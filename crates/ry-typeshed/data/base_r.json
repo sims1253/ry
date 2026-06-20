@@ -1,0 +1,245 @@
+{
+  "version": "0.0.1",
+  "functions": {
+    "c": {
+      "params": ["..."],
+      "return": "concat_of_args"
+    },
+    "length": {
+      "params": ["x"],
+      "return": {
+        "mode": "integer",
+        "length": "1",
+        "na": false
+      }
+    },
+    "nchar": {
+      "params": ["x"],
+      "return": {
+        "mode": "integer",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "is.numeric": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "1", "na": false }
+    },
+    "is.character": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "1", "na": false }
+    },
+    "is.integer": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "1", "na": false }
+    },
+    "is.logical": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "1", "na": false }
+    },
+    "is.null": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "1", "na": false }
+    },
+    "is.na": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "arg0", "na": false }
+    },
+    "as.numeric": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "arg0", "na": true }
+    },
+    "as.double": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "arg0", "na": true }
+    },
+    "as.integer": {
+      "params": ["x"],
+      "return": { "mode": "integer", "length": "arg0", "na": true }
+    },
+    "as.character": {
+      "params": ["x"],
+      "return": { "mode": "character", "length": "arg0", "na": true }
+    },
+    "as.logical": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "arg0", "na": true }
+    },
+    "sum": {
+      "params": ["..."],
+      "return": { "mode": "double_or_int", "length": "1", "na": true }
+    },
+    "mean": {
+      "params": ["x"],
+      "return": { "mode": "double_or_int", "length": "1", "na": true }
+    },
+    "min": {
+      "params": ["..."],
+      "return": { "mode": "double_or_int", "length": "1", "na": true }
+    },
+    "max": {
+      "params": ["..."],
+      "return": { "mode": "double_or_int", "length": "1", "na": true }
+    },
+    "print": {
+      "params": ["x"],
+      "return": { "mode": "opaque", "length": "arg0", "na": true }
+    },
+    "cat": {
+      "params": ["..."],
+      "return": { "mode": "null", "length": "0", "na": false }
+    },
+    "paste": {
+      "params": ["..."],
+      "return": { "mode": "character", "length": "longest_arg", "na": true }
+    },
+    "paste0": {
+      "params": ["..."],
+      "return": { "mode": "character", "length": "longest_arg", "na": true }
+    },
+    "sprintf": {
+      "params": ["fmt", "..."],
+      "return": { "mode": "character", "length": "longest_arg", "na": true }
+    },
+    "stop": {
+      "params": ["..."],
+      "return": { "mode": "opaque", "length": "0", "na": false }
+    },
+    "warning": {
+      "params": ["..."],
+      "return": { "mode": "null", "length": "0", "na": false }
+    },
+    "message": {
+      "params": ["..."],
+      "return": { "mode": "null", "length": "0", "na": false }
+    },
+    "invisible": {
+      "params": ["x"],
+      "return": "arg0"
+    },
+    "return": {
+      "params": ["x"],
+      "return": "arg0"
+    },
+    "ifelse": {
+      "params": ["test", "yes", "no"],
+      "return": { "mode": "yes_or_no", "length": "test", "na": true }
+    },
+    "abs": {
+      "params": ["x"],
+      "return": { "mode": "double_or_int", "length": "arg0", "na": true }
+    },
+    "sqrt": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "arg0", "na": true }
+    },
+    "exp": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "arg0", "na": true }
+    },
+    "log": {
+      "params": ["x", "base"],
+      "return": { "mode": "double", "length": "arg0", "na": true }
+    },
+    "list": {
+      "params": ["..."],
+      "return": { "mode": "list", "length": "n_args", "na": false }
+    },
+    "vector": {
+      "params": ["mode", "length"],
+      "return": { "mode": "arg0", "length": "arg1", "na": false }
+    },
+    "seq_len": {
+      "params": ["n"],
+      "return": { "mode": "integer", "length": "arg0", "na": false }
+    },
+    "seq_along": {
+      "params": ["along.with"],
+      "return": { "mode": "integer", "length": "arg0", "na": false }
+    },
+    "rep": {
+      "params": ["x", "times"],
+      "return": { "mode": "arg0", "length": "x_times", "na": true }
+    },
+    "which": {
+      "params": ["x"],
+      "return": { "mode": "integer", "length": "unknown", "na": false }
+    },
+    "any": {
+      "params": ["..."],
+      "return": { "mode": "logical", "length": "1", "na": true }
+    },
+    "all": {
+      "params": ["..."],
+      "return": { "mode": "logical", "length": "1", "na": true }
+    },
+    "unique": {
+      "params": ["x"],
+      "return": "arg0"
+    },
+    "sort": {
+      "params": ["x"],
+      "return": "arg0"
+    },
+    "rev": {
+      "params": ["x"],
+      "return": "arg0"
+    },
+    "head": {
+      "params": ["x", "n"],
+      "return": "arg0"
+    },
+    "tail": {
+      "params": ["x", "n"],
+      "return": "arg0"
+    },
+    "lapply": {
+      "params": ["X", "FUN"],
+      "return": { "mode": "list", "length": "arg0", "na": false }
+    },
+    "sapply": {
+      "params": ["X", "FUN"],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
+    },
+    "vapply": {
+      "params": ["X", "FUN", "FUN.VALUE"],
+      "return": { "mode": "arg2", "length": "unknown", "na": true }
+    },
+    "names": {
+      "params": ["x"],
+      "return": { "mode": "character", "length": "unknown", "na": false }
+    },
+    "rownames": {
+      "params": ["x"],
+      "return": { "mode": "character", "length": "unknown", "na": false }
+    },
+    "colnames": {
+      "params": ["x"],
+      "return": { "mode": "character", "length": "unknown", "na": false }
+    },
+    "ncol": {
+      "params": ["x"],
+      "return": { "mode": "integer", "length": "1", "na": false }
+    },
+    "nrow": {
+      "params": ["x"],
+      "return": { "mode": "integer", "length": "1", "na": false }
+    },
+    "NROW": {
+      "params": ["x"],
+      "return": { "mode": "integer", "length": "1", "na": false }
+    },
+    "NCOL": {
+      "params": ["x"],
+      "return": { "mode": "integer", "length": "1", "na": false }
+    },
+    "identical": {
+      "params": ["x", "y"],
+      "return": { "mode": "logical", "length": "1", "na": false }
+    },
+    "identical_to": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "1", "na": false }
+    }
+  }
+}

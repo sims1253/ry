@@ -1,0 +1,11 @@
+[package]
+name = "ry-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tree-sitter = { workspace = true }
+tree-sitter-r = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }

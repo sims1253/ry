@@ -27,10 +27,31 @@ const SNIPPETS: &[(&str, &str)] = &[
     ),
     (
         "tidyverse_pipe",
+        // Uses c(1,2,3) instead of mtcars so the snippet exercises pipe
+        // desugaring end-to-end without depending on NSE-opaque verbs.
         r#"library(magrittr)
-result <- mtcars %>%
-  subset(cyl == 4) %>%
-  subset(mpg > 25)
+result <- c(1, 2, 3) %>%
+  mean() %>%
+  round(2)
+"#,
+    ),
+    (
+        "mtcars_dataset",
+        // Verifies the typeshed datasets table resolves `mtcars` to a
+        // list-typed value (no RY010).
+        r#"df <- mtcars
+head(df)
+"#,
+    ),
+    (
+        "pipe_subset_nse",
+        // NSE snippet: `subset` evaluates `cyl == 4` in the caller's frame
+        // using the data.frame's columns. The checker cannot model this
+        // non-standard evaluation, so `cyl` is reported as unbound. This
+        // snippet is intentionally NOT expected to be clean; the
+        // diagnostic distribution is documented for review only.
+        r#"library(magrittr)
+result <- mtcars %>% subset(cyl == 4)
 "#,
     ),
     (

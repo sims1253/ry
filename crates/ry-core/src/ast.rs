@@ -99,7 +99,19 @@ pub enum BinOpKind {
     Lt, Le, Gt, Ge, Eq, Ne,
     And, AndAnd, Or, OrOr,
     NotIn, In,
-    Assign, SuperAssign, PipeForward, PipeBind,
+    Assign, SuperAssign,
+    /// `|>` (base R 4.1+) and `%>%` (magrittr). Both desugar the same
+    /// way at v1: `lhs |> rhs` calls `rhs` with `lhs` prepended to its
+    /// positional arguments (or substituted into the placeholder).
+    PipeForward,
+    /// `%T>%` (magrittr tee pipe). Returns the LHS, ignoring RHS.
+    PipeTee,
+    /// `%<>%` (magrittr assignment pipe). `x %<>% f()` is `x <- x %>% f()`.
+    /// Modeled as PipeForward for the result type; the assignment
+    /// side-effect is the caller's responsibility (see checker comment).
+    PipeAssign,
+    /// `%>_%` / placeholder-free magrittr binding (kept for symmetry).
+    PipeBind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

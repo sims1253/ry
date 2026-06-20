@@ -14,7 +14,7 @@ pub mod format;
 use ry_core::ast::*;
 use ry_core::types::{Length, Mode, RType};
 use ry_core::Span;
-use ry_typeshed::{load_base, FunctionSig, ReturnSpec, Typeshed};
+use ry_typeshed::{load_base, FunctionSig, JsonRType, ReturnSpec, Typeshed};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -523,7 +523,7 @@ impl Checker {
                 RType::new(Mode::Logical, length, true)
             }
             BinOpKind::Assign | BinOpKind::SuperAssign | BinOpKind::PipeForward
-            | BinOpKind::PipeBind => RType::UNKNOWN,
+            | BinOpKind::PipeTee | BinOpKind::PipeAssign | BinOpKind::PipeBind => RType::UNKNOWN,
         }
     }
 
@@ -717,6 +717,11 @@ impl Checker {
             Expr::Ident { name, span } => match scope.get(name) {
                 Some(t) => *t,
                 None => {
+                    // Built-in dataset? (mtcars, iris, ...) Resolve before
+                    // flagging the identifier as unbound.
+                    if let Some(jt) = self.typeshed.datasets.get(name) {
+                        return json_rtype_to_rtype(jt);
+                    }
                     self.emit(
                         Severity::Warning,
                         *span,
@@ -727,6 +732,15 @@ impl Checker {
                 }
             },
             Expr::BinOp { op, lhs, rhs, span } => {
+                // Pipes need structural access to `rhs` (to build a
+                // desugared call), so they bypass `infer_binop`'s
+                // type-only signature.
+                if matches!(*op, BinOpKind::PipeForward | BinOpKind::PipeAssign) {
+                    return self.infer_pipe(lhs, rhs, *span, scope);
+                }
+                if matches!(*op, BinOpKind::PipeTee) {
+                    return self.infer_pipe_tee(lhs, rhs, scope);
+                }
                 let lt = self.infer(lhs, scope);
                 let rt = self.infer(rhs, scope);
                 self.infer_binop(*op, lt, rt, *span)
@@ -857,6 +871,83 @@ impl Checker {
         RType::UNKNOWN
     }
 
+    /// Desugar `lhs %>% rhs` (and `lhs |> rhs`, `lhs %<>% rhs`) into a
+    /// call to `rhs` with `lhs` injected into the argument list.
+    ///
+    /// Magrittr `%>%` semantics: if `rhs` is a call, prepend `lhs` as
+    /// the first positional argument - unless one of the args is the
+    /// bare placeholder `.` (or base-R `_`), in which case the first
+    /// such occurrence is replaced with `lhs`. Bare `rhs` (e.g. `x %>% abs`)
+    /// becomes a one-arg call.
+    ///
+    /// `%<>%` (assignment pipe) shares the result type with `%>%` at v1.
+    /// The assignment side-effect (`x <- ...`) is handled by the caller
+    /// when it appears in an `Assign` statement; for a bare binop we
+    /// cannot reassign without a target expression, so we leave that to
+    /// a future pass.
+    fn infer_pipe(&mut self, lhs: &Expr, rhs: &Expr, span: Span, scope: &mut Scope) -> RType {
+        // Infer the LHS so diagnostics fire on it (e.g. unbound name).
+        let lhs_t = self.infer(lhs, scope);
+        let result = match rhs {
+            Expr::Call {
+                func,
+                args,
+                span: call_span,
+            } => {
+                let mut new_args: Vec<Arg> = Vec::with_capacity(args.len() + 1);
+                let mut placeholder_seen = false;
+                for a in args {
+                    if !placeholder_seen && is_pipe_placeholder(&a.value) {
+                        new_args.push(Arg {
+                            name: a.name.clone(),
+                            value: lhs.clone(),
+                            span: a.span,
+                        });
+                        placeholder_seen = true;
+                    } else {
+                        new_args.push(a.clone());
+                    }
+                }
+                if !placeholder_seen {
+                    new_args.insert(
+                        0,
+                        Arg {
+                            name: None,
+                            value: lhs.clone(),
+                            span,
+                        },
+                    );
+                }
+                self.infer_call(func, &new_args, scope, *call_span)
+            }
+            Expr::Ident { .. } => {
+                let new_args = vec![Arg {
+                    name: None,
+                    value: lhs.clone(),
+                    span,
+                }];
+                self.infer_call(rhs, &new_args, scope, span)
+            }
+            _ => {
+                // Unknown rhs form: infer rhs for diagnostics, give up on type.
+                let _ = self.infer(rhs, scope);
+                RType::UNKNOWN
+            }
+        };
+        let _ = lhs_t;
+        result
+    }
+
+    /// Tee pipe `%T>%`: run both sides for diagnostics, return the LHS type.
+    /// The RHS side-effect (e.g. `print`, `plot`) is discarded at runtime;
+    /// the value flows through as the LHS.
+    fn infer_pipe_tee(&mut self, lhs: &Expr, rhs: &Expr, scope: &mut Scope) -> RType {
+        let lhs_t = self.infer(lhs, scope);
+        // Still walk the RHS so any diagnostics on its body fire.
+        let _ = self.infer_pipe(lhs, rhs, span_of(rhs), scope);
+        lhs_t
+    }
+
     fn infer_call(&mut self, func: &Expr, args: &[Arg], scope: &mut Scope, span: Span) -> RType {
         // Only model direct calls `name(...)`. Pipelines and indirect calls
         // return opaque.
@@ -870,6 +961,15 @@ impl Checker {
                 return RType::UNKNOWN;
             }
         };
+
+        // NSE-opaque functions whose arguments are not regular values:
+        // `library(foo)` and `require(foo)` take a package name as a bare
+        // symbol, not an expression. Inferring their args would trigger
+        // spurious RY010 on every `library(magrittr)` etc. Return NULL
+        // (these functions return invisible(NULL) at runtime).
+        if name == "library" || name == "require" {
+            return RType::new(Mode::Null, Length::Zero, false);
+        }
 
         // Infer arg types.
         let mut arg_types: Vec<RType> = Vec::with_capacity(args.len());
@@ -1045,6 +1145,42 @@ fn span_of(e: &Expr) -> Span {
     }
 }
 
+/// True if `e` is a magrittr (`.`) or base-R (`_`) pipe placeholder.
+/// These are bare identifier references used inside a piped call to
+/// mark where the LHS value should be substituted.
+fn is_pipe_placeholder(e: &Expr) -> bool {
+    matches!(e, Expr::Ident { name, .. } if name == "." || name == "_")
+}
+
+/// Convert a typeshed `JsonRType` to the checker's `RType`. Mirrors the
+/// inline conversion in `apply_sig` for `ReturnSpec::Concrete` - kept
+/// here in ry-checker (not ry-typeshed) so that crate stays free of any
+/// dependency on ry-core's type definitions.
+fn json_rtype_to_rtype(jt: &JsonRType) -> RType {
+    let mode = match jt.mode.as_str() {
+        "logical" => Mode::Logical,
+        "integer" => Mode::Integer,
+        "double" => Mode::Double,
+        "character" => Mode::Character,
+        "complex" => Mode::Complex,
+        "raw" => Mode::Raw,
+        "list" => Mode::List,
+        "null" => Mode::Null,
+        "function" => Mode::Function,
+        "opaque" => Mode::Opaque,
+        _ => Mode::Opaque,
+    };
+    let length = match jt.length.as_str() {
+        "0" => Length::Zero,
+        "1" => Length::One,
+        s if s.parse::<usize>().is_ok() => {
+            Length::Known(s.parse::<usize>().unwrap_or(0))
+        }
+        _ => Length::Unknown,
+    };
+    RType::new(mode, length, jt.na)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1157,6 +1293,74 @@ mod tests {
         assert!(
             diags.iter().any(|d| d.code == "RY040"),
             "expected RY040 from character loop var + int, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn pipe_desugars_to_call() {
+        // `c(1,2,3) %>% mean()` desugars to `mean(c(1,2,3))`, which is
+        // well-typed: no diagnostics.
+        let diags = check("result <- c(1, 2, 3) %>% mean()\n");
+        assert!(diags.is_empty(), "got {:?}", diags);
+    }
+
+    #[test]
+    fn pipe_chain_infers() {
+        // A two-step pipe composes: `mean() -> double_or_int<1>`, then
+        // `round(<double>, digits = 2)` resolves against the typeshed.
+        let diags = check("a <- c(1, 2, 3) %>% mean() %>% round(2)\n");
+        assert!(diags.is_empty(), "got {:?}", diags);
+    }
+
+    #[test]
+    fn pipe_base_r_infers() {
+        // Base-R `|>` desugars identically to magrittr `%>%`.
+        let diags = check("a <- c(1, 2, 3) |> mean()\n");
+        assert!(diags.is_empty(), "got {:?}", diags);
+    }
+
+    #[test]
+    fn pipe_bare_function() {
+        // Bare `rhs` becomes a one-arg call: `x %>% abs` -> `abs(x)`.
+        let diags = check("x <- 1L\ny <- x %>% abs\n");
+        assert!(diags.is_empty(), "got {:?}", diags);
+    }
+
+    #[test]
+    fn pipe_placeholder_substitutes() {
+        // The first `.` is replaced with the LHS; `round(., digits = 2)`
+        // becomes `round(c(1,2,3), digits = 2)`.
+        let diags = check("result <- c(1, 2, 3) %>% round(., digits = 2)\n");
+        assert!(diags.is_empty(), "got {:?}", diags);
+    }
+
+    #[test]
+    fn pipe_tee_returns_lhs_type() {
+        // `%T>%` returns the LHS; the RHS is walked for diagnostics only.
+        // `c(1,2,3) %T>% print()` should be a length-3 double vector.
+        let diags = check("result <- c(1, 2, 3) %T>% print()\n");
+        assert!(diags.is_empty(), "got {:?}", diags);
+    }
+
+    #[test]
+    fn dataset_resolves_mtcars() {
+        // `mtcars` is in the typeshed's datasets table; using it must
+        // not emit RY010 (unbound variable).
+        let diags = check("df <- mtcars\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "expected no RY010 for mtcars, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn dataset_resolves_iris() {
+        let diags = check("df <- iris\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "expected no RY010 for iris, got {:?}",
             diags
         );
     }

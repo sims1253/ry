@@ -69,6 +69,11 @@ impl FunctionSig {
 pub struct Typeshed {
     pub version: String,
     pub functions: std::collections::BTreeMap<String, FunctionSig>,
+    /// Built-in datasets (`mtcars`, `iris`, ...) typed as list-typed
+    /// values. These resolve in the checker when an identifier is not
+    /// bound by user code or function scope.
+    #[serde(default)]
+    pub datasets: std::collections::BTreeMap<String, JsonRType>,
 }
 
 /// Wrapper to handle the JSON shape where the key "return" is reserved
@@ -93,6 +98,8 @@ pub fn load_base() -> Result<Typeshed, TypeshedError> {
         #[allow(dead_code)]
         version: String,
         functions: std::collections::BTreeMap<String, _fwd::_FunctionSig>,
+        #[serde(default)]
+        datasets: std::collections::BTreeMap<String, JsonRType>,
     }
     let raw: RawFile = serde_json::from_str(BASE_R_JSON)?;
     let mut functions = std::collections::BTreeMap::new();
@@ -109,6 +116,7 @@ pub fn load_base() -> Result<Typeshed, TypeshedError> {
     Ok(Typeshed {
         version: env!("CARGO_PKG_VERSION").to_string(),
         functions,
+        datasets: raw.datasets,
     })
 }
 

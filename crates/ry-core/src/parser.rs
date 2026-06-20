@@ -383,6 +383,9 @@ impl RParser {
             "||" => BinOpKind::OrOr,
             "%in%" => BinOpKind::In,
             "|>" => BinOpKind::PipeForward,
+            "%>%" => BinOpKind::PipeForward,
+            "%T>%" => BinOpKind::PipeTee,
+            "%<>%" => BinOpKind::PipeAssign,
             _ => {
                 tracing::trace!(op = op_text.as_str(), "unknown binary op");
                 return Some(Expr::Unknown(span));
@@ -557,6 +560,101 @@ mod tests {
                 );
             }
             other => panic!("unexpected: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_base_r_pipe() {
+        // Base-R `|>` lowers to PipeForward.
+        let f = parse("c(1, 2, 3) |> mean()\n");
+        match f.stmts.first() {
+            Some(Stmt::Expr(Expr::BinOp {
+                op: BinOpKind::PipeForward,
+                lhs,
+                rhs,
+                ..
+            })) => {
+                assert!(
+                    matches!(lhs.as_ref(), Expr::Call { .. }),
+                    "lhs should be a Call, got {:?}",
+                    lhs
+                );
+                assert!(
+                    matches!(rhs.as_ref(), Expr::Call { .. }),
+                    "rhs should be a Call, got {:?}",
+                    rhs
+                );
+            }
+            other => panic!("unexpected: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_magrittr_pipe() {
+        // `%>%` lowers to PipeForward (same semantic as `|>` at v1).
+        let f = parse("mtcars %>% subset(cyl == 4)\n");
+        match f.stmts.first() {
+            Some(Stmt::Expr(Expr::BinOp {
+                op: BinOpKind::PipeForward,
+                lhs,
+                rhs,
+                ..
+            })) => {
+                assert!(
+                    matches!(lhs.as_ref(), Expr::Ident { name, .. } if name == "mtcars"),
+                    "lhs should be Ident(\"mtcars\"), got {:?}",
+                    lhs
+                );
+                match rhs.as_ref() {
+                    Expr::Call { func, args, .. } => {
+                        assert!(
+                            matches!(func.as_ref(), Expr::Ident { name, .. } if name == "subset"),
+                            "rhs func should be Ident(\"subset\"), got {:?}",
+                            func
+                        );
+                        assert_eq!(args.len(), 1, "rhs args: {:?}", args);
+                    }
+                    other => panic!("rhs should be a Call, got {:?}", other),
+                }
+            }
+            other => panic!("unexpected: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_magrittr_tee_pipe() {
+        // `%T>%` lowers to PipeTee.
+        let f = parse("x %T>% print()\n");
+        match f.stmts.first() {
+            Some(Stmt::Expr(Expr::BinOp {
+                op: BinOpKind::PipeTee,
+                ..
+            })) => {}
+            other => panic!("expected PipeTee BinOp, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_magrittr_assign_pipe() {
+        // `%<>%` lowers to PipeAssign.
+        let f = parse("x %<>% abs()\n");
+        match f.stmts.first() {
+            Some(Stmt::Expr(Expr::BinOp {
+                op: BinOpKind::PipeAssign,
+                ..
+            })) => {}
+            other => panic!("expected PipeAssign BinOp, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn unknown_special_falls_through() {
+        // `%like%` is an arbitrary user-defined infix; it lowers to
+        // Unknown (we don't model its semantics).
+        let f = parse("y %like% \"foo\"\n");
+        match f.stmts.first() {
+            Some(Stmt::Expr(Expr::Unknown(_))) => {}
+            other => panic!("expected Unknown for `%like%`, got {:?}", other),
         }
     }
 }

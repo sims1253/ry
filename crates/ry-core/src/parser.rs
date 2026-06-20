@@ -81,8 +81,18 @@ impl RParser {
             "braced_expression" => self.lower_braced_as_stmt(n, src),
             "function_definition" => self.lower_function_def_as_stmt(n, src),
             _ => {
-                tracing::trace!(kind = n.kind(), "unhandled top-level stmt");
-                None
+                // Fallback: any expression node (string, integer, float,
+                // na, null, true, false, subset, etc.) appearing in
+                // statement position is wrapped as a bare expression
+                // statement. Without this, function-body trailing
+                // expressions like `function() "hello"` would be silently
+                // dropped, breaking return-type inference.
+                if let Some(e) = self.lower_expr(n, src) {
+                    Some(Stmt::Expr(e))
+                } else {
+                    tracing::trace!(kind = n.kind(), "unhandled top-level stmt");
+                    None
+                }
             }
         }
     }
@@ -156,21 +166,17 @@ impl RParser {
         }
     }
 
-    /// A braced expression used as a statement: splice its children into
-    /// the parent stream. We approximate by emitting them in order; the
-    /// block does not open a new scope in v1.
+    /// A braced expression used as a top-level statement. We splice the
+    /// *last* child as the statement, losing earlier siblings. This is a
+    /// known v1 limitation; at top level braces are rare and a proper
+    /// Block variant is a future task.
     fn lower_braced_as_stmt(&self, n: Node, src: &str) -> Option<Stmt> {
         let mut cur = n.walk();
+        let mut last: Option<Stmt> = None;
         for ch in n.named_children(&mut cur) {
-            // Only the *first* child becomes the Stmt; the rest would be
-            // lost. We handle the common case (single statement inside
-            // braces at top level) by emitting the last one. Marked TODO
-            // for v2 where we add a Block variant.
-            if let Some(s) = self.lower_stmt(ch, src) {
-                return Some(s);
-            }
+            last = self.lower_stmt(ch, src);
         }
-        None
+        last
     }
 
     fn lower_block(&self, n: Node, src: &str) -> Vec<Stmt> {
@@ -207,7 +213,7 @@ impl RParser {
                 let name = text(ch.child_by_field_name("name").unwrap_or(ch), src)
                     .unwrap_or_else(|| "?".into());
                 let default = ch
-                    .child_by_field_name("value")
+                    .child_by_field_name("default")
                     .and_then(|n| self.lower_expr(n, src));
                 out.push(Param {
                     name,
@@ -364,6 +370,7 @@ impl RParser {
             "^" => BinOpKind::Pow,
             "%%" => BinOpKind::Mod,
             "%/%" => BinOpKind::IDiv,
+            ":" => BinOpKind::Colon,
             "<" => BinOpKind::Lt,
             "<=" => BinOpKind::Le,
             ">" => BinOpKind::Gt,
@@ -496,6 +503,58 @@ mod tests {
             Some(Stmt::Expr(Expr::Call { args, .. })) => {
                 assert_eq!(args.len(), 2);
                 assert_eq!(args[0].name.as_deref(), Some("x"));
+            }
+            other => panic!("unexpected: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_function_with_default_params() {
+        let f = parse("f <- function(x = 1L, y = 2, z = \"a\") { x }\n");
+        match f.stmts.first() {
+            Some(Stmt::Assign {
+                value: Expr::Function { params, .. },
+                ..
+            }) => {
+                assert_eq!(params.len(), 3, "params: {:?}", params);
+                assert_eq!(params[0].name, "x");
+                assert!(
+                    matches!(params[0].default, Some(Expr::Integer(1, _))),
+                    "x default: {:?}",
+                    params[0].default
+                );
+                assert_eq!(params[1].name, "y");
+                assert!(
+                    matches!(params[1].default, Some(Expr::Double(2.0, _))),
+                    "y default: {:?}",
+                    params[1].default
+                );
+                assert_eq!(params[2].name, "z");
+                assert!(
+                    matches!(&params[2].default, Some(Expr::String(s, _)) if s == "a"),
+                    "z default: {:?}",
+                    params[2].default
+                );
+            }
+            other => panic!("unexpected: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_string_as_trailing_expression() {
+        // Function body whose only statement is a string literal.
+        let f = parse("g <- function() { \"hello\" }\n");
+        match f.stmts.first() {
+            Some(Stmt::Assign {
+                value: Expr::Function { body, .. },
+                ..
+            }) => {
+                assert_eq!(body.len(), 1, "body: {:?}", body);
+                assert!(
+                    matches!(&body[0], Stmt::Expr(Expr::String(s, _)) if s == "hello"),
+                    "body[0]: {:?}",
+                    body[0]
+                );
             }
             other => panic!("unexpected: {:?}", other),
         }

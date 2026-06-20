@@ -94,6 +94,8 @@ pub struct Arg {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinOpKind {
     Add, Sub, Mul, Div, Pow, Mod, IDiv,
+    /// `:` sequence operator (`from:to`)
+    Colon,
     Lt, Le, Gt, Ge, Eq, Ne,
     And, AndAnd, Or, OrOr,
     NotIn, In,

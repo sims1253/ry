@@ -199,6 +199,64 @@ impl RType {
             Mode::List | Mode::Function | Mode::Opaque
         ) || matches!(self.length, Length::Zero)
     }
+
+    /// Join (least upper bound) of two types, used when control flow
+    /// merges: e.g. the result of `if (cond) x else y`. The mode follows
+    /// R's coercion ladder (the higher-ranked operand wins). The length
+    /// is Unknown if the two differ, otherwise the common value. NA
+    /// propagates (true if either side can be NA).
+    ///
+    /// Opaque is absorbing: joining anything with unknown yields unknown,
+    /// which is the correct conservative choice.
+    pub fn join(self, other: RType) -> RType {
+        if matches!(self.mode, Mode::Opaque) || matches!(other.mode, Mode::Opaque) {
+            return RType::UNKNOWN;
+        }
+        if self == other {
+            return self;
+        }
+        let mode = if self.mode.coerce_rank() >= other.mode.coerce_rank() {
+            self.mode
+        } else {
+            other.mode
+        };
+        let length = if self.length == other.length {
+            self.length
+        } else {
+            Length::Unknown
+        };
+        RType::new(mode, length, self.na.0 || other.na.0)
+    }
+
+    /// Element type of an iterable used in `for (var in iter)`. For an
+    /// atomic vector this is a length-1 value of the same mode; for a
+    /// list it is a length-1 list; for opaque input it stays opaque.
+    pub fn element(self) -> RType {
+        match self.mode {
+            Mode::Null => RType::new(Mode::Null, Length::Zero, false),
+            Mode::Opaque => RType::UNKNOWN,
+            _ => RType::new(self.mode, Length::One, self.na.0),
+        }
+    }
+
+    /// Result of the `:` sequence operator `from:to`. Always integer in
+    /// R when both operands are integer-like (incl. logical), otherwise
+    /// the result is still integer-ish: R actually returns integer for
+    /// `1:3` but double for `1.5:3.5`. We follow R here.
+    pub fn seq(self, other: RType) -> RType {
+        let mode = if matches!(self.mode, Mode::Integer | Mode::Logical)
+            && matches!(other.mode, Mode::Integer | Mode::Logical)
+        {
+            Mode::Integer
+        } else if matches!(self.mode, Mode::Opaque) || matches!(other.mode, Mode::Opaque) {
+            Mode::Opaque
+        } else {
+            Mode::Double
+        };
+        // Length depends on the runtime values; can't be known statically
+        // except for literal operands, which the checker special-cases.
+        RType::new(mode, Length::Unknown, false)
+    }
 }
 
 impl fmt::Display for RType {
@@ -250,5 +308,54 @@ mod tests {
     fn condition_rejects_lists() {
         let l = RType::new(Mode::List, Length::One, false);
         assert!(l.invalid_condition());
+    }
+
+    #[test]
+    fn join_promotes_via_coercion_ladder() {
+        let i = RType::scalar(Mode::Integer, false);
+        let d = RType::scalar(Mode::Double, false);
+        assert_eq!(i.join(d).mode, Mode::Double);
+        assert_eq!(d.join(i).mode, Mode::Double);
+    }
+
+    #[test]
+    fn join_with_opaque_is_unknown() {
+        let i = RType::scalar(Mode::Integer, false);
+        assert_eq!(i.join(RType::UNKNOWN), RType::UNKNOWN);
+    }
+
+    #[test]
+    fn join_equal_returns_self() {
+        let i = RType::scalar(Mode::Integer, false);
+        assert_eq!(i.join(i), i);
+    }
+
+    #[test]
+    fn join_different_lengths_unknown() {
+        let a = RType::new(Mode::Integer, Length::Known(3), false);
+        let b = RType::new(Mode::Integer, Length::Known(5), false);
+        assert_eq!(a.join(b).length, Length::Unknown);
+    }
+
+    #[test]
+    fn element_of_vector_is_scalar() {
+        let v = RType::new(Mode::Integer, Length::Known(10), false);
+        let e = v.element();
+        assert_eq!(e.mode, Mode::Integer);
+        assert_eq!(e.length, Length::One);
+    }
+
+    #[test]
+    fn seq_int_int_is_integer() {
+        let a = RType::scalar(Mode::Integer, false);
+        let b = RType::scalar(Mode::Integer, false);
+        assert_eq!(a.seq(b).mode, Mode::Integer);
+    }
+
+    #[test]
+    fn seq_double_double_is_double() {
+        let a = RType::scalar(Mode::Double, false);
+        let b = RType::scalar(Mode::Double, false);
+        assert_eq!(a.seq(b).mode, Mode::Double);
     }
 }

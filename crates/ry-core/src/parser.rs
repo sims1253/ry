@@ -130,6 +130,33 @@ impl RParser {
         })
     }
 
+    /// Lower an `if_statement` in expression position (e.g. the RHS of
+    /// `x <- if (cond) 1L else 2L`). Unlike `lower_if` which produces a
+    /// `Stmt::If`, this produces an `Expr::If` whose branches are
+    /// lowered as expressions (the last expression in a braced body
+    /// becomes the branch's value).
+    ///
+    /// Side effects in intermediate statements within a braced branch
+    /// (e.g. `if (cond) { y <- 1; y + 1 }`) are NOT walked for
+    /// diagnostics in this path. Users who need full diagnostics should
+    /// use the statement form. The type inference is correct regardless
+    /// (the branch type is the last expression's type).
+    fn lower_if_expr(&self, n: Node, src: &str) -> Option<Expr> {
+        let cond = self.lower_expr(n.child_by_field_name("condition")?, src)?;
+        let consequence = n.child_by_field_name("consequence")?;
+        let then = self.lower_expr(consequence, src)?;
+        let else_ = n
+            .child_by_field_name("alternative")
+            .and_then(|alt| self.lower_expr(alt, src))
+            .map(Box::new);
+        Some(Expr::If {
+            cond: Box::new(cond),
+            then: Box::new(then),
+            else_,
+            span: self.span(n, src),
+        })
+    }
+
     fn lower_for(&self, n: Node, src: &str) -> Option<Stmt> {
         let name = text(n.child_by_field_name("variable")?, src)?;
         let iter = self.lower_expr(n.child_by_field_name("sequence")?, src)?;
@@ -294,6 +321,7 @@ impl RParser {
                 }
                 last
             }
+            "if_statement" => self.lower_if_expr(n, src),
             _ => {
                 tracing::trace!(kind = n.kind(), "unhandled expr");
                 Some(Expr::Unknown(self.span(n, src)))

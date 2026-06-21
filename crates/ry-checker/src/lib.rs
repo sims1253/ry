@@ -991,6 +991,18 @@ impl Checker {
                 // `Function` value (no `fn_sig`).
                 self.function_value_from_literal(params, body, scope, depth)
             }
+            Expr::If { cond, then, else_, .. } => {
+                // Pass 2 (pure): infer both branches without emitting
+                // diagnostics, then join. Mirrors pass 3's
+                // `infer_if_expr` minus the diagnostic emission.
+                let _ = self.infer_pure_at_depth(cond, scope, depth);
+                let then_t = self.infer_pure_at_depth(then, scope, depth);
+                let else_t = else_
+                    .as_ref()
+                    .map(|e| self.infer_pure_at_depth(e, scope, depth))
+                    .unwrap_or(RType::new(Mode::Null, Length::Zero, false));
+                then_t.join(else_t)
+            }
             Expr::Unknown(_) => RType::UNKNOWN,
         }
     }
@@ -1464,6 +1476,9 @@ impl Checker {
                 // resolves the same way as one inside a return slot.
                 self.function_value_from_literal(params, body, scope, 0)
             }
+            Expr::If { cond, then, else_, span } => {
+                self.infer_if_expr(cond, then, else_, *span, scope)
+            }
             Expr::Unknown(_) => RType::UNKNOWN,
         }
     }
@@ -1627,6 +1642,57 @@ impl Checker {
         // Still walk the RHS so any diagnostics on its body fire.
         let _ = self.infer_pipe(lhs, rhs, span_of(rhs), scope);
         lhs_t
+    }
+
+    /// Infer the type of an `if` expression `if (cond) then else else_`.
+    /// The condition is inferred for diagnostics (RY001/RY002). Both
+    /// branches are inferred; the result is the join of their types.
+    /// When `else_` is absent, R returns NULL for the else branch, so
+    /// we join with NULL's type.
+    fn infer_if_expr(
+        &mut self,
+        cond: &Expr,
+        then: &Expr,
+        else_: &Option<Box<Expr>>,
+        span: Span,
+        scope: &mut Scope,
+    ) -> RType {
+        let ct = self.infer(cond, scope);
+        if ct.invalid_condition() {
+            self.emit(
+                Severity::Error,
+                span_of(cond),
+                "RY001",
+                format!("`if` condition is `{}`, expected length-1 logical", ct),
+            );
+        } else if !matches!(ct.mode, Mode::Logical | Mode::Opaque) {
+            self.emit(
+                Severity::Warning,
+                span_of(cond),
+                "RY001",
+                format!(
+                    "`if` condition is `{}` (not logical); will be silently coerced",
+                    ct.mode
+                ),
+            );
+        } else if matches!(ct.mode, Mode::Logical) && !matches!(ct.length, Length::One) {
+            self.emit(
+                Severity::Warning,
+                span_of(cond),
+                "RY002",
+                format!("`if` condition has length {:?}, will only use first element", ct.length),
+            );
+        }
+        // Flow-sensitive type narrowing for the expression form too.
+        let narrowing = extract_type_narrowing(cond);
+        let (then_scope, else_scope) = apply_narrowing(scope, &narrowing);
+        let then_t = self.infer(then, &mut then_scope.clone());
+        let else_t = match else_ {
+            Some(e) => self.infer(e, &mut else_scope.clone()),
+            None => RType::new(Mode::Null, Length::Zero, false),
+        };
+        let _ = span;
+        then_t.join(else_t)
     }
 
     fn infer_call(&mut self, func: &Expr, args: &[Arg], scope: &mut Scope, span: Span) -> RType {
@@ -2956,6 +3022,7 @@ fn span_of(e: &Expr) -> Span {
         Expr::UnaryOp { span, .. } => *span,
         Expr::Index { span, .. } => *span,
         Expr::Function { span, .. } => *span,
+        Expr::If { span, .. } => *span,
         Expr::Unknown(s) => *s,
     }
 }
@@ -4262,6 +4329,66 @@ mod tests {
         assert!(
             diags.iter().all(|d| d.code != "RY040"),
             "character-narrowed opaque should not fire RY040 in then branch, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn if_expr_integer_branches_join_to_integer() {
+        // `if (TRUE) 1L else 2L` joins to integer. Using the result
+        // with a character must fire RY040, proving the type was
+        // inferred (not opaque, which would be permissive).
+        let diags = check(
+            "x <- if (TRUE) 1L else 2L\n\
+             bad <- x + \"hello\"\n",
+        );
+        assert!(
+            diags.iter().any(|d| d.code == "RY040"),
+            "expected RY040 from if-expr result + character, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn if_expr_mismatched_branches_join() {
+        // `if (TRUE) 1L else "hello"` joins integer + character =
+        // character. Using the result arithmetically fires RY040.
+        let diags = check(
+            "x <- if (TRUE) 1L else \"hello\"\n\
+             bad <- x + 1\n",
+        );
+        assert!(
+            diags.iter().any(|d| d.code == "RY040"),
+            "expected RY040 from joined if-expr (character) + double, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn if_expr_no_else_joins_with_null() {
+        // `if (TRUE) 1L` (no else) joins integer + NULL = integer.
+        // Using the result arithmetically is well-typed.
+        let diags = check(
+            "x <- if (TRUE) 1L\n\
+             y <- x + 1\n",
+        );
+        assert!(
+            diags.iter().all(|d| d.code != "RY040"),
+            "if-expr without else should join int+NULL=int, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn if_expr_nested() {
+        // Nested if-expressions: all branches integer, result integer.
+        let diags = check(
+            "x <- if (TRUE) { if (FALSE) 1L else 2L } else 3L\n\
+             bad <- x + \"x\"\n",
+        );
+        assert!(
+            diags.iter().any(|d| d.code == "RY040"),
+            "expected RY040 from nested if-expr result + character, got {:?}",
             diags
         );
     }

@@ -79,6 +79,16 @@ pub enum Expr {
     Index { base: Box<Expr>, kind: IndexKind, args: Vec<Arg>, span: Span },
     /// Function literal (anonymous), used as a value.
     Function { params: Vec<Param>, body: Vec<Stmt>, span: Span },
+    /// Conditional expression: `if (cond) expr1 else expr2`. Used in
+    /// expression position (e.g. `x <- if (cond) 1L else 2L`). The
+    /// result type is the join of the two branches. `else_` is `None`
+    /// when the `else` clause is absent (R returns NULL in that case).
+    If {
+        cond: Box<Expr>,
+        then: Box<Expr>,
+        else_: Option<Box<Expr>>,
+        span: Span,
+    },
     /// Anything we don't model yet.
     Unknown(Span),
 }

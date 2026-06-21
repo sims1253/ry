@@ -1717,6 +1717,40 @@ impl Checker {
         then_t.join(else_t)
     }
 
+    /// Infer the result type of `switch(EXPR, ...)`. Both forms are
+    /// supported:
+    ///   * Numeric: `switch(1, "first", "second", "third")` - selects
+    ///     the Nth positional argument.
+    ///   * Named: `switch(x, a = 1L, b = "two")` - selects by matching
+    ///     `x` against the argument names.
+    ///
+    /// The result type is the join of all alternative types (since we
+    /// can't know which branch will execute at runtime). Each
+    /// alternative is also walked for diagnostics.
+    fn infer_switch_call(
+        &mut self,
+        args: &[Arg],
+        scope: &mut Scope,
+        span: Span,
+    ) -> RType {
+        // The first argument is the selector; infer it for diagnostics.
+        if let Some(first) = args.first() {
+            let _ = self.infer(&first.value, scope);
+        }
+        // Join the types of all remaining arguments (the alternatives).
+        let mut alt_types: Vec<RType> = Vec::new();
+        for a in args.iter().skip(1) {
+            alt_types.push(self.infer(&a.value, scope));
+        }
+        let _ = span;
+        if alt_types.is_empty() {
+            return RType::UNKNOWN;
+        }
+        let mut iter = alt_types.into_iter();
+        let first = iter.next().unwrap_or(RType::UNKNOWN);
+        iter.fold(first, |acc, t| acc.join(t))
+    }
+
     fn infer_call(&mut self, func: &Expr, args: &[Arg], scope: &mut Scope, span: Span) -> RType {
         // Only model direct calls `name(...)`. Pipelines and indirect calls
         // return opaque.
@@ -1738,6 +1772,14 @@ impl Checker {
         // (these functions return invisible(NULL) at runtime).
         if name == "library" || name == "require" {
             return RType::new(Mode::Null, Length::Zero, false);
+        }
+
+        // `switch(EXPR, ...)` selects one of several alternatives.
+        // The result type is the join of all alternatives. Both numeric
+        // switch (`switch(1, "a", "b")`) and named switch
+        // (`switch(x, a = 1, b = 2)`) are supported.
+        if name == "switch" {
+            return self.infer_switch_call(args, scope, span);
         }
 
         // `structure(x, class = "...")` is R's class constructor. We

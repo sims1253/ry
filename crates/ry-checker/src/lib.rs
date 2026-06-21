@@ -1823,15 +1823,13 @@ impl Checker {
 
     fn infer_call(&mut self, func: &Expr, args: &[Arg], scope: &mut Scope, span: Span) -> RType {
         // Handle calls to function literals (IIFEs):
-        // `(function() 1L)()`. Infer the function value and, if it has
-        // an fn_sig, return the signature's return type.
-        if let Expr::Function { params, body, .. } = func {
-            let fn_val = self.function_value_from_literal(params, body, scope, 0);
-            for a in args {
-                let _ = self.infer(&a.value, scope);
-            }
-            if let Some(sig) = fn_val.fn_sig {
-                return *sig.return_type;
+        // `(function(x) x + 1)(2L)`. Infer the return type using the
+        // actual argument types via callback_return_type, which walks
+        // the body with the params bound to the argument types.
+        if let Expr::Function { .. } = func {
+            let arg_types: Vec<RType> = args.iter().map(|a| self.infer(&a.value, scope)).collect();
+            if let Some(rt) = self.callback_return_type(func, &arg_types, scope) {
+                return rt;
             }
             return RType::UNKNOWN;
         }

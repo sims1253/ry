@@ -446,6 +446,24 @@ impl Checker {
         &self.diagnostics
     }
 
+    /// Check a file and return both diagnostics and the final top-level
+    /// scope. Used by the LSP server for hover support: the scope maps
+    /// variable names to their inferred types, so hovering over a
+    /// variable shows its type.
+    pub fn check_with_scope(&mut self, file: &SourceFile) -> (Vec<Diagnostic>, Scope) {
+        self.path = file.path.clone();
+        self.collect_fns(&file.stmts);
+        self.run_fixpoint();
+        let mut scope = Scope::default();
+        // Clear diagnostics so we start fresh (the caller may call this
+        // multiple times on the same checker instance).
+        self.diagnostics.clear();
+        for s in &file.stmts {
+            self.check_stmt(s, &mut scope);
+        }
+        (std::mem::take(&mut self.diagnostics), scope)
+    }
+
     /// Construct a checker that uses pre-populated function tables.
     /// Used by `Project` for multi-file checking, where the tables are
     /// shared across files. The fresh checker starts with an empty

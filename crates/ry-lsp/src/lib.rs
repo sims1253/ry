@@ -71,6 +71,7 @@ impl LanguageServer for Backend {
                     // `changes[0]`.
                     TextDocumentSyncKind::FULL,
                 )),
+                hover_provider: Some(HoverProviderCapability::Simple(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -120,6 +121,54 @@ impl LanguageServer for Backend {
 
     async fn shutdown(&self) -> LspResult<()> {
         Ok(())
+    }
+
+    async fn hover(&self, params: HoverParams) -> LspResult<Option<Hover>> {
+        let uri = params.text_document_position_params.text_document.uri.clone();
+        let path = uri_to_path(&uri);
+        let position = params.text_document_position_params.position;
+
+        let text = {
+            let state = self.state.lock().await;
+            state.docs.get(&path).cloned()
+        };
+
+        let Some(text) = text else {
+            return Ok(None);
+        };
+
+        // Find the identifier at the hover position. We look for a
+        // word-like character sequence around the cursor.
+        let identifier = find_identifier_at_position(&text, position.line as usize, position.character as usize);
+        let Some(identifier) = identifier else {
+            return Ok(None);
+        };
+
+        // Parse and check the file to get the scope.
+        let mut parser = match RParser::new() {
+            Ok(p) => p,
+            Err(_) => return Ok(None),
+        };
+        let file = match parser.parse(&path, &text) {
+            Ok(f) => f,
+            Err(_) => return Ok(None),
+        };
+        let mut checker = ry_checker::Checker::new(&path);
+        let (_, scope) = checker.check_with_scope(&file);
+
+        // Look up the identifier in the scope.
+        if let Some(t) = scope.get(&identifier) {
+            let type_str = format!("{}", t);
+            return Ok(Some(Hover {
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: format!("```r\n{}: {}\n```", identifier, type_str),
+                }),
+                range: None,
+            }));
+        }
+
+        Ok(None)
     }
 }
 
@@ -179,6 +228,63 @@ impl Backend {
             .publish_diagnostics(uri, diags_for_uri, None)
             .await;
     }
+}
+
+/// Find the identifier (variable name) at a given line and column in
+/// the source text. Returns `None` if the position is not on an
+/// identifier-like character sequence. The search expands left and
+/// right from the cursor to find the boundaries of the word.
+///
+/// This is a simple character-based scan, not a full parser query. It
+/// handles the common case of hovering over a bare identifier like
+/// `x`, `my_var`, `result`. It does not handle dotted access (`df$col`)
+/// or function call syntax; those would require parser-level position
+/// information.
+fn find_identifier_at_position(text: &str, line: usize, col: usize) -> Option<String> {
+    let line_str = text.lines().nth(line)?;
+    let bytes = line_str.as_bytes();
+    if bytes.is_empty() || col >= bytes.len() {
+        return None;
+    }
+    // The character at the cursor must be identifier-like.
+    let is_ident_char = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'.';
+    if !is_ident_char(bytes[col]) {
+        // Check if the cursor is just after an identifier (common when
+        // the user places the cursor right at the end of a word).
+        if col > 0 && is_ident_char(bytes[col - 1]) {
+            // Expand from col-1 instead.
+        } else {
+            return None;
+        }
+    }
+    // Expand left to find the start of the identifier.
+    let mut start = col;
+    while start > 0 && is_ident_char(bytes[start - 1]) {
+        start -= 1;
+    }
+    // Expand right to find the end.
+    let mut end = col;
+    while end < bytes.len() && is_ident_char(bytes[end]) {
+        end += 1;
+    }
+    if start >= end {
+        return None;
+    }
+    let ident = std::str::from_utf8(&bytes[start..end]).ok()?;
+    // Filter out pure-number identifiers (123) and reserved words.
+    if ident.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    // Filter out R keywords that are not variable bindings.
+    if matches!(
+        ident,
+        "if" | "else" | "for" | "while" | "repeat" | "function" | "return"
+            | "break" | "next" | "TRUE" | "FALSE" | "NULL" | "NA" | "Inf"
+            | "NaN" | "in"
+    ) {
+        return None;
+    }
+    Some(ident.to_string())
 }
 
 /// Convert a `file://` URI to a filesystem path string. Falls back to
@@ -317,5 +423,63 @@ mod tests {
         let uri = Url::parse("untitled:Untitled-1").unwrap();
         let path = uri_to_path(&uri);
         assert_eq!(path, "untitled:Untitled-1");
+    }
+
+    #[test]
+    fn find_identifier_middle_of_word() {
+        let text = "x <- 42\nresult <- x + 1\n";
+        // Hover over 's' in 'result' (line 1, col 2)
+        let ident = find_identifier_at_position(text, 1, 2);
+        assert_eq!(ident.as_deref(), Some("result"));
+    }
+
+    #[test]
+    fn find_identifier_start_of_word() {
+        let text = "my_var <- 1L\n";
+        let ident = find_identifier_at_position(text, 0, 0);
+        assert_eq!(ident.as_deref(), Some("my_var"));
+    }
+
+    #[test]
+    fn find_identifier_end_of_word() {
+        let text = "my_var <- 1L\n";
+        // Cursor right after the 'r' (col 6, which is the space)
+        let ident = find_identifier_at_position(text, 0, 6);
+        assert_eq!(ident.as_deref(), Some("my_var"));
+    }
+
+    #[test]
+    fn find_identifier_on_operator_returns_none() {
+        let text = "x <- 1L\n";
+        // Hover over the '<' operator
+        let ident = find_identifier_at_position(text, 0, 2);
+        assert_eq!(ident, None);
+    }
+
+    #[test]
+    fn find_identifier_filters_keywords() {
+        let text = "if (TRUE) { x <- 1 }\n";
+        let ident = find_identifier_at_position(text, 0, 1);
+        assert_eq!(ident, None, "keywords should not be identifiers");
+    }
+
+    #[test]
+    fn find_identifier_filters_numbers() {
+        let text = "x <- 123\n";
+        let ident = find_identifier_at_position(text, 0, 5);
+        assert_eq!(ident, None, "pure numbers should not be identifiers");
+    }
+
+    #[test]
+    fn hover_returns_type_for_known_variable() {
+        // Integration test: parse a simple R snippet, check it, and
+        // verify that hover on a variable returns its type.
+        let text = "x <- 1L + 2L\n";
+        let mut parser = RParser::new().unwrap();
+        let file = parser.parse("test.R", text).unwrap();
+        let mut checker = ry_checker::Checker::new("test.R");
+        let (_, scope) = checker.check_with_scope(&file);
+        let t = scope.get("x").expect("x should be in scope");
+        assert_eq!(t.mode, ry_core::types::Mode::Integer);
     }
 }

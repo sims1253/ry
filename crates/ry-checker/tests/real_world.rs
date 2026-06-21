@@ -45,11 +45,11 @@ head(df)
     ),
     (
         "pipe_subset_nse",
-        // NSE snippet: `subset` evaluates `cyl == 4` in the caller's frame
-        // using the data.frame's columns. The checker cannot model this
-        // non-standard evaluation, so `cyl` is reported as unbound. This
-        // snippet is intentionally NOT expected to be clean; the
-        // diagnostic distribution is documented for review only.
+        // NSE snippet: `subset` evaluates `cyl == 4` in the caller's
+        // frame using the data.frame's columns. The checker augments
+        // the inference scope with `mtcars`'s column schema before
+        // inferring the expression argument, so `cyl` resolves to its
+        // column type and the snippet produces no diagnostics.
         r#"library(magrittr)
 result <- mtcars %>% subset(cyl == 4)
 "#,

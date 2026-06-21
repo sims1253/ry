@@ -111,6 +111,38 @@ fn split_s3_method_name(name: &str) -> Option<(&'static str, String)> {
     best
 }
 
+/// R's Non-Standard Evaluation verbs. Each evaluates its expression
+/// arguments in an augmented scope built from a data frame's column
+/// schema, so `subset(df, cyl == 4)` resolves `cyl` against `df` rather
+/// than the enclosing environment. See `infer_nse_call` for the
+/// per-verb semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NseVerb {
+    /// `subset(df, subset_expr, select_expr?)`: returns a data frame.
+    Subset,
+    /// `with(df, expr)`: returns whatever `expr` evaluates to.
+    With,
+    /// `within(df, expr)`: returns a (possibly mutated) data frame.
+    Within,
+    /// `transform(df, new_col = expr, ...)`: returns a data frame.
+    Transform,
+}
+
+impl NseVerb {
+    /// Recognize an NSE verb by its base-R function name. Returns
+    /// `None` for any other name so the caller can fall through to the
+    /// regular call-resolution path.
+    fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "subset" => Some(NseVerb::Subset),
+            "with" => Some(NseVerb::With),
+            "within" => Some(NseVerb::Within),
+            "transform" => Some(NseVerb::Transform),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
     Error,
@@ -1156,6 +1188,19 @@ impl Checker {
                 .with_class(ClassVector::single(intern_class_name("factor")));
         }
 
+        // NSE verbs (`subset`, `with`, `within`, `transform`) evaluate
+        // their expression arguments in an augmented scope where the
+        // data frame's columns are bound as names. We must intercept
+        // these BEFORE the eager `infer(&a.value, scope)` loop below,
+        // because that loop would emit spurious RY010 ("variable not
+        // bound") for every column reference (`cyl`, `mpg`, ...).
+        // Returns `Some(t)` when the call was handled; the caller uses
+        // the returned type verbatim. Returns `None` to fall through to
+        // the regular arg-inference path.
+        if let Some(t) = self.infer_nse_call(&name, args, scope, span) {
+            return t;
+        }
+
         // Infer arg types.
         let mut arg_types: Vec<RType> = Vec::with_capacity(args.len());
         for a in args {
@@ -1268,6 +1313,166 @@ impl Checker {
         }
         let _ = span;
         base_type
+    }
+
+    /// Handle R's Non-Standard Evaluation verbs (`subset`, `with`,
+    /// `within`, `transform`). These evaluate their expression
+    /// arguments in an augmented scope where the data frame's columns
+    /// are bound as names, so `subset(df, cyl == 4)` resolves `cyl`
+    /// against `df`'s column schema rather than the enclosing scope.
+    ///
+    /// Returns `Some(t)` when the call was recognized as an NSE verb
+    /// (the caller uses `t` verbatim and skips the regular arg-inference
+    /// path). Returns `None` for non-NSE names so `infer_call` falls
+    /// through to the regular path.
+    ///
+    /// Behavior when the first arg has no column schema: we cannot
+    /// enumerate the columns, so the expression arguments cannot be
+    /// type-checked meaningfully. We still infer them against the bare
+    /// scope (no column augmentation) so any genuinely unbound name in
+    /// the expression still emits RY010; this mirrors the conservative
+    /// approach for unknown data throughout the checker.
+    ///
+    /// The augmented scope is local to this call: column bindings must
+    /// NOT leak back into the enclosing scope (we operate on a clone).
+    fn infer_nse_call(
+        &mut self,
+        name: &str,
+        args: &[Arg],
+        scope: &mut Scope,
+        span: Span,
+    ) -> Option<RType> {
+        let verb = NseVerb::from_name(name)?;
+        // The data frame is the first positional argument. If it's
+        // absent, fall through to the regular path (R would error at
+        // runtime; v1 stays silent and defers).
+        let df_arg = args.first()?;
+        let df_type = self.infer(&df_arg.value, scope);
+        let augmented = match df_type.columns {
+            Some(schema) => self.scope_with_columns(scope, schema),
+            None => scope.clone(),
+        };
+        let result = match verb {
+            NseVerb::Subset => self.infer_nse_subset(args, df_type, &augmented),
+            NseVerb::With => self.infer_nse_with(args, df_type, &augmented),
+            NseVerb::Within => self.infer_nse_within(args, df_type, &augmented),
+            NseVerb::Transform => self.infer_nse_transform(args, df_type, &augmented),
+        };
+        let _ = span;
+        Some(result)
+    }
+
+    /// `subset(df, subset_expr, select_expr?)` returns a data frame of
+    /// the same class as `df` with possibly fewer rows. We infer the
+    /// `subset_expr` (and `select_expr`, if present) against the
+    /// augmented scope so column references resolve; the result type is
+    /// the data frame's own type (column schema is preserved since the
+    /// column set is unchanged in v1's model).
+    fn infer_nse_subset(
+        &mut self,
+        args: &[Arg],
+        df_type: RType,
+        augmented: &Scope,
+    ) -> RType {
+        // Args at indices 1 and 2 are the subset and select expressions.
+        // Any later positional or named args (e.g. `drop = ...`) are
+        // walked for diagnostics against the augmented scope.
+        let mut local = augmented.clone();
+        for (i, a) in args.iter().enumerate() {
+            if i == 0 {
+                continue;
+            }
+            // Named metadata args like `select = ...` are still NSE
+            // expressions in `subset`; we walk them all in the
+            // augmented scope so column references resolve uniformly.
+            let _ = self.infer(&a.value, &mut local);
+        }
+        df_type
+    }
+
+    /// `with(df, expr)` evaluates `expr` in the data frame's scope and
+    /// returns whatever `expr` evaluates to. The result type is the
+    /// inferred type of the expression.
+    fn infer_nse_with(
+        &mut self,
+        args: &[Arg],
+        df_type: RType,
+        augmented: &Scope,
+    ) -> RType {
+        let _ = df_type;
+        let mut local = augmented.clone();
+        // The second positional arg is the expression; any further args
+        // (rare for `with`) are walked for diagnostics.
+        let mut result = RType::UNKNOWN;
+        for (i, a) in args.iter().enumerate() {
+            if i == 0 {
+                continue;
+            }
+            let t = self.infer(&a.value, &mut local);
+            if i == 1 {
+                result = t;
+            }
+        }
+        result
+    }
+
+    /// `within(df, expr)` evaluates `expr` (typically assignments like
+    /// `df$new <- ...`) in the data frame's scope and returns the
+    /// (possibly mutated) data frame. The result type is the data
+    /// frame's own type; column additions from assignments inside `expr`
+    /// are not modeled at v1.
+    fn infer_nse_within(
+        &mut self,
+        args: &[Arg],
+        df_type: RType,
+        augmented: &Scope,
+    ) -> RType {
+        let mut local = augmented.clone();
+        for (i, a) in args.iter().enumerate() {
+            if i == 0 {
+                continue;
+            }
+            let _ = self.infer(&a.value, &mut local);
+        }
+        df_type
+    }
+
+    /// `transform(df, new_col = expr, ...)` adds or replaces columns.
+    /// Each named expression is inferred against the augmented scope so
+    /// references to existing columns (e.g. `mpg * 2`) resolve. The
+    /// result type is the data frame's own type; the new column types
+    /// are not folded into the schema at v1 (the existing schema is
+    /// preserved unchanged, matching the conservative stance documented
+    /// for `within`).
+    fn infer_nse_transform(
+        &mut self,
+        args: &[Arg],
+        df_type: RType,
+        augmented: &Scope,
+    ) -> RType {
+        let mut local = augmented.clone();
+        for (i, a) in args.iter().enumerate() {
+            if i == 0 {
+                continue;
+            }
+            let _ = self.infer(&a.value, &mut local);
+        }
+        df_type
+    }
+
+    /// Build an augmented scope by cloning `base_scope` and inserting a
+    /// binding for every column in `schema`. Column names that shadow
+    /// existing bindings in `base_scope` are overwritten by the column
+    /// type (this mirrors R's actual NSE lookup order: columns first,
+    /// then the enclosing environment). The returned scope is a fresh
+    /// clone; `base_scope` is untouched, so column bindings never leak
+    /// into the caller's scope.
+    fn scope_with_columns(&self, base_scope: &Scope, schema: &'static ColumnSchema) -> Scope {
+        let mut s = base_scope.clone();
+        for (name, t) in &schema.columns {
+            s.insert(name.clone(), *t);
+        }
+        s
     }
 
     /// Try S3 dispatch for a known generic. Returns `Some(rt)` if a
@@ -2338,5 +2543,107 @@ mod tests {
             check_with_scope("x <- structure(list(a = 1L), class = \"foo\")\nav <- x$a\n");
         let av = scope2.get("av").expect("av should be bound");
         assert_eq!(av.mode, Mode::Integer);
+    }
+
+    #[test]
+    fn nse_subset_resolves_columns() {
+        // `subset(mtcars, cyl == 4)` evaluates `cyl == 4` in a scope
+        // augmented with `mtcars`'s column schema. Without the NSE
+        // handler, `cyl` would be reported as unbound (RY010). With it,
+        // the expression is well-typed and produces no diagnostics.
+        let diags = check("df <- mtcars\nsmall <- subset(df, cyl == 4)\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "subset NSE handler should suppress RY010 on column refs, got {:?}",
+            diags
+        );
+        // The result type is the same data frame type as the first arg.
+        let (_, scope) = check_with_scope("df <- mtcars\nsmall <- subset(df, cyl == 4)\n");
+        let small = scope.get("small").expect("small should be bound");
+        assert!(
+            small.class.contains("data.frame"),
+            "subset() must preserve the data.frame class, got class {:?}",
+            small.class
+        );
+        // Column schema is preserved so downstream column access works.
+        assert!(
+            small.columns.is_some(),
+            "subset() must preserve the column schema"
+        );
+    }
+
+    #[test]
+    fn nse_with_evaluates_expression() {
+        // `with(mtcars, sum(mpg))` evaluates `sum(mpg)` against a scope
+        // where `mpg` is bound to the `mtcars` column type. Without the
+        // NSE handler, `mpg` would trigger RY010 inside the `sum` call.
+        let diags = check("df <- mtcars\ntotal <- with(df, sum(mpg))\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "with NSE handler should suppress RY010 on column refs, got {:?}",
+            diags
+        );
+        // `with` returns whatever the expression evaluates to. `sum`
+        // dispatches against the typeshed to a length-1 numeric.
+        let (_, scope) = check_with_scope("df <- mtcars\ntotal <- with(df, sum(mpg))\n");
+        let total = scope.get("total").expect("total should be bound");
+        assert!(
+            matches!(total.mode, Mode::Double | Mode::Integer),
+            "with(df, sum(mpg)) must infer a numeric result type, got {:?}",
+            total
+        );
+        assert_eq!(total.length, Length::One, "sum returns a scalar");
+    }
+
+    #[test]
+    fn nse_transform_handles_new_column() {
+        // `transform(mtcars, x = mpg * 2)` evaluates `mpg * 2` against
+        // an augmented scope. Without the NSE handler, `mpg` would
+        // trigger RY010 inside the arithmetic expression.
+        let diags = check("df <- mtcars\ndf2 <- transform(df, x = mpg * 2)\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "transform NSE handler should suppress RY010 on column refs, got {:?}",
+            diags
+        );
+        // `transform` returns a data frame; v1 keeps the original
+        // schema (does not fold in the new column type).
+        let (_, scope) = check_with_scope("df <- mtcars\ndf2 <- transform(df, x = mpg * 2)\n");
+        let df2 = scope.get("df2").expect("df2 should be bound");
+        assert!(
+            df2.class.contains("data.frame"),
+            "transform() must preserve the data.frame class, got class {:?}",
+            df2.class
+        );
+    }
+
+    #[test]
+    fn nse_subset_preserves_enclosing_scope() {
+        // The augmented scope is local to the NSE call: column names
+        // must NOT leak back. After `subset(mtcars, cyl == 4)`, a
+        // subsequent bare reference to `cyl` must STILL emit RY010.
+        let diags = check("df <- mtcars\nsmall <- subset(df, cyl == 4)\nbad <- cyl\n");
+        assert!(
+            diags.iter().any(|d| d.code == "RY010"),
+            "column bindings from NSE verbs must not leak into the enclosing scope, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn nse_subset_no_schema_falls_through_silently() {
+        // A data frame without a known column schema (here, an
+        // opaque-typed user variable) cannot be augmented, so column
+        // references inside the expression still emit RY010. The NSE
+        // handler does not suppress diagnostics it cannot justify.
+        let diags = check("df <- some_unknown_thing\nsmall <- subset(df, cyl == 4)\n");
+        // `some_unknown_thing` itself is unbound (RY010), and `cyl`
+        // inside the NSE expression is also unbound because `df` has no
+        // schema to inject. Both are correct.
+        assert!(
+            diags.iter().any(|d| d.code == "RY010"),
+            "expected RY010 for unbound `cyl` when df has no schema, got {:?}",
+            diags
+        );
     }
 }

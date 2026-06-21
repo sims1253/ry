@@ -133,6 +133,18 @@ enum NseVerb {
     Within,
     /// `transform(df, new_col = expr, ...)`: returns a data frame.
     Transform,
+    /// `dplyr::filter(.data, ...)`: returns rows where conditions are TRUE.
+    Filter,
+    /// `dplyr::mutate(.data, ...)`: adds/modifies columns, returns data frame.
+    Mutate,
+    /// `dplyr::summarise(.data, ...)` / `summarize(.data, ...)`: aggregates.
+    Summarise,
+    /// `dplyr::select(.data, ...)`: selects columns by name.
+    Select,
+    /// `dplyr::arrange(.data, ...)`: sorts rows.
+    Arrange,
+    /// `dplyr::group_by(.data, ...)`: groups by columns.
+    GroupBy,
 }
 
 impl NseVerb {
@@ -145,6 +157,13 @@ impl NseVerb {
             "with" => Some(NseVerb::With),
             "within" => Some(NseVerb::Within),
             "transform" => Some(NseVerb::Transform),
+            "filter" => Some(NseVerb::Filter),
+            "mutate" => Some(NseVerb::Mutate),
+            "summarise" => Some(NseVerb::Summarise),
+            "summarize" => Some(NseVerb::Summarise),
+            "select" => Some(NseVerb::Select),
+            "arrange" => Some(NseVerb::Arrange),
+            "group_by" => Some(NseVerb::GroupBy),
             _ => None,
         }
     }
@@ -2221,6 +2240,21 @@ impl Checker {
         // runtime; v1 stays silent and defers).
         let df_arg = args.first()?;
         let df_type = self.infer(&df_arg.value, scope);
+
+        // dplyr's `filter` shares its lowercase name with no base-R
+        // builtin (R's higher-order predicate is the capitalized
+        // `Filter`), but we still guard the dplyr interpretation so
+        // that a future lowercase `filter` builtin would not be
+        // shadowed. If the first arg does not look like a data frame
+        // (no column schema and no `data.frame` class), treat the call
+        // as something other than dplyr's `filter` and fall through.
+        if matches!(verb, NseVerb::Filter)
+            && df_type.columns.is_none()
+            && !df_type.class.contains("data.frame")
+        {
+            return None;
+        }
+
         let augmented = match df_type.columns {
             Some(schema) => self.scope_with_columns(scope, schema),
             None => scope.clone(),
@@ -2230,6 +2264,11 @@ impl Checker {
             NseVerb::With => self.infer_nse_with(args, df_type, &augmented),
             NseVerb::Within => self.infer_nse_within(args, df_type, &augmented),
             NseVerb::Transform => self.infer_nse_transform(args, df_type, &augmented),
+            NseVerb::Filter | NseVerb::Arrange | NseVerb::GroupBy | NseVerb::Select => {
+                self.infer_nse_dplyr_simple(args, df_type, &augmented)
+            }
+            NseVerb::Mutate => self.infer_nse_dplyr_mutate(args, df_type, &augmented),
+            NseVerb::Summarise => self.infer_nse_dplyr_summarise(args, df_type, &augmented),
         };
         let _ = span;
         Some(result)
@@ -2331,6 +2370,77 @@ impl Checker {
             let _ = self.infer(&a.value, &mut local);
         }
         df_type
+    }
+
+    /// Shared handler for dplyr verbs that preserve the input data
+    /// frame's type verbatim: `filter`, `select`, `arrange`, and
+    /// `group_by`. Each walks its remaining arguments in the augmented
+    /// scope (so column references resolve and emit no spurious RY010),
+    /// then returns `df_type`. The first positional argument is the
+    /// data frame and is skipped (it was already inferred by
+    /// `infer_nse_call`).
+    fn infer_nse_dplyr_simple(
+        &mut self,
+        args: &[Arg],
+        df_type: RType,
+        augmented: &Scope,
+    ) -> RType {
+        let mut local = augmented.clone();
+        for (i, a) in args.iter().enumerate() {
+            if i == 0 {
+                continue;
+            }
+            let _ = self.infer(&a.value, &mut local);
+        }
+        df_type
+    }
+
+    /// `dplyr::mutate(.data, new_col = expr, ...)`: adds or modifies
+    /// columns. Each expression is inferred against the augmented scope
+    /// so existing column references (e.g. `mpg * 0.425`) resolve. The
+    /// result type is the data frame's own type; for v1 we preserve the
+    /// existing schema (we do not fold the new column types in), mirroring
+    /// the conservative approach used for `transform`.
+    fn infer_nse_dplyr_mutate(
+        &mut self,
+        args: &[Arg],
+        df_type: RType,
+        augmented: &Scope,
+    ) -> RType {
+        let mut local = augmented.clone();
+        for (i, a) in args.iter().enumerate() {
+            if i == 0 {
+                continue;
+            }
+            let _ = self.infer(&a.value, &mut local);
+        }
+        df_type
+    }
+
+    /// `dplyr::summarise(.data, ...)`: collapses rows into a single
+    /// (or per-group) summary row. The arguments are walked in the
+    /// augmented scope so column references resolve. Because the result
+    /// columns are the *outputs* of aggregations rather than the input
+    /// columns, the resulting schema is unknown at v1; we return a
+    /// fresh data frame type (class `data.frame`, empty schema, scalar
+    /// length) so downstream code sees a data frame even though it
+    /// cannot resolve specific columns.
+    fn infer_nse_dplyr_summarise(
+        &mut self,
+        args: &[Arg],
+        df_type: RType,
+        augmented: &Scope,
+    ) -> RType {
+        let _ = df_type;
+        let mut local = augmented.clone();
+        for (i, a) in args.iter().enumerate() {
+            if i == 0 {
+                continue;
+            }
+            let _ = self.infer(&a.value, &mut local);
+        }
+        RType::new(Mode::List, Length::One, false)
+            .with_class(ClassVector::single(intern_class_name("data.frame")))
     }
 
     /// Build an augmented scope by cloning `base_scope` and inserting a
@@ -4788,6 +4898,177 @@ mod tests {
             diags.iter().any(|d| d.code == "RY010"),
             "expected RY010 for unbound `cyl` when df has no schema, got {:?}",
             diags
+        );
+    }
+
+    #[test]
+    fn nse_dplyr_filter_resolves_columns() {
+        // `filter(df, mpg > 20)` is dplyr's row filter. Without the
+        // NSE handler, `mpg` would be reported as unbound (RY010). The
+        // handler injects the data frame's column schema so the
+        // comparison is well-typed.
+        let diags = check("df <- mtcars\nsmall <- filter(df, mpg > 20)\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "dplyr filter NSE handler should suppress RY010 on column refs, got {:?}",
+            diags
+        );
+        // `filter` preserves the data frame type.
+        let (_, scope) = check_with_scope("df <- mtcars\nsmall <- filter(df, mpg > 20)\n");
+        let small = scope.get("small").expect("small should be bound");
+        assert!(
+            small.class.contains("data.frame"),
+            "filter() must preserve the data.frame class, got class {:?}",
+            small.class
+        );
+        assert!(
+            small.columns.is_some(),
+            "filter() must preserve the column schema"
+        );
+    }
+
+    #[test]
+    fn nse_dplyr_mutate_resolves_columns() {
+        // `mutate(df, kml = mpg * 0.425)` evaluates `mpg * 0.425`
+        // against an augmented scope. Without the handler, `mpg` would
+        // fire RY010.
+        let diags = check("df <- mtcars\ndf2 <- mutate(df, kml = mpg * 0.425)\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "dplyr mutate NSE handler should suppress RY010 on column refs, got {:?}",
+            diags
+        );
+        let (_, scope) = check_with_scope("df <- mtcars\ndf2 <- mutate(df, kml = mpg * 0.425)\n");
+        let df2 = scope.get("df2").expect("df2 should be bound");
+        assert!(
+            df2.class.contains("data.frame"),
+            "mutate() must preserve the data.frame class, got class {:?}",
+            df2.class
+        );
+    }
+
+    #[test]
+    fn nse_dplyr_summarise_returns_data_frame() {
+        // `summarise(df, m = mean(mpg))` collapses to a single-row data
+        // frame. The column reference `mpg` resolves via the augmented
+        // scope. The result is a fresh data frame type whose schema we
+        // do not know (the columns are aggregations, not the inputs).
+        let diags = check("df <- mtcars\ns <- summarise(df, m = mean(mpg))\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "dplyr summarise NSE handler should suppress RY010 on column refs, got {:?}",
+            diags
+        );
+        let (_, scope) = check_with_scope("df <- mtcars\ns <- summarise(df, m = mean(mpg))\n");
+        let s = scope.get("s").expect("s should be bound");
+        assert!(
+            s.class.contains("data.frame"),
+            "summarise() must return a data.frame class, got class {:?}",
+            s.class
+        );
+        assert!(
+            s.columns.is_none(),
+            "summarise() must not expose the input column schema, got {:?}",
+            s
+        );
+    }
+
+    #[test]
+    fn nse_dplyr_summarize_alias_matches_summarise() {
+        // The American-English `summarize` is an alias for `summarise`
+        // and must dispatch to the same handler. `hp` resolves against
+        // the augmented scope; the result is a data frame.
+        let diags = check("df <- mtcars\ns <- summarize(df, m = mean(hp))\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "dplyr summarize alias should suppress RY010 on column refs, got {:?}",
+            diags
+        );
+        let (_, scope) = check_with_scope("df <- mtcars\ns <- summarize(df, m = mean(hp))\n");
+        let s = scope.get("s").expect("s should be bound");
+        assert!(
+            s.class.contains("data.frame"),
+            "summarize() must return a data.frame class, got class {:?}",
+            s.class
+        );
+    }
+
+    #[test]
+    fn nse_dplyr_pipe_chain_resolves_columns() {
+        // `mtcars %>% filter(cyl == 4) %>% select(mpg, hp)` desugars
+        // to nested calls. Each stage's data frame is the previous
+        // stage's result (mtcars for the first), so column references
+        // resolve via the augmented scope and no RY010 fires.
+        let diags = check(
+            "library(magrittr)\n\
+             result <- mtcars %>% filter(cyl == 4) %>% select(mpg, hp)\n",
+        );
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "piped dplyr chain should suppress RY010 on column refs, got {:?}",
+            diags
+        );
+        // The chain's final result is a data frame (select preserves
+        // the type of its input, which here is `filter`'s output =
+        // mtcars' type).
+        let (_, scope) = check_with_scope(
+            "library(magrittr)\n\
+             result <- mtcars %>% filter(cyl == 4) %>% select(mpg, hp)\n",
+        );
+        let result = scope.get("result").expect("result should be bound");
+        assert!(
+            result.class.contains("data.frame"),
+            "piped dplyr chain must preserve the data.frame class, got class {:?}",
+            result.class
+        );
+    }
+
+    #[test]
+    fn nse_dplyr_filter_non_dataframe_falls_through() {
+        // `filter` is only treated as dplyr's verb when the first arg
+        // looks like a data frame (has a column schema or the
+        // `data.frame` class). Here the first arg is a bare integer;
+        // the call should NOT be intercepted as NSE - the bare column
+        // reference `mpg` (which is unbound here) should fire RY010
+        // through the regular arg-inference path.
+        let diags = check("x <- 1L\nr <- filter(x, mpg > 20)\n");
+        assert!(
+            diags.iter().any(|d| d.code == "RY010"),
+            "filter() with a non-data-frame first arg should fall through and emit RY010 on `mpg`, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn nse_dplyr_arrange_groupby_preserve_type() {
+        // `arrange` and `group_by` walk their column-reference args in
+        // the augmented scope and preserve the input data frame type.
+        let diags = check(
+            "df <- mtcars\n\
+             sorted <- arrange(df, mpg)\n\
+             grouped <- group_by(df, cyl)\n",
+        );
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "arrange/group_by NSE handlers should suppress RY010 on column refs, got {:?}",
+            diags
+        );
+        let (_, scope) = check_with_scope(
+            "df <- mtcars\n\
+             sorted <- arrange(df, mpg)\n\
+             grouped <- group_by(df, cyl)\n",
+        );
+        let sorted = scope.get("sorted").expect("sorted should be bound");
+        assert!(
+            sorted.class.contains("data.frame"),
+            "arrange() must preserve the data.frame class, got class {:?}",
+            sorted.class
+        );
+        let grouped = scope.get("grouped").expect("grouped should be bound");
+        assert!(
+            grouped.class.contains("data.frame"),
+            "group_by() must preserve the data.frame class, got class {:?}",
+            grouped.class
         );
     }
 

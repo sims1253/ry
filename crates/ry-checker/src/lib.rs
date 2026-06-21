@@ -1594,6 +1594,28 @@ impl Checker {
             } else {
                 lt.length.binary(rt.length)
             };
+            if matches!(op, BinOpKind::AndAnd | BinOpKind::OrOr) {
+                if let Length::Known(n) = lt.length {
+                    if n > 1 {
+                        self.emit(
+                            Severity::Warning,
+                            span,
+                            "RY032",
+                            format!("`{}` applied to a length-{} operand; only the first element is used", op_symbol(op), n),
+                        );
+                    }
+                }
+                if let Length::Known(n) = rt.length {
+                    if n > 1 {
+                        self.emit(
+                            Severity::Warning,
+                            span,
+                            "RY032",
+                            format!("`{}` applied to a length-{} operand; only the first element is used", op_symbol(op), n),
+                        );
+                    }
+                }
+            }
             return RType::new(Mode::Logical, length, true);
         }
         // Arithmetic.
@@ -3239,6 +3261,39 @@ fn is_pipe_placeholder(e: &Expr) -> bool {
     matches!(e, Expr::Ident { name, .. } if name == "." || name == "_")
 }
 
+/// Return the R source symbol for a binary operator, for use in
+/// diagnostic messages. Returns `?` for unknown ops.
+fn op_symbol(op: BinOpKind) -> &'static str {
+    match op {
+        BinOpKind::Add => "+",
+        BinOpKind::Sub => "-",
+        BinOpKind::Mul => "*",
+        BinOpKind::Div => "/",
+        BinOpKind::Pow => "^",
+        BinOpKind::Mod => "%%",
+        BinOpKind::IDiv => "%/%",
+        BinOpKind::Colon => ":",
+        BinOpKind::Lt => "<",
+        BinOpKind::Le => "<=",
+        BinOpKind::Gt => ">",
+        BinOpKind::Ge => ">=",
+        BinOpKind::Eq => "==",
+        BinOpKind::Ne => "!=",
+        BinOpKind::And => "&",
+        BinOpKind::AndAnd => "&&",
+        BinOpKind::Or => "|",
+        BinOpKind::OrOr => "||",
+        BinOpKind::In => "%in%",
+        BinOpKind::NotIn => "%notin%" ,
+        BinOpKind::Assign => "<-",
+        BinOpKind::SuperAssign => "<<-",
+        BinOpKind::PipeForward => "%>%",
+        BinOpKind::PipeTee => "%T>%",
+        BinOpKind::PipeAssign => "%<>%",
+        BinOpKind::PipeBind => "%>_%",
+    }
+}
+
 /// True if `e` is the magrittr `.` data pronoun. Unlike
 /// [`is_pipe_placeholder`], this excludes base-R's `_` placeholder,
 /// which has no data-pronoun role: `x %>% _$col` is not valid R.
@@ -3778,6 +3833,33 @@ mod tests {
     fn detects_unbound_var() {
         let diags = check("y <- undefined_thing\n");
         assert!(diags.iter().any(|d| d.code == "RY010"));
+    }
+
+    #[test]
+    fn scalar_logical_warns_on_vector_operand() {
+        let diags = check("x <- c(TRUE, FALSE)\nbad <- x && TRUE\n");
+        assert!(
+            diags.iter().any(|d| d.code == "RY032"),
+            "expected RY032 for && with vector, got {:?}", diags
+        );
+    }
+
+    #[test]
+    fn vectorized_logical_no_warning() {
+        let diags = check("x <- c(TRUE, FALSE)\nok <- x & TRUE\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY032"),
+            "vectorized & should not warn, got {:?}", diags
+        );
+    }
+
+    #[test]
+    fn scalar_logical_with_scalars_no_warning() {
+        let diags = check("a <- TRUE\nb <- FALSE\nx <- a && b\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY032"),
+            "&& with scalars should not warn, got {:?}", diags
+        );
     }
 
     #[test]

@@ -57,6 +57,12 @@ pub const RULES: &[Rule] = &[
         summary: "`&` / `|` / `&&` / `||` applied to non-coercible types.",
     },
     Rule {
+        code: "RY032",
+        name: "scalar-logical-length",
+        default_severity: Severity::Warning,
+        summary: "`&&` and `||` only use the first element of their operands; using them with vectors of length > 1 is almost always a bug. Use `&`/`|` for vectorized operations.",
+    },
+    Rule {
         code: "RY040",
         name: "invalid-arithmetic",
         default_severity: Severity::Error,

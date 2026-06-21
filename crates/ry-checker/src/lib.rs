@@ -4663,4 +4663,92 @@ mod tests {
             diags
         );
     }
+
+    #[test]
+    fn negative_integer_literal_infers_integer() {
+        // `-1L` is unary minus applied to an integer literal. The result
+        // must be integer (same mode as the operand), length 1, non-NA.
+        let (diags, scope) = check_with_scope("x <- -1L\n");
+        assert!(diags.is_empty(), "got {:?}", diags);
+        let x = scope.get("x").expect("x should be bound");
+        assert_eq!(x.mode, Mode::Integer, "got {:?}", x);
+        assert_eq!(x.length, Length::One, "got {:?}", x);
+        assert!(!x.na.0, "got {:?}", x);
+    }
+
+    #[test]
+    fn negative_double_literal_infers_double() {
+        // `-3.14` is unary minus applied to a double literal; result is
+        // double, length 1, non-NA.
+        let (diags, scope) = check_with_scope("y <- -3.14\n");
+        assert!(diags.is_empty(), "got {:?}", diags);
+        let y = scope.get("y").expect("y should be bound");
+        assert_eq!(y.mode, Mode::Double, "got {:?}", y);
+        assert_eq!(y.length, Length::One, "got {:?}", y);
+        assert!(!y.na.0, "got {:?}", y);
+    }
+
+    #[test]
+    fn neg_colon_infers_integer_and_groups_correctly() {
+        // `-1:3` parses as `(-1):3`, which R evaluates as seq(-1, 3) =
+        // c(-1, 0, 1, 2, 3), an integer vector. The type must be integer
+        // (not double, not error), and using it arithmetically must be
+        // well-typed. This is the key correctness case for unary-minus
+        // vs colon precedence.
+        let (diags, scope) = check_with_scope("z <- -1:3\n");
+        assert!(diags.is_empty(), "got {:?}", diags);
+        let z = scope.get("z").expect("z should be bound");
+        assert_eq!(z.mode, Mode::Integer, "got {:?}", z);
+        // Behavioral check: `:` always yields Unknown length, but the
+        // value must be usable as an integer in arithmetic.
+        let diags = check("z <- -1:3\nbad <- z + 1L\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY040"),
+            "z + 1L must be valid int+int, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn negated_paren_colon_infers_integer() {
+        // `-(1:3)` negates the whole sequence; still an integer vector.
+        let (diags, scope) = check_with_scope("w <- -(1:3)\n");
+        assert!(diags.is_empty(), "got {:?}", diags);
+        let w = scope.get("w").expect("w should be bound");
+        assert_eq!(w.mode, Mode::Integer, "got {:?}", w);
+    }
+
+    #[test]
+    fn neg_times_int_infers_integer_length_one() {
+        // `-2L * 3L` = `(-2L) * 3L` = -6L, a length-1 integer.
+        let (diags, scope) = check_with_scope("v <- -2L * 3L\n");
+        assert!(diags.is_empty(), "got {:?}", diags);
+        let v = scope.get("v").expect("v should be bound");
+        assert_eq!(v.mode, Mode::Integer, "got {:?}", v);
+        assert_eq!(v.length, Length::One, "got {:?}", v);
+    }
+
+    #[test]
+    fn neg_on_character_emits_ry020() {
+        // Unary `-` applied to a character is a type error in R.
+        let diags = check("x <- -\"hi\"\n");
+        assert!(
+            diags.iter().any(|d| d.code == "RY020"),
+            "expected RY020 for negation of character, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn neg_preserves_na_flag_and_mode() {
+        // `-NA_integer_` must remain an NA integer (negation does not
+        // change mode or clear the NA flag). This guards that the
+        // checker's `UnaryOp::Neg` returns the operand type verbatim.
+        let (diags, scope) = check_with_scope("a <- -NA_integer_\n");
+        assert!(diags.is_empty(), "got {:?}", diags);
+        let a = scope.get("a").expect("a should be bound");
+        assert_eq!(a.mode, Mode::Integer, "got {:?}", a);
+        assert_eq!(a.length, Length::One, "got {:?}", a);
+        assert!(a.na.0, "NA flag must survive negation, got {:?}", a);
+    }
 }

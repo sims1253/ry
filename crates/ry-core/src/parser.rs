@@ -798,4 +798,160 @@ mod tests {
             ),
         }
     }
+
+    #[test]
+    fn parses_negative_integer_literal_as_unary() {
+        // `-1L` lowers to a unary minus applied to a positive integer
+        // literal. Type-wise this is equivalent to a negative literal,
+        // but the structure (UnaryOp(Neg, Integer(1))) must be preserved
+        // so the checker can model R's unary-minus semantics.
+        let f = parse("-1L\n");
+        match f.stmts.first() {
+            Some(Stmt::Expr(Expr::UnaryOp {
+                op: UnaryOpKind::Neg,
+                expr,
+                ..
+            })) => {
+                assert!(
+                    matches!(expr.as_ref(), Expr::Integer(1, _)),
+                    "expected Integer(1) operand, got {:?}",
+                    expr
+                );
+            }
+            other => panic!("expected UnaryOp(Neg, Integer(1)), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_negative_double_literal_as_unary() {
+        // `-3.5` lowers to UnaryOp(Neg, Double(3.5)). We assert on the
+        // structure (not the exact value) since the value isn't the
+        // concern -- the negation wrapping is.
+        let f = parse("-3.5\n");
+        match f.stmts.first() {
+            Some(Stmt::Expr(Expr::UnaryOp {
+                op: UnaryOpKind::Neg,
+                expr,
+                ..
+            })) => {
+                assert!(
+                    matches!(expr.as_ref(), Expr::Double(_, _)),
+                    "expected Double operand, got {:?}",
+                    expr
+                );
+            }
+            other => panic!("expected UnaryOp(Neg, Double), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_neg_colon_groups_negated_left() {
+        // R's precedence gives unary `-` higher binding than the `:`
+        // sequence operator, so `-1:3` is `(-1):3` (= c(-1,0,1,2,3)),
+        // NOT `-(1:3)` (= c(-1,-2,-3)). This is a classic R gotcha; the
+        // parser must preserve the `(-1):3` grouping.
+        let f = parse("-1:3\n");
+        match f.stmts.first() {
+            Some(Stmt::Expr(Expr::BinOp {
+                op: BinOpKind::Colon,
+                lhs,
+                rhs,
+                ..
+            })) => {
+                // LHS must be the negated literal, not a bare literal.
+                assert!(
+                    matches!(lhs.as_ref(), Expr::UnaryOp {
+                        op: UnaryOpKind::Neg,
+                        ..
+                    }),
+                    "expected lhs UnaryOp(Neg, ..) so `:` sees -1, got {:?}",
+                    lhs
+                );
+                // RHS must be the positive literal `3` (no negation).
+                assert!(
+                    matches!(rhs.as_ref(), Expr::Double(_, _)),
+                    "expected rhs Double(3), got {:?}",
+                    rhs
+                );
+            }
+            other => panic!(
+                "expected BinOp(Colon, UnaryOp(Neg, ..), ..) for `-1:3`, got {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    fn parses_neg_paren_colon_groups_inner_seq() {
+        // `-(1:3)` forces the sequence first via parens, so the negation
+        // wraps the whole `1:3`. This must differ structurally from
+        // `-1:3` (the previous test).
+        let f = parse("-(1:3)\n");
+        match f.stmts.first() {
+            Some(Stmt::Expr(Expr::UnaryOp {
+                op: UnaryOpKind::Neg,
+                expr,
+                ..
+            })) => {
+                assert!(
+                    matches!(expr.as_ref(), Expr::BinOp {
+                        op: BinOpKind::Colon,
+                        ..
+                    }),
+                    "expected inner BinOp(Colon, ..), got {:?}",
+                    expr
+                );
+            }
+            other => panic!("expected UnaryOp(Neg, BinOp(Colon, ..)), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_neg_times_int_groups_negated_left() {
+        // Unary minus binds tighter than `*`, so `-2L * 3L` is
+        // `(-2L) * 3L`, not `-(2L * 3L)`. Either way the type is
+        // integer, but the grouping must follow R.
+        let f = parse("-2L * 3L\n");
+        match f.stmts.first() {
+            Some(Stmt::Expr(Expr::BinOp {
+                op: BinOpKind::Mul,
+                lhs,
+                ..
+            })) => {
+                assert!(
+                    matches!(lhs.as_ref(), Expr::UnaryOp {
+                        op: UnaryOpKind::Neg,
+                        ..
+                    }),
+                    "expected lhs UnaryOp(Neg, ..), got {:?}",
+                    lhs
+                );
+            }
+            other => panic!("expected BinOp(Mul, UnaryOp(Neg, ..), ..), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_neg_power_binds_looser_than_pow() {
+        // In R `^` binds tighter than unary `-`, so `-2^2` is `-(2^2)`
+        // (= -4), NOT `(-2)^2` (= 4). The parser must reflect this.
+        let f = parse("-2^2\n");
+        match f.stmts.first() {
+            Some(Stmt::Expr(Expr::UnaryOp {
+                op: UnaryOpKind::Neg,
+                expr,
+                ..
+            })) => {
+                assert!(
+                    matches!(expr.as_ref(), Expr::BinOp {
+                        op: BinOpKind::Pow,
+                        ..
+                    }),
+                    "expected inner BinOp(Pow, ..) so negation wraps it, got {:?}",
+                    expr
+                );
+            }
+            other => panic!("expected UnaryOp(Neg, BinOp(Pow, ..)), got {:?}", other),
+        }
+    }
 }

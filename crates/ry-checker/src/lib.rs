@@ -1618,6 +1618,12 @@ impl Checker {
     /// such occurrence is replaced with `lhs`. Bare `rhs` (e.g. `x %>% abs`)
     /// becomes a one-arg call.
     ///
+    /// Data pronoun: when `rhs` is an index expression whose base is
+    /// the magrittr `.` pronoun (`df %>% .$col`, `df %>% .[i]`,
+    /// `df %>% .[[i]]`), the `.` resolves to the piped LHS value and
+    /// the index is inferred against `lhs`'s type. A bare `x %>% .`
+    /// returns the LHS value itself.
+    ///
     /// `%<>%` (assignment pipe) shares the result type with `%>%` at v1.
     /// The assignment side-effect (`x <- ...`) is handled by the caller
     /// when it appears in an `Assign` statement; for a bare binop we
@@ -1627,6 +1633,18 @@ impl Checker {
         // Infer the LHS so diagnostics fire on it (e.g. unbound name).
         let lhs_t = self.infer(lhs, scope);
         let result = match rhs {
+            // Magrittr data pronoun with nested access:
+            // `df %>% .$col`, `df %>% .[i]`, `df %>% .[[i]]`. The `.` at
+            // the base of the index resolves to the piped LHS value, so
+            // we infer the index against `lhs_t` directly.
+            Expr::Index { base, kind, args, .. } if is_dot_pronoun(base) => {
+                self.infer_index(lhs_t, *kind, args, span, scope)
+            }
+            // Bare magrittr pronoun: `x %>% .` returns the LHS value
+            // itself (the `.` refers to the LHS). This is distinct from
+            // the general `Ident` arm below, which would treat `.` as a
+            // function name and call `.(lhs)`.
+            Expr::Ident { name, .. } if name == "." => lhs_t,
             Expr::Call {
                 func,
                 args,
@@ -3221,6 +3239,16 @@ fn is_pipe_placeholder(e: &Expr) -> bool {
     matches!(e, Expr::Ident { name, .. } if name == "." || name == "_")
 }
 
+/// True if `e` is the magrittr `.` data pronoun. Unlike
+/// [`is_pipe_placeholder`], this excludes base-R's `_` placeholder,
+/// which has no data-pronoun role: `x %>% _$col` is not valid R.
+/// Used by `infer_pipe` to detect nested access forms like
+/// `x %>% .$col`, `x %>% .[i]`, and `x %>% .[[i]]`, where the `.` at
+/// the base of the index refers to the piped LHS value.
+fn is_dot_pronoun(e: &Expr) -> bool {
+    matches!(e, Expr::Ident { name, .. } if name == ".")
+}
+
 /// A type refinement extracted from an `if` condition. Represents the
 /// information we can glean from a type predicate call like
 /// `is.numeric(x)` or `is.null(x)`.
@@ -3866,6 +3894,108 @@ mod tests {
         // `c(1,2,3) %T>% print()` should be a length-3 double vector.
         let diags = check("result <- c(1, 2, 3) %T>% print()\n");
         assert!(diags.is_empty(), "got {:?}", diags);
+    }
+
+    #[test]
+    fn pipe_dot_pronoun_dollar_column() {
+        // `df %>% .$mpg` resolves `.` to the piped LHS (`mtcars`) and
+        // then indexes by column name, so `col` should be `double<32>`
+        // (the type of `mtcars$mpg`). We assert the inferred type
+        // directly via the test scope and also check that no RY010
+        // (unbound `.`) leaks out.
+        let (diags, scope) = check_with_scope("df <- mtcars\ncol <- df %>% .$mpg\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "dot pronoun should not emit RY010 (unbound `.`), got {:?}",
+            diags
+        );
+        let col = scope.get("col").expect("col should be bound");
+        assert_eq!(
+            col.mode,
+            Mode::Double,
+            "df %>% .$mpg must infer double, got {:?}",
+            col
+        );
+        assert_eq!(col.length, Length::Known(32), "mpg has 32 rows");
+    }
+
+    #[test]
+    fn pipe_dot_pronoun_double_bracket() {
+        // `df %>% .[["mpg"]]` resolves `.` to the LHS and indexes by
+        // string-literal column name via `[[`, mirroring `$` semantics.
+        let (diags, scope) = check_with_scope("df <- mtcars\ncol <- df %>% .[[\"mpg\"]]\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "dot pronoun should not emit RY010, got {:?}",
+            diags
+        );
+        let col = scope.get("col").expect("col should be bound");
+        assert_eq!(col.mode, Mode::Double, ".[[\"mpg\"]] must infer double");
+        assert_eq!(col.length, Length::Known(32), "mpg has 32 rows");
+    }
+
+    #[test]
+    fn pipe_dot_pronoun_single_bracket() {
+        // `df %>% .[1]` preserves the base type (single-bracket
+        // subsetting keeps the existing opaque behavior at v1), so the
+        // result is the same data.frame-typed value as the LHS. The
+        // important behavioral check is that no RY010 leaks on `.`.
+        let (diags, scope) = check_with_scope("df <- mtcars\nsub <- df %>% .[1]\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "dot pronoun should not emit RY010, got {:?}",
+            diags
+        );
+        let sub = scope.get("sub").expect("sub should be bound");
+        assert_eq!(sub.mode, Mode::List, "df[1] preserves base mode");
+        assert!(
+            sub.class.contains("data.frame"),
+            ".[1] preserves the data.frame class"
+        );
+    }
+
+    #[test]
+    fn pipe_dot_pronoun_bare_returns_lhs() {
+        // `x %>% .` returns the LHS value itself (the `.` refers to the
+        // LHS). For a length-3 double vector, the result type matches.
+        let (diags, scope) = check_with_scope("x <- c(1, 2, 3)\ny <- x %>% .\n");
+        assert!(diags.is_empty(), "got {:?}", diags);
+        let y = scope.get("y").expect("y should be bound");
+        assert_eq!(y.mode, Mode::Double, "x %>% . must infer double");
+        assert_eq!(y.length, Length::Known(3), "length is preserved");
+    }
+
+    #[test]
+    fn pipe_dot_pronoun_undefined_column_emits_ry060() {
+        // `df %>% .$nonexistent` resolves `.` to the LHS, then the
+        // column lookup fails against `mtcars`'s schema, so RY060
+        // (undefined-column) must fire - the pronoun path reuses the
+        // same diagnostics as a direct `df$nonexistent`.
+        let diags = check("df <- mtcars\nbad <- df %>% .$nonexistent\n");
+        assert!(
+            diags.iter().any(|d| d.code == "RY060"),
+            "expected RY060 for undefined column via dot pronoun, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn pipe_dot_pronoun_chains_into_arithmetic() {
+        // End-to-end behavioral check: `df %>% .$mpg` produces a real
+        // double type (not opaque), so subsequent arithmetic that would
+        // fail on an opaque value type-checks cleanly. This is the
+        // motivating use case from the task description.
+        let diags = check("df <- mtcars\ncol <- df %>% .$mpg\nok <- col + 1L\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY040"),
+            "col + 1L should be valid (double + int), got {:?}",
+            diags
+        );
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "no RY010 should leak from the dot pronoun, got {:?}",
+            diags
+        );
     }
 
     #[test]

@@ -62,6 +62,12 @@ pub const RULES: &[Rule] = &[
         default_severity: Severity::Error,
         summary: "Arithmetic operator between incompatible types.",
     },
+    Rule {
+        code: "RY050",
+        name: "missing-s3-method",
+        default_severity: Severity::Warning,
+        summary: "S3 generic called on a value with no defined method for its class.",
+    },
 ];
 
 pub fn find(code: &str) -> Option<&'static Rule> {

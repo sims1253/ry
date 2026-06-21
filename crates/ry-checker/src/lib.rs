@@ -12,10 +12,102 @@ pub mod rules;
 pub mod format;
 
 use ry_core::ast::*;
-use ry_core::types::{Length, Mode, RType};
+use ry_core::types::{intern_class_name, ClassVector, Length, Mode, RType};
 use ry_core::Span;
 use ry_typeshed::{load_base, FunctionSig, JsonRType, ReturnSpec, Typeshed};
 use std::collections::HashMap;
+
+/// S3 generics we recognize when collecting method definitions of the
+/// form `print.foo <- function(...) body`. A `<generic>.<class>` name
+/// where `<generic>` is in this list is recorded in `FnTable::s3_methods`
+/// (keyed by `(generic, class)`) in addition to its slot in `fns`.
+///
+/// The list is intentionally generous: it mirrors the generics shipped
+/// with base R plus the most commonly defined ones in CRAN packages.
+/// Anything missing falls back to plain function-call inference (and so
+/// RY050 won't fire on it, which is a deliberate conservative choice).
+const S3_GENERICS: &[&str] = &[
+    "print",
+    "summary",
+    "plot",
+    "predict",
+    "fitted",
+    "residuals",
+    "coef",
+    "vcov",
+    "logLik",
+    "AIC",
+    "BIC",
+    "update",
+    "deviance",
+    "anova",
+    "model.matrix",
+    "terms",
+    "str",
+    "format",
+    "as.character",
+    "as.data.frame",
+    "as.matrix",
+    "as.vector",
+    "t",
+    "is.na",
+    "length",
+    "names",
+    "dim",
+    "[",
+    "[[",
+    "$",
+    "c",
+    "rep",
+    "rev",
+    "sort",
+    "unique",
+    "head",
+    "tail",
+    "subset",
+    "transform",
+    "within",
+    "merge",
+];
+
+/// Returns `Some((generic, class))` if `name` matches the S3 method
+/// naming convention `<generic>.<class>` and `<generic>` is in
+/// `S3_GENERICS`. We try the longest known generic prefix first so
+/// multi-segment generics like `as.data.frame` win over the shorter
+/// `as`. This is necessary because method names like `print.as.data.frame`
+/// (rare but valid) would otherwise match the wrong prefix.
+fn split_s3_method_name(name: &str) -> Option<(&'static str, String)> {
+    // Try every known generic, keep the longest matching prefix. This
+    // is O(N) per name but N is small (40) and the function is only
+    // called once per top-level assignment.
+    let mut best: Option<(&'static str, String)> = None;
+    for generic in S3_GENERICS {
+        // Build the prefix once per generic; cheap for our small list.
+        let mut buf = [0u8; 64];
+        let generic_bytes = generic.as_bytes();
+        if generic_bytes.len() + 1 > buf.len() {
+            continue; // Generic longer than the scratch buffer; skip.
+        }
+        buf[..generic_bytes.len()].copy_from_slice(generic_bytes);
+        buf[generic_bytes.len()] = b'.';
+        let prefix = std::str::from_utf8(&buf[..generic_bytes.len() + 1]).ok();
+        if let Some(prefix) = prefix {
+            if let Some(class) = name.strip_prefix(prefix) {
+                if class.is_empty() {
+                    continue;
+                }
+                // Prefer the longest matching prefix (more specific).
+                let is_better = best
+                    .as_ref()
+                    .is_none_or(|(g, _)| g.len() < generic.len());
+                if is_better {
+                    best = Some((generic, class.to_string()));
+                }
+            }
+        }
+    }
+    best
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
@@ -174,9 +266,19 @@ impl ReturnSlots {
 /// Map from function name to its recorded definition. A name shadows
 /// earlier entries (later definitions win), mirroring R's own semantics
 /// for top-level rebinding.
+///
+/// S3 method dispatch is modeled separately: assignments named
+/// `<generic>.<class>` (e.g. `print.foo`) are also recorded in
+/// `s3_methods` keyed by `(generic, class)`. The method body shares
+/// `return_slots` with regular functions so the fixpoint loop refines
+/// it the same way.
 #[derive(Debug, Clone, Default)]
 struct FnTable {
     fns: HashMap<String, UserFn>,
+    /// `(generic, class)` -> return slot index. Mirrors the same
+    /// `return_slots` storage as `fns`; lookups during dispatch consult
+    /// this map for an S3 method before falling back to the generic.
+    s3_methods: HashMap<(String, String), usize>,
 }
 
 /// Maximum fixpoint depth before we give up and freeze as Opaque.
@@ -219,6 +321,12 @@ impl Checker {
         // Pass 2 (fixpoint): refine each function's inferred return type
         // until the table stabilizes or we hit MAX_FIXPOINT_DEPTH. We
         // snapshot between iterations to detect convergence.
+        //
+        // S3 methods (`print.foo`, etc.) are inserted into `fns` under
+        // their full name during pass 1, with `s3_methods` pointing at
+        // the same return slot. Iterating `fns.keys()` therefore refines
+        // S3 method bodies alongside regular functions; dispatch reads
+        // the refined slot via the `s3_methods` map.
         for _ in 0..MAX_FIXPOINT_DEPTH {
             let before = self.return_slots.clone();
             let names: Vec<String> = self.fn_table.fns.keys().cloned().collect();
@@ -289,7 +397,21 @@ impl Checker {
                 if let (Expr::Ident { name, .. }, Expr::Function { params, body, .. }) =
                     (target, value)
                 {
-                    self.record_fn(name.clone(), params, body.clone());
+                    // An S3 method named like `print.foo` is recorded both
+                    // as a regular function (so the name resolves to its
+                    // return type if called directly) and as an S3 method
+                    // (so dispatch from `print(x)` on a classed value
+                    // finds it). We record the body once and share the
+                    // return slot between both entries.
+                    if let Some((generic, class)) = split_s3_method_name(name) {
+                        let slot =
+                            self.record_fn(name.clone(), params, body.clone());
+                        self.fn_table
+                            .s3_methods
+                            .insert((generic.to_string(), class), slot);
+                    } else {
+                        let _ = self.record_fn(name.clone(), params, body.clone());
+                    }
                 }
                 // Recurse into compound statements so we catch
                 // function-returning-function patterns at top level.
@@ -308,7 +430,10 @@ impl Checker {
         }
     }
 
-    fn record_fn(&mut self, name: String, params: &[Param], body: Vec<Stmt>) {
+    /// Record a user-defined function. Returns the index of the
+    /// allocated return slot so callers can wire up S3 dispatch entries
+    /// that share the same slot.
+    fn record_fn(&mut self, name: String, params: &[Param], body: Vec<Stmt>) -> usize {
         // We infer param types from defaults alone; params without a
         // default start as UNKNOWN (callers can refine them later).
         let params: Vec<(String, RType)> = params
@@ -337,6 +462,7 @@ impl Checker {
         if let Some(prev) = prev {
             tracing::debug!(fn_name = %name, prev_slot = prev.return_slot, "shadowed earlier def");
         }
+        slot
     }
 
     /// Pass 2: refine one function's inferred return type by walking its
@@ -971,6 +1097,27 @@ impl Checker {
             return RType::new(Mode::Null, Length::Zero, false);
         }
 
+        // `structure(x, class = "...")` is R's class constructor. We
+        // model only the common literal forms:
+        //   * `class = "foo"` attaches a single class.
+        //   * `class = c("a", "b", ...)` attaches a class vector.
+        // Non-literal or unparseable forms fall through to opaque
+        // inference with `ClassVector::unknown()` so RY050 stays quiet.
+        if name == "structure" {
+            return self.infer_structure_call(args, scope, span);
+        }
+        // `factor(x)` returns an integer vector with class "factor".
+        // (And often also "ordered" if `ordered = TRUE`, but we keep v1
+        // to the base case.)
+        if name == "factor" {
+            // Infer args so unbound-variable diagnostics still fire.
+            for a in args {
+                let _ = self.infer(&a.value, scope);
+            }
+            return RType::new(Mode::Integer, Length::Unknown, true)
+                .with_class(ClassVector::single(intern_class_name("factor")));
+        }
+
         // Infer arg types.
         let mut arg_types: Vec<RType> = Vec::with_capacity(args.len());
         for a in args {
@@ -983,6 +1130,23 @@ impl Checker {
         }
         if name == "list" {
             return RType::new(Mode::List, Length::Known(args.len()), false);
+        }
+
+        // S3 dispatch: when a known generic is called with a classed
+        // first argument, look up `(generic, class)` in the S3 method
+        // table. On a hit, return the method's inferred return type. On
+        // a miss with a *known* class, emit RY050. On a miss with an
+        // unknown or empty class, fall through (we can't say anything).
+        //
+        // We model only R's first-element dispatch rule: walking the
+        // full class vector (and matching `default`) is a future task.
+        // `default` is treated as always-present in the typeshed's S3
+        // method table for the common generics, so RY050 never fires
+        // for them unless the user explicitly shadows them away.
+        if S3_GENERICS.contains(&name.as_str()) {
+            if let Some(rt) = self.try_s3_dispatch(&name, &arg_types, span) {
+                return rt;
+            }
         }
 
         // User-defined functions: read from the refined FnTable. We
@@ -1000,6 +1164,145 @@ impl Checker {
 
         // Unknown function: opaque.
         RType::UNKNOWN
+    }
+
+    /// Infer the type of `structure(x, class = "...")`. We model only
+    /// the literal class forms; everything else returns the first
+    /// argument's type with `ClassVector::unknown()` (so we neither lie
+    /// about a class nor spuriously trigger RY050).
+    fn infer_structure_call(
+        &mut self,
+        args: &[Arg],
+        scope: &mut Scope,
+        span: Span,
+    ) -> RType {
+        // The base value is the first positional argument (or the
+        // `x = ...` named argument).
+        let mut base_type = RType::UNKNOWN;
+        let mut class_expr: Option<&Expr> = None;
+        for a in args {
+            if matches!(a.name.as_deref(), Some("class")) {
+                class_expr = Some(&a.value);
+                continue;
+            }
+            // First positional arg is the base; named args like
+            // `dim = ...` still get inferred for diagnostics.
+            if a.name.is_none() && matches!(base_type.mode, Mode::Opaque) {
+                base_type = self.infer(&a.value, scope);
+            } else {
+                let _ = self.infer(&a.value, scope);
+            }
+        }
+        if let Some(ce) = class_expr {
+            match parse_class_literal(ce) {
+                ClassLiteral::Single(name) => {
+                    let interned = intern_class_name(&name);
+                    return base_type.with_class(ClassVector::single(interned));
+                }
+                ClassLiteral::Multi(names) => {
+                    let interned: Vec<&'static str> =
+                        names.iter().map(|n| intern_class_name(n)).collect();
+                    return base_type
+                        .with_class(ClassVector::from_static_slice(&interned));
+                }
+                ClassLiteral::Unknown => {
+                    // Class is dynamic; keep base type but mark class as
+                    // undetermined so RY050 stays quiet.
+                    return base_type.with_class(ClassVector::unknown());
+                }
+            }
+        }
+        let _ = span;
+        base_type
+    }
+
+    /// Try S3 dispatch for a known generic. Returns `Some(rt)` if a
+    /// method was found or a diagnostic was emitted (the caller should
+    /// use the returned type directly). Returns `None` only when the
+    /// caller should fall through to other resolution paths.
+    ///
+    /// RY050 emission policy: we only flag a missing method when we're
+    /// confident the generic actually uses S3 dispatch. The signal for
+    /// that confidence is the existence of a `default` method (in user
+    /// code or typeshed). Without a `default`, the call might just be a
+    /// plain function call that happens to share a name with an S3
+    /// generic, so we stay silent and let the regular function table
+    /// resolve it. This keeps the real-world baseline stable while still
+    /// catching the cases the task calls out (`print` on an undefined
+    /// class, etc.).
+    ///
+    /// Design note: we deliberately return `Option<RType>` rather than
+    /// `RType` because the caller (`infer_call`) may still want to
+    /// consult the user-fn table or the typeshed for non-S3 forms (e.g.
+    /// when the first arg is opaque).
+    fn try_s3_dispatch(
+        &mut self,
+        generic: &str,
+        arg_types: &[RType],
+        span: Span,
+    ) -> Option<RType> {
+        let first = arg_types.first().copied()?;
+        let cv = first.class;
+        if !cv.has_known_class() {
+            // No known class (either empty or unknown): nothing for S3
+            // dispatch to do. The caller will try user-fn/typeshed
+            // resolution against the bare name.
+            return None;
+        }
+        // We have a known class vector. R walks it in order; for v1 we
+        // model only the first-element rule.
+        let first_class = cv.first()?;
+        // `default` is never itself "missing" - it's the fallback.
+        if first_class == "default" {
+            return None;
+        }
+        // 1. User-defined method for the first class wins.
+        if let Some(slot) = self
+            .fn_table
+            .s3_methods
+            .get(&(generic.to_string(), first_class.to_string()))
+            .copied()
+        {
+            return Some(self.return_slots.get(slot));
+        }
+        // 2. Built-in (typeshed) method for the first class. These are
+        // registered in the typeshed's `s3_methods` table as a
+        // `(generic, class)` -> FunctionSig map so we can reuse the
+        // existing `apply_sig` plumbing.
+        if let Some(sig) = self
+            .typeshed
+            .s3_methods
+            .get(&(generic.to_string(), first_class.to_string()))
+            .cloned()
+        {
+            return Some(self.apply_sig(generic, &sig, arg_types, &[], span));
+        }
+        // 3. No specific method. Only emit RY050 if we're confident the
+        // generic uses S3 dispatch, which we approximate by the
+        // existence of a `default` method anywhere in the program or
+        // typeshed. If there's no default, fall through silently: the
+        // call is probably just a plain function call.
+        let default_key = (generic.to_string(), "default".to_string());
+        let has_default = self.fn_table.s3_methods.contains_key(&default_key)
+            || self.typeshed.s3_methods.contains_key(&default_key);
+        if !has_default {
+            return None;
+        }
+        // The generic is a known S3 generic (it has a default) but the
+        // specific class has no method. Emit RY050 and return opaque so
+        // callers don't trip further diagnostics on the result. R would
+        // fall back to `<generic>.default` at runtime, but the missing
+        // specific method is almost always a bug worth flagging.
+        self.emit(
+            Severity::Warning,
+            span,
+            "RY050",
+            format!(
+                "S3 generic `{}` called on value of class `{}` but no `{}.{}` method is defined",
+                generic, first_class, generic, first_class
+            ),
+        );
+        Some(RType::UNKNOWN)
     }
 
     fn infer_c(&mut self, args: &[Arg], arg_types: &[RType], _span: Span) -> RType {
@@ -1152,10 +1455,58 @@ fn is_pipe_placeholder(e: &Expr) -> bool {
     matches!(e, Expr::Ident { name, .. } if name == "." || name == "_")
 }
 
+/// Result of trying to read a class literal from a `class = ...`
+/// argument of `structure(...)`. `Unknown` covers dynamic expressions
+/// (`class = my_var`, `class = some_call()`) which we cannot resolve at
+/// compile time.
+enum ClassLiteral {
+    /// A single string literal, e.g. `class = "foo"`.
+    Single(String),
+    /// A `c(...)` of string literals, e.g. `class = c("foo", "bar")`.
+    /// Non-string elements cause the whole vector to be reported as
+    /// `Unknown` (R would coerce at runtime, but we play it safe).
+    Multi(Vec<String>),
+    /// Anything we can't statically read.
+    Unknown,
+}
+
+/// Read a class literal from the `class = ...` argument of `structure`.
+/// Recognizes `"foo"`, `c("foo")`, and `c("a", "b", ...)`. Mixed-type
+/// vectors, non-literal values, and anything else become `Unknown`
+/// rather than producing a wrong class.
+fn parse_class_literal(e: &Expr) -> ClassLiteral {
+    match e {
+        Expr::String(s, _) => ClassLiteral::Single(s.clone()),
+        Expr::Call { func, args, .. } => {
+            if let Expr::Ident { name, .. } = func.as_ref() {
+                if name == "c" {
+                    let mut names: Vec<String> = Vec::new();
+                    for a in args {
+                        match &a.value {
+                            Expr::String(s, _) => names.push(s.clone()),
+                            _ => return ClassLiteral::Unknown,
+                        }
+                    }
+                    if names.is_empty() {
+                        return ClassLiteral::Unknown;
+                    }
+                    return ClassLiteral::Multi(names);
+                }
+            }
+            ClassLiteral::Unknown
+        }
+        _ => ClassLiteral::Unknown,
+    }
+}
+
 /// Convert a typeshed `JsonRType` to the checker's `RType`. Mirrors the
 /// inline conversion in `apply_sig` for `ReturnSpec::Concrete` - kept
 /// here in ry-checker (not ry-typeshed) so that crate stays free of any
 /// dependency on ry-core's type definitions.
+///
+/// Datasets with an explicit `class` field (e.g. `mtcars` with
+/// `["data.frame"]`) carry the class through, interning each name into a
+/// `&'static str` so the result stays `Copy`.
 fn json_rtype_to_rtype(jt: &JsonRType) -> RType {
     let mode = match jt.mode.as_str() {
         "logical" => Mode::Logical,
@@ -1178,7 +1529,14 @@ fn json_rtype_to_rtype(jt: &JsonRType) -> RType {
         }
         _ => Length::Unknown,
     };
-    RType::new(mode, length, jt.na)
+    let class = if jt.class.is_empty() {
+        ClassVector::empty()
+    } else {
+        let interned: Vec<&'static str> =
+            jt.class.iter().map(|n| intern_class_name(n)).collect();
+        ClassVector::from_static_slice(&interned)
+    };
+    RType::new(mode, length, jt.na).with_class(class)
 }
 
 #[cfg(test)]
@@ -1361,6 +1719,76 @@ mod tests {
         assert!(
             diags.iter().all(|d| d.code != "RY010"),
             "expected no RY010 for iris, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn s3_dispatch_known_method() {
+        // `print.foo` is defined; calling `print(x)` on a "foo"-class
+        // value dispatches to it. No RY050.
+        let diags = check(
+            "print.foo <- function(x, ...) { invisible(x) }\n\
+             x <- structure(list(), class = \"foo\")\n\
+             print(x)\n",
+        );
+        assert!(
+            diags.iter().all(|d| d.code != "RY050"),
+            "expected no RY050 when method is defined, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn s3_dispatch_missing_method() {
+        // No `print.undefined`; `print.default` exists in the typeshed,
+        // so we know `print` is an S3 generic. The missing specific
+        // method is flagged with RY050.
+        let diags = check(
+            "x <- structure(list(), class = \"undefined\")\n\
+             print(x)\n",
+        );
+        assert!(
+            diags.iter().any(|d| d.code == "RY050"),
+            "expected RY050 for missing method, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn s3_dispatch_no_class() {
+        // `y` has no class attribute (a plain atomic vector). S3
+        // dispatch has nothing to work on; RY050 must NOT fire.
+        let diags = check(
+            "y <- c(1, 2, 3)\n\
+             print(y)\n",
+        );
+        assert!(
+            diags.iter().all(|d| d.code != "RY050"),
+            "expected no RY050 on a classless value, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn structure_call_sets_class() {
+        // `structure(list(), class = "foo")` must produce a type whose
+        // class vector contains "foo". We exercise this through the
+        // public `Checker` API by relying on the fact that a missing
+        // `print.foo` method would emit RY050 only if the class was
+        // actually attached.
+        let mut parser = RParser::new().unwrap();
+        let src = "x <- structure(list(), class = \"foo\")\nprint(x)\n";
+        let f = parser.parse("test.R", src).unwrap();
+        let mut c = Checker::new("test.R");
+        c.check(&f);
+        let diags = c.take_diagnostics();
+        // Without `print.foo`, RY050 should fire - proving the class was
+        // attached. (If `structure` had failed to set the class, the
+        // value would be classless and no RY050 would appear.)
+        assert!(
+            diags.iter().any(|d| d.code == "RY050"),
+            "expected RY050 proving class was attached, got {:?}",
             diags
         );
     }

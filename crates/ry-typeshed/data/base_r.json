@@ -242,22 +242,60 @@
       "return": { "mode": "logical", "length": "1", "na": false }
     }
   },
+  "s3_methods": [
+    {
+      "generic": "print",
+      "class": "data.frame",
+      "params": ["x", "..."],
+      "return": "arg0"
+    },
+    {
+      "generic": "print",
+      "class": "factor",
+      "params": ["x", "..."],
+      "return": "arg0"
+    },
+    {
+      "generic": "summary",
+      "class": "default",
+      "params": ["object", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
+    },
+    {
+      "generic": "print",
+      "class": "default",
+      "params": ["x", "..."],
+      "return": "arg0"
+    },
+    {
+      "generic": "summary",
+      "class": "data.frame",
+      "params": ["object"],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
+    },
+    {
+      "generic": "summary",
+      "class": "factor",
+      "params": ["object"],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
+    }
+  ],
   "datasets": {
-    "mtcars":        { "mode": "list", "length": "11", "na": false, "note": "data.frame" },
-    "iris":          { "mode": "list", "length": "5",  "na": false, "note": "data.frame" },
-    "airquality":    { "mode": "list", "length": "6",  "na": true,  "note": "data.frame" },
-    "PlantGrowth":   { "mode": "list", "length": "2",  "na": false, "note": "data.frame" },
-    "ToothGrowth":   { "mode": "list", "length": "3",  "na": false, "note": "data.frame" },
-    "chickwts":      { "mode": "list", "length": "2",  "na": false, "note": "data.frame" },
-    "CO2":           { "mode": "list", "length": "5",  "na": false, "note": "data.frame" },
-    "esoph":         { "mode": "list", "length": "5",  "na": false, "note": "data.frame" },
-    "infert":        { "mode": "list", "length": "8",  "na": false, "note": "data.frame" },
-    "npk":           { "mode": "list", "length": "5",  "na": false, "note": "data.frame" },
-    "OrchardSprays": { "mode": "list", "length": "8",  "na": false, "note": "data.frame" },
-    "Loblolly":      { "mode": "list", "length": "3",  "na": false, "note": "data.frame" },
-    "Formaldehyde":  { "mode": "list", "length": "2",  "na": false, "note": "data.frame" },
-    "freeny":        { "mode": "list", "length": "5",  "na": false, "note": "data.frame" },
-    "stackloss":     { "mode": "list", "length": "4",  "na": false, "note": "data.frame" },
-    "USArrests":     { "mode": "list", "length": "4",  "na": false, "note": "data.frame" }
+    "mtcars":        { "mode": "list", "length": "11", "na": false, "class": ["data.frame"], "note": "data.frame" },
+    "iris":          { "mode": "list", "length": "5",  "na": false, "class": ["data.frame"], "note": "data.frame" },
+    "airquality":    { "mode": "list", "length": "6",  "na": true,  "class": ["data.frame"], "note": "data.frame" },
+    "PlantGrowth":   { "mode": "list", "length": "2",  "na": false, "class": ["data.frame"], "note": "data.frame" },
+    "ToothGrowth":   { "mode": "list", "length": "3",  "na": false, "class": ["data.frame"], "note": "data.frame" },
+    "chickwts":      { "mode": "list", "length": "2",  "na": false, "class": ["data.frame"], "note": "data.frame" },
+    "CO2":           { "mode": "list", "length": "5",  "na": false, "class": ["data.frame"], "note": "data.frame" },
+    "esoph":         { "mode": "list", "length": "5",  "na": false, "class": ["data.frame"], "note": "data.frame" },
+    "infert":        { "mode": "list", "length": "8",  "na": false, "class": ["data.frame"], "note": "data.frame" },
+    "npk":           { "mode": "list", "length": "5",  "na": false, "class": ["data.frame"], "note": "data.frame" },
+    "OrchardSprays": { "mode": "list", "length": "8",  "na": false, "class": ["data.frame"], "note": "data.frame" },
+    "Loblolly":      { "mode": "list", "length": "3",  "na": false, "class": ["data.frame"], "note": "data.frame" },
+    "Formaldehyde":  { "mode": "list", "length": "2",  "na": false, "class": ["data.frame"], "note": "data.frame" },
+    "freeny":        { "mode": "list", "length": "5",  "na": false, "class": ["data.frame"], "note": "data.frame" },
+    "stackloss":     { "mode": "list", "length": "4",  "na": false, "class": ["data.frame"], "note": "data.frame" },
+    "USArrests":     { "mode": "list", "length": "4",  "na": false, "class": ["data.frame"], "note": "data.frame" }
   }
 }

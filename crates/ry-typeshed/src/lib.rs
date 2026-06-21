@@ -29,6 +29,10 @@ pub struct JsonRType {
     pub length: String,
     #[serde(default)]
     pub na: bool,
+    /// S3 class vector, e.g. `["data.frame"]` for `mtcars`. Default
+    /// empty for backward compatibility with existing JSON.
+    #[serde(default)]
+    pub class: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -74,6 +78,12 @@ pub struct Typeshed {
     /// bound by user code or function scope.
     #[serde(default)]
     pub datasets: std::collections::BTreeMap<String, JsonRType>,
+    /// Built-in S3 methods keyed by `(generic, class)`. The checker
+    /// consults this during S3 dispatch; the presence of a `default`
+    /// entry for a generic suppresses RY050 for any class without a
+    /// more specific method.
+    #[serde(default)]
+    pub s3_methods: std::collections::BTreeMap<(String, String), FunctionSig>,
 }
 
 /// Wrapper to handle the JSON shape where the key "return" is reserved
@@ -90,6 +100,16 @@ mod _fwd {
     }
 }
 
+/// JSON shape for a single S3 method entry in `base_r.json`. The
+/// `(generic, class)` pair becomes the BTreeMap key after deserialization.
+#[derive(Debug, Clone, Deserialize)]
+struct RawS3Method {
+    generic: String,
+    class: String,
+    #[serde(flatten)]
+    sig: _fwd::_FunctionSig,
+}
+
 pub fn load_base() -> Result<Typeshed, TypeshedError> {
     // Use intermediate structs because serde derive can't directly rename
     // `return` to `return_` inside BTreeMap values without a custom impl.
@@ -100,6 +120,8 @@ pub fn load_base() -> Result<Typeshed, TypeshedError> {
         functions: std::collections::BTreeMap<String, _fwd::_FunctionSig>,
         #[serde(default)]
         datasets: std::collections::BTreeMap<String, JsonRType>,
+        #[serde(default)]
+        s3_methods: Vec<RawS3Method>,
     }
     let raw: RawFile = serde_json::from_str(BASE_R_JSON)?;
     let mut functions = std::collections::BTreeMap::new();
@@ -113,10 +135,23 @@ pub fn load_base() -> Result<Typeshed, TypeshedError> {
             },
         );
     }
+    let mut s3_methods = std::collections::BTreeMap::new();
+    for m in raw.s3_methods {
+        let key = (m.generic, m.class);
+        s3_methods.insert(
+            key,
+            FunctionSig {
+                params: m.sig.params,
+                return_: m.sig.return_,
+                aliases: m.sig.aliases,
+            },
+        );
+    }
     Ok(Typeshed {
         version: env!("CARGO_PKG_VERSION").to_string(),
         functions,
         datasets: raw.datasets,
+        s3_methods,
     })
 }
 

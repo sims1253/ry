@@ -2777,9 +2777,16 @@ impl Checker {
         args: &[Arg],
         span: Span,
     ) -> RType {
-        // For v1, a very small set of signatures is interpreted precisely.
-        // Everything else just gets an opaque type.
-        let first = arg_types.first().copied().unwrap_or(RType::UNKNOWN);
+        // Match named arguments to parameters so that `arg0` refers to
+        // the first *parameter* (by name), not the first positional arg.
+        // When `sig.params` is empty or only contains `...`, fall back
+        // to raw positional indexing.
+        let matched = if sig.params.is_empty() || sig.params.iter().all(|p| p == "...") {
+            arg_types.to_vec()
+        } else {
+            match_args_to_params(&sig.params, args, arg_types)
+        };
+        let first = matched.first().copied().unwrap_or(RType::UNKNOWN);
         match &sig.return_ {
             ReturnSpec::Slot(s) => match s.as_str() {
                 "arg0" => first,
@@ -2812,17 +2819,17 @@ impl Checker {
                             Mode::Double
                         }
                     }
-                    // "arg0" as a mode spec: use the first arg's mode.
+                    // "arg0" as a mode spec: use the first param's mode.
                     "arg0" => first.mode,
-                    // "arg1" as a mode spec: use the second arg's mode.
-                    "arg1" => arg_types.get(1).map(|t| t.mode).unwrap_or(Mode::Opaque),
-                    // "arg2" as a mode spec: use the third arg's mode.
-                    "arg2" => arg_types.get(2).map(|t| t.mode).unwrap_or(Mode::Opaque),
-                    // "yes_or_no": join of the second and third args'
+                    // "arg1" as a mode spec: use the second param's mode.
+                    "arg1" => matched.get(1).map(|t| t.mode).unwrap_or(Mode::Opaque),
+                    // "arg2" as a mode spec: use the third param's mode.
+                    "arg2" => matched.get(2).map(|t| t.mode).unwrap_or(Mode::Opaque),
+                    // "yes_or_no": join of the second and third params'
                     // modes (for `ifelse(test, yes, no)`).
                     "yes_or_no" => {
-                        let yes = arg_types.get(1).copied().unwrap_or(RType::UNKNOWN);
-                        let no = arg_types.get(2).copied().unwrap_or(RType::UNKNOWN);
+                        let yes = matched.get(1).copied().unwrap_or(RType::UNKNOWN);
+                        let no = matched.get(2).copied().unwrap_or(RType::UNKNOWN);
                         yes.join(no).mode
                     }
                     _ => Mode::Opaque,
@@ -2832,8 +2839,8 @@ impl Checker {
                     "1" => Length::One,
                     "unknown" => Length::Unknown,
                     "arg0" => first.length,
-                    "arg1" => arg_types.get(1).map(|t| t.length).unwrap_or(Length::Unknown),
-                    "arg2" => arg_types.get(2).map(|t| t.length).unwrap_or(Length::Unknown),
+                    "arg1" => matched.get(1).map(|t| t.length).unwrap_or(Length::Unknown),
+                    "arg2" => matched.get(2).map(|t| t.length).unwrap_or(Length::Unknown),
                     // Longest of all args' lengths (for paste/paste0/sprintf).
                     "longest_arg" => longest_arg_length(arg_types),
                     // Number of arguments (for list()).
@@ -3240,6 +3247,72 @@ fn parse_class_literal(e: &Expr) -> ClassLiteral {
 }
 
 /// Build a `ColumnSchema` from a `list(...)` / `data.frame(...)` argument
+/// Match call arguments to function parameters using R's standard
+/// argument matching rules. Returns a vector indexed by parameter
+/// position, where each entry is the type of the argument bound to
+/// that parameter (or `RType::UNKNOWN` if no argument was provided).
+///
+/// Algorithm (simplified v1):
+///   1. Exact name match: a named arg `x = ...` binds to the parameter
+///      named `x` if one exists.
+///   2. Positional fill: unmatched positional args fill remaining
+///      unmatched parameters in declaration order.
+///   3. `...` in the parameter list absorbs any extra args; those are
+///      inaccessible by index and get `UNKNOWN`.
+///
+/// Partial matching (R's prefix-based arg matching) is intentionally
+/// not implemented; it's rarely used in modern R code and adds
+/// significant complexity.
+fn match_args_to_params(
+    sig_params: &[String],
+    args: &[Arg],
+    arg_types: &[RType],
+) -> Vec<RType> {
+    let has_dots = sig_params.iter().any(|p| p == "...");
+    let n_named_params = if has_dots {
+        sig_params.len().saturating_sub(1)
+    } else {
+        sig_params.len()
+    };
+    let mut matched: Vec<RType> = vec![RType::UNKNOWN; sig_params.len()];
+    let mut filled: Vec<bool> = vec![false; sig_params.len()];
+    let mut used: Vec<bool> = vec![false; args.len()];
+    // Pass 1: exact name matching.
+    for (ai, a) in args.iter().enumerate() {
+        if let Some(name) = &a.name {
+            for (pi, p) in sig_params.iter().enumerate() {
+                if p == name {
+                    matched[pi] = arg_types[ai];
+                    filled[pi] = true;
+                    used[ai] = true;
+                    break;
+                }
+            }
+        }
+    }
+    // Pass 2: positional fill. Unmatched positional args fill remaining
+    // unmatched parameters in order. Named args that didn't match any
+    // parameter are skipped (they might be `...` args or typos).
+    let mut next_param = 0usize;
+    for (ai, a) in args.iter().enumerate() {
+        if used[ai] || a.name.is_some() {
+            continue;
+        }
+        // Find the next unfilled parameter slot.
+        while next_param < n_named_params && filled[next_param] {
+            next_param += 1;
+        }
+        if next_param < n_named_params {
+            matched[next_param] = arg_types[ai];
+            filled[next_param] = true;
+            next_param += 1;
+        }
+        // Extra positional args beyond the parameter count go to ...
+        // or are dropped; we can't assign them to a named slot.
+    }
+    matched
+}
+
 /// Compute the longest known length among a slice of argument types.
 /// Used by `paste` / `paste0` / `sprintf` which return a character
 /// vector whose length is the longest of the input vectors (R recycles

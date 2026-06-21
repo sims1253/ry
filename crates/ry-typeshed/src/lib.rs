@@ -33,6 +33,12 @@ pub struct JsonRType {
     /// empty for backward compatibility with existing JSON.
     #[serde(default)]
     pub class: Vec<String>,
+    /// Named column schema for record-like values (data frames and
+    /// lists with a known shape). Empty for non-record values. The
+    /// checker reads this from the dataset entry directly; the
+    /// `Typeshed` struct itself does not need a parallel field.
+    #[serde(default)]
+    pub columns: std::collections::BTreeMap<String, JsonRType>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

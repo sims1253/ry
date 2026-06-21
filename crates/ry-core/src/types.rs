@@ -306,16 +306,83 @@ pub fn intern_class_name(s: &str) -> &'static str {
     leaked
 }
 
+/// Schema for a record-like value (data frame, list with known shape).
+/// Stores an ordered `(name, RType)` list so we can both look up by
+/// name (column access) and iterate in source order (display, audit).
+///
+/// Interned via `intern_column_schema` so `RType` stays `Copy`: the
+/// schema lives for the lifetime of the program (acceptable for v1: the
+/// number of distinct schemas in a run is bounded by the source's
+/// literal `list(...)` / `data.frame(...)` constructors plus the
+/// typeshed's built-in datasets).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ColumnSchema {
+    pub columns: Vec<(String, RType)>,
+}
+
+impl ColumnSchema {
+    /// Look up a column by name. Linear scan is fine; the column count
+    /// is bounded by what appears literally in the source.
+    pub fn get(&self, name: &str) -> Option<RType> {
+        self.columns
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, t)| *t)
+    }
+
+    /// All column names in declared order. Used for diagnostic messages.
+    pub fn names(&self) -> Vec<&str> {
+        self.columns.iter().map(|(n, _)| n.as_str()).collect()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.columns.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.columns.len()
+    }
+}
+
+/// Intern a runtime-built `ColumnSchema` into `&'static ColumnSchema`
+/// so it can be stored in a `Copy` `RType`. Cached by content using a
+/// `OnceLock`-protected `Vec`; identical schemas collapse to the same
+/// static reference. The schemas are leaked (see `ColumnSchema` docs for
+/// the rationale).
+pub fn intern_column_schema(schema: ColumnSchema) -> &'static ColumnSchema {
+    use std::sync::{Mutex, OnceLock};
+    static TABLE: OnceLock<Mutex<Vec<&'static ColumnSchema>>> = OnceLock::new();
+    let lock = TABLE.get_or_init(|| Mutex::new(Vec::new()));
+    let mut guard = match lock.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+    for existing in guard.iter() {
+        if **existing == schema {
+            return existing;
+        }
+    }
+    let leaked: &'static ColumnSchema = Box::leak(Box::new(schema));
+    guard.push(leaked);
+    leaked
+}
+
 /// A fully-described R type at the granularity v1 cares about. Includes
-/// an optional S3 class vector; arithmetic / comparison strip the class
-/// (matching R), and control-flow `join` keeps it only when both sides
-/// agree.
+/// an optional S3 class vector and an optional record schema (data
+/// frame columns, named list shape); arithmetic / comparison strip the
+/// class and schema (matching R), and control-flow `join` keeps both
+/// only when both sides agree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RType {
     pub mode: Mode,
     pub length: Length,
     pub na: NaFlag,
     pub class: ClassVector,
+    /// Optional record schema for data frames and named lists. Interned
+    /// via `intern_column_schema` so this field stays `Copy`. `None`
+    /// means "we don't know the shape" (the conservative default for
+    /// values whose construction we can't see).
+    pub columns: Option<&'static ColumnSchema>,
 }
 
 impl RType {
@@ -324,6 +391,7 @@ impl RType {
         length: Length::Unknown,
         na: NaFlag(true),
         class: ClassVector::unknown(),
+        columns: None,
     };
 
     pub const fn new(mode: Mode, length: Length, na: bool) -> Self {
@@ -332,6 +400,7 @@ impl RType {
             length,
             na: NaFlag(na),
             class: ClassVector::empty(),
+            columns: None,
         }
     }
 
@@ -347,9 +416,21 @@ impl RType {
         RType { class, ..self }
     }
 
+    /// Return a copy of `self` with the column schema replaced. The
+    /// caller is responsible for interning via `intern_column_schema`.
+    pub const fn with_columns(self, schema: &'static ColumnSchema) -> Self {
+        RType {
+            columns: Some(schema),
+            ..self
+        }
+    }
+
     /// Result of `lhs op rhs` for an arithmetic operator, or None if the
     /// mode combination is invalid (e.g. list + numeric). Arithmetic
-    /// strips any S3 class attribute, matching R's actual semantics.
+    /// strips any S3 class attribute and the column schema, matching
+    /// R's actual semantics (arithmetic on data frames is either a loop
+    /// over columns producing a new frame or a runtime error depending
+    /// on the operator; we conservatively report the bare atomic mode).
     pub fn arith(self, rhs: RType) -> Option<RType> {
         let mode = self.mode.arith_result(rhs.mode)?;
         let length = self.length.binary(rhs.length);
@@ -358,12 +439,15 @@ impl RType {
             mode,
             length,
             na,
-            // Arithmetic on S3 objects usually strips the class in R.
+            // Arithmetic on S3 objects strips the class in R, and the
+            // column schema is meaningless on the atomic result.
             class: ClassVector::empty(),
+            columns: None,
         })
     }
 
-    /// Comparison operators return plain logical values (no class).
+    /// Comparison operators return plain logical values (no class, no
+    /// schema).
     pub fn compare(self, rhs: RType) -> Option<RType> {
         let mode = self.mode.compare_result(rhs.mode)?;
         let length = self.length.binary(rhs.length);
@@ -372,6 +456,7 @@ impl RType {
             length,
             na: NaFlag(true),
             class: ClassVector::empty(),
+            columns: None,
         })
     }
 
@@ -394,9 +479,10 @@ impl RType {
     /// Opaque is absorbing: joining anything with unknown yields unknown,
     /// which is the correct conservative choice.
     ///
-    /// The S3 class vector is preserved only when both sides agree
-    /// (including the `known` flag). When either side is `unknown`, the
-    /// joined class is also `unknown` (we can't say anything definitive).
+    /// The S3 class vector and column schema are preserved only when
+    /// both sides agree exactly (including the `known` flag for class).
+    /// When either side lacks information, the joined value drops that
+    /// information rather than guessing.
     pub fn join(self, other: RType) -> RType {
         if matches!(self.mode, Mode::Opaque) || matches!(other.mode, Mode::Opaque) {
             return RType::UNKNOWN;
@@ -423,19 +509,28 @@ impl RType {
             // Both classes known but differ: result has no class.
             ClassVector::empty()
         };
+        // Column schemas are preserved only on exact agreement; anything
+        // else drops the schema so we don't fabricate columns the
+        // runtime value might not have.
+        let columns = if self.columns.is_some() && self.columns == other.columns {
+            self.columns
+        } else {
+            None
+        };
         RType {
             mode,
             length,
             na: NaFlag(self.na.0 || other.na.0),
             class,
+            columns,
         }
     }
 
     /// Element type of an iterable used in `for (var in iter)`. For an
     /// atomic vector this is a length-1 value of the same mode; for a
     /// list it is a length-1 list; for opaque input it stays opaque.
-    /// The class is dropped: iterating over a classed vector yields the
-    /// bare elements in R.
+    /// The class and column schema are dropped: iterating over a classed
+    /// vector yields the bare elements in R.
     pub fn element(self) -> RType {
         match self.mode {
             Mode::Null => RType::new(Mode::Null, Length::Zero, false),
@@ -494,8 +589,9 @@ impl fmt::Display for RType {
 }
 
 impl RType {
-    /// Append the `:class` suffix to a partially-written `RType`. Used
-    /// by `Display` so the class annotation lands after the mode/length.
+    /// Append the `:class` suffix (and any column schema) to a
+    /// partially-written `RType`. Used by `Display` so the annotations
+    /// land after the mode/length.
     fn fmt_class(&self, f: &mut fmt::Formatter<'_>, core: fmt::Result) -> fmt::Result {
         core?;
         if self.class.has_known_class() {
@@ -512,6 +608,24 @@ impl RType {
             }
         } else if self.class.is_unknown() {
             f.write_str(":?")?;
+        }
+        // Column schema annotation. Abbreviated to the first 3 columns
+        // plus `...` when the schema has more entries, to keep the
+        // display readable for wide data frames.
+        if let Some(schema) = self.columns {
+            f.write_str("{")?;
+            let cols = &schema.columns;
+            let limit = 3;
+            for (i, (name, ty)) in cols.iter().take(limit).enumerate() {
+                if i > 0 {
+                    f.write_str(", ")?;
+                }
+                write!(f, "{}:{}", name, ty)?;
+            }
+            if cols.len() > limit {
+                f.write_str(", ...")?;
+            }
+            f.write_str("}")?;
         }
         Ok(())
     }
@@ -722,5 +836,126 @@ mod tests {
     fn intern_class_name_user_defined() {
         let a = intern_class_name("zzz_user_class_123");
         assert_eq!(a, "zzz_user_class_123");
+    }
+
+    #[test]
+    fn column_schema_lookups_by_name() {
+        let schema = ColumnSchema {
+            columns: vec![
+                ("a".to_string(), RType::scalar(Mode::Integer, false)),
+                ("b".to_string(), RType::scalar(Mode::Character, false)),
+            ],
+        };
+        assert_eq!(schema.get("a").unwrap().mode, Mode::Integer);
+        assert_eq!(schema.get("b").unwrap().mode, Mode::Character);
+        assert!(schema.get("missing").is_none());
+        assert_eq!(schema.names(), vec!["a", "b"]);
+        assert_eq!(schema.len(), 2);
+    }
+
+    #[test]
+    fn intern_column_schema_collapses_identical() {
+        let s1 = intern_column_schema(ColumnSchema {
+            columns: vec![("x".to_string(), RType::scalar(Mode::Double, false))],
+        });
+        let s2 = intern_column_schema(ColumnSchema {
+            columns: vec![("x".to_string(), RType::scalar(Mode::Double, false))],
+        });
+        // Identical content must intern to the same static reference.
+        assert!(
+            std::ptr::eq(s1, s2),
+            "identical schemas should intern to the same static"
+        );
+    }
+
+    #[test]
+    fn intern_column_schema_keeps_distinct() {
+        let s1 = intern_column_schema(ColumnSchema {
+            columns: vec![("x".to_string(), RType::scalar(Mode::Double, false))],
+        });
+        let s2 = intern_column_schema(ColumnSchema {
+            columns: vec![("y".to_string(), RType::scalar(Mode::Double, false))],
+        });
+        assert!(
+            !std::ptr::eq(s1, s2),
+            "distinct schemas should get distinct statics"
+        );
+    }
+
+    #[test]
+    fn rtype_with_columns_roundtrips() {
+        let schema = intern_column_schema(ColumnSchema {
+            columns: vec![("mpg".to_string(), RType::new(Mode::Double, Length::Known(32), false))],
+        });
+        let t = RType::new(Mode::List, Length::Known(1), false).with_columns(schema);
+        assert_eq!(t.columns, Some(schema));
+        // `with_columns` must not disturb other fields.
+        assert_eq!(t.mode, Mode::List);
+        assert_eq!(t.length, Length::Known(1));
+    }
+
+    #[test]
+    fn arith_strips_columns() {
+        let schema = intern_column_schema(ColumnSchema {
+            columns: vec![("x".to_string(), RType::scalar(Mode::Double, false))],
+        });
+        let lhs = RType::scalar(Mode::Double, false).with_columns(schema);
+        let rhs = RType::scalar(Mode::Double, false);
+        let r = lhs.arith(rhs).unwrap();
+        assert_eq!(r.mode, Mode::Double);
+        assert!(r.columns.is_none(), "arith must strip column schema");
+    }
+
+    #[test]
+    fn compare_strips_columns() {
+        let schema = intern_column_schema(ColumnSchema {
+            columns: vec![("x".to_string(), RType::scalar(Mode::Double, false))],
+        });
+        let lhs = RType::scalar(Mode::Double, false).with_columns(schema);
+        let rhs = RType::scalar(Mode::Double, false);
+        let r = lhs.compare(rhs).unwrap();
+        assert_eq!(r.mode, Mode::Logical);
+        assert!(r.columns.is_none(), "compare must strip column schema");
+    }
+
+    #[test]
+    fn join_preserves_columns_when_both_sides_agree() {
+        let schema = intern_column_schema(ColumnSchema {
+            columns: vec![("x".to_string(), RType::scalar(Mode::Double, false))],
+        });
+        let lhs = RType::scalar(Mode::List, false).with_columns(schema);
+        let rhs = RType::scalar(Mode::List, false).with_columns(schema);
+        let joined = lhs.join(rhs);
+        assert_eq!(joined.columns, Some(schema));
+    }
+
+    #[test]
+    fn join_drops_columns_when_sides_differ() {
+        let s1 = intern_column_schema(ColumnSchema {
+            columns: vec![("a".to_string(), RType::scalar(Mode::Double, false))],
+        });
+        let s2 = intern_column_schema(ColumnSchema {
+            columns: vec![("b".to_string(), RType::scalar(Mode::Double, false))],
+        });
+        let lhs = RType::scalar(Mode::List, false).with_columns(s1);
+        let rhs = RType::scalar(Mode::List, false).with_columns(s2);
+        let joined = lhs.join(rhs);
+        assert!(joined.columns.is_none(), "differing schemas must drop");
+    }
+
+    #[test]
+    fn rtype_display_includes_columns_abbreviated() {
+        // Build a 5-column schema; display should show 3 then `...`.
+        let cols: Vec<(String, RType)> = (0..5)
+            .map(|i| (format!("c{}", i), RType::scalar(Mode::Double, false)))
+            .collect();
+        let schema = intern_column_schema(ColumnSchema { columns: cols });
+        let t = RType::new(Mode::List, Length::Known(5), false).with_columns(schema);
+        let s = format!("{}", t);
+        assert!(s.contains("c0:"), "missing c0: {}", s);
+        assert!(s.contains("c1:"), "missing c1: {}", s);
+        assert!(s.contains("c2:"), "missing c2: {}", s);
+        assert!(!s.contains("c3:"), "c3 should be abbreviated: {}", s);
+        assert!(s.contains("..."), "missing ellipsis: {}", s);
     }
 }

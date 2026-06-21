@@ -12,7 +12,9 @@ pub mod rules;
 pub mod format;
 
 use ry_core::ast::*;
-use ry_core::types::{intern_class_name, ClassVector, Length, Mode, RType};
+use ry_core::types::{
+    intern_class_name, intern_column_schema, ClassVector, ColumnSchema, Length, Mode, RType,
+};
 use ry_core::Span;
 use ry_typeshed::{load_base, FunctionSig, JsonRType, ReturnSpec, Typeshed};
 use std::collections::HashMap;
@@ -604,8 +606,24 @@ impl Checker {
                             args.iter().map(|a| self.infer_pure(&a.value, scope)).collect();
                         return self.infer_c_pure(&arg_types);
                     }
-                    if name == "list" {
-                        return RType::new(Mode::List, Length::Known(args.len()), false);
+                    if name == "list" || name == "data.frame" {
+                        // Pass 2 (pure) mirrors pass 3 minus diagnostics.
+                        // We rebuild the schema so the refined return
+                        // type is correct for column access in callers.
+                        let arg_types: Vec<RType> =
+                            args.iter().map(|a| self.infer_pure(&a.value, scope)).collect();
+                        let length = Length::Known(arg_types.len());
+                        let base = if name == "data.frame" {
+                            RType::new(Mode::List, length, false)
+                                .with_class(ClassVector::single(intern_class_name("data.frame")))
+                        } else {
+                            RType::new(Mode::List, length, false)
+                        };
+                        let schema = build_named_schema(&arg_types, args);
+                        return match schema {
+                            Some(s) => base.with_columns(intern_column_schema(s)),
+                            None => base,
+                        };
                     }
                     if let Some(sig) = self.typeshed.functions.get(name) {
                         let arg_types: Vec<RType> =
@@ -615,11 +633,34 @@ impl Checker {
                 }
                 RType::UNKNOWN
             }
-            Expr::Index { base, kind, .. } => {
+            Expr::Index { base, kind, args, .. } => {
                 let bt = self.infer_pure(base, scope);
                 match kind {
                     IndexKind::Single => bt,
-                    IndexKind::Double | IndexKind::Dollar => {
+                    IndexKind::Dollar => {
+                        // Pass 2 (pure) mirrors pass 3 minus diagnostics.
+                        // The column name lives on `args[0].name`; if we
+                        // have a schema, return the column's type, else
+                        // fall back to the length-1 default.
+                        let col = args.first().and_then(|a| a.name.as_deref());
+                        if let (Some(name), Some(schema)) = (col, bt.columns) {
+                            if let Some(t) = schema.get(name) {
+                                return t;
+                            }
+                        }
+                        RType::new(bt.mode, Length::One, bt.na.0)
+                    }
+                    IndexKind::Double => {
+                        // `df[["col"]]`: name comes from a string literal.
+                        if let Some(Expr::String(name, _)) =
+                            args.first().map(|a| &a.value)
+                        {
+                            if let Some(schema) = bt.columns {
+                                if let Some(t) = schema.get(name) {
+                                    return t;
+                                }
+                            }
+                        }
                         RType::new(bt.mode, Length::One, bt.na.0)
                     }
                 }
@@ -903,10 +944,7 @@ impl Checker {
             }
             Expr::Index { base, kind, args, span } => {
                 let bt = self.infer(base, scope);
-                for a in args {
-                    self.infer(&a.value, scope);
-                }
-                self.infer_index(bt, *kind, *span)
+                self.infer_index(bt, *kind, args, *span, scope)
             }
             Expr::Function { .. } => RType::scalar(Mode::Function, false),
             Expr::Unknown(_) => RType::UNKNOWN,
@@ -1129,7 +1167,15 @@ impl Checker {
             return self.infer_c(args, &arg_types, span);
         }
         if name == "list" {
-            return RType::new(Mode::List, Length::Known(args.len()), false);
+            return self.infer_list(&arg_types, args, span);
+        }
+        // `data.frame(...)`: a record constructor. Same column-schema
+        // logic as `list(...)`, but the result is classed
+        // "data.frame" and column lengths are coerced to a common
+        // length (R recycles; for v1 we take the max of the known
+        // lengths).
+        if name == "data.frame" {
+            return self.infer_data_frame(&arg_types, args, span);
         }
 
         // S3 dispatch: when a known generic is called with a classed
@@ -1170,6 +1216,13 @@ impl Checker {
     /// the literal class forms; everything else returns the first
     /// argument's type with `ClassVector::unknown()` (so we neither lie
     /// about a class nor spuriously trigger RY050).
+    ///
+    /// The base value's column schema is preserved: `RType::with_class`
+    /// is `RType { class, ..self }`, so a `structure(list(a = 1L),
+    /// class = "foo")` call yields a value whose columns are still
+    /// `[("a", integer<1>)]` and whose class is `["foo"]`. This lets
+    /// `$a` resolve correctly on user-defined classes built on top of
+    /// a list-shaped payload.
     fn infer_structure_call(
         &mut self,
         args: &[Arg],
@@ -1177,7 +1230,8 @@ impl Checker {
         span: Span,
     ) -> RType {
         // The base value is the first positional argument (or the
-        // `x = ...` named argument).
+        // `x = ...` named argument). The first such positional-or-`x`
+        // arg wins; later ones are inferred for diagnostics only.
         let mut base_type = RType::UNKNOWN;
         let mut class_expr: Option<&Expr> = None;
         for a in args {
@@ -1185,9 +1239,9 @@ impl Checker {
                 class_expr = Some(&a.value);
                 continue;
             }
-            // First positional arg is the base; named args like
-            // `dim = ...` still get inferred for diagnostics.
-            if a.name.is_none() && matches!(base_type.mode, Mode::Opaque) {
+            let is_base = matches!(a.name.as_deref(), None | Some("x"))
+                && matches!(base_type.mode, Mode::Opaque);
+            if is_base {
                 base_type = self.infer(&a.value, scope);
             } else {
                 let _ = self.infer(&a.value, scope);
@@ -1336,6 +1390,111 @@ impl Checker {
         RType::new(mode, length, any_na || matches!(mode, Mode::Character | Mode::Double))
     }
 
+    /// Infer the type of `list(...)`. The result is always a list whose
+    /// length equals the argument count; if at least one argument is
+    /// named, we additionally build a column schema from the named
+    /// args (positional args get R's auto-generated `[[i]]` names).
+    ///
+    /// We build the schema even when only some args are named: that
+    /// mirrors R's `list(a = 1, "x")` which produces names `c("a", "2")`.
+    /// The schema is what powers `df$col` / `df[["col"]]` resolution
+    /// downstream.
+    fn infer_list(
+        &mut self,
+        arg_types: &[RType],
+        args: &[Arg],
+        _span: Span,
+    ) -> RType {
+        let length = Length::Known(arg_types.len());
+        let base = RType::new(Mode::List, length, false);
+        let schema = build_named_schema(arg_types, args);
+        if let Some(s) = schema {
+            base.with_columns(intern_column_schema(s))
+        } else {
+            base
+        }
+    }
+
+    /// Infer the type of `data.frame(...)`. Same column-schema logic as
+    /// `list(...)`, but:
+    /// * The result is classed `"data.frame"`.
+    /// * Column lengths are coerced to a common length (R recycles). For
+    ///   v1 we take the max of the known lengths (or Unknown if any
+    ///   column's length is Unknown), and propagate that length onto
+    ///   each column so `df$col` returns a vector of the right length.
+    /// * Special arguments like `row.names = ...`, `check.names = ...`
+    ///   are NOT columns and are dropped from the schema. We recognize
+    ///   the common ones by name.
+    fn infer_data_frame(
+        &mut self,
+        arg_types: &[RType],
+        args: &[Arg],
+        _span: Span,
+    ) -> RType {
+        // Filter out non-column named arguments first. Positional args
+        // are kept (they become columns); known metadata args are dropped
+        // so they don't pollute the schema.
+        const METADATA_ARGS: &[&str] = &[
+            "row.names",
+            "check.rows",
+            "check.names",
+            "stringsAsFactors",
+            "fix.empty.names",
+        ];
+        let mut filtered_types: Vec<RType> = Vec::with_capacity(arg_types.len());
+        let mut filtered_args: Vec<Arg> = Vec::with_capacity(args.len());
+        for (i, a) in args.iter().enumerate() {
+            if let Some(n) = a.name.as_deref() {
+                if METADATA_ARGS.contains(&n) {
+                    continue;
+                }
+            }
+            filtered_types.push(arg_types[i]);
+            filtered_args.push(a.clone());
+        }
+
+        // Compute the common column length (max of known lengths).
+        let mut common_len: Length = Length::One;
+        for t in &filtered_types {
+            common_len = match (common_len, t.length) {
+                (Length::Zero, x) | (x, Length::Zero) => x,
+                (Length::One, x) | (x, Length::One) => x,
+                (Length::Known(a), Length::Known(b)) => Length::Known(a.max(b)),
+                _ => Length::Unknown,
+            };
+        }
+
+        // Build per-column types with the coerced length.
+        let coerced_types: Vec<RType> = filtered_types
+            .iter()
+            .map(|t| RType {
+                mode: t.mode,
+                length: common_len,
+                na: t.na,
+                class: t.class,
+                // Nested column schemas on a data-frame column would
+                // mean nested data frames; v1 keeps those opaque.
+                columns: None,
+            })
+            .collect();
+
+        // Reuse the named-schema builder, then patch the coerced types
+        // in (the builder uses the original arg_types verbatim).
+        let mut schema = build_named_schema(&coerced_types, &filtered_args);
+        if let Some(s) = schema.as_mut() {
+            // Sanity: lengths should already match coerced_types.
+            debug_assert_eq!(s.columns.len(), coerced_types.len());
+        }
+
+        let class = ClassVector::single(intern_class_name("data.frame"));
+        let base = RType::new(Mode::List, Length::Known(filtered_types.len()), false)
+            .with_class(class);
+        match schema {
+            Some(s) => base.with_columns(intern_column_schema(s)),
+            None => base,
+        }
+    }
+
     fn apply_sig(
         &mut self,
         name: &str,
@@ -1397,12 +1556,110 @@ impl Checker {
         }
     }
 
-    fn infer_index(&mut self, bt: RType, kind: IndexKind, _span: Span) -> RType {
-        // Subset preserves element type. `x[[i]]` and `x$i` are scalar.
+    /// Resolve the type of a subset/extract expression given the base
+    /// type, the kind of index (`[`, `[[`, `$`), and the (already
+    /// lowered) argument list.
+    ///
+    /// v1 column-access semantics:
+    /// * `df$col` (`Dollar`): the column name lives on `args[0].name`.
+    ///   If `bt` has a column schema, return that column's type; if the
+    ///   name isn't in the schema, emit RY060. Otherwise (no schema) we
+    ///   conservatively return a length-1 value of `bt`'s mode.
+    /// * `df[["col"]]` (`Double`): same idea, but the name comes from a
+    ///   string-literal positional argument. Non-string-literal args
+    ///   fall through to the conservative length-1 default.
+    /// * `df[i]` or `df[i, j]` (`Single`): keep the existing opaque
+    ///   behavior (returns `bt`). Subsetting semantics are complex and
+    ///   out of scope for v1.
+    fn infer_index(
+        &mut self,
+        bt: RType,
+        kind: IndexKind,
+        args: &[Arg],
+        span: Span,
+        scope: &mut Scope,
+    ) -> RType {
         match kind {
-            IndexKind::Single => bt,
-            IndexKind::Double | IndexKind::Dollar => RType::new(bt.mode, Length::One, bt.na.0),
+            IndexKind::Dollar => {
+                // The parser records `$col` as a single arg with
+                // `name = Some("col")` and a synthesized `value` of
+                // `Expr::Ident { name: "col" }`. The value is NOT a
+                // real expression to be inferred: doing so would emit a
+                // spurious RY010 on the column name. So we deliberately
+                // do not call `infer` on it.
+                let col = args.first().and_then(|a| a.name.as_deref());
+                if let Some(name) = col {
+                    if let Some(schema) = bt.columns {
+                        if let Some(t) = schema.get(name) {
+                            return t;
+                        }
+                        self.emit_undefined_column(name, schema, span);
+                        // Fall through to the conservative default so
+                        // downstream code still has *a* type to work
+                        // with after the diagnostic.
+                    }
+                }
+                RType::new(bt.mode, Length::One, bt.na.0)
+            }
+            IndexKind::Double => {
+                // `df[["col"]]`: the column name comes from a
+                // string-literal positional argument. We infer the
+                // arg normally so any diagnostics on a non-literal arg
+                // (e.g. `df[[some_var]]`) still fire; for the string
+                // case, we additionally look it up in the schema.
+                let arg_expr = args.first().map(|a| &a.value);
+                if let Some(Expr::String(name, _)) = arg_expr {
+                    if let Some(schema) = bt.columns {
+                        if let Some(t) = schema.get(name) {
+                            return t;
+                        }
+                        self.emit_undefined_column(name, schema, span);
+                    }
+                    // No schema or unknown column: fall through.
+                    return RType::new(bt.mode, Length::One, bt.na.0);
+                }
+                // Non-string-literal arg: infer it for diagnostics,
+                // then return the conservative default.
+                if let Some(a) = args.first() {
+                    self.infer(&a.value, scope);
+                }
+                RType::new(bt.mode, Length::One, bt.na.0)
+            }
+            IndexKind::Single => {
+                // Single-bracket subsetting semantics are complex
+                // (column slice vs row slice depends on commas and
+                // drops). For v1 we infer each arg for diagnostics and
+                // return the base type (matches existing behavior).
+                for a in args {
+                    self.infer(&a.value, scope);
+                }
+                bt
+            }
         }
+    }
+
+    /// Emit RY060 for a column access whose name is not in the schema.
+    /// Lists the first 5 available column names so the user has
+    /// something to act on.
+    fn emit_undefined_column(&mut self, col: &str, schema: &'static ColumnSchema, span: Span) {
+        let names = schema.names();
+        let preview: Vec<&str> = names.iter().take(5).copied().collect();
+        let available = if names.len() > 5 {
+            format!("{}, ...", preview.join(", "))
+        } else if preview.is_empty() {
+            "(none)".to_string()
+        } else {
+            preview.join(", ")
+        };
+        self.emit(
+            Severity::Error,
+            span,
+            "RY060",
+            format!(
+                "column `{}` not found in data frame schema; available columns: {}",
+                col, available
+            ),
+        );
     }
 }
 
@@ -1499,6 +1756,40 @@ fn parse_class_literal(e: &Expr) -> ClassLiteral {
     }
 }
 
+/// Build a `ColumnSchema` from a `list(...)` / `data.frame(...)` argument
+/// list. Each named arg becomes a column keyed by its name; positional
+/// args get R's auto-generated `[[i]]` names (1-indexed). Returns `None`
+/// if there are no args at all (an empty list has no useful schema).
+///
+/// The arg-type vector and the arg list must be the same length; if they
+/// differ (which shouldn't happen but we guard anyway) we zip by the
+/// shorter one to avoid index panics.
+fn build_named_schema(arg_types: &[RType], args: &[Arg]) -> Option<ColumnSchema> {
+    if args.is_empty() {
+        return None;
+    }
+    let mut positional = 0usize;
+    let mut columns: Vec<(String, RType)> = Vec::with_capacity(args.len());
+    for (i, a) in args.iter().enumerate() {
+        let ty = arg_types.get(i).copied().unwrap_or(RType::UNKNOWN);
+        let name = match a.name.as_deref() {
+            Some(n) if !n.is_empty() => n.to_string(),
+            _ => {
+                // R auto-generates `[[1]]`, `[[2]], ... for unnamed list
+                // elements. We count only unnamed slots (named args do
+                // not consume positional indices in R's `list()`, but
+                // they do in `data.frame()`; for v1 we use a simple
+                // running counter over all args, which matches the
+                // common case and avoids surprising schema gaps).
+                positional += 1;
+                format!("[[{}]]", positional)
+            }
+        };
+        columns.push((name, ty));
+    }
+    Some(ColumnSchema { columns })
+}
+
 /// Convert a typeshed `JsonRType` to the checker's `RType`. Mirrors the
 /// inline conversion in `apply_sig` for `ReturnSpec::Concrete` - kept
 /// here in ry-checker (not ry-typeshed) so that crate stays free of any
@@ -1506,8 +1797,63 @@ fn parse_class_literal(e: &Expr) -> ClassLiteral {
 ///
 /// Datasets with an explicit `class` field (e.g. `mtcars` with
 /// `["data.frame"]`) carry the class through, interning each name into a
-/// `&'static str` so the result stays `Copy`.
+/// `&'static str` so the result stays `Copy`. A `columns` map (for
+/// data-frame datasets) is interned into a `&'static ColumnSchema` and
+/// attached via `RType::with_columns`; each column's `JsonRType` is
+/// converted recursively (without re-parsing nested `columns`, which
+/// would be a meaningless infinite recursion for a 1-level dataset
+/// schema).
 fn json_rtype_to_rtype(jt: &JsonRType) -> RType {
+    let mode = match jt.mode.as_str() {
+        "logical" => Mode::Logical,
+        "integer" => Mode::Integer,
+        "double" => Mode::Double,
+        "character" => Mode::Character,
+        "complex" => Mode::Complex,
+        "raw" => Mode::Raw,
+        "list" => Mode::List,
+        "null" => Mode::Null,
+        "function" => Mode::Function,
+        "opaque" => Mode::Opaque,
+        _ => Mode::Opaque,
+    };
+    let length = match jt.length.as_str() {
+        "0" => Length::Zero,
+        "1" => Length::One,
+        s if s.parse::<usize>().is_ok() => {
+            Length::Known(s.parse::<usize>().unwrap_or(0))
+        }
+        _ => Length::Unknown,
+    };
+    let class = if jt.class.is_empty() {
+        ClassVector::empty()
+    } else {
+        let interned: Vec<&'static str> =
+            jt.class.iter().map(|n| intern_class_name(n)).collect();
+        ClassVector::from_static_slice(&interned)
+    };
+    let base = RType::new(mode, length, jt.na).with_class(class);
+    if jt.columns.is_empty() {
+        return base;
+    }
+    // Build the column schema. We recurse via a single-level helper so
+    // a dataset's `columns.<col>.columns` (which is empty in practice)
+    // does not trigger further nesting.
+    let cols: Vec<(String, RType)> = jt
+        .columns
+        .iter()
+        .map(|(name, child)| (name.clone(), json_rtype_to_rtype_shallow(child)))
+        .collect();
+    let schema = intern_column_schema(ColumnSchema { columns: cols });
+    base.with_columns(schema)
+}
+
+/// Single-level variant of `json_rtype_to_rtype` for column entries
+/// inside a dataset schema. Identical to the parent function except it
+/// ignores any `columns` field on the child (data-frame columns are
+/// plain atomic vectors in the typeshed; nested data frames are out of
+/// scope for v1).
+fn json_rtype_to_rtype_shallow(jt: &JsonRType) -> RType {
     let mode = match jt.mode.as_str() {
         "logical" => Mode::Logical,
         "integer" => Mode::Integer,
@@ -1550,6 +1896,34 @@ mod tests {
         let mut c = Checker::new("test.R");
         c.check(&f);
         c.take_diagnostics()
+    }
+
+    /// Test-only variant of `check` that also returns the final
+    /// top-level scope so tests can assert on the inferred `RType` of a
+    /// binding (mode, length, class, columns). Mirrors what `Checker::check`
+    /// does internally, but keeps the scope around for inspection.
+    fn check_with_scope(src: &str) -> (Vec<Diagnostic>, Scope) {
+        let mut p = RParser::new().unwrap();
+        let f = p.parse("test.R", src).unwrap();
+        let mut c = Checker::new("test.R");
+        // Mirror `Checker::check`'s pass structure so user-fn return
+        // types are refined before we walk for the final scope.
+        c.collect_fns(&f.stmts);
+        for _ in 0..MAX_FIXPOINT_DEPTH {
+            let before = c.return_slots.clone();
+            let names: Vec<String> = c.fn_table.fns.keys().cloned().collect();
+            for name in names {
+                c.refine_fn_return(&name);
+            }
+            if c.return_slots.0 == before.0 {
+                break;
+            }
+        }
+        let mut scope = Scope::default();
+        for s in &f.stmts {
+            c.check_stmt(s, &mut scope);
+        }
+        (c.take_diagnostics(), scope)
     }
 
     #[test]
@@ -1791,5 +2165,178 @@ mod tests {
             "expected RY050 proving class was attached, got {:?}",
             diags
         );
+    }
+
+    #[test]
+    fn mtcars_mpg_column_infers_double() {
+        // `df$mpg` on `mtcars` must resolve to the column's type
+        // (double<32>, not opaque). We assert the inferred type of `x`
+        // directly via the test scope, and also exercise a behavioral
+        // check: `x + 1L` is well-typed (double + integer) and produces
+        // no RY040.
+        let (_, scope) = check_with_scope("df <- mtcars\nx <- df$mpg\n");
+        let x = scope.get("x").expect("x should be bound");
+        assert_eq!(
+            x.mode,
+            Mode::Double,
+            "df$mpg must infer double, got {:?}",
+            x
+        );
+        assert_eq!(x.length, Length::Known(32), "mpg has 32 rows");
+        // Behavioral check: arithmetic on the inferred double works.
+        let diags = check("df <- mtcars\nx <- df$mpg\ny <- x + 1L\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY040"),
+            "x + 1L should be valid (double + int), got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn mtcars_undefined_column_emits_ry060() {
+        // `mtcars$nonexistent` must emit RY060 (undefined-column). The
+        // message should name the offending column and list available
+        // ones so the user can fix the typo. The available-columns
+        // preview is taken from the schema in (BTreeMap-sorted) order;
+        // we assert on a column that lands in the first 5.
+        let diags = check("df <- mtcars\nbad <- df$nonexistent\n");
+        let hit = diags
+            .iter()
+            .find(|d| d.code == "RY060")
+            .expect("expected RY060 for nonexistent column");
+        assert!(
+            hit.message.contains("nonexistent"),
+            "message should name the column: {}",
+            hit.message
+        );
+        assert!(
+            hit.message.contains("cyl"),
+            "message should list an available column (cyl is in the first 5 alphabetically): {}",
+            hit.message
+        );
+        // Sanity: the message also indicates abbreviation (mtcars has
+        // 11 columns, more than the 5-column preview limit).
+        assert!(
+            hit.message.contains("..."),
+            "message should abbreviate the list: {}",
+            hit.message
+        );
+    }
+
+    #[test]
+    fn list_named_args_become_schema() {
+        // `list(a = 1L, b = "x")` builds a column schema from the named
+        // args; `l$a` resolves to integer<1> and `l$b` to character<1>.
+        let (_, scope) = check_with_scope("l <- list(a = 1L, b = \"x\")\nva <- l$a\nvb <- l$b\n");
+        let va = scope.get("va").expect("va should be bound");
+        assert_eq!(va.mode, Mode::Integer, "l$a must be integer");
+        assert_eq!(va.length, Length::One, "l$a is a scalar");
+        let vb = scope.get("vb").expect("vb should be bound");
+        assert_eq!(vb.mode, Mode::Character, "l$b must be character");
+        // And the list itself should carry the schema.
+        let l = scope.get("l").expect("l should be bound");
+        let schema = l.columns.expect("l should carry a column schema");
+        assert_eq!(schema.len(), 2, "schema should have 2 columns");
+        assert_eq!(schema.names(), vec!["a", "b"]);
+        // Accessing a missing column emits RY060.
+        let diags = check("l <- list(a = 1L)\nbad <- l$missing\n");
+        assert!(
+            diags.iter().any(|d| d.code == "RY060"),
+            "expected RY060 on missing list column, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn data_frame_constructor_attaches_class() {
+        // `data.frame(x = c(1L, 2L, 3L), y = c("a","b","c"))` must:
+        // * produce a value whose class is `["data.frame"]`
+        // * carry a column schema with `x` and `y`
+        // * coerce column lengths to the common max (3)
+        // (We use `c(1L, 2L, 3L)` rather than `1L:3L` because the `:`
+        // operator conservatively returns `Length::Unknown` for its
+        // result; `c(...)` gives us a concrete length-3 vector to test
+        // the recycling logic.)
+        let (_, scope) =
+            check_with_scope("df <- data.frame(x = c(1L, 2L, 3L), y = c(\"a\", \"b\", \"c\"))\n");
+        let df = scope.get("df").expect("df should be bound");
+        assert!(
+            df.class.contains("data.frame"),
+            "data.frame() must attach class data.frame, got class {:?}",
+            df.class
+        );
+        let schema = df.columns.expect("df should carry a column schema");
+        assert_eq!(schema.len(), 2, "schema should have 2 columns");
+        // Column `x` is integer recycled to length 3.
+        let x = schema.get("x").expect("x column should exist");
+        assert_eq!(x.mode, Mode::Integer);
+        assert_eq!(x.length, Length::Known(3), "x recycled to length 3");
+        // Column access resolves through the schema.
+        let (_, scope2) =
+            check_with_scope("df <- data.frame(x = c(1L, 2L, 3L))\nxv <- df$x\n");
+        let xv = scope2.get("xv").expect("xv should be bound");
+        assert_eq!(xv.mode, Mode::Integer);
+        assert_eq!(xv.length, Length::Known(3));
+        // `print(df)` dispatches to the typeshed's `print.data.frame`
+        // method, so no RY050 fires (proves the class is real).
+        let diags = check("df <- data.frame(x = c(1L, 2L, 3L))\nprint(df)\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY050"),
+            "print(df) should dispatch to print.data.frame, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn df_double_bracket_string_resolves_column() {
+        // `df[["col"]]` resolves via the schema just like `df$col`.
+        let (_, scope) = check_with_scope("df <- iris\nsl <- df[[\"Sepal.Length\"]]\n");
+        let sl = scope.get("sl").expect("sl should be bound");
+        assert_eq!(sl.mode, Mode::Double);
+        assert_eq!(sl.length, Length::Known(150));
+        // Non-string-literal arg falls back to opaque (no RY060).
+        let diags = check("df <- mtcars\nx <- df[[some_var]]\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY060"),
+            "non-literal [[ arg should not emit RY060, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn df_single_bracket_returns_base_type() {
+        // `df[1]` keeps the existing opaque behavior (no schema lookup,
+        // no RY060). The base type is preserved.
+        let (_, scope) = check_with_scope("df <- mtcars\nsub <- df[1]\n");
+        let sub = scope.get("sub").expect("sub should be bound");
+        assert_eq!(sub.mode, Mode::List, "df[1] preserves base mode");
+        assert!(
+            sub.class.contains("data.frame"),
+            "df[1] preserves the data.frame class"
+        );
+        // Single bracket never emits RY060 even on a known schema.
+        let diags = check("df <- mtcars\nsub <- df[\"nonexistent\"]\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY060"),
+            "single-bracket must not emit RY060, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn structure_preserves_list_column_schema() {
+        // `structure(list(a = 1L), class = "foo")` keeps the list's
+        // column schema while attaching the class.
+        let (_, scope) =
+            check_with_scope("x <- structure(list(a = 1L, b = \"y\"), class = \"foo\")\n");
+        let x = scope.get("x").expect("x should be bound");
+        assert!(x.class.contains("foo"), "class foo must be attached");
+        let schema = x.columns.expect("schema must be preserved");
+        assert_eq!(schema.names(), vec!["a", "b"]);
+        // Column access works through the new class.
+        let (_, scope2) =
+            check_with_scope("x <- structure(list(a = 1L), class = \"foo\")\nav <- x$a\n");
+        let av = scope2.get("av").expect("av should be bound");
+        assert_eq!(av.mode, Mode::Integer);
     }
 }

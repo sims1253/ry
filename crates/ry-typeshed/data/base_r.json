@@ -281,8 +281,26 @@
     }
   ],
   "datasets": {
-    "mtcars":        { "mode": "list", "length": "11", "na": false, "class": ["data.frame"], "note": "data.frame" },
-    "iris":          { "mode": "list", "length": "5",  "na": false, "class": ["data.frame"], "note": "data.frame" },
+    "mtcars":        { "mode": "list", "length": "11", "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "mpg":  { "mode": "double",   "length": "32", "na": false },
+      "cyl":  { "mode": "double",   "length": "32", "na": false },
+      "disp": { "mode": "double",   "length": "32", "na": false },
+      "hp":   { "mode": "double",   "length": "32", "na": false },
+      "drat": { "mode": "double",   "length": "32", "na": false },
+      "wt":   { "mode": "double",   "length": "32", "na": false },
+      "qsec": { "mode": "double",   "length": "32", "na": false },
+      "vs":   { "mode": "double",   "length": "32", "na": false },
+      "am":   { "mode": "double",   "length": "32", "na": false },
+      "gear": { "mode": "double",   "length": "32", "na": false },
+      "carb": { "mode": "double",   "length": "32", "na": false }
+    } },
+    "iris":          { "mode": "list", "length": "5",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "Sepal.Length": { "mode": "double",  "length": "150", "na": false },
+      "Sepal.Width":  { "mode": "double",  "length": "150", "na": false },
+      "Petal.Length": { "mode": "double",  "length": "150", "na": false },
+      "Petal.Width":  { "mode": "double",  "length": "150", "na": false },
+      "Species":      { "mode": "integer", "length": "150", "na": false, "class": ["factor"] }
+    } },
     "airquality":    { "mode": "list", "length": "6",  "na": true,  "class": ["data.frame"], "note": "data.frame" },
     "PlantGrowth":   { "mode": "list", "length": "2",  "na": false, "class": ["data.frame"], "note": "data.frame" },
     "ToothGrowth":   { "mode": "list", "length": "3",  "na": false, "class": ["data.frame"], "note": "data.frame" },

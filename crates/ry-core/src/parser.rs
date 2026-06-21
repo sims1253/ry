@@ -301,6 +301,7 @@ impl RParser {
             "call" => self.lower_call(n, src),
             "binary_operator" => self.lower_binary(n, src),
             "extract_operator" => self.lower_extract(n, src),
+            "namespace_operator" => self.lower_namespace(n, src),
             "unary_operator" => self.lower_unary(n, src),
             "subset" => self.lower_index(n, src, IndexKind::Single),
             "subset2" => self.lower_index(n, src, IndexKind::Double),
@@ -483,6 +484,40 @@ impl RParser {
             }],
             span,
         })
+    }
+
+    /// Lower a namespace-qualified name: `pkg::fn` or `pkg:::fn`.
+    ///
+    /// We drop the package prefix and lower to a plain `Expr::Ident`
+    /// named after the RHS, so the typeshed can resolve it directly.
+    /// This matches how `pkg::fn()` is typically used in modern R:
+    /// `stats::lm(x ~ y)` resolves the same way `lm(x ~ y)` does for
+    /// type-checking purposes (the namespace just selects the binding).
+    /// Both `::` (exported) and `:::` (internal/unexported) are handled
+    /// identically, since v1 doesn't track export visibility.
+    fn lower_namespace(&self, n: Node, src: &str) -> Option<Expr> {
+        let span = self.span(n, src);
+        let rhs = match n.child_by_field_name("rhs") {
+            Some(rhs) => rhs,
+            None => {
+                tracing::trace!("namespace_operator without rhs");
+                return Some(Expr::Unknown(span));
+            }
+        };
+        let raw = match text(rhs, src) {
+            Some(t) => t,
+            None => return Some(Expr::Unknown(span)),
+        };
+        // For identifier RHS the raw text is the bare name. For a string
+        // RHS (e.g. `pkg::"my func"`, used for non-syntactic names) we
+        // strip the surrounding quotes, mirroring `lower_expr`'s string
+        // handling.
+        let name = if rhs.kind() == "string" && raw.len() >= 2 {
+            raw[1..raw.len() - 1].to_string()
+        } else {
+            raw
+        };
+        Some(Expr::Ident { name, span })
     }
 
     fn lower_function_literal(&self, n: Node, src: &str) -> Option<Expr> {
@@ -698,6 +733,69 @@ mod tests {
         match f.stmts.first() {
             Some(Stmt::Expr(Expr::Unknown(_))) => {}
             other => panic!("expected Unknown for `%like%`, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_namespace_operator_double_colon() {
+        // `stats::rnorm` lowers to a bare `Expr::Ident { name: "rnorm" }`,
+        // dropping the package prefix.
+        let f = parse("stats::rnorm\n");
+        match f.stmts.first() {
+            Some(Stmt::Expr(Expr::Ident { name, .. })) => {
+                assert_eq!(name, "rnorm", "expected ident name \"rnorm\"");
+            }
+            other => panic!("expected Ident for `stats::rnorm`, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_namespace_operator_triple_colon() {
+        // `stats:::foobar` (triple colon, internal access) lowers the
+        // same way as `::` for type-checking purposes.
+        let f = parse("stats:::foobar\n");
+        match f.stmts.first() {
+            Some(Stmt::Expr(Expr::Ident { name, .. })) => {
+                assert_eq!(name, "foobar", "expected ident name \"foobar\"");
+            }
+            other => panic!(
+                "expected Ident for `stats:::foobar`, got {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    fn parses_namespace_operator_call() {
+        // `pkg::fn(args)` is parsed as a `call` whose `function` is a
+        // `namespace_operator`; we resolve it to `fn(args)` for typing.
+        let f = parse("stats::rnorm(10)\n");
+        match f.stmts.first() {
+            Some(Stmt::Expr(Expr::Call { func, args, .. })) => {
+                assert!(
+                    matches!(func.as_ref(), Expr::Ident { name, .. } if name == "rnorm"),
+                    "expected func Ident(\"rnorm\"), got {:?}",
+                    func
+                );
+                assert_eq!(args.len(), 1, "expected 1 arg, got {:?}", args);
+            }
+            other => panic!("expected Call for `stats::rnorm(10)`, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_namespace_operator_with_string_rhs() {
+        // Non-syntactic names can be reached via `pkg::"my fn"`; we
+        // strip the surrounding quotes when lowering.
+        let f = parse("base::\"my fn\"\n");
+        match f.stmts.first() {
+            Some(Stmt::Expr(Expr::Ident { name, .. })) => {
+                assert_eq!(name, "my fn", "expected ident name \"my fn\"");
+            }
+            other => panic!(
+                "expected Ident for `base::\"my fn\"`, got {:?}",
+                other
+            ),
         }
     }
 }

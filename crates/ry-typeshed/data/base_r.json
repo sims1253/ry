@@ -149,6 +149,50 @@
       "params": ["mode", "length"],
       "return": { "mode": "arg0", "length": "arg1", "na": false }
     },
+    "numeric": {
+      "params": ["length"],
+      "return": { "mode": "double", "length": "arg0", "na": false }
+    },
+    "double": {
+      "params": ["length"],
+      "return": { "mode": "double", "length": "arg0", "na": false }
+    },
+    "integer": {
+      "params": ["length"],
+      "return": { "mode": "integer", "length": "arg0", "na": false }
+    },
+    "character": {
+      "params": ["length"],
+      "return": { "mode": "character", "length": "arg0", "na": false }
+    },
+    "logical": {
+      "params": ["length"],
+      "return": { "mode": "logical", "length": "arg0", "na": false }
+    },
+    "complex": {
+      "params": ["length"],
+      "return": { "mode": "complex", "length": "arg0", "na": false }
+    },
+    "raw": {
+      "params": ["length"],
+      "return": { "mode": "raw", "length": "arg0", "na": false }
+    },
+    "matrix": {
+      "params": ["data", "nrow", "ncol"],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
+    },
+    "array": {
+      "params": ["data", "dim"],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
+    },
+    "factor": {
+      "params": ["x"],
+      "return": { "mode": "integer", "length": "arg0", "na": false }
+    },
+    "ordered": {
+      "params": ["x"],
+      "return": { "mode": "integer", "length": "arg0", "na": false }
+    },
     "seq_len": {
       "params": ["n"],
       "return": { "mode": "integer", "length": "arg0", "na": false }

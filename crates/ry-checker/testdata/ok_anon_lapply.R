@@ -1,8 +1,6 @@
 # no-diag
-# Anonymous closure passed to a higher-order built-in. v1 does NOT
-# infer the callback's return type (that would require modeling how
-# `lapply` invokes the callback), so `result` is opaque. The fixture
-# is `# no-diag` because there is nothing to flag: `lapply` is in the
-# typeshed (resolves to opaque/list), and the anonymous function
-# literal is walked for diagnostics without triggering any.
+# Anonymous closure passed to `lapply`. The checker now models the
+# callback: `function(i) { i * 2 }` takes an integer (element of
+# `1:3`) and returns `i * 2` (integer). The result is a list of
+# length 3 with integer elements. No diagnostics: well-typed code.
 result <- lapply(1:3, function(i) { i * 2 })

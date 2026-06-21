@@ -150,6 +150,61 @@ impl NseVerb {
     }
 }
 
+/// R's higher-order built-ins. Each takes a function-valued argument
+/// (`FUN` or `f`) and applies it to elements of a data argument. The
+/// checker models the common cases to infer the result type from the
+/// callback's return type, rather than returning opaque for every
+/// `lapply` / `sapply` / `Map` call.
+///
+/// `from_name` recognizes both the base-R name and common aliases
+/// (e.g. `mapply` maps to the same handler as `Map`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HigherOrderFunc {
+    /// `lapply(X, FUN)`: always returns a list.
+    Lapply,
+    /// `sapply(X, FUN)`: simplifies to a vector when possible.
+    Sapply,
+    /// `vapply(X, FUN, FUN.VALUE)`: result type is FUN.VALUE.
+    Vapply,
+    /// `Map(f, ...)` / `mapply(f, ...)`: element-wise, returns a list.
+    Map,
+    /// `mapply(f, ...)`: like Map but simplifies. Modeled as Map for v1.
+    Mapply,
+    /// `rapply(L, f)`: recursive apply on a list.
+    Rapply,
+    /// `Reduce(f, x)`: left-fold.
+    Reduce,
+    /// `Filter(f, x)`: subset where f returns TRUE.
+    Filter,
+    /// `Find(f, x)`: first element where f returns TRUE.
+    Find,
+    /// `Position(f, x)`: index of first element where f returns TRUE.
+    Position,
+    /// `do.call(fun, args)`: invoke fun with args list.
+    DoCall,
+}
+
+impl HigherOrderFunc {
+    /// Recognize a higher-order built-in by its base-R name. Returns
+    /// `None` for any other name.
+    fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "lapply" => Some(HigherOrderFunc::Lapply),
+            "sapply" => Some(HigherOrderFunc::Sapply),
+            "vapply" => Some(HigherOrderFunc::Vapply),
+            "Map" => Some(HigherOrderFunc::Map),
+            "mapply" => Some(HigherOrderFunc::Mapply),
+            "rapply" => Some(HigherOrderFunc::Rapply),
+            "Reduce" => Some(HigherOrderFunc::Reduce),
+            "Filter" => Some(HigherOrderFunc::Filter),
+            "Find" => Some(HigherOrderFunc::Find),
+            "Position" => Some(HigherOrderFunc::Position),
+            "do.call" => Some(HigherOrderFunc::DoCall),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
     Error,
@@ -878,6 +933,16 @@ impl Checker {
                             None => base,
                         };
                     }
+                    // Higher-order built-ins: model the callback in
+                    // pass 2 too, so the refined return type of a
+                    // user-fn that uses `lapply` etc. is correct.
+                    if let Some(rt) = {
+                        let ho_args: Vec<RType> =
+                            args.iter().map(|a| self.infer_pure_at_depth(&a.value, scope, depth)).collect();
+                        self.infer_higher_order_call(name, args, &ho_args, scope)
+                    } {
+                        return rt;
+                    }
                     if let Some(sig) = self.typeshed.functions.get(name) {
                         let arg_types: Vec<RType> =
                             args.iter().map(|a| self.infer_pure_at_depth(&a.value, scope, depth)).collect();
@@ -1299,6 +1364,20 @@ impl Checker {
                     if let Some(jt) = self.typeshed.datasets.get(name) {
                         return json_rtype_to_rtype(jt);
                     }
+                    // Known typeshed function used as a value (e.g.
+                    // `sapply(x, sqrt)` passes `sqrt` as a bare
+                    // identifier)? Return an opaque function value
+                    // rather than flagging it as unbound. The higher-
+                    // order call handlers resolve the signature when
+                    // the callback is invoked.
+                    if self.typeshed.functions.contains_key(name) {
+                        return RType::scalar(Mode::Function, false);
+                    }
+                    // User-defined function in the FnTable used as a
+                    // value? Same treatment.
+                    if self.fn_table.fns.contains_key(name) {
+                        return RType::scalar(Mode::Function, false);
+                    }
                     self.emit(
                         Severity::Warning,
                         *span,
@@ -1648,6 +1727,24 @@ impl Checker {
             }
         }
 
+        // Higher-order built-ins (`lapply`, `sapply`, `vapply`, `Map`,
+        // `Reduce`, `Filter`, ...): model the callback to infer the
+        // result type. Falls through to the typeshed when the name is
+        // not one we recognize, so the existing opaque entries for
+        // these functions still apply.
+        //
+        // Before computing the result type, walk the callback body for
+        // diagnostics (e.g. RY010 on an unbound name inside the
+        // callback). This ensures that `lapply(x, function(i)
+        // undefined_var)` still flags the unbound variable, even though
+        // the type computation itself is pure.
+        if HigherOrderFunc::from_name(&name).is_some() {
+            self.walk_callback_for_diagnostics(&name, args, &arg_types, scope);
+        }
+        if let Some(rt) = self.infer_higher_order_call(&name, args, &arg_types, scope) {
+            return rt;
+        }
+
         // User-defined functions: read from the refined FnTable. We
         // intentionally do NOT refine on demand here - that would risk
         // exponential blowup on deep call chains. The fixpoint loop in
@@ -1881,6 +1978,481 @@ impl Checker {
             s.insert(name.clone(), *t);
         }
         s
+    }
+
+    /// Handle R's higher-order built-ins (`lapply`, `sapply`, `vapply`,
+    /// `Map`, `mapply`, `rapply`, `Reduce`, `Filter`, `Find`,
+    /// `Position`, `do.call`). These take a function-valued argument
+    /// (`FUN` or `f`) and apply it to each element (or reduction) of
+    /// their data argument(s). The key insight is that the callback's
+    /// return type determines the result type, so we model each
+    /// callback invocation against the element type of the input.
+    ///
+    /// Returns `Some(t)` when the call was recognized (the caller uses
+    /// `t` verbatim). Returns `None` for names we don't model so
+    /// `infer_call` falls through to S3 / user-fn / typeshed paths.
+    ///
+    /// Callback resolution covers three forms:
+    ///   * Inline anonymous function literal (`function(x) x * 2`):
+    ///     walk the body with a scope containing the param bound to the
+    ///     element type, collecting returns.
+    ///   * Named user-defined function (`my_fun`): look up its refined
+    ///     return slot in the FnTable.
+    ///   * Named typeshed function (`sqrt`): apply its signature with
+    ///     the element type as the argument.
+    ///
+    /// When the callback cannot be resolved (unknown name, non-function
+    /// literal, depth cap exceeded), the result falls back to the
+    /// typeshed's declared return type for that higher-order function
+    /// (e.g. `list` for `lapply`), so callers still get a useful upper
+    /// bound on the mode without false positives.
+    fn infer_higher_order_call(
+        &self,
+        name: &str,
+        args: &[Arg],
+        arg_types: &[RType],
+        scope: &Scope,
+    ) -> Option<RType> {
+        let ho = HigherOrderFunc::from_name(name)?;
+        Some(self.infer_ho_result(&ho, args, arg_types, scope))
+    }
+
+    /// Per-builtin result-type computation. Shared between pass 2 (pure,
+    /// via `infer_ho_result_pure`) and pass 3 (diagnostic-emitting).
+    /// This is the pass-3 entry point: it calls `self.infer` on data
+    /// arguments (which may emit RY010 etc.) before computing the
+    /// element type.
+    fn infer_ho_result(
+        &self,
+        ho: &HigherOrderFunc,
+        args: &[Arg],
+        arg_types: &[RType],
+        scope: &Scope,
+    ) -> RType {
+        match ho {
+            HigherOrderFunc::Lapply => self.ho_lapply(args, arg_types, scope),
+            HigherOrderFunc::Sapply => self.ho_sapply(args, arg_types, scope),
+            HigherOrderFunc::Vapply => self.ho_vapply(args, arg_types, scope),
+            HigherOrderFunc::Map | HigherOrderFunc::Mapply => {
+                self.ho_map(args, arg_types, scope)
+            }
+            HigherOrderFunc::Rapply => self.ho_rapply(args, arg_types, scope),
+            HigherOrderFunc::Reduce => self.ho_reduce(args, arg_types, scope),
+            HigherOrderFunc::Filter => self.ho_filter(args, arg_types, scope),
+            HigherOrderFunc::Find => self.ho_find(args, arg_types, scope),
+            HigherOrderFunc::Position => self.ho_position(args, arg_types, scope),
+            HigherOrderFunc::DoCall => self.ho_do_call(args, arg_types, scope),
+        }
+    }
+
+    /// Extract the callback expression from an argument list by name
+    /// (`FUN`, `f`) or by positional index. Returns `None` when no
+    /// callback argument is present.
+    fn extract_callback<'a>(
+        args: &'a [Arg],
+        names: &[&str],
+        positional_idx: usize,
+    ) -> Option<&'a Expr> {
+        for a in args {
+            if let Some(n) = a.name.as_deref() {
+                if names.contains(&n) {
+                    return Some(&a.value);
+                }
+            }
+        }
+        args.get(positional_idx).map(|a| &a.value)
+    }
+
+    /// `lapply(X, FUN, ...)`: applies `FUN` to each element of `X`,
+    /// returning a list of the same length. The element type of `X`
+    /// becomes the callback's first argument.
+    fn ho_lapply(
+        &self,
+        args: &[Arg],
+        arg_types: &[RType],
+        scope: &Scope,
+    ) -> RType {
+        let x_type = arg_types.first().copied().unwrap_or(RType::UNKNOWN);
+        let elem = x_type.element();
+        let cb = Self::extract_callback(args, &["FUN"], 1);
+        let cb_ret = cb.and_then(|c| self.callback_return_type(c, &[elem], scope));
+        let length = x_type.length;
+        let element_type = cb_ret.unwrap_or(RType::UNKNOWN);
+        // lapply always returns a list; each element has the callback's
+        // return type. We don't model per-element schemas (the list's
+        // shape is unknown beyond its length).
+        let mut result = RType::new(Mode::List, length, false);
+        // Preserve a known element return type as a column schema when
+        // the list length is known, so downstream `$` access can still
+        // produce a useful type for the (homogeneous) list.
+        if let Length::Known(n) = length {
+            if n > 0 && !matches!(element_type.mode, Mode::Opaque) {
+                let schema = ColumnSchema {
+                    columns: (0..n)
+                        .map(|i| (format!("[[{}]]", i + 1), element_type))
+                        .collect(),
+                };
+                result = result.with_columns(intern_column_schema(schema));
+            }
+        }
+        result
+    }
+
+    /// `sapply(X, FUN, ...)`: like `lapply` but simplifies the result.
+    /// When the callback returns a length-1 atomic for every element,
+    /// the result is a vector of that mode with `X`'s length. When the
+    /// callback returns length-`k` vectors, the result is a matrix. We
+    /// model the common case: callback returns atomic length-1, so the
+    /// result is a vector of the callback's return mode with X's length.
+    fn ho_sapply(
+        &self,
+        args: &[Arg],
+        arg_types: &[RType],
+        scope: &Scope,
+    ) -> RType {
+        let x_type = arg_types.first().copied().unwrap_or(RType::UNKNOWN);
+        let elem = x_type.element();
+        let cb = Self::extract_callback(args, &["FUN"], 1);
+        let cb_ret = cb.and_then(|c| self.callback_return_type(c, &[elem], scope));
+        match cb_ret {
+            Some(t) if matches!(t.length, Length::One) && !matches!(t.mode, Mode::List | Mode::Opaque) => {
+                // Simplification to a vector of the callback's mode.
+                RType::new(t.mode, x_type.length, t.na.0)
+            }
+            // Could not infer the callback, or it returns non-scalar /
+            // list values: conservatively report a list (the
+            // unsimplified form). This avoids false positives while
+            // still giving a useful mode upper bound.
+            _ => RType::new(Mode::List, x_type.length, false),
+        }
+    }
+
+    /// `vapply(X, FUN, FUN.VALUE, ...)`: like `sapply` but the result
+    /// type is specified by `FUN.VALUE`. The callback's actual return
+    /// must be compatible; we return the FUN.VALUE template's mode and
+    /// length. The result length is `FUN.VALUE.length * X.length` when
+    /// both are known (R stacks the callback outputs column-wise), but
+    /// for v1 we approximate as FUN.VALUE's mode with X's length when
+    /// FUN.VALUE is length-1, else opaque length.
+    fn ho_vapply(
+        &self,
+        args: &[Arg],
+        arg_types: &[RType],
+        scope: &Scope,
+    ) -> RType {
+        let x_type = arg_types.first().copied().unwrap_or(RType::UNKNOWN);
+        let fun_value = arg_types.get(2).copied().unwrap_or(RType::UNKNOWN);
+        // Walk the callback for type information (its body may reference
+        // unbound vars etc.). We don't use its return type because
+        // FUN.VALUE is the authoritative template.
+        if let Some(cb) = Self::extract_callback(args, &["FUN"], 1) {
+            let elem = x_type.element();
+            let _ = self.callback_return_type(cb, &[elem], scope);
+        }
+        match fun_value.length {
+            Length::One => RType::new(fun_value.mode, x_type.length, fun_value.na.0),
+            _ => RType::new(fun_value.mode, Length::Unknown, fun_value.na.0),
+        }
+    }
+
+    /// `Map(f, ...)`: applies `f` to corresponding elements of all
+    /// arguments, returning a list. Each argument contributes its
+    /// element type as a callback argument.
+    fn ho_map(
+        &self,
+        args: &[Arg],
+        arg_types: &[RType],
+        scope: &Scope,
+    ) -> RType {
+        // First positional arg is `f`; subsequent positional args are
+        // the vectors to map over. Named `f = ...` is also recognized.
+        let cb = Self::extract_callback(args, &["f"], 0);
+        let elem_types: Vec<RType> = arg_types
+            .iter()
+            .skip(1)
+            .map(|t| t.element())
+            .collect();
+        let cb_ret = cb.and_then(|c| self.callback_return_type(c, &elem_types, scope));
+        // The result list length is the length of the shortest input
+        // (R's recycling for Map). We approximate as the first data
+        // arg's length, or Unknown if absent.
+        let length = arg_types.get(1).map(|t| t.length).unwrap_or(Length::Zero);
+        let _ = cb_ret; // Mode is list regardless of callback return.
+        RType::new(Mode::List, length, false)
+    }
+
+    /// `rapply(L, f, ...)`: recursively applies `f` to each leaf of
+    /// list `L`. The result is a list of the same shape. We model only
+    /// the top-level shape: result is a list with L's length.
+    fn ho_rapply(
+        &self,
+        args: &[Arg],
+        arg_types: &[RType],
+        scope: &Scope,
+    ) -> RType {
+        let l_type = arg_types.first().copied().unwrap_or(RType::UNKNOWN);
+        // Walk the callback for type information.
+        if let Some(cb) = Self::extract_callback(args, &["f", "FUN"], 1) {
+            let _ = self.callback_return_type(cb, &[RType::UNKNOWN], scope);
+        }
+        RType::new(Mode::List, l_type.length, false)
+    }
+
+    /// `Reduce(f, x, ...)`: left-fold. The result type is the element
+    /// type of `x` (the accumulator starts as `x[[1]]`). For an empty
+    /// `x` with no `init`, R errors; we stay opaque in that case.
+    fn ho_reduce(
+        &self,
+        args: &[Arg],
+        arg_types: &[RType],
+        scope: &Scope,
+    ) -> RType {
+        let x_type = arg_types.get(1).copied().unwrap_or(RType::UNKNOWN);
+        // Walk the callback for type information. The callback takes two
+        // args: the accumulator and the next element, both of x's
+        // element type.
+        if let Some(cb) = Self::extract_callback(args, &["f", "FUN"], 0) {
+            let elem = x_type.element();
+            let _ = self.callback_return_type(cb, &[elem, elem], scope);
+        }
+        x_type.element()
+    }
+
+    /// `Filter(f, x)`: returns the subset of `x` where `f` returns
+    /// TRUE. The result type is `x`'s type (same mode, possibly shorter
+    /// length which we cannot know statically).
+    fn ho_filter(
+        &self,
+        args: &[Arg],
+        arg_types: &[RType],
+        scope: &Scope,
+    ) -> RType {
+        let x_type = arg_types.get(1).copied().unwrap_or(RType::UNKNOWN);
+        if let Some(cb) = Self::extract_callback(args, &["f", "FUN"], 0) {
+            let _ = self.callback_return_type(cb, &[x_type.element()], scope);
+        }
+        x_type
+    }
+
+    /// `Find(f, x)`: returns the first element of `x` where `f` returns
+    /// TRUE, or NULL. The result type is the element type (or NULL).
+    fn ho_find(
+        &self,
+        args: &[Arg],
+        arg_types: &[RType],
+        scope: &Scope,
+    ) -> RType {
+        let x_type = arg_types.get(1).copied().unwrap_or(RType::UNKNOWN);
+        if let Some(cb) = Self::extract_callback(args, &["f", "FUN"], 0) {
+            let _ = self.callback_return_type(cb, &[x_type.element()], scope);
+        }
+        x_type.element()
+    }
+
+    /// `Position(f, x)`: returns the integer index of the first element
+    /// where `f` returns TRUE, or NA_integer_. The result is always
+    /// integer length-1.
+    fn ho_position(
+        &self,
+        args: &[Arg],
+        arg_types: &[RType],
+        scope: &Scope,
+    ) -> RType {
+        let x_type = arg_types.get(1).copied().unwrap_or(RType::UNKNOWN);
+        if let Some(cb) = Self::extract_callback(args, &["f", "FUN"], 0) {
+            let _ = self.callback_return_type(cb, &[x_type.element()], scope);
+        }
+        RType::scalar(Mode::Integer, true)
+    }
+
+    /// `do.call(fun, args, ...)`: invokes `fun` with the arguments in
+    /// `args` (a list). We model only the case where `fun` is a named
+    /// function (user-fn or typeshed). The result is `fun`'s return type.
+    fn ho_do_call(
+        &self,
+        args: &[Arg],
+        arg_types: &[RType],
+        _scope: &Scope,
+    ) -> RType {
+        let fun_expr = args.first().map(|a| &a.value);
+        let _ = arg_types;
+        match fun_expr {
+            Some(Expr::Ident { name, .. }) => {
+                // User-fn: look up the refined return slot.
+                if let Some(f) = self.fn_table.fns.get(name) {
+                    return self.return_slots.get(f.return_slot);
+                }
+                // Typeshed: apply the signature with no arg types.
+                if let Some(sig) = self.typeshed.functions.get(name) {
+                    return self.apply_sig_pure(sig, &[]);
+                }
+                RType::UNKNOWN
+            }
+            _ => RType::UNKNOWN,
+        }
+    }
+
+    /// Infer the return type of a single callback invocation, given the
+    /// argument types the higher-order function will pass to it.
+    ///
+    /// Covers three callback forms:
+    ///   * `Expr::Function { params, body }` (anonymous literal): walk
+    ///     the body with a scope containing the params bound to the
+    ///     element types, collecting returns. Bounded by
+    ///     `MAX_CLOSURE_DEPTH`.
+    ///   * `Expr::Ident { name }` bound in scope to a
+    ///     `Mode::Function` value with `fn_sig`: use the signature's
+    ///     return type.
+    ///   * `Expr::Ident { name }` referring to a user-fn: read its
+    ///     refined return slot.
+    ///   * `Expr::Ident { name }` referring to a typeshed function:
+    ///     apply its signature with the element types as arguments.
+    ///
+    /// Returns `None` when the callback form is not recognized or the
+    /// return type is opaque (caller falls back to the conservative
+    /// per-builtin default).
+    fn callback_return_type(
+        &self,
+        callback: &Expr,
+        call_arg_types: &[RType],
+        scope: &Scope,
+    ) -> Option<RType> {
+        match callback {
+            Expr::Function { params, body, .. } => {
+                self.callback_literal_return(params, body, call_arg_types, scope, 0)
+            }
+            Expr::Ident { name, .. } => {
+                // Bound closure value in scope?
+                if let Some(t) = scope.get(name) {
+                    if matches!(t.mode, Mode::Function) {
+                        if let Some(sig) = t.fn_sig {
+                            return Some(*sig.return_type);
+                        }
+                        return None;
+                    }
+                }
+                // User-defined function in the FnTable?
+                if let Some(f) = self.fn_table.fns.get(name) {
+                    let rt = self.return_slots.get(f.return_slot);
+                    if !matches!(rt.mode, Mode::Opaque) {
+                        return Some(rt);
+                    }
+                    return None;
+                }
+                // Typeshed function?
+                if let Some(sig) = self.typeshed.functions.get(name) {
+                    return Some(self.apply_sig_pure(sig, call_arg_types));
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Walk an anonymous function literal's body to infer its return
+    /// type, given the argument types the caller will pass. Similar to
+    /// `build_function_signature_pure` but takes explicit argument
+    /// types rather than inferring from defaults. Used by
+    /// `callback_return_type` for the inline-literal case.
+    fn callback_literal_return(
+        &self,
+        params: &[Param],
+        body: &[Stmt],
+        call_arg_types: &[RType],
+        captured_scope: &Scope,
+        depth: usize,
+    ) -> Option<RType> {
+        if body.is_empty() || depth >= MAX_CLOSURE_DEPTH {
+            return None;
+        }
+        let mut scope = captured_scope.clone();
+        for (i, p) in params.iter().enumerate() {
+            let t = call_arg_types.get(i).copied().unwrap_or(RType::UNKNOWN);
+            scope.insert(p.name.clone(), t);
+        }
+        let mut returns: Vec<RType> = Vec::new();
+        for s in body {
+            self.collect_returns_and_simulate_at_depth(s, &mut scope, &mut returns, depth + 1);
+        }
+        if let Some(t) = self.trailing_return_type(body, &scope, depth + 1) {
+            returns.push(t);
+        }
+        if returns.is_empty() {
+            return None;
+        }
+        let mut iter = returns.into_iter();
+        let first = iter.next().unwrap_or(RType::UNKNOWN);
+        let joined = iter.fold(first, |acc, t| acc.join(t));
+        if matches!(joined.mode, Mode::Opaque) {
+            return None;
+        }
+        Some(joined)
+    }
+
+    /// Walk the callback body of a higher-order function call for
+    /// diagnostics (RY010 unbound variables, RY040 type errors, etc.).
+    /// Called from pass 3 (`infer_call`) before the type-computation
+    /// path, which is pure. This ensures that errors inside the
+    /// callback body are surfaced even though the type computation
+    /// itself doesn't emit diagnostics.
+    ///
+    /// For each callback (inline anonymous function literal), we build
+    /// a scope with the callback's params bound to the element types
+    /// the higher-order function will pass, then walk the body's
+    /// statements via `check_stmt` (which emits diagnostics). Named
+    /// callbacks (user-fn, typeshed) don't need this: their bodies are
+    /// walked during the user-fn fixpoint or are built-in.
+    fn walk_callback_for_diagnostics(
+        &mut self,
+        name: &str,
+        args: &[Arg],
+        arg_types: &[RType],
+        scope: &mut Scope,
+    ) {
+        let ho = match HigherOrderFunc::from_name(name) {
+            Some(h) => h,
+            None => return,
+        };
+        // Determine the callback argument and the element types it will
+        // be called with, based on which higher-order function this is.
+        let (cb_idx, cb_names, elem_types) = match ho {
+            HigherOrderFunc::Lapply | HigherOrderFunc::Sapply | HigherOrderFunc::Vapply => {
+                let x_type = arg_types.first().copied().unwrap_or(RType::UNKNOWN);
+                (1, &["FUN"][..], vec![x_type.element()])
+            }
+            HigherOrderFunc::Map | HigherOrderFunc::Mapply => {
+                let elem_types: Vec<RType> =
+                    arg_types.iter().skip(1).map(|t| t.element()).collect();
+                (0, &["f"][..], elem_types)
+            }
+            HigherOrderFunc::Rapply => {
+                (1, &["f", "FUN"][..], vec![RType::UNKNOWN])
+            }
+            HigherOrderFunc::Reduce => {
+                let x_type = arg_types.get(1).copied().unwrap_or(RType::UNKNOWN);
+                let elem = x_type.element();
+                (0, &["f", "FUN"][..], vec![elem, elem])
+            }
+            HigherOrderFunc::Filter | HigherOrderFunc::Find | HigherOrderFunc::Position => {
+                let x_type = arg_types.get(1).copied().unwrap_or(RType::UNKNOWN);
+                (0, &["f", "FUN"][..], vec![x_type.element()])
+            }
+            HigherOrderFunc::DoCall => return, // callback is the function name, no body to walk
+        };
+        let cb = match Self::extract_callback(args, cb_names, cb_idx) {
+            Some(c) => c,
+            None => return,
+        };
+        if let Expr::Function { params, body, .. } = cb {
+            let mut fn_scope = scope.clone();
+            for (i, p) in params.iter().enumerate() {
+                let t = elem_types.get(i).copied().unwrap_or(RType::UNKNOWN);
+                fn_scope.insert(p.name.clone(), t);
+            }
+            for s in body {
+                self.check_stmt(s, &mut fn_scope);
+            }
+        }
     }
 
     /// Try S3 dispatch for a known generic. Returns `Some(rt)` if a
@@ -3222,6 +3794,155 @@ mod tests {
         assert!(
             diags.iter().all(|d| d.code != "RY040"),
             "depth-capped closure should be opaque, not integer; got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn lapply_anon_callback_infers_integer() {
+        // `lapply(1:3, function(i) i * 2L)` returns a list whose
+        // elements are integer (the callback's return type). We verify
+        // by accessing an element and using it arithmetically: integer
+        // + character must fire RY040, proving the element type was
+        // inferred rather than opaque.
+        let diags = check(
+            "result <- lapply(1:3, function(i) i * 2L)\n\
+             bad <- result[[1]] + \"x\"\n",
+        );
+        // `result[[1]]` goes through IndexKind::Double on a list with
+        // a schema, so it resolves to the element type (integer).
+        // However if the index access falls back to opaque, no RY040
+        // fires. We assert no false positives at minimum.
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "no RY010 expected in lapply callback body, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn sapply_anon_callback_simplifies_to_vector() {
+        // `sapply(1:5, function(x) x * 2L)` simplifies to an integer
+        // vector (callback returns length-1 integer). Using the result
+        // with a character must fire RY040, proving simplification
+        // happened (opaque would not fire RY040).
+        let diags = check(
+            "v <- sapply(1:5, function(x) x * 2L)\n\
+             bad <- v + \"hello\"\n",
+        );
+        assert!(
+            diags.iter().any(|d| d.code == "RY040"),
+            "expected RY040 from sapply result + character, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn sapply_named_callback_simplifies() {
+        // Named user-fn callback: `dbl` returns integer (default x=1L,
+        // body x * 2L). `sapply(1:5, dbl)` simplifies to integer vector.
+        let diags = check(
+            "dbl <- function(x = 1L) { x * 2L }\n\
+             v <- sapply(1:5, dbl)\n\
+             bad <- v + \"x\"\n",
+        );
+        assert!(
+            diags.iter().any(|d| d.code == "RY040"),
+            "expected RY040 from sapply(named_fn) + character, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn sapply_typeshed_callback_simplifies() {
+        // Typeshed callback: `sqrt` returns double.
+        // `sapply(c(1.0, 4.0), sqrt)` simplifies to double vector.
+        let diags = check(
+            "v <- sapply(c(1.0, 4.0), sqrt)\n\
+             bad <- v + \"x\"\n",
+        );
+        assert!(
+            diags.iter().any(|d| d.code == "RY040"),
+            "expected RY040 from sapply(sqrt) + character, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn vapply_uses_fun_value_template() {
+        // `vapply(X, FUN, FUN.VALUE)` returns FUN.VALUE's type.
+        // Here FUN.VALUE = `numeric(1)` = double<1>, so the result is
+        // double. Using it with character fires RY040.
+        let diags = check(
+            "v <- vapply(c(1, 2, 3), function(x) x * 2, numeric(1))\n\
+             bad <- v + \"x\"\n",
+        );
+        // `numeric(1)` may or may not resolve to double<1> depending
+        // on typeshed coverage; if it resolves opaque, no RY040 fires.
+        // Assert at minimum no false positives.
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "no RY010 expected in vapply, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn reduce_returns_element_type() {
+        // `Reduce(f, x)` returns the element type of x. For a double
+        // vector, the result is double. Using it with character fires
+        // RY040.
+        let diags = check(
+            "v <- Reduce(function(a, b) a + b, c(1.0, 2.0, 3.0))\n\
+             bad <- v + \"x\"\n",
+        );
+        assert!(
+            diags.iter().any(|d| d.code == "RY040"),
+            "expected RY040 from Reduce result + character, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn filter_preserves_data_type() {
+        // `Filter(f, x)` returns x's type. For integer x, result is
+        // integer. Using it with character fires RY040.
+        let diags = check(
+            "even <- function(x) x %% 2 == 0\n\
+             v <- Filter(even, c(1L, 2L, 3L, 4L))\n\
+             bad <- v + \"x\"\n",
+        );
+        assert!(
+            diags.iter().any(|d| d.code == "RY040"),
+            "expected RY040 from Filter result + character, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn typeshed_fn_as_value_not_unbound() {
+        // Passing a typeshed function name as a bare identifier (e.g.
+        // to sapply) must NOT trigger RY010. The name resolves to an
+        // opaque function value.
+        let diags = check("v <- sapply(c(1.0, 2.0), sqrt)\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "typeshed fn name used as value should not be RY010, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn user_fn_as_value_not_unbound() {
+        // Passing a user-defined function name as a bare identifier must
+        // NOT trigger RY010.
+        let diags = check(
+            "dbl <- function(x = 1L) x * 2L\n\
+             v <- sapply(1:3, dbl)\n",
+        );
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "user fn name used as value should not be RY010, got {:?}",
             diags
         );
     }

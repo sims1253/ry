@@ -431,7 +431,18 @@ fn find_def_spans_in_stmt(stmt: &Stmt, name: &str, out: &mut Vec<Span>) {
                 }
             }
         }
-        Stmt::For { body, .. } | Stmt::While { body, .. } => {
+        Stmt::For { name: loop_var, body, span, .. } => {
+            // The loop variable is a real binding in R (the checker
+            // binds it at check_stmt). Record its definition so that
+            // go-to-def on a reference to the loop variable works.
+            if loop_var == name {
+                out.push(*span);
+            }
+            for s in body {
+                find_def_spans_in_stmt(s, name, out);
+            }
+        }
+        Stmt::While { body, .. } => {
             for s in body {
                 find_def_spans_in_stmt(s, name, out);
             }

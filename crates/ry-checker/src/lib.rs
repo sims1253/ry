@@ -902,6 +902,14 @@ impl Checker {
                 }
             }
             Expr::Call { func, args, .. } => {
+                // IIFE in pass 2: (function() 1L)()
+                if let Expr::Function { params, body, .. } = func.as_ref() {
+                    let fn_val = self.function_value_from_literal(params, body, scope, depth);
+                    if let Some(sig) = fn_val.fn_sig {
+                        return *sig.return_type;
+                    }
+                    return RType::UNKNOWN;
+                }
                 if let Expr::Ident { name, .. } = func.as_ref() {
                     // Indirect call through a closure value: if the name
                     // is bound in scope to a `Function`-typed value with
@@ -1814,6 +1822,20 @@ impl Checker {
     }
 
     fn infer_call(&mut self, func: &Expr, args: &[Arg], scope: &mut Scope, span: Span) -> RType {
+        // Handle calls to function literals (IIFEs):
+        // `(function() 1L)()`. Infer the function value and, if it has
+        // an fn_sig, return the signature's return type.
+        if let Expr::Function { params, body, .. } = func {
+            let fn_val = self.function_value_from_literal(params, body, scope, 0);
+            for a in args {
+                let _ = self.infer(&a.value, scope);
+            }
+            if let Some(sig) = fn_val.fn_sig {
+                return *sig.return_type;
+            }
+            return RType::UNKNOWN;
+        }
+
         // Only model direct calls `name(...)`. Pipelines and indirect calls
         // return opaque.
         let name = match func {

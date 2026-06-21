@@ -3794,12 +3794,14 @@ fn is_nse_symbol_fn(name: &str) -> bool {
         "from_theme" | "aes" | "aes_" | "aes_string" | "aes_q"
         // rlang NSE
         | "sym" | "ensym" | "enquo" | "enquos" | "expr" | "enexpr"
-        | "quo" | "quos" | "abort" | "warn" | "inform"
-        | "defuse" | "tidyeval_data"
-        // dplyr/tidyselect NSE  
-        | "tidyselect" | "vars" | "all_vars" | "peek_vars"
+        | "exprs" | "quo" | "quos" | "abort" | "inform"
+        | "defuse" | "tidyeval_data" | "new_formula" | "new_quosure"
+        // dplyr/tidyselect NSE
+        | "tidyselect" | "all_vars" | "peek_vars"
         // Common NSE helpers
         | "delayedAssign" | "makeActiveBinding"
+        // data.table NSE
+        | "setkey" | "setkeyv" | "setindex" | "setindexv"
     )
 }
 

@@ -1551,6 +1551,18 @@ impl Checker {
                     if self.fn_table.known_vars.contains(name) {
                         return RType::UNKNOWN;
                     }
+                    // Namespace-qualified reference (`pkg::name`),
+                    // including the bare reexport pattern
+                    // (`rlang::set_names` or `magrittr::`%>%`` in
+                    // statement position) and qualified values
+                    // (`x <- S7::class_any`). We don't model other
+                    // packages' export tables, so we treat these as
+                    // opaque cross-package references and never emit
+                    // RY010. The `contains("::")` test matches both
+                    // `::` and `:::`.
+                    if name.contains("::") {
+                        return RType::UNKNOWN;
+                    }
                     self.emit(
                         Severity::Warning,
                         *span,
@@ -2015,6 +2027,22 @@ impl Checker {
             }
         };
 
+        // For namespace-qualified calls (`pkg::fn(args)`), strip the
+        // package prefix for the typeshed / FnTable / higher-order /
+        // S3-generic lookups below, so `stats::rnorm(10)` resolves the
+        // same way `rnorm(10)` does. The special-case string-equality
+        // checks (library, switch, structure, factor, the dplyr NSE
+        // verbs, ...) keep using the full `name`, because those
+        // builtins are always invoked unqualified; a qualified call
+        // like `base::c(...)` falls through to the typeshed lookup
+        // with the stripped name. `rsplit_once("::")` handles both
+        // `::` and `:::` forms: for `pkg:::fn` it splits at the last
+        // `::`, yielding `("pkg:", "fn")`.
+        let lookup_name = name
+            .rsplit_once("::")
+            .map(|(_, n)| n.to_string())
+            .unwrap_or_else(|| name.clone());
+
         // NSE-opaque functions whose arguments are not regular values:
         // `library(foo)` and `require(foo)` take a package name as a bare
         // symbol, not an expression. Inferring their args would trigger
@@ -2088,7 +2116,12 @@ impl Checker {
         // before the FnTable / typeshed paths so a local binding
         // shadows any same-named top-level function (matching R's
         // lexical scoping).
-        if let Some(t) = scope.get(&name) {
+        //
+        // For namespace-qualified calls we look up the stripped name:
+        // `pkg::f()` resolves against a local `f` binding the same way
+        // `f()` does (the namespace just selects the binding, and we
+        // don't model per-package environments).
+        if let Some(t) = scope.get(&lookup_name) {
             if matches!(t.mode, Mode::Function) {
                 if let Some(sig) = t.fn_sig {
                     return *sig.return_type;
@@ -2130,8 +2163,11 @@ impl Checker {
         // `default` is treated as always-present in the typeshed's S3
         // method table for the common generics, so RY050 never fires
         // for them unless the user explicitly shadows them away.
-        if S3_GENERICS.contains(&name.as_str()) {
-            if let Some(rt) = self.try_s3_dispatch(&name, &arg_types, span) {
+        //
+        // We use the prefix-stripped `lookup_name` so a qualified call
+        // like `base::print(x)` still dispatches as `print`.
+        if S3_GENERICS.contains(&lookup_name.as_str()) {
+            if let Some(rt) = self.try_s3_dispatch(&lookup_name, &arg_types, span) {
                 return rt;
             }
         }
@@ -2147,10 +2183,14 @@ impl Checker {
         // callback). This ensures that `lapply(x, function(i)
         // undefined_var)` still flags the unbound variable, even though
         // the type computation itself is pure.
-        if HigherOrderFunc::from_name(&name).is_some() {
-            self.walk_callback_for_diagnostics(&name, args, &arg_types, scope);
+        //
+        // Qualified calls (`base::lapply(...)`) resolve via the
+        // stripped `lookup_name`, matching how R treats `::` as a
+        // binding selector rather than a different function.
+        if HigherOrderFunc::from_name(&lookup_name).is_some() {
+            self.walk_callback_for_diagnostics(&lookup_name, args, &arg_types, scope);
         }
-        if let Some(rt) = self.infer_higher_order_call(&name, args, &arg_types, scope) {
+        if let Some(rt) = self.infer_higher_order_call(&lookup_name, args, &arg_types, scope) {
             return rt;
         }
 
@@ -2158,7 +2198,10 @@ impl Checker {
         // intentionally do NOT refine on demand here - that would risk
         // exponential blowup on deep call chains. The fixpoint loop in
         // `check()` already stabilized the table.
-        if let Some(f) = self.fn_table.fns.get(&name) {
+        //
+        // Qualified calls look up the stripped name; a user's `utils::
+        // helper()` resolves like `helper()`.
+        if let Some(f) = self.fn_table.fns.get(&lookup_name) {
             return self.return_slots.get(f.return_slot);
         }
 
@@ -2176,9 +2219,12 @@ impl Checker {
             return self.infer_seq(args, &arg_types, span);
         }
 
-        // Look up in the typeshed.
-        if let Some(sig) = self.typeshed.functions.get(&name).cloned() {
-            return self.apply_sig(&name, &sig, &arg_types, args, span);
+        // Look up in the typeshed. We use the stripped `lookup_name`
+        // so `stats::rnorm(10)` resolves against the typeshed's `rnorm`
+        // entry, and `base::list(...)` resolves against `list` (after
+        // the unqualified-`name` special-case above fell through).
+        if let Some(sig) = self.typeshed.functions.get(&lookup_name).cloned() {
+            return self.apply_sig(&lookup_name, &sig, &arg_types, args, span);
         }
 
         // Unknown function: opaque.
@@ -2838,8 +2884,16 @@ impl Checker {
                 self.callback_literal_return(params, body, call_arg_types, scope, 0)
             }
             Expr::Ident { name, .. } => {
+                // Strip any `pkg::` namespace prefix so a qualified
+                // callback name (`base::sqrt` passed to `sapply`)
+                // resolves against the same entries as the bare name.
+                // `rsplit_once("::")` handles both `::` and `:::`.
+                let lookup_name = name
+                    .rsplit_once("::")
+                    .map(|(_, n)| n)
+                    .unwrap_or(name.as_str());
                 // Bound closure value in scope?
-                if let Some(t) = scope.get(name) {
+                if let Some(t) = scope.get(lookup_name) {
                     if matches!(t.mode, Mode::Function) {
                         if let Some(sig) = t.fn_sig {
                             return Some(*sig.return_type);
@@ -2848,7 +2902,7 @@ impl Checker {
                     }
                 }
                 // User-defined function in the FnTable?
-                if let Some(f) = self.fn_table.fns.get(name) {
+                if let Some(f) = self.fn_table.fns.get(lookup_name) {
                     let rt = self.return_slots.get(f.return_slot);
                     if !matches!(rt.mode, Mode::Opaque) {
                         return Some(rt);
@@ -2856,7 +2910,7 @@ impl Checker {
                     return None;
                 }
                 // Typeshed function?
-                if let Some(sig) = self.typeshed.functions.get(name) {
+                if let Some(sig) = self.typeshed.functions.get(lookup_name) {
                     return Some(self.apply_sig_pure(sig, call_arg_types));
                 }
                 None
@@ -6033,6 +6087,116 @@ mod tests {
         assert!(
             diags.iter().all(|d| d.code != "RY010"),
             "top-level use-before-def should not trigger RY010 (matches cross-file semantics), got {:?}",
+            diags
+        );
+    }
+
+    // ---- Namespace-qualified identifiers (pkg::name) ----
+    //
+    // The parser preserves the full `pkg::name` spelling in `Expr::Ident`.
+    // The checker must (a) suppress RY010 for these in value and
+    // statement position (we don't model other packages' exports), and
+    // (b) still resolve `pkg::fn(args)` calls by stripping the prefix
+    // for typeshed lookups.
+
+    #[test]
+    fn namespace_qualified_value_does_not_emit_ry010() {
+        // `x <- S7::class_any` -- the RHS is a cross-package value
+        // reference. We can't resolve S7's export table, so we treat
+        // it as opaque and stay silent (no RY010).
+        let diags = check("x <- S7::class_any\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "qualified value `S7::class_any` should not emit RY010, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn namespace_qualified_statement_does_not_emit_ry010() {
+        // Reexport pattern: a bare `rlang::set_names` in statement
+        // position (common in purrr/dplyr reexport files). This is the
+        // form produced by the parser for `pkg::name` at the top level.
+        let diags = check("rlang::set_names\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "qualified statement `rlang::set_names` should not emit RY010, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn namespace_qualified_backtick_operator_does_not_emit_ry010() {
+        // `magrittr::`%>%`` -- a backticked infix operator reexported
+        // from another package. The RHS name contains `%`, which makes
+        // a good regression test that the `::` suppression isn't
+        // confused by special characters.
+        let diags = check("magrittr::`%>%`\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "qualified `magrittr::`%>%`` should not emit RY010, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn namespace_qualified_call_resolves_via_typeshed() {
+        // `stats::rnorm(10)` should resolve through the typeshed as
+        // `rnorm` (prefix stripped) and return a double vector, with no
+        // RY010. We assert both the diagnostic silence AND the inferred
+        // return type.
+        let (diags, scope) = check_with_scope("x <- stats::rnorm(10)\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "qualified call `stats::rnorm(10)` should not emit RY010, got {:?}",
+            diags
+        );
+        let t = scope
+            .get("x")
+            .expect("x should be bound after assignment");
+        assert!(
+            matches!(t.mode, Mode::Double),
+            "stats::rnorm(10) should infer as Double, got {:?}",
+            t
+        );
+    }
+
+    #[test]
+    fn namespace_qualified_triple_colon_value_does_not_emit_ry010() {
+        // `pkg:::name` (triple colon, internal access) must be treated
+        // the same way as `::` for RY010 suppression.
+        let diags = check("x <- stats:::internal_helper\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "triple-colon qualified value should not emit RY010, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn namespace_qualified_call_to_unknown_package_function_is_silent() {
+        // `tibble::tibble(...)` -- `tibble` is not in our typeshed, so
+        // the call resolves to opaque. Crucially, no RY010 should fire
+        // on the function name itself (it's a qualified cross-package
+        // reference).
+        let diags = check("x <- tibble::tibble(a = 1L)\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "qualified call to non-typeshed fn should not emit RY010, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn bare_unbound_identifier_still_emits_ry010() {
+        // Regression guard: suppressing RY010 for `pkg::name` must NOT
+        // accidentally suppress it for genuinely unbound bare names.
+        // `totally_undefined_thing` has no `::` and is not in scope,
+        // the typeshed, or the FnTable, so it must still fire RY010.
+        let diags = check("x <- totally_undefined_thing\n");
+        assert!(
+            diags.iter().any(|d| d.code == "RY010"),
+            "bare unbound identifier should still emit RY010, got {:?}",
             diags
         );
     }

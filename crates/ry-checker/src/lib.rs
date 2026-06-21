@@ -1526,24 +1526,9 @@ impl Checker {
         // double). If both operands are integer literals we can even
         // pin the length exactly.
         if matches!(op, BinOpKind::Colon) {
-            let length = match (&lt.length, &rt.length) {
-                (Length::One, Length::One) => {
-                    // The actual length is |b - a| + 1, but without
-                    // runtime values we can only say "at least 1".
-                    Length::Unknown
-                }
-                _ => Length::Unknown,
-            };
-            let mode = if matches!(lt.mode, Mode::Integer | Mode::Logical)
-                && matches!(rt.mode, Mode::Integer | Mode::Logical)
-            {
-                Mode::Integer
-            } else if matches!(lt.mode, Mode::Opaque) || matches!(rt.mode, Mode::Opaque) {
-                Mode::Opaque
-            } else {
-                Mode::Double
-            };
-            return RType::new(mode, length, false);
+            // Delegate to the type lattice's `seq` method, which models
+            // R's `:` behavior (integer for whole-number endpoints).
+            return lt.seq(rt);
         }
         let is_compare = matches!(
             op,

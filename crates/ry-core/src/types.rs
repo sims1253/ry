@@ -637,22 +637,30 @@ impl RType {
         }
     }
 
-    /// Result of the `:` sequence operator `from:to`. Always integer in
-    /// R when both operands are integer-like (incl. logical), otherwise
-    /// the result is still integer-ish: R actually returns integer for
-    /// `1:3` but double for `1.5:3.5`. We follow R here.
+    /// Result of the `:` sequence operator `from:to`. In R, `:` returns
+    /// integer whenever both endpoints are whole numbers, regardless of
+    /// whether they're typed as double or integer. Since `1:3` (with
+    /// double literals) is far more common than `1.5:3.5`, we default
+    /// to integer for all numeric (non-opaque) operands. The only case
+    /// this gets wrong is genuinely fractional endpoints, which are
+    /// rare and produce only a minor false negative (we'd report
+    /// integer where R reports double).
     pub fn seq(self, other: RType) -> RType {
-        let mode = if matches!(self.mode, Mode::Integer | Mode::Logical)
-            && matches!(other.mode, Mode::Integer | Mode::Logical)
+        let mode = if matches!(self.mode, Mode::Opaque) || matches!(other.mode, Mode::Opaque) {
+            Mode::Opaque
+        } else if matches!(self.mode, Mode::Character | Mode::List | Mode::Function | Mode::Null)
+            || matches!(other.mode, Mode::Character | Mode::List | Mode::Function | Mode::Null)
         {
-            Mode::Integer
-        } else if matches!(self.mode, Mode::Opaque) || matches!(other.mode, Mode::Opaque) {
+            // Non-numeric operands: R would coerce or error. We stay
+            // opaque to avoid false positives.
             Mode::Opaque
         } else {
-            Mode::Double
+            // All numeric (integer, double, logical) operands: R's `:`
+            // returns integer when both endpoints are whole numbers.
+            // We can't check values statically, so we default to
+            // integer (matching the overwhelmingly common case).
+            Mode::Integer
         };
-        // Length depends on the runtime values; can't be known statically
-        // except for literal operands, which the checker special-cases.
         RType::new(mode, Length::Unknown, false)
     }
 }
@@ -814,10 +822,12 @@ mod tests {
     }
 
     #[test]
-    fn seq_double_double_is_double() {
+    fn seq_double_double_is_integer() {
+        // R's `:` returns integer for whole-number double endpoints.
+        // `1:3` produces c(1L, 2L, 3L) even though 1 and 3 are doubles.
         let a = RType::scalar(Mode::Double, false);
         let b = RType::scalar(Mode::Double, false);
-        assert_eq!(a.seq(b).mode, Mode::Double);
+        assert_eq!(a.seq(b).mode, Mode::Integer);
     }
 
     #[test]

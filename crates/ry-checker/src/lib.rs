@@ -1487,6 +1487,23 @@ impl Checker {
                     }
                     return rt;
                 }
+                // `:` sequence operator: when both operands are
+                // integer-valued literals we can pin the result length
+                // exactly as `|b - a| + 1` (R always returns integer
+                // for whole-number endpoints). We need the raw AST to
+                // read the literal values, so this case lives here in
+                // the `Expr::BinOp` arm rather than in the type-only
+                // `infer_binop`. Non-literal operands fall through to
+                // `infer_binop`'s lattice-based `seq` (Unknown length).
+                if matches!(*op, BinOpKind::Colon) {
+                    if let (Some(a), Some(b)) = (extract_literal_int(lhs), extract_literal_int(rhs)) {
+                        let len = (b - a).unsigned_abs() as usize;
+                        let len = len.saturating_add(1);
+                        if len > 0 {
+                            return RType::new(Mode::Integer, Length::Known(len), false);
+                        }
+                    }
+                }
                 let lt = self.infer(lhs, scope);
                 let rt = self.infer(rhs, scope);
                 self.infer_binop(*op, lt, rt, *span)
@@ -2049,6 +2066,20 @@ impl Checker {
         // `check()` already stabilized the table.
         if let Some(f) = self.fn_table.fns.get(&name) {
             return self.return_slots.get(f.return_slot);
+        }
+
+        // Literal-arg length inference for `rep`, `seq`, `seq.int`.
+        // These have typeshed entries that conservatively return
+        // `Length::Unknown`; when the relevant arguments are literals
+        // we can pin the result length exactly. We place this AFTER the
+        // FnTable lookup so a user-defined `rep`/`seq` still wins, and
+        // BEFORE the typeshed so the precise length is preferred over
+        // the conservative `x_times` / `unknown` spec.
+        if name == "rep" {
+            return self.infer_rep(args, &arg_types, span);
+        }
+        if name == "seq" || name == "seq.int" {
+            return self.infer_seq(args, &arg_types, span);
         }
 
         // Look up in the typeshed.
@@ -2982,6 +3013,172 @@ impl Checker {
         }
     }
 
+    /// Infer the result type of `rep(x, times, each)`. R's `rep` has
+    /// two relevant parameters for length:
+    ///   * `times` (default 1): how many times to repeat the whole
+    ///     vector. Total length = `length(x) * times`.
+    ///   * `each` (default 1): how many times to repeat each element
+    ///     before concatenating. Total length = `length(x) * each`.
+    ///   * Combined: `length(x) * times * each`.
+    ///
+    /// The result mode is `x`'s mode (matching the typeshed's
+    /// `"mode": "arg0"` spec). We preserve `x`'s class and column
+    /// schema too, so `rep(factor(...), 3)` stays a factor.
+    ///
+    /// We read `times` / `each` from the raw AST (not the inferred
+    /// `RType`) because the type lattice discards the runtime value.
+    /// When the values aren't literal integers or `x`'s length is
+    /// unknown, we fall back to `Length::Unknown`. Named args win over
+    /// positional ones; if `times`/`each` is supplied but isn't a
+    /// literal, the length is Unknown (we can't know the runtime
+    /// value, unlike the "not supplied" case which defaults to 1).
+    fn infer_rep(&mut self, args: &[Arg], arg_types: &[RType], _span: Span) -> RType {
+        let x_type = arg_types.first().copied().unwrap_or(RType::UNKNOWN);
+        // Track `times` / `each` as `Option<Option<i64>>`:
+        //   * outer None      -> not supplied (use default 1)
+        //   * outer Some(None) -> supplied but non-literal (Unknown)
+        //   * outer Some(Some(n)) -> supplied literal value n
+        let mut times: Option<Option<i64>> = None;
+        let mut each: Option<Option<i64>> = None;
+        // Named args win, so collect them first.
+        for a in args.iter() {
+            match a.name.as_deref() {
+                Some("times") => times = Some(extract_literal_int(&a.value)),
+                Some("each") => each = Some(extract_literal_int(&a.value)),
+                _ => {}
+            }
+        }
+        // Positional fallback: arg1 = times, arg2 = each. Only fill
+        // slots that weren't set by name.
+        for (i, a) in args.iter().enumerate() {
+            if a.name.is_some() {
+                continue;
+            }
+            match i {
+                1 if times.is_none() => times = Some(extract_literal_int(&a.value)),
+                2 if each.is_none() => each = Some(extract_literal_int(&a.value)),
+                _ => {}
+            }
+        }
+        // Resolve `times`. Non-supplied -> 1; non-literal -> Unknown.
+        let times_n = match times {
+            None => 1usize,
+            Some(Some(n)) => n.max(0) as usize,
+            Some(None) => return RType { length: Length::Unknown, ..x_type },
+        };
+        let each_n = match each {
+            None => 1usize,
+            Some(Some(n)) => n.max(0) as usize,
+            Some(None) => return RType { length: Length::Unknown, ..x_type },
+        };
+        let length = match x_type.length {
+            Length::Zero => Length::Zero,
+            Length::One => Length::Known(times_n.saturating_mul(each_n)),
+            Length::Known(xn) => Length::Known(xn.saturating_mul(times_n).saturating_mul(each_n)),
+            Length::Unknown => Length::Unknown,
+        };
+        RType { length, ..x_type }
+    }
+
+    /// Infer the result type of `seq(from, to, by)` / `seq.int(...)`.
+    /// Two literal forms let us pin the result length exactly:
+    ///   * `seq(from, to, by)`: length = `|to - from| / |by| + 1`
+    ///     (R rounds to the nearest whole step that stays in range).
+    ///   * `seq(from, to, length.out = n)`: length = `n`.
+    ///   * `seq(from, to)` (no `by`, no `length.out`): R defaults
+    ///     `by` to +/-1, so length = `|to - from| + 1`.
+    ///
+    /// When `length.out` is present it wins (R documents this as
+    /// taking precedence over `by`). When we can't pin the length, we
+    /// still report the right mode (integer when the first arg is an
+    /// integer literal, else double) with `Length::Unknown`.
+    fn infer_seq(&mut self, args: &[Arg], arg_types: &[RType], _span: Span) -> RType {
+        // Helper: find (was_supplied, literal_value) for a named or
+        // positional argument. Named args win over positional. The
+        // `pos` index counts only unnamed args, so `seq(from=1, 10)`
+        // still matches `to` at positional index 0.
+        let find = |name: &str, pos: usize| -> (bool, Option<i64>) {
+            for a in args.iter() {
+                if a.name.as_deref() == Some(name) {
+                    return (true, extract_literal_int(&a.value));
+                }
+            }
+            let mut idx = 0;
+            for a in args.iter() {
+                if a.name.is_some() {
+                    continue;
+                }
+                if idx == pos {
+                    return (true, extract_literal_int(&a.value));
+                }
+                idx += 1;
+            }
+            (false, None)
+        };
+
+        let (_, from_val) = find("from", 0);
+        let (_, to_val) = find("to", 1);
+        let (by_supplied, by_val) = find("by", 2);
+        let (lo_supplied, lo_val) = find("length.out", 3);
+
+        // Mode: integer if `from` is an integer literal, else double
+        // (mirrors the typeshed's "double_or_int" rule). We look at
+        // the named `from = ...` first, then the first positional arg.
+        let from_expr = args
+            .iter()
+            .find(|a| a.name.as_deref() == Some("from"))
+            .or_else(|| args.iter().find(|a| a.name.is_none()))
+            .map(|a| &a.value);
+        let from_is_int_literal = from_expr
+            .map(|e| matches!(e, Expr::Integer(_, _)))
+            .unwrap_or(false);
+        // Mode: integer if `from` is an integer literal or its inferred
+        // type is integer, else double (mirrors the typeshed's
+        // "double_or_int" rule).
+        let mode = if from_is_int_literal
+            || arg_types.first().map(|t| t.mode) == Some(Mode::Integer)
+        {
+            Mode::Integer
+        } else {
+            Mode::Double
+        };
+
+        // If a length-determining arg was supplied but wasn't a
+        // literal, we can't pin the length. `length.out` and `by` both
+        // participate in the length formula, so a non-literal value
+        // for either forces Unknown. (`from`/`to` are handled below:
+        // `extract_literal_int` returns None for them, which makes the
+        // formula fall through to Unknown.)
+        if (lo_supplied && lo_val.is_none()) || (by_supplied && by_val.is_none()) {
+            return RType::new(mode, Length::Unknown, false);
+        }
+
+        // `length.out` wins over `by` when both are present.
+        let length = if let Some(n) = lo_val {
+            if n >= 0 {
+                Length::Known(n as usize)
+            } else {
+                Length::Unknown
+            }
+        } else if let (Some(f), Some(t)) = (from_val, to_val) {
+            match by_val {
+                // by == 0: R errors at runtime; model as Unknown.
+                Some(0) => Length::Unknown,
+                Some(b) => {
+                    let diff = (t - f).unsigned_abs() as usize;
+                    let step = b.unsigned_abs() as usize;
+                    Length::Known(diff / step + 1)
+                }
+                // by not supplied (the supplied-non-literal case
+                // returned above): R defaults to +/-1.
+                None => Length::Known((t - f).unsigned_abs() as usize + 1),
+            }
+        } else {
+            Length::Unknown
+        };
+        RType::new(mode, length, false)
+    }
+
     fn apply_sig(
         &mut self,
         name: &str,
@@ -3268,6 +3465,25 @@ fn span_of(e: &Expr) -> Span {
         Expr::Function { span, .. } => *span,
         Expr::If { span, .. } => *span,
         Expr::Unknown(s) => *s,
+    }
+}
+
+/// Extract an integer value from a literal expression. Returns
+/// `Some(n)` for `Expr::Integer(n, _)` and for `Expr::Double(f, _)`
+/// when `f` is a finite whole number (e.g. `2.0`). Returns `None` for
+/// non-literal expressions, NaN/Inf, or fractional doubles.
+///
+/// Used by the literal-based length inference paths (`:` colon
+/// operator, `rep`, `seq`) to compute exact result lengths when the
+/// relevant arguments are literal integers or whole-number doubles.
+/// We look at the raw AST rather than the inferred `RType` because the
+/// type lattice discards the runtime value (it only carries mode and
+/// length).
+fn extract_literal_int(e: &Expr) -> Option<i64> {
+    match e {
+        Expr::Integer(n, _) => Some(*n),
+        Expr::Double(f, _) if f.is_finite() && f.fract() == 0.0 => Some(*f as i64),
+        _ => None,
     }
 }
 
@@ -4964,8 +5180,10 @@ mod tests {
         assert!(diags.is_empty(), "got {:?}", diags);
         let z = scope.get("z").expect("z should be bound");
         assert_eq!(z.mode, Mode::Integer, "got {:?}", z);
-        // Behavioral check: `:` always yields Unknown length, but the
-        // value must be usable as an integer in arithmetic.
+        // Behavioral check: `-1:3`'s LHS is a UnaryOp (not a literal),
+        // so the literal-based length inference doesn't fire and the
+        // length stays Unknown. The value must still be usable as an
+        // integer in arithmetic.
         let diags = check("z <- -1:3\nbad <- z + 1L\n");
         assert!(
             diags.iter().all(|d| d.code != "RY040"),
@@ -5015,5 +5233,208 @@ mod tests {
         assert_eq!(a.mode, Mode::Integer, "got {:?}", a);
         assert_eq!(a.length, Length::One, "got {:?}", a);
         assert!(a.na.0, "NA flag must survive negation, got {:?}", a);
+    }
+
+    // ---- Literal-based length inference: `:`, `rep`, `seq` ----
+    //
+    // These exercise the literal-arg fast paths that pin the result
+    // length exactly instead of returning `Length::Unknown`. The
+    // common pattern: build the expression, assert the inferred
+    // `RType` has `Length::Known(n)` with the expected `n`, then do a
+    // behavioral check that downstream code sees the precise length
+    // (e.g. mixing with a character fires RY040).
+
+    #[test]
+    fn colon_literals_pin_length() {
+        // `1:10` has 10 elements; both endpoints are integer-valued
+        // literals so the literal-based path fires.
+        let (diags, scope) = check_with_scope("x <- 1:10\n");
+        assert!(diags.is_empty(), "got {:?}", diags);
+        let x = scope.get("x").expect("x should be bound");
+        assert_eq!(x.mode, Mode::Integer, "got {:?}", x);
+        assert_eq!(x.length, Length::Known(10), "got {:?}", x);
+    }
+
+    #[test]
+    fn colon_literals_descending_pin_length() {
+        // `10:1` is c(10, 9, ..., 1): length 10, mode integer.
+        let (_, scope) = check_with_scope("x <- 10:1\n");
+        let x = scope.get("x").expect("x should be bound");
+        assert_eq!(x.mode, Mode::Integer, "got {:?}", x);
+        assert_eq!(x.length, Length::Known(10), "got {:?}", x);
+    }
+
+    #[test]
+    fn colon_double_literals_pin_length() {
+        // `1.0:5.0` - whole-number doubles also trigger the literal
+        // path; R returns integer for whole-number endpoints.
+        let (_, scope) = check_with_scope("x <- 1.0:5.0\n");
+        let x = scope.get("x").expect("x should be bound");
+        assert_eq!(x.mode, Mode::Integer, "got {:?}", x);
+        assert_eq!(x.length, Length::Known(5), "got {:?}", x);
+    }
+
+    #[test]
+    fn colon_single_element_pin_length_one() {
+        // `5:5` is a length-1 integer vector c(5).
+        let (_, scope) = check_with_scope("x <- 5:5\n");
+        let x = scope.get("x").expect("x should be bound");
+        assert_eq!(x.length, Length::Known(1), "got {:?}", x);
+    }
+
+    #[test]
+    fn colon_literals_fire_ry040_on_char_mix() {
+        // `1:10` is integer<10>; adding a character is a type error
+        // (RY040). This is the headline benefit of precise length
+        // inference: the checker sees a real vector, not an opaque.
+        let diags = check("x <- 1:10\nbad <- x + \"hello\"\n");
+        assert!(
+            diags.iter().any(|d| d.code == "RY040"),
+            "expected RY040 for integer<10> + character, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn colon_non_literal_stays_unknown() {
+        // `n:10` where `n` is a variable: LHS isn't a literal, so the
+        // length stays Unknown (no false precision).
+        let (_, scope) = check_with_scope("n <- 1L\nx <- n:10\n");
+        let x = scope.get("x").expect("x should be bound");
+        assert_eq!(x.mode, Mode::Integer, "got {:?}", x);
+        assert_eq!(x.length, Length::Unknown, "got {:?}", x);
+    }
+
+    #[test]
+    fn rep_literal_times_pin_length() {
+        // `rep(1:3, 2)` = c(1,2,3,1,2,3): length 6, mode integer.
+        let (diags, scope) = check_with_scope("x <- rep(1:3, 2)\n");
+        assert!(diags.is_empty(), "got {:?}", diags);
+        let x = scope.get("x").expect("x should be bound");
+        assert_eq!(x.mode, Mode::Integer, "got {:?}", x);
+        assert_eq!(x.length, Length::Known(6), "got {:?}", x);
+    }
+
+    #[test]
+    fn rep_scalar_x_literal_times_pin_length() {
+        // `rep(0, 5)` = c(0,0,0,0,0): length 5. `0` is a double
+        // literal in R (no `L` suffix), so the mode stays double.
+        let (diags, scope) = check_with_scope("x <- rep(0, 5)\n");
+        assert!(diags.is_empty(), "got {:?}", diags);
+        let x = scope.get("x").expect("x should be bound");
+        assert_eq!(x.mode, Mode::Double, "got {:?}", x);
+        assert_eq!(x.length, Length::Known(5), "got {:?}", x);
+    }
+
+    #[test]
+    fn rep_named_times_arg_pin_length() {
+        // `rep(c(1, 2), times = 3)` = c(1,2,1,2,1,2): length 6.
+        let (_, scope) = check_with_scope("x <- rep(c(1, 2), times = 3)\n");
+        let x = scope.get("x").expect("x should be bound");
+        assert_eq!(x.length, Length::Known(6), "got {:?}", x);
+    }
+
+    #[test]
+    fn rep_each_arg_pin_length() {
+        // `rep(c(1, 2, 3), each = 2)` = c(1,1,2,2,3,3): length 6.
+        let (_, scope) = check_with_scope("x <- rep(c(1, 2, 3), each = 2)\n");
+        let x = scope.get("x").expect("x should be bound");
+        assert_eq!(x.length, Length::Known(6), "got {:?}", x);
+    }
+
+    #[test]
+    fn rep_times_and_each_pin_length() {
+        // `rep(c(1, 2), 3, each = 2)`: each element twice, then the
+        // whole thing 3 times = 2 * 2 * 3 = 12.
+        let (_, scope) = check_with_scope("x <- rep(c(1, 2), 3, each = 2)\n");
+        let x = scope.get("x").expect("x should be bound");
+        assert_eq!(x.length, Length::Known(12), "got {:?}", x);
+    }
+
+    #[test]
+    fn rep_non_literal_times_stays_unknown() {
+        // `rep(1:3, n)` where `n` is a variable: `times` isn't a
+        // literal, so the length stays Unknown.
+        let (_, scope) = check_with_scope("n <- 2\nx <- rep(1:3, n)\n");
+        let x = scope.get("x").expect("x should be bound");
+        assert_eq!(x.length, Length::Unknown, "got {:?}", x);
+    }
+
+    #[test]
+    fn rep_literal_fire_ry040_on_char_mix() {
+        // `rep(c(1, 2), 3)` is double<6>; adding a character fires RY040.
+        let diags = check("x <- rep(c(1, 2), 3)\nbad <- x + \"hello\"\n");
+        assert!(
+            diags.iter().any(|d| d.code == "RY040"),
+            "expected RY040 for double<6> + character, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn seq_literal_by_pin_length() {
+        // `seq(1, 10, 2)` = c(1, 3, 5, 7, 9): length 5.
+        let (diags, scope) = check_with_scope("x <- seq(1, 10, 2)\n");
+        assert!(diags.is_empty(), "got {:?}", diags);
+        let x = scope.get("x").expect("x should be bound");
+        assert_eq!(x.length, Length::Known(5), "got {:?}", x);
+    }
+
+    #[test]
+    fn seq_length_out_pin_length() {
+        // `seq(1, 5, length.out = 3)` = c(1, 3, 5): length 3.
+        let (diags, scope) = check_with_scope("x <- seq(1, 5, length.out = 3)\n");
+        assert!(diags.is_empty(), "got {:?}", diags);
+        let x = scope.get("x").expect("x should be bound");
+        assert_eq!(x.length, Length::Known(3), "got {:?}", x);
+    }
+
+    #[test]
+    fn seq_default_by_one_pin_length() {
+        // `seq(1, 5)` (no `by`, no `length.out`): R uses by = 1, so
+        // length = 5.
+        let (_, scope) = check_with_scope("x <- seq(1, 5)\n");
+        let x = scope.get("x").expect("x should be bound");
+        assert_eq!(x.length, Length::Known(5), "got {:?}", x);
+    }
+
+    #[test]
+    fn seq_int_literal_by_pin_length() {
+        // `seq.int(1L, 10L, 2L)` = c(1L, 3L, 5L, 7L, 9L): length 5,
+        // mode integer (all integer literals).
+        let (diags, scope) = check_with_scope("x <- seq.int(1L, 10L, 2L)\n");
+        assert!(diags.is_empty(), "got {:?}", diags);
+        let x = scope.get("x").expect("x should be bound");
+        assert_eq!(x.mode, Mode::Integer, "got {:?}", x);
+        assert_eq!(x.length, Length::Known(5), "got {:?}", x);
+    }
+
+    #[test]
+    fn seq_int_double_by_pin_length() {
+        // `seq.int(2, 10, 2.0)` uses whole-number double for `by`:
+        // extract_literal_int accepts it, length = 5.
+        let (_, scope) = check_with_scope("x <- seq.int(2, 10, 2.0)\n");
+        let x = scope.get("x").expect("x should be bound");
+        assert_eq!(x.length, Length::Known(5), "got {:?}", x);
+    }
+
+    #[test]
+    fn seq_non_literal_stays_unknown() {
+        // `seq(1, n, 1)` where `n` is a variable: `to` isn't a
+        // literal, so the length stays Unknown.
+        let (_, scope) = check_with_scope("n <- 10\nx <- seq(1, n, 1)\n");
+        let x = scope.get("x").expect("x should be bound");
+        assert_eq!(x.length, Length::Unknown, "got {:?}", x);
+    }
+
+    #[test]
+    fn seq_literal_fire_ry040_on_char_mix() {
+        // `seq(1, 10, 2)` is double<5>; adding a character fires RY040.
+        let diags = check("x <- seq(1, 10, 2)\nbad <- x + \"hello\"\n");
+        assert!(
+            diags.iter().any(|d| d.code == "RY040"),
+            "expected RY040 for double<5> + character, got {:?}",
+            diags
+        );
     }
 }

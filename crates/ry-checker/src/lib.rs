@@ -394,6 +394,12 @@ pub(crate) struct FnTable {
     /// `return_slots` storage as `fns`; lookups during dispatch consult
     /// this map for an S3 method before falling back to the generic.
     pub(crate) s3_methods: HashMap<(String, String), usize>,
+    /// Names of all top-level variable assignments across all files in
+    /// the project. Used to suppress RY010 for cross-file references:
+    /// when an identifier is not in the current scope but IS in this
+    /// set, we know it's defined in another file (or later in this
+    /// same file) and return opaque instead of flagging it as unbound.
+    pub(crate) known_vars: std::collections::HashSet<String>,
 }
 
 /// Maximum fixpoint depth before we give up and freeze as Opaque.
@@ -582,6 +588,15 @@ impl Checker {
     fn collect_fns_stmt(&mut self, s: &Stmt) {
         match s {
             Stmt::Assign { target, value, .. } => {
+                // Record every identifier-bound top-level assignment in
+                // `known_vars`. This is independent of whether the RHS
+                // is a function literal: regular variable assignments
+                // (`my_const <- 42`, `GeomRect <- ggproto(...)`) need
+                // to be resolvable from other files (and from later in
+                // this same file) without triggering RY010.
+                if let Expr::Ident { name, .. } = target {
+                    self.fn_table.known_vars.insert(name.clone());
+                }
                 if let (Expr::Ident { name, .. }, Expr::Function { params, body, .. }) =
                     (target, value)
                 {
@@ -612,7 +627,16 @@ impl Checker {
                     // table entry.
                     self.collect_nested_fns_in_body(name, body);
                 }
-                // Non-function assignments: nothing to record.
+                // Non-function assignments: nothing further to record
+                // (the name is already in `known_vars`).
+            }
+            Stmt::FunctionDef { name: Some(n), .. } => {
+                // A bare top-level `function(params) body` literal in
+                // statement position. If the parser gave it a name
+                // (rare but possible for named-form function
+                // definitions), record that name in `known_vars` so
+                // cross-file references to it don't trigger RY010.
+                self.fn_table.known_vars.insert(n.clone());
             }
             Stmt::If { then, else_, .. } => {
                 for s in then {
@@ -1514,6 +1538,18 @@ impl Checker {
                     // value? Same treatment.
                     if self.fn_table.fns.contains_key(name) {
                         return RType::scalar(Mode::Function, false);
+                    }
+                    // Cross-file variable defined in another file of
+                    // the project (or a top-level assignment later in
+                    // this same file)? Return opaque rather than
+                    // flagging it as unbound. Without this, multi-file
+                    // projects like ggplot2 (where `GeomRect <-
+                    // ggproto(...)` is a CALL, not a function literal)
+                    // generate hundreds of false-positive RY010
+                    // warnings for references to symbols defined in
+                    // sibling files.
+                    if self.fn_table.known_vars.contains(name) {
+                        return RType::UNKNOWN;
                     }
                     self.emit(
                         Severity::Warning,
@@ -5870,5 +5906,134 @@ mod tests {
         let x = scope.get("x").expect("x should be bound");
         assert_eq!(x.mode, Mode::Integer, "got {:?}", x);
         assert_eq!(x.length, Length::Zero, "got {:?}", x);
+    }
+
+    // ---- Cross-file variable resolution (known_vars) ---------------
+
+    /// Parse helper for project-mode tests, mirroring the one in
+    /// `project::tests`.
+    fn parse_file(path: &str, src: &str) -> SourceFile {
+        let mut p = RParser::new().unwrap();
+        p.parse(path, src).unwrap()
+    }
+
+    #[test]
+    fn cross_file_literal_variable_resolves() {
+        // File A defines a top-level constant `my_const <- 42`; file B
+        // references it. Without `known_vars`, B would emit RY010 on
+        // `my_const`. With `known_vars`, the reference resolves to
+        // opaque and no diagnostic fires.
+        let mut project = Project::new();
+        project.add_file("a.R".to_string(), parse_file("a.R", "my_const <- 42\n"));
+        project.add_file("b.R".to_string(), parse_file("b.R", "x <- my_const\n"));
+        let diags = project.check();
+        let b_diags: Vec<_> = diags
+            .into_iter()
+            .filter(|(p, _)| p == "b.R")
+            .flat_map(|(_, d)| d)
+            .collect();
+        assert!(
+            b_diags.iter().all(|d| d.code != "RY010"),
+            "cross-file literal variable should not trigger RY010, got {:?}",
+            b_diags
+        );
+    }
+
+    #[test]
+    fn cross_file_opaque_call_variable_resolves() {
+        // File A defines `GeomRect <- ggproto("GeomRect", Geom, ...)`.
+        // The RHS is a CALL (not a function literal), so it would not
+        // be in `fns`; previously any reference from file B would fire
+        // RY010. With `known_vars`, `GeomRect` resolves to opaque.
+        let mut project = Project::new();
+        project.add_file(
+            "geom.R".to_string(),
+            parse_file(
+                "geom.R",
+                "GeomRect <- ggproto(\"GeomRect\", Geom, draw = function() NULL)\n",
+            ),
+        );
+        project.add_file(
+            "user.R".to_string(),
+            parse_file("user.R", "x <- GeomRect\n"),
+        );
+        let diags = project.check();
+        let user_diags: Vec<_> = diags
+            .into_iter()
+            .filter(|(p, _)| p == "user.R")
+            .flat_map(|(_, d)| d)
+            .collect();
+        assert!(
+            user_diags.iter().all(|d| d.code != "RY010"),
+            "cross-file ggproto-defined variable should not trigger RY010, got {:?}",
+            user_diags
+        );
+    }
+
+    #[test]
+    fn cross_file_list_constructor_variable_resolves() {
+        // File A defines `config <- list(timeout = 30, retries = 3)`:
+        // a list constructor, not a function. File B references it.
+        let mut project = Project::new();
+        project.add_file(
+            "config.R".to_string(),
+            parse_file("config.R", "config <- list(timeout = 30, retries = 3)\n"),
+        );
+        project.add_file(
+            "main.R".to_string(),
+            parse_file("main.R", "t <- config$timeout\n"),
+        );
+        let diags = project.check();
+        let main_diags: Vec<_> = diags
+            .into_iter()
+            .filter(|(p, _)| p == "main.R")
+            .flat_map(|(_, d)| d)
+            .collect();
+        assert!(
+            main_diags.iter().all(|d| d.code != "RY010"),
+            "cross-file list-constructor variable should not trigger RY010, got {:?}",
+            main_diags
+        );
+    }
+
+    #[test]
+    fn genuinely_undefined_variable_still_triggers_ry010() {
+        // Sanity: a name that is NOT defined in any file of the project
+        // (and is not a typeshed function or dataset) must still emit
+        // RY010. `known_vars` only suppresses diagnostics for names we
+        // have actually seen assigned.
+        let mut project = Project::new();
+        project.add_file(
+            "a.R".to_string(),
+            parse_file("a.R", "x <- totally_undefined_thing\n"),
+        );
+        let diags = project.check();
+        let a_diags: Vec<_> = diags
+            .into_iter()
+            .filter(|(p, _)| p == "a.R")
+            .flat_map(|(_, d)| d)
+            .collect();
+        assert!(
+            a_diags.iter().any(|d| d.code == "RY010"),
+            "genuinely undefined variable should still trigger RY010, got {:?}",
+            a_diags
+        );
+    }
+
+    #[test]
+    fn same_file_top_level_assignment_in_known_vars() {
+        // Single-file mode: a top-level assignment `x <- 1L` puts `x`
+        // in `known_vars`. Referencing `x` BEFORE its assignment in the
+        // same file (use-before-def at the top level) does NOT trigger
+        // RY010. R's `source()` semantics evaluate top-to-bottom so
+        // this would error at runtime, but for static checking we
+        // prioritize suppressing false positives over catching
+        // use-before-def (matching the documented behavior of `known_vars`).
+        let diags = check("y <- x\nx <- 1L\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "top-level use-before-def should not trigger RY010 (matches cross-file semantics), got {:?}",
+            diags
+        );
     }
 }

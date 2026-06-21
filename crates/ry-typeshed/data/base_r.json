@@ -240,6 +240,754 @@
     "identical_to": {
       "params": ["x"],
       "return": { "mode": "logical", "length": "1", "na": false }
+    },
+    "ceiling": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "arg0", "na": false }
+    },
+    "floor": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "arg0", "na": false }
+    },
+    "trunc": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "arg0", "na": false }
+    },
+    "signif": {
+      "params": ["x", "digits"],
+      "return": { "mode": "double", "length": "arg0", "na": false }
+    },
+    "round": {
+      "params": ["x", "digits"],
+      "return": { "mode": "double_or_int", "length": "arg0", "na": false }
+    },
+    "sign": {
+      "params": ["x"],
+      "return": { "mode": "double_or_int", "length": "arg0", "na": true }
+    },
+    "sin": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "arg0", "na": true }
+    },
+    "cos": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "arg0", "na": true }
+    },
+    "tan": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "arg0", "na": true }
+    },
+    "asin": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "arg0", "na": true }
+    },
+    "acos": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "arg0", "na": true }
+    },
+    "atan": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "arg0", "na": true }
+    },
+    "sinh": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "arg0", "na": true }
+    },
+    "cosh": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "arg0", "na": true }
+    },
+    "tanh": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "arg0", "na": true }
+    },
+    "log10": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "arg0", "na": true }
+    },
+    "log2": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "arg0", "na": true }
+    },
+    "log1p": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "arg0", "na": true }
+    },
+    "expm1": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "arg0", "na": true }
+    },
+    "gamma": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "arg0", "na": true }
+    },
+    "lgamma": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "arg0", "na": true }
+    },
+    "digamma": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "arg0", "na": true }
+    },
+    "trigamma": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "arg0", "na": true }
+    },
+    "cumsum": {
+      "params": ["x"],
+      "return": { "mode": "double_or_int", "length": "arg0", "na": true }
+    },
+    "cumprod": {
+      "params": ["x"],
+      "return": { "mode": "double_or_int", "length": "arg0", "na": true }
+    },
+    "cummax": {
+      "params": ["x"],
+      "return": { "mode": "double_or_int", "length": "arg0", "na": true }
+    },
+    "cummin": {
+      "params": ["x"],
+      "return": { "mode": "double_or_int", "length": "arg0", "na": true }
+    },
+    "diff": {
+      "params": ["x"],
+      "return": { "mode": "double_or_int", "length": "unknown", "na": true }
+    },
+    "pmin": {
+      "params": ["..."],
+      "return": { "mode": "double_or_int", "length": "unknown", "na": true }
+    },
+    "pmax": {
+      "params": ["..."],
+      "return": { "mode": "double_or_int", "length": "unknown", "na": true }
+    },
+    "range": {
+      "params": ["..."],
+      "return": { "mode": "double_or_int", "length": "2", "na": true }
+    },
+    "prod": {
+      "params": ["..."],
+      "return": { "mode": "double_or_int", "length": "1", "na": true }
+    },
+    "median": {
+      "params": ["x"],
+      "return": { "mode": "double_or_int", "length": "1", "na": true }
+    },
+    "quantile": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "unknown", "na": true }
+    },
+    "IQR": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "1", "na": true }
+    },
+    "var": {
+      "params": ["x", "y"],
+      "return": { "mode": "double", "length": "unknown", "na": true }
+    },
+    "sd": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "1", "na": true }
+    },
+    "mad": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "1", "na": true }
+    },
+    "scale": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "arg0", "na": true }
+    },
+    "rowMeans": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "unknown", "na": true }
+    },
+    "rowSums": {
+      "params": ["x"],
+      "return": { "mode": "double_or_int", "length": "unknown", "na": true }
+    },
+    "colMeans": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "unknown", "na": true }
+    },
+    "colSums": {
+      "params": ["x"],
+      "return": { "mode": "double_or_int", "length": "unknown", "na": true }
+    },
+    "gsub": {
+      "params": ["pattern", "replacement", "x"],
+      "return": { "mode": "character", "length": "arg2", "na": true }
+    },
+    "sub": {
+      "params": ["pattern", "replacement", "x"],
+      "return": { "mode": "character", "length": "arg2", "na": true }
+    },
+    "grep": {
+      "params": ["pattern", "x"],
+      "return": { "mode": "integer", "length": "unknown", "na": false }
+    },
+    "grepl": {
+      "params": ["pattern", "x"],
+      "return": { "mode": "logical", "length": "arg1", "na": false }
+    },
+    "regexpr": {
+      "params": ["pattern", "text"],
+      "return": { "mode": "integer", "length": "arg1", "na": false }
+    },
+    "gregexpr": {
+      "params": ["pattern", "text"],
+      "return": { "mode": "list", "length": "arg1", "na": false }
+    },
+    "regmatches": {
+      "params": ["x", "m"],
+      "return": { "mode": "character", "length": "unknown", "na": false }
+    },
+    "substr": {
+      "params": ["x", "start", "stop"],
+      "return": { "mode": "character", "length": "arg0", "na": true }
+    },
+    "substring": {
+      "params": ["text", "first", "last"],
+      "return": { "mode": "character", "length": "arg0", "na": true }
+    },
+    "toupper": {
+      "params": ["x"],
+      "return": { "mode": "character", "length": "arg0", "na": true }
+    },
+    "tolower": {
+      "params": ["x"],
+      "return": { "mode": "character", "length": "arg0", "na": true }
+    },
+    "casefold": {
+      "params": ["x", "upper"],
+      "return": { "mode": "character", "length": "arg0", "na": true }
+    },
+    "chartr": {
+      "params": ["old", "new", "x"],
+      "return": { "mode": "character", "length": "arg2", "na": false }
+    },
+    "trimws": {
+      "params": ["x"],
+      "return": { "mode": "character", "length": "arg0", "na": true }
+    },
+    "strsplit": {
+      "params": ["x", "split"],
+      "return": { "mode": "list", "length": "arg0", "na": false }
+    },
+    "startsWith": {
+      "params": ["x", "prefix"],
+      "return": { "mode": "logical", "length": "arg0", "na": false }
+    },
+    "endsWith": {
+      "params": ["x", "suffix"],
+      "return": { "mode": "logical", "length": "arg0", "na": false }
+    },
+    "format": {
+      "params": ["x"],
+      "return": { "mode": "character", "length": "unknown", "na": true }
+    },
+    "formatC": {
+      "params": ["x"],
+      "return": { "mode": "character", "length": "arg0", "na": true }
+    },
+    "toString": {
+      "params": ["x"],
+      "return": { "mode": "character", "length": "1", "na": false }
+    },
+    "seq": {
+      "params": ["from", "to", "by"],
+      "return": { "mode": "double_or_int", "length": "unknown", "na": false }
+    },
+    "seq.int": {
+      "params": ["from", "to", "by"],
+      "return": { "mode": "double_or_int", "length": "unknown", "na": false }
+    },
+    "sample": {
+      "params": ["x", "size"],
+      "return": { "mode": "arg0", "length": "unknown", "na": true }
+    },
+    "sample.int": {
+      "params": ["n", "size"],
+      "return": { "mode": "integer", "length": "unknown", "na": false }
+    },
+    "order": {
+      "params": ["..."],
+      "return": { "mode": "integer", "length": "unknown", "na": false }
+    },
+    "rank": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "arg0", "na": true }
+    },
+    "sort.int": {
+      "params": ["x"],
+      "return": "arg0"
+    },
+    "duplicated": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "arg0", "na": false }
+    },
+    "match": {
+      "params": ["x", "table"],
+      "return": { "mode": "integer", "length": "arg0", "na": true }
+    },
+    "pmatch": {
+      "params": ["x", "table"],
+      "return": { "mode": "integer", "length": "arg0", "na": true }
+    },
+    "charmatch": {
+      "params": ["x", "table"],
+      "return": { "mode": "integer", "length": "arg0", "na": true }
+    },
+    "append": {
+      "params": ["x", "values"],
+      "return": "arg0"
+    },
+    "unlist": {
+      "params": ["x"],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
+    },
+    "split": {
+      "params": ["x", "f"],
+      "return": { "mode": "list", "length": "unknown", "na": false }
+    },
+    "cut": {
+      "params": ["x", "breaks"],
+      "return": { "mode": "integer", "length": "arg0", "na": true }
+    },
+    "ave": {
+      "params": ["x", "f"],
+      "return": { "mode": "double_or_int", "length": "arg0", "na": true }
+    },
+    "tapply": {
+      "params": ["X", "INDEX", "FUN"],
+      "return": { "mode": "list", "length": "unknown", "na": false }
+    },
+    "rle": {
+      "params": ["x"],
+      "return": { "mode": "list", "length": "unknown", "na": false }
+    },
+    "table": {
+      "params": ["..."],
+      "return": { "mode": "integer", "length": "unknown", "na": false }
+    },
+    "tabulate": {
+      "params": ["bin", "nbins"],
+      "return": { "mode": "integer", "length": "unknown", "na": false }
+    },
+    "prop.table": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "arg0", "na": false }
+    },
+    "as.matrix": {
+      "params": ["x"],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
+    },
+    "as.data.frame": {
+      "params": ["x"],
+      "return": { "mode": "list", "length": "unknown", "na": true }
+    },
+    "as.list": {
+      "params": ["x"],
+      "return": { "mode": "list", "length": "arg0", "na": true }
+    },
+    "as.vector": {
+      "params": ["x"],
+      "return": "arg0"
+    },
+    "as.factor": {
+      "params": ["x"],
+      "return": { "mode": "integer", "length": "arg0", "na": false }
+    },
+    "rbind": {
+      "params": ["..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
+    },
+    "cbind": {
+      "params": ["..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
+    },
+    "merge": {
+      "params": ["x", "y"],
+      "return": { "mode": "list", "length": "unknown", "na": false }
+    },
+    "na.omit": {
+      "params": ["x"],
+      "return": "arg0"
+    },
+    "complete.cases": {
+      "params": ["..."],
+      "return": { "mode": "logical", "length": "unknown", "na": false }
+    },
+    "intersect": {
+      "params": ["x", "y"],
+      "return": "arg0"
+    },
+    "union": {
+      "params": ["x", "y"],
+      "return": "arg0"
+    },
+    "setdiff": {
+      "params": ["x", "y"],
+      "return": "arg0"
+    },
+    "setequal": {
+      "params": ["x", "y"],
+      "return": { "mode": "logical", "length": "1", "na": false }
+    },
+    "is.element": {
+      "params": ["el", "set"],
+      "return": { "mode": "logical", "length": "arg0", "na": false }
+    },
+    "is.finite": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "arg0", "na": false }
+    },
+    "is.infinite": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "arg0", "na": false }
+    },
+    "is.nan": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "arg0", "na": false }
+    },
+    "is.array": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "1", "na": false }
+    },
+    "is.data.frame": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "1", "na": false }
+    },
+    "is.factor": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "1", "na": false }
+    },
+    "is.list": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "1", "na": false }
+    },
+    "is.matrix": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "1", "na": false }
+    },
+    "is.vector": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "1", "na": false }
+    },
+    "is.atomic": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "1", "na": false }
+    },
+    "is.recursive": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "1", "na": false }
+    },
+    "is.function": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "1", "na": false }
+    },
+    "is.complex": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "1", "na": false }
+    },
+    "is.raw": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "1", "na": false }
+    },
+    "is.double": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "1", "na": false }
+    },
+    "is.object": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "1", "na": false }
+    },
+    "isSymmetric": {
+      "params": ["object"],
+      "return": { "mode": "logical", "length": "1", "na": false }
+    },
+    "is.unsorted": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "1", "na": true }
+    },
+    "typeof": {
+      "params": ["x"],
+      "return": { "mode": "character", "length": "1", "na": false }
+    },
+    "mode": {
+      "params": ["x"],
+      "return": { "mode": "character", "length": "1", "na": false }
+    },
+    "class": {
+      "params": ["x"],
+      "return": { "mode": "character", "length": "unknown", "na": false }
+    },
+    "dim": {
+      "params": ["x"],
+      "return": { "mode": "integer", "length": "unknown", "na": false }
+    },
+    "exists": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "1", "na": false }
+    },
+    "missing": {
+      "params": ["x"],
+      "return": { "mode": "logical", "length": "1", "na": false }
+    },
+    "Sys.time": {
+      "params": [],
+      "return": { "mode": "double", "length": "1", "na": false }
+    },
+    "Sys.Date": {
+      "params": [],
+      "return": { "mode": "double", "length": "1", "na": false }
+    },
+    "date": {
+      "params": [],
+      "return": { "mode": "character", "length": "1", "na": false }
+    },
+    "proc.time": {
+      "params": [],
+      "return": { "mode": "double", "length": "3", "na": false }
+    },
+    "tryCatch": {
+      "params": ["expr"],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
+    },
+    "stopifnot": {
+      "params": ["..."],
+      "return": { "mode": "null", "length": "0", "na": false }
+    },
+    "force": {
+      "params": ["x"],
+      "return": "arg0"
+    },
+    "formals": {
+      "params": ["fn"],
+      "return": { "mode": "list", "length": "unknown", "na": false }
+    },
+    "body": {
+      "params": ["fun"],
+      "return": { "mode": "opaque", "length": "1", "na": false }
+    },
+    "environment": {
+      "params": ["fun"],
+      "return": { "mode": "opaque", "length": "1", "na": false }
+    },
+    "args": {
+      "params": ["name"],
+      "return": { "mode": "function", "length": "1", "na": false }
+    },
+    "debug": {
+      "params": ["fun"],
+      "return": { "mode": "null", "length": "0", "na": false }
+    },
+    "undebug": {
+      "params": ["fun"],
+      "return": { "mode": "null", "length": "0", "na": false }
+    },
+    "browser": {
+      "params": [],
+      "return": { "mode": "null", "length": "0", "na": false }
+    },
+    "traceback": {
+      "params": [],
+      "return": { "mode": "null", "length": "0", "na": false }
+    },
+    "get": {
+      "params": ["x"],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
+    },
+    "mget": {
+      "params": ["x"],
+      "return": { "mode": "list", "length": "arg0", "na": true }
+    },
+    "assign": {
+      "params": ["x", "value"],
+      "return": { "mode": "opaque", "length": "1", "na": false }
+    },
+    "getwd": {
+      "params": [],
+      "return": { "mode": "character", "length": "1", "na": false }
+    },
+    "setwd": {
+      "params": ["dir"],
+      "return": { "mode": "character", "length": "1", "na": false }
+    },
+    "options": {
+      "params": ["..."],
+      "return": { "mode": "list", "length": "unknown", "na": false }
+    },
+    "getOption": {
+      "params": ["x"],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
+    },
+    "ls": {
+      "params": [],
+      "return": { "mode": "character", "length": "unknown", "na": false }
+    },
+    "rm": {
+      "params": ["..."],
+      "return": { "mode": "null", "length": "0", "na": false }
+    },
+    "remove": {
+      "params": ["..."],
+      "return": { "mode": "null", "length": "0", "na": false }
+    },
+    "gc": {
+      "params": [],
+      "return": { "mode": "list", "length": "unknown", "na": false }
+    },
+    "suppressWarnings": {
+      "params": ["expr"],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
+    },
+    "suppressMessages": {
+      "params": ["expr"],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
+    },
+    "with": {
+      "params": ["data", "expr"],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
+    },
+    "within": {
+      "params": ["data", "expr"],
+      "return": "arg0"
+    },
+    "expand.grid": {
+      "params": ["..."],
+      "return": { "mode": "list", "length": "unknown", "na": false }
+    },
+    "gl": {
+      "params": ["n", "k"],
+      "return": { "mode": "integer", "length": "unknown", "na": false }
+    },
+    "interaction": {
+      "params": ["..."],
+      "return": { "mode": "integer", "length": "unknown", "na": false }
+    },
+    "diag": {
+      "params": ["x"],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
+    },
+    "solve": {
+      "params": ["a", "b"],
+      "return": { "mode": "double", "length": "unknown", "na": true }
+    },
+    "det": {
+      "params": ["x"],
+      "return": { "mode": "double", "length": "1", "na": true }
+    },
+    "t": {
+      "params": ["x"],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
+    },
+    "read.csv": {
+      "params": ["file"],
+      "return": { "mode": "list", "length": "unknown", "na": true }
+    },
+    "read.table": {
+      "params": ["file"],
+      "return": { "mode": "list", "length": "unknown", "na": true }
+    },
+    "readLines": {
+      "params": ["con"],
+      "return": { "mode": "character", "length": "unknown", "na": true }
+    },
+    "write.csv": {
+      "params": ["x", "file"],
+      "return": { "mode": "null", "length": "0", "na": false }
+    },
+    "write.table": {
+      "params": ["x", "file"],
+      "return": { "mode": "null", "length": "0", "na": false }
+    },
+    "file.path": {
+      "params": ["..."],
+      "return": { "mode": "character", "length": "1", "na": false }
+    },
+    "file.exists": {
+      "params": ["..."],
+      "return": { "mode": "logical", "length": "arg0", "na": false }
+    },
+    "list.files": {
+      "params": ["path"],
+      "return": { "mode": "character", "length": "unknown", "na": false }
+    },
+    "basename": {
+      "params": ["path"],
+      "return": { "mode": "character", "length": "arg0", "na": false }
+    },
+    "dirname": {
+      "params": ["path"],
+      "return": { "mode": "character", "length": "arg0", "na": false }
+    },
+    "tempfile": {
+      "params": [],
+      "return": { "mode": "character", "length": "1", "na": false }
+    },
+    "Sys.getenv": {
+      "params": ["x"],
+      "return": { "mode": "character", "length": "arg0", "na": false }
+    },
+    "normalizePath": {
+      "params": ["path"],
+      "return": { "mode": "character", "length": "arg0", "na": true }
+    },
+    "readRDS": {
+      "params": ["file"],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
+    },
+    "saveRDS": {
+      "params": ["object", "file"],
+      "return": { "mode": "null", "length": "0", "na": false }
+    },
+    "parse": {
+      "params": ["file"],
+      "return": { "mode": "opaque", "length": "unknown", "na": false }
+    },
+    "deparse": {
+      "params": ["expr"],
+      "return": { "mode": "character", "length": "unknown", "na": false }
+    },
+    "substitute": {
+      "params": ["expr"],
+      "return": { "mode": "opaque", "length": "1", "na": false }
+    },
+    "quote": {
+      "params": ["expr"],
+      "return": { "mode": "opaque", "length": "1", "na": false }
+    },
+    "eval": {
+      "params": ["expr"],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
+    },
+    "expression": {
+      "params": ["..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false }
+    },
+    "bquote": {
+      "params": ["expr"],
+      "return": { "mode": "opaque", "length": "1", "na": false }
+    },
+    "call": {
+      "params": ["name", "..."],
+      "return": { "mode": "opaque", "length": "1", "na": false }
+    },
+    "as.call": {
+      "params": ["x"],
+      "return": { "mode": "opaque", "length": "1", "na": false }
+    },
+    "do.call": {
+      "params": ["what", "args"],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
+    },
+    "switch": {
+      "params": ["EXPR", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
+    },
+    "try": {
+      "params": ["expr"],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
     }
   },
   "s3_methods": [

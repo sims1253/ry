@@ -1033,6 +1033,62 @@
       "params": ["expr"],
       "return": { "mode": "opaque", "length": "unknown", "na": true }
     },
+    ".Call": {
+      "params": ["name", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
+    },
+    ".Internal": {
+      "params": ["call"],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
+    },
+    ".External": {
+      "params": ["name", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
+    },
+    ".External2": {
+      "params": ["name", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
+    },
+    ".C": {
+      "params": ["name", "..."],
+      "return": { "mode": "list", "length": "unknown", "na": true }
+    },
+    ".Fortran": {
+      "params": ["name", "..."],
+      "return": { "mode": "list", "length": "unknown", "na": true }
+    },
+    ".Machine": {
+      "params": [],
+      "return": { "mode": "list", "length": "unknown", "na": false }
+    },
+    ".Platform": {
+      "params": [],
+      "return": { "mode": "list", "length": "unknown", "na": false }
+    },
+    ".Options": {
+      "params": [],
+      "return": { "mode": "list", "length": "unknown", "na": false }
+    },
+    ".libPaths": {
+      "params": ["new"],
+      "return": { "mode": "character", "length": "unknown", "na": false }
+    },
+    ".packages": {
+      "params": ["all"],
+      "return": { "mode": "character", "length": "unknown", "na": false }
+    },
+    "getRversion": {
+      "params": [],
+      "return": { "mode": "opaque", "length": "1", "na": false }
+    },
+    "R.version": {
+      "params": [],
+      "return": { "mode": "list", "length": "unknown", "na": false }
+    },
+    "version": {
+      "params": [],
+      "return": { "mode": "list", "length": "unknown", "na": false }
+    },
     "rnorm": { "params": ["n", "mean", "sd"], "return": { "mode": "double", "length": "arg0", "na": false } },
     "runif": { "params": ["n", "min", "max"], "return": { "mode": "double", "length": "arg0", "na": false } },
     "rexp": { "params": ["n", "rate"], "return": { "mode": "double", "length": "arg0", "na": false } },
@@ -1419,6 +1475,13 @@
     "lh":            { "mode": "double", "length": "48", "na": false, "class": ["ts"] },
     "JohnsonJohnson": { "mode": "double", "length": "84", "na": false, "class": ["ts"] },
     "WorldPhones":   { "mode": "integer", "length": "49", "na": false },
-    "USAccdeaths":   { "mode": "integer", "length": "72", "na": false, "class": ["ts"] }
+    "USAccdeaths":   { "mode": "integer", "length": "72", "na": false, "class": ["ts"] },
+    "letters":       { "mode": "character", "length": "26", "na": false },
+    "LETTERS":       { "mode": "character", "length": "26", "na": false },
+    "month.abb":     { "mode": "character", "length": "12", "na": false },
+    "month.name":    { "mode": "character", "length": "12", "na": false },
+    "pi":            { "mode": "double", "length": "1", "na": false },
+    "T":             { "mode": "logical", "length": "1", "na": false },
+    "F":             { "mode": "logical", "length": "1", "na": false }
   }
 }

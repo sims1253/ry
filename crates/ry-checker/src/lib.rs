@@ -890,6 +890,25 @@ impl Checker {
             Expr::Na(t, _) => *t,
             Expr::Ident { name, .. } => scope.get(name).copied().unwrap_or(RType::UNKNOWN),
             Expr::BinOp { op, lhs, rhs, .. } => {
+                // `:` sequence operator: when both operands are
+                // integer-valued literals we can pin the result length
+                // exactly as `|b - a| + 1`. This mirrors the pass-3
+                // (`infer`) literal fast path so a function whose body
+                // is `1:10` gets a precise `integer<10>` return type
+                // rather than `Length::Unknown`. Non-literal operands
+                // fall through to `infer_binop_pure`'s lattice-based
+                // `seq` (Unknown length).
+                if matches!(op, BinOpKind::Colon) {
+                    if let (Some(a), Some(b)) =
+                        (extract_literal_int(lhs), extract_literal_int(rhs))
+                    {
+                        let len = (b - a).unsigned_abs() as usize;
+                        let len = len.saturating_add(1);
+                        if len > 0 {
+                            return RType::new(Mode::Integer, Length::Known(len), false);
+                        }
+                    }
+                }
                 let lt = self.infer_pure_at_depth(lhs, scope, depth);
                 let rt = self.infer_pure_at_depth(rhs, scope, depth);
                 self.infer_binop_pure(*op, lt, rt)
@@ -968,6 +987,26 @@ impl Checker {
                         self.infer_higher_order_call(name, args, &ho_args, scope)
                     } {
                         return rt;
+                    }
+                    // Literal-arg length inference for `rep`, `seq`,
+                    // `seq.int`. These have typeshed entries that
+                    // conservatively return `Length::Unknown`; when the
+                    // relevant arguments are literals we can pin the
+                    // result length exactly. Mirrors the pass-3
+                    // (`infer`) interception, placed after the FnTable
+                    // and higher-order lookups and before the typeshed
+                    // so the precise length is preferred. This is what
+                    // lets a function whose body is `rep(1:3, 2)` get a
+                    // precise `integer<6>` return type.
+                    if name == "rep" {
+                        let ho_args: Vec<RType> =
+                            args.iter().map(|a| self.infer_pure_at_depth(&a.value, scope, depth)).collect();
+                        return self.infer_rep(args, &ho_args, Span::default());
+                    }
+                    if name == "seq" || name == "seq.int" {
+                        let ho_args: Vec<RType> =
+                            args.iter().map(|a| self.infer_pure_at_depth(&a.value, scope, depth)).collect();
+                        return self.infer_seq(args, &ho_args, Span::default());
                     }
                     if let Some(sig) = self.typeshed.functions.get(name) {
                         let arg_types: Vec<RType> =
@@ -3032,49 +3071,85 @@ impl Checker {
     /// positional ones; if `times`/`each` is supplied but isn't a
     /// literal, the length is Unknown (we can't know the runtime
     /// value, unlike the "not supplied" case which defaults to 1).
-    fn infer_rep(&mut self, args: &[Arg], arg_types: &[RType], _span: Span) -> RType {
-        let x_type = arg_types.first().copied().unwrap_or(RType::UNKNOWN);
+    fn infer_rep(&self, args: &[Arg], arg_types: &[RType], _span: Span) -> RType {
+        // Helper: find the index in `args` of a named or positional
+        // argument. Named args win over positional. The `pos` index
+        // counts only unnamed args, so `rep(each = 2, c(1,2,3), 1)`
+        // still matches `x` at positional index 0 and `times` at 1.
+        // Mirrors `infer_seq`'s positional-counting approach.
+        let find_idx = |name: &str, pos: usize| -> Option<usize> {
+            for (i, a) in args.iter().enumerate() {
+                if a.name.as_deref() == Some(name) {
+                    return Some(i);
+                }
+            }
+            let mut idx = 0usize;
+            for (i, a) in args.iter().enumerate() {
+                if a.name.is_some() {
+                    continue;
+                }
+                if idx == pos {
+                    return Some(i);
+                }
+                idx += 1;
+            }
+            None
+        };
+        // `x` is the first positional arg (pos 0) or a named `x = ...`.
+        // We must look it up by index rather than `arg_types.first()`
+        // because named `times`/`each` args can precede `x` in the
+        // call (e.g. `rep(each = 2, c(1,2,3), 1)`).
+        let x_type = find_idx("x", 0)
+            .and_then(|i| arg_types.get(i).copied())
+            .unwrap_or(RType::UNKNOWN);
         // Track `times` / `each` as `Option<Option<i64>>`:
         //   * outer None      -> not supplied (use default 1)
         //   * outer Some(None) -> supplied but non-literal (Unknown)
         //   * outer Some(Some(n)) -> supplied literal value n
-        let mut times: Option<Option<i64>> = None;
-        let mut each: Option<Option<i64>> = None;
-        // Named args win, so collect them first.
-        for a in args.iter() {
-            match a.name.as_deref() {
-                Some("times") => times = Some(extract_literal_int(&a.value)),
-                Some("each") => each = Some(extract_literal_int(&a.value)),
-                _ => {}
-            }
-        }
-        // Positional fallback: arg1 = times, arg2 = each. Only fill
-        // slots that weren't set by name.
-        for (i, a) in args.iter().enumerate() {
-            if a.name.is_some() {
-                continue;
-            }
-            match i {
-                1 if times.is_none() => times = Some(extract_literal_int(&a.value)),
-                2 if each.is_none() => each = Some(extract_literal_int(&a.value)),
-                _ => {}
-            }
-        }
-        // Resolve `times`. Non-supplied -> 1; non-literal -> Unknown.
-        let times_n = match times {
+        let times = find_idx("times", 1)
+            .and_then(|i| args.get(i))
+            .map(|a| extract_literal_int(&a.value));
+        let each = find_idx("each", 2)
+            .and_then(|i| args.get(i))
+            .map(|a| extract_literal_int(&a.value));
+        // Resolve `times`. Non-supplied -> 1; non-literal -> Unknown;
+        // negative literal -> Unknown (R errors or recycles in ways we
+        // can't model, so we stay conservative rather than pin a wrong
+        // length).
+        let times_n: usize = match times {
             None => 1usize,
-            Some(Some(n)) => n.max(0) as usize,
+            Some(Some(n)) if n < 0 => return RType { length: Length::Unknown, ..x_type },
+            Some(Some(n)) => n as usize,
             Some(None) => return RType { length: Length::Unknown, ..x_type },
         };
-        let each_n = match each {
+        let each_n: usize = match each {
             None => 1usize,
-            Some(Some(n)) => n.max(0) as usize,
+            Some(Some(n)) if n < 0 => return RType { length: Length::Unknown, ..x_type },
+            Some(Some(n)) => n as usize,
             Some(None) => return RType { length: Length::Unknown, ..x_type },
         };
+        // Compute the total length, normalizing so we never emit
+        // `Length::Known(0)` (which violates the `Known(n > 1)`
+        // invariant) or `Length::Known(1)` (use `Length::One` instead).
+        // A zero total (e.g. `rep(x, times = 0)`) becomes `Length::Zero`.
         let length = match x_type.length {
             Length::Zero => Length::Zero,
-            Length::One => Length::Known(times_n.saturating_mul(each_n)),
-            Length::Known(xn) => Length::Known(xn.saturating_mul(times_n).saturating_mul(each_n)),
+            Length::One => {
+                let total = times_n.saturating_mul(each_n);
+                match total {
+                    0 => Length::Zero,
+                    1 => Length::One,
+                    n => Length::Known(n),
+                }
+            }
+            Length::Known(xn) => {
+                let total = xn.saturating_mul(times_n).saturating_mul(each_n);
+                match total {
+                    0 => Length::Zero,
+                    1 => Length::One,
+                    n => Length::Known(n),
+                }
+            }
             Length::Unknown => Length::Unknown,
         };
         RType { length, ..x_type }
@@ -3092,7 +3167,7 @@ impl Checker {
     /// taking precedence over `by`). When we can't pin the length, we
     /// still report the right mode (integer when the first arg is an
     /// integer literal, else double) with `Length::Unknown`.
-    fn infer_seq(&mut self, args: &[Arg], arg_types: &[RType], _span: Span) -> RType {
+    fn infer_seq(&self, args: &[Arg], arg_types: &[RType], _span: Span) -> RType {
         // Helper: find (was_supplied, literal_value) for a named or
         // positional argument. Named args win over positional. The
         // `pos` index counts only unnamed args, so `seq(from=1, 10)`
@@ -5436,5 +5511,83 @@ mod tests {
             "expected RY040 for double<5> + character, got {:?}",
             diags
         );
+    }
+
+    // ---- Pass-2 propagation + rep/seq edge cases ----
+    //
+    // These cover the three code-review fixes: (1) literal lengths
+    // now propagate through function return types because the literal
+    // fast paths live in pass 2 (`infer_pure_at_depth`) as well as
+    // pass 3; (2) `infer_rep` counts only unnamed args when binding
+    // positional `times`/`each`; (3) `infer_rep` never emits
+    // `Length::Known(0)` or treats negative multipliers as known.
+
+    #[test]
+    fn pass2_colon_literal_propagates_through_fn_return() {
+        // `f <- function() 1:10` should give f a return type of
+        // integer<10>, and `g <- f()` should propagate that precise
+        // length to g. Previously the `:` literal fast path only
+        // existed in pass 3, so f's return type (computed in pass 2)
+        // was Length::Unknown and g inherited the unknown length.
+        let (diags, scope) = check_with_scope("f <- function() 1:10\ng <- f()\n");
+        assert!(diags.is_empty(), "got {:?}", diags);
+        let g = scope.get("g").expect("g should be bound");
+        assert_eq!(g.mode, Mode::Integer, "got {:?}", g);
+        assert_eq!(g.length, Length::Known(10), "got {:?}", g);
+    }
+
+    #[test]
+    fn pass2_colon_literal_propagates_through_fn_return_fire_ry040() {
+        // Behavioral check: f returns integer<10>, so mixing g with a
+        // character fires RY040. This is the headline benefit - the
+        // checker sees a real vector through the function boundary.
+        let diags = check(
+            "f <- function() 1:10\n\
+             g <- f()\n\
+             bad <- g + \"hello\"\n",
+        );
+        assert!(
+            diags.iter().any(|d| d.code == "RY040"),
+            "expected RY040 for integer<10> + character (via fn return), got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn rep_named_each_before_positional_binds_times() {
+        // `rep(each = 2, c(1, 2, 3), 1)`: the named `each = 2` appears
+        // before the positional args. The trailing positional `1`
+        // binds to `times` (positional index 1, counting only unnamed
+        // args). Result: 3 (x) * 1 (times) * 2 (each) = 6. Previously
+        // the raw-list index bug made `times` bind to the non-literal
+        // `c(1,2,3)` at raw index 1, yielding Some(None) -> Unknown.
+        let (diags, scope) = check_with_scope("x <- rep(each = 2, c(1, 2, 3), 1)\n");
+        assert!(diags.is_empty(), "got {:?}", diags);
+        let x = scope.get("x").expect("x should be bound");
+        assert_eq!(x.mode, Mode::Double, "got {:?}", x);
+        assert_eq!(x.length, Length::Known(6), "got {:?}", x);
+    }
+
+    #[test]
+    fn rep_negative_times_does_not_crash() {
+        // `rep(x, times = -1)`: a negative `times` is modeled as
+        // Length::Unknown. The `-1` parses as UnaryOp::Neg, which
+        // extract_literal_int treats as a non-literal, so we can't pin
+        // the length. The check must not panic and must stay Unknown.
+        let (diags, scope) = check_with_scope("x <- 1:3\ny <- rep(x, times = -1)\n");
+        assert!(diags.is_empty(), "got {:?}", diags);
+        let y = scope.get("y").expect("y should be bound");
+        assert_eq!(y.length, Length::Unknown, "got {:?}", y);
+    }
+
+    #[test]
+    fn rep_zero_times_yields_length_zero() {
+        // `rep(1:3, times = 0)` returns a length-0 vector. The result
+        // must be Length::Zero, not the invariant-violating Known(0).
+        let (diags, scope) = check_with_scope("x <- rep(1:3, times = 0)\n");
+        assert!(diags.is_empty(), "got {:?}", diags);
+        let x = scope.get("x").expect("x should be bound");
+        assert_eq!(x.mode, Mode::Integer, "got {:?}", x);
+        assert_eq!(x.length, Length::Zero, "got {:?}", x);
     }
 }

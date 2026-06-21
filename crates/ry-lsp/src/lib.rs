@@ -319,11 +319,24 @@ impl Backend {
         }
 
         let per_file = project.check();
+        // Look up the source text for the file we are diagnosing so we
+        // can convert byte offsets to precise LSP ranges. We snapshot
+        // it as a borrowed `&str` outside the iterator to avoid
+        // re-borrowing on every diagnostic.
+        let source_text = docs.get(&path).map(|s| s.as_str());
         let diags_for_uri: Vec<LspDiagnostic> = per_file
             .into_iter()
             .filter(|(p, _)| p == &path)
             .flat_map(|(_, ds)| ds)
-            .map(diagnostic_to_lsp)
+            .map(|d| match source_text {
+                // Prefer the source-aware path so editors squiggle the
+                // exact offending token instead of a single character.
+                Some(text) => diagnostic_to_lsp_with_source(&d, text),
+                // Fallback: source text missing (defensive — the file
+                // was just open, so this branch should not normally
+                // fire). Keep the old single-character behavior.
+                None => diagnostic_to_lsp(d),
+            })
             .collect();
         self.client
             .publish_diagnostics(uri, diags_for_uri, None)
@@ -772,6 +785,14 @@ fn span_to_range(text: &str, span: Span) -> Option<Range> {
 /// (0-indexed line, 0-indexed character column). Mirrors the
 /// parser's `char_col` helper: each character advances the column,
 /// each newline resets it and bumps the line.
+///
+/// UTF-16 NOTE: the LSP spec defines `Position.character` as a UTF-16
+/// code-unit offset, not a Rust `char` count. This helper counts
+/// `char`s (Unicode scalar values), which is identical to the UTF-16
+/// count for the BMP subset that excludes astral-plane characters
+/// (emoji, rare CJK). For pure ASCII source the two counts agree
+/// exactly. For non-ASCII content this is an approximation; a future
+/// revision should compute true UTF-16 offsets for full correctness.
 fn byte_offset_to_position(text: &str, byte_offset: usize) -> Position {
     let mut line = 0u32;
     let mut col = 0u32;
@@ -860,6 +881,50 @@ fn diagnostic_to_lsp(d: RyDiagnostic) -> LspDiagnostic {
     }
 }
 
+/// Convert a `ry_checker::Diagnostic` to an LSP `Diagnostic` using a
+/// precise multi-character range derived from the span's byte offsets
+/// against the source text.
+///
+/// Unlike `diagnostic_to_lsp` (which falls back to a single-character
+/// range anchored at the span's pre-resolved `line` / `col`), this
+/// version maps both `span.start` and `span.end` byte offsets to LSP
+/// `Position`s via `byte_offset_to_position`, so editors squiggle
+/// exactly the offending token. If the span is zero-width
+/// (`start == end`), we extend the end by one character so the
+/// squiggle is still visible.
+///
+/// This is the path used by `publish_diagnostics`; the older
+/// `diagnostic_to_lsp` is retained as a fallback for tests and for the
+/// rare case where source text is unavailable.
+fn diagnostic_to_lsp_with_source(d: &RyDiagnostic, text: &str) -> LspDiagnostic {
+    let start = byte_offset_to_position(text, d.span.start);
+    let end = byte_offset_to_position(text, d.span.end);
+    // Zero-width spans (start == end) appear in the AST for some
+    // synthetic sites. Extend by one character so the editor renders a
+    // non-empty squiggle, mirroring `diagnostic_to_lsp`'s behavior.
+    let end = if start == end {
+        Position {
+            line: start.line,
+            character: start.character + 1,
+        }
+    } else {
+        end
+    };
+    let severity = match d.severity {
+        Severity::Error => Some(DiagnosticSeverity::ERROR),
+        Severity::Warning => Some(DiagnosticSeverity::WARNING),
+        Severity::Info => Some(DiagnosticSeverity::INFORMATION),
+    };
+    LspDiagnostic {
+        range: Range { start, end },
+        severity,
+        code: Some(NumberOrString::String(d.code.to_string())),
+        source: Some("ry".to_string()),
+        message: d.message.clone(),
+        ..Default::default()
+    }
+}
+
 /// Entry point for the LSP server. Reads from stdin, writes to stdout.
 ///
 /// IMPORTANT: the caller (the CLI) MUST install a `tracing_subscriber`
@@ -920,6 +985,98 @@ mod tests {
         );
         let lsp = diagnostic_to_lsp(d);
         assert_eq!(lsp.severity, Some(DiagnosticSeverity::WARNING));
+    }
+
+    #[test]
+    fn multi_char_range_from_source() {
+        // The source-aware converter must produce a precise multi-char
+        // range from the span's byte offsets rather than the old
+        // single-character fallback.
+        let text = "x <- 1L + \"hello\"\n";
+        // The RY040 diagnostic for `+` should span exactly the `+`
+        // operator at byte offsets 7..8 (line 0, col 7).
+        let d = Diagnostic::new(
+            Severity::Error,
+            Span::new(7, 8, 0, 7),
+            "test.R",
+            "RY040",
+            "test",
+        );
+        let lsp = diagnostic_to_lsp_with_source(&d, text);
+        assert_eq!(lsp.range.start.line, 0);
+        assert_eq!(lsp.range.start.character, 7);
+        assert_eq!(lsp.range.end.line, 0);
+        assert_eq!(lsp.range.end.character, 8);
+        // Non-range fields must still be populated identically to the
+        // fallback path so behavior is unchanged except for the range.
+        assert_eq!(lsp.severity, Some(DiagnosticSeverity::ERROR));
+        assert_eq!(lsp.message, "test");
+        assert_eq!(lsp.source.as_deref(), Some("ry"));
+        match lsp.code {
+            Some(NumberOrString::String(s)) => assert_eq!(s, "RY040"),
+            other => panic!("expected String code, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn zero_width_span_extends_by_one_char() {
+        // A zero-width span (start == end) must be widened by exactly
+        // one character so the squiggle is non-empty in the editor.
+        let text = "x <- 1L\n";
+        let d = Diagnostic::new(
+            Severity::Error,
+            Span::new(0, 0, 0, 0),
+            "test.R",
+            "RY040",
+            "test",
+        );
+        let lsp = diagnostic_to_lsp_with_source(&d, text);
+        assert_eq!(lsp.range.start.line, 0);
+        assert_eq!(lsp.range.start.character, 0);
+        assert_eq!(lsp.range.end.line, 0);
+        assert_eq!(lsp.range.end.character, 1);
+    }
+
+    #[test]
+    fn multi_char_range_on_second_line() {
+        // Byte offsets that cross a newline must land on the correct
+        // line and column. Here the diagnostic sits on line 1 of a
+        // two-line source.
+        let text = "x <- 1L\ny <- 2L\n";
+        // The `y` identifier is at byte offset 8 (the byte right after
+        // the first `\n`). It is one character wide.
+        let d = Diagnostic::new(
+            Severity::Warning,
+            Span::new(8, 9, 1, 0),
+            "test.R",
+            "RY001",
+            "warning",
+        );
+        let lsp = diagnostic_to_lsp_with_source(&d, text);
+        assert_eq!(lsp.range.start.line, 1);
+        assert_eq!(lsp.range.start.character, 0);
+        assert_eq!(lsp.range.end.line, 1);
+        assert_eq!(lsp.range.end.character, 1);
+    }
+
+    #[test]
+    fn multi_char_range_spans_identifier() {
+        // A diagnostic covering a multi-character identifier must
+        // squiggle exactly the identifier's bytes.
+        let text = "my_var <- 1L\n";
+        // `my_var` occupies bytes 0..6.
+        let d = Diagnostic::new(
+            Severity::Info,
+            Span::new(0, 6, 0, 0),
+            "test.R",
+            "RY001",
+            "info",
+        );
+        let lsp = diagnostic_to_lsp_with_source(&d, text);
+        assert_eq!(lsp.range.start.line, 0);
+        assert_eq!(lsp.range.start.character, 0);
+        assert_eq!(lsp.range.end.line, 0);
+        assert_eq!(lsp.range.end.character, 6);
     }
 
     #[test]

@@ -2052,6 +2052,15 @@ impl Checker {
             return RType::new(Mode::Null, Length::Zero, false);
         }
 
+        // NSE-symbol functions: take bare symbol arguments that should
+        // NOT be resolved as variable references. These are commonly
+        // used in metaprogramming and NSE contexts where the argument
+        // is a name, not a value. We return opaque without evaluating
+        // the args as expressions, suppressing spurious RY010.
+        if is_nse_symbol_fn(&name) {
+            return RType::UNKNOWN;
+        }
+
         // `switch(EXPR, ...)` selects one of several alternatives.
         // The result type is the join of all alternatives. Both numeric
         // switch (`switch(1, "a", "b")`) and named switch
@@ -3767,6 +3776,31 @@ fn extract_literal_int(e: &Expr) -> Option<i64> {
 /// mark where the LHS value should be substituted.
 fn is_pipe_placeholder(e: &Expr) -> bool {
     matches!(e, Expr::Ident { name, .. } if name == "." || name == "_")
+}
+
+/// Functions whose arguments are bare symbols (NSE), not expressions.
+/// When these are called, the checker does NOT evaluate the arguments
+/// as variable references, preventing spurious RY010 warnings.
+///
+/// Includes popular package functions commonly used in NSE contexts:
+///   * ggplot2: from_theme, aes, aes_, aes_string, aes_q
+///   * rlang: sym, ensym, enquo, enquos, expr, enexpr
+///   * base: quote, substitute, bquote (already in typeshed but also
+///     used as NSE)
+fn is_nse_symbol_fn(name: &str) -> bool {
+    matches!(
+        name,
+        // ggplot2 NSE
+        "from_theme" | "aes" | "aes_" | "aes_string" | "aes_q"
+        // rlang NSE
+        | "sym" | "ensym" | "enquo" | "enquos" | "expr" | "enexpr"
+        | "quo" | "quos" | "abort" | "warn" | "inform"
+        | "defuse" | "tidyeval_data"
+        // dplyr/tidyselect NSE  
+        | "tidyselect" | "vars" | "all_vars" | "peek_vars"
+        // Common NSE helpers
+        | "delayedAssign" | "makeActiveBinding"
+    )
 }
 
 /// Return the R source symbol for a binary operator, for use in

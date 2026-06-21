@@ -1215,6 +1215,14 @@ impl Checker {
                             Mode::Double
                         }
                     }
+                    "arg0" => first.mode,
+                    "arg1" => arg_types.get(1).map(|t| t.mode).unwrap_or(Mode::Opaque),
+                    "arg2" => arg_types.get(2).map(|t| t.mode).unwrap_or(Mode::Opaque),
+                    "yes_or_no" => {
+                        let yes = arg_types.get(1).copied().unwrap_or(RType::UNKNOWN);
+                        let no = arg_types.get(2).copied().unwrap_or(RType::UNKNOWN);
+                        yes.join(no).mode
+                    }
                     _ => Mode::Opaque,
                 };
                 let length = match c.length.as_str() {
@@ -1222,6 +1230,12 @@ impl Checker {
                     "1" => Length::One,
                     "unknown" => Length::Unknown,
                     "arg0" => first.length,
+                    "arg1" => arg_types.get(1).map(|t| t.length).unwrap_or(Length::Unknown),
+                    "arg2" => arg_types.get(2).map(|t| t.length).unwrap_or(Length::Unknown),
+                    "longest_arg" => longest_arg_length(arg_types),
+                    "n_args" => Length::Known(arg_types.len()),
+                    "x_times" => rep_length(arg_types),
+                    "test" => first.length,
                     _ => Length::Unknown,
                 };
                 RType::new(mode, length, c.na)
@@ -2701,17 +2715,15 @@ impl Checker {
         // Everything else just gets an opaque type.
         let first = arg_types.first().copied().unwrap_or(RType::UNKNOWN);
         match &sig.return_ {
-            ReturnSpec::Slot(s) => {
-                match s.as_str() {
-                    "arg0" => first,
-                    "concat_of_args" => self.infer_c(args, arg_types, span),
-                    s if s.starts_with("arg") => {
-                        let idx: usize = s[3..].parse().unwrap_or(0);
-                        arg_types.get(idx).copied().unwrap_or(RType::UNKNOWN)
-                    }
-                    _ => RType::UNKNOWN,
+            ReturnSpec::Slot(s) => match s.as_str() {
+                "arg0" => first,
+                "concat_of_args" => self.infer_c(args, arg_types, span),
+                s if s.starts_with("arg") => {
+                    let idx: usize = s[3..].parse().unwrap_or(0);
+                    arg_types.get(idx).copied().unwrap_or(RType::UNKNOWN)
                 }
-            }
+                _ => RType::UNKNOWN,
+            },
             ReturnSpec::Concrete(c) => {
                 let mode = match c.mode.as_str() {
                     "logical" => Mode::Logical,
@@ -2734,6 +2746,19 @@ impl Checker {
                             Mode::Double
                         }
                     }
+                    // "arg0" as a mode spec: use the first arg's mode.
+                    "arg0" => first.mode,
+                    // "arg1" as a mode spec: use the second arg's mode.
+                    "arg1" => arg_types.get(1).map(|t| t.mode).unwrap_or(Mode::Opaque),
+                    // "arg2" as a mode spec: use the third arg's mode.
+                    "arg2" => arg_types.get(2).map(|t| t.mode).unwrap_or(Mode::Opaque),
+                    // "yes_or_no": join of the second and third args'
+                    // modes (for `ifelse(test, yes, no)`).
+                    "yes_or_no" => {
+                        let yes = arg_types.get(1).copied().unwrap_or(RType::UNKNOWN);
+                        let no = arg_types.get(2).copied().unwrap_or(RType::UNKNOWN);
+                        yes.join(no).mode
+                    }
                     _ => Mode::Opaque,
                 };
                 let length = match c.length.as_str() {
@@ -2741,7 +2766,15 @@ impl Checker {
                     "1" => Length::One,
                     "unknown" => Length::Unknown,
                     "arg0" => first.length,
-                    "test" => arg_types.first().copied().unwrap_or(RType::UNKNOWN).length,
+                    "arg1" => arg_types.get(1).map(|t| t.length).unwrap_or(Length::Unknown),
+                    "arg2" => arg_types.get(2).map(|t| t.length).unwrap_or(Length::Unknown),
+                    // Longest of all args' lengths (for paste/paste0/sprintf).
+                    "longest_arg" => longest_arg_length(arg_types),
+                    // Number of arguments (for list()).
+                    "n_args" => Length::Known(args.len()),
+                    // x_times: arg0 length * arg1 value (for rep).
+                    "x_times" => rep_length(arg_types),
+                    "test" => first.length,
                     _ => Length::Unknown,
                 };
                 let _ = name;
@@ -3136,6 +3169,45 @@ fn parse_class_literal(e: &Expr) -> ClassLiteral {
             ClassLiteral::Unknown
         }
         _ => ClassLiteral::Unknown,
+    }
+}
+
+/// Build a `ColumnSchema` from a `list(...)` / `data.frame(...)` argument
+/// Compute the longest known length among a slice of argument types.
+/// Used by `paste` / `paste0` / `sprintf` which return a character
+/// vector whose length is the longest of the input vectors (R recycles
+/// shorter args to match). Returns `Length::Unknown` if any arg has an
+/// unknown length.
+fn longest_arg_length(arg_types: &[RType]) -> Length {
+    let mut max: Length = Length::One;
+    for t in arg_types {
+        max = match (max, t.length) {
+            (Length::Zero, x) | (x, Length::Zero) => x,
+            (Length::One, x) | (x, Length::One) => x,
+            (Length::Known(a), Length::Known(b)) => Length::Known(a.max(b)),
+            _ => return Length::Unknown,
+        };
+    }
+    max
+}
+
+/// Compute the result length of `rep(x, times)`. `x` is arg0, `times`
+/// is arg1. R's `rep(x, times)` returns `x` repeated `times` times; the
+/// total length is `length(x) * times`. We can only compute this when
+/// both lengths are known and `times` is a single integer.
+fn rep_length(arg_types: &[RType]) -> Length {
+    let x_len = arg_types.first().map(|t| t.length).unwrap_or(Length::Unknown);
+    let times_type = arg_types.get(1).copied().unwrap_or(RType::UNKNOWN);
+    match (x_len, times_type.length) {
+        (Length::Known(x), Length::One) => {
+            // We know the structure but not the runtime `times` value;
+            // approximate as Unknown unless `times` is a length-1 value
+            // (which it is). R's `rep(x, 3)` gives `length(x) * 3`, but
+            // we can't know the value `3` statically. Return Unknown.
+            let _ = x;
+            Length::Unknown
+        }
+        _ => Length::Unknown,
     }
 }
 

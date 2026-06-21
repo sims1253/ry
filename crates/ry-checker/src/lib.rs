@@ -10,6 +10,12 @@
 
 pub mod rules;
 pub mod format;
+pub mod project;
+
+// Re-export `Project` at the crate root so callers (the CLI, integration
+// tests) can write `ry_checker::Project` rather than
+// `ry_checker::project::Project`. Mirrors the ergonomics of `Checker`.
+pub use project::Project;
 
 use ry_core::ast::*;
 use ry_core::types::{
@@ -267,23 +273,23 @@ impl Scope {
 /// We store the AST nodes by index into a side-table the checker owns,
 /// avoiding lifetime entanglement with the SourceFile.
 #[derive(Debug, Clone)]
-struct UserFn {
+pub(crate) struct UserFn {
     /// Parameter names with their inferred-or-default types.
-    params: Vec<(String, RType)>,
+    pub(crate) params: Vec<(String, RType)>,
     /// Indices into the body Vec<Stmt>. Stored as a snapshot we can
     /// re-walk on each fixpoint iteration.
-    body: Vec<Stmt>,
+    pub(crate) body: Vec<Stmt>,
     /// Currently-inferred return type. Starts as UNKNOWN, refined by
     /// each fixpoint iteration. Stored as a slot index so all calls
     /// observe the latest refinement without rebuilding the table.
-    return_slot: usize,
+    pub(crate) return_slot: usize,
 }
 
 /// Side-table of inferred return types, indexed by `UserFn::return_slot`.
 /// Stored separately so we can clone the table cheaply when entering a
 /// nested inference pass without deep-cloning the function bodies.
 #[derive(Debug, Clone, Default)]
-struct ReturnSlots(Vec<RType>);
+pub(crate) struct ReturnSlots(pub(crate) Vec<RType>);
 
 impl ReturnSlots {
     fn get(&self, i: usize) -> RType {
@@ -307,28 +313,28 @@ impl ReturnSlots {
 /// `return_slots` with regular functions so the fixpoint loop refines
 /// it the same way.
 #[derive(Debug, Clone, Default)]
-struct FnTable {
-    fns: HashMap<String, UserFn>,
+pub(crate) struct FnTable {
+    pub(crate) fns: HashMap<String, UserFn>,
     /// `(generic, class)` -> return slot index. Mirrors the same
     /// `return_slots` storage as `fns`; lookups during dispatch consult
     /// this map for an S3 method before falling back to the generic.
-    s3_methods: HashMap<(String, String), usize>,
+    pub(crate) s3_methods: HashMap<(String, String), usize>,
 }
 
 /// Maximum fixpoint depth before we give up and freeze as Opaque.
 /// Conservative cap; well-typed programs converge in 2-3 iterations.
-const MAX_FIXPOINT_DEPTH: usize = 8;
+pub(crate) const MAX_FIXPOINT_DEPTH: usize = 8;
 
 pub struct Checker {
     typeshed: Typeshed,
-    diagnostics: Vec<Diagnostic>,
-    path: String,
+    pub(crate) diagnostics: Vec<Diagnostic>,
+    pub(crate) path: String,
     /// User-defined functions collected in pass 1.
-    fn_table: FnTable,
+    pub(crate) fn_table: FnTable,
     /// Inferred return types, refined by the fixpoint loop.
-    return_slots: ReturnSlots,
+    pub(crate) return_slots: ReturnSlots,
     /// Stack of function names currently being inferred (cycle detection).
-    inferring: Vec<String>,
+    pub(crate) inferring: Vec<String>,
 }
 
 impl Checker {
@@ -353,14 +359,56 @@ impl Checker {
         self.collect_fns(&file.stmts);
 
         // Pass 2 (fixpoint): refine each function's inferred return type
-        // until the table stabilizes or we hit MAX_FIXPOINT_DEPTH. We
-        // snapshot between iterations to detect convergence.
-        //
-        // S3 methods (`print.foo`, etc.) are inserted into `fns` under
-        // their full name during pass 1, with `s3_methods` pointing at
-        // the same return slot. Iterating `fns.keys()` therefore refines
-        // S3 method bodies alongside regular functions; dispatch reads
-        // the refined slot via the `s3_methods` map.
+        // until the table stabilizes or we hit MAX_FIXPOINT_DEPTH.
+        self.run_fixpoint();
+
+        // Pass 3: final walk, emitting all diagnostics. Function calls
+        // now resolve against the refined FnTable.
+        self.emit_diagnostics(file);
+        &self.diagnostics
+    }
+
+    /// Construct a checker that uses pre-populated function tables.
+    /// Used by `Project` for multi-file checking, where the tables are
+    /// shared across files. The fresh checker starts with an empty
+    /// diagnostics vec and an empty `inferring` stack.
+    pub(crate) fn with_tables(path: &str, fn_table: FnTable, return_slots: ReturnSlots) -> Self {
+        let typeshed = load_base().expect("typeshed must load");
+        Self {
+            typeshed,
+            diagnostics: Vec::new(),
+            path: path.to_string(),
+            fn_table,
+            return_slots,
+            inferring: Vec::new(),
+        }
+    }
+
+    /// Take ownership of this checker's tables. Used by `Project` to
+    /// move a populated `FnTable`/`ReturnSlots` out of a throwaway
+    /// checker and into a shared `Project`.
+    pub(crate) fn into_tables(self) -> (FnTable, ReturnSlots) {
+        (self.fn_table, self.return_slots)
+    }
+
+    /// Pass 1: collect function definitions from this file into the
+    /// shared `FnTable`. Does NOT emit diagnostics. `Project::check`
+    /// calls this once per file before running the fixpoint.
+    pub(crate) fn collect_file_fns(&mut self, file: &SourceFile) {
+        self.path = file.path.clone();
+        self.collect_fns(&file.stmts);
+    }
+
+    /// Pass 2: refine all function return types until convergence.
+    /// Iterates the shared `FnTable`; safe to call once after all files
+    /// have been collected.
+    ///
+    /// S3 methods (`print.foo`, etc.) are inserted into `fns` under
+    /// their full name during pass 1, with `s3_methods` pointing at
+    /// the same return slot. Iterating `fns.keys()` therefore refines
+    /// S3 method bodies alongside regular functions; dispatch reads
+    /// the refined slot via the `s3_methods` map.
+    pub(crate) fn run_fixpoint(&mut self) {
         for _ in 0..MAX_FIXPOINT_DEPTH {
             let before = self.return_slots.clone();
             let names: Vec<String> = self.fn_table.fns.keys().cloned().collect();
@@ -371,14 +419,17 @@ impl Checker {
                 break;
             }
         }
+    }
 
-        // Pass 3: final walk, emitting all diagnostics. Function calls
-        // now resolve against the refined FnTable.
+    /// Pass 3: emit diagnostics for this file using the refined tables.
+    /// Diagnostics are appended to `self.diagnostics`; clear that vec
+    /// first if you want only this file's diagnostics.
+    pub(crate) fn emit_diagnostics(&mut self, file: &SourceFile) {
+        self.path = file.path.clone();
         let mut scope = Scope::default();
         for s in &file.stmts {
             self.check_stmt(s, &mut scope);
         }
-        &self.diagnostics
     }
 
     pub fn take_diagnostics(&mut self) -> Vec<Diagnostic> {
@@ -388,19 +439,7 @@ impl Checker {
     /// Apply a `SeverityFilter` to the diagnostics collected so far,
     /// mutating severities (or dropping suppressed ones) in place.
     pub fn apply_filter(&mut self, filter: &SeverityFilter) {
-        let mut out: Vec<Diagnostic> = Vec::with_capacity(self.diagnostics.len());
-        for d in self.diagnostics.drain(..) {
-            let default = d
-                .rule()
-                .map(|r| r.default_severity)
-                .unwrap_or(Severity::Warning);
-            if let Some(sev) = filter.effective(d.code, default) {
-                let mut d = d;
-                d.severity = sev;
-                out.push(d);
-            }
-        }
-        self.diagnostics = out;
+        apply_filter_to_diagnostics(&mut self.diagnostics, filter);
     }
 
     fn emit(&mut self, severity: Severity, span: Span, code: &'static str, msg: impl Into<String>) {
@@ -1866,6 +1905,34 @@ impl Checker {
             ),
         );
     }
+}
+
+/// Apply a `SeverityFilter` to a vec of diagnostics in place. Each
+/// diagnostic's severity is replaced by the filter's effective
+/// severity for its code; diagnostics for codes the filter suppresses
+/// are dropped entirely.
+///
+/// Both `Checker::apply_filter`, `Project::apply_filter`, and the CLI
+/// (for per-file diagnostic vecs produced by `Project::check`) call
+/// this. Keeping the logic here avoids duplicating the resolution
+/// rules.
+pub fn apply_filter_to_diagnostics(
+    diagnostics: &mut Vec<Diagnostic>,
+    filter: &SeverityFilter,
+) {
+    let mut out: Vec<Diagnostic> = Vec::with_capacity(diagnostics.len());
+    for d in diagnostics.drain(..) {
+        let default = d
+            .rule()
+            .map(|r| r.default_severity)
+            .unwrap_or(Severity::Warning);
+        if let Some(sev) = filter.effective(d.code, default) {
+            let mut d = d;
+            d.severity = sev;
+            out.push(d);
+        }
+    }
+    *diagnostics = out;
 }
 
 /// Quick literal-only inference for function parameter defaults. We

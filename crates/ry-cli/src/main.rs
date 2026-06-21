@@ -200,6 +200,13 @@ fn run_check(
     let mut all_diagnostics: Vec<ry_checker::Diagnostic> = Vec::new();
     let mut srcs: HashMap<String, String> = HashMap::new();
     let mut parse_errors = 0usize;
+    let mut file_count = 0usize;
+
+    // Multi-file project mode: build a single `Project` so functions
+    // defined in one file are visible when checking another. This
+    // replaces the previous per-file `Checker` loop, which left every
+    // cross-file call opaque.
+    let mut project = ry_checker::Project::new();
 
     for path in &all_paths {
         let src = match std::fs::read_to_string(path) {
@@ -220,11 +227,24 @@ fn run_check(
                 continue;
             }
         };
-        let mut checker = ry_checker::Checker::new(&path_str);
-        checker.check(&file);
-        checker.apply_filter(&filter);
-        all_diagnostics.extend(checker.take_diagnostics());
+        project.add_file(path_str.clone(), file);
         srcs.insert(path_str, src);
+        file_count += 1;
+    }
+
+    // Run the three-pass check across all successfully parsed files.
+    // Pass 1 collects fns, pass 2 fixpoint-refines returns, pass 3
+    // emits per-file diagnostics against the shared table.
+    let mut per_file_diagnostics = project.check();
+
+    // Apply the severity filter to each file's diagnostics. The free
+    // function is shared with `Checker::apply_filter` so resolution
+    // rules stay in one place.
+    for (_path, diags) in &mut per_file_diagnostics {
+        ry_checker::apply_filter_to_diagnostics(diags, &filter);
+    }
+    for (_path, diags) in per_file_diagnostics {
+        all_diagnostics.extend(diags);
     }
 
     all_diagnostics.sort_by(|a, b| {
@@ -255,7 +275,7 @@ fn run_check(
 
     eprintln!(
         "ry: checked {} file(s), {} error(s), {} warning(s)",
-        all_paths.len(),
+        file_count,
         errors,
         warnings
     );

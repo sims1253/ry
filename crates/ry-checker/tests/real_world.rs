@@ -10,7 +10,7 @@
 
 use std::collections::BTreeMap;
 
-use ry_checker::Checker;
+use ry_checker::{Checker, Project};
 use ry_core::RParser;
 
 /// Snippets modeled on patterns observed in real R packages. None of
@@ -167,5 +167,97 @@ fn real_world_distribution() {
     println!(
         "\nThis is a baseline report, not an assertion. If the numbers shift\n\
          significantly between commits, investigate false-positive regressions.\n"
+    );
+}
+
+/// Multi-file project baseline. Mirrors the single-file baseline but
+/// exercises the `Project` API: a helper file defines utilities, and a
+/// main file uses them. Like the single-file baseline this only reports
+/// the distribution without asserting it.
+#[test]
+fn real_world_multi_file_distribution() {
+    // (file_path, src) pairs modeling a small two-file project. The
+    // helper file defines a couple of utilities; the main file uses
+    // them, including one use that exercises cross-file return-type
+    // propagation (the `name()` helper returns character, so using it
+    // arithmetically would fire RY040 if the inference is correct).
+    let project_files: &[(&str, &str)] = &[
+        (
+            "helpers.R",
+            r#"double <- function(x = 1L) { x * 2L }
+name <- function() { "ry" }
+"#,
+        ),
+        (
+            "main.R",
+            r#"total <- double(21L)
+upper <- toupper(name())
+oops <- name() + 1L
+"#,
+        ),
+    ];
+
+    let mut project = Project::new();
+    for (path, src) in project_files {
+        let mut parser = match RParser::new() {
+            Ok(p) => p,
+            Err(e) => {
+                println!("{}: parser init failed: {}", path, e);
+                return;
+            }
+        };
+        let file = match parser.parse(path, src) {
+            Ok(f) => f,
+            Err(e) => {
+                println!("{}: parse failed: {}", path, e);
+                return;
+            }
+        };
+        project.add_file((*path).to_string(), file);
+    }
+
+    let per_file = project.check();
+    let mut grand_total: BTreeMap<String, usize> = BTreeMap::new();
+    let mut per_file_counts: Vec<(&str, BTreeMap<String, usize>, usize)> = Vec::new();
+    for (path, diags) in &per_file {
+        let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+        for d in diags {
+            *counts.entry(d.code.to_string()).or_insert(0) += 1;
+            *grand_total.entry(d.code.to_string()).or_insert(0) += 1;
+        }
+        per_file_counts.push((path, counts, diags.len()));
+    }
+
+    println!("\n=== ry real-world multi-file baseline ===\n");
+    println!("{:<16} {:<8} codes", "file", "diags");
+    println!("{}", "-".repeat(64));
+    for (path, counts, n) in &per_file_counts {
+        let codes_str = if counts.is_empty() {
+            "(clean)".to_string()
+        } else {
+            counts
+                .iter()
+                .map(|(k, v)| format!("{}x{}", v, k))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        println!("{:<16} {:<8} {}", path, n, codes_str);
+    }
+    println!("{}", "-".repeat(64));
+    let total: usize = per_file_counts.iter().map(|(_, _, n)| *n).sum();
+    println!(
+        "{:<16} {:<8} {}",
+        "TOTAL",
+        total,
+        grand_total
+            .iter()
+            .map(|(k, v)| format!("{}x{}", v, k))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    println!(
+        "\nThis is a baseline report, not an assertion. The multi-file path\n\
+         should produce at least one RY040 from `name() + 1L` if cross-file\n\
+         return-type inference is wired up correctly.\n"
     );
 }

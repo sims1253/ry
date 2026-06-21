@@ -1266,12 +1266,19 @@ impl Checker {
                         format!("`if` condition has length {:?}, will only use first element", ct.length),
                     );
                 }
+                // Flow-sensitive type refinement: if the condition is a
+                // type predicate (`is.numeric(x)`, `is.null(x)`, ...),
+                // narrow `x`'s type in each branch. The `then` branch
+                // gets the positive refinement; `else_` gets the
+                // negative (which we model only for `is.null`).
+                let narrowing = extract_type_narrowing(cond);
+                let (then_scope, else_scope) = apply_narrowing(scope, &narrowing);
                 for s in then {
-                    self.check_stmt(s, scope);
+                    self.check_stmt(s, &mut then_scope.clone());
                 }
                 if let Some(else_) = else_ {
                     for s in else_ {
-                        self.check_stmt(s, scope);
+                        self.check_stmt(s, &mut else_scope.clone());
                     }
                 }
             }
@@ -2927,6 +2934,167 @@ fn is_pipe_placeholder(e: &Expr) -> bool {
     matches!(e, Expr::Ident { name, .. } if name == "." || name == "_")
 }
 
+/// A type refinement extracted from an `if` condition. Represents the
+/// information we can glean from a type predicate call like
+/// `is.numeric(x)` or `is.null(x)`.
+///
+/// `Narrowing::Positive` means "in the `then` branch, `var` is of the
+/// given mode". `Negative` means "in the `else_` branch, `var` is NOT
+/// of the given mode" (we only model this for `is.null`, where the
+/// negation is meaningful: the value is non-null).
+#[derive(Debug, Clone)]
+enum Narrowing {
+    /// No refinement could be extracted from the condition.
+    None,
+    /// `var` is narrowed to `mode` in the positive (then) branch.
+    Positive { var: String, mode: Mode },
+    /// `var` is narrowed away from `mode` in the negative (else) branch.
+    /// Only meaningful for `is.null` (negation = non-null).
+    Negative { var: String, mode: Mode },
+}
+
+/// Extract a type narrowing from an `if` condition expression.
+/// Recognizes:
+///   * `is.numeric(x)` / `is.double(x)` / `is.integer(x)` /
+///     `is.character(x)` / `is.logical(x)` / `is.complex(x)` /
+///     `is.list(x)` / `is.null(x)`
+///   * `!is.null(x)` (negated form: `then` branch gets non-null)
+///
+/// For the negated form `!is.null(x)`, we swap: the `then` branch gets
+/// the negative narrowing (non-null), and the `else_` branch gets the
+/// positive narrowing (null). This is handled by returning a `Negative`
+/// variant which `apply_narrowing` applies to the `then` branch.
+fn extract_type_narrowing(cond: &Expr) -> Narrowing {
+    match cond {
+        Expr::Call { func, args, .. } => {
+            let Expr::Ident { name, .. } = func.as_ref() else {
+                return Narrowing::None;
+            };
+            let Some(mode) = predicate_mode(name) else {
+                return Narrowing::None;
+            };
+            let Some(var) = args.first().and_then(|a| match &a.value {
+                Expr::Ident { name, .. } => Some(name.clone()),
+                _ => None,
+            }) else {
+                return Narrowing::None;
+            };
+            Narrowing::Positive { var, mode }
+        }
+        Expr::UnaryOp { op: UnaryOpKind::Not, expr, .. } => {
+            // `!is.null(x)`: swap the narrowing so the `then` branch
+            // gets the negative (non-null) and `else_` gets the
+            // positive (null).
+            let Expr::Call { func, args, .. } = expr.as_ref() else {
+                return Narrowing::None;
+            };
+            let Expr::Ident { name, .. } = func.as_ref() else {
+                return Narrowing::None;
+            };
+            let Some(mode) = predicate_mode(name) else {
+                return Narrowing::None;
+            };
+            let Some(var) = args.first().and_then(|a| match &a.value {
+                Expr::Ident { name, .. } => Some(name.clone()),
+                _ => None,
+            }) else {
+                return Narrowing::None;
+            };
+            Narrowing::Negative { var, mode }
+        }
+        _ => Narrowing::None,
+    }
+}
+
+/// Map a type predicate name to the `Mode` it tests for.
+fn predicate_mode(name: &str) -> Option<Mode> {
+    match name {
+        "is.numeric" => Some(Mode::Double), // numeric = double or integer
+        "is.double" => Some(Mode::Double),
+        "is.integer" => Some(Mode::Integer),
+        "is.character" => Some(Mode::Character),
+        "is.logical" => Some(Mode::Logical),
+        "is.complex" => Some(Mode::Complex),
+        "is.list" => Some(Mode::List),
+        "is.null" => Some(Mode::Null),
+        "is.raw" => Some(Mode::Raw),
+        _ => None,
+    }
+}
+
+/// Apply a narrowing to produce separate scopes for the `then` and
+/// `else_` branches. Returns `(then_scope, else_scope)` where each is
+/// a clone of `base` with the appropriate binding updated.
+///
+/// For `Positive { var, mode }`: the `then` scope narrows `var` to
+/// `mode`; the `else` scope is unchanged (we don't model negation for
+/// non-null predicates).
+///
+/// For `Negative { var, mode }`: the `then` scope is unchanged for
+/// `var` but we remove a `Null` mode if `mode == Null`; the `else`
+/// scope narrows `var` to `mode`. This handles `!is.null(x)`: the
+/// `then` branch knows `x` is non-null, the `else` branch knows `x`
+/// is null.
+fn apply_narrowing(base: &Scope, narrowing: &Narrowing) -> (Scope, Scope) {
+    let (mut then_scope, mut else_scope) = (base.clone(), base.clone());
+    match narrowing {
+        Narrowing::None => {}
+        Narrowing::Positive { var, mode } => {
+            if let Some(existing) = then_scope.get(var).copied() {
+                // Only narrow if the existing type is opaque or wider
+                // than the predicate's mode. If the existing type is
+                // already concrete and incompatible, the narrowing is
+                // vacuous (the branch is dead code).
+                if matches!(existing.mode, Mode::Opaque) {
+                    then_scope.insert(
+                        var.clone(),
+                        RType::new(*mode, existing.length, existing.na.0),
+                    );
+                } else if existing.mode.coerce_rank() <= mode.coerce_rank() {
+                    // The existing mode is at or below the predicate's
+                    // mode on the coercion ladder; the narrowing is
+                    // valid. Use the predicate's mode (which may be
+                    // more specific).
+                    then_scope.insert(
+                        var.clone(),
+                        RType::new(*mode, existing.length, existing.na.0),
+                    );
+                }
+            }
+            // For is.null, the else branch knows var is NOT null.
+            // We only model this when mode is Null.
+            if matches!(mode, Mode::Null) {
+                if let Some(existing) = else_scope.get(var).copied() {
+                    if matches!(existing.mode, Mode::Null) {
+                        // var was null, but we're in the else branch
+                        // (not null). Make it opaque since we don't
+                        // know what else it could be.
+                        else_scope.insert(var.clone(), RType::UNKNOWN);
+                    }
+                }
+            }
+        }
+        Narrowing::Negative { var, mode } => {
+            // The negation: `then` branch knows var is NOT of `mode`.
+            if let Some(existing) = then_scope.get(var).copied() {
+                if existing.mode == *mode {
+                    then_scope.insert(var.clone(), RType::UNKNOWN);
+                }
+            }
+            // `else` branch knows var IS of `mode`.
+            if let Some(existing) = else_scope.get(var).copied() {
+                if matches!(existing.mode, Mode::Opaque) || existing.mode == *mode {
+                    else_scope.insert(
+                        var.clone(),
+                        RType::new(*mode, existing.length, existing.na.0),
+                    );
+                }
+            }
+        }
+    }
+    (then_scope, else_scope)
+}
+
 /// Result of trying to read a class literal from a `class = ...`
 /// argument of `structure(...)`. `Unknown` covers dynamic expressions
 /// (`class = my_var`, `class = some_call()`) which we cannot resolve at
@@ -3943,6 +4111,85 @@ mod tests {
         assert!(
             diags.iter().all(|d| d.code != "RY010"),
             "user fn name used as value should not be RY010, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn type_narrowing_is_null_then_branch() {
+        // `if (!is.null(x)) { length(x) }`: the `then` branch knows
+        // `x` is non-null. Without narrowing, `x` inside the branch
+        // resolves from the enclosing scope and is well-typed either
+        // way. We test the negative: inside a `!is.null` branch, using
+        // `x` arithmetically should NOT fire RY040 when `x` was opaque
+        // (the narrowing doesn't give us a mode, just removes null).
+        let diags = check(
+            "x <- NULL\n\
+             if (!is.null(x)) {\n\
+             \x20 y <- x + 1\n\
+             }\n",
+        );
+        // `x` starts as NULL; in the `then` branch it's narrowed to
+        // opaque (non-null). `opaque + 1` should not fire RY040
+        // (opaque is permissive).
+        assert!(
+            diags.iter().all(|d| d.code != "RY040"),
+            "non-null narrowed opaque should not fire RY040, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn type_narrowing_is_numeric_then_branch() {
+        // `if (is.numeric(x)) { x + 1 }`: the `then` branch narrows
+        // `x` to numeric (double). If `x` was opaque, it's now double
+        // inside the branch. Using `x + 1` should be well-typed.
+        let diags = check(
+            "x <- some_opaque_thing\n\
+             if (is.numeric(x)) {\n\
+             \x20 y <- x + 1\n\
+             }\n",
+        );
+        assert!(
+            diags.iter().all(|d| d.code != "RY040"),
+            "numeric-narrowed opaque should not fire RY040 in then branch, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn type_narrowing_does_not_leak() {
+        // The narrowing must NOT leak into the enclosing scope. After
+        // the `if`, `x` should still be opaque.
+        let diags = check(
+            "x <- some_opaque_thing\n\
+             if (is.numeric(x)) {\n\
+             \x20 y <- x + 1\n\
+             }\n\
+             z <- x + \"bad\"\n",
+        );
+        // `x` outside the branch is still opaque, so `x + "bad"` must
+        // NOT fire RY040. This proves the narrowing is branch-local.
+        assert!(
+            diags.iter().all(|d| d.code != "RY040"),
+            "narrowing leaked into enclosing scope, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn type_narrowing_is_character_then_branch() {
+        // `if (is.character(x)) { nchar(x) }`: the `then` branch
+        // narrows `x` to character. `nchar` on character is fine.
+        let diags = check(
+            "x <- some_opaque_thing\n\
+             if (is.character(x)) {\n\
+             \x20 n <- nchar(x)\n\
+             }\n",
+        );
+        assert!(
+            diags.iter().all(|d| d.code != "RY040"),
+            "character-narrowed opaque should not fire RY040 in then branch, got {:?}",
             diags
         );
     }

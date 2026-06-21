@@ -5,6 +5,7 @@ members = [
     "crates/ry-checker",
     "crates/ry-typeshed",
     "crates/ry-cli",
+    "crates/ry-lsp",
 ]
 
 [workspace.package]

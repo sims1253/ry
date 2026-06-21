@@ -12,6 +12,7 @@ path = "src/main.rs"
 ry-core = { path = "../ry-core" }
 ry-checker = { path = "../ry-checker" }
 ry-typeshed = { path = "../ry-typeshed" }
+ry-lsp = { path = "../ry-lsp" }
 clap = { workspace = true }
 clap_complete = "4"
 miette = { workspace = true }
@@ -22,6 +23,10 @@ toml = "0.8"
 glob = "0.3"
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+# Only the runtime pieces needed to drive the async LSP server from a
+# synchronous `fn main()`. We do NOT pull in the full `tokio` feature
+# set here (the ry-lsp crate does that itself).
+tokio = { version = "1", features = ["rt-multi-thread", "io-std"] }
 
 [dev-dependencies]
 tempfile = "3"

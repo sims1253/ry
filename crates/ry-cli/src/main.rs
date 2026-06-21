@@ -58,7 +58,10 @@ enum Cmd {
         #[arg(long, value_name = "WHEN")]
         color: Option<String>,
     },
-    /// Start the language server (not yet implemented).
+    /// Start the language server. Speaks the Language Server Protocol
+    /// (LSP) over stdio, publishing type-check diagnostics for open R
+    /// files. Connect to it from any LSP-aware editor (VS Code, Neovim,
+    /// Helix, etc.).
     Server,
     /// Display ry's version.
     Version {
@@ -143,8 +146,32 @@ fn main() -> Result<ExitCode> {
             check_matches,
         ),
         Cmd::Server => {
-            eprintln!("ry: `server` is not implemented yet (planned for LSP integration)");
-            Ok(ExitCode::FAILURE)
+            // The LSP server reads JSON-RPC from stdin and writes
+            // JSON-RPC to stdout. CRITICAL: any tracing or log output
+            // on stdout will corrupt the stream. We install a tracing
+            // subscriber that writes ONLY to stderr, with a conservative
+            // `ry=warn` filter so the server stays quiet by default.
+            //
+            // `try_init` is idempotent (the first subscriber wins); if a
+            // subscriber was already installed earlier in this process,
+            // this call is a no-op. We don't rely on that, but it means
+            // we don't have to coordinate with `run_check`'s init.
+            tracing_subscriber::fmt()
+                .with_writer(std::io::stderr)
+                .with_env_filter("ry=warn")
+                .try_init()
+                .ok();
+            // The LSP server is async (tower-lsp is built on tokio), but
+            // `main` is synchronous. We spin up a multi-threaded tokio
+            // runtime for the server case only. Other subcommands keep
+            // their synchronous behavior and pay no runtime cost.
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| miette::miette!("failed to start tokio runtime: {}", e))?;
+            rt.block_on(async {
+                ry_lsp::run().await
+            })
+            .map_err(|e| miette::miette!("ry LSP server error: {}", e))?;
+            Ok(ExitCode::SUCCESS)
         }
         Cmd::Version { output_format } => {
             print_version(&output_format);

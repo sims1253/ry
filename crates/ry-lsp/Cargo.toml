@@ -1,0 +1,15 @@
+[package]
+name = "ry-lsp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ry-core = { path = "../ry-core" }
+ry-checker = { path = "../ry-checker" }
+ry-typeshed = { path = "../ry-typeshed" }
+tower-lsp = "0.20"
+tokio = { version = "1", features = ["full"] }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

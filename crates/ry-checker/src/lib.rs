@@ -1763,6 +1763,56 @@ impl Checker {
         iter.fold(first, |acc, t| acc.join(t))
     }
 
+    /// Infer the result type of `tryCatch(expr, ...)`. The first
+    /// positional argument is the main expression; subsequent named
+    /// arguments are condition handlers (`error = function(e) ...`,
+    /// `warning = function(w) ...`, etc.).
+    ///
+    /// The result type is the join of the main expression's type and
+    /// all handler return types. Each handler is a function literal
+    /// (or named function); we infer its return type via
+    /// `callback_return_type` with the condition object as the
+    /// callback's argument (opaque, since we don't model the
+    /// condition object).
+    fn infer_trycatch_call(
+        &mut self,
+        args: &[Arg],
+        scope: &mut Scope,
+        span: Span,
+    ) -> RType {
+        let mut types: Vec<RType> = Vec::new();
+        for (i, a) in args.iter().enumerate() {
+            if i == 0 {
+                // Main expression.
+                types.push(self.infer(&a.value, scope));
+            } else if a.name.is_some() {
+                // Named handler: `error = function(e) ...`. Infer the
+                // handler function's return type.
+                if let Some(rt) = self.callback_return_type(
+                    &a.value,
+                    &[RType::UNKNOWN],
+                    scope,
+                ) {
+                    types.push(rt);
+                } else {
+                    // Couldn't infer handler return: infer for
+                    // diagnostics and use opaque.
+                    let _ = self.infer(&a.value, scope);
+                }
+            } else {
+                // Extra positional arg (rare): infer for diagnostics.
+                let _ = self.infer(&a.value, scope);
+            }
+        }
+        let _ = span;
+        if types.is_empty() {
+            return RType::UNKNOWN;
+        }
+        let mut iter = types.into_iter();
+        let first = iter.next().unwrap_or(RType::UNKNOWN);
+        iter.fold(first, |acc, t| acc.join(t))
+    }
+
     fn infer_call(&mut self, func: &Expr, args: &[Arg], scope: &mut Scope, span: Span) -> RType {
         // Only model direct calls `name(...)`. Pipelines and indirect calls
         // return opaque.
@@ -1792,6 +1842,14 @@ impl Checker {
         // (`switch(x, a = 1, b = 2)`) are supported.
         if name == "switch" {
             return self.infer_switch_call(args, scope, span);
+        }
+
+        // `tryCatch(expr, ..., handler = fun)`: error-handling construct.
+        // The result type is the join of the main expression and all
+        // handler return types. Handlers are named arguments whose
+        // values are functions (error = function(e) ...).
+        if name == "tryCatch" {
+            return self.infer_trycatch_call(args, scope, span);
         }
 
         // `structure(x, class = "...")` is R's class constructor. We

@@ -57,6 +57,10 @@ enum Cmd {
         /// Control when colored output is used.
         #[arg(long, value_name = "WHEN")]
         color: Option<String>,
+        /// Watch for file changes and re-check automatically.
+        /// Uses polling (500ms interval). Press Ctrl+C to stop.
+        #[arg(short = 'W', long)]
+        watch: bool,
     },
     /// Start the language server. Speaks the Language Server Protocol
     /// (LSP) over stdio, publishing type-check diagnostics for open R
@@ -115,6 +119,7 @@ fn main() -> Result<ExitCode> {
             exit_zero: false,
             output_format: "concise".to_string(),
             color: None,
+            watch: false,
         },
     };
 
@@ -133,6 +138,7 @@ fn main() -> Result<ExitCode> {
             exit_zero,
             output_format,
             color: _,
+            watch,
         } => run_check(
             paths,
             error,
@@ -144,6 +150,7 @@ fn main() -> Result<ExitCode> {
             cli.verbose,
             cli.quiet,
             check_matches,
+            watch,
         ),
         Cmd::Server => {
             // The LSP server reads JSON-RPC from stdin and writes
@@ -266,6 +273,7 @@ fn run_check(
     cli_verbose: u8,
     cli_quiet: u8,
     check_matches: Option<&ArgMatches>,
+    watch: bool,
 ) -> Result<ExitCode> {
     // Determine the search start directory for config discovery. If the
     // user passed a path, anchor discovery at the first path's parent
@@ -335,7 +343,7 @@ fn run_check(
     let filter = build_filter(&cfg.error, &cfg.warn, &cfg.ignore);
     let excludes = config::Excludes::from_config(&cfg);
 
-    // ty defaults to the project root when no paths are given.
+    // Collect the initial file set.
     let mut all_paths = Vec::new();
     let search_roots: Vec<PathBuf> = if paths.is_empty() {
         vec![PathBuf::from(".")]
@@ -369,18 +377,155 @@ fn run_check(
         return Ok(ExitCode::FAILURE);
     }
 
+    // Run the initial check.
+    let result = run_check_once(&all_paths, &filter, format)?;
+    result.print_summary(format);
+
+    if !watch {
+        return Ok(result.exit_code(&cfg));
+    }
+
+    // Watch mode: poll for changes and re-check.
+    eprintln!("ry: watching {} file(s) for changes (Ctrl+C to stop)...", all_paths.len());
+    let mut stamps: HashMap<PathBuf, std::time::SystemTime> = HashMap::new();
+    for p in &all_paths {
+        if let Ok(meta) = std::fs::metadata(p) {
+            if let Ok(mtime) = meta.modified() {
+                stamps.insert(p.clone(), mtime);
+            }
+        }
+    }
+
+    let poll_interval = std::time::Duration::from_millis(500);
+    loop {
+        std::thread::sleep(poll_interval);
+
+        // Re-scan for new/deleted files.
+        let mut current_paths = Vec::new();
+        for root in &search_roots {
+            collect_r_files(root, &mut current_paths);
+        }
+        if let Some(root) = config_root.as_ref() {
+            if !excludes.is_empty() {
+                current_paths.retain(|p| {
+                    let rel = relative_path_for_exclude(p, root);
+                    !excludes.matches(&rel)
+                });
+            }
+        }
+
+        // Check for any file modification or file set change.
+        let mut changed = current_paths.len() != all_paths.len();
+        if !changed {
+            current_paths.sort();
+            all_paths.sort();
+            if current_paths != all_paths {
+                changed = true;
+            }
+        }
+        if !changed {
+            for p in &current_paths {
+                if let Ok(meta) = std::fs::metadata(p) {
+                    if let Ok(mtime) = meta.modified() {
+                        let prev = stamps.get(p).copied();
+                        if prev != Some(mtime) {
+                            changed = true;
+                            stamps.insert(p.clone(), mtime);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if changed {
+            all_paths = current_paths;
+            // Re-sync stamps for any new files.
+            for p in &all_paths {
+                if let Ok(meta) = std::fs::metadata(p) {
+                    if let Ok(mtime) = meta.modified() {
+                        stamps.insert(p.clone(), mtime);
+                    }
+                }
+            }
+            // Clear screen for a clean view of the new diagnostics.
+            // Using ANSI escape sequences rather than `clear` command
+            // for portability (no external process spawn).
+            eprint!("\x1b[2J\x1b[H");
+            let result = run_check_once(&all_paths, &filter, format)?;
+            result.print_summary(format);
+        }
+    }
+}
+
+/// Result of a single check pass: the diagnostics, file count, and
+/// parse error count. Used by both one-shot and watch mode to print
+/// results and compute the exit code.
+struct CheckResult {
+    diagnostics: Vec<ry_checker::Diagnostic>,
+    file_count: usize,
+    parse_errors: usize,
+}
+
+impl CheckResult {
+    fn print_summary(&self, format: ry_checker::format::OutputFormat) {
+        let errors = self
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == ry_checker::Severity::Error)
+            .count();
+        let warnings = self
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == ry_checker::Severity::Warning)
+            .count();
+        let _ = format;
+        eprintln!(
+            "ry: checked {} file(s), {} error(s), {} warning(s)",
+            self.file_count, errors, warnings
+        );
+    }
+
+    fn exit_code(&self, cfg: &config::Config) -> ExitCode {
+        let errors = self
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == ry_checker::Severity::Error)
+            .count();
+        let warnings = self
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == ry_checker::Severity::Warning)
+            .count();
+        let failed = errors > 0
+            || self.parse_errors > 0
+            || (cfg.error_on_warning && warnings > 0);
+        if cfg.exit_zero || !failed {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Core check logic: parse all files, run the project checker, apply
+/// the severity filter, print diagnostics, and return a summary. Used
+/// by both one-shot `ry check` and `ry check --watch` iterations.
+fn run_check_once(
+    all_paths: &[PathBuf],
+    filter: &ry_checker::SeverityFilter,
+    format: ry_checker::format::OutputFormat,
+) -> Result<CheckResult> {
     let mut all_diagnostics: Vec<ry_checker::Diagnostic> = Vec::new();
     let mut srcs: HashMap<String, String> = HashMap::new();
     let mut parse_errors = 0usize;
     let mut file_count = 0usize;
 
     // Multi-file project mode: build a single `Project` so functions
-    // defined in one file are visible when checking another. This
-    // replaces the previous per-file `Checker` loop, which left every
-    // cross-file call opaque.
+    // defined in one file are visible when checking another.
     let mut project = ry_checker::Project::new();
 
-    for path in &all_paths {
+    for path in all_paths {
         let src = match std::fs::read_to_string(path) {
             Ok(s) => s,
             Err(e) => {
@@ -404,16 +549,10 @@ fn run_check(
         file_count += 1;
     }
 
-    // Run the three-pass check across all successfully parsed files.
-    // Pass 1 collects fns, pass 2 fixpoint-refines returns, pass 3
-    // emits per-file diagnostics against the shared table.
     let mut per_file_diagnostics = project.check();
 
-    // Apply the severity filter to each file's diagnostics. The free
-    // function is shared with `Checker::apply_filter` so resolution
-    // rules stay in one place.
     for (_path, diags) in &mut per_file_diagnostics {
-        ry_checker::apply_filter_to_diagnostics(diags, &filter);
+        ry_checker::apply_filter_to_diagnostics(diags, filter);
     }
     for (_path, diags) in per_file_diagnostics {
         all_diagnostics.extend(diags);
@@ -428,40 +567,17 @@ fn run_check(
 
     let rendered = ry_checker::format::render(&all_diagnostics, format, &srcs);
     if !rendered.is_empty() {
-        // JSON (machine-readable) goes to stdout; human formats go to
-        // stderr so stdout stays clean for piping.
         match format {
             ry_checker::format::OutputFormat::Json => print!("{}", rendered),
             _ => eprint!("{}", rendered),
         }
     }
 
-    let errors = all_diagnostics
-        .iter()
-        .filter(|d| d.severity == ry_checker::Severity::Error)
-        .count();
-    let warnings = all_diagnostics
-        .iter()
-        .filter(|d| d.severity == ry_checker::Severity::Warning)
-        .count();
-
-    eprintln!(
-        "ry: checked {} file(s), {} error(s), {} warning(s)",
+    Ok(CheckResult {
+        diagnostics: all_diagnostics,
         file_count,
-        errors,
-        warnings
-    );
-
-    let failed = errors > 0
-        || parse_errors > 0
-        || (cfg.error_on_warning && warnings > 0);
-    if cfg.exit_zero {
-        Ok(ExitCode::SUCCESS)
-    } else if failed {
-        Ok(ExitCode::FAILURE)
-    } else {
-        Ok(ExitCode::SUCCESS)
-    }
+        parse_errors,
+    })
 }
 
 fn print_version(format: &str) {

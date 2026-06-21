@@ -987,7 +987,8 @@ impl Checker {
                         RType::new(bt.mode, Length::One, bt.na.0)
                     }
                     IndexKind::Double => {
-                        // `df[["col"]]`: name comes from a string literal.
+                        // `df[["col"]]` or `x[[i]]`: string literal or
+                        // integer literal index.
                         if let Some(Expr::String(name, _)) =
                             args.first().map(|a| &a.value)
                         {
@@ -996,6 +997,24 @@ impl Checker {
                                     return t;
                                 }
                             }
+                            return RType::new(bt.mode, Length::One, bt.na.0);
+                        }
+                        let int_idx = match args.first().map(|a| &a.value) {
+                            Some(Expr::Integer(i, _)) => Some(*i as f64),
+                            Some(Expr::Double(f, _)) => Some(*f),
+                            _ => None,
+                        };
+                        if let Some(idx) = int_idx {
+                            if let Some(schema) = bt.columns {
+                                let key = format!("[[{}]]", idx as i64);
+                                if let Some(t) = schema.get(&key) {
+                                    return t;
+                                }
+                                if let Some(common) = homogeneous_list_element_type(schema) {
+                                    return common;
+                                }
+                            }
+                            return RType::UNKNOWN;
                         }
                         RType::new(bt.mode, Length::One, bt.na.0)
                     }
@@ -2183,22 +2202,24 @@ impl Checker {
         let cb_ret = cb.and_then(|c| self.callback_return_type(c, &[elem], scope));
         let length = x_type.length;
         let element_type = cb_ret.unwrap_or(RType::UNKNOWN);
-        // lapply always returns a list; each element has the callback's
-        // return type. We don't model per-element schemas (the list's
-        // shape is unknown beyond its length).
         let mut result = RType::new(Mode::List, length, false);
-        // Preserve a known element return type as a column schema when
-        // the list length is known, so downstream `$` access can still
-        // produce a useful type for the (homogeneous) list.
-        if let Length::Known(n) = length {
-            if n > 0 && !matches!(element_type.mode, Mode::Opaque) {
-                let schema = ColumnSchema {
-                    columns: (0..n)
-                        .map(|i| (format!("[[{}]]", i + 1), element_type))
-                        .collect(),
-                };
-                result = result.with_columns(intern_column_schema(schema));
-            }
+        // Always build a schema when we know the element type, even if
+        // the list length is unknown. We create a single `[[1]]` entry
+        // so that `result[[1]]` and `homogeneous_list_element_type`
+        // can resolve the element type. When the length IS known, we
+        // create explicit entries for each index.
+        if !matches!(element_type.mode, Mode::Opaque) {
+            let n = match length {
+                Length::Known(n) if n > 0 => n,
+                _ => 1, // Unknown or zero length: still create one
+                       // entry so the element type is discoverable.
+            };
+            let schema = ColumnSchema {
+                columns: (0..n)
+                    .map(|i| (format!("[[{}]]", i + 1), element_type))
+                    .collect(),
+            };
+            result = result.with_columns(intern_column_schema(schema));
         }
         result
     }
@@ -2920,11 +2941,11 @@ impl Checker {
                 RType::new(bt.mode, Length::One, bt.na.0)
             }
             IndexKind::Double => {
-                // `df[["col"]]`: the column name comes from a
-                // string-literal positional argument. We infer the
-                // arg normally so any diagnostics on a non-literal arg
-                // (e.g. `df[[some_var]]`) still fire; for the string
-                // case, we additionally look it up in the schema.
+                // `df[["col"]]` or `x[[i]]`: the index can be a string
+                // literal (column name) or an integer literal (positional
+                // index). For string literals we look up by column name.
+                // For integer literals we look up by `[[N]]` key (which
+                // is how lapply/list schemas name their elements).
                 let arg_expr = args.first().map(|a| &a.value);
                 if let Some(Expr::String(name, _)) = arg_expr {
                     if let Some(schema) = bt.columns {
@@ -2933,11 +2954,35 @@ impl Checker {
                         }
                         self.emit_undefined_column(name, schema, span);
                     }
-                    // No schema or unknown column: fall through.
                     return RType::new(bt.mode, Length::One, bt.na.0);
                 }
-                // Non-string-literal arg: infer it for diagnostics,
-                // then return the conservative default.
+                // Integer or double literal index: look up `[[N]]` in
+                // the schema. In R, `1` is a double, `1L` is an integer;
+                // both are valid indices for `[[`, so we handle both.
+                let int_idx = match arg_expr {
+                    Some(Expr::Integer(i, _)) => Some(*i as f64),
+                    Some(Expr::Double(f, _)) => Some(*f),
+                    _ => None,
+                };
+                if let Some(idx) = int_idx {
+                    if let Some(schema) = bt.columns {
+                        let key = format!("[[{}]]", idx as i64);
+                        if let Some(t) = schema.get(&key) {
+                            return t;
+                        }
+                        // Index not in schema: if all elements have the
+                        // same type (homogeneous list from lapply etc.),
+                        // return that common type. Otherwise opaque.
+                        if let Some(common) = homogeneous_list_element_type(schema) {
+                            return common;
+                        }
+                    }
+                    // No schema or heterogeneous: opaque is safer than
+                    // `bt.element()` (which returns list<1> for lists).
+                    return RType::UNKNOWN;
+                }
+                // Non-literal arg: infer it for diagnostics, then return
+                // the conservative default.
                 if let Some(a) = args.first() {
                     self.infer(&a.value, scope);
                 }
@@ -3265,6 +3310,24 @@ fn parse_class_literal(e: &Expr) -> ClassLiteral {
 }
 
 /// Build a `ColumnSchema` from a `list(...)` / `data.frame(...)` argument
+/// If all elements in a column schema have the same type (a homogeneous
+/// list, like `lapply` output), return that common type. Used by `[[`
+/// indexing when the specific index isn't in the schema but all
+/// elements are known to be the same type. Returns `None` for
+/// heterogeneous lists or empty schemas.
+fn homogeneous_list_element_type(schema: &'static ColumnSchema) -> Option<RType> {
+    if schema.columns.is_empty() {
+        return None;
+    }
+    let first = schema.columns.first()?.1;
+    for (_, t) in &schema.columns {
+        if t != &first {
+            return None;
+        }
+    }
+    Some(first)
+}
+
 /// Match call arguments to function parameters using R's standard
 /// argument matching rules. Returns a vector indexed by parameter
 /// position, where each entry is the type of the argument bound to

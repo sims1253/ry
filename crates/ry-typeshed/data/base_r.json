@@ -1049,19 +1049,217 @@
       "Petal.Width":  { "mode": "double",  "length": "150", "na": false },
       "Species":      { "mode": "integer", "length": "150", "na": false, "class": ["factor"] }
     } },
-    "airquality":    { "mode": "list", "length": "6",  "na": true,  "class": ["data.frame"], "note": "data.frame" },
-    "PlantGrowth":   { "mode": "list", "length": "2",  "na": false, "class": ["data.frame"], "note": "data.frame" },
-    "ToothGrowth":   { "mode": "list", "length": "3",  "na": false, "class": ["data.frame"], "note": "data.frame" },
-    "chickwts":      { "mode": "list", "length": "2",  "na": false, "class": ["data.frame"], "note": "data.frame" },
-    "CO2":           { "mode": "list", "length": "5",  "na": false, "class": ["data.frame"], "note": "data.frame" },
-    "esoph":         { "mode": "list", "length": "5",  "na": false, "class": ["data.frame"], "note": "data.frame" },
-    "infert":        { "mode": "list", "length": "8",  "na": false, "class": ["data.frame"], "note": "data.frame" },
-    "npk":           { "mode": "list", "length": "5",  "na": false, "class": ["data.frame"], "note": "data.frame" },
-    "OrchardSprays": { "mode": "list", "length": "8",  "na": false, "class": ["data.frame"], "note": "data.frame" },
-    "Loblolly":      { "mode": "list", "length": "3",  "na": false, "class": ["data.frame"], "note": "data.frame" },
-    "Formaldehyde":  { "mode": "list", "length": "2",  "na": false, "class": ["data.frame"], "note": "data.frame" },
-    "freeny":        { "mode": "list", "length": "5",  "na": false, "class": ["data.frame"], "note": "data.frame" },
-    "stackloss":     { "mode": "list", "length": "4",  "na": false, "class": ["data.frame"], "note": "data.frame" },
-    "USArrests":     { "mode": "list", "length": "4",  "na": false, "class": ["data.frame"], "note": "data.frame" }
+    "airquality":    { "mode": "list", "length": "6",  "na": true,  "class": ["data.frame"], "note": "data.frame", "columns": {
+      "Ozone":   { "mode": "integer", "length": "153", "na": true },
+      "Solar.R": { "mode": "integer", "length": "153", "na": true },
+      "Wind":    { "mode": "double",  "length": "153", "na": true },
+      "Temp":    { "mode": "integer", "length": "153", "na": true },
+      "Month":   { "mode": "integer", "length": "153", "na": false },
+      "Day":     { "mode": "integer", "length": "153", "na": false }
+    } },
+    "PlantGrowth":   { "mode": "list", "length": "2",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "weight": { "mode": "double",  "length": "30", "na": false },
+      "group":  { "mode": "integer", "length": "30", "na": false, "class": ["factor"] }
+    } },
+    "ToothGrowth":   { "mode": "list", "length": "3",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "len":   { "mode": "double",  "length": "60", "na": false },
+      "supp":  { "mode": "integer", "length": "60", "na": false, "class": ["factor"] },
+      "dose":  { "mode": "double",  "length": "60", "na": false }
+    } },
+    "chickwts":      { "mode": "list", "length": "2",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "weight": { "mode": "double",  "length": "71", "na": false },
+      "feed":   { "mode": "integer", "length": "71", "na": false, "class": ["factor"] }
+    } },
+    "CO2":           { "mode": "list", "length": "5",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "Plant":     { "mode": "integer", "length": "84", "na": false, "class": ["factor", "ordered"] },
+      "Type":      { "mode": "integer", "length": "84", "na": false, "class": ["factor"] },
+      "Treatment": { "mode": "integer", "length": "84", "na": false, "class": ["factor"] },
+      "conc":      { "mode": "double",  "length": "84", "na": false },
+      "uptake":    { "mode": "double",  "length": "84", "na": false }
+    } },
+    "esoph":         { "mode": "list", "length": "5",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "agegp":     { "mode": "integer", "length": "88", "na": false, "class": ["factor", "ordered"] },
+      "alcgp":     { "mode": "integer", "length": "88", "na": false, "class": ["factor", "ordered"] },
+      "tobgp":     { "mode": "integer", "length": "88", "na": false, "class": ["factor", "ordered"] },
+      "ncases":    { "mode": "double",  "length": "88", "na": false },
+      "ncontrols": { "mode": "double",  "length": "88", "na": false }
+    } },
+    "infert":        { "mode": "list", "length": "8",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "education":      { "mode": "integer", "length": "248", "na": false, "class": ["factor"] },
+      "age":            { "mode": "double",  "length": "248", "na": false },
+      "parity":         { "mode": "double",  "length": "248", "na": false },
+      "induced":        { "mode": "double",  "length": "248", "na": false },
+      "case":           { "mode": "double",  "length": "248", "na": false },
+      "spontaneous":    { "mode": "double",  "length": "248", "na": false },
+      "stratum":        { "mode": "integer", "length": "248", "na": false },
+      "pooled.stratum": { "mode": "double",  "length": "248", "na": false }
+    } },
+    "npk":           { "mode": "list", "length": "5",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "block": { "mode": "integer", "length": "24", "na": false, "class": ["factor"] },
+      "N":     { "mode": "double",  "length": "24", "na": false },
+      "P":     { "mode": "double",  "length": "24", "na": false },
+      "K":     { "mode": "double",  "length": "24", "na": false },
+      "yield": { "mode": "double",  "length": "24", "na": false }
+    } },
+    "OrchardSprays": { "mode": "list", "length": "8",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "rowpos":     { "mode": "integer", "length": "64", "na": false },
+      "colpos":     { "mode": "integer", "length": "64", "na": false },
+      "treatment":  { "mode": "integer", "length": "64", "na": false, "class": ["factor"] },
+      "decrease":   { "mode": "double",  "length": "64", "na": false },
+      "rowpos.f":   { "mode": "integer", "length": "64", "na": false, "class": ["factor"] },
+      "colpos.f":   { "mode": "integer", "length": "64", "na": false, "class": ["factor"] }
+    } },
+    "Loblolly":      { "mode": "list", "length": "3",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "height": { "mode": "double",  "length": "84", "na": false },
+      "age":    { "mode": "double",  "length": "84", "na": false },
+      "Seed":   { "mode": "integer", "length": "84", "na": false, "class": ["factor", "ordered"] }
+    } },
+    "Formaldehyde":  { "mode": "list", "length": "2",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "carb":     { "mode": "double", "length": "6", "na": false },
+      "optden":   { "mode": "double", "length": "6", "na": false }
+    } },
+    "freeny":        { "mode": "list", "length": "5",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "y":         { "mode": "double", "length": "39", "na": false },
+      "lag.quarterly.revenue": { "mode": "double", "length": "39", "na": false },
+      "price.index":     { "mode": "double", "length": "39", "na": false },
+      "income.level":    { "mode": "double", "length": "39", "na": false },
+      "market.potential": { "mode": "double", "length": "39", "na": false }
+    } },
+    "stackloss":     { "mode": "list", "length": "4",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "Air.Flow":     { "mode": "double", "length": "21", "na": false },
+      "Water.Temp":   { "mode": "double", "length": "21", "na": false },
+      "Acid.Conc.":   { "mode": "double", "length": "21", "na": false },
+      "stack.loss":   { "mode": "double", "length": "21", "na": false }
+    } },
+    "USArrests":     { "mode": "list", "length": "4",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "Murder":   { "mode": "double", "length": "50", "na": false },
+      "Assault":  { "mode": "integer", "length": "50", "na": false },
+      "UrbanPop": { "mode": "integer", "length": "50", "na": false },
+      "Rape":     { "mode": "double", "length": "50", "na": false }
+    } },
+    "ChickWeight":   { "mode": "list", "length": "4",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "weight": { "mode": "double",  "length": "578", "na": false },
+      "Time":   { "mode": "double",  "length": "578", "na": false },
+      "Chick":  { "mode": "integer", "length": "578", "na": false, "class": ["factor", "ordered"] },
+      "Diet":   { "mode": "integer", "length": "578", "na": false, "class": ["factor"] }
+    } },
+    "DNase":         { "mode": "list", "length": "3",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "Run":     { "mode": "integer", "length": "176", "na": false, "class": ["factor", "ordered"] },
+      "conc":    { "mode": "double",  "length": "176", "na": false },
+      "density": { "mode": "double",  "length": "176", "na": false }
+    } },
+    "Indometh":      { "mode": "list", "length": "3",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "Subject": { "mode": "integer", "length": "66", "na": false, "class": ["factor", "ordered"] },
+      "time":    { "mode": "double",  "length": "66", "na": false },
+      "conc":    { "mode": "double",  "length": "66", "na": false }
+    } },
+    "LifeCycleSavings": { "mode": "list", "length": "5",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "sr":        { "mode": "double", "length": "50", "na": false },
+      "pop15":     { "mode": "double", "length": "50", "na": false },
+      "pop75":     { "mode": "double", "length": "50", "na": false },
+      "dpi":       { "mode": "double", "length": "50", "na": false },
+      "ddpi":      { "mode": "double", "length": "50", "na": false }
+    } },
+    "Orange":        { "mode": "list", "length": "3",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "Tree":   { "mode": "integer", "length": "35", "na": false, "class": ["factor", "ordered"] },
+      "age":    { "mode": "double",  "length": "35", "na": false },
+      "circumference": { "mode": "double", "length": "35", "na": false }
+    } },
+    "Theoph":        { "mode": "list", "length": "3",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "Subject": { "mode": "integer", "length": "132", "na": false, "class": ["factor", "ordered"] },
+      "Wt":      { "mode": "double",  "length": "132", "na": false },
+      "Dose":    { "mode": "double",  "length": "132", "na": false },
+      "Time":    { "mode": "double",  "length": "132", "na": false },
+      "conc":    { "mode": "double",  "length": "132", "na": false }
+    } },
+    "InsectSprays":  { "mode": "list", "length": "2",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "count": { "mode": "double",  "length": "72", "na": false },
+      "spray": { "mode": "integer", "length": "72", "na": false, "class": ["factor"] }
+    } },
+    "warpbreaks":    { "mode": "list", "length": "3",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "breaks":  { "mode": "double",  "length": "54", "na": false },
+      "wool":    { "mode": "integer", "length": "54", "na": false, "class": ["factor"] },
+      "tension": { "mode": "integer", "length": "54", "na": false, "class": ["factor"] }
+    } },
+    "sleep":         { "mode": "list", "length": "3",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "extra":   { "mode": "double",  "length": "20", "na": false },
+      "group":   { "mode": "integer", "length": "20", "na": false, "class": ["factor"] },
+      "ID":      { "mode": "integer", "length": "20", "na": false, "class": ["factor"] }
+    } },
+    "swiss":         { "mode": "list", "length": "6",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "Fertility":      { "mode": "double", "length": "47", "na": false },
+      "Agriculture":    { "mode": "double", "length": "47", "na": false },
+      "Examination":    { "mode": "integer", "length": "47", "na": false },
+      "Education":      { "mode": "integer", "length": "47", "na": false },
+      "Catholic":       { "mode": "double", "length": "47", "na": false },
+      "Infant.Mortality": { "mode": "double", "length": "47", "na": false }
+    } },
+    "trees":         { "mode": "list", "length": "3",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "Girth":  { "mode": "double", "length": "31", "na": false },
+      "Height": { "mode": "double", "length": "31", "na": false },
+      "Volume": { "mode": "double", "length": "31", "na": false }
+    } },
+    "women":         { "mode": "list", "length": "2",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "height": { "mode": "double", "length": "15", "na": false },
+      "weight": { "mode": "double", "length": "15", "na": false }
+    } },
+    "cars":          { "mode": "list", "length": "2",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "speed": { "mode": "double", "length": "50", "na": false },
+      "dist":  { "mode": "double", "length": "50", "na": false }
+    } },
+    "faithful":      { "mode": "list", "length": "2",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "eruptions": { "mode": "double", "length": "272", "na": false },
+      "waiting":   { "mode": "double", "length": "272", "na": false }
+    } },
+    "attitude":      { "mode": "list", "length": "7",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "rating":     { "mode": "double", "length": "30", "na": false },
+      "complaints": { "mode": "double", "length": "30", "na": false },
+      "privileges": { "mode": "double", "length": "30", "na": false },
+      "learning":   { "mode": "double", "length": "30", "na": false },
+      "raises":     { "mode": "double", "length": "30", "na": false },
+      "critical":   { "mode": "double", "length": "30", "na": false },
+      "advance":    { "mode": "double", "length": "30", "na": false }
+    } },
+    "USJudgeRatings": { "mode": "list", "length": "12", "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "CONT": { "mode": "double", "length": "43", "na": false },
+      "INTG": { "mode": "double", "length": "43", "na": false },
+      "DMNR": { "mode": "double", "length": "43", "na": false },
+      "DILG": { "mode": "double", "length": "43", "na": false },
+      "CFMG": { "mode": "double", "length": "43", "na": false },
+      "DECI": { "mode": "double", "length": "43", "na": false },
+      "PREP": { "mode": "double", "length": "43", "na": false },
+      "FAMI": { "mode": "double", "length": "43", "na": false },
+      "ORAL": { "mode": "double", "length": "43", "na": false },
+      "WRIT": { "mode": "double", "length": "43", "na": false },
+      "PHYS": { "mode": "double", "length": "43", "na": false },
+      "RTEN": { "mode": "double", "length": "43", "na": false }
+    } },
+    "rock":          { "mode": "list", "length": "4",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "area":      { "mode": "double",  "length": "48", "na": false },
+      "peri":      { "mode": "double",  "length": "48", "na": false },
+      "shape":     { "mode": "double",  "length": "48", "na": false },
+      "perm":      { "mode": "double",  "length": "48", "na": false }
+    } },
+    "quakes":        { "mode": "list", "length": "5",  "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
+      "lat":    { "mode": "double", "length": "1000", "na": false },
+      "long":   { "mode": "double", "length": "1000", "na": false },
+      "depth":  { "mode": "integer", "length": "1000", "na": false },
+      "mag":    { "mode": "double", "length": "1000", "na": false },
+      "stations": { "mode": "integer", "length": "1000", "na": false }
+    } },
+    "Nile":          { "mode": "double", "length": "100", "na": false, "class": ["ts"] },
+    "LakeHuron":     { "mode": "double", "length": "98",  "na": false, "class": ["ts"] },
+    "sunspot.year":  { "mode": "double", "length": "289", "na": false, "class": ["ts"] },
+    "sunspot.month": { "mode": "double", "length": "2820", "na": false, "class": ["ts"] },
+    "nottem":        { "mode": "double", "length": "240", "na": false, "class": ["ts"] },
+    "co2":           { "mode": "double", "length": "468", "na": false, "class": ["ts"] },
+    "precip":        { "mode": "double", "length": "70", "na": false },
+    "rivers":        { "mode": "integer", "length": "141", "na": false },
+    "discoveries":   { "mode": "integer", "length": "100", "na": false, "class": ["ts"] },
+    "pressure":      { "mode": "double", "length": "19", "na": false },
+    "lh":            { "mode": "double", "length": "48", "na": false, "class": ["ts"] },
+    "JohnsonJohnson": { "mode": "double", "length": "84", "na": false, "class": ["ts"] },
+    "WorldPhones":   { "mode": "integer", "length": "49", "na": false },
+    "USAccdeaths":   { "mode": "integer", "length": "72", "na": false, "class": ["ts"] }
   }
 }

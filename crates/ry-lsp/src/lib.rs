@@ -6,11 +6,13 @@
 //!   * `textDocument/didChange` (incremental edits re-check and republish)
 //!   * `textDocument/didClose` (clears diagnostics)
 //!   * Document diagnostics via `textDocument/publishDiagnostics`
+//!   * `textDocument/hover` (type at cursor)
+//!   * `textDocument/definition` (go-to-definition for variables/functions)
 //!   * Graceful shutdown via `shutdown` / `exit`
 //!
-//! Out of scope for v1: code actions, hover, go-to-definition, formatting,
-//! completion, and workspace configuration requests. We DO read `ry.toml`
-//! for rule severities in future revisions, but v1 ignores configuration
+//! Out of scope for v1: code actions, formatting, completion, and
+//! workspace configuration requests. We DO read `ry.toml` for rule
+//! severities in future revisions, but v1 ignores configuration
 //! change notifications.
 //!
 //! To test manually:
@@ -25,7 +27,7 @@
 //! the CLI's `tracing_subscriber` initialization before `run()` is called.
 
 use ry_checker::{Diagnostic as RyDiagnostic, Project, Severity};
-use ry_core::RParser;
+use ry_core::{Expr, RParser, SourceFile, Span, Stmt};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -72,6 +74,10 @@ impl LanguageServer for Backend {
                     TextDocumentSyncKind::FULL,
                 )),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
+                // Enable `textDocument/definition` so the client can
+                // request go-to-definition (Ctrl+click / "Go to
+                // Definition"). The handler is `goto_definition` below.
+                definition_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -169,6 +175,52 @@ impl LanguageServer for Backend {
         }
 
         Ok(None)
+    }
+
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> LspResult<Option<GotoDefinitionResponse>> {
+        let uri = params.text_document_position_params.text_document.uri.clone();
+        let path = uri_to_path(&uri);
+        let position = params.text_document_position_params.position;
+
+        let text = {
+            let state = self.state.lock().await;
+            state.docs.get(&path).cloned()
+        };
+
+        let Some(text) = text else {
+            return Ok(None);
+        };
+
+        // Reuse the same word-finding helper as `hover` to extract the
+        // identifier under the cursor. Returns `None` (no definition)
+        // for operators, numbers, and keywords.
+        let identifier =
+            find_identifier_at_position(&text, position.line as usize, position.character as usize);
+        let Some(identifier) = identifier else {
+            return Ok(None);
+        };
+
+        // Parse the current document. We do not need the checker's
+        // scope here: definitions live in the AST, not the type
+        // environment.
+        let mut parser = match RParser::new() {
+            Ok(p) => p,
+            Err(_) => return Ok(None),
+        };
+        let file = match parser.parse(&path, &text) {
+            Ok(f) => f,
+            Err(_) => return Ok(None),
+        };
+
+        let locations = find_definition_locations(&file, &identifier, &uri);
+        if locations.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(GotoDefinitionResponse::Array(locations)))
+        }
     }
 }
 
@@ -285,6 +337,159 @@ fn find_identifier_at_position(text: &str, line: usize, col: usize) -> Option<St
         return None;
     }
     Some(ident.to_string())
+}
+
+/// Walk the AST of `file` looking for every definition site of `name`
+/// and return each as an LSP `Location` (URI + range) inside `uri`.
+///
+/// A "definition site" is one of:
+///   * an assignment whose target is a bare identifier (`x <- ...`),
+///     which also covers the common R idiom `f <- function(...) ...`;
+///   * a named function definition (`Stmt::FunctionDef { name: Some(..) }`).
+///
+/// The walk recurses into function bodies (both named and anonymous
+/// `Expr::Function` literals), `if`/`for`/`while` blocks, and the
+/// sub-expressions of calls, binary/unary ops, and index operations,
+/// so that local definitions introduced inside nested scopes are
+/// found as well. Each returned `Location`'s range covers exactly the
+/// identifier characters so the editor places the cursor on the name.
+fn find_definition_locations(file: &SourceFile, name: &str, uri: &Url) -> Vec<Location> {
+    let mut spans: Vec<Span> = Vec::new();
+    for stmt in &file.stmts {
+        find_def_spans_in_stmt(stmt, name, &mut spans);
+    }
+    spans
+        .into_iter()
+        .map(|sp| span_to_location(sp, name, uri))
+        .collect()
+}
+
+/// Convert a definition-site `Span` into an LSP `Location`. The range
+/// runs from `(span.line, span.col)` to `(span.line, span.col +
+/// name.len())`, i.e. it highlights the identifier itself. For ASCII
+/// identifiers `name.len()` equals both the byte and char count; the
+/// existing diagnostic conversion makes the same ASCII assumption (see
+/// `diagnostic_to_lsp`).
+fn span_to_location(span: Span, name: &str, uri: &Url) -> Location {
+    let start = Position {
+        line: span.line as u32,
+        character: span.col as u32,
+    };
+    let end = Position {
+        line: span.line as u32,
+        character: span.col as u32 + name.len() as u32,
+    };
+    Location {
+        uri: uri.clone(),
+        range: Range { start, end },
+    }
+}
+
+/// Recurse into a statement looking for definitions of `name`,
+/// appending each definition's `Span` to `out`.
+fn find_def_spans_in_stmt(stmt: &Stmt, name: &str, out: &mut Vec<Span>) {
+    match stmt {
+        Stmt::Assign { target, value, .. } => {
+            // An assignment `x <- v` defines `x`. This also catches
+            // `f <- function(..) ..` because the parser models named
+            // function definitions as `Assign` with an `Expr::Function`
+            // value.
+            if let Expr::Ident { name: n, span } = target {
+                if n == name {
+                    out.push(*span);
+                }
+            }
+            // The value may contain nested local definitions, e.g. an
+            // anonymous function literal whose body assigns a local.
+            find_def_spans_in_expr(value, name, out);
+        }
+        Stmt::FunctionDef {
+            name: fn_name,
+            body,
+            span,
+            ..
+        } => {
+            // Named function-definition statements (currently the
+            // parser always emits `name: None`, but handle `Some`
+            // for completeness / future grammar changes).
+            if let Some(n) = fn_name {
+                if n == name {
+                    out.push(*span);
+                }
+            }
+            for s in body {
+                find_def_spans_in_stmt(s, name, out);
+            }
+        }
+        Stmt::If { then, else_, .. } => {
+            for s in then {
+                find_def_spans_in_stmt(s, name, out);
+            }
+            if let Some(else_block) = else_ {
+                for s in else_block {
+                    find_def_spans_in_stmt(s, name, out);
+                }
+            }
+        }
+        Stmt::For { body, .. } | Stmt::While { body, .. } => {
+            for s in body {
+                find_def_spans_in_stmt(s, name, out);
+            }
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value {
+                find_def_spans_in_expr(v, name, out);
+            }
+        }
+        Stmt::Expr(e) => find_def_spans_in_expr(e, name, out),
+    }
+}
+
+/// Recurse into an expression looking for nested statement bodies
+/// (function literals, conditional expressions) that may contain
+/// definitions of `name`. Operator/call/index operands are walked too
+/// so that function literals nested inside them are discovered.
+fn find_def_spans_in_expr(expr: &Expr, name: &str, out: &mut Vec<Span>) {
+    match expr {
+        Expr::Function { body, .. } => {
+            for s in body {
+                find_def_spans_in_stmt(s, name, out);
+            }
+        }
+        Expr::If { then, else_, .. } => {
+            find_def_spans_in_expr(then, name, out);
+            if let Some(e) = else_ {
+                find_def_spans_in_expr(e, name, out);
+            }
+        }
+        Expr::Call { func, args, .. } => {
+            find_def_spans_in_expr(func, name, out);
+            for arg in args {
+                find_def_spans_in_expr(&arg.value, name, out);
+            }
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            find_def_spans_in_expr(lhs, name, out);
+            find_def_spans_in_expr(rhs, name, out);
+        }
+        Expr::UnaryOp { expr, .. } => find_def_spans_in_expr(expr, name, out),
+        Expr::Index { base, args, .. } => {
+            find_def_spans_in_expr(base, name, out);
+            for arg in args {
+                find_def_spans_in_expr(&arg.value, name, out);
+            }
+        }
+        // Literals, bare identifiers, NULL, NA, and Unknown carry no
+        // nested statement bodies.
+        Expr::Logical(_, _)
+        | Expr::Integer(_, _)
+        | Expr::Double(_, _)
+        | Expr::String(_, _)
+        | Expr::Null(_)
+        | Expr::Na(_, _)
+        | Expr::Ident { .. }
+        | Expr::Unknown(_) => {}
+    }
 }
 
 /// Convert a `file://` URI to a filesystem path string. Falls back to
@@ -481,5 +686,82 @@ mod tests {
         let (_, scope) = checker.check_with_scope(&file);
         let t = scope.get("x").expect("x should be in scope");
         assert_eq!(t.mode, ry_core::types::Mode::Integer);
+    }
+
+    #[test]
+    fn goto_def_finds_variable_assignment() {
+        // `x <- 1L + 2L` defines `x` at line 0, col 0 (1-char name).
+        let text = "x <- 1L + 2L\n";
+        let mut parser = RParser::new().unwrap();
+        let file = parser.parse("test.R", text).unwrap();
+        let uri = Url::parse("file:///tmp/test.R").unwrap();
+        let locs = find_definition_locations(&file, "x", &uri);
+        assert_eq!(locs.len(), 1, "expected exactly one definition of x");
+        let loc = &locs[0];
+        assert_eq!(loc.uri, uri);
+        assert_eq!(loc.range.start.line, 0);
+        assert_eq!(loc.range.start.character, 0);
+        // Name "x" is one character wide.
+        assert_eq!(loc.range.end.line, 0);
+        assert_eq!(loc.range.end.character, 1);
+    }
+
+    #[test]
+    fn goto_def_finds_function_definition() {
+        // `add <- function(a, b) a + b` defines `add` (3 chars) at
+        // line 0, col 0. The parser models this as an Assign whose
+        // value is an Expr::Function, so the Assign-target branch of
+        // the walk must find it.
+        let text = "add <- function(a, b) a + b\n";
+        let mut parser = RParser::new().unwrap();
+        let file = parser.parse("test.R", text).unwrap();
+        let uri = Url::parse("file:///tmp/test.R").unwrap();
+        let locs = find_definition_locations(&file, "add", &uri);
+        assert_eq!(locs.len(), 1, "expected exactly one definition of add");
+        let loc = &locs[0];
+        assert_eq!(loc.range.start.line, 0);
+        assert_eq!(loc.range.start.character, 0);
+        assert_eq!(loc.range.end.character, 3, "add is 3 chars wide");
+    }
+
+    #[test]
+    fn goto_def_finds_local_definition_inside_function_body() {
+        // A local assignment nested inside a function literal must be
+        // found by recursing through Expr::Function -> body. `local`
+        // sits on line 1, indented 2 spaces.
+        let text = "f <- function() {\n  local <- 1L\n  local\n}\n";
+        let mut parser = RParser::new().unwrap();
+        let file = parser.parse("test.R", text).unwrap();
+        let uri = Url::parse("file:///tmp/test.R").unwrap();
+        let locs = find_definition_locations(&file, "local", &uri);
+        assert_eq!(locs.len(), 1, "expected exactly one definition of local");
+        let loc = &locs[0];
+        assert_eq!(loc.range.start.line, 1);
+        assert_eq!(loc.range.start.character, 2);
+        assert_eq!(loc.range.end.character, 2 + "local".len() as u32);
+    }
+
+    #[test]
+    fn goto_def_finds_reassignment_as_multiple_locations() {
+        // Two assignments to the same name yield two Locations; the
+        // editor can present them as alternatives.
+        let text = "x <- 1L\nx <- 2L\n";
+        let mut parser = RParser::new().unwrap();
+        let file = parser.parse("test.R", text).unwrap();
+        let uri = Url::parse("file:///tmp/test.R").unwrap();
+        let locs = find_definition_locations(&file, "x", &uri);
+        assert_eq!(locs.len(), 2);
+        assert_eq!(locs[0].range.start.line, 0);
+        assert_eq!(locs[1].range.start.line, 1);
+    }
+
+    #[test]
+    fn goto_def_returns_empty_for_undefined_name() {
+        let text = "x <- 1L\n";
+        let mut parser = RParser::new().unwrap();
+        let file = parser.parse("test.R", text).unwrap();
+        let uri = Url::parse("file:///tmp/test.R").unwrap();
+        let locs = find_definition_locations(&file, "does_not_exist", &uri);
+        assert!(locs.is_empty(), "expected no definitions");
     }
 }

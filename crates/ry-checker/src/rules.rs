@@ -63,6 +63,12 @@ pub const RULES: &[Rule] = &[
         summary: "`&&` and `||` only use the first element of their operands; using them with vectors of length > 1 is almost always a bug. Use `&`/`|` for vectorized operations.",
     },
     Rule {
+        code: "RY033",
+        name: "comparison-mode-mismatch",
+        default_severity: Severity::Warning,
+        summary: "Comparing a character value with a numeric value is valid R but almost always unintended. R compares byte values, not semantic equality.",
+    },
+    Rule {
         code: "RY040",
         name: "invalid-arithmetic",
         default_severity: Severity::Error,

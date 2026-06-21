@@ -1561,6 +1561,23 @@ impl Checker {
         );
         if is_compare {
             if let Some(t) = lt.compare(rt) {
+                // RY033: warn about comparing a character value with a
+                // non-character one. R coerces by comparing byte values,
+                // which is rarely the programmer's intent.
+                if matches!(lt.mode, Mode::Character) != matches!(rt.mode, Mode::Character)
+                    && !matches!(lt.mode, Mode::Opaque)
+                    && !matches!(rt.mode, Mode::Opaque)
+                {
+                    self.emit(
+                        Severity::Warning,
+                        span,
+                        "RY033",
+                        format!(
+                            "comparing `{}` with `{}`; R compares byte values which is rarely intended",
+                            lt.mode, rt.mode
+                        ),
+                    );
+                }
                 if matches!(op, BinOpKind::AndAnd | BinOpKind::OrOr) {
                     return RType::new(Mode::Logical, Length::One, t.na.0);
                 }
@@ -3859,6 +3876,42 @@ mod tests {
         assert!(
             diags.iter().all(|d| d.code != "RY032"),
             "&& with scalars should not warn, got {:?}", diags
+        );
+    }
+
+    #[test]
+    fn compare_char_numeric_warns() {
+        let diags = check(r#"bad <- "hello" < 42"#);
+        assert!(
+            diags.iter().any(|d| d.code == "RY033"),
+            "expected RY033 for character vs numeric, got {:?}", diags
+        );
+    }
+
+    #[test]
+    fn compare_same_mode_no_warning() {
+        let diags = check("bad <- 1 < 2\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY033"),
+            "numeric vs numeric should not warn, got {:?}", diags
+        );
+    }
+
+    #[test]
+    fn compare_char_char_no_warning() {
+        let diags = check(r#"x <- "abc" < "xyz""#);
+        assert!(
+            diags.iter().all(|d| d.code != "RY033"),
+            "character vs character should not warn, got {:?}", diags
+        );
+    }
+
+    #[test]
+    fn compare_eq_char_numeric_warns() {
+        let diags = check(r#"bad <- "hello" == 1"#);
+        assert!(
+            diags.iter().any(|d| d.code == "RY033"),
+            "expected RY033 for character == numeric, got {:?}", diags
         );
     }
 

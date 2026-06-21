@@ -414,6 +414,21 @@ impl RParser {
             "%>%" => BinOpKind::PipeForward,
             "%T>%" => BinOpKind::PipeTee,
             "%<>%" => BinOpKind::PipeAssign,
+            // Assignment operators in expression position (e.g. the
+            // inner assignment in `a <- b <- 1L`). These return the
+            // assigned value in R, so `infer_binop` returns the RHS
+            // type for them. `->` and `->>` are right-to-left, so we
+            // swap the operands.
+            "<-" | "=" | "<<" => BinOpKind::Assign,
+            "->" | "->>" => {
+                // Right-assigned: `a -> b` is `b <- a`. Swap operands.
+                return Some(Expr::BinOp {
+                    op: BinOpKind::Assign,
+                    lhs: Box::new(rhs),
+                    rhs: Box::new(lhs),
+                    span,
+                });
+            }
             _ => {
                 tracing::trace!(op = op_text.as_str(), "unknown binary op");
                 return Some(Expr::Unknown(span));

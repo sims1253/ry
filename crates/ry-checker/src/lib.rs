@@ -1205,7 +1205,8 @@ impl Checker {
                 };
                 RType::new(Mode::Logical, length, true)
             }
-            BinOpKind::Assign | BinOpKind::SuperAssign | BinOpKind::PipeForward
+            BinOpKind::Assign | BinOpKind::SuperAssign => rt,
+            BinOpKind::PipeForward
             | BinOpKind::PipeTee | BinOpKind::PipeAssign | BinOpKind::PipeBind => RType::UNKNOWN,
         }
     }
@@ -1466,6 +1467,17 @@ impl Checker {
                 }
                 if matches!(*op, BinOpKind::PipeTee) {
                     return self.infer_pipe_tee(lhs, rhs, scope);
+                }
+                // Assignment in expression position (e.g. the inner
+                // assignment in `a <- b <- 1L`): bind the LHS and
+                // return the RHS type. R's `<-` returns the assigned
+                // value (invisibly).
+                if matches!(*op, BinOpKind::Assign | BinOpKind::SuperAssign) {
+                    let rt = self.infer(rhs, scope);
+                    if let Expr::Ident { name, .. } = lhs.as_ref() {
+                        scope.insert(name.clone(), rt);
+                    }
+                    return rt;
                 }
                 let lt = self.infer(lhs, scope);
                 let rt = self.infer(rhs, scope);

@@ -2,8 +2,13 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{CommandFactory, Parser as ClapParser, Subcommand};
+use clap::{
+    ArgMatches, CommandFactory, FromArgMatches, Parser as ClapParser, Subcommand,
+};
+use clap::parser::ValueSource;
 use miette::{IntoDiagnostic, Result};
+
+mod config;
 
 #[derive(Debug, ClapParser)]
 #[command(
@@ -79,8 +84,22 @@ enum Cmd {
 }
 
 fn main() -> Result<ExitCode> {
-    let cli = Cli::parse();
-    init_tracing(cli.verbose, cli.quiet);
+    // We parse into the typed `Cli` for ergonomic access to argument
+    // values, but we ALSO retain the underlying `ArgMatches` so we can
+    // distinguish "the user passed --error-on-warning on the command
+    // line" from "the default value of false". That distinction is what
+    // lets a `ry.toml` `error-on-warning = true` take effect when the
+    // user runs a bare `ry check` (no flags).
+    //
+    // clap derive's `from_arg_matches` is infallible for our schema
+    // (every arg has a default or is optional); the unwrap is safe.
+    let matches = Cli::command().get_matches();
+    let cli = Cli::from_arg_matches(&matches).expect("clap derive schema is self-consistent");
+
+    // Tracing is initialized inside `run_check` AFTER config discovery
+    // so a `verbose = N` in `ry.toml` can take effect. Non-check
+    // subcommands do not emit tracing events, so they do not need an
+    // earlier init.
 
     let cmd = match cli.cmd {
         Some(c) => c,
@@ -95,6 +114,11 @@ fn main() -> Result<ExitCode> {
             color: None,
         },
     };
+
+    // Subcommand matches are nested under the subcommand's name. We
+    // only need them for `check` (to detect explicit CLI overrides of
+    // scalar fields that the config file can also set).
+    let check_matches = matches.subcommand_matches("check");
 
     match cmd {
         Cmd::Check {
@@ -114,6 +138,9 @@ fn main() -> Result<ExitCode> {
             error_on_warning,
             exit_zero,
             &output_format,
+            cli.verbose,
+            cli.quiet,
+            check_matches,
         ),
         Cmd::Server => {
             eprintln!("ry: `server` is not implemented yet (planned for LSP integration)");
@@ -164,6 +191,42 @@ fn build_filter(error: &[String], warn: &[String], ignore: &[String]) -> ry_chec
     f
 }
 
+/// Returns true if the named argument was explicitly provided on the
+/// command line (rather than coming from a clap default value). Used to
+/// distinguish "the user passed `--error-on-warning`" from "the field's
+/// default of false", which is what lets the `ry.toml` value take
+/// effect when the CLI flag is omitted.
+fn flag_set(matches: Option<&ArgMatches>, id: &str) -> bool {
+    matches
+        .and_then(|m| m.value_source(id))
+        == Some(ValueSource::CommandLine)
+}
+
+/// Compute the path of `file` relative to `root`, as a forward-slash
+/// string suitable for matching against `ry.toml` `exclude` patterns.
+///
+/// Both inputs are first canonicalized so that a relative `ry check
+/// ./src` invocation still matches patterns written against the
+/// project-relative form (e.g. `src/**`). If canonicalization fails
+/// (e.g. a missing path), we fall back to a best-effort strip of the
+/// root prefix from the literal path, and finally to the file's full
+/// display string, so exclude matching degrades gracefully rather than
+/// panicking.
+fn relative_path_for_exclude(file: &std::path::Path, root: &std::path::Path) -> String {
+    let canon_file = std::fs::canonicalize(file).ok();
+    let canon_root = std::fs::canonicalize(root).ok();
+    if let (Some(f), Some(r)) = (canon_file, canon_root) {
+        if let Ok(rel) = f.strip_prefix(&r) {
+            return rel.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
+        }
+    }
+    // Best-effort fallback: strip the root's literal prefix.
+    if let Ok(rel) = file.strip_prefix(root) {
+        return rel.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
+    }
+    file.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/")
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_check(
     paths: Vec<PathBuf>,
@@ -173,14 +236,77 @@ fn run_check(
     error_on_warning: bool,
     exit_zero: bool,
     output_format: &str,
+    cli_verbose: u8,
+    cli_quiet: u8,
+    check_matches: Option<&ArgMatches>,
 ) -> Result<ExitCode> {
-    let format = ry_checker::format::OutputFormat::parse(output_format).ok_or_else(|| {
+    // Determine the search start directory for config discovery. If the
+    // user passed a path, anchor discovery at the first path's parent
+    // (for files) or at the path itself (for directories). With no
+    // paths, discovery starts from the current working directory.
+    let search_start: PathBuf = paths
+        .first()
+        .map(|p| {
+            if p.is_dir() {
+                p.clone()
+            } else {
+                p.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."))
+            }
+        })
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    // Discover a ry.toml by walking up from the search start. A missing
+    // config is not an error; we fall back to `Config::defaults()`. A
+    // present-but-malformed config IS an error: surface it and abort so
+    // the user notices the typo rather than silently running with
+    // defaults.
+    let (config_root, base_cfg) = match config::Config::discover(&search_start) {
+        Ok(Some((path, cfg))) => {
+            tracing::debug!(config = %path.display(), "loaded ry.toml");
+            (path.parent().map(|p| p.to_path_buf()), cfg)
+        }
+        Ok(None) => (None, config::Config::defaults()),
+        Err(e) => {
+            eprintln!("ry: {}", e);
+            return Ok(ExitCode::FAILURE);
+        }
+    };
+
+    // Determine which scalar CLI flags were explicitly set on the
+    // command line. `value_source == CommandLine` distinguishes a
+    // user-provided value from the clap default. When the CLI did NOT
+    // set a scalar, we forward `None` so the config file's value wins.
+    let m = check_matches;
+    let cli_error_on_warning = flag_set(m, "error_on_warning").then_some(error_on_warning);
+    let cli_exit_zero = flag_set(m, "exit_zero").then_some(exit_zero);
+    let cli_output_format = flag_set(m, "output_format").then_some(output_format.to_string());
+
+    let cfg = base_cfg.merge_cli(
+        error,
+        warn,
+        ignore,
+        cli_error_on_warning,
+        cli_exit_zero,
+        cli_output_format,
+        cli_verbose,
+        cli_quiet,
+    );
+
+    // Re-init tracing with the merged verbosity so a `verbose = 2` in
+    // ry.toml takes effect even when the user runs a bare `ry check`.
+    // `try_init` is idempotent (the first subscriber wins), so if main
+    // already installed one this is a no-op; that's fine because main
+    // used the CLI counts which are a superset here.
+    init_tracing(cfg.verbose, cfg.quiet);
+
+    let format = ry_checker::format::OutputFormat::parse(&cfg.output_format).ok_or_else(|| {
         miette::miette!(
             "unknown --output-format `{}`; expected one of: full, concise, json",
-            output_format
+            cfg.output_format
         )
     })?;
-    let filter = build_filter(&error, &warn, &ignore);
+    let filter = build_filter(&cfg.error, &cfg.warn, &cfg.ignore);
+    let excludes = config::Excludes::from_config(&cfg);
 
     // ty defaults to the project root when no paths are given.
     let mut all_paths = Vec::new();
@@ -192,6 +318,25 @@ fn run_check(
     for root in &search_roots {
         collect_r_files(root, &mut all_paths);
     }
+
+    // Apply exclude patterns. Patterns match against the path relative
+    // to the directory containing the originating `ry.toml`; if no
+    // config was found, nothing is excluded. We use forward-slash
+    // separators to match the glob crate's expectations.
+    if let Some(root) = config_root.as_ref() {
+        if !excludes.is_empty() {
+            all_paths.retain(|p| {
+                let rel = relative_path_for_exclude(p, root);
+                if excludes.matches(&rel) {
+                    tracing::debug!(path = %p.display(), "excluded by ry.toml");
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+    }
+
     if all_paths.is_empty() {
         eprintln!("ry: no .R / .r files found in {:?}", search_roots);
         return Ok(ExitCode::FAILURE);
@@ -282,8 +427,8 @@ fn run_check(
 
     let failed = errors > 0
         || parse_errors > 0
-        || (error_on_warning && warnings > 0);
-    if exit_zero {
+        || (cfg.error_on_warning && warnings > 0);
+    if cfg.exit_zero {
         Ok(ExitCode::SUCCESS)
     } else if failed {
         Ok(ExitCode::FAILURE)

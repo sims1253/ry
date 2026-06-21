@@ -19,7 +19,8 @@ pub use project::Project;
 
 use ry_core::ast::*;
 use ry_core::types::{
-    intern_class_name, intern_column_schema, ClassVector, ColumnSchema, Length, Mode, RType,
+    intern_class_name, intern_column_schema, intern_function_signature, ClassVector, ColumnSchema,
+    FunctionSignature, Length, Mode, RType,
 };
 use ry_core::Span;
 use ry_typeshed::{load_base, FunctionSig, JsonRType, ReturnSpec, Typeshed};
@@ -325,6 +326,28 @@ pub(crate) struct FnTable {
 /// Conservative cap; well-typed programs converge in 2-3 iterations.
 pub(crate) const MAX_FIXPOINT_DEPTH: usize = 8;
 
+/// Maximum nesting depth for closure inference. A function factory
+/// whose body returns another function factory (and so on) eventually
+/// bottoms out at this depth; deeper nests get an opaque `Function`
+/// value with no `fn_sig`. Three levels covers the overwhelming
+/// majority of real-world R closure patterns (factories, currying,
+/// method chaining) while bounding the worst-case recursion.
+///
+/// Scope limits for closure support (documented here so all the
+/// approximations live in one place):
+///   * Captured bindings are snapshotted at the point where the inner
+///     function is inferred. Closures that close over mutable state
+///     (reassigned in the body) get opaque for the captured binding
+///     (we don't track per-binding mutation in v1).
+///   * Recursive closures (a closure that calls itself by name) are
+///     detected via the existing fixpoint cycle detection in
+///     `refine_fn_return`.
+///   * Anonymous functions passed to higher-order built-ins like
+///     `lapply` / `sapply` / `Map` are NOT inferred in v1; doing so
+///     would require per-builtin modeling of how they invoke the
+///     callback. They resolve to opaque (matching the typeshed entry).
+pub(crate) const MAX_CLOSURE_DEPTH: usize = 3;
+
 pub struct Checker {
     typeshed: Typeshed,
     pub(crate) diagnostics: Vec<Diagnostic>,
@@ -485,9 +508,19 @@ impl Checker {
                     } else {
                         let _ = self.record_fn(name.clone(), params, body.clone());
                     }
+                    // Recurse into the function body so nested
+                    // `inner <- function(...) ...` definitions are
+                    // recorded with a mangled name. The mangled name is
+                    // an internal implementation detail (not user-facing)
+                    // used only so the fixpoint can refine the inner
+                    // function's return type independently. Callers that
+                    // close over the inner function via a captured
+                    // `Function`-typed value go through `fn_sig` on the
+                    // outer function's return type, not through this
+                    // table entry.
+                    self.collect_nested_fns_in_body(name, body);
                 }
-                // Recurse into compound statements so we catch
-                // function-returning-function patterns at top level.
+                // Non-function assignments: nothing to record.
             }
             Stmt::If { then, else_, .. } => {
                 for s in then {
@@ -497,6 +530,66 @@ impl Checker {
                     for s in e {
                         self.collect_fns_stmt(s);
                     }
+                }
+            }
+            Stmt::For { body, .. } | Stmt::While { body, .. } => {
+                // Loop bodies may contain function definitions (rare but
+                // possible); recurse so we don't miss them.
+                for s in body {
+                    self.collect_fns_stmt(s);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Walk a function body looking for `inner <- function(...) ...`
+    /// definitions and record them with the mangled name
+    /// `<outer>$<inner>`. The mangled name is internal: it exists so
+    /// the fixpoint can refine the inner function's return type, which
+    /// `refine_fn_return` reads back when building the outer function's
+    /// `fn_sig`. Users never see this name.
+    ///
+    /// Recursion is bounded by the AST's literal nesting (small in
+    /// practice). The inference depth is separately bounded by
+    /// `MAX_CLOSURE_DEPTH` in `build_function_signature_pure`.
+    fn collect_nested_fns_in_body(&mut self, outer: &str, body: &[Stmt]) {
+        for s in body {
+            self.collect_nested_fns_stmt(outer, s);
+        }
+    }
+
+    /// Per-statement helper for `collect_nested_fns_in_body`. Records
+    /// any `inner <- function(...) ...` under `<outer>$<inner>` and
+    /// recurses into compound statements so we catch nested defs
+    /// inside `if` / `for` / `while` blocks too.
+    fn collect_nested_fns_stmt(&mut self, outer: &str, s: &Stmt) {
+        match s {
+            Stmt::Assign { target, value, .. } => {
+                if let (Expr::Ident { name: inner, .. }, Expr::Function { params, body: inner_body, .. }) =
+                    (target, value)
+                {
+                    let mangled = format!("{}${}", outer, inner);
+                    let next_outer = mangled.clone();
+                    let _ = self.record_fn(mangled, params, inner_body.clone());
+                    // Recurse one more level so doubly-nested factories
+                    // are also collected.
+                    self.collect_nested_fns_in_body(&next_outer, inner_body);
+                }
+            }
+            Stmt::If { then, else_, .. } => {
+                for s in then {
+                    self.collect_nested_fns_stmt(outer, s);
+                }
+                if let Some(e) = else_ {
+                    for s in e {
+                        self.collect_nested_fns_stmt(outer, s);
+                    }
+                }
+            }
+            Stmt::For { body, .. } | Stmt::While { body, .. } => {
+                for s in body {
+                    self.collect_nested_fns_stmt(outer, s);
                 }
             }
             _ => {}
@@ -566,14 +659,27 @@ impl Checker {
         scope.insert(name.to_string(), RType::scalar(Mode::Function, false));
 
         let mut returns: Vec<RType> = Vec::new();
+        // Walk the body in source order, simulating each statement's
+        // effect on the scope so the trailing return expression can
+        // reference bindings established earlier in the body. This is
+        // the same simulation `build_function_signature_pure` uses for
+        // nested closures; we apply it at the top level too so
+        // named-return closures (`g <- function() { 1L }; g`) resolve.
+        //
+        // We use the pure inference path (no diagnostics) so pass 2
+        // does not double-emit; diagnostics are produced in pass 3
+        // against the fully refined FnTable.
         for s in &body_clone {
-            self.collect_returns_stmt(s, &scope, &mut returns);
+            self.collect_returns_and_simulate_at_depth(s, &mut scope, &mut returns, 0);
         }
         // Trailing expression of a braced body is the implicit return.
-        if let Some(Stmt::Expr(e)) = body_clone.last() {
-            if !is_return_call(e) {
-                returns.push(self.infer(e, &mut scope.clone()));
-            }
+        // A trailing `Stmt::FunctionDef` is the implicit return value
+        // for the `function() { function() { 1L } }` shape;
+        // `trailing_return_type` handles both forms and attaches an
+        // inferred `fn_sig` when the trailing expression is itself a
+        // function literal (the closure-factory pattern).
+        if let Some(t) = self.trailing_return_type(&body_clone, &scope, 0) {
+            returns.push(t);
         }
 
         // Fold the collected return types. We start from the first
@@ -591,60 +697,117 @@ impl Checker {
         self.inferring.pop();
     }
 
-    /// Walk a statement collecting the types of any values that flow out
-    /// of the function via `return(...)` or `invisible(...)`.
-    fn collect_returns_stmt(
-        &mut self,
+    /// Combined return-collector and scope-simulator. Unlike a plain
+    /// return-collector, this takes `&mut Scope` and processes
+    /// `Stmt::Assign` so later statements see the binding. Used by both
+    /// `refine_fn_return` (for top-level user functions) and
+    /// `build_function_signature_pure` (for nested closures) so the
+    /// closure-factory-with-named-return pattern
+    /// (`g <- function() { 1L }; g`) resolves.
+    ///
+    /// Approximations (documented):
+    ///   * `if` branches are walked in sequence against the same scope;
+    ///     bindings established in the `then` branch leak into `else_`
+    ///     and into subsequent statements. This is a deliberate v1
+    ///     simplification (proper flow-sensitive scoping would require
+    ///     a full abstract interpreter).
+    ///   * Loop bodies are walked once (not to fixpoint); bindings they
+    ///     establish leak to subsequent statements. This matches the
+    ///     existing `collect_returns_stmt_at_depth` approximation.
+    ///   * Indexed assignment (`x[i] <- v`) does not update the scope
+    ///     (we don't model per-element mutation in v1).
+    fn collect_returns_and_simulate_at_depth(
+        &self,
         s: &Stmt,
-        scope: &Scope,
+        scope: &mut Scope,
         returns: &mut Vec<RType>,
+        depth: usize,
     ) {
         match s {
             Stmt::Expr(e) => {
-                if let Some(rt) = self.try_infer_return_call(e, scope) {
+                if let Some(rt) = self.try_infer_return_call_at_depth(e, scope, depth) {
                     returns.push(rt);
+                }
+            }
+            Stmt::Assign { target, value, .. } => {
+                let vt = self.infer_pure_at_depth(value, scope, depth);
+                if let Expr::Ident { name, .. } = target {
+                    scope.insert(name.clone(), vt);
+                }
+            }
+            Stmt::FunctionDef { name, params, body, .. } => {
+                // A named function def establishes a binding whose type
+                // is a `Mode::Function` value (with `fn_sig` when we can
+                // infer it). This is what makes
+                // `f <- function() { g <- function() { 1L }; g }` resolve.
+                let vt = self.function_value_from_literal(params, body, scope, depth);
+                if let Some(n) = name {
+                    scope.insert(n.clone(), vt);
                 }
             }
             Stmt::If { cond, then, else_, .. } => {
                 let _ = cond;
                 for s in then {
-                    self.collect_returns_stmt(s, scope, returns);
+                    self.collect_returns_and_simulate_at_depth(s, scope, returns, depth);
                 }
                 if let Some(e) = else_ {
                     for s in e {
-                        self.collect_returns_stmt(s, scope, returns);
+                        self.collect_returns_and_simulate_at_depth(s, scope, returns, depth);
                     }
                 }
             }
             Stmt::For { body, .. } | Stmt::While { body, .. } => {
-                // next/return inside loops are still real returns; we
-                // approximate by walking unconditionally. FALSE POSITIVES
-                // for early-exit returns are possible but rare in idiomatic R.
                 for s in body {
-                    self.collect_returns_stmt(s, scope, returns);
+                    self.collect_returns_and_simulate_at_depth(s, scope, returns, depth);
                 }
             }
-            _ => {}
+            Stmt::Return { value, .. } => {
+                if let Some(v) = value {
+                    returns.push(self.infer_pure_at_depth(v, scope, depth));
+                } else {
+                    returns.push(RType::new(Mode::Null, Length::Zero, false));
+                }
+            }
         }
     }
 
     /// If `e` is a call to `return(...)` or `invisible(...)`, infer and
     /// return the type of its argument; otherwise None.
-    fn try_infer_return_call(&self, e: &Expr, scope: &Scope) -> Option<RType> {
+    ///
+    /// Depth-tracked so a `return(function() { ... })` builds the inner
+    /// signature at the right depth. Threads the closure-nesting depth
+    /// through to `infer_pure_at_depth`.
+    fn try_infer_return_call_at_depth(
+        &self,
+        e: &Expr,
+        scope: &Scope,
+        depth: usize,
+    ) -> Option<RType> {
         if let Expr::Call { func, args, .. } = e {
             if let Expr::Ident { name, .. } = func.as_ref() {
                 if name == "return" || name == "invisible" {
-                    return Some(args.first().map(|a| self.infer_pure(&a.value, scope)).unwrap_or(RType::new(Mode::Null, Length::Zero, false)));
+                    return Some(args.first().map(|a| self.infer_pure_at_depth(&a.value, scope, depth)).unwrap_or(RType::new(Mode::Null, Length::Zero, false)));
                 }
             }
         }
         None
     }
 
-    /// Non-mutating variant of `infer`, used during pass 2 refinement so
-    /// we don't double-emit diagnostics. Diagnostics are produced in pass
-    /// 3 against the fully refined FnTable.
-    fn infer_pure(&self, e: &Expr, scope: &Scope) -> RType {
+    /// Non-mutating, depth-tracked variant of `infer`, used during pass
+    /// 2 refinement so we don't double-emit diagnostics. Diagnostics
+    /// are produced in pass 3 against the fully refined FnTable.
+    ///
+    /// This is also the path that builds `fn_sig` for closures: when we
+    /// encounter an `Expr::Function` literal we walk its body to infer
+    /// its return type and attach the resulting signature. Closure
+    /// nesting is bounded by `MAX_CLOSURE_DEPTH`.
+    ///
+    /// `depth` counts how many closure bodies we have descended into;
+    /// once it reaches `MAX_CLOSURE_DEPTH` we stop building nested
+    /// signatures and return opaque `Function` values (matching the
+    /// documented scope limit). Top-level expressions start at depth 0;
+    /// callers that don't care about depth tracking should pass 0.
+    fn infer_pure_at_depth(&self, e: &Expr, scope: &Scope, depth: usize) -> RType {
         match e {
             Expr::Logical(_, _) => RType::scalar(Mode::Logical, false),
             Expr::Integer(_, _) => RType::scalar(Mode::Integer, false),
@@ -654,12 +817,12 @@ impl Checker {
             Expr::Na(t, _) => *t,
             Expr::Ident { name, .. } => scope.get(name).copied().unwrap_or(RType::UNKNOWN),
             Expr::BinOp { op, lhs, rhs, .. } => {
-                let lt = self.infer_pure(lhs, scope);
-                let rt = self.infer_pure(rhs, scope);
+                let lt = self.infer_pure_at_depth(lhs, scope, depth);
+                let rt = self.infer_pure_at_depth(rhs, scope, depth);
                 self.infer_binop_pure(*op, lt, rt)
             }
             Expr::UnaryOp { op, expr, .. } => {
-                let t = self.infer_pure(expr, scope);
+                let t = self.infer_pure_at_depth(expr, scope, depth);
                 match op {
                     UnaryOpKind::Neg => t,
                     UnaryOpKind::Not => RType::new(Mode::Logical, t.length, t.na.0),
@@ -667,6 +830,25 @@ impl Checker {
             }
             Expr::Call { func, args, .. } => {
                 if let Expr::Ident { name, .. } = func.as_ref() {
+                    // Indirect call through a closure value: if the name
+                    // is bound in scope to a `Function`-typed value with
+                    // a `fn_sig`, the call resolves to the signature's
+                    // return type. This unblocks the
+                    // `c <- make_counter(); c()` pattern without needing
+                    // a FnTable entry for `c`.
+                    if let Some(t) = scope.get(name) {
+                        if matches!(t.mode, Mode::Function) {
+                            if let Some(sig) = t.fn_sig {
+                                return *sig.return_type;
+                            }
+                            // Bound function value without an inferred
+                            // signature: opaque. Fall through to the
+                            // FnTable / typeshed paths below only if
+                            // those could plausibly match (they can't
+                            // for a scope-local name, but the check is
+                            // cheap and keeps the fallthrough explicit).
+                        }
+                    }
                     // Direct recursion: read the current best estimate
                     // from the return slot table.
                     if let Some(f) = self.fn_table.fns.get(name) {
@@ -674,7 +856,7 @@ impl Checker {
                     }
                     if name == "c" {
                         let arg_types: Vec<RType> =
-                            args.iter().map(|a| self.infer_pure(&a.value, scope)).collect();
+                            args.iter().map(|a| self.infer_pure_at_depth(&a.value, scope, depth)).collect();
                         return self.infer_c_pure(&arg_types);
                     }
                     if name == "list" || name == "data.frame" {
@@ -682,7 +864,7 @@ impl Checker {
                         // We rebuild the schema so the refined return
                         // type is correct for column access in callers.
                         let arg_types: Vec<RType> =
-                            args.iter().map(|a| self.infer_pure(&a.value, scope)).collect();
+                            args.iter().map(|a| self.infer_pure_at_depth(&a.value, scope, depth)).collect();
                         let length = Length::Known(arg_types.len());
                         let base = if name == "data.frame" {
                             RType::new(Mode::List, length, false)
@@ -698,14 +880,14 @@ impl Checker {
                     }
                     if let Some(sig) = self.typeshed.functions.get(name) {
                         let arg_types: Vec<RType> =
-                            args.iter().map(|a| self.infer_pure(&a.value, scope)).collect();
+                            args.iter().map(|a| self.infer_pure_at_depth(&a.value, scope, depth)).collect();
                         return self.apply_sig_pure(sig, &arg_types);
                     }
                 }
                 RType::UNKNOWN
             }
             Expr::Index { base, kind, args, .. } => {
-                let bt = self.infer_pure(base, scope);
+                let bt = self.infer_pure_at_depth(base, scope, depth);
                 match kind {
                     IndexKind::Single => bt,
                     IndexKind::Dollar => {
@@ -736,8 +918,157 @@ impl Checker {
                     }
                 }
             }
-            Expr::Function { .. } => RType::scalar(Mode::Function, false),
+            Expr::Function { params, body, .. } => {
+                // Closure literal: build an inferred signature by
+                // walking the inner body with the captured scope plus
+                // the function's own params. Bounded by
+                // `MAX_CLOSURE_DEPTH`; beyond that we return an opaque
+                // `Function` value (no `fn_sig`).
+                self.function_value_from_literal(params, body, scope, depth)
+            }
             Expr::Unknown(_) => RType::UNKNOWN,
+        }
+    }
+
+    /// Build a `Mode::Function` `RType` (with `fn_sig` when we can
+    /// infer it) for a `function(params) body` literal. `captured_scope`
+    /// is the scope at the point where the literal appears; the inner
+    /// function's params are layered on top so it can reference both.
+    ///
+    /// `depth` is the current closure-nesting depth (0 at the top
+    /// level). Once `depth >= MAX_CLOSURE_DEPTH` we stop building
+    /// nested signatures and return an opaque `Function` value, as
+    /// documented in the closure-support scope limits.
+    fn function_value_from_literal(
+        &self,
+        params: &[Param],
+        body: &[Stmt],
+        captured_scope: &Scope,
+        depth: usize,
+    ) -> RType {
+        let base = RType::scalar(Mode::Function, false);
+        if depth >= MAX_CLOSURE_DEPTH {
+            return base;
+        }
+        match self.build_function_signature_pure(params, body, captured_scope, depth) {
+            Some(sig) => base.with_fn_sig(sig),
+            None => base,
+        }
+    }
+
+    /// Build an interned `FunctionSignature` for a function literal by
+    /// walking its body's returns with a scope that layers the inner
+    /// params on top of the captured enclosing scope. Returns `None`
+    /// when we have no information (empty body, depth cap exceeded on
+    /// nested literals, etc.); the caller falls back to an opaque
+    /// `Function` value.
+    ///
+    /// Captured bindings are snapshotted here by reading
+    /// `captured_scope`. We do NOT track per-binding mutation in v1, so
+    /// a closure that closes over mutable state (a binding reassigned
+    /// in the body) sees the captured value rather than the final
+    /// mutated value. This is the documented approximation.
+    fn build_function_signature_pure(
+        &self,
+        params: &[Param],
+        body: &[Stmt],
+        captured_scope: &Scope,
+        depth: usize,
+    ) -> Option<&'static FunctionSignature> {
+        if body.is_empty() {
+            return None;
+        }
+        // Layer the inner function's params on top of the captured
+        // scope. We start from a clone of the captured scope so the
+        // body can reference enclosing bindings (`make_adder`'s `x`).
+        let mut scope = captured_scope.clone();
+        let mut param_types: Vec<RType> = Vec::with_capacity(params.len());
+        for p in params {
+            let t = match &p.default {
+                Some(e) => infer_literal_default(e),
+                None => RType::UNKNOWN,
+            };
+            scope.insert(p.name.clone(), t);
+            param_types.push(t);
+        }
+        // Walk the body in source order, simulating each statement's
+        // effect on the scope so later statements (notably the trailing
+        // return expression) can reference bindings established earlier
+        // in the body. This is what lets us resolve the named-return
+        // closure pattern:
+        //     f <- function() { g <- function() { 1L }; g }
+        // Here the trailing `g` must see the `g <- function() { 1L }`
+        // binding to pick up its inferred `fn_sig`.
+        //
+        // We collect explicit `return(...)` types as we go; the trailing
+        // statement's value is added separately below. Branches in `if`
+        // are walked without splitting the scope (v1 approximation).
+        let mut returns: Vec<RType> = Vec::new();
+        for s in body {
+            self.collect_returns_and_simulate_at_depth(
+                s,
+                &mut scope,
+                &mut returns,
+                depth + 1,
+            );
+        }
+        // Trailing expression of a braced body is the implicit return.
+        // A trailing `Stmt::FunctionDef` (a bare function literal in
+        // statement position) is also the implicit return value - this
+        // is the closure-factory pattern: `function() { function() { 1L } }`
+        // has a `Stmt::FunctionDef` as its body's last statement.
+        if let Some(t) = self.trailing_return_type(body, &scope, depth + 1) {
+            returns.push(t);
+        }
+        if returns.is_empty() {
+            return None;
+        }
+        let mut iter = returns.into_iter();
+        let first = iter.next().unwrap_or(RType::UNKNOWN);
+        let joined = iter.fold(first, |acc, t| acc.join(t));
+        // If we couldn't infer anything useful (joined is UNKNOWN),
+        // there's no point attaching an empty signature.
+        if matches!(joined.mode, Mode::Opaque) {
+            return None;
+        }
+        Some(intern_function_signature(FunctionSignature {
+            params: param_types,
+            return_type: Box::new(joined),
+        }))
+    }
+
+    /// Extract the implicit return type of a function body's trailing
+    /// statement. Handles both `Stmt::Expr(e)` (a bare expression) and
+    /// `Stmt::FunctionDef` (a bare function literal in statement
+    /// position, which is how the parser represents the trailing
+    /// function in `function() { function() { 1L } }`).
+    ///
+    /// Returns `None` when the body is empty, the last statement is not
+    /// an expression-like form, or the trailing expression is a
+    /// `return(...)` call (which `collect_returns_stmt_at_depth`
+    /// already counted).
+    fn trailing_return_type(
+        &self,
+        body: &[Stmt],
+        scope: &Scope,
+        depth: usize,
+    ) -> Option<RType> {
+        let last = body.last()?;
+        match last {
+            Stmt::Expr(e) => {
+                if is_return_call(e) {
+                    None
+                } else {
+                    Some(self.infer_pure_at_depth(e, scope, depth))
+                }
+            }
+            Stmt::FunctionDef { params, body, .. } => {
+                // A trailing bare function definition is the implicit
+                // return value. Build it as a function literal so the
+                // signature is attached.
+                Some(self.function_value_from_literal(params, body, scope, depth))
+            }
+            _ => None,
         }
     }
 
@@ -906,11 +1237,19 @@ impl Checker {
                 }
             }
             Stmt::FunctionDef { name, params, body, .. } => {
-                // Install the function as opaque in the surrounding scope.
+                // Install the function in the surrounding scope. We
+                // build an inferred `fn_sig` (when possible) so a bare
+                // named function def in statement position behaves the
+                // same as `name <- function(...) body` for downstream
+                // callers. This mirrors `infer`'s handling of
+                // `Expr::Function` and `collect_returns_and_simulate_at_depth`'s
+                // handling of `Stmt::FunctionDef` in pass 2.
+                let vt = self.function_value_from_literal(params, body, scope, 0);
                 if let Some(n) = name {
-                    scope.insert(n.clone(), RType::scalar(Mode::Function, false));
+                    scope.insert(n.clone(), vt);
                 }
-                // Infer the body in a fresh scope populated with params.
+                // Infer the body in a fresh scope populated with params
+                // so any diagnostics inside the body still fire.
                 let mut fn_scope = scope.clone();
                 for p in params {
                     let t = match &p.default {
@@ -1017,7 +1356,14 @@ impl Checker {
                 let bt = self.infer(base, scope);
                 self.infer_index(bt, *kind, args, *span, scope)
             }
-            Expr::Function { .. } => RType::scalar(Mode::Function, false),
+            Expr::Function { params, body, .. } => {
+                // Pass 3: build a `Mode::Function` value with an
+                // inferred `fn_sig` when we can. This mirrors pass 2's
+                // `infer_pure` so a function literal in a top-level
+                // expression (`g <- f(); v <- (function() 1L)()`)
+                // resolves the same way as one inside a return slot.
+                self.function_value_from_literal(params, body, scope, 0)
+            }
             Expr::Unknown(_) => RType::UNKNOWN,
         }
     }
@@ -1244,6 +1590,29 @@ impl Checker {
         let mut arg_types: Vec<RType> = Vec::with_capacity(args.len());
         for a in args {
             arg_types.push(self.infer(&a.value, scope));
+        }
+
+        // Indirect call through a closure value: if the name is bound
+        // in scope to a `Function`-typed value with an inferred
+        // `fn_sig`, the call resolves to the signature's return type.
+        // This is what makes `c <- make_counter(); v <- c()` work
+        // without `c` having its own FnTable entry. We check this
+        // before the FnTable / typeshed paths so a local binding
+        // shadows any same-named top-level function (matching R's
+        // lexical scoping).
+        if let Some(t) = scope.get(&name) {
+            if matches!(t.mode, Mode::Function) {
+                if let Some(sig) = t.fn_sig {
+                    return *sig.return_type;
+                }
+                // Bound function value without an inferred signature:
+                // opaque. We do NOT fall through to the FnTable path,
+                // because a scope-local binding shadows top-level
+                // definitions and we have no way to refine the local
+                // one. Returning opaque here is the conservative
+                // choice (no false positives, possible false negatives).
+                return RType::UNKNOWN;
+            }
         }
 
         // Built-in: `c(...)` concatenates and produces the common mode.
@@ -1719,6 +2088,8 @@ impl Checker {
                 // Nested column schemas on a data-frame column would
                 // mean nested data frames; v1 keeps those opaque.
                 columns: None,
+                // fn_sig is meaningless on a data-frame column.
+                fn_sig: None,
             })
             .collect();
 
@@ -2710,6 +3081,147 @@ mod tests {
         assert!(
             diags.iter().any(|d| d.code == "RY010"),
             "expected RY010 for unbound `cyl` when df has no schema, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn closure_factory_infers_inner_return() {
+        // `make_counter <- function() { function() { 1L } }` produces a
+        // function whose `fn_sig.return_type` is itself a function with
+        // `fn_sig.return_type` = integer<1>. So `c <- make_counter()`
+        // binds `c` to a function-typed value with an inferred signature,
+        // and `c()` resolves to integer<1>. We verify by using the
+        // result arithmetically: integer + character must fire RY040
+        // (proving the type was inferred, not opaque).
+        let (_, scope) = check_with_scope(
+            "make_counter <- function() { function() { 1L } }\n\
+             c <- make_counter()\n",
+        );
+        let c = scope.get("c").expect("c should be bound");
+        assert_eq!(
+            c.mode, Mode::Function,
+            "c must be function-typed, got {:?}",
+            c
+        );
+        let sig = c.fn_sig.expect("c must carry an inferred fn_sig");
+        assert_eq!(
+            sig.return_type.mode,
+            Mode::Integer,
+            "c() must resolve to integer, got {:?}",
+            sig.return_type
+        );
+        // Behavioral check: using the result arithmetically with a
+        // character operand must fire RY040.
+        let diags = check(
+            "make_counter <- function() { function() { 1L } }\n\
+             c <- make_counter()\n\
+             v <- c()\n\
+             bad <- v + \"x\"\n",
+        );
+        assert!(
+            diags.iter().any(|d| d.code == "RY040"),
+            "expected RY040 from integer closure result + character, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn closure_capture_resolves_outer_binding() {
+        // `make_adder(x)` returns a closure that references the captured
+        // `x`. The inner function's body `x + y` (both double via
+        // defaults) produces double<1>; the outer function's `fn_sig`
+        // carries that as the return type. `add5(3)` therefore resolves
+        // to double<1>.
+        let (_, scope) = check_with_scope(
+            "make_adder <- function(x = 0) {\n\
+             \x20 function(y = 0) { x + y }\n\
+             }\n\
+             add5 <- make_adder(5)\n",
+        );
+        let add5 = scope.get("add5").expect("add5 should be bound");
+        assert_eq!(add5.mode, Mode::Function);
+        let sig = add5.fn_sig.expect("add5 must carry an inferred fn_sig");
+        assert_eq!(
+            sig.return_type.mode,
+            Mode::Double,
+            "add5(3) must resolve to double, got {:?}",
+            sig.return_type
+        );
+        // Behavioral check: using the result arithmetically with a
+        // character operand must fire RY040.
+        let diags = check(
+            "make_adder <- function(x = 0) {\n\
+             \x20 function(y = 0) { x + y }\n\
+             }\n\
+             add5 <- make_adder(5)\n\
+             v <- add5(3)\n\
+             bad <- v + \"x\"\n",
+        );
+        assert!(
+            diags.iter().any(|d| d.code == "RY040"),
+            "expected RY040 from double closure result + character, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn nested_function_definition_visible_in_outer_body() {
+        // The named-return closure pattern: `g <- function() { 1L }; g`
+        // inside the outer body. The body simulator processes the
+        // assignment so the trailing `g` picks up `g`'s inferred
+        // `fn_sig`. The outer function's return type is therefore a
+        // function value with an inferred signature, and `h()`
+        // resolves to integer<1>.
+        let (_, scope) = check_with_scope(
+            "f <- function() {\n\
+             \x20 g <- function() { 1L }\n\
+             \x20 g\n\
+             }\n\
+             h <- f()\n",
+        );
+        let h = scope.get("h").expect("h should be bound");
+        assert_eq!(h.mode, Mode::Function);
+        let sig = h.fn_sig.expect("h must carry an inferred fn_sig");
+        assert_eq!(
+            sig.return_type.mode,
+            Mode::Integer,
+            "h() must resolve to integer, got {:?}",
+            sig.return_type
+        );
+        // Behavioral check.
+        let diags = check(
+            "f <- function() {\n\
+             \x20 g <- function() { 1L }\n\
+             \x20 g\n\
+             }\n\
+             h <- f()\n\
+             v <- h()\n\
+             bad <- v + \"x\"\n",
+        );
+        assert!(
+            diags.iter().any(|d| d.code == "RY040"),
+            "expected RY040 from integer nested-closure result + character, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn closure_depth_cap_falls_back_to_opaque() {
+        // Four levels of nested closures exceeds MAX_CLOSURE_DEPTH (3).
+        // The deepest call must NOT produce a false-positive RY040 when
+        // used arithmetically, because the result is opaque (we gave up
+        // inferring). This verifies the depth cap is respected.
+        let diags = check(
+            "f1 <- function() { function() { function() { function() { 1L } } } }\n\
+             a <- f1()()()()\n\
+             bad <- a + \"x\"\n",
+        );
+        // `a` is opaque (depth cap exceeded), so `a + "x"` must NOT
+        // fire RY040. We allow any diagnostics EXCEPT RY040.
+        assert!(
+            diags.iter().all(|d| d.code != "RY040"),
+            "depth-capped closure should be opaque, not integer; got {:?}",
             diags
         );
     }

@@ -367,6 +367,62 @@ pub fn intern_column_schema(schema: ColumnSchema) -> &'static ColumnSchema {
     leaked
 }
 
+/// Inferred signature for a function value (closures returned from
+/// function factories, curried helpers, etc.).
+///
+/// This is v1's answer to R closures without a full dependent type
+/// system. The checker walks a function literal's body, collects its
+/// return types, and stores the joined result here. The signature is
+/// attached to a `Mode::Function` `RType` via the `fn_sig` field so
+/// callers can resolve indirect calls like `f <- make_counter();
+/// f()`.
+///
+/// Scope limits (see `ry-checker/src/lib.rs` for the implementation):
+///   * Maximum nesting depth: 3 levels of closures. Deeper nests get
+///     `fn_sig = None` (opaque).
+///   * Captured bindings are snapshotted at the point where the inner
+///     function is inferred. Closures that close over mutable state
+///     (reassigned in the body) get opaque for the captured binding.
+///   * `params` carries positional inferred-or-default types and may be
+///     shorter than the real arity (we only fill entries we can infer).
+///
+/// Interned via `intern_function_signature` so `RType` stays `Copy`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionSignature {
+    /// Positional parameter types the checker could infer from
+    /// defaults or call sites. May be shorter than the real arity;
+    /// missing entries are treated as opaque by callers.
+    pub params: Vec<RType>,
+    /// Joined return type of the function body. `RType::UNKNOWN` if the
+    /// body gave us nothing to work with.
+    pub return_type: Box<RType>,
+}
+
+/// Intern a runtime-built `FunctionSignature` into
+/// `&'static FunctionSignature` so it can be stored in a `Copy`
+/// `RType`. Same caching/leaking pattern as `intern_column_schema`:
+/// identical signatures collapse to the same static reference, and the
+/// storage is leaked for the program's lifetime (acceptable for v1:
+/// the number of distinct closure signatures in a run is bounded by
+/// the source's literal `function(...) ...` expressions).
+pub fn intern_function_signature(sig: FunctionSignature) -> &'static FunctionSignature {
+    use std::sync::{Mutex, OnceLock};
+    static TABLE: OnceLock<Mutex<Vec<&'static FunctionSignature>>> = OnceLock::new();
+    let lock = TABLE.get_or_init(|| Mutex::new(Vec::new()));
+    let mut guard = match lock.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+    for existing in guard.iter() {
+        if **existing == sig {
+            return existing;
+        }
+    }
+    let leaked: &'static FunctionSignature = Box::leak(Box::new(sig));
+    guard.push(leaked);
+    leaked
+}
+
 /// A fully-described R type at the granularity v1 cares about. Includes
 /// an optional S3 class vector and an optional record schema (data
 /// frame columns, named list shape); arithmetic / comparison strip the
@@ -383,6 +439,20 @@ pub struct RType {
     /// means "we don't know the shape" (the conservative default for
     /// values whose construction we can't see).
     pub columns: Option<&'static ColumnSchema>,
+    /// Optional inferred signature for `Mode::Function` values. Carries
+    /// the joined return type (and any positional param types we could
+    /// infer) for closures returned from function factories like
+    /// `make_counter <- function() { function() { 1L } }`.
+    ///
+    /// `None` for opaque functions (built-ins without a typeshed entry,
+    /// user functions whose body we couldn't walk, or closures deeper
+    /// than the 3-level nesting cap). Interned via
+    /// `intern_function_signature` so this field stays `Copy`.
+    ///
+    /// For non-`Function` modes this is always `None`; arithmetic and
+    /// comparison ops clear it (you cannot meaningfully add two
+    /// closures).
+    pub fn_sig: Option<&'static FunctionSignature>,
 }
 
 impl RType {
@@ -392,6 +462,7 @@ impl RType {
         na: NaFlag(true),
         class: ClassVector::unknown(),
         columns: None,
+        fn_sig: None,
     };
 
     pub const fn new(mode: Mode, length: Length, na: bool) -> Self {
@@ -401,6 +472,7 @@ impl RType {
             na: NaFlag(na),
             class: ClassVector::empty(),
             columns: None,
+            fn_sig: None,
         }
     }
 
@@ -425,6 +497,18 @@ impl RType {
         }
     }
 
+    /// Return a copy of `self` with the function signature replaced.
+    /// The caller is responsible for interning via
+    /// `intern_function_signature`. Only meaningful when `mode` is
+    /// `Mode::Function`; on other modes the signature is silently
+    /// dropped (arithmetic / comparison clear it).
+    pub const fn with_fn_sig(self, sig: &'static FunctionSignature) -> Self {
+        RType {
+            fn_sig: Some(sig),
+            ..self
+        }
+    }
+
     /// Result of `lhs op rhs` for an arithmetic operator, or None if the
     /// mode combination is invalid (e.g. list + numeric). Arithmetic
     /// strips any S3 class attribute and the column schema, matching
@@ -440,9 +524,12 @@ impl RType {
             length,
             na,
             // Arithmetic on S3 objects strips the class in R, and the
-            // column schema is meaningless on the atomic result.
+            // column schema is meaningless on the atomic result. The
+            // function signature is likewise dropped: you cannot add
+            // two closures and get a meaningful signature back.
             class: ClassVector::empty(),
             columns: None,
+            fn_sig: None,
         })
     }
 
@@ -457,6 +544,7 @@ impl RType {
             na: NaFlag(true),
             class: ClassVector::empty(),
             columns: None,
+            fn_sig: None,
         })
     }
 
@@ -517,12 +605,22 @@ impl RType {
         } else {
             None
         };
+        // Function signatures are preserved only on exact agreement;
+        // two branches returning closures with different signatures
+        // collapse to an opaque function (signature dropped) rather
+        // than silently picking one branch's signature.
+        let fn_sig = if self.fn_sig.is_some() && self.fn_sig == other.fn_sig {
+            self.fn_sig
+        } else {
+            None
+        };
         RType {
             mode,
             length,
             na: NaFlag(self.na.0 || other.na.0),
             class,
             columns,
+            fn_sig,
         }
     }
 
@@ -626,6 +724,12 @@ impl RType {
                 f.write_str(", ...")?;
             }
             f.write_str("}")?;
+        }
+        // Function signature annotation for closures whose return type
+        // we could infer. Shown as `-> <return_type>` so it visually
+        // resembles R's own `function() {}` shape.
+        if let Some(sig) = self.fn_sig {
+            write!(f, " -> {}", sig.return_type)?;
         }
         Ok(())
     }
@@ -957,5 +1061,113 @@ mod tests {
         assert!(s.contains("c2:"), "missing c2: {}", s);
         assert!(!s.contains("c3:"), "c3 should be abbreviated: {}", s);
         assert!(s.contains("..."), "missing ellipsis: {}", s);
+    }
+
+    #[test]
+    fn intern_function_signature_collapses_identical() {
+        let s1 = intern_function_signature(FunctionSignature {
+            params: vec![RType::scalar(Mode::Double, false)],
+            return_type: Box::new(RType::scalar(Mode::Integer, false)),
+        });
+        let s2 = intern_function_signature(FunctionSignature {
+            params: vec![RType::scalar(Mode::Double, false)],
+            return_type: Box::new(RType::scalar(Mode::Integer, false)),
+        });
+        assert!(
+            std::ptr::eq(s1, s2),
+            "identical signatures should intern to the same static"
+        );
+    }
+
+    #[test]
+    fn intern_function_signature_keeps_distinct() {
+        let s1 = intern_function_signature(FunctionSignature {
+            params: vec![],
+            return_type: Box::new(RType::scalar(Mode::Integer, false)),
+        });
+        let s2 = intern_function_signature(FunctionSignature {
+            params: vec![],
+            return_type: Box::new(RType::scalar(Mode::Double, false)),
+        });
+        assert!(
+            !std::ptr::eq(s1, s2),
+            "distinct signatures should get distinct statics"
+        );
+    }
+
+    #[test]
+    fn rtype_with_fn_sig_roundtrips() {
+        let sig = intern_function_signature(FunctionSignature {
+            params: vec![RType::scalar(Mode::Double, false)],
+            return_type: Box::new(RType::scalar(Mode::Integer, false)),
+        });
+        let t = RType::scalar(Mode::Function, false).with_fn_sig(sig);
+        assert_eq!(t.fn_sig, Some(sig));
+        assert_eq!(t.mode, Mode::Function);
+    }
+
+    #[test]
+    fn rtype_default_fn_sig_is_none() {
+        // All standard constructors must produce fn_sig = None so the
+        // signature is opt-in only.
+        assert!(RType::UNKNOWN.fn_sig.is_none());
+        assert!(RType::scalar(Mode::Function, false).fn_sig.is_none());
+        assert!(RType::new(Mode::Integer, Length::One, false).fn_sig.is_none());
+    }
+
+    #[test]
+    fn arith_strips_fn_sig() {
+        // Arithmetic on a function value is an error in R; even when
+        // arith_result permits it (it doesn't for Function), the
+        // signature must not survive. We exercise the strip via a
+        // classed list whose schema we know survives only via join.
+        let sig = intern_function_signature(FunctionSignature {
+            params: vec![],
+            return_type: Box::new(RType::scalar(Mode::Integer, false)),
+        });
+        let lhs = RType::scalar(Mode::Integer, false).with_fn_sig(sig);
+        let rhs = RType::scalar(Mode::Integer, false);
+        let r = lhs.arith(rhs).unwrap();
+        assert!(r.fn_sig.is_none(), "arith must strip fn_sig");
+    }
+
+    #[test]
+    fn join_preserves_fn_sig_when_both_sides_agree() {
+        let sig = intern_function_signature(FunctionSignature {
+            params: vec![],
+            return_type: Box::new(RType::scalar(Mode::Integer, false)),
+        });
+        let lhs = RType::scalar(Mode::Function, false).with_fn_sig(sig);
+        let rhs = RType::scalar(Mode::Function, false).with_fn_sig(sig);
+        let joined = lhs.join(rhs);
+        assert_eq!(joined.fn_sig, Some(sig));
+    }
+
+    #[test]
+    fn join_drops_fn_sig_when_sides_differ() {
+        let s1 = intern_function_signature(FunctionSignature {
+            params: vec![],
+            return_type: Box::new(RType::scalar(Mode::Integer, false)),
+        });
+        let s2 = intern_function_signature(FunctionSignature {
+            params: vec![],
+            return_type: Box::new(RType::scalar(Mode::Double, false)),
+        });
+        let lhs = RType::scalar(Mode::Function, false).with_fn_sig(s1);
+        let rhs = RType::scalar(Mode::Function, false).with_fn_sig(s2);
+        let joined = lhs.join(rhs);
+        assert!(joined.fn_sig.is_none(), "differing sigs must drop");
+    }
+
+    #[test]
+    fn rtype_display_includes_fn_sig() {
+        let sig = intern_function_signature(FunctionSignature {
+            params: vec![],
+            return_type: Box::new(RType::scalar(Mode::Integer, false)),
+        });
+        let t = RType::scalar(Mode::Function, false).with_fn_sig(sig);
+        let s = format!("{}", t);
+        assert!(s.contains("->"), "missing -> in display: {}", s);
+        assert!(s.contains("integer"), "missing return type: {}", s);
     }
 }

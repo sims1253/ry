@@ -167,6 +167,20 @@ impl LanguageServer for Backend {
                 // walks the AST looking for statement spans that cross a
                 // newline and emits one `FoldingRange` per such span.
                 folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
+                // Enable `textDocument/codeAction` so editors can offer
+                // quick fixes for diagnostics. The handler is
+                // `code_action` below; it offers per-diagnostic
+                // `# ry: ignore[CODE]` line-suppression comments and a
+                // file-level `# ry: ignore-file` action.
+                code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+                // Enable `textDocument/selectionRange` so editors can
+                // offer expand/shrink selection ("Expand Selection" /
+                // "Shrink Selection") based on AST structure. The
+                // handler is `selection_range` below; it builds a chain
+                // of progressively wider ranges (identifier ->
+                // enclosing statement -> whole file) for each cursor
+                // position requested.
+                selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -849,6 +863,94 @@ impl LanguageServer for Backend {
         };
 
         let ranges = collect_folding_ranges(&file, &text);
+        if ranges.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(ranges))
+        }
+    }
+
+    async fn code_action(&self, params: CodeActionParams) -> LspResult<Option<CodeActionResponse>> {
+        let uri = params.text_document.uri.clone();
+        let path = uri_to_path(&uri);
+
+        let text = {
+            let state = self.state.lock().await;
+            state.docs.get(&path).cloned()
+        };
+
+        let Some(text) = text else {
+            return Ok(None);
+        };
+
+        // Build one quick-fix per diagnostic currently visible at the
+        // cursor (the client populates `params.context.diagnostics`
+        // with the squiggles overlapping `params.range`). Each
+        // per-diagnostic action appends a `# ry: ignore[CODE]`
+        // suppression comment to the end of the offending line. When
+        // a line already carries an ignore comment we skip it so the
+        // lightbulb does not offer a redundant no-op.
+        let mut actions: CodeActionResponse = Vec::new();
+        for diag in &params.context.diagnostics {
+            if let Some(action) = make_ignore_action(&uri, diag, &text) {
+                actions.push(CodeActionOrCommand::CodeAction(action));
+            }
+        }
+
+        // The file-level action inserts `# ry: ignore-file` at line 0.
+        // It is only offered when the file does not already carry a
+        // file-level suppression, so the user never sees a duplicate.
+        if let Some(action) = make_ignore_file_action(&uri, &text) {
+            actions.push(CodeActionOrCommand::CodeAction(action));
+        }
+
+        if actions.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(actions))
+        }
+    }
+
+    async fn selection_range(
+        &self,
+        params: SelectionRangeParams,
+    ) -> LspResult<Option<Vec<SelectionRange>>> {
+        let uri = params.text_document.uri.clone();
+        let _ = uri; // retained for symmetry with the other handlers
+        let path = uri_to_path(&uri);
+
+        let text = {
+            let state = self.state.lock().await;
+            state.docs.get(&path).cloned()
+        };
+
+        let Some(text) = text else {
+            return Ok(None);
+        };
+
+        // Parse the document. On any parse failure we return `None`
+        // (no selection ranges) rather than erroring, so the editor
+        // simply disables expand/shrink selection instead of showing
+        // a broken state. Mirrors `document_symbol` / `folding_range`.
+        let mut parser = match RParser::new() {
+            Ok(p) => p,
+            Err(_) => return Ok(None),
+        };
+        let file = match parser.parse(&path, &text) {
+            Ok(f) => f,
+            Err(_) => return Ok(None),
+        };
+
+        // Build one `SelectionRange` chain per requested position.
+        // The LSP spec allows the client to pass multiple cursor
+        // positions in a single request (e.g. multi-cursor edit);
+        // we return one chain per position in the same order.
+        let ranges: Vec<SelectionRange> = params
+            .positions
+            .into_iter()
+            .map(|pos| build_selection_range(pos, &file, &text))
+            .collect();
+
         if ranges.is_empty() {
             Ok(None)
         } else {
@@ -2784,6 +2886,262 @@ fn diagnostic_to_lsp_with_source(d: &RyDiagnostic, text: &str) -> LspDiagnostic 
     }
 }
 
+/// Extract the diagnostic code string from an LSP `Diagnostic`. ry
+/// always emits string codes (`RY040`, `RY001`, ...), but we handle
+/// the numeric variant defensively so a future change to the code
+/// shape does not crash the code-action handler. Returns an empty
+/// string when the diagnostic has no code, in which case the ignore
+/// comment omits the `[CODE]` suffix.
+fn diag_code_from_lsp(d: &LspDiagnostic) -> String {
+    match &d.code {
+        Some(NumberOrString::String(s)) => s.clone(),
+        Some(NumberOrString::Number(n)) => n.to_string(),
+        None => String::new(),
+    }
+}
+
+/// Build a `CodeAction` that appends a `# ry: ignore[CODE]`
+/// suppression comment to the end of the diagnostic's line. Returns
+/// `None` when the line already carries an ignore comment (so the
+/// lightbulb does not offer a redundant no-op).
+///
+/// The produced `TextEdit` replaces the whole line with
+/// `<original line>  # ry: ignore[<code>]` (two spaces before the `#`
+/// to visually separate the code from the comment). The `CodeAction`
+/// also carries the originating diagnostic in `diagnostics` so the
+/// editor can link the lightbulb back to the squiggle it fixes.
+fn make_ignore_action(uri: &Url, diag: &LspDiagnostic, text: &str) -> Option<CodeAction> {
+    let line = diag.range.start.line as usize;
+    let line_text = text.lines().nth(line)?;
+
+    // A line that already carries an ignore comment is fully
+    // suppressed; offering another action would be a no-op.
+    if line_text.contains("ry: ignore") {
+        return None;
+    }
+
+    let code = diag_code_from_lsp(diag);
+    let new_line = if code.is_empty() {
+        format!("{}  # ry: ignore", line_text)
+    } else {
+        format!("{}  # ry: ignore[{}]", line_text, code)
+    };
+
+    let start = Position {
+        line: diag.range.start.line,
+        character: 0,
+    };
+    let end = Position {
+        line: diag.range.start.line,
+        character: line_text.len() as u32,
+    };
+
+    let mut changes = HashMap::new();
+    changes.insert(
+        uri.clone(),
+        vec![TextEdit {
+            range: Range { start, end },
+            new_text: new_line,
+        }],
+    );
+
+    let title = if code.is_empty() {
+        "Ignore this diagnostic on its line".to_string()
+    } else {
+        format!("Ignore {} on this line", code)
+    };
+
+    Some(CodeAction {
+        title,
+        kind: Some(CodeActionKind::QUICKFIX),
+        edit: Some(WorkspaceEdit {
+            changes: Some(changes),
+            ..Default::default()
+        }),
+        diagnostics: Some(vec![diag.clone()]),
+        ..Default::default()
+    })
+}
+
+/// Build a `CodeAction` that inserts `# ry: ignore-file` at the top
+/// of the document (line 0, character 0), suppressing every ry
+/// diagnostic in the file. Returns `None` when the file already
+/// carries a file-level suppression comment so the lightbulb does
+/// not offer a redundant no-op.
+fn make_ignore_file_action(uri: &Url, text: &str) -> Option<CodeAction> {
+    if text.contains("ry: ignore-file") {
+        return None;
+    }
+
+    let mut changes = HashMap::new();
+    changes.insert(
+        uri.clone(),
+        vec![TextEdit {
+            range: Range {
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 0,
+                },
+            },
+            new_text: "# ry: ignore-file\n".to_string(),
+        }],
+    );
+
+    Some(CodeAction {
+        title: "Ignore all diagnostics in this file".to_string(),
+        kind: Some(CodeActionKind::QUICKFIX),
+        edit: Some(WorkspaceEdit {
+            changes: Some(changes),
+            ..Default::default()
+        }),
+        ..Default::default()
+    })
+}
+
+/// Map an LSP `Position` (0-indexed line, 0-indexed character column)
+/// to a byte offset within `text`. Mirrors `byte_offset_to_position`'s
+/// ASCII assumption: each `char` advances the column by one, each
+/// newline bumps the line. For non-ASCII content this is an
+/// approximation consistent with the rest of the file.
+///
+/// Used by `find_enclosing_stmt_range` to test whether a cursor
+/// position falls within a statement's byte-offset `Span`.
+fn position_to_byte_offset(text: &str, position: Position) -> usize {
+    let mut line = 0u32;
+    let mut col = 0u32;
+    for (b, ch) in text.char_indices() {
+        if line == position.line && col >= position.character {
+            return b;
+        }
+        if ch == '\n' {
+            line += 1;
+            col = 0;
+        } else {
+            col += 1;
+        }
+    }
+    text.len()
+}
+
+/// Find the smallest enclosing statement whose `Span` contains the
+/// cursor position, returning its range as an LSP `Range`. Returns
+/// `None` when the cursor is not inside any statement (e.g. on a
+/// blank line past the end of the file).
+///
+/// The byte offset of the cursor is computed via
+/// `position_to_byte_offset`; we then walk the file's top-level
+/// statements and return the first whose span contains that offset.
+/// Nested statements (function bodies, control-flow blocks) are not
+/// searched: for the expand-selection use case, expanding from the
+/// identifier to the top-level statement is the most useful single
+/// hop, and the file-level range provides the "expand all the way"
+/// step.
+fn find_enclosing_stmt_range(position: Position, file: &SourceFile, text: &str) -> Option<Range> {
+    let byte_offset = position_to_byte_offset(text, position);
+    let mut best: Option<Span> = None;
+    for stmt in &file.stmts {
+        if let Some(span) = span_of_stmt(stmt) {
+            if byte_offset >= span.start && byte_offset < span.end {
+                // Prefer the smallest (innermost) enclosing statement
+                // so multi-statement lines and nested constructs
+                // expand to the tightest meaningful range first.
+                match best {
+                    None => best = Some(span),
+                    Some(prev) if span.end - span.start < prev.end - prev.start => {
+                        best = Some(span);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    best.and_then(|span| span_to_range(text, span))
+}
+
+/// Compute an LSP `Range` covering the entire source text (from
+/// `(0, 0)` to the position of the last byte). Used as the widest
+/// level of the selection-range chain.
+fn file_range(text: &str) -> Range {
+    let end = byte_offset_to_position(text, text.len());
+    Range {
+        start: Position {
+            line: 0,
+            character: 0,
+        },
+        end,
+    }
+}
+
+/// Build a `SelectionRange` chain for a single cursor position. The
+/// chain widens from the identifier under the cursor (narrowest) to
+/// the enclosing statement (middle) to the whole file (widest),
+/// matching how VS Code's "Expand Selection" works.
+///
+/// When the cursor is not on an identifier (e.g. on whitespace or an
+/// operator), the narrowest range falls back to a zero-width span at
+/// the cursor so the editor still has something to anchor the
+/// selection. Levels that would be identical to their child (e.g. a
+/// single-statement file where the statement span equals the file
+/// span) are skipped so the chain never contains duplicate ranges.
+fn build_selection_range(position: Position, file: &SourceFile, text: &str) -> SelectionRange {
+    // 1. The identifier at the cursor (narrowest). Fall back to a
+    //    zero-width span at the cursor when the position is not on an
+    //    identifier-like character.
+    let ident_range = find_identifier_range_at_position(
+        text,
+        position.line as usize,
+        position.character as usize,
+    )
+    .map(|(_, r)| r)
+    .unwrap_or(Range {
+        start: position,
+        end: position,
+    });
+
+    // 2. The enclosing statement (middle).
+    let stmt_range = find_enclosing_stmt_range(position, file, text);
+
+    // 3. The whole file (widest).
+    let file_range = file_range(text);
+
+    // Build the chain from widest to narrowest so each level's
+    // `parent` points to the next wider range. Duplicate levels are
+    // skipped so the editor never offers a no-op expand step.
+    //
+    // Per the LSP spec, the outermost `SelectionRange` is the
+    // narrowest; each `parent` widens. We therefore start from the
+    // widest range (file) as the deepest parent and wrap outward.
+    let mut chain: Vec<Range> = vec![file_range];
+    if let Some(stmt) = stmt_range {
+        if stmt != file_range && stmt != ident_range {
+            chain.push(stmt);
+        }
+    }
+    if ident_range != *chain.last().unwrap() {
+        chain.push(ident_range);
+    }
+
+    // Fold the chain into nested `SelectionRange`s. The chain is
+    // ordered widest-first; we build from the widest (deepest parent)
+    // and wrap each narrower level around it so the outermost
+    // `SelectionRange.range` is the narrowest (identifier).
+    let mut sel = SelectionRange {
+        range: chain[0],
+        parent: None,
+    };
+    for r in chain.into_iter().skip(1) {
+        sel = SelectionRange {
+            range: r,
+            parent: Some(Box::new(sel)),
+        };
+    }
+    sel
+}
+
 /// Entry point for the LSP server. Reads from stdin, writes to stdout.
 ///
 /// IMPORTANT: the caller (the CLI) MUST install a `tracing_subscriber`
@@ -4438,5 +4796,362 @@ mod tests {
         let has_inner_if = ranges.iter().any(|r| r.start_line == 1 && r.end_line == 3);
         assert!(has_outer, "missing outer function range: {:?}", ranges);
         assert!(has_inner_if, "missing inner if range: {:?}", ranges);
+    }
+
+    // ---- code action helpers ----
+
+    /// Helper: build an LSP `Diagnostic` covering a given line range
+    /// with a string code, mirroring what `diagnostic_to_lsp` produces.
+    /// Used by the code-action tests so we do not have to run the full
+    /// checker pipeline just to exercise the quick-fix builders.
+    fn lsp_diag(line: u32, start_char: u32, end_char: u32, code: &str) -> LspDiagnostic {
+        LspDiagnostic {
+            range: Range {
+                start: Position {
+                    line,
+                    character: start_char,
+                },
+                end: Position {
+                    line,
+                    character: end_char,
+                },
+            },
+            severity: Some(DiagnosticSeverity::ERROR),
+            code: Some(NumberOrString::String(code.to_string())),
+            source: Some("ry".to_string()),
+            message: "test diagnostic".to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn code_action_ignore_line_appends_suppression_comment() {
+        // The canonical case: a diagnostic on `x <- 1L + "s"` should
+        // produce a quick-fix that appends
+        // `  # ry: ignore[RY040]` to the end of line 0. The edit's
+        // range covers the whole line (col 0 to line length) and the
+        // new text is the original line plus the comment.
+        let text = "x <- 1L + \"s\"\n";
+        let diag = lsp_diag(0, 0, 1, "RY040");
+        let uri = Url::parse("file:///tmp/test.R").unwrap();
+        let action = make_ignore_action(&uri, &diag, text).expect("should produce an action");
+
+        assert_eq!(action.title, "Ignore RY040 on this line");
+        assert_eq!(action.kind, Some(CodeActionKind::QUICKFIX));
+        // The action must link back to the diagnostic it fixes so the
+        // editor can show the lightbulb on the right squiggle.
+        assert_eq!(
+            action.diagnostics.as_deref(),
+            Some(std::slice::from_ref(&diag))
+        );
+
+        let edit = action.edit.expect("should have an edit");
+        let changes = edit.changes.expect("should have changes");
+        let edits = changes.get(&uri).expect("should have edits for the uri");
+        assert_eq!(edits.len(), 1, "expected exactly one text edit");
+        let te = &edits[0];
+        // The range covers the whole line (col 0 to len).
+        assert_eq!(te.range.start.line, 0);
+        assert_eq!(te.range.start.character, 0);
+        assert_eq!(te.range.end.line, 0);
+        assert_eq!(
+            te.range.end.character,
+            "x <- 1L + \"s\"".len() as u32,
+            "range should span the whole line"
+        );
+        // The new text is the original line plus the suppression
+        // comment.
+        assert_eq!(
+            te.new_text, "x <- 1L + \"s\"  # ry: ignore[RY040]",
+            "new text should append the ignore comment"
+        );
+    }
+
+    #[test]
+    fn code_action_ignore_line_skips_already_suppressed() {
+        // A line that already carries an `ry: ignore` comment is fully
+        // suppressed; the action must return `None` so the lightbulb
+        // does not offer a redundant no-op.
+        let text = "x <- 1L + \"s\"  # ry: ignore[RY040]\n";
+        let diag = lsp_diag(0, 0, 1, "RY040");
+        let uri = Url::parse("file:///tmp/test.R").unwrap();
+        assert!(
+            make_ignore_action(&uri, &diag, text).is_none(),
+            "should not offer an action for an already-suppressed line"
+        );
+    }
+
+    #[test]
+    fn code_action_ignore_line_handles_missing_code() {
+        // A diagnostic without a code (defensive) must still produce an
+        // action, with the comment omitting the `[CODE]` suffix.
+        let text = "x <- bad_thing()\n";
+        let mut diag = lsp_diag(0, 0, 1, "RY099");
+        diag.code = None;
+        let uri = Url::parse("file:///tmp/test.R").unwrap();
+        let action = make_ignore_action(&uri, &diag, text).expect("should produce an action");
+        let edit = action.edit.expect("should have an edit");
+        let changes = edit.changes.unwrap();
+        let te = &changes.get(&uri).unwrap()[0];
+        assert_eq!(
+            te.new_text, "x <- bad_thing()  # ry: ignore",
+            "missing code should omit the [CODE] suffix"
+        );
+        assert_eq!(
+            action.title, "Ignore this diagnostic on its line",
+            "missing code should use a generic title"
+        );
+    }
+
+    #[test]
+    fn code_action_ignore_file_inserts_at_line_zero() {
+        // The file-level action inserts `# ry: ignore-file\n` at the
+        // very top of the document (a zero-width insert at (0, 0)).
+        let text = "x <- 1L\ny <- 2L\n";
+        let uri = Url::parse("file:///tmp/test.R").unwrap();
+        let action =
+            make_ignore_file_action(&uri, text).expect("should produce a file-level action");
+
+        assert_eq!(action.title, "Ignore all diagnostics in this file");
+        assert_eq!(action.kind, Some(CodeActionKind::QUICKFIX));
+        let edit = action.edit.expect("should have an edit");
+        let changes = edit.changes.unwrap();
+        let te = &changes.get(&uri).unwrap()[0];
+        // The insert is at the very start of the file.
+        assert_eq!(te.range.start.line, 0);
+        assert_eq!(te.range.start.character, 0);
+        assert_eq!(te.range.end.line, 0);
+        assert_eq!(te.range.end.character, 0);
+        assert_eq!(te.new_text, "# ry: ignore-file\n");
+    }
+
+    #[test]
+    fn code_action_ignore_file_skips_already_suppressed() {
+        // A file that already has `# ry: ignore-file` must not get a
+        // second file-level action.
+        let text = "# ry: ignore-file\nx <- 1L\n";
+        let uri = Url::parse("file:///tmp/test.R").unwrap();
+        assert!(
+            make_ignore_file_action(&uri, text).is_none(),
+            "should not offer a file-level action when one already exists"
+        );
+    }
+
+    #[test]
+    fn diag_code_from_lsp_extracts_string_code() {
+        // ry always emits string codes; the helper must surface them.
+        let diag = lsp_diag(0, 0, 1, "RY040");
+        assert_eq!(diag_code_from_lsp(&diag), "RY040");
+    }
+
+    #[test]
+    fn diag_code_from_lsp_handles_missing_code() {
+        // A diagnostic with no code yields an empty string (not a
+        // panic), so the ignore-comment builder can fall back to the
+        // code-less format.
+        let mut diag = lsp_diag(0, 0, 1, "RY099");
+        diag.code = None;
+        assert_eq!(diag_code_from_lsp(&diag), "");
+    }
+
+    // ---- selection range helpers ----
+
+    /// Helper: parse a snippet and return the `SelectionRange` chain
+    /// for a single cursor position. Mirrors what the
+    /// `selection_range` LSP method does, minus the async state
+    /// lookup.
+    fn selection_range_at(src: &str, position: Position) -> SelectionRange {
+        let mut parser = RParser::new().unwrap();
+        let file = parser.parse("test.R", src).unwrap();
+        build_selection_range(position, &file, src)
+    }
+
+    /// Walk a `SelectionRange` chain from narrowest to widest,
+    /// returning the list of `Range`s in order. Used by the tests to
+    /// assert the chain widens monotonically.
+    fn chain_ranges(sel: &SelectionRange) -> Vec<Range> {
+        let mut out = vec![sel.range];
+        let mut cur = &sel.parent;
+        while let Some(p) = cur {
+            out.push(p.range);
+            cur = &p.parent;
+        }
+        out
+    }
+
+    #[test]
+    fn selection_range_chain_widens_from_identifier_to_file() {
+        // For `result <- x + 1` with the cursor on `result`, the chain
+        // must widen: identifier (`result`) -> enclosing statement ->
+        // whole file. Each level must strictly contain the previous.
+        let src = "result <- x + 1\n";
+        // Cursor on 's' in 'result' (line 0, col 2).
+        let pos = Position {
+            line: 0,
+            character: 2,
+        };
+        let sel = selection_range_at(src, pos);
+        let ranges = chain_ranges(&sel);
+
+        // The narrowest range must cover the identifier `result`
+        // (cols 0..6 on line 0).
+        assert_eq!(ranges[0].start.line, 0);
+        assert_eq!(ranges[0].start.character, 0);
+        assert_eq!(ranges[0].end.character, "result".len() as u32);
+
+        // The chain must have at least 2 levels (identifier + file).
+        assert!(
+            ranges.len() >= 2,
+            "expected at least 2 levels, got {:?}",
+            ranges
+        );
+
+        // Every level must contain the cursor position.
+        for r in &ranges {
+            let contains = (r.start.line < pos.line
+                || (r.start.line == pos.line && r.start.character <= pos.character))
+                && (r.end.line > pos.line
+                    || (r.end.line == pos.line && r.end.character >= pos.character));
+            assert!(contains, "range {:?} does not contain cursor {:?}", r, pos);
+        }
+
+        // Each level must contain or equal the previous (monotonic
+        // widening), with no two consecutive identical ranges.
+        for w in ranges.windows(2) {
+            assert!(
+                w[0] != w[1],
+                "consecutive duplicate ranges in chain: {:?}",
+                w
+            );
+        }
+
+        // The widest level (last) must start at (0, 0).
+        let widest = ranges.last().unwrap();
+        assert_eq!(widest.start.line, 0);
+        assert_eq!(widest.start.character, 0);
+    }
+
+    #[test]
+    fn selection_range_identifier_on_rhs() {
+        // Cursor on `x` in `result <- x + 1` (the RHS read). The
+        // narrowest range must be the identifier `x` (1 char), and
+        // the chain must widen to the enclosing statement.
+        let src = "result <- x + 1\n";
+        // `x` is at line 0, col 10 (after "result <- ").
+        let pos = Position {
+            line: 0,
+            character: 10,
+        };
+        let sel = selection_range_at(src, pos);
+        let ranges = chain_ranges(&sel);
+
+        // The narrowest range is the single-character `x`.
+        assert_eq!(ranges[0].start.line, 0);
+        assert_eq!(ranges[0].start.character, 10);
+        assert_eq!(ranges[0].end.character, 11);
+
+        // The chain widens beyond the identifier.
+        assert!(
+            ranges.len() >= 2,
+            "expected at least 2 levels, got {:?}",
+            ranges
+        );
+    }
+
+    #[test]
+    fn selection_range_picks_correct_statement_in_multi_line_file() {
+        // In a two-statement file, the enclosing statement for a
+        // cursor on line 1 must be the second statement, not the
+        // first.
+        let src = "x <- 1L\ny <- x + 1\n";
+        // Cursor on `y` (line 1, col 0).
+        let pos = Position {
+            line: 1,
+            character: 0,
+        };
+        let sel = selection_range_at(src, pos);
+        let ranges = chain_ranges(&sel);
+
+        // The narrowest range is the identifier `y`.
+        assert_eq!(ranges[0].start.line, 1);
+        assert_eq!(ranges[0].start.character, 0);
+        assert_eq!(ranges[0].end.character, 1);
+
+        // The enclosing statement (the middle level) must start on
+        // line 1 and cover at least the `y <- x + 1` text.
+        let stmt_level = ranges
+            .iter()
+            .find(|r| r.start.line == 1 && r.end.character > 1)
+            .unwrap_or_else(|| panic!("expected a statement-level range on line 1: {:?}", ranges));
+        assert!(
+            stmt_level.start.character == 0,
+            "statement range should start at col 0: {:?}",
+            stmt_level
+        );
+    }
+
+    #[test]
+    fn selection_range_no_identifier_falls_back_to_cursor() {
+        // Cursor on whitespace (between `<-` and the value) is not on
+        // an identifier. The narrowest range must be a zero-width
+        // span at the cursor so the editor still has an anchor.
+        let src = "x <- 1L\n";
+        // Cursor on the space after `<-` (line 0, col 4).
+        let pos = Position {
+            line: 0,
+            character: 4,
+        };
+        let sel = selection_range_at(src, pos);
+        let ranges = chain_ranges(&sel);
+
+        // The narrowest range is a zero-width span at the cursor.
+        assert_eq!(ranges[0].start, pos);
+        assert_eq!(ranges[0].end, pos);
+
+        // The chain still widens to the file level.
+        let widest = ranges.last().unwrap();
+        assert_eq!(widest.start.line, 0);
+        assert_eq!(widest.start.character, 0);
+    }
+
+    #[test]
+    fn position_to_byte_offset_basic() {
+        // The helper must map LSP positions back to byte offsets in
+        // the source text. This is the inverse of
+        // `byte_offset_to_position` for ASCII text.
+        let text = "x <- 1L\ny <- 2L\n";
+        // (0, 0) -> byte 0 (the 'x').
+        assert_eq!(
+            position_to_byte_offset(
+                text,
+                Position {
+                    line: 0,
+                    character: 0,
+                }
+            ),
+            0
+        );
+        // (0, 5) -> byte 5 (the '1').
+        assert_eq!(
+            position_to_byte_offset(
+                text,
+                Position {
+                    line: 0,
+                    character: 5,
+                }
+            ),
+            5
+        );
+        // (1, 0) -> byte 8 (the 'y', right after the first '\n').
+        assert_eq!(
+            position_to_byte_offset(
+                text,
+                Position {
+                    line: 1,
+                    character: 0,
+                }
+            ),
+            8
+        );
     }
 }

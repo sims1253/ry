@@ -10,6 +10,9 @@
 //!   * `textDocument/definition` (go-to-definition for variables/functions)
 //!   * `textDocument/references` (find all usages of a symbol across open files)
 //!   * `textDocument/documentSymbol` (outline view of the file's bindings)
+//!   * `workspace/symbol` (search for symbols across all open files)
+//!   * `textDocument/rename` (workspace-wide rename of a variable / function)
+//!   * `textDocument/prepareRename` (validates the cursor is on a renameable identifier)
 //!   * Graceful shutdown via `shutdown` / `exit`
 //!
 //! Out of scope for v1: code actions, formatting, completion, and
@@ -129,6 +132,33 @@ impl LanguageServer for Backend {
                     ]),
                     ..Default::default()
                 }),
+                // Enable `workspace/symbol` so the client can search
+                // for symbols across all open files (Ctrl+T / "Go to
+                // Symbol in Workspace"). The handler is `symbol`
+                // below; it walks every open document's AST, flattens
+                // the hierarchical `DocumentSymbol` tree produced by
+                // `collect_symbols` into a flat list of
+                // `SymbolInformation` (each carrying its file `Url`),
+                // and filters by a case-insensitive substring match
+                // against the query string.
+                workspace_symbol_provider: Some(OneOf::Left(true)),
+                // Enable `textDocument/rename` so the client can do a
+                // workspace-wide rename of a variable / function
+                // (F2 / "Rename Symbol"). The handler is `rename`
+                // below; it reuses the references walker to find every
+                // occurrence of the identifier at the cursor across all
+                // open documents and produces a `WorkspaceEdit`
+                // grouping `TextEdit`s by file URI.
+                //
+                // `prepare_provider: true` also advertises
+                // `textDocument/prepareRename` (handled by
+                // `prepare_rename` below) so the editor can validate
+                // that the cursor sits on a renameable identifier
+                // before showing the rename UI.
+                rename_provider: Some(OneOf::Right(RenameOptions {
+                    prepare_provider: Some(true),
+                    work_done_progress_options: Default::default(),
+                })),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -547,6 +577,196 @@ impl LanguageServer for Backend {
             active_parameter: active_param,
         }))
     }
+
+    async fn symbol(
+        &self,
+        params: WorkspaceSymbolParams,
+    ) -> LspResult<Option<Vec<SymbolInformation>>> {
+        let query = params.query;
+
+        // Snapshot ALL open documents under the lock, then drop the
+        // lock before parsing/walking so a slow search doesn't block
+        // other LSP requests. Workspace symbols span every open
+        // document, mirroring how `references` works.
+        let docs = {
+            let state = self.state.lock().await;
+            state.docs.clone()
+        };
+
+        // A single parser instance is reused across all documents;
+        // tree-sitter's `Parser` is designed to be reused.
+        let mut parser = match RParser::new() {
+            Ok(p) => p,
+            Err(_) => return Ok(None),
+        };
+
+        let mut all_symbols: Vec<SymbolInformation> = Vec::new();
+        for (doc_path, doc_text) in &docs {
+            let file = match parser.parse(doc_path, doc_text) {
+                Ok(f) => f,
+                // Skip documents that fail to parse rather than
+                // aborting the whole search; a syntax error in one
+                // file shouldn't hide symbols in another.
+                Err(_) => continue,
+            };
+            // Run the checker so the inferred types are available to
+            // the symbol detail strings via `collect_symbols`. The
+            // resulting `SymbolInformation`s do not surface `detail`
+            // (the LSP type has no such field), but the kind
+            // classification (FUNCTION vs VARIABLE) does depend on
+            // the AST shape, which the checker doesn't change.
+            let mut checker = ry_checker::Checker::new(doc_path);
+            let (_, scope) = checker.check_with_scope(&file);
+
+            let doc_symbols = collect_symbols(&file.stmts, doc_text, Some(&scope));
+            let doc_uri = path_to_uri(doc_path);
+            // Flatten the hierarchical `DocumentSymbol` tree (which
+            // nests function-body bindings as children) into a flat
+            // list of `SymbolInformation`, attaching the file URI to
+            // each symbol's `Location`. Workspace symbols is a flat
+            // list per the LSP spec.
+            all_symbols.extend(flatten_symbols_to_symbol_info(doc_symbols, &doc_uri));
+        }
+
+        // Filter by the query string (case-insensitive substring match
+        // on the symbol name). An empty query returns every symbol,
+        // matching the convention used by other LSP servers (the
+        // editor typically caps the result count client-side).
+        if !query.is_empty() {
+            let query_lower = query.to_lowercase();
+            all_symbols.retain(|s| s.name.to_lowercase().contains(&query_lower));
+        }
+
+        if all_symbols.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(all_symbols))
+        }
+    }
+
+    async fn rename(
+        &self,
+        params: RenameParams,
+    ) -> LspResult<Option<WorkspaceEdit>> {
+        let uri = params.text_document_position.text_document.uri.clone();
+        let path = uri_to_path(&uri);
+        let position = params.text_document_position.position;
+        let new_name = params.new_name;
+
+        // Snapshot ALL open documents under the lock, then drop the
+        // lock before parsing/walking so a slow rename doesn't block
+        // other LSP requests. Rename is workspace-wide, so we walk
+        // every open document (not just the current one).
+        let docs = {
+            let state = self.state.lock().await;
+            state.docs.clone()
+        };
+
+        let text = docs.get(&path).cloned();
+        let Some(text) = text else {
+            return Ok(None);
+        };
+
+        // Find the identifier at the cursor position to learn the
+        // old name. We rename ALL occurrences of that name across all
+        // open documents, mirroring how `references` works. Returns
+        // `None` (no rename) for operators, numbers, and keywords.
+        let old_name = find_identifier_at_position(
+            &text,
+            position.line as usize,
+            position.character as usize,
+        );
+        let Some(old_name) = old_name else {
+            return Ok(None);
+        };
+
+        // A single parser instance is reused across all documents.
+        let mut parser = match RParser::new() {
+            Ok(p) => p,
+            Err(_) => return Ok(None),
+        };
+
+        // Build the per-URI edit map. For each open document we find
+        // every occurrence of `old_name` (including declaration sites,
+        // since a rename must update the definition too) and append a
+        // `TextEdit` replacing the old name with the new one. Edits
+        // are grouped by file URI into the `WorkspaceEdit.changes`
+        // map; the editor applies each group atomically per file.
+        //
+        // The same loop logic is factored into `build_rename_edits`
+        // (used by the unit tests). We inline it here rather than
+        // share the helper because the helper borrows pre-parsed
+        // `SourceFile`s, while here we parse lazily inside the loop
+        // and skip parse failures per-document.
+        let mut edits: HashMap<Url, Vec<TextEdit>> = HashMap::new();
+        for (doc_path, doc_text) in &docs {
+            let file = match parser.parse(doc_path, doc_text) {
+                Ok(f) => f,
+                // Skip documents that fail to parse rather than
+                // aborting the whole rename; a syntax error in one
+                // file shouldn't block renaming in another.
+                Err(_) => continue,
+            };
+            let doc_uri = path_to_uri(doc_path);
+            // include_declaration = true: a rename must rewrite the
+            // definition site as well as every read / call site.
+            let locations = find_references_in_file(
+                &file,
+                &old_name,
+                &doc_uri,
+                doc_text,
+                true,
+            );
+            for loc in locations {
+                edits.entry(doc_uri.clone()).or_default().push(TextEdit {
+                    range: loc.range,
+                    new_text: new_name.clone(),
+                });
+            }
+        }
+
+        Ok(Some(WorkspaceEdit {
+            changes: Some(edits),
+            ..Default::default()
+        }))
+    }
+
+    async fn prepare_rename(
+        &self,
+        params: TextDocumentPositionParams,
+    ) -> LspResult<Option<PrepareRenameResponse>> {
+        let uri = params.text_document.uri.clone();
+        let _ = uri; // retained for symmetry with other handlers
+        let path = uri_to_path(&uri);
+        let position = params.position;
+
+        let text = {
+            let state = self.state.lock().await;
+            state.docs.get(&path).cloned()
+        };
+
+        let Some(text) = text else {
+            return Ok(None);
+        };
+
+        // Validate that the cursor is on a renameable identifier
+        // before the editor shows the rename UI. We reuse the same
+        // word-finding helper as `hover` / `goto_definition`, but in
+        // its range-returning variant so we can hand the editor the
+        // exact span to highlight as the rename target. Returns
+        // `None` (rename not allowed here) for operators, numbers,
+        // keywords, and whitespace.
+        let (_, range) = match find_identifier_range_at_position(
+            &text,
+            position.line as usize,
+            position.character as usize,
+        ) {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+
+        Ok(Some(PrepareRenameResponse::Range(range)))
+    }
 }
 
 impl Backend {
@@ -637,12 +857,40 @@ impl Backend {
 /// identifier-like character sequence. The search expands left and
 /// right from the cursor to find the boundaries of the word.
 ///
+/// This is a thin wrapper around `find_identifier_range_at_position`
+/// that discards the range; callers that need the identifier's span
+/// (e.g. `prepare_rename`) should call the range-returning helper
+/// directly.
+///
 /// This is a simple character-based scan, not a full parser query. It
 /// handles the common case of hovering over a bare identifier like
 /// `x`, `my_var`, `result`. It does not handle dotted access (`df$col`)
 /// or function call syntax; those would require parser-level position
 /// information.
 fn find_identifier_at_position(text: &str, line: usize, col: usize) -> Option<String> {
+    find_identifier_range_at_position(text, line, col).map(|(name, _)| name)
+}
+
+/// Find the identifier (variable name) at a given line and column in
+/// the source text, returning BOTH the identifier string AND its LSP
+/// `Range` (line + character offsets of the identifier span). Returns
+/// `None` if the position is not on an identifier-like character
+/// sequence.
+///
+/// The search expands left and right from the cursor to find the
+/// boundaries of the word. The same filtering rules as
+/// `find_identifier_at_position` apply: pure numbers and R keywords
+/// are rejected (they are not renameable bindings).
+///
+/// Used by `prepare_rename` to validate that the cursor sits on a
+/// renameable identifier before the editor shows the rename UI, and
+/// to hand the editor the exact span to highlight as the rename
+/// target.
+fn find_identifier_range_at_position(
+    text: &str,
+    line: usize,
+    col: usize,
+) -> Option<(String, Range)> {
     let line_str = text.lines().nth(line)?;
     let bytes = line_str.as_bytes();
     if bytes.is_empty() || col >= bytes.len() {
@@ -686,7 +934,17 @@ fn find_identifier_at_position(text: &str, line: usize, col: usize) -> Option<St
     ) {
         return None;
     }
-    Some(ident.to_string())
+    let range = Range {
+        start: Position {
+            line: line as u32,
+            character: start as u32,
+        },
+        end: Position {
+            line: line as u32,
+            character: end as u32,
+        },
+    };
+    Some((ident.to_string(), range))
 }
 
 /// Walk the AST of `file` looking for every definition site of `name`
@@ -1061,6 +1319,40 @@ fn path_to_uri(path: &str) -> Url {
     Url::from_file_path(path).unwrap_or_else(|_| {
         Url::parse(path).unwrap_or_else(|_| Url::parse("file:///unknown").unwrap())
     })
+}
+
+/// Build a `WorkspaceEdit` renaming `old_name` to `new_name` across
+/// the given slice of `(path, parsed_file, source_text)` tuples.
+/// Mirrors exactly what the `rename` LSP method does, minus the async
+/// state lookup, so the rename logic is unit-testable without a live
+/// `Backend`.
+///
+/// For each document we reuse `find_references_in_file` (with
+/// `include_declaration = true`, since a rename must rewrite the
+/// definition site as well as every read / call site) and append one
+/// `TextEdit` per occurrence. Edits are grouped by file URI into the
+/// `WorkspaceEdit.changes` map.
+#[cfg(test)]
+fn build_rename_edits(
+    docs: &[(&str, &SourceFile, &str)],
+    old_name: &str,
+    new_name: &str,
+) -> WorkspaceEdit {
+    let mut edits: HashMap<Url, Vec<TextEdit>> = HashMap::new();
+    for (doc_path, file, doc_text) in docs {
+        let doc_uri = path_to_uri(doc_path);
+        let locations = find_references_in_file(file, old_name, &doc_uri, doc_text, true);
+        for loc in locations {
+            edits.entry(doc_uri.clone()).or_default().push(TextEdit {
+                range: loc.range,
+                new_text: new_name.to_string(),
+            });
+        }
+    }
+    WorkspaceEdit {
+        changes: Some(edits),
+        ..Default::default()
+    }
 }
 
 /// Collect `InlayHint`s for every assignment whose target is a bare
@@ -1483,6 +1775,69 @@ fn get_signature(name: &str) -> Option<Vec<String>> {
         _ => return None,
     };
     Some(params.iter().map(|s| s.to_string()).collect())
+}
+
+/// Recursively flatten a tree of `DocumentSymbol`s (with their
+/// children) into a flat list of `SymbolInformation`s, attaching the
+/// given URI to each symbol's `Location`. Workspace symbols is a flat
+/// list per the LSP spec, so the hierarchical structure produced by
+/// `collect_symbols` (which nests function-body bindings as children)
+/// must be flattened before it can be returned to the editor.
+///
+/// Each `SymbolInformation` carries:
+///   * the symbol's `name`, `kind`, `tags`, and `deprecated` flag
+///     (copied straight from the source `DocumentSymbol`);
+///   * a `Location` whose `uri` is the file the symbol lives in and
+///     whose `range` is the symbol's `selection_range` (the
+///     identifier span, which is what editors jump to when the user
+///     picks a workspace symbol);
+///   * a `container_name` set to the enclosing symbol's name (or
+///     `None` for top-level symbols), so the editor can render the
+///     breadcrumb "file > function > variable" in the picker.
+fn flatten_symbols_to_symbol_info(
+    symbols: Vec<DocumentSymbol>,
+    uri: &Url,
+) -> Vec<SymbolInformation> {
+    let mut out = Vec::new();
+    for sym in symbols {
+        flatten_one_symbol(sym, uri, None, &mut out);
+    }
+    out
+}
+
+/// Recurse into a single `DocumentSymbol`, pushing its own
+/// `SymbolInformation` to `out` and then walking each child with the
+/// current symbol's name as the `container_name`. The recursion
+/// preserves the source order of children, matching how
+/// `collect_symbols` emits them.
+#[allow(deprecated)]
+fn flatten_one_symbol(
+    sym: DocumentSymbol,
+    uri: &Url,
+    container_name: Option<&str>,
+    out: &mut Vec<SymbolInformation>,
+) {
+    let name = sym.name.clone();
+    let info = SymbolInformation {
+        name: sym.name,
+        kind: sym.kind,
+        tags: sym.tags,
+        deprecated: sym.deprecated,
+        location: Location {
+            uri: uri.clone(),
+            // Use `selection_range` (the identifier span) rather than
+            // the full `range` so the editor lands the cursor on the
+            // symbol's name, not somewhere inside its body.
+            range: sym.selection_range,
+        },
+        container_name: container_name.map(|s| s.to_string()),
+    };
+    out.push(info);
+    if let Some(children) = sym.children {
+        for child in children {
+            flatten_one_symbol(child, uri, Some(&name), out);
+        }
+    }
 }
 
 /// Collect `DocumentSymbol`s for an outline view of the file. Walks
@@ -2927,5 +3282,274 @@ mod tests {
         assert_eq!(locs_without.len(), 1, "got {:?}", locs_without);
         // The lone reference (RHS) is at col 5 ("x <- x...").
         assert_eq!(locs_without[0].range.start.character, 5);
+    }
+
+    // ---- workspace symbols helpers ----
+
+    /// Helper: parse + check a snippet and return its top-level
+    /// `DocumentSymbol`s, then flatten them into `SymbolInformation`s
+    /// attached to the given URI. Mirrors what the `symbol` LSP method
+    /// does for a single document, minus the async state lookup and
+    /// the cross-document iteration / query filter.
+    fn workspace_symbols(src: &str, uri: &Url) -> Vec<SymbolInformation> {
+        let mut parser = RParser::new().unwrap();
+        let file = parser.parse("test.R", src).unwrap();
+        let mut checker = ry_checker::Checker::new("test.R");
+        let (_, scope) = checker.check_with_scope(&file);
+        let doc_symbols = collect_symbols(&file.stmts, src, Some(&scope));
+        flatten_symbols_to_symbol_info(doc_symbols, uri)
+    }
+
+    #[test]
+    fn workspace_symbols_flatten_tree_with_container_names() {
+        // The canonical example: a function `add` (with parameters
+        // `a` and `b` that become nested children), a variable
+        // `result`, and a variable `name`. Flattening must produce
+        // one `SymbolInformation` per node (function + each param +
+        // each top-level variable) and propagate the parent's name
+        // into each child's `container_name`.
+        let src = "add <- function(a, b) a + b\nresult <- add(1, 2)\nname <- \"hello\"\n";
+        let uri = Url::parse("file:///tmp/test.R").unwrap();
+        let symbols = workspace_symbols(src, &uri);
+
+        // 1 function (add) + 2 params (a, b) + 2 variables (result,
+        // name) => 5 flattened symbols.
+        assert_eq!(symbols.len(), 5, "got {:?}", symbols);
+
+        // Every symbol must point at the file we passed in.
+        for s in &symbols {
+            assert_eq!(s.location.uri, uri, "wrong uri for {:?}", s.name);
+        }
+
+        // Top-level symbols have `container_name = None`; the
+        // function's parameters inherit `container_name = "add"`.
+        // Build a name -> container_name lookup to assert each.
+        let container_of = |name: &str| -> Option<String> {
+            symbols
+                .iter()
+                .find(|s| s.name == name)
+                .and_then(|s| s.container_name.clone())
+        };
+        assert_eq!(container_of("add"), None, "add is top-level");
+        assert_eq!(container_of("result"), None, "result is top-level");
+        assert_eq!(container_of("name"), None, "name is top-level");
+        assert_eq!(
+            container_of("a"),
+            Some("add".to_string()),
+            "a is a parameter of add"
+        );
+        assert_eq!(
+            container_of("b"),
+            Some("add".to_string()),
+            "b is a parameter of add"
+        );
+
+        // The function symbol must be classified as FUNCTION, the
+        // parameters and variables as VARIABLE.
+        let kind_of = |name: &str| -> SymbolKind {
+            symbols.iter().find(|s| s.name == name).unwrap().kind
+        };
+        assert_eq!(kind_of("add"), SymbolKind::FUNCTION);
+        assert_eq!(kind_of("a"), SymbolKind::VARIABLE);
+        assert_eq!(kind_of("b"), SymbolKind::VARIABLE);
+        assert_eq!(kind_of("result"), SymbolKind::VARIABLE);
+        assert_eq!(kind_of("name"), SymbolKind::VARIABLE);
+
+        // The function symbol's location range must cover exactly the
+        // 3-character identifier `add` at line 0, col 0 (this is the
+        // `selection_range` propagated from the `DocumentSymbol`).
+        let add = symbols.iter().find(|s| s.name == "add").unwrap();
+        assert_eq!(add.location.range.start.line, 0);
+        assert_eq!(add.location.range.start.character, 0);
+        assert_eq!(add.location.range.end.line, 0);
+        assert_eq!(add.location.range.end.character, 3);
+    }
+
+    #[test]
+    fn workspace_symbols_filter_case_insensitive_substring() {
+        // The `symbol` handler retains a symbol when its name contains
+        // the query as a case-insensitive substring. We exercise the
+        // filter inline (the handler does `name.to_lowercase().contains
+        // (&query.to_lowercase())`) so the test pins the exact
+        // matching rule: 'RES' must match 'result' but not 'add'.
+        let src = "add <- function(a, b) a + b\nresult <- add(1, 2)\n";
+        let uri = Url::parse("file:///tmp/test.R").unwrap();
+        let mut symbols = workspace_symbols(src, &uri);
+
+        // Sanity: without filtering we get add, a, b, result.
+        assert_eq!(symbols.len(), 4, "got {:?}", symbols);
+
+        // Apply the same filter the handler uses.
+        let query = "RES".to_string();
+        let query_lower = query.to_lowercase();
+        symbols.retain(|s| s.name.to_lowercase().contains(&query_lower));
+
+        // Only `result` contains "res" case-insensitively.
+        assert_eq!(symbols.len(), 1, "got {:?}", symbols);
+        assert_eq!(symbols[0].name, "result");
+
+        // An empty query must NOT filter anything (the handler
+        // special-cases this), so re-fetch and check.
+        let symbols_all = workspace_symbols(src, &uri);
+        assert_eq!(
+            symbols_all.len(),
+            4,
+            "empty query should return all symbols"
+        );
+    }
+
+    #[test]
+    fn workspace_symbols_empty_when_no_bindings() {
+        // A bare expression with no assignments produces no
+        // `DocumentSymbol`s and therefore no `SymbolInformation`s.
+        let src = "1L + 2L\n";
+        let uri = Url::parse("file:///tmp/test.R").unwrap();
+        let symbols = workspace_symbols(src, &uri);
+        assert!(symbols.is_empty(), "expected no symbols, got {:?}", symbols);
+    }
+
+    // ---- rename helpers ----
+
+    #[test]
+    fn rename_edits_single_file_includes_declaration_and_usages() {
+        // `x` is defined once (line 0) and read once (line 1, col 4
+        // in `y <- x + 1`). Renaming `x` to `new_x` must produce 2
+        // edits in the same file: one for the declaration and one
+        // for the usage. Each edit must replace the 1-character
+        // identifier span with the new name.
+        let src = "x <- 1L\ny <- x + 1\n";
+        let mut parser = RParser::new().unwrap();
+        let file = parser.parse("test.R", src).unwrap();
+        let edit = build_rename_edits(&[("test.R", &file, src)], "x", "new_x");
+
+        let changes = edit.changes.expect("should have changes");
+        // All edits land in the same file (one entry in the map).
+        assert_eq!(changes.len(), 1, "got {:?}", changes);
+        let uri = path_to_uri("test.R");
+        let edits = changes.get(&uri).expect("should have edits for test.R");
+        assert_eq!(edits.len(), 2, "got {:?}", edits);
+        // Every edit must carry the new name and target a 1-char range.
+        for e in edits {
+            assert_eq!(e.new_text, "new_x");
+            assert_eq!(
+                e.range.end.character - e.range.start.character,
+                1,
+                "expected 1-char wide range for 'x'"
+            );
+        }
+        // The two edits must cover the declaration on line 0 and the
+        // usage on line 1 (the only `x` in the source).
+        let lines: Vec<u32> = edits.iter().map(|e| e.range.start.line).collect();
+        assert!(lines.contains(&0), "expected an edit on line 0: {:?}", lines);
+        assert!(lines.contains(&1), "expected an edit on line 1: {:?}", lines);
+    }
+
+    #[test]
+    fn rename_edits_across_files_group_by_uri() {
+        // Simulate two open documents: a.R defines `helper`, b.R calls
+        // it. Renaming `helper` to `h` must produce one edit in each
+        // file, grouped under separate URIs in the `changes` map.
+        // We use absolute paths so `path_to_uri` produces distinct
+        // `file://` URIs (relative paths would all collapse to the
+        // `file:///unknown` fallback).
+        let src_a = "helper <- function() 1L\n";
+        let src_b = "helper()\n";
+        let mut parser = RParser::new().unwrap();
+        let file_a = parser.parse("/tmp/a.R", src_a).unwrap();
+        let file_b = parser.parse("/tmp/b.R", src_b).unwrap();
+        let edit = build_rename_edits(
+            &[("/tmp/a.R", &file_a, src_a), ("/tmp/b.R", &file_b, src_b)],
+            "helper",
+            "h",
+        );
+
+        let changes = edit.changes.expect("should have changes");
+        // One entry per file.
+        assert_eq!(changes.len(), 2, "got {:?}", changes);
+        let uri_a = path_to_uri("/tmp/a.R");
+        let uri_b = path_to_uri("/tmp/b.R");
+        let edits_a = changes.get(&uri_a).expect("a.R should have edits");
+        let edits_b = changes.get(&uri_b).expect("b.R should have edits");
+        // One edit per file (the definition in a.R, the call in b.R).
+        assert_eq!(edits_a.len(), 1, "got {:?}", edits_a);
+        assert_eq!(edits_b.len(), 1, "got {:?}", edits_b);
+        // Every edit must replace with the new name and target a
+        // 7-character span (the length of `helper`).
+        for e in edits_a.iter().chain(edits_b.iter()) {
+            assert_eq!(e.new_text, "h");
+            assert_eq!(
+                e.range.end.character - e.range.start.character,
+                "helper".len() as u32
+            );
+        }
+    }
+
+    #[test]
+    fn rename_edits_unknown_name_yields_empty_changes() {
+        // Renaming a name that doesn't exist anywhere must produce an
+        // empty `changes` map (still `Some`, just with no entries).
+        let src = "x <- 1L\n";
+        let mut parser = RParser::new().unwrap();
+        let file = parser.parse("test.R", src).unwrap();
+        let edit = build_rename_edits(&[("test.R", &file, src)], "does_not_exist", "y");
+        let changes = edit.changes.expect("should still be Some(empty)");
+        assert!(changes.is_empty(), "got {:?}", changes);
+    }
+
+    // ---- prepareRename helpers ----
+
+    #[test]
+    fn prepare_rename_returns_identifier_range() {
+        // Cursor on 'v' inside `my_var` (line 0, col 2): the helper
+        // must return the full identifier name AND a range covering
+        // exactly `my_var` (cols 0..6 on line 0).
+        let text = "my_var <- 1L\n";
+        let (name, range) = find_identifier_range_at_position(text, 0, 2)
+            .expect("should find identifier");
+        assert_eq!(name, "my_var");
+        assert_eq!(range.start.line, 0);
+        assert_eq!(range.start.character, 0);
+        assert_eq!(range.end.line, 0);
+        assert_eq!(range.end.character, "my_var".len() as u32);
+    }
+
+    #[test]
+    fn prepare_rename_returns_none_for_keywords_and_operators() {
+        // R keywords are not renameable bindings: `if` must yield
+        // `None` so the editor does not offer a rename UI on it.
+        let text = "if (TRUE) { x <- 1 }\n";
+        assert_eq!(
+            find_identifier_range_at_position(text, 0, 1),
+            None,
+            "keyword 'if' must not be renameable"
+        );
+        // Operators / whitespace must also yield `None`.
+        let text = "x <- 1L\n";
+        assert_eq!(
+            find_identifier_range_at_position(text, 0, 2),
+            None,
+            "operator '<-' must not be renameable"
+        );
+        // Pure numbers must yield `None`.
+        let text = "x <- 123\n";
+        assert_eq!(
+            find_identifier_range_at_position(text, 0, 5),
+            None,
+            "pure numbers must not be renameable"
+        );
+    }
+
+    #[test]
+    fn prepare_rename_at_end_of_word_still_resolves() {
+        // Cursor right after the last identifier character (a common
+        // transient state when the user just clicked at the end of
+        // a word): the helper must still resolve the identifier. We
+        // place the cursor on the space after `my_var` (col 6).
+        let text = "my_var <- 1L\n";
+        let (name, range) = find_identifier_range_at_position(text, 0, 6)
+            .expect("should find identifier at end of word");
+        assert_eq!(name, "my_var");
+        assert_eq!(range.start.character, 0);
+        assert_eq!(range.end.character, "my_var".len() as u32);
     }
 }

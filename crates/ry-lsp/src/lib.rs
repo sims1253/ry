@@ -28,7 +28,7 @@
 //! the CLI's `tracing_subscriber` initialization before `run()` is called.
 
 use ry_checker::{Diagnostic as RyDiagnostic, Project, Scope, Severity};
-use ry_core::{Expr, RParser, SourceFile, Span, Stmt};
+use ry_core::{Expr, Mode, RParser, SourceFile, Span, Stmt};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -91,6 +91,21 @@ impl LanguageServer for Backend {
                 // users see the checker's work. The handler is
                 // `inlay_hint` below.
                 inlay_hint_provider: Some(OneOf::Left(true)),
+                // Enable `textDocument/completion` so editors can
+                // auto-complete variable / function names from the
+                // checked scope, and column names after a `$` trigger.
+                // The `:` trigger is advertised in anticipation of
+                // future `package::name` namespace completion; v1 has
+                // no special handling for it and it falls through to
+                // the generic in-scope list. The handler is
+                // `completion` below.
+                completion_provider: Some(CompletionOptions {
+                    trigger_characters: Some(vec![
+                        "$".to_string(),
+                        ":".to_string(),
+                    ]),
+                    ..Default::default()
+                }),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -330,6 +345,43 @@ impl LanguageServer for Backend {
             Ok(None)
         } else {
             Ok(Some(hints))
+        }
+    }
+
+    async fn completion(&self, params: CompletionParams) -> LspResult<Option<CompletionResponse>> {
+        let uri = params.text_document_position.text_document.uri.clone();
+        let path = uri_to_path(&uri);
+        let position = params.text_document_position.position;
+
+        let text = {
+            let state = self.state.lock().await;
+            state.docs.get(&path).cloned()
+        };
+
+        let Some(text) = text else {
+            return Ok(None);
+        };
+
+        // Parse and check the file to get the scope. Mirrors `hover`
+        // and `inlay_hint`: on any parse failure we return `None`
+        // (no completions) rather than erroring, so the editor simply
+        // shows nothing instead of a broken state.
+        let mut parser = match RParser::new() {
+            Ok(p) => p,
+            Err(_) => return Ok(None),
+        };
+        let file = match parser.parse(&path, &text) {
+            Ok(f) => f,
+            Err(_) => return Ok(None),
+        };
+        let mut checker = ry_checker::Checker::new(&path);
+        let (_, scope) = checker.check_with_scope(&file);
+
+        let items = collect_completions(&text, position, &params.context, &scope);
+        if items.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(CompletionResponse::Array(items)))
         }
     }
 }
@@ -736,6 +788,191 @@ fn collect_inlay_hints_from_stmt(
         // not be present in `scope`, and emitting a hint for a name
         // the scope doesn't know would be wrong.
         _ => {}
+    }
+}
+
+/// Collect completion items for a given cursor position and trigger
+/// context. The decision tree mirrors what R users expect from an
+/// autocomplete popup:
+///
+///   * If the user just typed `$` after an identifier whose scope
+///     type carries a `ColumnSchema` (e.g. a `list(a = 1, b = 2)`
+///     literal or a `data.frame(...)` call), return ONLY the column
+///     names as `FIELD` items. Dumping the rest of the scope here
+///     would be noise: the user is clearly asking for a column.
+///   * Otherwise (manual invocation, identifier character, `:`, etc.)
+///     return the in-scope bindings (`VARIABLE` / `FUNCTION`) plus a
+///     curated list of common base-R keywords and functions. This
+///     gives a focused, predictable popup instead of a giant dump.
+///
+/// The list is sorted alphabetically by `label` and de-duplicated so
+/// the same name never appears twice (e.g. when a user-defined `c`
+/// would otherwise collide with the curated `c`).
+fn collect_completions(
+    text: &str,
+    position: Position,
+    context: &Option<CompletionContext>,
+    scope: &Scope,
+) -> Vec<CompletionItem> {
+    let trigger = context
+        .as_ref()
+        .and_then(|c| c.trigger_character.as_deref());
+
+    if trigger == Some("$") {
+        // `$`-triggered completion: offer only column names from the
+        // variable before the `$` on the current line. If the
+        // variable is unknown or carries no schema, return an empty
+        // list (no completions) rather than falling through to the
+        // generic list, so the editor popup stays focused.
+        if let Some(line) = text.lines().nth(position.line as usize) {
+            // `position.character` is a UTF-16 offset; we
+            // approximate it as a byte index (matching the rest of
+            // this file's ASCII assumption). Clamp to the line end
+            // so a cursor past the last char doesn't slice out of
+            // bounds.
+            let until = position.character.min(line.len() as u32) as usize;
+            let before_cursor = &line[..until];
+            // Strip the trailing `$` (and any whitespace between the
+            // identifier and it) so `extract_last_identifier` lands
+            // on the variable name.
+            let trimmed = before_cursor.trim_end().trim_end_matches('$');
+            if let Some(var_name) = extract_last_identifier(trimmed) {
+                if let Some(t) = scope.get(&var_name) {
+                    if let Some(schema) = t.columns {
+                        let mut items: Vec<CompletionItem> = schema
+                            .columns
+                            .iter()
+                            .map(|(col_name, col_type)| CompletionItem {
+                                label: col_name.clone(),
+                                kind: Some(CompletionItemKind::FIELD),
+                                detail: Some(format!("{}", col_type)),
+                                ..Default::default()
+                            })
+                            .collect();
+                        items.sort_by(|a, b| a.label.cmp(&b.label));
+                        return items;
+                    }
+                }
+            }
+        }
+        // No schema (or no variable) before the `$`: nothing useful
+        // to offer. Returning empty lets the editor close the popup
+        // instead of showing irrelevant completions.
+        return Vec::new();
+    }
+
+    // Generic completion: variables in scope + common keywords /
+    // functions. We surface every checked binding (so locally defined
+    // variables and functions complete) and then layer in the small
+    // curated list of base-R names. The curated list is intentionally
+    // short: the task explicitly calls for a focused popup.
+    let mut items: Vec<CompletionItem> = scope
+        .bindings
+        .iter()
+        .map(|(name, t)| CompletionItem {
+            label: name.clone(),
+            kind: Some(if matches!(t.mode, Mode::Function) {
+                CompletionItemKind::FUNCTION
+            } else {
+                CompletionItemKind::VARIABLE
+            }),
+            detail: Some(format!("{}", t)),
+            ..Default::default()
+        })
+        .collect();
+    items.extend(common_r_completions());
+
+    // Sort alphabetically by label, then drop duplicates (a user
+    // `c <- ...` binding would otherwise collide with the curated
+    // `c`). `dedup_by` after `sort_by` collapses only adjacent
+    // equal-label pairs, so the sort must use the same key.
+    items.sort_by(|a, b| a.label.cmp(&b.label));
+    items.dedup_by(|a, b| a.label == b.label);
+    items
+}
+
+/// Build a small, curated list of common base-R keywords and
+/// functions. Kept short on purpose: the task calls for a focused
+/// popup, and the typeshed's full function table isn't directly
+/// reachable from the LSP crate. These names cover the constructs R
+/// users type most often at the top level.
+fn common_r_completions() -> Vec<CompletionItem> {
+    // (name, kind, detail). The detail is a one-line human hint so
+    // the popup shows something useful next to each entry. We use the
+    // full `CompletionItemKind::X` form (rather than a `use` alias)
+    // because `CompletionItemKind` is a tuple struct with associated
+    // constants, not an enum, so a glob import is not allowed.
+    const ENTRIES: &[(&str, CompletionItemKind, &str)] = &[
+        // Keywords / control flow.
+        ("if", CompletionItemKind::KEYWORD, "conditional"),
+        ("else", CompletionItemKind::KEYWORD, "conditional alternative"),
+        ("for", CompletionItemKind::KEYWORD, "for loop"),
+        ("while", CompletionItemKind::KEYWORD, "while loop"),
+        ("repeat", CompletionItemKind::KEYWORD, "repeat loop"),
+        ("function", CompletionItemKind::KEYWORD, "function definition"),
+        ("return", CompletionItemKind::KEYWORD, "return from function"),
+        ("break", CompletionItemKind::KEYWORD, "break out of loop"),
+        ("next", CompletionItemKind::KEYWORD, "skip to next iteration"),
+        // Common base-R functions.
+        ("c", CompletionItemKind::FUNCTION, "combine values into a vector"),
+        ("list", CompletionItemKind::FUNCTION, "create a list"),
+        ("data.frame", CompletionItemKind::FUNCTION, "create a data frame"),
+        ("matrix", CompletionItemKind::FUNCTION, "create a matrix"),
+        ("vector", CompletionItemKind::FUNCTION, "create a vector"),
+        ("length", CompletionItemKind::FUNCTION, "length of an object"),
+        ("names", CompletionItemKind::FUNCTION, "names of an object"),
+        ("mean", CompletionItemKind::FUNCTION, "arithmetic mean"),
+        ("sum", CompletionItemKind::FUNCTION, "sum of elements"),
+        ("min", CompletionItemKind::FUNCTION, "minimum"),
+        ("max", CompletionItemKind::FUNCTION, "maximum"),
+        ("print", CompletionItemKind::FUNCTION, "print an object"),
+        ("str", CompletionItemKind::FUNCTION, "display the structure of an object"),
+        ("library", CompletionItemKind::FUNCTION, "load an attached package"),
+        ("require", CompletionItemKind::FUNCTION, "load an attached package"),
+        ("sapply", CompletionItemKind::FUNCTION, "apply a function over a list or vector"),
+        ("lapply", CompletionItemKind::FUNCTION, "apply a function over a list"),
+        ("mapply", CompletionItemKind::FUNCTION, "apply a function over multiple arguments"),
+        ("which", CompletionItemKind::FUNCTION, "indices of TRUE values"),
+        ("is.na", CompletionItemKind::FUNCTION, "detect missing values"),
+        ("as.integer", CompletionItemKind::FUNCTION, "coerce to integer"),
+        ("as.numeric", CompletionItemKind::FUNCTION, "coerce to numeric"),
+        ("as.character", CompletionItemKind::FUNCTION, "coerce to character"),
+        ("as.logical", CompletionItemKind::FUNCTION, "coerce to logical"),
+    ];
+    ENTRIES
+        .iter()
+        .map(|(name, kind, detail)| CompletionItem {
+            label: (*name).to_string(),
+            kind: Some(*kind),
+            detail: Some((*detail).to_string()),
+            ..Default::default()
+        })
+        .collect()
+}
+
+/// Extract the identifier at the end of `s`, scanning backwards. An
+/// "identifier character" follows R's rules: ASCII alphanumeric, `_`,
+/// or `.`. Returns `None` when `s` does not end with an identifier
+/// character (e.g. `s == ""`, `s == "()"`, or `s == "$"`).
+///
+/// This is used by `$`-triggered completion to recover the variable
+/// name preceding the `$` (e.g. `mtcars$` -> `mtcars`). It is a
+/// simple character scan, not a parser query, which is enough for
+/// the common single-line case `var$`.
+fn extract_last_identifier(s: &str) -> Option<String> {
+    let chars: Vec<char> = s.chars().collect();
+    let mut end = chars.len();
+    while end > 0
+        && (chars[end - 1].is_alphanumeric()
+            || chars[end - 1] == '_'
+            || chars[end - 1] == '.')
+    {
+        end -= 1;
+    }
+    if end < chars.len() {
+        Some(chars[end..].iter().collect())
+    } else {
+        None
     }
 }
 
@@ -1677,5 +1914,203 @@ mod tests {
             ),
             other => panic!("expected String label, got {:?}", other),
         }
+    }
+
+    // ---- completion helpers ----
+
+    /// Helper: parse + check a snippet and return the completion
+    /// items for a given cursor position and trigger context. Mirrors
+    /// what the `completion` LSP method does, minus the async state
+    /// lookup.
+    fn completions(
+        src: &str,
+        position: Position,
+        context: Option<CompletionContext>,
+    ) -> Vec<CompletionItem> {
+        let mut parser = RParser::new().unwrap();
+        let file = parser.parse("test.R", src).unwrap();
+        let mut checker = ry_checker::Checker::new("test.R");
+        let (_, scope) = checker.check_with_scope(&file);
+        collect_completions(src, position, &context, &scope)
+    }
+
+    /// Build a `CompletionContext` for a given trigger character.
+    /// Used by the `$`-triggered test to mimic what the editor sends
+    /// right after the user types `$`.
+    fn trigger_context(ch: &str) -> Option<CompletionContext> {
+        Some(CompletionContext {
+            trigger_kind: CompletionTriggerKind::TRIGGER_CHARACTER,
+            trigger_character: Some(ch.to_string()),
+        })
+    }
+
+    #[test]
+    fn extract_last_identifier_basic() {
+        // The variable name sits at the end of the input; the helper
+        // must scan back to its start, stopping at the first non-ident
+        // character.
+        assert_eq!(extract_last_identifier("mtcars").as_deref(), Some("mtcars"));
+        assert_eq!(extract_last_identifier("df$col").as_deref(), Some("col"));
+        assert_eq!(extract_last_identifier("foo.bar_baz").as_deref(), Some("foo.bar_baz"));
+        // Trailing whitespace / `$` are not stripped here; the caller
+        // (`collect_completions`) handles that. So a trailing `$`
+        // produces `None` because `$` is not an identifier character.
+        assert_eq!(extract_last_identifier("mtcars$"), None);
+        assert_eq!(extract_last_identifier(""), None);
+        assert_eq!(extract_last_identifier("(1 + 2)"), None);
+    }
+
+    #[test]
+    fn common_r_completions_includes_keywords_and_functions() {
+        // The curated list must surface a handful of keywords (so the
+        // popup helps users start a function definition / loop) and
+        // common base-R functions (so `c`, `list`, `mean` show up even
+        // when the user has no bindings yet). Every entry must carry a
+        // non-empty detail string and a kind.
+        let items = common_r_completions();
+        // Sanity: the list is non-empty but focused.
+        assert!(!items.is_empty(), "curated list should not be empty");
+        assert!(
+            items.len() <= 50,
+            "curated list should stay focused, got {} entries",
+            items.len()
+        );
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        // A representative keyword and a representative function.
+        assert!(labels.contains(&"function"), "missing 'function': {:?}", labels);
+        assert!(labels.contains(&"if"), "missing 'if': {:?}", labels);
+        assert!(labels.contains(&"c"), "missing 'c': {:?}", labels);
+        assert!(labels.contains(&"list"), "missing 'list': {:?}", labels);
+        assert!(labels.contains(&"mean"), "missing 'mean': {:?}", labels);
+        // Every entry must have a kind and a detail.
+        for it in &items {
+            assert!(it.kind.is_some(), "entry {:?} missing kind", it.label);
+            assert!(
+                it.detail.as_deref().is_some_and(|d| !d.is_empty()),
+                "entry {:?} missing/empty detail",
+                it.label
+            );
+        }
+        // The 'function' entry must be classified as a KEYWORD (R
+        // treats it as a keyword, not a function call), and 'c' as a
+        // FUNCTION.
+        let function_item = items.iter().find(|i| i.label == "function").unwrap();
+        assert_eq!(function_item.kind, Some(CompletionItemKind::KEYWORD));
+        let c_item = items.iter().find(|i| i.label == "c").unwrap();
+        assert_eq!(c_item.kind, Some(CompletionItemKind::FUNCTION));
+    }
+
+    #[test]
+    fn completions_for_scope_variables_and_keywords() {
+        // Generic (non-triggered) completion must include the user's
+        // in-scope bindings AND the curated keyword/function list.
+        // Bindings get a VARIABLE or FUNCTION kind; the curated
+        // keywords keep their KEYWORD / FUNCTION kind. Duplicate
+        // labels (e.g. a user `c <- ...` vs the curated `c`) must be
+        // collapsed by `dedup_by`.
+        let src = "x <- 1L + 2L\nname <- \"hi\"\n";
+        // Cursor on line 2, col 0 (a fresh line). No trigger.
+        let pos = Position { line: 2, character: 0 };
+        let items = completions(src, pos, None);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        // In-scope bindings.
+        assert!(labels.contains(&"x"), "missing x: {:?}", labels);
+        assert!(labels.contains(&"name"), "missing name: {:?}", labels);
+        // Curated keywords / functions.
+        assert!(labels.contains(&"if"), "missing if: {:?}", labels);
+        assert!(labels.contains(&"function"), "missing function: {:?}", labels);
+        assert!(labels.contains(&"mean"), "missing mean: {:?}", labels);
+        // Dedup: 'c' should appear at most once even though both the
+        // scope (no user `c` here) and the curated list could
+        // contribute. This guards the dedup path against future
+        // changes that add a 'c' to the scope.
+        let c_count = labels.iter().filter(|&&l| l == "c").count();
+        assert_eq!(c_count, 1, "'c' should appear exactly once: {:?}", labels);
+        // 'x' must be a VARIABLE; the curated 'function' must be a
+        // KEYWORD.
+        let x_item = items.iter().find(|i| i.label == "x").unwrap();
+        assert_eq!(x_item.kind, Some(CompletionItemKind::VARIABLE));
+        let function_item = items.iter().find(|i| i.label == "function").unwrap();
+        assert_eq!(function_item.kind, Some(CompletionItemKind::KEYWORD));
+        // The list must be sorted alphabetically by label.
+        let mut sorted = labels.clone();
+        sorted.sort();
+        assert_eq!(labels, sorted, "completions should be sorted by label");
+    }
+
+    #[test]
+    fn completions_for_dollar_trigger_returns_columns() {
+        // When `$` is the trigger, the popup must show ONLY the
+        // column names of the variable before the `$`. We use a
+        // `list(a = <int>, b = <chr>)` literal so the checker infers
+        // a `ColumnSchema` with columns `a` and `b`. Each column item
+        // must be a FIELD whose detail surfaces its inferred type.
+        let src = "df <- list(a = 1L, b = \"x\")\ndf$\n";
+        // Cursor right after the `$` on line 1 (col 3: 'd','f','$').
+        let pos = Position { line: 1, character: 3 };
+        let items = completions(src, pos, trigger_context("$"));
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(labels.contains(&"a"), "missing column a: {:?}", labels);
+        assert!(labels.contains(&"b"), "missing column b: {:?}", labels);
+        // No scope variables / keywords should leak into the column
+        // popup.
+        assert!(
+            !labels.contains(&"df"),
+            "df should not appear in column completions: {:?}",
+            labels
+        );
+        assert!(
+            !labels.contains(&"if"),
+            "keywords should not appear in column completions: {:?}",
+            labels
+        );
+        // Every item must be a FIELD (column) with a non-empty detail.
+        for it in &items {
+            assert_eq!(
+                it.kind,
+                Some(CompletionItemKind::FIELD),
+                "column {:?} should be FIELD",
+                it.label
+            );
+            assert!(
+                it.detail.as_deref().is_some_and(|d| !d.is_empty()),
+                "column {:?} missing detail",
+                it.label
+            );
+        }
+        // Column 'a' is integer and 'b' is character; the detail
+        // strings should reflect that so the popup shows the type
+        // next to the name.
+        let a_item = items.iter().find(|i| i.label == "a").unwrap();
+        let a_detail = a_item.detail.as_deref().unwrap();
+        assert!(
+            a_detail.contains("integer"),
+            "column a should be integer, got: {}",
+            a_detail
+        );
+        let b_item = items.iter().find(|i| i.label == "b").unwrap();
+        let b_detail = b_item.detail.as_deref().unwrap();
+        assert!(
+            b_detail.contains("character"),
+            "column b should be character, got: {}",
+            b_detail
+        );
+    }
+
+    #[test]
+    fn completions_for_dollar_trigger_without_schema_returns_empty() {
+        // If the variable before the `$` has no `ColumnSchema` (e.g.
+        // a plain integer vector), the `$`-triggered popup must
+        // return an empty list rather than fall through to the
+        // generic in-scope list. Falling through would dump every
+        // binding where the user expects column names.
+        let src = "x <- 1L + 2L\nx$\n";
+        let pos = Position { line: 1, character: 2 };
+        let items = completions(src, pos, trigger_context("$"));
+        assert!(
+            items.is_empty(),
+            "expected no completions for non-data-frame $, got: {:?}",
+            items
+        );
     }
 }

@@ -84,6 +84,13 @@ impl LanguageServer for Backend {
                 // variables) in the sidebar. The handler is
                 // `document_symbol` below.
                 document_symbol_provider: Some(OneOf::Left(true)),
+                // Enable `textDocument/inlayHint` so the client can
+                // request inline "ghost text" annotations showing the
+                // inferred type of each binding. For a checker with no
+                // annotation syntax (like R), this is the primary way
+                // users see the checker's work. The handler is
+                // `inlay_hint` below.
+                inlay_hint_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -269,6 +276,60 @@ impl LanguageServer for Backend {
             Ok(None)
         } else {
             Ok(Some(DocumentSymbolResponse::Nested(symbols)))
+        }
+    }
+
+    async fn inlay_hint(&self, params: InlayHintParams) -> LspResult<Option<Vec<InlayHint>>> {
+        let uri = params.text_document.uri.clone();
+        let path = uri_to_path(&uri);
+        let range = params.range;
+
+        let text = {
+            let state = self.state.lock().await;
+            state.docs.get(&path).cloned()
+        };
+
+        let Some(text) = text else {
+            return Ok(None);
+        };
+
+        // Parse the document. On any parse failure we return `None`
+        // (no hints) rather than erroring, so the editor simply shows
+        // nothing instead of a broken state. Mirrors `document_symbol`.
+        let mut parser = match RParser::new() {
+            Ok(p) => p,
+            Err(_) => return Ok(None),
+        };
+        let file = match parser.parse(&path, &text) {
+            Ok(f) => f,
+            Err(_) => return Ok(None),
+        };
+
+        // Run the checker so we can attach inferred types to each
+        // binding. The top-level scope maps binding names to their
+        // `RType`; nested scopes (function bodies) are not tracked by
+        // the top-level scope, so locals fall back to whatever the
+        // scope exposes (typically nothing, which yields no hint).
+        let mut checker = ry_checker::Checker::new(&path);
+        let (_, scope) = checker.check_with_scope(&file);
+
+        let mut hints = collect_inlay_hints(&file, &scope, &text);
+        // Filter to the visible range the editor requested. Hints
+        // outside `[range.start, range.end]` are dropped so we don't
+        // waste client render cycles on off-screen annotations.
+        hints.retain(|h| {
+            let within_start = h.position.line > range.start.line
+                || (h.position.line == range.start.line
+                    && h.position.character >= range.start.character);
+            let within_end = h.position.line < range.end.line
+                || (h.position.line == range.end.line
+                    && h.position.character <= range.end.character);
+            within_start && within_end
+        });
+        if hints.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(hints))
         }
     }
 }
@@ -574,6 +635,107 @@ fn find_def_spans_in_expr(expr: &Expr, name: &str, out: &mut Vec<Span>) {
         | Expr::Na(_, _)
         | Expr::Ident { .. }
         | Expr::Unknown(_) => {}
+    }
+}
+
+/// Collect `InlayHint`s for every assignment whose target is a bare
+/// identifier with a known (non-opaque) inferred type. The hint is
+/// placed at the end of the identifier name (so the editor renders the
+/// ghost text right after the variable, before the `<-`), and its
+/// label is the inferred type rendered via `RType`'s `Display` impl
+/// (e.g. `: integer<len=1>`).
+///
+/// The walk recurses into `Stmt::FunctionDef` bodies so that local
+/// bindings inside named functions are annotated too (the top-level
+/// scope may or may not track them; if it doesn't, the lookup simply
+/// yields `None` and no hint is emitted, which is the right call for
+/// v1).
+///
+/// Opaque (`Mode::Opaque`) types are deliberately skipped: they
+/// represent "we don't know" and would only clutter the editor with
+/// unhelpful `: opaque<len=?>?NA?` annotations. This mirrors how the
+/// `document_symbol` detail path behaves implicitly (it surfaces
+/// whatever the scope has, but for opaque the Display string is
+/// noisy). For inlay hints, skipping is the better UX.
+fn collect_inlay_hints(file: &SourceFile, scope: &Scope, text: &str) -> Vec<InlayHint> {
+    let mut hints = Vec::new();
+    for stmt in &file.stmts {
+        collect_inlay_hints_from_stmt(stmt, scope, text, &mut hints);
+    }
+    hints
+}
+
+/// Walk a single statement, appending any inlay hints it contributes
+/// to `hints`. Assignments to a bare identifier become hints (when
+/// the scope has a non-opaque type for the name); function-definition
+/// statements are recursed into so their body bindings are annotated.
+fn collect_inlay_hints_from_stmt(
+    stmt: &Stmt,
+    scope: &Scope,
+    text: &str,
+    hints: &mut Vec<InlayHint>,
+) {
+    match stmt {
+        // Destructure the target directly so clippy's `collapsible_match`
+        // lint stays quiet: only bare-identifier targets become hints.
+        // Complex targets (`df$col <- 1`, `x[1] <- 2`) fall through to
+        // the second `Stmt::Assign` arm below and contribute nothing.
+        Stmt::Assign {
+            target: Expr::Ident { name, span },
+            ..
+        } => {
+            if let Some(t) = scope.get(name) {
+                // Skip opaque types: they're not useful to the
+                // user (they represent "we don't know"). Showing
+                // `: opaque<len=?>?NA?` next to every unknown
+                // binding would just be visual noise.
+                if matches!(t.mode, ry_core::types::Mode::Opaque) {
+                    return;
+                }
+                // Place the hint right after the identifier name.
+                // `span.start + name.len()` lands on the first
+                // character past the identifier (in byte space,
+                // which `byte_offset_to_position` converts to an
+                // LSP `Position`). For ASCII identifiers this is
+                // exact; non-ASCII names would need a UTF-16-aware
+                // helper, matching the existing approximation in
+                // `byte_offset_to_position`.
+                let pos = byte_offset_to_position(text, span.start + name.len());
+                hints.push(InlayHint {
+                    position: pos,
+                    label: InlayHintLabel::String(format!(": {}", t)),
+                    kind: Some(InlayHintKind::TYPE),
+                    tooltip: None,
+                    padding_left: Some(true),
+                    padding_right: None,
+                    text_edits: None,
+                    data: None,
+                });
+            }
+        }
+        // Non-identifier assignment targets (e.g. `x[1] <- 2`,
+        // `df$col <- value`) don't introduce a new name in the
+        // scope, so they contribute no hints.
+        Stmt::Assign { .. } => {}
+        // Recurse into named function bodies so nested bindings are
+        // annotated too. `Stmt::FunctionDef` with `name: Some(..)` is
+        // not currently emitted by the parser (named functions come
+        // through as `Assign` + `Expr::Function`), but we handle it
+        // for completeness / future grammar changes.
+        Stmt::FunctionDef { body, .. } => {
+            for s in body {
+                collect_inlay_hints_from_stmt(s, scope, text, hints);
+            }
+        }
+        // Other statement forms (bare expressions, control flow,
+        // returns) do not introduce named top-level bindings, so they
+        // contribute no hints. We deliberately do NOT recurse into
+        // `if`/`for`/`while` bodies here (unlike `collect_symbols`)
+        // because the top-level scope only tracks the file's top
+        // scope; bindings introduced inside control-flow blocks may
+        // not be present in `scope`, and emitting a hint for a name
+        // the scope doesn't know would be wrong.
+        _ => {}
     }
 }
 
@@ -1372,5 +1534,148 @@ mod tests {
         let names: Vec<&str> = symbols.iter().map(|s| s.name.as_str()).collect();
         assert!(names.contains(&"a"), "a should be in outline: {:?}", names);
         assert!(names.contains(&"b"), "b should be in outline: {:?}", names);
+    }
+
+    // ---- inlay hint helpers ----
+
+    /// Helper: parse + check a snippet and return its inlay hints.
+    /// Mirrors what the `inlay_hint` LSP method does, minus the async
+    /// state lookup and range filter.
+    fn inlay_hints(src: &str) -> Vec<InlayHint> {
+        let mut parser = RParser::new().unwrap();
+        let file = parser.parse("test.R", src).unwrap();
+        let mut checker = ry_checker::Checker::new("test.R");
+        let (_, scope) = checker.check_with_scope(&file);
+        collect_inlay_hints(&file, &scope, src)
+    }
+
+    #[test]
+    fn inlay_hints_for_basic_assignments() {
+        // The canonical example: an integer vector, a string, and a
+        // numeric. Each binding should get exactly one hint whose
+        // label mentions the inferred mode.
+        let src = "x <- 1:10\nname <- \"hello\"\nd <- 1.5\n";
+        let hints = inlay_hints(src);
+        assert_eq!(hints.len(), 3, "got {:?}", hints);
+
+        // Every hint must be a TYPE hint with left padding (so it
+        // renders as `x : <type>` rather than `x: <type>`).
+        for h in &hints {
+            assert_eq!(h.kind, Some(InlayHintKind::TYPE));
+            assert_eq!(h.padding_left, Some(true));
+            assert_eq!(h.padding_right, None);
+        }
+
+        // The first hint sits right after `x` at line 0, col 1.
+        assert_eq!(hints[0].position.line, 0);
+        assert_eq!(hints[0].position.character, 1);
+        match &hints[0].label {
+            InlayHintLabel::String(s) => assert!(
+                s.contains("integer"),
+                "expected integer in label, got: {}",
+                s
+            ),
+            other => panic!("expected String label, got {:?}", other),
+        }
+
+        // The second hint sits right after `name` at line 1, col 4.
+        assert_eq!(hints[1].position.line, 1);
+        assert_eq!(hints[1].position.character, 4);
+        match &hints[1].label {
+            InlayHintLabel::String(s) => assert!(
+                s.contains("character"),
+                "expected character in label, got: {}",
+                s
+            ),
+            other => panic!("expected String label, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn inlay_hints_skip_opaque_types() {
+        // A call to an unknown function resolves to `Mode::Opaque`
+        // ("we don't know"), so `result` must NOT get a hint: showing
+        // `: opaque<len=?>?NA?` next to every unknown binding would
+        // just be visual noise. We bind a known integer alongside so
+        // we can confirm the walker still runs and emits hints for
+        // the non-opaque binding.
+        let src = "result <- some_unknown_function()\nx <- 1L + 2L\n";
+        let hints = inlay_hints(src);
+        // Only `x` should produce a hint; `result` is opaque and skipped.
+        // Each hint's position is right after its identifier:
+        //   `result` is at col 0..6 -> hint at col 6 (line 0)
+        //   `x`      is at col 0..1 -> hint at col 1 (line 1)
+        let has_hint_for_result = hints
+            .iter()
+            .any(|h| h.position.line == 0 && h.position.character == 6);
+        let has_hint_for_x = hints
+            .iter()
+            .any(|h| h.position.line == 1 && h.position.character == 1);
+        assert!(
+            !has_hint_for_result,
+            "result is opaque and should NOT get a hint, got: {:?}",
+            hints
+        );
+        assert!(
+            has_hint_for_x,
+            "x is integer and SHOULD get a hint, got: {:?}",
+            hints
+        );
+    }
+
+    #[test]
+    fn inlay_hints_label_starts_with_colon_space() {
+        // The hint label should look like a type annotation, so it
+        // must start with `: ` to render as `x : integer<...>`.
+        let src = "x <- 1L\n";
+        let hints = inlay_hints(src);
+        assert_eq!(hints.len(), 1);
+        match &hints[0].label {
+            InlayHintLabel::String(s) => {
+                assert!(s.starts_with(": "), "expected ': ' prefix, got: {}", s);
+                assert!(
+                    s.contains("integer"),
+                    "expected integer mode in label, got: {}",
+                    s
+                );
+            }
+            other => panic!("expected String label, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn inlay_hints_position_at_end_of_identifier() {
+        // For `my_var <- 1L`, the hint must land at col 6 (the byte
+        // right after the 6-character `my_var`), so the editor
+        // renders `my_var : integer<...> <- 1L`.
+        let src = "my_var <- 1L\n";
+        let hints = inlay_hints(src);
+        assert_eq!(hints.len(), 1);
+        assert_eq!(hints[0].position.line, 0);
+        assert_eq!(
+            hints[0].position.character,
+            "my_var".len() as u32,
+            "hint should land right after the identifier"
+        );
+    }
+
+    #[test]
+    fn inlay_hints_for_function_definition() {
+        // `add <- function(a, b) a + b` binds `add` to a function.
+        // The walker should emit a hint at the end of `add` (col 3)
+        // whose label identifies a function type.
+        let src = "add <- function(a, b) a + b\n";
+        let hints = inlay_hints(src);
+        assert_eq!(hints.len(), 1, "got {:?}", hints);
+        assert_eq!(hints[0].position.line, 0);
+        assert_eq!(hints[0].position.character, 3);
+        match &hints[0].label {
+            InlayHintLabel::String(s) => assert!(
+                s.contains("function"),
+                "expected function in label, got: {}",
+                s
+            ),
+            other => panic!("expected String label, got {:?}", other),
+        }
     }
 }

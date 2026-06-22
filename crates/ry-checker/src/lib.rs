@@ -372,27 +372,28 @@ pub fn parse_suppressions(src: &str) -> Vec<Suppression> {
 fn parse_ignore_comment(line: &str) -> Option<Vec<String>> {
     let comment_start = line.find('#')?;
     let comment = &line[comment_start..];
-    let comment_lower = comment.to_lowercase();
+    // Strip the '#' and whitespace so the marker must be at the START
+    // of the comment body. This prevents false matches on prose like
+    // `# See docs for ry: ignore` or `# TODO: add ry: ignore`.
+    let body = comment[1..].trim_start();
+    let body_lower = body.to_lowercase();
 
-    // `# ry: ignore[...]` or `# ry:ignore[...]` (with or without space).
-    // We check both spellings; whichever matches first wins.
+    // `# ry: ignore[...]` or `# ry:ignore[...]`
     for marker in ["ry: ignore", "ry:ignore"] {
-        if let Some(pos) = comment_lower.find(marker) {
-            let after_marker = &comment_lower[pos + marker.len()..];
+        if let Some(rest) = body_lower.strip_prefix(marker) {
             // `ry: ignore-file` is a file-level directive, not a
-            // line-level one; skip it here so it doesn't get treated
-            // as a bare "ignore all" on its own line.
-            if after_marker.starts_with("-file") {
+            // line-level one; skip it here.
+            if rest.starts_with("-file") {
                 continue;
             }
-            let after = &comment[pos + marker.len()..];
+            let after = &body[marker.len()..];
             return Some(parse_rule_codes(after));
         }
     }
 
-    // `# noqa` / `# noqa: RY040` / `# noqa[RY040]`.
-    if let Some(pos) = comment_lower.find("noqa") {
-        let after = &comment[pos + "noqa".len()..];
+    // `# noqa` / `# noqa: RY040` / `# noqa[RY040]`
+    if body_lower.starts_with("noqa") {
+        let after = &body["noqa".len()..];
         return Some(parse_rule_codes(after));
     }
 

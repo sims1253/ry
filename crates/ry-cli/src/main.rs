@@ -2,10 +2,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{
-    ArgMatches, CommandFactory, FromArgMatches, Parser as ClapParser, Subcommand,
-};
 use clap::parser::ValueSource;
+use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser as ClapParser, Subcommand};
 use miette::{IntoDiagnostic, Result};
 
 mod config;
@@ -174,10 +172,8 @@ fn main() -> Result<ExitCode> {
             // their synchronous behavior and pay no runtime cost.
             let rt = tokio::runtime::Runtime::new()
                 .map_err(|e| miette::miette!("failed to start tokio runtime: {}", e))?;
-            rt.block_on(async {
-                ry_lsp::run().await
-            })
-            .map_err(|e| miette::miette!("ry LSP server error: {}", e))?;
+            rt.block_on(async { ry_lsp::run().await })
+                .map_err(|e| miette::miette!("ry LSP server error: {}", e))?;
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Version { output_format } => {
@@ -211,7 +207,11 @@ fn init_tracing(verbose: u8, quiet: u8) {
         .try_init();
 }
 
-fn build_filter(error: &[String], warn: &[String], ignore: &[String]) -> ry_checker::SeverityFilter {
+fn build_filter(
+    error: &[String],
+    warn: &[String],
+    ignore: &[String],
+) -> ry_checker::SeverityFilter {
     let mut f = ry_checker::SeverityFilter::default();
     for e in error {
         f.add_error(e);
@@ -231,9 +231,7 @@ fn build_filter(error: &[String], warn: &[String], ignore: &[String]) -> ry_chec
 /// default of false", which is what lets the `ry.toml` value take
 /// effect when the CLI flag is omitted.
 fn flag_set(matches: Option<&ArgMatches>, id: &str) -> bool {
-    matches
-        .and_then(|m| m.value_source(id))
-        == Some(ValueSource::CommandLine)
+    matches.and_then(|m| m.value_source(id)) == Some(ValueSource::CommandLine)
 }
 
 /// Compute the path of `file` relative to `root`, as a forward-slash
@@ -251,14 +249,19 @@ fn relative_path_for_exclude(file: &std::path::Path, root: &std::path::Path) -> 
     let canon_root = std::fs::canonicalize(root).ok();
     if let (Some(f), Some(r)) = (canon_file, canon_root) {
         if let Ok(rel) = f.strip_prefix(&r) {
-            return rel.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
+            return rel
+                .to_string_lossy()
+                .replace(std::path::MAIN_SEPARATOR, "/");
         }
     }
     // Best-effort fallback: strip the root's literal prefix.
     if let Ok(rel) = file.strip_prefix(root) {
-        return rel.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
+        return rel
+            .to_string_lossy()
+            .replace(std::path::MAIN_SEPARATOR, "/");
     }
-    file.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/")
+    file.to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -285,7 +288,9 @@ fn run_check(
             if p.is_dir() {
                 p.clone()
             } else {
-                p.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."))
+                p.parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| PathBuf::from("."))
             }
         })
         .unwrap_or_else(|| PathBuf::from("."));
@@ -386,7 +391,10 @@ fn run_check(
     }
 
     // Watch mode: poll for changes and re-check.
-    eprintln!("ry: watching {} file(s) for changes (Ctrl+C to stop)...", all_paths.len());
+    eprintln!(
+        "ry: watching {} file(s) for changes (Ctrl+C to stop)...",
+        all_paths.len()
+    );
     let mut stamps: HashMap<PathBuf, std::time::SystemTime> = HashMap::new();
     for p in &all_paths {
         if let Ok(meta) = std::fs::metadata(p) {
@@ -497,9 +505,7 @@ impl CheckResult {
             .iter()
             .filter(|d| d.severity == ry_checker::Severity::Warning)
             .count();
-        let failed = errors > 0
-            || self.parse_errors > 0
-            || (cfg.error_on_warning && warnings > 0);
+        let failed = errors > 0 || self.parse_errors > 0 || (cfg.error_on_warning && warnings > 0);
         if cfg.exit_zero || !failed {
             ExitCode::SUCCESS
         } else {
@@ -592,10 +598,7 @@ fn run_check_once(
 fn print_version(format: &str) {
     let v = env!("CARGO_PKG_VERSION");
     match format {
-        "json" => println!(
-            "{{\"name\":\"ry\",\"version\":\"{}\"}}",
-            v
-        ),
+        "json" => println!("{{\"name\":\"ry\",\"version\":\"{}\"}}", v),
         _ => println!("ry {}", v),
     }
 }
@@ -640,7 +643,10 @@ fn run_explain_rule(rule: Option<String>, output_format: &str) -> Result<ExitCod
                 for r in &matched {
                     println!(
                         "{:<8} {:<24} {:<10} {}",
-                        r.code, r.name, r.default_severity.as_str(), r.summary
+                        r.code,
+                        r.name,
+                        r.default_severity.as_str(),
+                        r.summary
                     );
                 }
             }

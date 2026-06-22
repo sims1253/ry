@@ -11,7 +11,11 @@ use tree_sitter::{Node, Parser};
 #[derive(Debug, Error)]
 pub enum ParseError {
     #[error("tree-sitter parse error at {line}:{col}: {message}")]
-    TreeSitter { line: usize, col: usize, message: String },
+    TreeSitter {
+        line: usize,
+        col: usize,
+        message: String,
+    },
 }
 
 pub struct RParser {
@@ -32,13 +36,14 @@ impl RParser {
     }
 
     pub fn parse(&mut self, path: &str, src: &str) -> Result<SourceFile, ParseError> {
-        let tree = self.parser.parse(src, None).ok_or_else(|| {
-            ParseError::TreeSitter {
+        let tree = self
+            .parser
+            .parse(src, None)
+            .ok_or_else(|| ParseError::TreeSitter {
                 line: 0,
                 col: 0,
                 message: "parser returned no tree".into(),
-            }
-        })?;
+            })?;
         let root = tree.root_node();
         let mut stmts = Vec::new();
         let mut cursor = root.walk();
@@ -121,7 +126,9 @@ impl RParser {
         let cond = self.lower_expr(n.child_by_field_name("condition")?, src)?;
         let consequence = n.child_by_field_name("consequence")?;
         let then = self.lower_block(consequence, src);
-        let else_ = n.child_by_field_name("alternative").map(|alt| self.lower_block(alt, src));
+        let else_ = n
+            .child_by_field_name("alternative")
+            .map(|alt| self.lower_block(alt, src));
         Some(Stmt::If {
             cond,
             then,
@@ -264,7 +271,10 @@ impl RParser {
             "integer" => {
                 let raw = text(n, src)?;
                 let stripped = raw.trim_end_matches('L').trim_end_matches('l');
-                stripped.parse::<i64>().ok().map(|v| Expr::Integer(v, self.span(n, src)))
+                stripped
+                    .parse::<i64>()
+                    .ok()
+                    .map(|v| Expr::Integer(v, self.span(n, src)))
             }
             "float" | "nan" | "inf" => {
                 let raw = text(n, src)?;
@@ -288,9 +298,7 @@ impl RParser {
                     "NA" => crate::types::RType::scalar(crate::types::Mode::Logical, true),
                     "NA_integer_" => crate::types::RType::scalar(crate::types::Mode::Integer, true),
                     "NA_real_" => crate::types::RType::scalar(crate::types::Mode::Double, true),
-                    "NA_complex_" => {
-                        crate::types::RType::scalar(crate::types::Mode::Complex, true)
-                    }
+                    "NA_complex_" => crate::types::RType::scalar(crate::types::Mode::Complex, true),
                     "NA_character_" => {
                         crate::types::RType::scalar(crate::types::Mode::Character, true)
                     }
@@ -379,10 +387,18 @@ impl RParser {
         // Positional: there's still a `value` field in tree-sitter-r.
         if let Some(value_node) = n.child_by_field_name("value") {
             if let Some(v) = self.lower_expr(value_node, src) {
-                return Arg { name: None, value: v, span };
+                return Arg {
+                    name: None,
+                    value: v,
+                    span,
+                };
             }
         }
-        Arg { name: None, value: Expr::Unknown(span), span }
+        Arg {
+            name: None,
+            value: Expr::Unknown(span),
+            span,
+        }
     }
 
     fn lower_binary(&self, n: Node, src: &str) -> Option<Expr> {
@@ -540,7 +556,10 @@ impl RParser {
         // and so the original spelling round-trips through the AST.
         let op = namespace_op(n, src).unwrap_or("::");
         let full_name = format!("{}{}{}", pkg, op, name);
-        Some(Expr::Ident { name: full_name, span })
+        Some(Expr::Ident {
+            name: full_name,
+            span,
+        })
     }
 
     fn lower_function_literal(&self, n: Node, src: &str) -> Option<Expr> {
@@ -808,10 +827,7 @@ mod tests {
                     "expected ident name \"stats:::foobar\""
                 );
             }
-            other => panic!(
-                "expected Ident for `stats:::foobar`, got {:?}",
-                other
-            ),
+            other => panic!("expected Ident for `stats:::foobar`, got {:?}", other),
         }
     }
 
@@ -843,15 +859,9 @@ mod tests {
         let f = parse("base::\"my fn\"\n");
         match f.stmts.first() {
             Some(Stmt::Expr(Expr::Ident { name, .. })) => {
-                assert_eq!(
-                    name, "base::my fn",
-                    "expected ident name \"base::my fn\""
-                );
+                assert_eq!(name, "base::my fn", "expected ident name \"base::my fn\"");
             }
-            other => panic!(
-                "expected Ident for `base::\"my fn\"`, got {:?}",
-                other
-            ),
+            other => panic!("expected Ident for `base::\"my fn\"`, got {:?}", other),
         }
     }
 
@@ -916,10 +926,13 @@ mod tests {
             })) => {
                 // LHS must be the negated literal, not a bare literal.
                 assert!(
-                    matches!(lhs.as_ref(), Expr::UnaryOp {
-                        op: UnaryOpKind::Neg,
-                        ..
-                    }),
+                    matches!(
+                        lhs.as_ref(),
+                        Expr::UnaryOp {
+                            op: UnaryOpKind::Neg,
+                            ..
+                        }
+                    ),
                     "expected lhs UnaryOp(Neg, ..) so `:` sees -1, got {:?}",
                     lhs
                 );
@@ -950,10 +963,13 @@ mod tests {
                 ..
             })) => {
                 assert!(
-                    matches!(expr.as_ref(), Expr::BinOp {
-                        op: BinOpKind::Colon,
-                        ..
-                    }),
+                    matches!(
+                        expr.as_ref(),
+                        Expr::BinOp {
+                            op: BinOpKind::Colon,
+                            ..
+                        }
+                    ),
                     "expected inner BinOp(Colon, ..), got {:?}",
                     expr
                 );
@@ -975,10 +991,13 @@ mod tests {
                 ..
             })) => {
                 assert!(
-                    matches!(lhs.as_ref(), Expr::UnaryOp {
-                        op: UnaryOpKind::Neg,
-                        ..
-                    }),
+                    matches!(
+                        lhs.as_ref(),
+                        Expr::UnaryOp {
+                            op: UnaryOpKind::Neg,
+                            ..
+                        }
+                    ),
                     "expected lhs UnaryOp(Neg, ..), got {:?}",
                     lhs
                 );
@@ -999,10 +1018,13 @@ mod tests {
                 ..
             })) => {
                 assert!(
-                    matches!(expr.as_ref(), Expr::BinOp {
-                        op: BinOpKind::Pow,
-                        ..
-                    }),
+                    matches!(
+                        expr.as_ref(),
+                        Expr::BinOp {
+                            op: BinOpKind::Pow,
+                            ..
+                        }
+                    ),
                     "expected inner BinOp(Pow, ..) so negation wraps it, got {:?}",
                     expr
                 );

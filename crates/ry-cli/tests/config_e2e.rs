@@ -169,7 +169,11 @@ fn ry_toml_output_format_json() {
     );
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
     assert!(
-        parsed.as_array().unwrap().iter().any(|d| d["code"] == "RY040"),
+        parsed
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["code"] == "RY040"),
         "expected RY040 in JSON diagnostics: {}",
         parsed
     );

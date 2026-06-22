@@ -118,11 +118,8 @@ impl Project {
         // keeps them cached for the next `check()` call.
         let mut per_file: Vec<(String, Vec<Diagnostic>)> = Vec::with_capacity(self.files.len());
         for (path, file) in &self.files {
-            let mut emitter = Checker::with_tables(
-                path,
-                self.fn_table.clone(),
-                self.return_slots.clone(),
-            );
+            let mut emitter =
+                Checker::with_tables(path, self.fn_table.clone(), self.return_slots.clone());
             emitter.emit_diagnostics(file);
             per_file.push((path.clone(), emitter.take_diagnostics()));
         }
@@ -176,7 +173,8 @@ mod tests {
         let all: Vec<_> = diags.into_iter().flat_map(|(_, d)| d).collect();
         assert!(
             all.iter().any(|d| d.code == "RY040"),
-            "expected RY040 from char fn + int, got {:?}", all
+            "expected RY040 from char fn + int, got {:?}",
+            all
         );
     }
 }

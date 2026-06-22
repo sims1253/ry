@@ -71,8 +71,8 @@ fn load_fixtures() -> Vec<Fixture> {
         if path.extension().and_then(|e| e.to_str()) != Some("R") {
             continue;
         }
-        let src = fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
+        let src =
+            fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
         let expected = parse_marker(&src).unwrap_or_else(|| {
             panic!(
                 "fixture {} has no `# expect:` or `# no-diag` marker on its first line",
@@ -84,7 +84,11 @@ fn load_fixtures() -> Vec<Fixture> {
             .and_then(|n| n.to_str())
             .unwrap_or_default()
             .to_string();
-        out.push(Fixture { name, src, expected });
+        out.push(Fixture {
+            name,
+            src,
+            expected,
+        });
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     out

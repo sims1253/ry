@@ -65,9 +65,7 @@ struct State {
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> LspResult<InitializeResult> {
         let mut state = self.state.lock().await;
-        state.root = params
-            .root_uri
-            .and_then(|uri| uri.to_file_path().ok());
+        state.root = params.root_uri.and_then(|uri| uri.to_file_path().ok());
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
@@ -111,10 +109,7 @@ impl LanguageServer for Backend {
                 // the generic in-scope list. The handler is
                 // `completion` below.
                 completion_provider: Some(CompletionOptions {
-                    trigger_characters: Some(vec![
-                        "$".to_string(),
-                        ":".to_string(),
-                    ]),
+                    trigger_characters: Some(vec!["$".to_string(), ":".to_string()]),
                     ..Default::default()
                 }),
                 // Enable `textDocument/signatureHelp` so editors can
@@ -126,10 +121,7 @@ impl LanguageServer for Backend {
                 // and returns a `SignatureHelp` highlighting the
                 // active parameter (counted by commas).
                 signature_help_provider: Some(SignatureHelpOptions {
-                    trigger_characters: Some(vec![
-                        "(".to_string(),
-                        ",".to_string(),
-                    ]),
+                    trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
                     ..Default::default()
                 }),
                 // Enable `workspace/symbol` so the client can search
@@ -159,6 +151,22 @@ impl LanguageServer for Backend {
                     prepare_provider: Some(true),
                     work_done_progress_options: Default::default(),
                 })),
+                // Enable `textDocument/documentHighlight` so the client
+                // can highlight all in-file occurrences of the symbol
+                // under the cursor (e.g. with a colored background). The
+                // handler is `document_highlight` below; it reuses the
+                // reference walker to find every `Expr::Ident` matching
+                // the cursor's identifier in the current file, classifying
+                // assignment targets as `WRITE` and all other occurrences
+                // as `READ`.
+                document_highlight_provider: Some(OneOf::Left(true)),
+                // Enable `textDocument/foldingRange` so editors can offer
+                // code folding (collapsible regions) for multi-line
+                // function bodies, `if`/`else` blocks, and `for`/`while`
+                // loop bodies. The handler is `folding_range` below; it
+                // walks the AST looking for statement spans that cross a
+                // newline and emits one `FoldingRange` per such span.
+                folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -201,9 +209,7 @@ impl LanguageServer for Backend {
         }
         // Clear diagnostics for the closed document so stale squiggles
         // don't linger after the user closes the file.
-        self.client
-            .publish_diagnostics(uri, Vec::new(), None)
-            .await;
+        self.client.publish_diagnostics(uri, Vec::new(), None).await;
     }
 
     async fn shutdown(&self) -> LspResult<()> {
@@ -211,7 +217,11 @@ impl LanguageServer for Backend {
     }
 
     async fn hover(&self, params: HoverParams) -> LspResult<Option<Hover>> {
-        let uri = params.text_document_position_params.text_document.uri.clone();
+        let uri = params
+            .text_document_position_params
+            .text_document
+            .uri
+            .clone();
         let path = uri_to_path(&uri);
         let position = params.text_document_position_params.position;
 
@@ -226,7 +236,8 @@ impl LanguageServer for Backend {
 
         // Find the identifier at the hover position. We look for a
         // word-like character sequence around the cursor.
-        let identifier = find_identifier_at_position(&text, position.line as usize, position.character as usize);
+        let identifier =
+            find_identifier_at_position(&text, position.line as usize, position.character as usize);
         let Some(identifier) = identifier else {
             return Ok(None);
         };
@@ -262,7 +273,11 @@ impl LanguageServer for Backend {
         &self,
         params: GotoDefinitionParams,
     ) -> LspResult<Option<GotoDefinitionResponse>> {
-        let uri = params.text_document_position_params.text_document.uri.clone();
+        let uri = params
+            .text_document_position_params
+            .text_document
+            .uri
+            .clone();
         let path = uri_to_path(&uri);
         let position = params.text_document_position_params.position;
 
@@ -304,10 +319,7 @@ impl LanguageServer for Backend {
         }
     }
 
-    async fn references(
-        &self,
-        params: ReferenceParams,
-    ) -> LspResult<Option<Vec<Location>>> {
+    async fn references(&self, params: ReferenceParams) -> LspResult<Option<Vec<Location>>> {
         let uri = params.text_document_position.text_document.uri.clone();
         let path = uri_to_path(&uri);
         let position = params.text_document_position.position;
@@ -511,7 +523,11 @@ impl LanguageServer for Backend {
         &self,
         params: SignatureHelpParams,
     ) -> LspResult<Option<SignatureHelp>> {
-        let uri = params.text_document_position_params.text_document.uri.clone();
+        let uri = params
+            .text_document_position_params
+            .text_document
+            .uri
+            .clone();
         let path = uri_to_path(&uri);
         let position = params.text_document_position_params.position;
 
@@ -528,14 +544,11 @@ impl LanguageServer for Backend {
         // the enclosing call's function name and the active parameter
         // index. Returns `None` when the cursor is not inside a call
         // (e.g. at the top level, inside `[`, or before any `(`).
-        let (func_name, active_param) = match find_enclosing_call(
-            &text,
-            position.line as usize,
-            position.character as usize,
-        ) {
-            Some(c) => c,
-            None => return Ok(None),
-        };
+        let (func_name, active_param) =
+            match find_enclosing_call(&text, position.line as usize, position.character as usize) {
+                Some(c) => c,
+                None => return Ok(None),
+            };
 
         // Look up the function's parameter names. We only support
         // base-R functions from the curated table; user-defined
@@ -644,10 +657,7 @@ impl LanguageServer for Backend {
         }
     }
 
-    async fn rename(
-        &self,
-        params: RenameParams,
-    ) -> LspResult<Option<WorkspaceEdit>> {
+    async fn rename(&self, params: RenameParams) -> LspResult<Option<WorkspaceEdit>> {
         let uri = params.text_document_position.text_document.uri.clone();
         let path = uri_to_path(&uri);
         let position = params.text_document_position.position;
@@ -671,11 +681,8 @@ impl LanguageServer for Backend {
         // old name. We rename ALL occurrences of that name across all
         // open documents, mirroring how `references` works. Returns
         // `None` (no rename) for operators, numbers, and keywords.
-        let old_name = find_identifier_at_position(
-            &text,
-            position.line as usize,
-            position.character as usize,
-        );
+        let old_name =
+            find_identifier_at_position(&text, position.line as usize, position.character as usize);
         let Some(old_name) = old_name else {
             return Ok(None);
         };
@@ -710,13 +717,7 @@ impl LanguageServer for Backend {
             let doc_uri = path_to_uri(doc_path);
             // include_declaration = true: a rename must rewrite the
             // definition site as well as every read / call site.
-            let locations = find_references_in_file(
-                &file,
-                &old_name,
-                &doc_uri,
-                doc_text,
-                true,
-            );
+            let locations = find_references_in_file(&file, &old_name, &doc_uri, doc_text, true);
             for loc in locations {
                 edits.entry(doc_uri.clone()).or_default().push(TextEdit {
                     range: loc.range,
@@ -766,6 +767,93 @@ impl LanguageServer for Backend {
         };
 
         Ok(Some(PrepareRenameResponse::Range(range)))
+    }
+
+    async fn document_highlight(
+        &self,
+        params: DocumentHighlightParams,
+    ) -> LspResult<Option<Vec<DocumentHighlight>>> {
+        let uri = params
+            .text_document_position_params
+            .text_document
+            .uri
+            .clone();
+        let path = uri_to_path(&uri);
+        let position = params.text_document_position_params.position;
+
+        let text = {
+            let state = self.state.lock().await;
+            state.docs.get(&path).cloned()
+        };
+
+        let Some(text) = text else {
+            return Ok(None);
+        };
+
+        // Reuse the same word-finding helper as `hover` /
+        // `references` to extract the identifier under the cursor.
+        // Returns `None` (no highlights) for operators, numbers, and
+        // keywords.
+        let identifier =
+            find_identifier_at_position(&text, position.line as usize, position.character as usize);
+        let Some(identifier) = identifier else {
+            return Ok(None);
+        };
+
+        // Parse the current document. Document highlight is scoped to
+        // the current file (per the LSP spec), so we only parse once.
+        let mut parser = match RParser::new() {
+            Ok(p) => p,
+            Err(_) => return Ok(None),
+        };
+        let file = match parser.parse(&path, &text) {
+            Ok(f) => f,
+            Err(_) => return Ok(None),
+        };
+
+        let highlights = collect_document_highlights(&file, &identifier, &text);
+        if highlights.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(highlights))
+        }
+    }
+
+    async fn folding_range(
+        &self,
+        params: FoldingRangeParams,
+    ) -> LspResult<Option<Vec<FoldingRange>>> {
+        let uri = params.text_document.uri.clone();
+        let path = uri_to_path(&uri);
+
+        let text = {
+            let state = self.state.lock().await;
+            state.docs.get(&path).cloned()
+        };
+
+        let Some(text) = text else {
+            return Ok(None);
+        };
+
+        // Parse the document. On any parse failure we return `None`
+        // (no folding ranges) rather than erroring, so the editor
+        // simply shows no fold markers instead of a broken state.
+        // Mirrors `document_symbol` / `inlay_hint`.
+        let mut parser = match RParser::new() {
+            Ok(p) => p,
+            Err(_) => return Ok(None),
+        };
+        let file = match parser.parse(&path, &text) {
+            Ok(f) => f,
+            Err(_) => return Ok(None),
+        };
+
+        let ranges = collect_folding_ranges(&file, &text);
+        if ranges.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(ranges))
+        }
     }
 }
 
@@ -928,9 +1016,21 @@ fn find_identifier_range_at_position(
     // Filter out R keywords that are not variable bindings.
     if matches!(
         ident,
-        "if" | "else" | "for" | "while" | "repeat" | "function" | "return"
-            | "break" | "next" | "TRUE" | "FALSE" | "NULL" | "NA" | "Inf"
-            | "NaN" | "in"
+        "if" | "else"
+            | "for"
+            | "while"
+            | "repeat"
+            | "function"
+            | "return"
+            | "break"
+            | "next"
+            | "TRUE"
+            | "FALSE"
+            | "NULL"
+            | "NA"
+            | "Inf"
+            | "NaN"
+            | "in"
     ) {
         return None;
     }
@@ -1039,7 +1139,12 @@ fn find_def_spans_in_stmt(stmt: &Stmt, name: &str, out: &mut Vec<Span>) {
                 }
             }
         }
-        Stmt::For { name: loop_var, body, span, .. } => {
+        Stmt::For {
+            name: loop_var,
+            body,
+            span,
+            ..
+        } => {
             // The loop variable is a real binding in R (the checker
             // binds it at check_stmt). Record its definition so that
             // go-to-def on a reference to the loop variable works.
@@ -1201,7 +1306,9 @@ fn find_ref_spans_in_stmt(stmt: &Stmt, name: &str, out: &mut Vec<Span>, include_
                 find_ref_spans_in_stmt(s, name, out, include_declaration);
             }
         }
-        Stmt::If { cond, then, else_, .. } => {
+        Stmt::If {
+            cond, then, else_, ..
+        } => {
             find_ref_spans_in_expr(cond, name, out, include_declaration);
             for s in then {
                 find_ref_spans_in_stmt(s, name, out, include_declaration);
@@ -1254,12 +1361,7 @@ fn find_ref_spans_in_stmt(stmt: &Stmt, name: &str, out: &mut Vec<Span>, include_
 /// `include_declaration` is forwarded to `find_ref_spans_in_stmt` when
 /// recursing into nested function bodies so that declaration inclusion
 /// stays consistent across the whole AST.
-fn find_ref_spans_in_expr(
-    expr: &Expr,
-    name: &str,
-    out: &mut Vec<Span>,
-    include_declaration: bool,
-) {
+fn find_ref_spans_in_expr(expr: &Expr, name: &str, out: &mut Vec<Span>, include_declaration: bool) {
     match expr {
         Expr::Ident { name: n, span } => {
             if n == name {
@@ -1276,9 +1378,7 @@ fn find_ref_spans_in_expr(
             find_ref_spans_in_expr(lhs, name, out, include_declaration);
             find_ref_spans_in_expr(rhs, name, out, include_declaration);
         }
-        Expr::UnaryOp { expr, .. } => {
-            find_ref_spans_in_expr(expr, name, out, include_declaration)
-        }
+        Expr::UnaryOp { expr, .. } => find_ref_spans_in_expr(expr, name, out, include_declaration),
         Expr::Index { base, args, .. } => {
             find_ref_spans_in_expr(base, name, out, include_declaration);
             for arg in args {
@@ -1290,7 +1390,9 @@ fn find_ref_spans_in_expr(
                 find_ref_spans_in_stmt(s, name, out, include_declaration);
             }
         }
-        Expr::If { cond, then, else_, .. } => {
+        Expr::If {
+            cond, then, else_, ..
+        } => {
             find_ref_spans_in_expr(cond, name, out, include_declaration);
             find_ref_spans_in_expr(then, name, out, include_declaration);
             if let Some(e) = else_ {
@@ -1307,6 +1409,207 @@ fn find_ref_spans_in_expr(
         | Expr::Na(_, _)
         | Expr::Unknown(_) => {}
     }
+}
+
+/// Walk the AST of `file` collecting every occurrence of `name` in the
+/// current file and classify each as a READ or WRITE highlight.
+///
+///   * WRITE: an occurrence that is the `target` of a `Stmt::Assign`
+///     (i.e. the LHS of `name <- ...`). The loop variable of a
+///     `for (name in ...)` is also treated as a WRITE since each
+///     iteration re-binds it.
+///   * READ: every other occurrence (e.g. on the RHS of an
+///     assignment, in a call argument, in a condition).
+///
+/// Each returned `DocumentHighlight` carries the identifier's range
+/// (derived from its `Span` byte offsets against `text`, with zero-width
+/// spans widened by one character so the editor always renders a
+/// visible highlight) and a `kind` of READ or WRITE.
+fn collect_document_highlights(
+    file: &SourceFile,
+    name: &str,
+    text: &str,
+) -> Vec<DocumentHighlight> {
+    let mut entries: Vec<(Span, DocumentHighlightKind)> = Vec::new();
+    for stmt in &file.stmts {
+        collect_highlight_entries_from_stmt(stmt, name, &mut entries);
+    }
+    entries
+        .into_iter()
+        .map(|(span, kind)| DocumentHighlight {
+            range: span_to_visible_range(span, text),
+            kind: Some(kind),
+        })
+        .collect()
+}
+
+/// Recurse into a statement collecting every occurrence of `name` as
+/// a `(Span, DocumentHighlightKind)` pair. Assignment targets and loop
+/// variables are WRITEs; every identifier reference is a READ. The walk
+/// mirrors `find_ref_spans_in_stmt` so that occurrences inside nested
+/// function bodies, `if`/`for`/`while` blocks, and operator / call /
+/// index sub-expressions are all found.
+fn collect_highlight_entries_from_stmt(
+    stmt: &Stmt,
+    name: &str,
+    out: &mut Vec<(Span, DocumentHighlightKind)>,
+) {
+    match stmt {
+        Stmt::Assign { target, value, .. } => {
+            // The assignment target (`x <- ...`) is a WRITE. This also
+            // covers `f <- function(..) ..` (the parser models named
+            // function definitions as Assign with an Expr::Function
+            // value).
+            if let Expr::Ident { name: n, span } = target {
+                if n == name {
+                    out.push((*span, DocumentHighlightKind::WRITE));
+                }
+            }
+            // The value contributes READ references (e.g. the RHS of
+            // `x <- x + 1` reads `x`).
+            collect_highlight_entries_from_expr(value, name, out);
+        }
+        Stmt::FunctionDef {
+            name: fn_name,
+            body,
+            span,
+            ..
+        } => {
+            // A named function definition is a WRITE binding. (The
+            // parser currently always emits `name: None`, but handle
+            // `Some` for completeness.)
+            if let Some(n) = fn_name {
+                if n == name {
+                    out.push((*span, DocumentHighlightKind::WRITE));
+                }
+            }
+            for s in body {
+                collect_highlight_entries_from_stmt(s, name, out);
+            }
+        }
+        Stmt::If {
+            cond, then, else_, ..
+        } => {
+            collect_highlight_entries_from_expr(cond, name, out);
+            for s in then {
+                collect_highlight_entries_from_stmt(s, name, out);
+            }
+            if let Some(else_block) = else_ {
+                for s in else_block {
+                    collect_highlight_entries_from_stmt(s, name, out);
+                }
+            }
+        }
+        Stmt::For {
+            name: loop_var,
+            iter,
+            body,
+            span,
+        } => {
+            // The loop variable is re-bound each iteration, so it is a
+            // WRITE. This matches how the task spec defines WRITE
+            // ("assignment target"), and how the editor visually
+            // distinguishes definition vs usage.
+            if loop_var == name {
+                out.push((*span, DocumentHighlightKind::WRITE));
+            }
+            // The iterator expression may READ `name`.
+            collect_highlight_entries_from_expr(iter, name, out);
+            for s in body {
+                collect_highlight_entries_from_stmt(s, name, out);
+            }
+        }
+        Stmt::While { cond, body, .. } => {
+            collect_highlight_entries_from_expr(cond, name, out);
+            for s in body {
+                collect_highlight_entries_from_stmt(s, name, out);
+            }
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value {
+                collect_highlight_entries_from_expr(v, name, out);
+            }
+        }
+        Stmt::Expr(e) => collect_highlight_entries_from_expr(e, name, out),
+    }
+}
+
+/// Recurse into an expression collecting every READ occurrence of
+/// `name` as a `(Span, DocumentHighlightKind::READ)` pair. A
+/// `Expr::Ident` with a matching name is the match target (a READ);
+/// all other variants recurse into their sub-expressions so reads
+/// inside calls, operators, indexes, function literals, and
+/// conditional expressions are found.
+fn collect_highlight_entries_from_expr(
+    expr: &Expr,
+    name: &str,
+    out: &mut Vec<(Span, DocumentHighlightKind)>,
+) {
+    match expr {
+        Expr::Ident { name: n, span } => {
+            if n == name {
+                out.push((*span, DocumentHighlightKind::READ));
+            }
+        }
+        Expr::Call { func, args, .. } => {
+            collect_highlight_entries_from_expr(func, name, out);
+            for arg in args {
+                collect_highlight_entries_from_expr(&arg.value, name, out);
+            }
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            collect_highlight_entries_from_expr(lhs, name, out);
+            collect_highlight_entries_from_expr(rhs, name, out);
+        }
+        Expr::UnaryOp { expr, .. } => collect_highlight_entries_from_expr(expr, name, out),
+        Expr::Index { base, args, .. } => {
+            collect_highlight_entries_from_expr(base, name, out);
+            for arg in args {
+                collect_highlight_entries_from_expr(&arg.value, name, out);
+            }
+        }
+        Expr::Function { body, .. } => {
+            for s in body {
+                collect_highlight_entries_from_stmt(s, name, out);
+            }
+        }
+        Expr::If {
+            cond, then, else_, ..
+        } => {
+            collect_highlight_entries_from_expr(cond, name, out);
+            collect_highlight_entries_from_expr(then, name, out);
+            if let Some(e) = else_ {
+                collect_highlight_entries_from_expr(e, name, out);
+            }
+        }
+        // Literals, NULL, NA, and Unknown carry no identifier
+        // references.
+        Expr::Logical(_, _)
+        | Expr::Integer(_, _)
+        | Expr::Double(_, _)
+        | Expr::String(_, _)
+        | Expr::Null(_)
+        | Expr::Na(_, _)
+        | Expr::Unknown(_) => {}
+    }
+}
+
+/// Convert a `Span`'s byte offsets to an LSP `Range` against `text`.
+/// Zero-width spans are widened by one character so the editor always
+/// renders a non-empty highlight, mirroring the convention used by
+/// `find_references_in_file` and `diagnostic_to_lsp_with_source`.
+fn span_to_visible_range(span: Span, text: &str) -> Range {
+    let start = byte_offset_to_position(text, span.start);
+    let end = byte_offset_to_position(text, span.end);
+    let end = if start == end {
+        Position {
+            line: start.line,
+            character: start.character + 1,
+        }
+    } else {
+        end
+    };
+    Range { start, end }
 }
 
 /// Convert a document's path string (the key used in `State::docs`)
@@ -1570,39 +1873,115 @@ fn common_r_completions() -> Vec<CompletionItem> {
     const ENTRIES: &[(&str, CompletionItemKind, &str)] = &[
         // Keywords / control flow.
         ("if", CompletionItemKind::KEYWORD, "conditional"),
-        ("else", CompletionItemKind::KEYWORD, "conditional alternative"),
+        (
+            "else",
+            CompletionItemKind::KEYWORD,
+            "conditional alternative",
+        ),
         ("for", CompletionItemKind::KEYWORD, "for loop"),
         ("while", CompletionItemKind::KEYWORD, "while loop"),
         ("repeat", CompletionItemKind::KEYWORD, "repeat loop"),
-        ("function", CompletionItemKind::KEYWORD, "function definition"),
-        ("return", CompletionItemKind::KEYWORD, "return from function"),
+        (
+            "function",
+            CompletionItemKind::KEYWORD,
+            "function definition",
+        ),
+        (
+            "return",
+            CompletionItemKind::KEYWORD,
+            "return from function",
+        ),
         ("break", CompletionItemKind::KEYWORD, "break out of loop"),
-        ("next", CompletionItemKind::KEYWORD, "skip to next iteration"),
+        (
+            "next",
+            CompletionItemKind::KEYWORD,
+            "skip to next iteration",
+        ),
         // Common base-R functions.
-        ("c", CompletionItemKind::FUNCTION, "combine values into a vector"),
+        (
+            "c",
+            CompletionItemKind::FUNCTION,
+            "combine values into a vector",
+        ),
         ("list", CompletionItemKind::FUNCTION, "create a list"),
-        ("data.frame", CompletionItemKind::FUNCTION, "create a data frame"),
+        (
+            "data.frame",
+            CompletionItemKind::FUNCTION,
+            "create a data frame",
+        ),
         ("matrix", CompletionItemKind::FUNCTION, "create a matrix"),
         ("vector", CompletionItemKind::FUNCTION, "create a vector"),
-        ("length", CompletionItemKind::FUNCTION, "length of an object"),
+        (
+            "length",
+            CompletionItemKind::FUNCTION,
+            "length of an object",
+        ),
         ("names", CompletionItemKind::FUNCTION, "names of an object"),
         ("mean", CompletionItemKind::FUNCTION, "arithmetic mean"),
         ("sum", CompletionItemKind::FUNCTION, "sum of elements"),
         ("min", CompletionItemKind::FUNCTION, "minimum"),
         ("max", CompletionItemKind::FUNCTION, "maximum"),
         ("print", CompletionItemKind::FUNCTION, "print an object"),
-        ("str", CompletionItemKind::FUNCTION, "display the structure of an object"),
-        ("library", CompletionItemKind::FUNCTION, "load an attached package"),
-        ("require", CompletionItemKind::FUNCTION, "load an attached package"),
-        ("sapply", CompletionItemKind::FUNCTION, "apply a function over a list or vector"),
-        ("lapply", CompletionItemKind::FUNCTION, "apply a function over a list"),
-        ("mapply", CompletionItemKind::FUNCTION, "apply a function over multiple arguments"),
-        ("which", CompletionItemKind::FUNCTION, "indices of TRUE values"),
-        ("is.na", CompletionItemKind::FUNCTION, "detect missing values"),
-        ("as.integer", CompletionItemKind::FUNCTION, "coerce to integer"),
-        ("as.numeric", CompletionItemKind::FUNCTION, "coerce to numeric"),
-        ("as.character", CompletionItemKind::FUNCTION, "coerce to character"),
-        ("as.logical", CompletionItemKind::FUNCTION, "coerce to logical"),
+        (
+            "str",
+            CompletionItemKind::FUNCTION,
+            "display the structure of an object",
+        ),
+        (
+            "library",
+            CompletionItemKind::FUNCTION,
+            "load an attached package",
+        ),
+        (
+            "require",
+            CompletionItemKind::FUNCTION,
+            "load an attached package",
+        ),
+        (
+            "sapply",
+            CompletionItemKind::FUNCTION,
+            "apply a function over a list or vector",
+        ),
+        (
+            "lapply",
+            CompletionItemKind::FUNCTION,
+            "apply a function over a list",
+        ),
+        (
+            "mapply",
+            CompletionItemKind::FUNCTION,
+            "apply a function over multiple arguments",
+        ),
+        (
+            "which",
+            CompletionItemKind::FUNCTION,
+            "indices of TRUE values",
+        ),
+        (
+            "is.na",
+            CompletionItemKind::FUNCTION,
+            "detect missing values",
+        ),
+        (
+            "as.integer",
+            CompletionItemKind::FUNCTION,
+            "coerce to integer",
+        ),
+        (
+            "as.numeric",
+            CompletionItemKind::FUNCTION,
+            "coerce to numeric",
+        ),
+        (
+            "as.character",
+            CompletionItemKind::FUNCTION,
+            "coerce to character",
+        ),
+        (
+            "as.logical",
+            CompletionItemKind::FUNCTION,
+            "coerce to logical",
+        ),
     ];
     ENTRIES
         .iter()
@@ -1628,9 +2007,7 @@ fn extract_last_identifier(s: &str) -> Option<String> {
     let chars: Vec<char> = s.chars().collect();
     let mut end = chars.len();
     while end > 0
-        && (chars[end - 1].is_alphanumeric()
-            || chars[end - 1] == '_'
-            || chars[end - 1] == '.')
+        && (chars[end - 1].is_alphanumeric() || chars[end - 1] == '_' || chars[end - 1] == '.')
     {
         end -= 1;
     }
@@ -1864,7 +2241,12 @@ fn collect_symbols(stmts: &[Stmt], text: &str, scope: Option<&Scope>) -> Vec<Doc
 /// `out`. Assignments and named function definitions become symbols
 /// directly; `if` / `for` / `while` blocks are traversed so their
 /// inner bindings appear at the current outline level.
-fn collect_from_stmt(stmt: &Stmt, text: &str, scope: Option<&Scope>, out: &mut Vec<DocumentSymbol>) {
+fn collect_from_stmt(
+    stmt: &Stmt,
+    text: &str,
+    scope: Option<&Scope>,
+    out: &mut Vec<DocumentSymbol>,
+) {
     match stmt {
         Stmt::Assign { .. } | Stmt::FunctionDef { .. } => {
             if let Some(sym) = stmt_to_symbol(stmt, text, scope) {
@@ -1898,12 +2280,19 @@ fn collect_from_stmt(stmt: &Stmt, text: &str, scope: Option<&Scope>, out: &mut V
 fn stmt_to_symbol(stmt: &Stmt, text: &str, scope: Option<&Scope>) -> Option<DocumentSymbol> {
     match stmt {
         Stmt::Assign {
-            target, value, span, ..
+            target,
+            value,
+            span,
+            ..
         } => {
             // Only bare-identifier targets (`x <- ...`) become symbols.
             // Complex targets (`df$col <- 1`, `x[1] <- 2`) are skipped:
             // they don't introduce a new name in the outline.
-            let Expr::Ident { name, span: ident_span } = target else {
+            let Expr::Ident {
+                name,
+                span: ident_span,
+            } = target
+            else {
                 return None;
             };
             let is_function = matches!(value, Expr::Function { .. });
@@ -1971,8 +2360,7 @@ fn stmt_to_symbol(stmt: &Stmt, text: &str, scope: Option<&Scope>) -> Option<Docu
 /// body has no bindings, so that non-function symbols stay flat.
 fn function_body_symbols(value: &Expr, text: &str) -> Option<Vec<DocumentSymbol>> {
     if let Expr::Function { params, body, .. } = value {
-        let mut children: Vec<DocumentSymbol> =
-            params.iter().filter_map(param_to_symbol).collect();
+        let mut children: Vec<DocumentSymbol> = params.iter().filter_map(param_to_symbol).collect();
         children.extend(collect_symbols(body, text, None));
         if children.is_empty() {
             None
@@ -2009,14 +2397,7 @@ fn compute_detail(name: &str, is_function: bool, scope: Option<&Scope>) -> Optio
             return Some(format!("{}", t));
         }
     }
-    Some(
-        if is_function {
-            "function"
-        } else {
-            "variable"
-        }
-        .to_string(),
-    )
+    Some(if is_function { "function" } else { "variable" }.to_string())
 }
 
 /// Build an LSP `Range` covering exactly an identifier, using the
@@ -2082,7 +2463,210 @@ fn byte_offset_to_position(text: &str, byte_offset: usize) -> Position {
             col += 1;
         }
     }
-    Position { line, character: col }
+    Position {
+        line,
+        character: col,
+    }
+}
+
+/// Collect `FoldingRange`s for every multi-line foldable block in the
+/// file. R's foldable regions are:
+///   * function bodies (`function() { ... }`),
+///   * `if`/`else` blocks,
+///   * `for`/`while` loop bodies,
+///   * assignment statements whose RHS spans multiple lines (e.g.
+///     `f <- function() { ... }`, since the parser models named
+///     function definitions as `Assign` rather than `FunctionDef`).
+///
+/// A region is foldable only when its `Span` crosses a newline
+/// (single-line blocks have nothing to collapse). The walk recurses
+/// into nested bodies so an outer function and an inner `if` each get
+/// their own range.
+fn collect_folding_ranges(file: &SourceFile, text: &str) -> Vec<FoldingRange> {
+    let mut ranges = Vec::new();
+    for stmt in &file.stmts {
+        collect_folding_from_stmt(stmt, text, &mut ranges);
+    }
+    ranges
+}
+
+/// Walk a single statement, appending any foldable region it
+/// contributes to `ranges`, and then recurse into nested blocks so
+/// their inner regions are also collected.
+fn collect_folding_from_stmt(stmt: &Stmt, text: &str, ranges: &mut Vec<FoldingRange>) {
+    // Compute this statement's span and, if it spans multiple lines,
+    // push a folding range for it. We compute the end line from the
+    // span's byte offsets against the source text (so multi-line
+    // bodies that share their starting line with the `function` /
+    // `for` / `if` keyword are folded correctly).
+    if let Some(span) = span_of_stmt(stmt) {
+        let start_line = span.line as u32;
+        let end_line = byte_offset_to_position(text, span.end).line;
+        if end_line > start_line {
+            ranges.push(FoldingRange {
+                start_line,
+                end_line,
+                start_character: None,
+                end_character: None,
+                kind: Some(FoldingRangeKind::Region),
+                collapsed_text: None,
+            });
+        }
+    }
+    // Recurse into nested blocks so an outer function's body and an
+    // inner `if` each get their own range. Mirrors
+    // `collect_from_stmt`'s structure (used by `documentSymbol`).
+    match stmt {
+        Stmt::FunctionDef { body, .. } | Stmt::For { body, .. } | Stmt::While { body, .. } => {
+            for s in body {
+                collect_folding_from_stmt(s, text, ranges);
+            }
+        }
+        Stmt::If { then, else_, .. } => {
+            for s in then {
+                collect_folding_from_stmt(s, text, ranges);
+            }
+            if let Some(e) = else_ {
+                for s in e {
+                    collect_folding_from_stmt(s, text, ranges);
+                }
+            }
+        }
+        // An `Assign` may carry a multi-line function literal on its
+        // RHS (the common `f <- function() { ... }` pattern). Recurse
+        // into the value so nested function bodies and control-flow
+        // blocks inside it also become foldable. `Expr::Function` and
+        // `Expr::If` both expose their own spans, so the recursive
+        // `collect_folding_from_expr` can pick them up.
+        Stmt::Assign { value, .. } => {
+            collect_folding_from_expr(value, text, ranges);
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value {
+                collect_folding_from_expr(v, text, ranges);
+            }
+        }
+        Stmt::Expr(e) => collect_folding_from_expr(e, text, ranges),
+    }
+}
+
+/// Recurse into an expression looking for nested multi-line blocks
+/// (function literals, conditional expressions, and the bodies of
+/// call / operator / index sub-expressions) so they contribute their
+/// own folding ranges.
+fn collect_folding_from_expr(expr: &Expr, text: &str, ranges: &mut Vec<FoldingRange>) {
+    match expr {
+        Expr::Function { body, span, .. } => {
+            // The function literal itself is a foldable region; its
+            // body statements may contain more foldable regions.
+            push_range_if_multiline(*span, text, ranges);
+            for s in body {
+                collect_folding_from_stmt(s, text, ranges);
+            }
+        }
+        Expr::If {
+            cond,
+            then,
+            else_,
+            span,
+        } => {
+            push_range_if_multiline(*span, text, ranges);
+            collect_folding_from_expr(cond, text, ranges);
+            collect_folding_from_expr(then, text, ranges);
+            if let Some(e) = else_ {
+                collect_folding_from_expr(e, text, ranges);
+            }
+        }
+        Expr::Call {
+            func, args, span, ..
+        } => {
+            push_range_if_multiline(*span, text, ranges);
+            collect_folding_from_expr(func, text, ranges);
+            for arg in args {
+                collect_folding_from_expr(&arg.value, text, ranges);
+            }
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            collect_folding_from_expr(lhs, text, ranges);
+            collect_folding_from_expr(rhs, text, ranges);
+        }
+        Expr::UnaryOp { expr, .. } => collect_folding_from_expr(expr, text, ranges),
+        Expr::Index { base, args, .. } => {
+            collect_folding_from_expr(base, text, ranges);
+            for arg in args {
+                collect_folding_from_expr(&arg.value, text, ranges);
+            }
+        }
+        // Literals, NULL, NA, bare identifiers, and Unknown carry no
+        // nested foldable bodies.
+        Expr::Logical(_, _)
+        | Expr::Integer(_, _)
+        | Expr::Double(_, _)
+        | Expr::String(_, _)
+        | Expr::Null(_)
+        | Expr::Na(_, _)
+        | Expr::Ident { .. }
+        | Expr::Unknown(_) => {}
+    }
+}
+
+/// Push a folding range for `span` when its end lands on a later line
+/// than its start. Mirrors the inline check used in
+/// `collect_folding_from_stmt` so the same "multi-line" rule is
+/// applied uniformly to statement and expression spans.
+fn push_range_if_multiline(span: Span, text: &str, ranges: &mut Vec<FoldingRange>) {
+    let start_line = span.line as u32;
+    let end_line = byte_offset_to_position(text, span.end).line;
+    if end_line > start_line {
+        ranges.push(FoldingRange {
+            start_line,
+            end_line,
+            start_character: None,
+            end_character: None,
+            kind: Some(FoldingRangeKind::Region),
+            collapsed_text: None,
+        });
+    }
+}
+
+/// Return the `Span` of a statement, if it carries one. Most
+/// statement variants store their own span; the bare-expression form
+/// (`Stmt::Expr`) delegates to the inner expression's span (when one
+/// is available).
+fn span_of_stmt(stmt: &Stmt) -> Option<Span> {
+    match stmt {
+        Stmt::Assign { span, .. }
+        | Stmt::If { span, .. }
+        | Stmt::For { span, .. }
+        | Stmt::While { span, .. }
+        | Stmt::FunctionDef { span, .. }
+        | Stmt::Return { span, .. } => Some(*span),
+        Stmt::Expr(e) => span_of_expr(e),
+    }
+}
+
+/// Return the `Span` of an expression. Each variant that wraps its
+/// own span contributes it directly; bare literals return their span
+/// too. Returns `None` only for variants that have no span at all
+/// (none in the current AST, but the future-proofing keeps the
+/// compiler honest).
+fn span_of_expr(expr: &Expr) -> Option<Span> {
+    match expr {
+        Expr::Logical(_, s)
+        | Expr::Integer(_, s)
+        | Expr::Double(_, s)
+        | Expr::String(_, s)
+        | Expr::Null(s)
+        | Expr::Na(_, s)
+        | Expr::Call { span: s, .. }
+        | Expr::Ident { span: s, .. }
+        | Expr::BinOp { span: s, .. }
+        | Expr::UnaryOp { span: s, .. }
+        | Expr::Index { span: s, .. }
+        | Expr::Function { span: s, .. }
+        | Expr::If { span: s, .. }
+        | Expr::Unknown(s) => Some(*s),
+    }
 }
 
 /// Construct a `DocumentSymbol` with all fields filled. The
@@ -2214,9 +2798,7 @@ pub async fn run() -> LspResult<()> {
         state: Arc::new(Mutex::new(State::default())),
     })
     .finish();
-    Server::new(stdin, stdout, socket)
-        .serve(service)
-        .await;
+    Server::new(stdin, stdout, socket).serve(service).await;
     Ok(())
 }
 
@@ -2537,7 +3119,8 @@ mod tests {
         // The canonical example from the task: a function, a call
         // result, and a string. We expect 3 top-level symbols with the
         // right names and kinds.
-        let src = "add <- function(x = 0, y = 0) { x + y }\nresult <- add(1, 2)\nname <- \"hello\"\n";
+        let src =
+            "add <- function(x = 0, y = 0) { x + y }\nresult <- add(1, 2)\nname <- \"hello\"\n";
         let symbols = doc_symbols(src);
         assert_eq!(symbols.len(), 3, "got {:?}", symbols);
 
@@ -2547,7 +3130,10 @@ mod tests {
         // surfaces that (which starts with "function"). We don't pin
         // the exact signature since return-type inference may refine
         // it over time; we just check it identifies a function.
-        let detail = symbols[0].detail.as_deref().expect("add should have detail");
+        let detail = symbols[0]
+            .detail
+            .as_deref()
+            .expect("add should have detail");
         assert!(
             detail.starts_with("function"),
             "expected detail to start with 'function', got: {}",
@@ -2815,7 +3401,10 @@ mod tests {
         // character.
         assert_eq!(extract_last_identifier("mtcars").as_deref(), Some("mtcars"));
         assert_eq!(extract_last_identifier("df$col").as_deref(), Some("col"));
-        assert_eq!(extract_last_identifier("foo.bar_baz").as_deref(), Some("foo.bar_baz"));
+        assert_eq!(
+            extract_last_identifier("foo.bar_baz").as_deref(),
+            Some("foo.bar_baz")
+        );
         // Trailing whitespace / `$` are not stripped here; the caller
         // (`collect_completions`) handles that. So a trailing `$`
         // produces `None` because `$` is not an identifier character.
@@ -2917,8 +3506,7 @@ mod tests {
         // has one top-level comma => active param 1 (`digits`).
         let text = "round(x, ";
         let comma = text.find(',').expect("snippet should have a comma");
-        let (name, active) =
-            find_enclosing_call(text, 0, comma + 1).expect("should find call");
+        let (name, active) = find_enclosing_call(text, 0, comma + 1).expect("should find call");
         assert_eq!(name, "round");
         assert_eq!(active, 1);
 
@@ -2954,7 +3542,10 @@ mod tests {
         } else {
             None
         };
-        assert_eq!(active_param, None, "active param should clamp to None past the last formal");
+        assert_eq!(
+            active_param, None,
+            "active param should clamp to None past the last formal"
+        );
     }
 
     #[test]
@@ -2974,7 +3565,11 @@ mod tests {
         );
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         // A representative keyword and a representative function.
-        assert!(labels.contains(&"function"), "missing 'function': {:?}", labels);
+        assert!(
+            labels.contains(&"function"),
+            "missing 'function': {:?}",
+            labels
+        );
         assert!(labels.contains(&"if"), "missing 'if': {:?}", labels);
         assert!(labels.contains(&"c"), "missing 'c': {:?}", labels);
         assert!(labels.contains(&"list"), "missing 'list': {:?}", labels);
@@ -3007,7 +3602,10 @@ mod tests {
         // collapsed by `dedup_by`.
         let src = "x <- 1L + 2L\nname <- \"hi\"\n";
         // Cursor on line 2, col 0 (a fresh line). No trigger.
-        let pos = Position { line: 2, character: 0 };
+        let pos = Position {
+            line: 2,
+            character: 0,
+        };
         let items = completions(src, pos, None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         // In-scope bindings.
@@ -3015,7 +3613,11 @@ mod tests {
         assert!(labels.contains(&"name"), "missing name: {:?}", labels);
         // Curated keywords / functions.
         assert!(labels.contains(&"if"), "missing if: {:?}", labels);
-        assert!(labels.contains(&"function"), "missing function: {:?}", labels);
+        assert!(
+            labels.contains(&"function"),
+            "missing function: {:?}",
+            labels
+        );
         assert!(labels.contains(&"mean"), "missing mean: {:?}", labels);
         // Dedup: 'c' should appear at most once even though both the
         // scope (no user `c` here) and the curated list could
@@ -3044,7 +3646,10 @@ mod tests {
         // must be a FIELD whose detail surfaces its inferred type.
         let src = "df <- list(a = 1L, b = \"x\")\ndf$\n";
         // Cursor right after the `$` on line 1 (col 3: 'd','f','$').
-        let pos = Position { line: 1, character: 3 };
+        let pos = Position {
+            line: 1,
+            character: 3,
+        };
         let items = completions(src, pos, trigger_context("$"));
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(labels.contains(&"a"), "missing column a: {:?}", labels);
@@ -3102,7 +3707,10 @@ mod tests {
         // generic in-scope list. Falling through would dump every
         // binding where the user expects column names.
         let src = "x <- 1L + 2L\nx$\n";
-        let pos = Position { line: 1, character: 2 };
+        let pos = Position {
+            line: 1,
+            character: 2,
+        };
         let items = completions(src, pos, trigger_context("$"));
         assert!(
             items.is_empty(),
@@ -3132,16 +3740,19 @@ mod tests {
         // should be returned.
         let src = "x <- 1L\ny <- x + 1\nz <- x * 2\n";
         let locs = references_in(src, "x", false);
-        assert_eq!(
-            locs.len(),
-            2,
-            "expected 2 references to x, got {:?}",
-            locs
-        );
+        assert_eq!(locs.len(), 2, "expected 2 references to x, got {:?}", locs);
         // The two references live on lines 1 and 2 (0-indexed).
         let lines: Vec<u32> = locs.iter().map(|l| l.range.start.line).collect();
-        assert!(lines.contains(&1), "expected a reference on line 1: {:?}", lines);
-        assert!(lines.contains(&2), "expected a reference on line 2: {:?}", lines);
+        assert!(
+            lines.contains(&1),
+            "expected a reference on line 1: {:?}",
+            lines
+        );
+        assert!(
+            lines.contains(&2),
+            "expected a reference on line 2: {:?}",
+            lines
+        );
         // Each reference must cover exactly the identifier "x" (1 char
         // wide), not a zero-width or multi-char range.
         for loc in &locs {
@@ -3160,12 +3771,7 @@ mod tests {
         // lines 1 and 2 should be returned.
         let src = "add <- function(a, b) a + b\nadd(1, 2)\nadd(3, 4)\n";
         let locs = references_in(src, "add", false);
-        assert_eq!(
-            locs.len(),
-            2,
-            "expected 2 call sites, got {:?}",
-            locs
-        );
+        assert_eq!(locs.len(), 2, "expected 2 call sites, got {:?}", locs);
         let lines: Vec<u32> = locs.iter().map(|l| l.range.start.line).collect();
         assert!(lines.contains(&1), "expected a call on line 1: {:?}", lines);
         assert!(lines.contains(&2), "expected a call on line 2: {:?}", lines);
@@ -3225,8 +3831,12 @@ mod tests {
 
         // include_declaration = true so the definition in a.R counts.
         let mut all = Vec::new();
-        all.extend(find_references_in_file(&file_a, "helper", &uri_a, src_a, true));
-        all.extend(find_references_in_file(&file_b, "helper", &uri_b, src_b, true));
+        all.extend(find_references_in_file(
+            &file_a, "helper", &uri_a, src_a, true,
+        ));
+        all.extend(find_references_in_file(
+            &file_b, "helper", &uri_b, src_b, true,
+        ));
 
         // One definition in a.R + one call in b.R => 2 locations.
         assert_eq!(
@@ -3237,8 +3847,16 @@ mod tests {
         );
         // The locations must come from different URIs (one per file).
         let uris: Vec<&Url> = all.iter().map(|l| &l.uri).collect();
-        assert!(uris.contains(&&uri_a), "missing location in a.R: {:?}", uris);
-        assert!(uris.contains(&&uri_b), "missing location in b.R: {:?}", uris);
+        assert!(
+            uris.contains(&&uri_a),
+            "missing location in a.R: {:?}",
+            uris
+        );
+        assert!(
+            uris.contains(&&uri_b),
+            "missing location in b.R: {:?}",
+            uris
+        );
     }
 
     #[test]
@@ -3258,8 +3876,16 @@ mod tests {
             locs
         );
         let lines: Vec<u32> = locs.iter().map(|l| l.range.start.line).collect();
-        assert!(lines.contains(&2), "expected a reference on line 2: {:?}", lines);
-        assert!(lines.contains(&5), "expected a reference on line 5: {:?}", lines);
+        assert!(
+            lines.contains(&2),
+            "expected a reference on line 2: {:?}",
+            lines
+        );
+        assert!(
+            lines.contains(&5),
+            "expected a reference on line 5: {:?}",
+            lines
+        );
     }
 
     #[test]
@@ -3346,9 +3972,8 @@ mod tests {
 
         // The function symbol must be classified as FUNCTION, the
         // parameters and variables as VARIABLE.
-        let kind_of = |name: &str| -> SymbolKind {
-            symbols.iter().find(|s| s.name == name).unwrap().kind
-        };
+        let kind_of =
+            |name: &str| -> SymbolKind { symbols.iter().find(|s| s.name == name).unwrap().kind };
         assert_eq!(kind_of("add"), SymbolKind::FUNCTION);
         assert_eq!(kind_of("a"), SymbolKind::VARIABLE);
         assert_eq!(kind_of("b"), SymbolKind::VARIABLE);
@@ -3440,8 +4065,16 @@ mod tests {
         // The two edits must cover the declaration on line 0 and the
         // usage on line 1 (the only `x` in the source).
         let lines: Vec<u32> = edits.iter().map(|e| e.range.start.line).collect();
-        assert!(lines.contains(&0), "expected an edit on line 0: {:?}", lines);
-        assert!(lines.contains(&1), "expected an edit on line 1: {:?}", lines);
+        assert!(
+            lines.contains(&0),
+            "expected an edit on line 0: {:?}",
+            lines
+        );
+        assert!(
+            lines.contains(&1),
+            "expected an edit on line 1: {:?}",
+            lines
+        );
     }
 
     #[test]
@@ -3504,8 +4137,8 @@ mod tests {
         // must return the full identifier name AND a range covering
         // exactly `my_var` (cols 0..6 on line 0).
         let text = "my_var <- 1L\n";
-        let (name, range) = find_identifier_range_at_position(text, 0, 2)
-            .expect("should find identifier");
+        let (name, range) =
+            find_identifier_range_at_position(text, 0, 2).expect("should find identifier");
         assert_eq!(name, "my_var");
         assert_eq!(range.start.line, 0);
         assert_eq!(range.start.character, 0);
@@ -3551,5 +4184,259 @@ mod tests {
         assert_eq!(name, "my_var");
         assert_eq!(range.start.character, 0);
         assert_eq!(range.end.character, "my_var".len() as u32);
+    }
+
+    // ---- document highlight helpers ----
+
+    /// Helper: parse a snippet and return the `DocumentHighlight`s for
+    /// `name`. Mirrors what the `document_highlight` LSP method does,
+    /// minus the async state lookup. Order of the returned highlights
+    /// follows source order (top-to-bottom).
+    fn doc_highlights(src: &str, name: &str) -> Vec<DocumentHighlight> {
+        let mut parser = RParser::new().unwrap();
+        let file = parser.parse("test.R", src).unwrap();
+        collect_document_highlights(&file, name, src)
+    }
+
+    #[test]
+    fn document_highlight_classifies_write_and_read() {
+        // `x` is written at line 0 (assignment target) and read on
+        // lines 1 and 2 (RHS of `y` and `z`). The WRITE must land on
+        // line 0 and the two READs on lines 1 and 2.
+        let src = "x <- 1L\ny <- x + 1\nz <- x * 2\n";
+        let hl = doc_highlights(src, "x");
+        assert_eq!(hl.len(), 3, "got {:?}", hl);
+
+        // Exactly one WRITE at line 0, covering exactly the 1-char
+        // identifier `x` at col 0.
+        let writes: Vec<&DocumentHighlight> = hl
+            .iter()
+            .filter(|h| h.kind == Some(DocumentHighlightKind::WRITE))
+            .collect();
+        assert_eq!(writes.len(), 1, "expected one WRITE: {:?}", hl);
+        assert_eq!(writes[0].range.start.line, 0);
+        assert_eq!(writes[0].range.start.character, 0);
+        assert_eq!(writes[0].range.end.character, 1);
+
+        // Two READs on lines 1 and 2.
+        let reads: Vec<&DocumentHighlight> = hl
+            .iter()
+            .filter(|h| h.kind == Some(DocumentHighlightKind::READ))
+            .collect();
+        assert_eq!(reads.len(), 2, "expected two READs: {:?}", hl);
+        let read_lines: Vec<u32> = reads.iter().map(|h| h.range.start.line).collect();
+        assert!(
+            read_lines.contains(&1),
+            "expected READ on line 1: {:?}",
+            read_lines
+        );
+        assert!(
+            read_lines.contains(&2),
+            "expected READ on line 2: {:?}",
+            read_lines
+        );
+    }
+
+    #[test]
+    fn document_highlight_self_referencing_assignment_has_write_and_read() {
+        // `x <- x + 1` writes `x` on the LHS (col 0) and reads `x` on
+        // the RHS (col 5). Both must be highlighted with the right
+        // kinds on the same line.
+        let src = "x <- x + 1\n";
+        let hl = doc_highlights(src, "x");
+        assert_eq!(hl.len(), 2, "got {:?}", hl);
+        // Find the WRITE (LHS at col 0) and the READ (RHS at col 5).
+        let write = hl
+            .iter()
+            .find(|h| h.kind == Some(DocumentHighlightKind::WRITE))
+            .expect("expected a WRITE");
+        assert_eq!(write.range.start.line, 0);
+        assert_eq!(write.range.start.character, 0);
+        let read = hl
+            .iter()
+            .find(|h| h.kind == Some(DocumentHighlightKind::READ))
+            .expect("expected a READ");
+        assert_eq!(read.range.start.line, 0);
+        assert_eq!(read.range.start.character, 5);
+    }
+
+    #[test]
+    fn document_highlight_finds_occurrences_inside_nested_scopes() {
+        // `data` is written at line 0 and read inside a function body
+        // (line 2) and inside a for-loop body (line 5). The walker
+        // must recurse into both nested scopes.
+        let src = "data <- c(1, 2, 3)\nf <- function() {\n  data[1]\n}\nfor (i in 1:3) {\n  print(data)\n}\n";
+        let hl = doc_highlights(src, "data");
+        // 1 WRITE (line 0) + 2 READs (lines 2 and 5) = 3 highlights.
+        assert_eq!(hl.len(), 3, "got {:?}", hl);
+        let read_lines: Vec<u32> = hl
+            .iter()
+            .filter(|h| h.kind == Some(DocumentHighlightKind::READ))
+            .map(|h| h.range.start.line)
+            .collect();
+        assert!(
+            read_lines.contains(&2),
+            "expected READ on line 2: {:?}",
+            read_lines
+        );
+        assert!(
+            read_lines.contains(&5),
+            "expected READ on line 5: {:?}",
+            read_lines
+        );
+    }
+
+    #[test]
+    fn document_highlight_returns_empty_for_unknown_name() {
+        let src = "x <- 1L\ny <- x + 1\n";
+        let hl = doc_highlights(src, "does_not_exist");
+        assert!(hl.is_empty(), "expected no highlights, got {:?}", hl);
+    }
+
+    #[test]
+    fn document_highlight_classifies_loop_variable_as_write() {
+        // The loop variable `i` is re-bound each iteration, so it
+        // should be classified as a WRITE. The single READ lives in
+        // the loop body on line 1.
+        let src = "for (i in 1:3) {\n  print(i)\n}\n";
+        let hl = doc_highlights(src, "i");
+        assert_eq!(hl.len(), 2, "got {:?}", hl);
+        let writes: Vec<&DocumentHighlight> = hl
+            .iter()
+            .filter(|h| h.kind == Some(DocumentHighlightKind::WRITE))
+            .collect();
+        assert_eq!(
+            writes.len(),
+            1,
+            "expected one WRITE for the loop var: {:?}",
+            hl
+        );
+        let reads: Vec<&DocumentHighlight> = hl
+            .iter()
+            .filter(|h| h.kind == Some(DocumentHighlightKind::READ))
+            .collect();
+        assert_eq!(reads.len(), 1, "expected one READ in the body: {:?}", hl);
+        assert_eq!(reads[0].range.start.line, 1);
+    }
+
+    // ---- folding range helpers ----
+
+    /// Helper: parse a snippet and return its folding ranges. Mirrors
+    /// what the `folding_range` LSP method does, minus the async state
+    /// lookup. Ranges are returned in source order.
+    fn folding_ranges(src: &str) -> Vec<FoldingRange> {
+        let mut parser = RParser::new().unwrap();
+        let file = parser.parse("test.R", src).unwrap();
+        collect_folding_ranges(&file, src)
+    }
+
+    #[test]
+    fn folding_range_for_multiline_function_body() {
+        // A function whose body spans multiple lines must produce a
+        // folding range covering the body. The named function pattern
+        // `f <- function() { ... }` is modeled by the parser as an
+        // `Assign` with an `Expr::Function` value, so the recursive
+        // `collect_folding_from_expr` must find the function-literal
+        // span. The body starts on line 0 and ends on line 2.
+        let src = "f <- function() {\n  x <- 1L\n  x\n}\n";
+        let ranges = folding_ranges(src);
+        assert!(
+            !ranges.is_empty(),
+            "expected at least one range, got {:?}",
+            ranges
+        );
+        // At least one range must start at line 0 and end at line 3.
+        let covers_func = ranges.iter().any(|r| {
+            r.start_line == 0 && r.end_line == 3 && r.kind == Some(FoldingRangeKind::Region)
+        });
+        assert!(
+            covers_func,
+            "expected a range covering the function body (0..3), got {:?}",
+            ranges
+        );
+        // Every range must be `Region`-kinded and span at least 2 lines.
+        for r in &ranges {
+            assert_eq!(r.kind, Some(FoldingRangeKind::Region));
+            assert!(
+                r.end_line > r.start_line,
+                "expected multi-line range: {:?}",
+                r
+            );
+        }
+    }
+
+    #[test]
+    fn folding_range_for_if_else_block() {
+        // An `if`/`else` block whose body spans multiple lines must
+        // produce a folding range. The `if` statement spans lines 0..2.
+        let src = "if (x > 0) {\n  print(\"pos\")\n} else {\n  print(\"nonpos\")\n}\n";
+        let ranges = folding_ranges(src);
+        assert!(
+            !ranges.is_empty(),
+            "expected at least one range, got {:?}",
+            ranges
+        );
+        // The outer `if` must cover lines 0..4 (it ends on the final
+        // `}` of the `else` block).
+        let covers_if = ranges.iter().any(|r| r.start_line == 0 && r.end_line == 4);
+        assert!(
+            covers_if,
+            "expected a range covering the whole if/else (0..4), got {:?}",
+            ranges
+        );
+    }
+
+    #[test]
+    fn folding_range_for_for_loop() {
+        // A `for` loop with a multi-line body must fold from the loop
+        // header line down to the closing brace.
+        let src = "for (i in 1:3) {\n  print(i)\n  print(i * 2)\n}\n";
+        let ranges = folding_ranges(src);
+        assert!(
+            !ranges.is_empty(),
+            "expected at least one range, got {:?}",
+            ranges
+        );
+        let covers_for = ranges.iter().any(|r| r.start_line == 0 && r.end_line == 3);
+        assert!(
+            covers_for,
+            "expected a range covering the for loop (0..3), got {:?}",
+            ranges
+        );
+    }
+
+    #[test]
+    fn folding_range_empty_for_single_line_statement() {
+        // A single-line statement has no foldable region; the helper
+        // must return an empty list.
+        let src = "x <- 1L + 2L\ny <- x * 3L\n";
+        let ranges = folding_ranges(src);
+        assert!(
+            ranges.is_empty(),
+            "expected no folding ranges for single-line code, got {:?}",
+            ranges
+        );
+    }
+
+    #[test]
+    fn folding_range_nested_blocks_each_get_their_own_range() {
+        // A function body containing a nested multi-line `if` must
+        // yield (at least) two ranges: one for the outer function and
+        // one for the inner `if`. This guards the recursive walk.
+        let src = "f <- function(x) {\n  if (x > 0) {\n    print(x)\n  }\n}\n";
+        let ranges = folding_ranges(src);
+        // We expect at least 2 ranges: the outer function body and
+        // the inner if body.
+        assert!(
+            ranges.len() >= 2,
+            "expected at least 2 ranges (function + nested if), got {:?}",
+            ranges
+        );
+        // One range must cover the whole function (lines 0..4), and
+        // another must cover the inner if (lines 1..3).
+        let has_outer = ranges.iter().any(|r| r.start_line == 0 && r.end_line == 4);
+        let has_inner_if = ranges.iter().any(|r| r.start_line == 1 && r.end_line == 3);
+        assert!(has_outer, "missing outer function range: {:?}", ranges);
+        assert!(has_inner_if, "missing inner if range: {:?}", ranges);
     }
 }

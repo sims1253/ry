@@ -158,7 +158,9 @@ impl Config {
         let abs = if start.is_absolute() {
             start.to_path_buf()
         } else {
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join(start)
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(start)
         };
         let mut dir: &Path = if abs.is_file() {
             abs.parent().unwrap_or(Path::new("."))
@@ -361,10 +363,7 @@ r-version = "4.3"
     fn parse_unknown_field_returns_error() {
         // `deny_unknown_fields` should catch typos.
         let res: Result<Config, _> = toml::from_str("error-on-warning = true\nbogus = 5\n");
-        assert!(
-            res.is_err(),
-            "unknown fields must be rejected, got {res:?}"
-        );
+        assert!(res.is_err(), "unknown fields must be rejected, got {res:?}");
     }
 
     #[test]
@@ -503,7 +502,9 @@ r-version = "4.3"
         let child = parent.join("child");
         fs::create_dir_all(&child).unwrap();
 
-        let (path, cfg) = Config::discover(&child).unwrap().expect("should find ry.toml");
+        let (path, cfg) = Config::discover(&child)
+            .unwrap()
+            .expect("should find ry.toml");
         assert_eq!(path, grandparent.path().join(CONFIG_FILENAME));
         assert_eq!(cfg.error, vec!["RY001"]);
     }
@@ -517,7 +518,9 @@ r-version = "4.3"
         fs::create_dir_all(&mid).unwrap();
         fs::write(mid.join(CONFIG_FILENAME), "error = [\"MID\"]\n").unwrap();
 
-        let (path, cfg) = Config::discover(&mid).unwrap().expect("should find nearest ry.toml");
+        let (path, cfg) = Config::discover(&mid)
+            .unwrap()
+            .expect("should find nearest ry.toml");
         assert_eq!(path, mid.join(CONFIG_FILENAME));
         assert_eq!(cfg.error, vec!["MID"]);
     }
@@ -531,7 +534,9 @@ r-version = "4.3"
         let file = tmp.path().join("bad.R");
         fs::write(&file, "x <- 1\n").unwrap();
 
-        let (_path, cfg) = Config::discover(&file).unwrap().expect("should find via parent");
+        let (_path, cfg) = Config::discover(&file)
+            .unwrap()
+            .expect("should find via parent");
         assert!(cfg.exit_zero);
     }
 

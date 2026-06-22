@@ -16,7 +16,11 @@ pub struct SourceFile {
 #[derive(Debug, Clone)]
 pub enum Stmt {
     /// `target <- value`
-    Assign { target: Expr, value: Expr, span: Span },
+    Assign {
+        target: Expr,
+        value: Expr,
+        span: Span,
+    },
     /// Bare expression as a statement.
     Expr(Expr),
     /// `if (cond) then [else else_]`
@@ -34,7 +38,11 @@ pub enum Stmt {
         span: Span,
     },
     /// `while (cond) body` / `repeat body`
-    While { cond: Expr, body: Vec<Stmt>, span: Span },
+    While {
+        cond: Expr,
+        body: Vec<Stmt>,
+        span: Span,
+    },
     /// `function(params) body`
     FunctionDef {
         name: Option<String>,
@@ -68,17 +76,39 @@ pub enum Expr {
     /// `NA`, `NA_real_`, `NA_integer_`, `NA_character_`
     Na(RType, Span),
     /// `c(...)`
-    Call { func: Box<Expr>, args: Vec<Arg>, span: Span },
+    Call {
+        func: Box<Expr>,
+        args: Vec<Arg>,
+        span: Span,
+    },
     /// Identifier reference.
     Ident { name: String, span: Span },
     /// Binary operator: `a + b`, `a %>% b`, etc.
-    BinOp { op: BinOpKind, lhs: Box<Expr>, rhs: Box<Expr>, span: Span },
+    BinOp {
+        op: BinOpKind,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
+        span: Span,
+    },
     /// Unary op: `-x`, `!x`
-    UnaryOp { op: UnaryOpKind, expr: Box<Expr>, span: Span },
+    UnaryOp {
+        op: UnaryOpKind,
+        expr: Box<Expr>,
+        span: Span,
+    },
     /// Subset: `x[i]`, `x[[i]]`, `x$i`, `x[i, j]`
-    Index { base: Box<Expr>, kind: IndexKind, args: Vec<Arg>, span: Span },
+    Index {
+        base: Box<Expr>,
+        kind: IndexKind,
+        args: Vec<Arg>,
+        span: Span,
+    },
     /// Function literal (anonymous), used as a value.
-    Function { params: Vec<Param>, body: Vec<Stmt>, span: Span },
+    Function {
+        params: Vec<Param>,
+        body: Vec<Stmt>,
+        span: Span,
+    },
     /// Conditional expression: `if (cond) expr1 else expr2`. Used in
     /// expression position (e.g. `x <- if (cond) 1L else 2L`). The
     /// result type is the join of the two branches. `else_` is `None`
@@ -103,13 +133,29 @@ pub struct Arg {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinOpKind {
-    Add, Sub, Mul, Div, Pow, Mod, IDiv,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Pow,
+    Mod,
+    IDiv,
     /// `:` sequence operator (`from:to`)
     Colon,
-    Lt, Le, Gt, Ge, Eq, Ne,
-    And, AndAnd, Or, OrOr,
-    NotIn, In,
-    Assign, SuperAssign,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Eq,
+    Ne,
+    And,
+    AndAnd,
+    Or,
+    OrOr,
+    NotIn,
+    In,
+    Assign,
+    SuperAssign,
     /// `|>` (base R 4.1+) and `%>%` (magrittr). Both desugar the same
     /// way at v1: `lhs |> rhs` calls `rhs` with `lhs` prepended to its
     /// positional arguments (or substituted into the placeholder).
@@ -126,7 +172,8 @@ pub enum BinOpKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOpKind {
-    Neg, Not,
+    Neg,
+    Not,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

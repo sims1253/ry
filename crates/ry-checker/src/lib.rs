@@ -8,9 +8,9 @@
 //! function definitions; subsequent passes refine each function's
 //! inferred return type until stable (or the depth cap is hit).
 
-pub mod rules;
 pub mod format;
 pub mod project;
+pub mod rules;
 
 // Re-export `Project` at the crate root so callers (the CLI, integration
 // tests) can write `ry_checker::Project` rather than
@@ -106,9 +106,7 @@ fn split_s3_method_name(name: &str) -> Option<(&'static str, String)> {
                     continue;
                 }
                 // Prefer the longest matching prefix (more specific).
-                let is_better = best
-                    .as_ref()
-                    .is_none_or(|(g, _)| g.len() < generic.len());
+                let is_better = best.as_ref().is_none_or(|(g, _)| g.len() < generic.len());
                 if is_better {
                     best = Some((generic, class.to_string()));
                 }
@@ -257,7 +255,13 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
-    pub fn new(severity: Severity, span: Span, path: &str, code: &'static str, message: impl Into<String>) -> Self {
+    pub fn new(
+        severity: Severity,
+        span: Span,
+        path: &str,
+        code: &'static str,
+        message: impl Into<String>,
+    ) -> Self {
         Self {
             severity,
             span,
@@ -466,7 +470,10 @@ pub fn filter_suppressed(diags: Vec<Diagnostic>, src: &str) -> Vec<Diagnostic> {
         return Vec::new();
     }
     let supps = parse_suppressions(src);
-    diags.into_iter().filter(|d| !is_suppressed(d, &supps)).collect()
+    diags
+        .into_iter()
+        .filter(|d| !is_suppressed(d, &supps))
+        .collect()
 }
 
 /// Severity overrides that a caller (typically the CLI) wants to apply.
@@ -760,13 +767,8 @@ impl Checker {
     }
 
     fn emit(&mut self, severity: Severity, span: Span, code: &'static str, msg: impl Into<String>) {
-        self.diagnostics.push(Diagnostic::new(
-            severity,
-            span,
-            &self.path,
-            code,
-            msg,
-        ));
+        self.diagnostics
+            .push(Diagnostic::new(severity, span, &self.path, code, msg));
     }
 
     /// Pass 1: walk top-level (and only top-level) statements, collecting
@@ -803,8 +805,7 @@ impl Checker {
                     // finds it). We record the body once and share the
                     // return slot between both entries.
                     if let Some((generic, class)) = split_s3_method_name(name) {
-                        let slot =
-                            self.record_fn(name.clone(), params, body.clone());
+                        let slot = self.record_fn(name.clone(), params, body.clone());
                         self.fn_table
                             .s3_methods
                             .insert((generic.to_string(), class), slot);
@@ -878,8 +879,14 @@ impl Checker {
     fn collect_nested_fns_stmt(&mut self, outer: &str, s: &Stmt) {
         match s {
             Stmt::Assign { target, value, .. } => {
-                if let (Expr::Ident { name: inner, .. }, Expr::Function { params, body: inner_body, .. }) =
-                    (target, value)
+                if let (
+                    Expr::Ident { name: inner, .. },
+                    Expr::Function {
+                        params,
+                        body: inner_body,
+                        ..
+                    },
+                ) = (target, value)
                 {
                     let mangled = format!("{}${}", outer, inner);
                     let next_outer = mangled.clone();
@@ -1047,7 +1054,9 @@ impl Checker {
                     scope.insert(name.clone(), vt);
                 }
             }
-            Stmt::FunctionDef { name, params, body, .. } => {
+            Stmt::FunctionDef {
+                name, params, body, ..
+            } => {
                 // A named function def establishes a binding whose type
                 // is a `Mode::Function` value (with `fn_sig` when we can
                 // infer it). This is what makes
@@ -1057,7 +1066,9 @@ impl Checker {
                     scope.insert(n.clone(), vt);
                 }
             }
-            Stmt::If { cond, then, else_, .. } => {
+            Stmt::If {
+                cond, then, else_, ..
+            } => {
                 let _ = cond;
                 for s in then {
                     self.collect_returns_and_simulate_at_depth(s, scope, returns, depth);
@@ -1098,7 +1109,11 @@ impl Checker {
         if let Expr::Call { func, args, .. } = e {
             if let Expr::Ident { name, .. } = func.as_ref() {
                 if name == "return" || name == "invisible" {
-                    return Some(args.first().map(|a| self.infer_pure_at_depth(&a.value, scope, depth)).unwrap_or(RType::new(Mode::Null, Length::Zero, false)));
+                    return Some(
+                        args.first()
+                            .map(|a| self.infer_pure_at_depth(&a.value, scope, depth))
+                            .unwrap_or(RType::new(Mode::Null, Length::Zero, false)),
+                    );
                 }
             }
         }
@@ -1138,8 +1153,7 @@ impl Checker {
                 // fall through to `infer_binop_pure`'s lattice-based
                 // `seq` (Unknown length).
                 if matches!(op, BinOpKind::Colon) {
-                    if let (Some(a), Some(b)) =
-                        (extract_literal_int(lhs), extract_literal_int(rhs))
+                    if let (Some(a), Some(b)) = (extract_literal_int(lhs), extract_literal_int(rhs))
                     {
                         let len = (b - a).unsigned_abs() as usize;
                         let len = len.saturating_add(1);
@@ -1194,16 +1208,20 @@ impl Checker {
                         return self.return_slots.get(f.return_slot);
                     }
                     if name == "c" {
-                        let arg_types: Vec<RType> =
-                            args.iter().map(|a| self.infer_pure_at_depth(&a.value, scope, depth)).collect();
+                        let arg_types: Vec<RType> = args
+                            .iter()
+                            .map(|a| self.infer_pure_at_depth(&a.value, scope, depth))
+                            .collect();
                         return self.infer_c_pure(&arg_types);
                     }
                     if name == "list" || name == "data.frame" {
                         // Pass 2 (pure) mirrors pass 3 minus diagnostics.
                         // We rebuild the schema so the refined return
                         // type is correct for column access in callers.
-                        let arg_types: Vec<RType> =
-                            args.iter().map(|a| self.infer_pure_at_depth(&a.value, scope, depth)).collect();
+                        let arg_types: Vec<RType> = args
+                            .iter()
+                            .map(|a| self.infer_pure_at_depth(&a.value, scope, depth))
+                            .collect();
                         let length = Length::Known(arg_types.len());
                         let base = if name == "data.frame" {
                             RType::new(Mode::List, length, false)
@@ -1221,8 +1239,10 @@ impl Checker {
                     // pass 2 too, so the refined return type of a
                     // user-fn that uses `lapply` etc. is correct.
                     if let Some(rt) = {
-                        let ho_args: Vec<RType> =
-                            args.iter().map(|a| self.infer_pure_at_depth(&a.value, scope, depth)).collect();
+                        let ho_args: Vec<RType> = args
+                            .iter()
+                            .map(|a| self.infer_pure_at_depth(&a.value, scope, depth))
+                            .collect();
                         self.infer_higher_order_call(name, args, &ho_args, scope)
                     } {
                         return rt;
@@ -1238,24 +1258,32 @@ impl Checker {
                     // lets a function whose body is `rep(1:3, 2)` get a
                     // precise `integer<6>` return type.
                     if name == "rep" {
-                        let ho_args: Vec<RType> =
-                            args.iter().map(|a| self.infer_pure_at_depth(&a.value, scope, depth)).collect();
+                        let ho_args: Vec<RType> = args
+                            .iter()
+                            .map(|a| self.infer_pure_at_depth(&a.value, scope, depth))
+                            .collect();
                         return self.infer_rep(args, &ho_args, Span::default());
                     }
                     if name == "seq" || name == "seq.int" {
-                        let ho_args: Vec<RType> =
-                            args.iter().map(|a| self.infer_pure_at_depth(&a.value, scope, depth)).collect();
+                        let ho_args: Vec<RType> = args
+                            .iter()
+                            .map(|a| self.infer_pure_at_depth(&a.value, scope, depth))
+                            .collect();
                         return self.infer_seq(args, &ho_args, Span::default());
                     }
                     if let Some(sig) = self.typeshed.functions.get(name) {
-                        let arg_types: Vec<RType> =
-                            args.iter().map(|a| self.infer_pure_at_depth(&a.value, scope, depth)).collect();
+                        let arg_types: Vec<RType> = args
+                            .iter()
+                            .map(|a| self.infer_pure_at_depth(&a.value, scope, depth))
+                            .collect();
                         return self.apply_sig_pure(sig, &arg_types);
                     }
                 }
                 RType::UNKNOWN
             }
-            Expr::Index { base, kind, args, .. } => {
+            Expr::Index {
+                base, kind, args, ..
+            } => {
                 let bt = self.infer_pure_at_depth(base, scope, depth);
                 match kind {
                     IndexKind::Single => bt,
@@ -1275,9 +1303,7 @@ impl Checker {
                     IndexKind::Double => {
                         // `df[["col"]]` or `x[[i]]`: string literal or
                         // integer literal index.
-                        if let Some(Expr::String(name, _)) =
-                            args.first().map(|a| &a.value)
-                        {
+                        if let Some(Expr::String(name, _)) = args.first().map(|a| &a.value) {
                             if let Some(schema) = bt.columns {
                                 if let Some(t) = schema.get(name) {
                                     return t;
@@ -1314,7 +1340,9 @@ impl Checker {
                 // `Function` value (no `fn_sig`).
                 self.function_value_from_literal(params, body, scope, depth)
             }
-            Expr::If { cond, then, else_, .. } => {
+            Expr::If {
+                cond, then, else_, ..
+            } => {
                 // Pass 2 (pure): infer both branches without emitting
                 // diagnostics, then join. Mirrors pass 3's
                 // `infer_if_expr` minus the diagnostic emission.
@@ -1405,12 +1433,7 @@ impl Checker {
         // are walked without splitting the scope (v1 approximation).
         let mut returns: Vec<RType> = Vec::new();
         for s in body {
-            self.collect_returns_and_simulate_at_depth(
-                s,
-                &mut scope,
-                &mut returns,
-                depth + 1,
-            );
+            self.collect_returns_and_simulate_at_depth(s, &mut scope, &mut returns, depth + 1);
         }
         // Trailing expression of a braced body is the implicit return.
         // A trailing `Stmt::FunctionDef` (a bare function literal in
@@ -1447,12 +1470,7 @@ impl Checker {
     /// an expression-like form, or the trailing expression is a
     /// `return(...)` call (which `collect_returns_stmt_at_depth`
     /// already counted).
-    fn trailing_return_type(
-        &self,
-        body: &[Stmt],
-        scope: &Scope,
-        depth: usize,
-    ) -> Option<RType> {
+    fn trailing_return_type(&self, body: &[Stmt], scope: &Scope, depth: usize) -> Option<RType> {
         let last = body.last()?;
         match last {
             Stmt::Expr(e) => {
@@ -1475,14 +1493,21 @@ impl Checker {
     fn infer_binop_pure(&self, op: BinOpKind, lt: RType, rt: RType) -> RType {
         match op {
             BinOpKind::Colon => lt.seq(rt),
-            BinOpKind::Add | BinOpKind::Sub | BinOpKind::Mul | BinOpKind::Div
-            | BinOpKind::Pow | BinOpKind::Mod | BinOpKind::IDiv => {
-                lt.arith(rt).unwrap_or(RType::UNKNOWN)
-            }
-            BinOpKind::Lt | BinOpKind::Le | BinOpKind::Gt | BinOpKind::Ge
-            | BinOpKind::Eq | BinOpKind::Ne | BinOpKind::In | BinOpKind::NotIn => {
-                lt.compare(rt).unwrap_or(RType::UNKNOWN)
-            }
+            BinOpKind::Add
+            | BinOpKind::Sub
+            | BinOpKind::Mul
+            | BinOpKind::Div
+            | BinOpKind::Pow
+            | BinOpKind::Mod
+            | BinOpKind::IDiv => lt.arith(rt).unwrap_or(RType::UNKNOWN),
+            BinOpKind::Lt
+            | BinOpKind::Le
+            | BinOpKind::Gt
+            | BinOpKind::Ge
+            | BinOpKind::Eq
+            | BinOpKind::Ne
+            | BinOpKind::In
+            | BinOpKind::NotIn => lt.compare(rt).unwrap_or(RType::UNKNOWN),
             BinOpKind::And | BinOpKind::AndAnd | BinOpKind::Or | BinOpKind::OrOr => {
                 let length = if matches!(op, BinOpKind::AndAnd | BinOpKind::OrOr) {
                     Length::One
@@ -1493,7 +1518,9 @@ impl Checker {
             }
             BinOpKind::Assign | BinOpKind::SuperAssign => rt,
             BinOpKind::PipeForward
-            | BinOpKind::PipeTee | BinOpKind::PipeAssign | BinOpKind::PipeBind => RType::UNKNOWN,
+            | BinOpKind::PipeTee
+            | BinOpKind::PipeAssign
+            | BinOpKind::PipeBind => RType::UNKNOWN,
         }
     }
 
@@ -1566,8 +1593,14 @@ impl Checker {
                     "1" => Length::One,
                     "unknown" => Length::Unknown,
                     "arg0" => first.length,
-                    "arg1" => arg_types.get(1).map(|t| t.length).unwrap_or(Length::Unknown),
-                    "arg2" => arg_types.get(2).map(|t| t.length).unwrap_or(Length::Unknown),
+                    "arg1" => arg_types
+                        .get(1)
+                        .map(|t| t.length)
+                        .unwrap_or(Length::Unknown),
+                    "arg2" => arg_types
+                        .get(2)
+                        .map(|t| t.length)
+                        .unwrap_or(Length::Unknown),
                     "longest_arg" => longest_arg_length(arg_types),
                     "n_args" => Length::Known(arg_types.len()),
                     "x_times" => rep_length(arg_types),
@@ -1588,7 +1621,9 @@ impl Checker {
             Stmt::Expr(e) => {
                 self.infer(e, scope);
             }
-            Stmt::If { cond, then, else_, .. } => {
+            Stmt::If {
+                cond, then, else_, ..
+            } => {
                 let ct = self.infer(cond, scope);
                 if ct.invalid_condition() {
                     self.emit(
@@ -1613,7 +1648,10 @@ impl Checker {
                         Severity::Warning,
                         span_of(cond),
                         "RY002",
-                        format!("`if` condition has length {:?}, will only use first element", ct.length),
+                        format!(
+                            "`if` condition has length {:?}, will only use first element",
+                            ct.length
+                        ),
                     );
                 }
                 // Flow-sensitive type refinement: if the condition is a
@@ -1632,7 +1670,9 @@ impl Checker {
                     }
                 }
             }
-            Stmt::For { name, iter, body, .. } => {
+            Stmt::For {
+                name, iter, body, ..
+            } => {
                 let iter_t = self.infer(iter, scope);
                 let mut inner = scope.clone();
                 // The loop variable gets the element type of the iterator:
@@ -1658,7 +1698,9 @@ impl Checker {
                     self.check_stmt(s, scope);
                 }
             }
-            Stmt::FunctionDef { name, params, body, .. } => {
+            Stmt::FunctionDef {
+                name, params, body, ..
+            } => {
                 // Install the function in the surrounding scope. We
                 // build an inferred `fn_sig` (when possible) so a bare
                 // named function def in statement position behaves the
@@ -1811,7 +1853,8 @@ impl Checker {
                 // `infer_binop`. Non-literal operands fall through to
                 // `infer_binop`'s lattice-based `seq` (Unknown length).
                 if matches!(*op, BinOpKind::Colon) {
-                    if let (Some(a), Some(b)) = (extract_literal_int(lhs), extract_literal_int(rhs)) {
+                    if let (Some(a), Some(b)) = (extract_literal_int(lhs), extract_literal_int(rhs))
+                    {
                         let len = (b - a).unsigned_abs() as usize;
                         let len = len.saturating_add(1);
                         if len > 0 {
@@ -1833,11 +1876,20 @@ impl Checker {
                 // innermost operand, so RY021 doesn't fire on the
                 // intermediate `!` applied to a list/function.
                 if matches!(op, UnaryOpKind::Not) {
-                    if let Expr::UnaryOp { op: UnaryOpKind::Not, .. } = expr.as_ref() {
+                    if let Expr::UnaryOp {
+                        op: UnaryOpKind::Not,
+                        ..
+                    } = expr.as_ref()
+                    {
                         // Strip all consecutive `!` operators to find
                         // the innermost real expression.
                         let mut innermost = expr.as_ref();
-                        while let Expr::UnaryOp { op: UnaryOpKind::Not, expr: next, .. } = innermost {
+                        while let Expr::UnaryOp {
+                            op: UnaryOpKind::Not,
+                            expr: next,
+                            ..
+                        } = innermost
+                        {
                             innermost = next.as_ref();
                         }
                         let _ = self.infer(innermost, scope);
@@ -1870,10 +1922,13 @@ impl Checker {
                     }
                 }
             }
-            Expr::Call { func, args, span } => {
-                self.infer_call(func, args, scope, *span)
-            }
-            Expr::Index { base, kind, args, span } => {
+            Expr::Call { func, args, span } => self.infer_call(func, args, scope, *span),
+            Expr::Index {
+                base,
+                kind,
+                args,
+                span,
+            } => {
                 let bt = self.infer(base, scope);
                 self.infer_index(bt, *kind, args, *span, scope)
             }
@@ -1885,9 +1940,12 @@ impl Checker {
                 // resolves the same way as one inside a return slot.
                 self.function_value_from_literal(params, body, scope, 0)
             }
-            Expr::If { cond, then, else_, span } => {
-                self.infer_if_expr(cond, then, else_, *span, scope)
-            }
+            Expr::If {
+                cond,
+                then,
+                else_,
+                span,
+            } => self.infer_if_expr(cond, then, else_, *span, scope),
             Expr::Unknown(_) => RType::UNKNOWN,
         }
     }
@@ -1904,8 +1962,14 @@ impl Checker {
         }
         let is_compare = matches!(
             op,
-            BinOpKind::Lt | BinOpKind::Le | BinOpKind::Gt | BinOpKind::Ge
-                | BinOpKind::Eq | BinOpKind::Ne | BinOpKind::In | BinOpKind::NotIn
+            BinOpKind::Lt
+                | BinOpKind::Le
+                | BinOpKind::Gt
+                | BinOpKind::Ge
+                | BinOpKind::Eq
+                | BinOpKind::Ne
+                | BinOpKind::In
+                | BinOpKind::NotIn
         );
         let is_logic = matches!(
             op,
@@ -1951,10 +2015,7 @@ impl Checker {
                     Severity::Error,
                     span,
                     "RY031",
-                    format!(
-                        "logical op applied to `{}` and `{}`",
-                        lt.mode, rt.mode
-                    ),
+                    format!("logical op applied to `{}` and `{}`", lt.mode, rt.mode),
                 );
                 return RType::UNKNOWN;
             }
@@ -1995,7 +2056,10 @@ impl Checker {
             Severity::Error,
             span,
             "RY040",
-            format!("cannot apply arithmetic op to `{}` and `{}`", lt.mode, rt.mode),
+            format!(
+                "cannot apply arithmetic op to `{}` and `{}`",
+                lt.mode, rt.mode
+            ),
         );
         RType::UNKNOWN
     }
@@ -2028,9 +2092,9 @@ impl Checker {
             // `df %>% .$col`, `df %>% .[i]`, `df %>% .[[i]]`. The `.` at
             // the base of the index resolves to the piped LHS value, so
             // we infer the index against `lhs_t` directly.
-            Expr::Index { base, kind, args, .. } if is_dot_pronoun(base) => {
-                self.infer_index(lhs_t, *kind, args, span, scope)
-            }
+            Expr::Index {
+                base, kind, args, ..
+            } if is_dot_pronoun(base) => self.infer_index(lhs_t, *kind, args, span, scope),
             // Bare magrittr pronoun: `x %>% .` returns the LHS value
             // itself (the `.` refers to the LHS). This is distinct from
             // the general `Ident` arm below, which would treat `.` as a
@@ -2131,7 +2195,10 @@ impl Checker {
                 Severity::Warning,
                 span_of(cond),
                 "RY002",
-                format!("`if` condition has length {:?}, will only use first element", ct.length),
+                format!(
+                    "`if` condition has length {:?}, will only use first element",
+                    ct.length
+                ),
             );
         }
         // Flow-sensitive type narrowing for the expression form too.
@@ -2156,12 +2223,7 @@ impl Checker {
     /// The result type is the join of all alternative types (since we
     /// can't know which branch will execute at runtime). Each
     /// alternative is also walked for diagnostics.
-    fn infer_switch_call(
-        &mut self,
-        args: &[Arg],
-        scope: &mut Scope,
-        span: Span,
-    ) -> RType {
+    fn infer_switch_call(&mut self, args: &[Arg], scope: &mut Scope, span: Span) -> RType {
         // The first argument is the selector; infer it for diagnostics.
         if let Some(first) = args.first() {
             let _ = self.infer(&first.value, scope);
@@ -2191,12 +2253,7 @@ impl Checker {
     /// `callback_return_type` with the condition object as the
     /// callback's argument (opaque, since we don't model the
     /// condition object).
-    fn infer_trycatch_call(
-        &mut self,
-        args: &[Arg],
-        scope: &mut Scope,
-        span: Span,
-    ) -> RType {
+    fn infer_trycatch_call(&mut self, args: &[Arg], scope: &mut Scope, span: Span) -> RType {
         let mut types: Vec<RType> = Vec::new();
         for (i, a) in args.iter().enumerate() {
             if i == 0 {
@@ -2205,11 +2262,7 @@ impl Checker {
             } else if a.name.is_some() {
                 // Named handler: `error = function(e) ...`. Infer the
                 // handler function's return type.
-                if let Some(rt) = self.callback_return_type(
-                    &a.value,
-                    &[RType::UNKNOWN],
-                    scope,
-                ) {
+                if let Some(rt) = self.callback_return_type(&a.value, &[RType::UNKNOWN], scope) {
                     types.push(rt);
                 } else {
                     // Couldn't infer handler return: infer for
@@ -2381,10 +2434,7 @@ impl Checker {
                     Severity::Error,
                     span,
                     "RY070",
-                    format!(
-                        "`{}` is `{}`, not a function; cannot call it",
-                        name, t.mode
-                    ),
+                    format!("`{}` is `{}`, not a function; cannot call it", name, t.mode),
                 );
                 return RType::UNKNOWN;
             }
@@ -2498,12 +2548,7 @@ impl Checker {
     /// `[("a", integer<1>)]` and whose class is `["foo"]`. This lets
     /// `$a` resolve correctly on user-defined classes built on top of
     /// a list-shaped payload.
-    fn infer_structure_call(
-        &mut self,
-        args: &[Arg],
-        scope: &mut Scope,
-        span: Span,
-    ) -> RType {
+    fn infer_structure_call(&mut self, args: &[Arg], scope: &mut Scope, span: Span) -> RType {
         // The base value is the first positional argument (or the
         // `x = ...` named argument). The first such positional-or-`x`
         // arg wins; later ones are inferred for diagnostics only.
@@ -2531,8 +2576,7 @@ impl Checker {
                 ClassLiteral::Multi(names) => {
                     let interned: Vec<&'static str> =
                         names.iter().map(|n| intern_class_name(n)).collect();
-                    return base_type
-                        .with_class(ClassVector::from_static_slice(&interned));
+                    return base_type.with_class(ClassVector::from_static_slice(&interned));
                 }
                 ClassLiteral::Unknown => {
                     // Class is dynamic; keep base type but mark class as
@@ -2618,12 +2662,7 @@ impl Checker {
     /// augmented scope so column references resolve; the result type is
     /// the data frame's own type (column schema is preserved since the
     /// column set is unchanged in v1's model).
-    fn infer_nse_subset(
-        &mut self,
-        args: &[Arg],
-        df_type: RType,
-        augmented: &Scope,
-    ) -> RType {
+    fn infer_nse_subset(&mut self, args: &[Arg], df_type: RType, augmented: &Scope) -> RType {
         // Args at indices 1 and 2 are the subset and select expressions.
         // Any later positional or named args (e.g. `drop = ...`) are
         // walked for diagnostics against the augmented scope.
@@ -2643,12 +2682,7 @@ impl Checker {
     /// `with(df, expr)` evaluates `expr` in the data frame's scope and
     /// returns whatever `expr` evaluates to. The result type is the
     /// inferred type of the expression.
-    fn infer_nse_with(
-        &mut self,
-        args: &[Arg],
-        df_type: RType,
-        augmented: &Scope,
-    ) -> RType {
+    fn infer_nse_with(&mut self, args: &[Arg], df_type: RType, augmented: &Scope) -> RType {
         let _ = df_type;
         let mut local = augmented.clone();
         // The second positional arg is the expression; any further args
@@ -2671,12 +2705,7 @@ impl Checker {
     /// (possibly mutated) data frame. The result type is the data
     /// frame's own type; column additions from assignments inside `expr`
     /// are not modeled at v1.
-    fn infer_nse_within(
-        &mut self,
-        args: &[Arg],
-        df_type: RType,
-        augmented: &Scope,
-    ) -> RType {
+    fn infer_nse_within(&mut self, args: &[Arg], df_type: RType, augmented: &Scope) -> RType {
         let mut local = augmented.clone();
         for (i, a) in args.iter().enumerate() {
             if i == 0 {
@@ -2694,12 +2723,7 @@ impl Checker {
     /// are not folded into the schema at v1 (the existing schema is
     /// preserved unchanged, matching the conservative stance documented
     /// for `within`).
-    fn infer_nse_transform(
-        &mut self,
-        args: &[Arg],
-        df_type: RType,
-        augmented: &Scope,
-    ) -> RType {
+    fn infer_nse_transform(&mut self, args: &[Arg], df_type: RType, augmented: &Scope) -> RType {
         let mut local = augmented.clone();
         for (i, a) in args.iter().enumerate() {
             if i == 0 {
@@ -2717,12 +2741,7 @@ impl Checker {
     /// then returns `df_type`. The first positional argument is the
     /// data frame and is skipped (it was already inferred by
     /// `infer_nse_call`).
-    fn infer_nse_dplyr_simple(
-        &mut self,
-        args: &[Arg],
-        df_type: RType,
-        augmented: &Scope,
-    ) -> RType {
+    fn infer_nse_dplyr_simple(&mut self, args: &[Arg], df_type: RType, augmented: &Scope) -> RType {
         let mut local = augmented.clone();
         for (i, a) in args.iter().enumerate() {
             if i == 0 {
@@ -2739,12 +2758,7 @@ impl Checker {
     /// result type is the data frame's own type; for v1 we preserve the
     /// existing schema (we do not fold the new column types in), mirroring
     /// the conservative approach used for `transform`.
-    fn infer_nse_dplyr_mutate(
-        &mut self,
-        args: &[Arg],
-        df_type: RType,
-        augmented: &Scope,
-    ) -> RType {
+    fn infer_nse_dplyr_mutate(&mut self, args: &[Arg], df_type: RType, augmented: &Scope) -> RType {
         let mut local = augmented.clone();
         for (i, a) in args.iter().enumerate() {
             if i == 0 {
@@ -2849,9 +2863,7 @@ impl Checker {
             HigherOrderFunc::Lapply => self.ho_lapply(args, arg_types, scope),
             HigherOrderFunc::Sapply => self.ho_sapply(args, arg_types, scope),
             HigherOrderFunc::Vapply => self.ho_vapply(args, arg_types, scope),
-            HigherOrderFunc::Map | HigherOrderFunc::Mapply => {
-                self.ho_map(args, arg_types, scope)
-            }
+            HigherOrderFunc::Map | HigherOrderFunc::Mapply => self.ho_map(args, arg_types, scope),
             HigherOrderFunc::Rapply => self.ho_rapply(args, arg_types, scope),
             HigherOrderFunc::Reduce => self.ho_reduce(args, arg_types, scope),
             HigherOrderFunc::Filter => self.ho_filter(args, arg_types, scope),
@@ -2882,12 +2894,7 @@ impl Checker {
     /// `lapply(X, FUN, ...)`: applies `FUN` to each element of `X`,
     /// returning a list of the same length. The element type of `X`
     /// becomes the callback's first argument.
-    fn ho_lapply(
-        &self,
-        args: &[Arg],
-        arg_types: &[RType],
-        scope: &Scope,
-    ) -> RType {
+    fn ho_lapply(&self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
         let x_type = arg_types.first().copied().unwrap_or(RType::UNKNOWN);
         let elem = x_type.element();
         let cb = Self::extract_callback(args, &["FUN"], 1);
@@ -2904,7 +2911,7 @@ impl Checker {
             let n = match length {
                 Length::Known(n) if n > 0 => n,
                 _ => 1, // Unknown or zero length: still create one
-                       // entry so the element type is discoverable.
+                        // entry so the element type is discoverable.
             };
             let schema = ColumnSchema {
                 columns: (0..n)
@@ -2922,18 +2929,16 @@ impl Checker {
     /// callback returns length-`k` vectors, the result is a matrix. We
     /// model the common case: callback returns atomic length-1, so the
     /// result is a vector of the callback's return mode with X's length.
-    fn ho_sapply(
-        &self,
-        args: &[Arg],
-        arg_types: &[RType],
-        scope: &Scope,
-    ) -> RType {
+    fn ho_sapply(&self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
         let x_type = arg_types.first().copied().unwrap_or(RType::UNKNOWN);
         let elem = x_type.element();
         let cb = Self::extract_callback(args, &["FUN"], 1);
         let cb_ret = cb.and_then(|c| self.callback_return_type(c, &[elem], scope));
         match cb_ret {
-            Some(t) if matches!(t.length, Length::One) && !matches!(t.mode, Mode::List | Mode::Opaque) => {
+            Some(t)
+                if matches!(t.length, Length::One)
+                    && !matches!(t.mode, Mode::List | Mode::Opaque) =>
+            {
                 // Simplification to a vector of the callback's mode.
                 RType::new(t.mode, x_type.length, t.na.0)
             }
@@ -2952,12 +2957,7 @@ impl Checker {
     /// both are known (R stacks the callback outputs column-wise), but
     /// for v1 we approximate as FUN.VALUE's mode with X's length when
     /// FUN.VALUE is length-1, else opaque length.
-    fn ho_vapply(
-        &self,
-        args: &[Arg],
-        arg_types: &[RType],
-        scope: &Scope,
-    ) -> RType {
+    fn ho_vapply(&self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
         let x_type = arg_types.first().copied().unwrap_or(RType::UNKNOWN);
         let fun_value = arg_types.get(2).copied().unwrap_or(RType::UNKNOWN);
         // Walk the callback for type information (its body may reference
@@ -2976,20 +2976,11 @@ impl Checker {
     /// `Map(f, ...)`: applies `f` to corresponding elements of all
     /// arguments, returning a list. Each argument contributes its
     /// element type as a callback argument.
-    fn ho_map(
-        &self,
-        args: &[Arg],
-        arg_types: &[RType],
-        scope: &Scope,
-    ) -> RType {
+    fn ho_map(&self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
         // First positional arg is `f`; subsequent positional args are
         // the vectors to map over. Named `f = ...` is also recognized.
         let cb = Self::extract_callback(args, &["f"], 0);
-        let elem_types: Vec<RType> = arg_types
-            .iter()
-            .skip(1)
-            .map(|t| t.element())
-            .collect();
+        let elem_types: Vec<RType> = arg_types.iter().skip(1).map(|t| t.element()).collect();
         let cb_ret = cb.and_then(|c| self.callback_return_type(c, &elem_types, scope));
         // The result list length is the length of the shortest input
         // (R's recycling for Map). We approximate as the first data
@@ -3002,12 +2993,7 @@ impl Checker {
     /// `rapply(L, f, ...)`: recursively applies `f` to each leaf of
     /// list `L`. The result is a list of the same shape. We model only
     /// the top-level shape: result is a list with L's length.
-    fn ho_rapply(
-        &self,
-        args: &[Arg],
-        arg_types: &[RType],
-        scope: &Scope,
-    ) -> RType {
+    fn ho_rapply(&self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
         let l_type = arg_types.first().copied().unwrap_or(RType::UNKNOWN);
         // Walk the callback for type information.
         if let Some(cb) = Self::extract_callback(args, &["f", "FUN"], 1) {
@@ -3019,12 +3005,7 @@ impl Checker {
     /// `Reduce(f, x, ...)`: left-fold. The result type is the element
     /// type of `x` (the accumulator starts as `x[[1]]`). For an empty
     /// `x` with no `init`, R errors; we stay opaque in that case.
-    fn ho_reduce(
-        &self,
-        args: &[Arg],
-        arg_types: &[RType],
-        scope: &Scope,
-    ) -> RType {
+    fn ho_reduce(&self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
         let x_type = arg_types.get(1).copied().unwrap_or(RType::UNKNOWN);
         // Walk the callback for type information. The callback takes two
         // args: the accumulator and the next element, both of x's
@@ -3039,12 +3020,7 @@ impl Checker {
     /// `Filter(f, x)`: returns the subset of `x` where `f` returns
     /// TRUE. The result type is `x`'s type (same mode, possibly shorter
     /// length which we cannot know statically).
-    fn ho_filter(
-        &self,
-        args: &[Arg],
-        arg_types: &[RType],
-        scope: &Scope,
-    ) -> RType {
+    fn ho_filter(&self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
         let x_type = arg_types.get(1).copied().unwrap_or(RType::UNKNOWN);
         if let Some(cb) = Self::extract_callback(args, &["f", "FUN"], 0) {
             let _ = self.callback_return_type(cb, &[x_type.element()], scope);
@@ -3054,12 +3030,7 @@ impl Checker {
 
     /// `Find(f, x)`: returns the first element of `x` where `f` returns
     /// TRUE, or NULL. The result type is the element type (or NULL).
-    fn ho_find(
-        &self,
-        args: &[Arg],
-        arg_types: &[RType],
-        scope: &Scope,
-    ) -> RType {
+    fn ho_find(&self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
         let x_type = arg_types.get(1).copied().unwrap_or(RType::UNKNOWN);
         if let Some(cb) = Self::extract_callback(args, &["f", "FUN"], 0) {
             let _ = self.callback_return_type(cb, &[x_type.element()], scope);
@@ -3070,12 +3041,7 @@ impl Checker {
     /// `Position(f, x)`: returns the integer index of the first element
     /// where `f` returns TRUE, or NA_integer_. The result is always
     /// integer length-1.
-    fn ho_position(
-        &self,
-        args: &[Arg],
-        arg_types: &[RType],
-        scope: &Scope,
-    ) -> RType {
+    fn ho_position(&self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
         let x_type = arg_types.get(1).copied().unwrap_or(RType::UNKNOWN);
         if let Some(cb) = Self::extract_callback(args, &["f", "FUN"], 0) {
             let _ = self.callback_return_type(cb, &[x_type.element()], scope);
@@ -3086,12 +3052,7 @@ impl Checker {
     /// `do.call(fun, args, ...)`: invokes `fun` with the arguments in
     /// `args` (a list). We model only the case where `fun` is a named
     /// function (user-fn or typeshed). The result is `fun`'s return type.
-    fn ho_do_call(
-        &self,
-        args: &[Arg],
-        arg_types: &[RType],
-        _scope: &Scope,
-    ) -> RType {
+    fn ho_do_call(&self, args: &[Arg], arg_types: &[RType], _scope: &Scope) -> RType {
         let fun_expr = args.first().map(|a| &a.value);
         let _ = arg_types;
         match fun_expr {
@@ -3251,9 +3212,7 @@ impl Checker {
                     arg_types.iter().skip(1).map(|t| t.element()).collect();
                 (0, &["f"][..], elem_types)
             }
-            HigherOrderFunc::Rapply => {
-                (1, &["f", "FUN"][..], vec![RType::UNKNOWN])
-            }
+            HigherOrderFunc::Rapply => (1, &["f", "FUN"][..], vec![RType::UNKNOWN]),
             HigherOrderFunc::Reduce => {
                 let x_type = arg_types.get(1).copied().unwrap_or(RType::UNKNOWN);
                 let elem = x_type.element();
@@ -3300,12 +3259,7 @@ impl Checker {
     /// `RType` because the caller (`infer_call`) may still want to
     /// consult the user-fn table or the typeshed for non-S3 forms (e.g.
     /// when the first arg is opaque).
-    fn try_s3_dispatch(
-        &mut self,
-        generic: &str,
-        arg_types: &[RType],
-        span: Span,
-    ) -> Option<RType> {
+    fn try_s3_dispatch(&mut self, generic: &str, arg_types: &[RType], span: Span) -> Option<RType> {
         let first = arg_types.first().copied()?;
         let cv = first.class;
         if !cv.has_known_class() {
@@ -3398,7 +3352,11 @@ impl Checker {
         } else {
             Length::Known(total_len)
         };
-        RType::new(mode, length, any_na || matches!(mode, Mode::Character | Mode::Double))
+        RType::new(
+            mode,
+            length,
+            any_na || matches!(mode, Mode::Character | Mode::Double),
+        )
     }
 
     /// Infer the type of `list(...)`. The result is always a list whose
@@ -3410,12 +3368,7 @@ impl Checker {
     /// mirrors R's `list(a = 1, "x")` which produces names `c("a", "2")`.
     /// The schema is what powers `df$col` / `df[["col"]]` resolution
     /// downstream.
-    fn infer_list(
-        &mut self,
-        arg_types: &[RType],
-        args: &[Arg],
-        _span: Span,
-    ) -> RType {
+    fn infer_list(&mut self, arg_types: &[RType], args: &[Arg], _span: Span) -> RType {
         let length = Length::Known(arg_types.len());
         let base = RType::new(Mode::List, length, false);
         let schema = build_named_schema(arg_types, args);
@@ -3436,12 +3389,7 @@ impl Checker {
     /// * Special arguments like `row.names = ...`, `check.names = ...`
     ///   are NOT columns and are dropped from the schema. We recognize
     ///   the common ones by name.
-    fn infer_data_frame(
-        &mut self,
-        arg_types: &[RType],
-        args: &[Arg],
-        _span: Span,
-    ) -> RType {
+    fn infer_data_frame(&mut self, arg_types: &[RType], args: &[Arg], _span: Span) -> RType {
         // Filter out non-column named arguments first. Positional args
         // are kept (they become columns); known metadata args are dropped
         // so they don't pollute the schema.
@@ -3500,8 +3448,8 @@ impl Checker {
         }
 
         let class = ClassVector::single(intern_class_name("data.frame"));
-        let base = RType::new(Mode::List, Length::Known(filtered_types.len()), false)
-            .with_class(class);
+        let base =
+            RType::new(Mode::List, Length::Known(filtered_types.len()), false).with_class(class);
         match schema {
             Some(s) => base.with_columns(intern_column_schema(s)),
             None => base,
@@ -3574,15 +3522,35 @@ impl Checker {
         // length).
         let times_n: usize = match times {
             None => 1usize,
-            Some(Some(n)) if n < 0 => return RType { length: Length::Unknown, ..x_type },
+            Some(Some(n)) if n < 0 => {
+                return RType {
+                    length: Length::Unknown,
+                    ..x_type
+                }
+            }
             Some(Some(n)) => n as usize,
-            Some(None) => return RType { length: Length::Unknown, ..x_type },
+            Some(None) => {
+                return RType {
+                    length: Length::Unknown,
+                    ..x_type
+                }
+            }
         };
         let each_n: usize = match each {
             None => 1usize,
-            Some(Some(n)) if n < 0 => return RType { length: Length::Unknown, ..x_type },
+            Some(Some(n)) if n < 0 => {
+                return RType {
+                    length: Length::Unknown,
+                    ..x_type
+                }
+            }
             Some(Some(n)) => n as usize,
-            Some(None) => return RType { length: Length::Unknown, ..x_type },
+            Some(None) => {
+                return RType {
+                    length: Length::Unknown,
+                    ..x_type
+                }
+            }
         };
         // Compute the total length, normalizing so we never emit
         // `Length::Known(0)` (which violates the `Known(n > 1)`
@@ -3666,13 +3634,12 @@ impl Checker {
         // Mode: integer if `from` is an integer literal or its inferred
         // type is integer, else double (mirrors the typeshed's
         // "double_or_int" rule).
-        let mode = if from_is_int_literal
-            || arg_types.first().map(|t| t.mode) == Some(Mode::Integer)
-        {
-            Mode::Integer
-        } else {
-            Mode::Double
-        };
+        let mode =
+            if from_is_int_literal || arg_types.first().map(|t| t.mode) == Some(Mode::Integer) {
+                Mode::Integer
+            } else {
+                Mode::Double
+            };
 
         // If a length-determining arg was supplied but wasn't a
         // literal, we can't pin the length. `length.out` and `by` both
@@ -3981,10 +3948,7 @@ impl Checker {
 /// (for per-file diagnostic vecs produced by `Project::check`) call
 /// this. Keeping the logic here avoids duplicating the resolution
 /// rules.
-pub fn apply_filter_to_diagnostics(
-    diagnostics: &mut Vec<Diagnostic>,
-    filter: &SeverityFilter,
-) {
+pub fn apply_filter_to_diagnostics(diagnostics: &mut Vec<Diagnostic>, filter: &SeverityFilter) {
     let mut out: Vec<Diagnostic> = Vec::with_capacity(diagnostics.len());
     for d in diagnostics.drain(..) {
         let default = d
@@ -4032,9 +3996,29 @@ fn is_return_call(e: &Expr) -> bool {
 fn is_operator_symbol(s: &str) -> bool {
     matches!(
         s,
-        "+" | "-" | "*" | "/" | "^" | "<" | ">" | "<=" | ">="
-            | "==" | "!=" | "&" | "|" | "&&" | "||" | "!" | ":"
-            | "<-" | "<<-" | "=" | "~" | "$" | "@" | "?"
+        "+" | "-"
+            | "*"
+            | "/"
+            | "^"
+            | "<"
+            | ">"
+            | "<="
+            | ">="
+            | "=="
+            | "!="
+            | "&"
+            | "|"
+            | "&&"
+            | "||"
+            | "!"
+            | ":"
+            | "<-"
+            | "<<-"
+            | "="
+            | "~"
+            | "$"
+            | "@"
+            | "?"
     )
 }
 
@@ -4133,7 +4117,7 @@ fn op_symbol(op: BinOpKind) -> &'static str {
         BinOpKind::Or => "|",
         BinOpKind::OrOr => "||",
         BinOpKind::In => "%in%",
-        BinOpKind::NotIn => "%notin%" ,
+        BinOpKind::NotIn => "%notin%",
         BinOpKind::Assign => "<-",
         BinOpKind::SuperAssign => "<<-",
         BinOpKind::PipeForward => "%>%",
@@ -4200,7 +4184,11 @@ fn extract_type_narrowing(cond: &Expr) -> Narrowing {
             };
             Narrowing::Positive { var, mode }
         }
-        Expr::UnaryOp { op: UnaryOpKind::Not, expr, .. } => {
+        Expr::UnaryOp {
+            op: UnaryOpKind::Not,
+            expr,
+            ..
+        } => {
             // `!is.null(x)`: swap the narrowing so the `then` branch
             // gets the negative (non-null) and `else_` gets the
             // positive (null).
@@ -4393,11 +4381,7 @@ fn homogeneous_list_element_type(schema: &'static ColumnSchema) -> Option<RType>
 /// Partial matching (R's prefix-based arg matching) is intentionally
 /// not implemented; it's rarely used in modern R code and adds
 /// significant complexity.
-fn match_args_to_params(
-    sig_params: &[String],
-    args: &[Arg],
-    arg_types: &[RType],
-) -> Vec<RType> {
+fn match_args_to_params(sig_params: &[String], args: &[Arg], arg_types: &[RType]) -> Vec<RType> {
     let has_dots = sig_params.iter().any(|p| p == "...");
     let n_named_params = if has_dots {
         sig_params.len().saturating_sub(1)
@@ -4466,7 +4450,10 @@ fn longest_arg_length(arg_types: &[RType]) -> Length {
 /// total length is `length(x) * times`. We can only compute this when
 /// both lengths are known and `times` is a single integer.
 fn rep_length(arg_types: &[RType]) -> Length {
-    let x_len = arg_types.first().map(|t| t.length).unwrap_or(Length::Unknown);
+    let x_len = arg_types
+        .first()
+        .map(|t| t.length)
+        .unwrap_or(Length::Unknown);
     let times_type = arg_types.get(1).copied().unwrap_or(RType::UNKNOWN);
     match (x_len, times_type.length) {
         (Length::Known(x), Length::One) => {
@@ -4545,16 +4532,13 @@ fn json_rtype_to_rtype(jt: &JsonRType) -> RType {
     let length = match jt.length.as_str() {
         "0" => Length::Zero,
         "1" => Length::One,
-        s if s.parse::<usize>().is_ok() => {
-            Length::Known(s.parse::<usize>().unwrap_or(0))
-        }
+        s if s.parse::<usize>().is_ok() => Length::Known(s.parse::<usize>().unwrap_or(0)),
         _ => Length::Unknown,
     };
     let class = if jt.class.is_empty() {
         ClassVector::empty()
     } else {
-        let interned: Vec<&'static str> =
-            jt.class.iter().map(|n| intern_class_name(n)).collect();
+        let interned: Vec<&'static str> = jt.class.iter().map(|n| intern_class_name(n)).collect();
         ClassVector::from_static_slice(&interned)
     };
     let base = RType::new(mode, length, jt.na).with_class(class);
@@ -4595,16 +4579,13 @@ fn json_rtype_to_rtype_shallow(jt: &JsonRType) -> RType {
     let length = match jt.length.as_str() {
         "0" => Length::Zero,
         "1" => Length::One,
-        s if s.parse::<usize>().is_ok() => {
-            Length::Known(s.parse::<usize>().unwrap_or(0))
-        }
+        s if s.parse::<usize>().is_ok() => Length::Known(s.parse::<usize>().unwrap_or(0)),
         _ => Length::Unknown,
     };
     let class = if jt.class.is_empty() {
         ClassVector::empty()
     } else {
-        let interned: Vec<&'static str> =
-            jt.class.iter().map(|n| intern_class_name(n)).collect();
+        let interned: Vec<&'static str> = jt.class.iter().map(|n| intern_class_name(n)).collect();
         ClassVector::from_static_slice(&interned)
     };
     RType::new(mode, length, jt.na).with_class(class)
@@ -4854,7 +4835,8 @@ mod tests {
         let diags = check(r#""a" + 1L"#);
         assert!(
             diags.iter().any(|d| d.code == "RY040"),
-            "expected RY040, got {:?}", diags
+            "expected RY040, got {:?}",
+            diags
         );
     }
 
@@ -4887,7 +4869,8 @@ mod tests {
         let diags = check("x <- c(TRUE, FALSE)\nbad <- x && TRUE\n");
         assert!(
             diags.iter().any(|d| d.code == "RY032"),
-            "expected RY032 for && with vector, got {:?}", diags
+            "expected RY032 for && with vector, got {:?}",
+            diags
         );
     }
 
@@ -4896,7 +4879,8 @@ mod tests {
         let diags = check("x <- c(TRUE, FALSE)\nok <- x & TRUE\n");
         assert!(
             diags.iter().all(|d| d.code != "RY032"),
-            "vectorized & should not warn, got {:?}", diags
+            "vectorized & should not warn, got {:?}",
+            diags
         );
     }
 
@@ -4905,7 +4889,8 @@ mod tests {
         let diags = check("a <- TRUE\nb <- FALSE\nx <- a && b\n");
         assert!(
             diags.iter().all(|d| d.code != "RY032"),
-            "&& with scalars should not warn, got {:?}", diags
+            "&& with scalars should not warn, got {:?}",
+            diags
         );
     }
 
@@ -4914,7 +4899,8 @@ mod tests {
         let diags = check(r#"bad <- "hello" < 42"#);
         assert!(
             diags.iter().any(|d| d.code == "RY033"),
-            "expected RY033 for character vs numeric, got {:?}", diags
+            "expected RY033 for character vs numeric, got {:?}",
+            diags
         );
     }
 
@@ -4923,7 +4909,8 @@ mod tests {
         let diags = check("bad <- 1 < 2\n");
         assert!(
             diags.iter().all(|d| d.code != "RY033"),
-            "numeric vs numeric should not warn, got {:?}", diags
+            "numeric vs numeric should not warn, got {:?}",
+            diags
         );
     }
 
@@ -4932,7 +4919,8 @@ mod tests {
         let diags = check(r#"x <- "abc" < "xyz""#);
         assert!(
             diags.iter().all(|d| d.code != "RY033"),
-            "character vs character should not warn, got {:?}", diags
+            "character vs character should not warn, got {:?}",
+            diags
         );
     }
 
@@ -4941,7 +4929,8 @@ mod tests {
         let diags = check(r#"bad <- "hello" == 1"#);
         assert!(
             diags.iter().any(|d| d.code == "RY033"),
-            "expected RY033 for character == numeric, got {:?}", diags
+            "expected RY033 for character == numeric, got {:?}",
+            diags
         );
     }
 
@@ -5360,8 +5349,7 @@ mod tests {
         assert_eq!(x.mode, Mode::Integer);
         assert_eq!(x.length, Length::Known(3), "x recycled to length 3");
         // Column access resolves through the schema.
-        let (_, scope2) =
-            check_with_scope("df <- data.frame(x = c(1L, 2L, 3L))\nxv <- df$x\n");
+        let (_, scope2) = check_with_scope("df <- data.frame(x = c(1L, 2L, 3L))\nxv <- df$x\n");
         let xv = scope2.get("xv").expect("xv should be bound");
         assert_eq!(xv.mode, Mode::Integer);
         assert_eq!(xv.length, Length::Known(3));
@@ -5716,7 +5704,8 @@ mod tests {
         );
         let c = scope.get("c").expect("c should be bound");
         assert_eq!(
-            c.mode, Mode::Function,
+            c.mode,
+            Mode::Function,
             "c must be function-typed, got {:?}",
             c
         );
@@ -6690,9 +6679,7 @@ mod tests {
             "qualified call `stats::rnorm(10)` should not emit RY010, got {:?}",
             diags
         );
-        let t = scope
-            .get("x")
-            .expect("x should be bound after assignment");
+        let t = scope.get("x").expect("x should be bound after assignment");
         assert!(
             matches!(t.mode, Mode::Double),
             "stats::rnorm(10) should infer as Double, got {:?}",
@@ -6788,7 +6775,8 @@ mod tests {
         let diags = check("x <- 42\ny <- x(10)\n");
         assert!(
             diags.iter().any(|d| d.code == "RY070"),
-            "expected RY070 for calling integer, got {:?}", diags
+            "expected RY070 for calling integer, got {:?}",
+            diags
         );
     }
 
@@ -6797,7 +6785,8 @@ mod tests {
         let diags = check("x <- \"hello\"\ny <- x()\n");
         assert!(
             diags.iter().any(|d| d.code == "RY070"),
-            "expected RY070 for calling character, got {:?}", diags
+            "expected RY070 for calling character, got {:?}",
+            diags
         );
     }
 
@@ -6806,7 +6795,8 @@ mod tests {
         let diags = check("f <- function() 1L\ny <- f()\n");
         assert!(
             diags.iter().all(|d| d.code != "RY070"),
-            "calling a real function should not emit RY070, got {:?}", diags
+            "calling a real function should not emit RY070, got {:?}",
+            diags
         );
     }
 
@@ -6817,7 +6807,8 @@ mod tests {
         let diags = check("y <- some_unknown_thing(10)\n");
         assert!(
             diags.iter().all(|d| d.code != "RY070"),
-            "opaque value should not emit RY070, got {:?}", diags
+            "opaque value should not emit RY070, got {:?}",
+            diags
         );
     }
 

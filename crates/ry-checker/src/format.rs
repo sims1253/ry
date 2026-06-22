@@ -53,12 +53,7 @@ pub fn render(
                 let _ = writeln!(
                     out,
                     "{}:{}:{}: {}: [{}] {}",
-                    d.path,
-                    line,
-                    col,
-                    d.severity,
-                    d.code,
-                    d.message
+                    d.path, line, col, d.severity, d.code, d.message
                 );
             }
             out
@@ -78,7 +73,8 @@ pub fn render(
                     }
                 })
                 .collect();
-            serde_json::to_string_pretty(&items).unwrap_or_else(|e| format!("{{\"error\": \"{}\"}}", e))
+            serde_json::to_string_pretty(&items)
+                .unwrap_or_else(|e| format!("{{\"error\": \"{}\"}}", e))
         }
     }
 }

@@ -552,10 +552,8 @@ impl RType {
     /// (`if (cond)`, `while (cond)`). R requires a length-1 logical, but
     /// will accept any length-1 atomic and silently coerce.
     pub fn invalid_condition(&self) -> bool {
-        matches!(
-            self.mode,
-            Mode::List | Mode::Function | Mode::Opaque
-        ) || matches!(self.length, Length::Zero)
+        matches!(self.mode, Mode::List | Mode::Function | Mode::Opaque)
+            || matches!(self.length, Length::Zero)
     }
 
     /// Join (least upper bound) of two types, used when control flow
@@ -648,9 +646,13 @@ impl RType {
     pub fn seq(self, other: RType) -> RType {
         let mode = if matches!(self.mode, Mode::Opaque) || matches!(other.mode, Mode::Opaque) {
             Mode::Opaque
-        } else if matches!(self.mode, Mode::Character | Mode::List | Mode::Function | Mode::Null)
-            || matches!(other.mode, Mode::Character | Mode::List | Mode::Function | Mode::Null)
-        {
+        } else if matches!(
+            self.mode,
+            Mode::Character | Mode::List | Mode::Function | Mode::Null
+        ) || matches!(
+            other.mode,
+            Mode::Character | Mode::List | Mode::Function | Mode::Null
+        ) {
             // Non-numeric operands: R would coerce or error. We stay
             // opaque to avoid false positives.
             Mode::Opaque
@@ -766,10 +768,7 @@ mod tests {
     #[test]
     fn length_recycling() {
         assert_eq!(Length::One.binary(Length::Known(5)), Length::Known(5));
-        assert_eq!(
-            Length::Known(4).binary(Length::Known(2)),
-            Length::Known(4)
-        );
+        assert_eq!(Length::Known(4).binary(Length::Known(2)), Length::Known(4));
         assert_eq!(Length::Zero.binary(Length::Known(5)), Length::Zero);
     }
 
@@ -908,8 +907,7 @@ mod tests {
 
     #[test]
     fn join_class_unknown_when_one_side_unknown() {
-        let lhs = RType::scalar(Mode::List, false)
-            .with_class(ClassVector::single("lm"));
+        let lhs = RType::scalar(Mode::List, false).with_class(ClassVector::single("lm"));
         let rhs = RType::UNKNOWN; // unknown class
         let joined = lhs.join(rhs);
         assert_eq!(joined, RType::UNKNOWN);
@@ -920,11 +918,7 @@ mod tests {
     fn rtype_display_includes_class_suffix() {
         let t = RType::scalar(Mode::List, false).with_class(ClassVector::single("lm"));
         let s = format!("{}", t);
-        assert!(
-            s.contains(":lm"),
-            "expected `:lm` in display, got {}",
-            s
-        );
+        assert!(s.contains(":lm"), "expected `:lm` in display, got {}", s);
     }
 
     #[test]
@@ -942,7 +936,11 @@ mod tests {
     fn intern_class_name_is_idempotent() {
         let a = intern_class_name("data.frame");
         let b = intern_class_name("data.frame");
-        assert_eq!(a.as_ptr(), b.as_ptr(), "same content must intern to same static");
+        assert_eq!(
+            a.as_ptr(),
+            b.as_ptr(),
+            "same content must intern to same static"
+        );
         assert_eq!(a, "data.frame");
     }
 
@@ -999,7 +997,10 @@ mod tests {
     #[test]
     fn rtype_with_columns_roundtrips() {
         let schema = intern_column_schema(ColumnSchema {
-            columns: vec![("mpg".to_string(), RType::new(Mode::Double, Length::Known(32), false))],
+            columns: vec![(
+                "mpg".to_string(),
+                RType::new(Mode::Double, Length::Known(32), false),
+            )],
         });
         let t = RType::new(Mode::List, Length::Known(1), false).with_columns(schema);
         assert_eq!(t.columns, Some(schema));
@@ -1122,7 +1123,9 @@ mod tests {
         // signature is opt-in only.
         assert!(RType::UNKNOWN.fn_sig.is_none());
         assert!(RType::scalar(Mode::Function, false).fn_sig.is_none());
-        assert!(RType::new(Mode::Integer, Length::One, false).fn_sig.is_none());
+        assert!(RType::new(Mode::Integer, Length::One, false)
+            .fn_sig
+            .is_none());
     }
 
     #[test]

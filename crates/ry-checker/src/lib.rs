@@ -3652,7 +3652,15 @@ impl Checker {
                         // with after the diagnostic.
                     }
                 }
-                RType::new(bt.mode, Length::One, bt.na.0)
+                // No schema (or column not found after RY060): for
+                // list-like types, return opaque since we don't know
+                // the element type. For other types, return a length-1
+                // value of the base mode.
+                if matches!(bt.mode, Mode::List | Mode::Opaque | Mode::Function) {
+                    RType::UNKNOWN
+                } else {
+                    RType::new(bt.mode, Length::One, bt.na.0)
+                }
             }
             IndexKind::Double => {
                 // `df[["col"]]` or `x[[i]]`: the index can be a string

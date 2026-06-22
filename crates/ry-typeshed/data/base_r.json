@@ -1057,18 +1057,6 @@
       "params": ["name", "..."],
       "return": { "mode": "list", "length": "unknown", "na": true }
     },
-    ".Machine": {
-      "params": [],
-      "return": { "mode": "list", "length": "unknown", "na": false }
-    },
-    ".Platform": {
-      "params": [],
-      "return": { "mode": "list", "length": "unknown", "na": false }
-    },
-    ".Options": {
-      "params": [],
-      "return": { "mode": "list", "length": "unknown", "na": false }
-    },
     ".libPaths": {
       "params": ["new"],
       "return": { "mode": "character", "length": "unknown", "na": false }
@@ -1482,6 +1470,9 @@
     "month.name":    { "mode": "character", "length": "12", "na": false },
     "pi":            { "mode": "double", "length": "1", "na": false },
     "T":             { "mode": "logical", "length": "1", "na": false },
-    "F":             { "mode": "logical", "length": "1", "na": false }
+    "F":             { "mode": "logical", "length": "1", "na": false },
+    ".Machine":      { "mode": "list", "length": "unknown", "na": false },
+    ".Platform":     { "mode": "list", "length": "unknown", "na": false },
+    ".Options":      { "mode": "list", "length": "unknown", "na": false }
   }
 }

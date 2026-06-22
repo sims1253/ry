@@ -2142,7 +2142,25 @@ impl Checker {
                 // one. Returning opaque here is the conservative
                 // choice (no false positives, possible false negatives).
                 return RType::UNKNOWN;
+            } else if !matches!(t.mode, Mode::Opaque) {
+                // RY070: a non-function value is being called as if it
+                // were a function. R errors at runtime with
+                // "could not find function". Args have already been
+                // inferred above, so we just emit and return opaque
+                // (re-inferring would double-emit arg diagnostics).
+                self.emit(
+                    Severity::Error,
+                    span,
+                    "RY070",
+                    format!(
+                        "`{}` is `{}`, not a function; cannot call it",
+                        name, t.mode
+                    ),
+                );
+                return RType::UNKNOWN;
             }
+            // Opaque: fall through; the name might still resolve via
+            // the FnTable or typeshed below.
         }
 
         // Built-in: `c(...)` concatenates and produces the common mode.
@@ -6234,6 +6252,44 @@ mod tests {
             diags.iter().any(|d| d.code == "RY010"),
             "bare unbound identifier should still emit RY010, got {:?}",
             diags
+        );
+    }
+
+    #[test]
+    fn calling_integer_emits_ry070() {
+        let diags = check("x <- 42\ny <- x(10)\n");
+        assert!(
+            diags.iter().any(|d| d.code == "RY070"),
+            "expected RY070 for calling integer, got {:?}", diags
+        );
+    }
+
+    #[test]
+    fn calling_character_emits_ry070() {
+        let diags = check("x <- \"hello\"\ny <- x()\n");
+        assert!(
+            diags.iter().any(|d| d.code == "RY070"),
+            "expected RY070 for calling character, got {:?}", diags
+        );
+    }
+
+    #[test]
+    fn calling_actual_function_no_ry070() {
+        let diags = check("f <- function() 1L\ny <- f()\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY070"),
+            "calling a real function should not emit RY070, got {:?}", diags
+        );
+    }
+
+    #[test]
+    fn calling_opaque_no_ry070() {
+        // Opaque (unknown) values should not trigger RY070 - we don't know
+        // if they're functions or not.
+        let diags = check("y <- some_unknown_thing(10)\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY070"),
+            "opaque value should not emit RY070, got {:?}", diags
         );
     }
 }

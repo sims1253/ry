@@ -5,7 +5,7 @@
 x <- c(3L, 1L, 2L, 1L)
 a <- intersect(x, c(1L, 2L))
 b <- union(x, c(4L, 5L))
-c <- setdiff(x, c(1L))
+cc <- setdiff(x, c(1L))
 d <- duplicated(x)
 e <- unique(x)
 f <- sort(x)

@@ -86,6 +86,12 @@ pub const RULES: &[Rule] = &[
         default_severity: Severity::Error,
         summary: "Column access on a value whose schema does not contain that column.",
     },
+    Rule {
+        code: "RY070",
+        name: "call-non-function",
+        default_severity: Severity::Error,
+        summary: "A non-function value is being called as if it were a function. R will error at runtime with 'could not find function'.",
+    },
 ];
 
 pub fn find(code: &str) -> Option<&'static Rule> {

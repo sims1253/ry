@@ -1628,6 +1628,26 @@ impl Checker {
                 self.infer_binop(*op, lt, rt, *span)
             }
             Expr::UnaryOp { op, expr, span } => {
+                // Detect tidyeval `!!` (unquote) and `!!!` (splice)
+                // operators BEFORE inferring the inner expression.
+                // tree-sitter parses these as nested unary `!`:
+                // `!!x` -> `!(!x)`, `!!!x` -> `!(!(!x))`.
+                // These are NSE operators, not actual negation. We must
+                // strip ALL nested `!` operators and only infer the
+                // innermost operand, so RY021 doesn't fire on the
+                // intermediate `!` applied to a list/function.
+                if matches!(op, UnaryOpKind::Not) {
+                    if let Expr::UnaryOp { op: UnaryOpKind::Not, .. } = expr.as_ref() {
+                        // Strip all consecutive `!` operators to find
+                        // the innermost real expression.
+                        let mut innermost = expr.as_ref();
+                        while let Expr::UnaryOp { op: UnaryOpKind::Not, expr: next, .. } = innermost {
+                            innermost = next.as_ref();
+                        }
+                        let _ = self.infer(innermost, scope);
+                        return RType::UNKNOWN;
+                    }
+                }
                 let t = self.infer(expr, scope);
                 match op {
                     UnaryOpKind::Neg => {
@@ -3665,16 +3685,24 @@ impl Checker {
             IndexKind::Double => {
                 // `df[["col"]]` or `x[[i]]`: the index can be a string
                 // literal (column name) or an integer literal (positional
-                // index). For string literals we look up by column name.
-                // For integer literals we look up by `[[N]]` key (which
-                // is how lapply/list schemas name their elements).
+                // index). For string literals we look up by column name
+                // ONLY on data frames (class data.frame). For plain
+                // lists, string access is dynamic and we don't flag it.
                 let arg_expr = args.first().map(|a| &a.value);
                 if let Some(Expr::String(name, _)) = arg_expr {
                     if let Some(schema) = bt.columns {
                         if let Some(t) = schema.get(name) {
                             return t;
                         }
-                        self.emit_undefined_column(name, schema, span);
+                        // Only emit RY060 for data frames, not plain lists.
+                        // Lists created by lapply etc. have internal
+                        // [[N]] schemas; string access is dynamic.
+                        if bt.class.contains("data.frame") {
+                            self.emit_undefined_column(name, schema, span);
+                        }
+                    }
+                    if matches!(bt.mode, Mode::List | Mode::Opaque | Mode::Function) {
+                        return RType::UNKNOWN;
                     }
                     return RType::new(bt.mode, Length::One, bt.na.0);
                 }

@@ -8,6 +8,7 @@
 //!   * Document diagnostics via `textDocument/publishDiagnostics`
 //!   * `textDocument/hover` (type at cursor)
 //!   * `textDocument/definition` (go-to-definition for variables/functions)
+//!   * `textDocument/references` (find all usages of a symbol across open files)
 //!   * `textDocument/documentSymbol` (outline view of the file's bindings)
 //!   * Graceful shutdown via `shutdown` / `exit`
 //!
@@ -79,6 +80,13 @@ impl LanguageServer for Backend {
                 // request go-to-definition (Ctrl+click / "Go to
                 // Definition"). The handler is `goto_definition` below.
                 definition_provider: Some(OneOf::Left(true)),
+                // Enable `textDocument/references` so the client can
+                // find all usages of a variable / function across the
+                // workspace (Shift+F12 / "Find All References"). The
+                // handler is `references` below; it walks every open
+                // document's AST collecting matching `Expr::Ident`
+                // nodes, optionally including the definition site.
+                references_provider: Some(OneOf::Left(true)),
                 // Enable `textDocument/documentSymbol` so the client can
                 // render an outline of the file's structure (functions,
                 // variables) in the sidebar. The handler is
@@ -103,6 +111,21 @@ impl LanguageServer for Backend {
                     trigger_characters: Some(vec![
                         "$".to_string(),
                         ":".to_string(),
+                    ]),
+                    ..Default::default()
+                }),
+                // Enable `textDocument/signatureHelp` so editors can
+                // show function parameter hints when the user types
+                // `(` or `,` inside a call. The handler is
+                // `signature_help` below; it walks backward from the
+                // cursor to identify the enclosing call, looks up the
+                // function's parameter names in a small curated table,
+                // and returns a `SignatureHelp` highlighting the
+                // active parameter (counted by commas).
+                signature_help_provider: Some(SignatureHelpOptions {
+                    trigger_characters: Some(vec![
+                        "(".to_string(),
+                        ",".to_string(),
                     ]),
                     ..Default::default()
                 }),
@@ -251,6 +274,75 @@ impl LanguageServer for Backend {
         }
     }
 
+    async fn references(
+        &self,
+        params: ReferenceParams,
+    ) -> LspResult<Option<Vec<Location>>> {
+        let uri = params.text_document_position.text_document.uri.clone();
+        let path = uri_to_path(&uri);
+        let position = params.text_document_position.position;
+        let include_declaration = params.context.include_declaration;
+
+        // Snapshot ALL open documents under the lock, then drop the
+        // lock before parsing/walking so a slow search doesn't block
+        // other LSP requests. References are workspace-wide, so we
+        // search every open document (not just the current one).
+        let docs = {
+            let state = self.state.lock().await;
+            state.docs.clone()
+        };
+
+        let text = docs.get(&path).cloned();
+        let Some(text) = text else {
+            return Ok(None);
+        };
+
+        // Reuse the same word-finding helper as `hover` /
+        // `goto_definition` to extract the identifier under the
+        // cursor. Returns `None` (no references) for operators,
+        // numbers, and keywords.
+        let identifier =
+            find_identifier_at_position(&text, position.line as usize, position.character as usize);
+        let Some(identifier) = identifier else {
+            return Ok(None);
+        };
+
+        // A single parser instance is reused across all documents;
+        // tree-sitter's `Parser` is designed to be reused and this
+        // avoids the per-file allocation cost of `publish_diagnostics`'s
+        // pattern.
+        let mut parser = match RParser::new() {
+            Ok(p) => p,
+            Err(_) => return Ok(None),
+        };
+
+        let mut all_locations = Vec::new();
+        for (doc_path, doc_text) in &docs {
+            let file = match parser.parse(doc_path, doc_text) {
+                Ok(f) => f,
+                // Skip documents that fail to parse rather than
+                // aborting the whole search; a syntax error in one
+                // file shouldn't hide references in another.
+                Err(_) => continue,
+            };
+            let doc_uri = path_to_uri(doc_path);
+            let locs = find_references_in_file(
+                &file,
+                &identifier,
+                &doc_uri,
+                doc_text,
+                include_declaration,
+            );
+            all_locations.extend(locs);
+        }
+
+        if all_locations.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(all_locations))
+        }
+    }
+
     async fn document_symbol(
         &self,
         params: DocumentSymbolParams,
@@ -383,6 +475,77 @@ impl LanguageServer for Backend {
         } else {
             Ok(Some(CompletionResponse::Array(items)))
         }
+    }
+
+    async fn signature_help(
+        &self,
+        params: SignatureHelpParams,
+    ) -> LspResult<Option<SignatureHelp>> {
+        let uri = params.text_document_position_params.text_document.uri.clone();
+        let path = uri_to_path(&uri);
+        let position = params.text_document_position_params.position;
+
+        let text = {
+            let state = self.state.lock().await;
+            state.docs.get(&path).cloned()
+        };
+
+        let Some(text) = text else {
+            return Ok(None);
+        };
+
+        // Walk backward from the cursor on the current line to find
+        // the enclosing call's function name and the active parameter
+        // index. Returns `None` when the cursor is not inside a call
+        // (e.g. at the top level, inside `[`, or before any `(`).
+        let (func_name, active_param) = match find_enclosing_call(
+            &text,
+            position.line as usize,
+            position.character as usize,
+        ) {
+            Some(c) => c,
+            None => return Ok(None),
+        };
+
+        // Look up the function's parameter names. We only support
+        // base-R functions from the curated table; user-defined
+        // functions would require reaching into the checker's FnTable
+        // from the LSP crate, which is out of scope for v1.
+        let Some(params_list) = get_signature(&func_name) else {
+            return Ok(None);
+        };
+
+        // Build the signature label like `round(x, digits)` and the
+        // per-parameter `ParameterInformation` list. The active
+        // parameter (highlighted by the editor) is clamped to the
+        // parameter count; if the user has typed more commas than
+        // there are formal parameters, we return `None` so the editor
+        // clears the popup rather than highlighting a non-existent
+        // parameter.
+        let active_param = if active_param < params_list.len() {
+            Some(active_param as u32)
+        } else {
+            None
+        };
+        let label = format!("{}({})", func_name, params_list.join(", "));
+        let param_infos: Vec<ParameterInformation> = params_list
+            .iter()
+            .map(|p| ParameterInformation {
+                label: ParameterLabel::Simple(p.clone()),
+                documentation: None,
+            })
+            .collect();
+
+        Ok(Some(SignatureHelp {
+            signatures: vec![SignatureInformation {
+                label,
+                documentation: None,
+                parameters: Some(param_infos),
+                active_parameter: active_param,
+            }],
+            active_signature: Some(0),
+            active_parameter: active_param,
+        }))
     }
 }
 
@@ -690,6 +853,216 @@ fn find_def_spans_in_expr(expr: &Expr, name: &str, out: &mut Vec<Span>) {
     }
 }
 
+/// Walk the AST of `file` collecting every reference to `name` and
+/// return each as an LSP `Location` (URI + range) inside `uri`. When
+/// `include_declaration` is true, definition sites (assignment
+/// targets, loop variables, named function definitions) are included
+/// alongside the plain identifier references; when false, only genuine
+/// reference sites are returned.
+///
+/// Each returned `Location`'s range is derived from the matching
+/// node's `Span` byte offsets against `text` so editors highlight
+/// exactly the identifier characters. Zero-width spans are widened by
+/// one character so the highlight is always visible.
+fn find_references_in_file(
+    file: &SourceFile,
+    name: &str,
+    uri: &Url,
+    text: &str,
+    include_declaration: bool,
+) -> Vec<Location> {
+    let mut spans: Vec<Span> = Vec::new();
+    for stmt in &file.stmts {
+        find_ref_spans_in_stmt(stmt, name, &mut spans, include_declaration);
+    }
+    let mut locations = Vec::with_capacity(spans.len());
+    for span in spans {
+        let start = byte_offset_to_position(text, span.start);
+        let end = byte_offset_to_position(text, span.end);
+        // Extend zero-width spans to one character so the editor
+        // renders a non-empty highlight, mirroring
+        // `diagnostic_to_lsp_with_source`'s behavior.
+        let end = if start == end {
+            Position {
+                line: start.line,
+                character: start.character + 1,
+            }
+        } else {
+            end
+        };
+        locations.push(Location {
+            uri: uri.clone(),
+            range: Range { start, end },
+        });
+    }
+    locations
+}
+
+/// Recurse into a statement collecting every reference to `name`,
+/// appending each reference's `Span` to `out`. Definition sites
+/// (assignment targets, loop variables, named function definitions)
+/// are appended only when `include_declaration` is true.
+///
+/// The walk mirrors `find_def_spans_in_stmt` in structure: it recurses
+/// into function bodies, `if`/`for`/`while` blocks, and the
+/// sub-expressions of every statement so that references inside nested
+/// scopes are found.
+fn find_ref_spans_in_stmt(stmt: &Stmt, name: &str, out: &mut Vec<Span>, include_declaration: bool) {
+    match stmt {
+        Stmt::Assign { target, value, .. } => {
+            // The assignment target (`x <- ...`) is a definition site.
+            // Include it only when the caller asked for declarations.
+            if include_declaration {
+                if let Expr::Ident { name: n, span } = target {
+                    if n == name {
+                        out.push(*span);
+                    }
+                }
+            }
+            // The value always contributes references (e.g. `x <- x + 1`
+            // references `x` on the right-hand side).
+            find_ref_spans_in_expr(value, name, out, include_declaration);
+        }
+        Stmt::FunctionDef {
+            name: fn_name,
+            body,
+            span,
+            ..
+        } => {
+            // A named function definition is a declaration site. Include
+            // it only when requested. (The parser currently always emits
+            // `name: None`, but handle `Some` for completeness.)
+            if include_declaration {
+                if let Some(n) = fn_name {
+                    if n == name {
+                        out.push(*span);
+                    }
+                }
+            }
+            for s in body {
+                find_ref_spans_in_stmt(s, name, out, include_declaration);
+            }
+        }
+        Stmt::If { cond, then, else_, .. } => {
+            find_ref_spans_in_expr(cond, name, out, include_declaration);
+            for s in then {
+                find_ref_spans_in_stmt(s, name, out, include_declaration);
+            }
+            if let Some(else_block) = else_ {
+                for s in else_block {
+                    find_ref_spans_in_stmt(s, name, out, include_declaration);
+                }
+            }
+        }
+        Stmt::For {
+            name: loop_var,
+            iter,
+            body,
+            span,
+        } => {
+            // The loop variable is a binding (definition site). Include
+            // it only when the caller asked for declarations.
+            if include_declaration && loop_var == name {
+                out.push(*span);
+            }
+            // The iterator expression may reference `name`.
+            find_ref_spans_in_expr(iter, name, out, include_declaration);
+            for s in body {
+                find_ref_spans_in_stmt(s, name, out, include_declaration);
+            }
+        }
+        Stmt::While { cond, body, .. } => {
+            find_ref_spans_in_expr(cond, name, out, include_declaration);
+            for s in body {
+                find_ref_spans_in_stmt(s, name, out, include_declaration);
+            }
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value {
+                find_ref_spans_in_expr(v, name, out, include_declaration);
+            }
+        }
+        Stmt::Expr(e) => find_ref_spans_in_expr(e, name, out, include_declaration),
+    }
+}
+
+/// Recurse into an expression collecting every reference to `name`,
+/// appending each reference's `Span` to `out`. A `Expr::Ident` with a
+/// matching name is the match target (a reference); all other variants
+/// recurse into their sub-expressions so references inside calls,
+/// operators, indexes, function literals, and conditional expressions
+/// are found.
+///
+/// `include_declaration` is forwarded to `find_ref_spans_in_stmt` when
+/// recursing into nested function bodies so that declaration inclusion
+/// stays consistent across the whole AST.
+fn find_ref_spans_in_expr(
+    expr: &Expr,
+    name: &str,
+    out: &mut Vec<Span>,
+    include_declaration: bool,
+) {
+    match expr {
+        Expr::Ident { name: n, span } => {
+            if n == name {
+                out.push(*span);
+            }
+        }
+        Expr::Call { func, args, .. } => {
+            find_ref_spans_in_expr(func, name, out, include_declaration);
+            for arg in args {
+                find_ref_spans_in_expr(&arg.value, name, out, include_declaration);
+            }
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            find_ref_spans_in_expr(lhs, name, out, include_declaration);
+            find_ref_spans_in_expr(rhs, name, out, include_declaration);
+        }
+        Expr::UnaryOp { expr, .. } => {
+            find_ref_spans_in_expr(expr, name, out, include_declaration)
+        }
+        Expr::Index { base, args, .. } => {
+            find_ref_spans_in_expr(base, name, out, include_declaration);
+            for arg in args {
+                find_ref_spans_in_expr(&arg.value, name, out, include_declaration);
+            }
+        }
+        Expr::Function { body, .. } => {
+            for s in body {
+                find_ref_spans_in_stmt(s, name, out, include_declaration);
+            }
+        }
+        Expr::If { cond, then, else_, .. } => {
+            find_ref_spans_in_expr(cond, name, out, include_declaration);
+            find_ref_spans_in_expr(then, name, out, include_declaration);
+            if let Some(e) = else_ {
+                find_ref_spans_in_expr(e, name, out, include_declaration);
+            }
+        }
+        // Literals, NULL, NA, and Unknown carry no identifier
+        // references.
+        Expr::Logical(_, _)
+        | Expr::Integer(_, _)
+        | Expr::Double(_, _)
+        | Expr::String(_, _)
+        | Expr::Null(_)
+        | Expr::Na(_, _)
+        | Expr::Unknown(_) => {}
+    }
+}
+
+/// Convert a document's path string (the key used in `State::docs`)
+/// back into an LSP `Url`. The common case is a filesystem path
+/// produced by `uri_to_path`, which round-trips cleanly through
+/// `Url::from_file_path`. Non-file documents (e.g. `untitled:` URIs
+/// that fell back to their string form in `uri_to_path`) are recovered
+/// via `Url::parse`.
+fn path_to_uri(path: &str) -> Url {
+    Url::from_file_path(path).unwrap_or_else(|_| {
+        Url::parse(path).unwrap_or_else(|_| Url::parse("file:///unknown").unwrap())
+    })
+}
+
 /// Collect `InlayHint`s for every assignment whose target is a bare
 /// identifier with a known (non-opaque) inferred type. The hint is
 /// placed at the end of the identifier name (so the editor renders the
@@ -974,6 +1347,142 @@ fn extract_last_identifier(s: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Find the enclosing function call for a cursor at `(line, col)` in
+/// `text`. Returns `(function_name, active_param_index)` where
+/// `function_name` is the identifier immediately before the nearest
+/// unmatched `(` to the left of the cursor, and `active_param_index`
+/// is the number of commas at depth 0 between the `(` and the cursor.
+///
+/// The scan is confined to the current line (matching the common case
+/// where the user is mid-call on a single line). Returns `None` when:
+///   * the line doesn't exist;
+///   * there is no unmatched `(` before the cursor (cursor not in a
+///     call);
+///   * the text immediately before the `(` is not an identifier
+///     (e.g. the cursor sits inside `1 + (2 *` rather than a function
+///     call).
+fn find_enclosing_call(text: &str, line: usize, col: usize) -> Option<(String, usize)> {
+    let line_str = text.lines().nth(line)?;
+    // Clamp the column to the line length so a cursor past the last
+    // character (a common transient state right after typing `(`)
+    // doesn't slice out of bounds. `col` is treated as a byte index,
+    // matching the ASCII assumption used throughout this file.
+    let until = col.min(line_str.len());
+    let before_cursor = &line_str[..until];
+
+    // Walk backward to find the last unmatched `(`. We track depth so
+    // a `(` belonging to a nested call (e.g. the inner `(` in
+    // `f(g(`) is skipped in favor of the outermost enclosing one.
+    let mut depth = 0;
+    let mut paren_pos = None;
+    for (i, ch) in before_cursor.char_indices().rev() {
+        match ch {
+            ')' => depth += 1,
+            '(' => {
+                if depth == 0 {
+                    paren_pos = Some(i);
+                    break;
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    let paren_pos = paren_pos?;
+
+    // The function name is the identifier ending right at the `(`.
+    // `extract_last_identifier` already scans backward for an R-style
+    // identifier, which is exactly what we need.
+    let before_paren = &before_cursor[..paren_pos];
+    let func_name = extract_last_identifier(before_paren)?;
+
+    // Count commas between `(` and the cursor to determine which
+    // parameter the user is currently editing. We only count commas at
+    // depth 0 (commas inside nested calls belong to the inner call's
+    // argument list, not this one). Strings are not tracked here, so
+    // a comma inside a string literal would be miscounted; that's an
+    // acceptable v1 approximation for the common case.
+    let args_str = &before_cursor[paren_pos + 1..];
+    let mut local_depth = 0;
+    let mut active_param = 0;
+    for ch in args_str.chars() {
+        match ch {
+            '(' | '[' | '{' => local_depth += 1,
+            ')' | ']' | '}' => {
+                if local_depth > 0 {
+                    local_depth -= 1;
+                }
+            }
+            ',' if local_depth == 0 => active_param += 1,
+            _ => {}
+        }
+    }
+
+    Some((func_name, active_param))
+}
+
+/// Look up the formal parameter names of a base-R function for
+/// signature help. Returns `None` for functions outside the curated
+/// table (user-defined functions are out of scope; the checker's
+/// FnTable isn't reachable from the LSP crate).
+///
+/// The table is a small hand-maintained list of the most common base-R
+/// functions with their conventional parameter names. `...` is used
+/// for variadic functions where naming the rest of the parameters
+/// would be misleading. This intentionally avoids the typeshed: it
+/// would require exposing `ry-typeshed`'s internal `params` arrays to
+/// the LSP crate, and the curated list covers the cases users hit most.
+fn get_signature(name: &str) -> Option<Vec<String>> {
+    let params: &[&str] = match name {
+        "c" => &["..."],
+        "list" => &["..."],
+        "mean" => &["x", "trim", "na.rm"],
+        "sum" => &["..."],
+        "length" => &["x"],
+        "rep" => &["x", "times", "each"],
+        "seq" => &["from", "to", "by"],
+        "round" => &["x", "digits"],
+        "paste" => &["...", "sep", "collapse"],
+        "paste0" => &["...", "collapse"],
+        "sprintf" => &["fmt", "..."],
+        "lapply" => &["X", "FUN"],
+        "sapply" => &["X", "FUN"],
+        "vapply" => &["X", "FUN", "FUN.VALUE"],
+        "mapply" => &["FUN", "..."],
+        "Map" => &["f", "..."],
+        "Reduce" => &["f", "x", "accumulate"],
+        "grepl" => &["pattern", "x"],
+        "gsub" => &["pattern", "replacement", "x"],
+        "substr" => &["x", "start", "stop"],
+        "matrix" => &["data", "nrow", "ncol"],
+        "data.frame" => &["..."],
+        "factor" => &["x", "levels", "labels"],
+        "ifelse" => &["test", "yes", "no"],
+        "which" => &["x"],
+        "order" => &["..."],
+        "sort" => &["x"],
+        "unique" => &["x"],
+        "match" => &["x", "table"],
+        "names" => &["x"],
+        "nchar" => &["x"],
+        "toupper" => &["x"],
+        "tolower" => &["x"],
+        "print" => &["x"],
+        "cat" => &["..."],
+        "stop" => &["..."],
+        "warning" => &["..."],
+        "nrow" => &["x"],
+        "ncol" => &["x"],
+        "head" => &["x", "n"],
+        "tail" => &["x", "n"],
+        "cbind" => &["..."],
+        "rbind" => &["..."],
+        "merge" => &["x", "y"],
+        _ => return None,
+    };
+    Some(params.iter().map(|s| s.to_string()).collect())
 }
 
 /// Collect `DocumentSymbol`s for an outline view of the file. Walks
@@ -1960,6 +2469,139 @@ mod tests {
         assert_eq!(extract_last_identifier("(1 + 2)"), None);
     }
 
+    // ---- signature help helpers ----
+
+    #[test]
+    fn find_enclosing_call_basic_round() {
+        // `round(` with the cursor right after the `(` (col 6): the
+        // enclosing call is `round`, and no comma has been typed yet
+        // so the active parameter is 0.
+        let text = "round(\n";
+        let (name, active) = find_enclosing_call(text, 0, 6).expect("should find call");
+        assert_eq!(name, "round");
+        assert_eq!(active, 0);
+    }
+
+    #[test]
+    fn find_enclosing_call_counts_commas() {
+        // `round(x, ` with the cursor at col 9 (after the comma + the
+        // space): one comma has been typed, so the active parameter is
+        // 1 (the second parameter, `digits`).
+        let text = "round(x, \n";
+        let (name, active) = find_enclosing_call(text, 0, 9).expect("should find call");
+        assert_eq!(name, "round");
+        assert_eq!(active, 1);
+    }
+
+    #[test]
+    fn find_enclosing_call_skips_nested_calls() {
+        // `outer(inner(1, 2), ` with the cursor at the trailing
+        // space: the nearest enclosing call is `outer` (the inner
+        // `inner(1, 2)` is closed), and only the top-level comma
+        // (after the inner call) counts toward `outer`'s active
+        // parameter, so it should be 1.
+        let text = "outer(inner(1, 2), \n";
+        let (name, active) = find_enclosing_call(text, 0, 18).expect("should find call");
+        assert_eq!(name, "outer");
+        assert_eq!(
+            active, 1,
+            "only the top-level comma should count, not the inner call's comma"
+        );
+    }
+
+    #[test]
+    fn find_enclosing_call_returns_none_outside_call() {
+        // No `(` before the cursor: not inside a call.
+        let text = "x <- 1\n";
+        assert_eq!(find_enclosing_call(text, 0, 4), None);
+    }
+
+    #[test]
+    fn find_enclosing_call_returns_none_for_non_ident_func() {
+        // The text before the `(` is `(1 + 2) + (` which is not a
+        // function call (no identifier before the `(`). The helper
+        // must return `None` rather than treat the `(` as a call.
+        let text = "1 + (2 * 3)\n";
+        assert_eq!(find_enclosing_call(text, 0, 6), None);
+    }
+
+    #[test]
+    fn get_signature_returns_known_params() {
+        // `round` has the conventional `x, digits` parameters; the
+        // helper must surface them in order.
+        let params = get_signature("round").expect("round should have a signature");
+        assert_eq!(params, vec!["x", "digits"]);
+
+        // `mean` has three formal parameters.
+        let params = get_signature("mean").expect("mean should have a signature");
+        assert_eq!(params, vec!["x", "trim", "na.rm"]);
+
+        // Variadic functions collapse to `...`.
+        let params = get_signature("c").expect("c should have a signature");
+        assert_eq!(params, vec!["..."]);
+    }
+
+    #[test]
+    fn get_signature_returns_none_for_unknown() {
+        // User-defined functions aren't in the curated table.
+        assert!(get_signature("my_helper").is_none());
+        assert!(get_signature("").is_none());
+    }
+
+    #[test]
+    fn signature_help_label_and_active_param() {
+        // End-to-end test of the signature-help logic at the helper
+        // level: locate the enclosing call, look up the signature,
+        // and verify the resulting label and active-parameter
+        // highlight. We exercise the same helpers the LSP handler
+        // uses so the test stays accurate even though the handler is
+        // async and stateful.
+        //
+        // To avoid fragile byte-counting, we find the comma's position
+        // dynamically and place the cursor right after it. `round(x, `
+        // has one top-level comma => active param 1 (`digits`).
+        let text = "round(x, ";
+        let comma = text.find(',').expect("snippet should have a comma");
+        let (name, active) =
+            find_enclosing_call(text, 0, comma + 1).expect("should find call");
+        assert_eq!(name, "round");
+        assert_eq!(active, 1);
+
+        let params = get_signature(&name).expect("round should have a signature");
+        let label = format!("{}({})", name, params.join(", "));
+        assert_eq!(label, "round(x, digits)");
+        // The active parameter must be clamped to the parameter list
+        // length: with 2 params and active=1, the highlight should
+        // land on `digits`.
+        let active_param = if active < params.len() {
+            Some(active as u32)
+        } else {
+            None
+        };
+        assert_eq!(active_param, Some(1));
+    }
+
+    #[test]
+    fn signature_help_clamps_when_past_last_param() {
+        // When the user has typed more commas than there are formal
+        // parameters (e.g. `round(1, 2, 3, `), the active-parameter
+        // index should clamp to `None` so the editor clears the
+        // highlight instead of pointing at a non-existent parameter.
+        // `round` has 2 params; typing 3 commas puts the cursor on a
+        // 4th parameter that doesn't exist.
+        let text = "round(1, 2, 3, \n";
+        // After the third comma (byte 14): active param 3.
+        let (_, active) = find_enclosing_call(text, 0, 14).expect("should find call");
+        assert_eq!(active, 3);
+        let params = get_signature("round").expect("round should have a signature");
+        let active_param = if active < params.len() {
+            Some(active as u32)
+        } else {
+            None
+        };
+        assert_eq!(active_param, None, "active param should clamp to None past the last formal");
+    }
+
     #[test]
     fn common_r_completions_includes_keywords_and_functions() {
         // The curated list must surface a handful of keywords (so the
@@ -2112,5 +2754,178 @@ mod tests {
             "expected no completions for non-data-frame $, got: {:?}",
             items
         );
+    }
+
+    // ---- references (find all references) helpers ----
+
+    /// Helper: parse a snippet and return the references to `name`
+    /// within it. Mirrors what the `references` LSP method does for a
+    /// single document, minus the async state lookup. Uses
+    /// `include_declaration` to control whether definition sites are
+    /// included.
+    fn references_in(src: &str, name: &str, include_declaration: bool) -> Vec<Location> {
+        let mut parser = RParser::new().unwrap();
+        let file = parser.parse("test.R", src).unwrap();
+        let uri = Url::parse("file:///tmp/test.R").unwrap();
+        find_references_in_file(&file, name, &uri, src, include_declaration)
+    }
+
+    #[test]
+    fn references_finds_variable_usages_in_same_file() {
+        // `x` is defined once and read twice (in the RHS of `y` and in
+        // `z`). With include_declaration = false, only the two reads
+        // should be returned.
+        let src = "x <- 1L\ny <- x + 1\nz <- x * 2\n";
+        let locs = references_in(src, "x", false);
+        assert_eq!(
+            locs.len(),
+            2,
+            "expected 2 references to x, got {:?}",
+            locs
+        );
+        // The two references live on lines 1 and 2 (0-indexed).
+        let lines: Vec<u32> = locs.iter().map(|l| l.range.start.line).collect();
+        assert!(lines.contains(&1), "expected a reference on line 1: {:?}", lines);
+        assert!(lines.contains(&2), "expected a reference on line 2: {:?}", lines);
+        // Each reference must cover exactly the identifier "x" (1 char
+        // wide), not a zero-width or multi-char range.
+        for loc in &locs {
+            assert_eq!(
+                loc.range.end.character - loc.range.start.character,
+                1,
+                "expected 1-char wide range for 'x'"
+            );
+        }
+    }
+
+    #[test]
+    fn references_finds_function_call_sites() {
+        // `add` is defined as a function and called twice. With
+        // include_declaration = false, only the two call sites on
+        // lines 1 and 2 should be returned.
+        let src = "add <- function(a, b) a + b\nadd(1, 2)\nadd(3, 4)\n";
+        let locs = references_in(src, "add", false);
+        assert_eq!(
+            locs.len(),
+            2,
+            "expected 2 call sites, got {:?}",
+            locs
+        );
+        let lines: Vec<u32> = locs.iter().map(|l| l.range.start.line).collect();
+        assert!(lines.contains(&1), "expected a call on line 1: {:?}", lines);
+        assert!(lines.contains(&2), "expected a call on line 2: {:?}", lines);
+        // Each call-site range covers exactly the 3-char name "add".
+        for loc in &locs {
+            assert_eq!(
+                loc.range.end.character - loc.range.start.character,
+                3,
+                "expected 3-char wide range for 'add'"
+            );
+            assert_eq!(loc.range.start.character, 0, "calls start at col 0");
+        }
+    }
+
+    #[test]
+    fn references_include_declaration_flag() {
+        // `x` is defined once (line 0) and read once (line 1).
+        let src = "x <- 1L\nx + 1\n";
+        // With include_declaration = true: the definition (line 0) AND
+        // the read (line 1) => 2 locations.
+        let locs_with = references_in(src, "x", true);
+        assert_eq!(
+            locs_with.len(),
+            2,
+            "expected 2 locations with declaration, got {:?}",
+            locs_with
+        );
+        // With include_declaration = false: only the read (line 1) =>
+        // 1 location, and it must NOT be the definition on line 0.
+        let locs_without = references_in(src, "x", false);
+        assert_eq!(
+            locs_without.len(),
+            1,
+            "expected 1 location without declaration, got {:?}",
+            locs_without
+        );
+        assert_eq!(
+            locs_without[0].range.start.line, 1,
+            "the lone reference must be the read on line 1"
+        );
+    }
+
+    #[test]
+    fn references_across_multiple_files() {
+        // Simulate two open documents: a.R defines `helper`, b.R calls
+        // it. This mirrors how `references` walks `self.state.docs`
+        // across all open documents (we drive `find_references_in_file`
+        // directly for each parsed file since the async state is not
+        // reachable from a unit test).
+        let src_a = "helper <- function() 1L\n";
+        let src_b = "helper()\n";
+        let mut parser = RParser::new().unwrap();
+        let file_a = parser.parse("a.R", src_a).unwrap();
+        let file_b = parser.parse("b.R", src_b).unwrap();
+        let uri_a = Url::parse("file:///tmp/a.R").unwrap();
+        let uri_b = Url::parse("file:///tmp/b.R").unwrap();
+
+        // include_declaration = true so the definition in a.R counts.
+        let mut all = Vec::new();
+        all.extend(find_references_in_file(&file_a, "helper", &uri_a, src_a, true));
+        all.extend(find_references_in_file(&file_b, "helper", &uri_b, src_b, true));
+
+        // One definition in a.R + one call in b.R => 2 locations.
+        assert_eq!(
+            all.len(),
+            2,
+            "expected 2 locations across files, got {:?}",
+            all
+        );
+        // The locations must come from different URIs (one per file).
+        let uris: Vec<&Url> = all.iter().map(|l| &l.uri).collect();
+        assert!(uris.contains(&&uri_a), "missing location in a.R: {:?}", uris);
+        assert!(uris.contains(&&uri_b), "missing location in b.R: {:?}", uris);
+    }
+
+    #[test]
+    fn references_finds_usages_inside_nested_scopes() {
+        // `data` is read inside an anonymous function body (via index
+        // `data[1]`) and inside a for-loop body (via `print(data)`).
+        // The walker must recurse into both nested scopes.
+        let src = "data <- c(1, 2, 3)\nf <- function() {\n  data[1]\n}\nfor (i in 1:3) {\n  print(data)\n}\n";
+        let locs = references_in(src, "data", false);
+        // Two reads: inside the function body (line 2) and inside the
+        // for-loop body (line 5). The definition on line 0 is excluded
+        // because include_declaration is false.
+        assert_eq!(
+            locs.len(),
+            2,
+            "expected 2 nested references, got {:?}",
+            locs
+        );
+        let lines: Vec<u32> = locs.iter().map(|l| l.range.start.line).collect();
+        assert!(lines.contains(&2), "expected a reference on line 2: {:?}", lines);
+        assert!(lines.contains(&5), "expected a reference on line 5: {:?}", lines);
+    }
+
+    #[test]
+    fn references_returns_empty_for_undefined_name() {
+        // No occurrences of `does_not_exist` anywhere.
+        let src = "x <- 1L\ny <- x + 1\n";
+        let locs = references_in(src, "does_not_exist", true);
+        assert!(locs.is_empty(), "expected no references, got {:?}", locs);
+    }
+
+    #[test]
+    fn references_self_referencing_assignment() {
+        // `x <- x + 1` references `x` on the RHS even though the LHS is
+        // a definition. With include_declaration = true the LHS counts
+        // too, giving 2 locations; with false only the RHS read counts.
+        let src = "x <- x + 1\n";
+        let locs_with = references_in(src, "x", true);
+        assert_eq!(locs_with.len(), 2, "got {:?}", locs_with);
+        let locs_without = references_in(src, "x", false);
+        assert_eq!(locs_without.len(), 1, "got {:?}", locs_without);
+        // The lone reference (RHS) is at col 5 ("x <- x...").
+        assert_eq!(locs_without[0].range.start.character, 5);
     }
 }

@@ -87,6 +87,12 @@ pub const RULES: &[Rule] = &[
         summary: "Column access on a value whose schema does not contain that column.",
     },
     Rule {
+        code: "RY061",
+        name: "dollar-on-atomic",
+        default_severity: Severity::Error,
+        summary: "The $ operator is invalid for atomic vectors (integer, double, character, logical). It only works on list-like types (lists, data frames, environments).",
+    },
+    Rule {
         code: "RY070",
         name: "call-non-function",
         default_severity: Severity::Error,

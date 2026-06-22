@@ -3593,6 +3593,34 @@ impl Checker {
     ) -> RType {
         match kind {
             IndexKind::Dollar => {
+                // RY061: `$` on an atomic vector is a runtime error in R
+                // ("$ operator is invalid for atomic vectors"). Only flag
+                // when we're confident the type is atomic (not opaque,
+                // not list, not function, not NULL). List-like types
+                // without a schema are fine -- the column might exist
+                // dynamically -- and atomic types *with* a schema are
+                // already covered by the schema lookup / RY060 below.
+                if matches!(
+                    bt.mode,
+                    Mode::Integer
+                        | Mode::Double
+                        | Mode::Character
+                        | Mode::Logical
+                        | Mode::Complex
+                        | Mode::Raw
+                ) && bt.columns.is_none()
+                {
+                    self.emit(
+                        Severity::Error,
+                        span,
+                        "RY061",
+                        format!(
+                            "$ operator is invalid for atomic vectors of mode `{}`",
+                            bt.mode
+                        ),
+                    );
+                    return RType::UNKNOWN;
+                }
                 // The parser records `$col` as a single arg with
                 // `name = Some("col")` and a synthesized `value` of
                 // `Expr::Ident { name: "col" }`. The value is NOT a
@@ -6291,5 +6319,35 @@ mod tests {
             diags.iter().all(|d| d.code != "RY070"),
             "opaque value should not emit RY070, got {:?}", diags
         );
+    }
+
+    #[test]
+    fn dollar_on_integer_emits_ry061() {
+        let diags = check("x <- 1:10\nval <- x$col\n");
+        assert!(diags.iter().any(|d| d.code == "RY061"), "got {:?}", diags);
+    }
+
+    #[test]
+    fn dollar_on_character_emits_ry061() {
+        let diags = check("x <- c(\"a\", \"b\")\nval <- x$col\n");
+        assert!(diags.iter().any(|d| d.code == "RY061"), "got {:?}", diags);
+    }
+
+    #[test]
+    fn dollar_on_list_no_warning() {
+        let diags = check("x <- list(a = 1)\nval <- x$a\n");
+        assert!(diags.iter().all(|d| d.code != "RY061"), "got {:?}", diags);
+    }
+
+    #[test]
+    fn dollar_on_data_frame_no_warning() {
+        let diags = check("val <- mtcars$mpg\n");
+        assert!(diags.iter().all(|d| d.code != "RY061"), "got {:?}", diags);
+    }
+
+    #[test]
+    fn dollar_on_opaque_no_warning() {
+        let diags = check("x <- some_unknown_thing\nval <- x$col\n");
+        assert!(diags.iter().all(|d| d.code != "RY061"), "got {:?}", diags);
     }
 }

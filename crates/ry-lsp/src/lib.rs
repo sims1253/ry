@@ -324,10 +324,22 @@ impl Backend {
         // it as a borrowed `&str` outside the iterator to avoid
         // re-borrowing on every diagnostic.
         let source_text = docs.get(&path).map(|s| s.as_str());
+        // Parse inline suppression comments once for the target file
+        // (`# ry: ignore`, `# noqa`, `# ry: ignore-file`) so the
+        // per-diagnostic filter below is a cheap lookup.
+        let (file_level, suppressions) = match source_text {
+            Some(text) => {
+                let supps = ry_checker::parse_suppressions(text);
+                (ry_checker::has_file_suppression(text), supps)
+            }
+            None => (false, Vec::new()),
+        };
         let diags_for_uri: Vec<LspDiagnostic> = per_file
             .into_iter()
             .filter(|(p, _)| p == &path)
             .flat_map(|(_, ds)| ds)
+            // Drop diagnostics covered by inline suppression comments.
+            .filter(|d| !file_level && !ry_checker::is_suppressed(d, &suppressions))
             .map(|d| match source_text {
                 // Prefer the source-aware path so editors squiggle the
                 // exact offending token instead of a single character.

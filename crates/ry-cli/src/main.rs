@@ -551,6 +551,15 @@ fn run_check_once(
 
     let mut per_file_diagnostics = project.check();
 
+    // Apply inline suppression comments (`# ry: ignore`, `# noqa`,
+    // `# ry: ignore-file`) before the severity filter so a suppressed
+    // error never even reaches the filter pipeline.
+    for (path, diags) in &mut per_file_diagnostics {
+        if let Some(src) = srcs.get(path) {
+            *diags = ry_checker::filter_suppressed(std::mem::take(diags), src);
+        }
+    }
+
     for (_path, diags) in &mut per_file_diagnostics {
         ry_checker::apply_filter_to_diagnostics(diags, filter);
     }

@@ -97,7 +97,11 @@ fn run(name: &str, src: &str) -> Vec<(String, Severity)> {
         .unwrap_or_else(|e| panic!("parse {}: {}", name, e));
     let mut c = Checker::new(name);
     c.check(&file);
-    c.take_diagnostics()
+    // Apply inline suppression (`# ry: ignore`, `# noqa`,
+    // `# ry: ignore-file`) so corpus fixtures that test the suppression
+    // feature behave the same way the CLI / LSP do.
+    let diags = ry_checker::filter_suppressed(c.take_diagnostics(), src);
+    diags
         .into_iter()
         .map(|d| (d.code.to_string(), d.severity))
         .collect()

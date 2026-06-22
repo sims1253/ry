@@ -273,6 +273,201 @@ impl Diagnostic {
     }
 }
 
+// ============================================================================
+// Inline suppression comments (`# ry: ignore`, `# noqa`)
+// ============================================================================
+//
+// Users can suppress false-positive diagnostics inline, mirroring the
+// `# ruff: ignore` / `# noqa` conventions from the Python ecosystem:
+//
+//     x <- bad  # ry: ignore                 # suppress ALL rules on this line
+//     x <- bad  # ry: ignore[RY010]          # suppress a specific rule
+//     x <- bad  # ry: ignore[RY010, RY040]   # suppress multiple rules
+//     x <- bad  # noqa: RY010                # flake8/ruff-compatible alias
+//
+//     # ry: ignore                           # standalone: suppresses the
+//     x <- bad                               #   next non-comment, non-blank line
+//
+//     # ry: ignore-file                      # file-level: suppresses everything
+//
+// The parser is deliberately tolerant of whitespace and case so
+// `#RY:ignore[ry010]`, `# ry:ignore`, etc. all work. Rule codes are
+// always uppercased `RYxxx` tokens; anything not starting with `RY` is
+// dropped (so prose like `# ry: ignore this mess` suppresses all rules,
+// matching ruff's "bare ignore" behavior).
+
+/// A suppression directive parsed from a `# ry: ignore` or `# noqa`
+/// comment.
+#[derive(Debug, Clone)]
+pub struct Suppression {
+    /// Line number (0-indexed) of the code line the suppression applies
+    /// to. For trailing comments this is the line they sit on; for
+    /// standalone comments this is the next non-comment, non-blank
+    /// line.
+    pub line: usize,
+    /// Rule codes to suppress. An empty vec means "suppress all rules".
+    pub rules: Vec<String>,
+}
+
+/// Scan source text for `# ry: ignore` / `# noqa` comments and return
+/// one [`Suppression`] per directive found.
+///
+/// File-level directives (`# ry: ignore-file`) are NOT included here;
+/// use [`has_file_suppression`] to detect those.
+pub fn parse_suppressions(src: &str) -> Vec<Suppression> {
+    let mut suppressions = Vec::new();
+    // A standalone `# ry: ignore` line defers until the next code line.
+    let mut pending: Option<Suppression> = None;
+
+    for (line_num, line) in src.lines().enumerate() {
+        let trimmed = line.trim();
+
+        if let Some(codes) = parse_ignore_comment(trimmed) {
+            // If the line has code before the comment, it's a trailing
+            // suppression (applies to this line). Otherwise it's a
+            // standalone comment that applies to the next code line.
+            let code_before = line_before_comment(line);
+            if code_before.trim().is_empty() {
+                pending = Some(Suppression {
+                    line: 0, // filled in when we reach the target line
+                    rules: codes,
+                });
+            } else {
+                suppressions.push(Suppression {
+                    line: line_num,
+                    rules: codes,
+                });
+            }
+            continue;
+        }
+
+        // Resolve a pending standalone suppression against the next
+        // non-blank, non-comment line. Blank lines and further comment
+        // lines don't consume the pending suppression.
+        if let Some(mut supp) = pending.take() {
+            if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                supp.line = line_num;
+                suppressions.push(supp);
+            } else {
+                pending = Some(supp);
+            }
+        }
+    }
+
+    suppressions
+}
+
+/// Parse a single comment line for an ignore directive. Returns
+/// `Some(codes)` (empty vec = suppress all) when the line contains a
+/// recognized directive, or `None` otherwise.
+///
+/// Recognized forms (case-insensitive on the `ry:` / `noqa` markers):
+///   - `# ry: ignore`
+///   - `# ry:ignore`
+///   - `# ry: ignore[RY040]`
+///   - `# ry: ignore[RY040, RY010]`
+///   - `# noqa`
+///   - `# noqa: RY040`
+///   - `# noqa[RY040]`
+fn parse_ignore_comment(line: &str) -> Option<Vec<String>> {
+    let comment_start = line.find('#')?;
+    let comment = &line[comment_start..];
+    let comment_lower = comment.to_lowercase();
+
+    // `# ry: ignore[...]` or `# ry:ignore[...]` (with or without space).
+    // We check both spellings; whichever matches first wins.
+    for marker in ["ry: ignore", "ry:ignore"] {
+        if let Some(pos) = comment_lower.find(marker) {
+            let after_marker = &comment_lower[pos + marker.len()..];
+            // `ry: ignore-file` is a file-level directive, not a
+            // line-level one; skip it here so it doesn't get treated
+            // as a bare "ignore all" on its own line.
+            if after_marker.starts_with("-file") {
+                continue;
+            }
+            let after = &comment[pos + marker.len()..];
+            return Some(parse_rule_codes(after));
+        }
+    }
+
+    // `# noqa` / `# noqa: RY040` / `# noqa[RY040]`.
+    if let Some(pos) = comment_lower.find("noqa") {
+        let after = &comment[pos + "noqa".len()..];
+        return Some(parse_rule_codes(after));
+    }
+
+    None
+}
+
+/// Parse rule codes from text like `[RY040]`, `[RY040, RY010]`,
+/// `: RY040`, or empty. Returns an empty vec when no codes are found
+/// (which means "suppress all"). Codes are uppercased so that
+/// `ry010` and `RY010` are treated identically.
+fn parse_rule_codes(text: &str) -> Vec<String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Vec::new();
+    }
+    // Strip a single layer of surrounding brackets / leading colon.
+    let text = text.trim_start_matches(['[', ':', ' ']);
+    let text = text.trim_end_matches(']');
+    text.split([',', ' '])
+        .filter(|s| !s.is_empty())
+        .map(|s| s.trim().to_uppercase())
+        .filter(|s| s.starts_with("RY"))
+        .collect()
+}
+
+/// Return the portion of a line before its first `#` (the code part).
+/// If the line has no comment, the whole line is returned.
+fn line_before_comment(line: &str) -> &str {
+    match line.find('#') {
+        Some(pos) => &line[..pos],
+        None => line,
+    }
+}
+
+/// Returns `true` if the source contains a file-level suppression
+/// directive (`# ry: ignore-file`). When true, every diagnostic in the
+/// file should be suppressed.
+pub fn has_file_suppression(src: &str) -> bool {
+    for line in src.lines() {
+        if let Some(hash_pos) = line.find('#') {
+            let comment = &line[hash_pos..];
+            let lower = comment.to_lowercase();
+            if lower.contains("ry: ignore-file") || lower.contains("ry:ignore-file") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Returns `true` if `diag` is covered by one of the given per-line
+/// [`Suppression`] directives.
+///
+/// A suppression matches when:
+///   - its `line` equals the diagnostic's line, AND
+///   - its `rules` list is empty (suppress all) OR contains the
+///     diagnostic's code.
+pub fn is_suppressed(diag: &Diagnostic, suppressions: &[Suppression]) -> bool {
+    suppressions.iter().any(|s| {
+        s.line == diag.span.line && (s.rules.is_empty() || s.rules.iter().any(|r| r == diag.code))
+    })
+}
+
+/// Convenience: drop every diagnostic that is suppressed, either by a
+/// per-line `# ry: ignore` / `# noqa` directive or by a file-level
+/// `# ry: ignore-file`. This is the filter the CLI and LSP call after
+/// running the checker.
+pub fn filter_suppressed(diags: Vec<Diagnostic>, src: &str) -> Vec<Diagnostic> {
+    if has_file_suppression(src) {
+        return Vec::new();
+    }
+    let supps = parse_suppressions(src);
+    diags.into_iter().filter(|d| !is_suppressed(d, &supps)).collect()
+}
+
 /// Severity overrides that a caller (typically the CLI) wants to apply.
 /// Matches ty's `--error` / `--warn` / `--ignore` semantics.
 #[derive(Debug, Clone, Default)]
@@ -4453,6 +4648,204 @@ mod tests {
             c.check_stmt(s, &mut scope);
         }
         (c.take_diagnostics(), scope)
+    }
+
+    // ---- inline suppression comment tests ----
+
+    #[test]
+    fn parse_trailing_ignore_comment() {
+        let supps = parse_suppressions("x <- bad  # ry: ignore\n");
+        assert_eq!(supps.len(), 1);
+        assert_eq!(supps[0].line, 0);
+        assert!(supps[0].rules.is_empty()); // suppress all
+    }
+
+    #[test]
+    fn parse_specific_rule_ignore() {
+        let supps = parse_suppressions("x <- \"a\" * 3  # ry: ignore[RY040]\n");
+        assert_eq!(supps.len(), 1);
+        assert_eq!(supps[0].rules, vec!["RY040"]);
+    }
+
+    #[test]
+    fn parse_multiple_rules() {
+        let supps = parse_suppressions("x <- bad  # ry: ignore[RY040, RY010]\n");
+        assert_eq!(supps.len(), 1);
+        assert!(supps[0].rules.contains(&"RY040".to_string()));
+        assert!(supps[0].rules.contains(&"RY010".to_string()));
+    }
+
+    #[test]
+    fn parse_standalone_comment_applies_to_next_line() {
+        let src = "# ry: ignore\nx <- bad\n";
+        let supps = parse_suppressions(src);
+        assert_eq!(supps.len(), 1);
+        assert_eq!(supps[0].line, 1); // next line
+    }
+
+    #[test]
+    fn parse_standalone_comment_skips_blank_lines() {
+        let src = "# ry: ignore\n\nx <- bad\n";
+        let supps = parse_suppressions(src);
+        assert_eq!(supps.len(), 1);
+        assert_eq!(supps[0].line, 2);
+    }
+
+    #[test]
+    fn parse_noqa_alias() {
+        let supps = parse_suppressions("x <- bad  # noqa: RY010\n");
+        assert_eq!(supps.len(), 1);
+        assert!(supps[0].rules.contains(&"RY010".to_string()));
+    }
+
+    #[test]
+    fn parse_bare_noqa_suppresses_all() {
+        let supps = parse_suppressions("x <- bad  # noqa\n");
+        assert_eq!(supps.len(), 1);
+        assert!(supps[0].rules.is_empty());
+    }
+
+    #[test]
+    fn parse_noqa_bracket_form() {
+        let supps = parse_suppressions("x <- bad  # noqa[RY010]\n");
+        assert_eq!(supps.len(), 1);
+        assert!(supps[0].rules.contains(&"RY010".to_string()));
+    }
+
+    #[test]
+    fn parse_compact_ry_ignore_no_space() {
+        let supps = parse_suppressions("x <- bad  # ry:ignore[RY010]\n");
+        assert_eq!(supps.len(), 1);
+        assert!(supps[0].rules.contains(&"RY010".to_string()));
+    }
+
+    #[test]
+    fn parse_case_insensitive_marker() {
+        let supps = parse_suppressions("x <- bad  # RY: IGNORE[ry010]\n");
+        assert_eq!(supps.len(), 1);
+        assert!(supps[0].rules.contains(&"RY010".to_string()));
+    }
+
+    #[test]
+    fn parse_non_suppression_comment_is_ignored() {
+        let supps = parse_suppressions("# just a regular comment\nx <- bad\n");
+        assert!(supps.is_empty());
+    }
+
+    #[test]
+    fn parse_file_level_suppression() {
+        assert!(has_file_suppression("# ry: ignore-file\nx <- bad\n"));
+        assert!(has_file_suppression("# ry:ignore-file\nx <- bad\n"));
+        assert!(!has_file_suppression("# ry: ignore\nx <- bad\n"));
+    }
+
+    #[test]
+    fn file_level_marker_not_treated_as_line_level() {
+        // `# ry: ignore-file` must NOT also register as a line-level
+        // "ignore all" (it's handled by has_file_suppression instead).
+        let supps = parse_suppressions("# ry: ignore-file\nx <- bad\n");
+        assert!(
+            supps.is_empty(),
+            "ignore-file should not produce line-level suppressions, got {:?}",
+            supps
+        );
+    }
+
+    #[test]
+    fn is_suppressed_matches_line_and_code() {
+        let supps = vec![Suppression {
+            line: 2,
+            rules: vec!["RY010".to_string()],
+        }];
+        let diag_matching = Diagnostic {
+            severity: Severity::Warning,
+            span: Span {
+                start: 0,
+                end: 1,
+                line: 2,
+                col: 0,
+            },
+            path: "x.R".into(),
+            code: "RY010",
+            message: "test".into(),
+        };
+        let diag_wrong_line = Diagnostic {
+            span: Span {
+                line: 0,
+                ..diag_matching.span
+            },
+            ..diag_matching.clone()
+        };
+        let diag_wrong_code = Diagnostic {
+            code: "RY040",
+            ..diag_matching.clone()
+        };
+        assert!(is_suppressed(&diag_matching, &supps));
+        assert!(!is_suppressed(&diag_wrong_line, &supps));
+        assert!(!is_suppressed(&diag_wrong_code, &supps));
+    }
+
+    #[test]
+    fn is_suppressed_empty_rules_matches_any_code() {
+        let supps = vec![Suppression {
+            line: 0,
+            rules: vec![],
+        }];
+        let diag = Diagnostic {
+            severity: Severity::Warning,
+            span: Span {
+                start: 0,
+                end: 1,
+                line: 0,
+                col: 0,
+            },
+            path: "x.R".into(),
+            code: "RY999",
+            message: "test".into(),
+        };
+        assert!(is_suppressed(&diag, &supps));
+    }
+
+    #[test]
+    fn filter_suppressed_end_to_end() {
+        // Trailing `# ry: ignore[RY010]` on the offending line drops RY010.
+        let src = "x <- undefined_var  # ry: ignore[RY010]\n";
+        let diags = check(src);
+        let filtered = filter_suppressed(diags, src);
+        assert!(
+            filtered.iter().all(|d| d.code != "RY010"),
+            "RY010 should be suppressed, got {:?}",
+            filtered
+        );
+    }
+
+    #[test]
+    fn filter_suppressed_file_level_drops_everything() {
+        let src = "# ry: ignore-file\nx <- undefined_var\n";
+        let diags = check(src);
+        let filtered = filter_suppressed(diags, src);
+        assert!(
+            filtered.is_empty(),
+            "file-level suppression should drop all diagnostics, got {:?}",
+            filtered
+        );
+    }
+
+    #[test]
+    fn filter_suppressed_other_rules_still_fire() {
+        // Suppressing RY010 on line 0 should NOT affect RY040 on line 1.
+        let src = "x <- undefined_var  # ry: ignore[RY010]\ny <- \"a\" * 3L\n";
+        let diags = check(src);
+        let filtered = filter_suppressed(diags, src);
+        assert!(
+            filtered.iter().any(|d| d.code == "RY040"),
+            "RY040 should still fire (it's on a different line), got {:?}",
+            filtered
+        );
+        assert!(
+            filtered.iter().all(|d| d.code != "RY010"),
+            "RY010 should be suppressed"
+        );
     }
 
     #[test]

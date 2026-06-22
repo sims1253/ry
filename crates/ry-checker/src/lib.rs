@@ -1563,6 +1563,19 @@ impl Checker {
                     if name.contains("::") {
                         return RType::UNKNOWN;
                     }
+                    // Special/operator names referenced via backticks
+                    // (e.g. `` `%+%` ``, `` `+` ``) or bare operator
+                    // symbols. The parser preserves the surrounding
+                    // backticks in the identifier name, so a leading
+                    // backtick is the primary signal. These are commonly
+                    // user-defined operators or package reexports that
+                    // we cannot resolve against any scope, typeshed, or
+                    // FnTable -- suppressing RY010 here avoids
+                    // false positives on code like ggplot2's `` `%+%` ``
+                    // operator. We return opaque rather than flagging.
+                    if name.starts_with('`') || name.contains('%') || is_operator_symbol(name) {
+                        return RType::UNKNOWN;
+                    }
                     self.emit(
                         Severity::Warning,
                         *span,
@@ -3777,6 +3790,20 @@ fn infer_literal_default(e: &Expr) -> RType {
 fn is_return_call(e: &Expr) -> bool {
     matches!(e, Expr::Call { func, .. }
         if matches!(func.as_ref(), Expr::Ident { name, .. } if name == "return" || name == "invisible"))
+}
+
+/// True if the string is an R operator symbol that might be referenced
+/// as a (possibly backtick-quoted) identifier, e.g. `+`, `*`, `<-`.
+/// These are commonly user-defined or package-imported operators that
+/// the checker cannot resolve against any scope, typeshed, or FnTable.
+/// Used to suppress spurious RY010 (unbound variable) on such names.
+fn is_operator_symbol(s: &str) -> bool {
+    matches!(
+        s,
+        "+" | "-" | "*" | "/" | "^" | "<" | ">" | "<=" | ">="
+            | "==" | "!=" | "&" | "|" | "&&" | "||" | "!" | ":"
+            | "<-" | "<<-" | "=" | "~" | "$" | "@" | "?"
+    )
 }
 
 fn span_of(e: &Expr) -> Span {
@@ -6279,6 +6306,49 @@ mod tests {
         assert!(
             diags.iter().any(|d| d.code == "RY010"),
             "bare unbound identifier should still emit RY010, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn backtick_percent_operator_not_unbound() {
+        // A backtick-quoted operator name like `` `%+%` `` is commonly a
+        // user-defined or package-imported infix operator. The parser
+        // preserves the backticks in the identifier name, and we cannot
+        // resolve such names against any scope, typeshed, or FnTable.
+        // The checker must suppress RY010 and return opaque.
+        let diags = check("x <- `%+%`\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "backtick `%+%` operator should not emit RY010, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn backtick_builtin_operator_symbol_not_unbound() {
+        // A backtick-quoted built-in operator symbol like `` `+` `` is
+        // referenced as a value (e.g. passed to `Reduce`). Suppress
+        // RY010: these are R language primitives we don't model as
+        // scope-bound variables.
+        let diags = check("x <- `+`\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "backtick `+` operator should not emit RY010, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn backtick_pipe_operator_not_unbound() {
+        // `` `%>%` `` (magrittr pipe) referenced as a bare backtick
+        // identifier should not emit RY010. This pattern appears in
+        // package reexport code (`magrittr::`%>%`` is already covered
+        // by the `::` check; the bare backtick form is covered here).
+        let diags = check("x <- `%>%`\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "backtick `%>%` operator should not emit RY010, got {:?}",
             diags
         );
     }

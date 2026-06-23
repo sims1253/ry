@@ -49,7 +49,7 @@ enum Cmd {
         /// Always use exit code 0, even if there are error-level diagnostics.
         #[arg(long)]
         exit_zero: bool,
-        /// Output format. One of: full, concise, json.
+        /// Output format. One of: full, concise, json, github, gitlab, junit.
         #[arg(long, value_name = "FORMAT", default_value = "concise")]
         output_format: String,
         /// Control when colored output is used.
@@ -341,7 +341,7 @@ fn run_check(
 
     let format = ry_checker::format::OutputFormat::parse(&cfg.output_format).ok_or_else(|| {
         miette::miette!(
-            "unknown --output-format `{}`; expected one of: full, concise, json",
+            "unknown --output-format `{}`; expected one of: full, concise, json, github, gitlab, junit",
             cfg.output_format
         )
     })?;
@@ -583,7 +583,10 @@ fn run_check_once(
     let rendered = ry_checker::format::render(&all_diagnostics, format, &srcs);
     if !rendered.is_empty() {
         match format {
-            ry_checker::format::OutputFormat::Json => print!("{}", rendered),
+            ry_checker::format::OutputFormat::Json
+            | ry_checker::format::OutputFormat::Github
+            | ry_checker::format::OutputFormat::Gitlab
+            | ry_checker::format::OutputFormat::Junit => print!("{}", rendered),
             _ => eprint!("{}", rendered),
         }
     }

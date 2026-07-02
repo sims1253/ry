@@ -363,7 +363,7 @@ impl RParser {
                     "NA_character_" => {
                         crate::types::RType::scalar(crate::types::Mode::Character, true)
                     }
-                    _ => crate::types::RType::UNKNOWN,
+                    _ => crate::types::RType::unknown(),
                 };
                 Some(Expr::Na(t, self.span(n, src)))
             }

@@ -7,6 +7,7 @@
 //! signature is not in the typeshed).
 
 use std::fmt;
+use std::sync::Arc;
 
 /// Atomic mode of an R vector, mirrors `typeof()` for vectors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -143,18 +144,18 @@ impl Length {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct NaFlag(pub bool);
 
-/// S3 class attribute. Up to 4 class names. Uses `&'static str` so the
-/// type stays `Copy` (and so does `RType`). Class names that aren't
-/// known at compile time (e.g. user-defined via `structure(class = my_var)`)
-/// are dropped to `ClassVector::unknown()`.
+/// S3 class attribute. Up to 4 class names. Class names are held as
+/// `Arc<str>` so a runtime-derived name (e.g. from `structure(class =
+/// my_var)`) does not require a global intern table; the `Arc` is cheap
+/// to clone and is released when the owning `RType` is dropped.
 ///
 /// The `known` flag distinguishes three states:
 ///   * `known == true`, `len == 0`: we know there is no class attribute.
 ///   * `known == true`, `len > 0`: we know the class vector.
 ///   * `known == false`: we couldn't determine the class (do not warn).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ClassVector {
-    pub names: [Option<&'static str>; 4],
+    pub names: [Option<Arc<str>>; 4],
     pub len: u8,
     pub known: bool,
 }
@@ -163,30 +164,30 @@ impl ClassVector {
     /// A value with no class attribute set. The class is *known* to be
     /// empty (e.g. a plain atomic literal); callers may rely on this to
     /// suppress RY050 since there's nothing to dispatch on.
-    pub const fn empty() -> Self {
+    pub fn empty() -> Self {
         ClassVector {
-            names: [None; 4],
+            names: [None, None, None, None],
             len: 0,
             known: true,
         }
     }
 
     /// A single-class value, e.g. `structure(x, class = "foo")`.
-    pub const fn single(name: &'static str) -> Self {
+    pub fn single(name: &str) -> Self {
         ClassVector {
-            names: [Some(name), None, None, None],
+            names: [Some(Arc::from(name)), None, None, None],
             len: 1,
             known: true,
         }
     }
 
     /// We couldn't determine the class at all (dynamic input). Used for
-    /// `RType::UNKNOWN` and any value whose class depends on unknown
+    /// `RType::unknown()` and any value whose class depends on unknown
     /// state. Distinguished from `empty()` so callers avoid emitting
     /// RY050 on values they can't reason about.
-    pub const fn unknown() -> Self {
+    pub fn unknown() -> Self {
         ClassVector {
-            names: [None; 4],
+            names: [None, None, None, None],
             len: 0,
             known: false,
         }
@@ -194,11 +195,11 @@ impl ClassVector {
 
     /// First class name, if any. R's S3 dispatch walks the class vector
     /// in order; for v1 we model only the first-element rule.
-    pub fn first(&self) -> Option<&'static str> {
+    pub fn first(&self) -> Option<Arc<str>> {
         if self.len == 0 {
             None
         } else {
-            self.names[0]
+            self.names[0].clone()
         }
     }
 
@@ -208,8 +209,8 @@ impl ClassVector {
             return false;
         }
         for i in 0..(self.len as usize).min(4) {
-            if let Some(n) = self.names[i] {
-                if n == name {
+            if let Some(n) = &self.names[i] {
+                if &**n == name {
                     return true;
                 }
             }
@@ -228,16 +229,16 @@ impl ClassVector {
         self.known && self.len > 0
     }
 
-    /// Build a class vector from a slice of static strings, truncating
+    /// Build a class vector from a slice of strings, truncating
     /// to the first 4 entries (R's S3 rarely uses more; the truncation
     /// is logged at debug level by the caller if needed).
-    pub fn from_static_slice(names: &[&'static str]) -> Self {
+    pub fn from_slice(names: &[&str]) -> Self {
         if names.is_empty() {
             return ClassVector::empty();
         }
         let mut out = ClassVector::empty();
         for (i, n) in names.iter().take(4).enumerate() {
-            out.names[i] = Some(*n);
+            out.names[i] = Some(Arc::from(*n));
         }
         out.len = names.len().min(4) as u8;
         out.known = true;
@@ -246,15 +247,15 @@ impl ClassVector {
 
     /// Set the class on an existing `RType`, returning a new `RType`.
     /// Used by the checker when it sees `structure(x, class = "foo")`.
-    pub fn with_class(mut self, names: &[&'static str]) -> Self {
-        self.names = [None; 4];
+    pub fn with_class(mut self, names: &[&str]) -> Self {
+        self.names = [None, None, None, None];
         if names.is_empty() {
             self.len = 0;
             self.known = true;
             return self;
         }
         for (i, n) in names.iter().take(4).enumerate() {
-            self.names[i] = Some(*n);
+            self.names[i] = Some(Arc::from(*n));
         }
         self.len = names.len().min(4) as u8;
         self.known = true;
@@ -262,59 +263,13 @@ impl ClassVector {
     }
 }
 
-/// Class literals we recognize at type-inference time. Class names that
-/// aren't in this table (e.g. user-defined `"myclass"`) are still
-/// interned via `intern_class_name` so we can keep `ClassVector: Copy`
-/// while supporting user-defined classes from `structure(...)`.
-pub const KNOWN_CLASSES: &[(&str, &str)] = &[
-    ("data.frame", "data.frame"),
-    ("lm", "lm"),
-    ("factor", "factor"),
-    ("ts", "ts"),
-    ("Date", "Date"),
-    ("POSIXct", "POSIXct"),
-    ("POSIXlt", "POSIXlt"),
-    ("table", "table"),
-    ("matrix", "matrix"),
-];
-
-/// Intern a runtime `&str` into `&'static str` so it can be stored in a
-/// `Copy` `ClassVector`. We cache by string content using a `OnceLock`
-/// HashMap; the underlying strings are leaked (acceptable for v1: the
-/// number of distinct class names in a program is small and bounded by
-/// the source's literal string constants).
-pub fn intern_class_name(s: &str) -> &'static str {
-    use std::sync::{Mutex, OnceLock};
-    static TABLE: OnceLock<Mutex<std::collections::HashMap<String, &'static str>>> =
-        OnceLock::new();
-    let lock = TABLE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
-    let mut guard = match lock.lock() {
-        Ok(g) => g,
-        Err(p) => p.into_inner(),
-    };
-    if let Some(existing) = guard.get(s) {
-        return existing;
-    }
-    // First check the well-known table so common class names don't
-    // accumulate duplicate leaks.
-    if let Some((_, canonical)) = KNOWN_CLASSES.iter().find(|(k, _)| *k == s) {
-        guard.insert(s.to_string(), canonical);
-        return canonical;
-    }
-    let leaked: &'static str = Box::leak(s.to_string().into_boxed_str());
-    guard.insert(s.to_string(), leaked);
-    leaked
-}
-
 /// Schema for a record-like value (data frame, list with known shape).
 /// Stores an ordered `(name, RType)` list so we can both look up by
 /// name (column access) and iterate in source order (display, audit).
 ///
-/// Interned via `intern_column_schema` so `RType` stays `Copy`: the
-/// schema lives for the lifetime of the program (acceptable for v1: the
-/// number of distinct schemas in a run is bounded by the source's
-/// literal `list(...)` / `data.frame(...)` constructors plus the
-/// typeshed's built-in datasets).
+/// Stored behind an `Arc` on `RType` (see `RType::columns`); the Arc is
+/// released when the owning `RType` is dropped, so column schemas no
+/// longer leak for the lifetime of the process.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ColumnSchema {
     pub columns: Vec<(String, RType)>,
@@ -327,7 +282,7 @@ impl ColumnSchema {
         self.columns
             .iter()
             .find(|(n, _)| n == name)
-            .map(|(_, t)| *t)
+            .map(|(_, t)| t.clone())
     }
 
     /// All column names in declared order. Used for diagnostic messages.
@@ -342,29 +297,6 @@ impl ColumnSchema {
     pub fn len(&self) -> usize {
         self.columns.len()
     }
-}
-
-/// Intern a runtime-built `ColumnSchema` into `&'static ColumnSchema`
-/// so it can be stored in a `Copy` `RType`. Cached by content using a
-/// `OnceLock`-protected `Vec`; identical schemas collapse to the same
-/// static reference. The schemas are leaked (see `ColumnSchema` docs for
-/// the rationale).
-pub fn intern_column_schema(schema: ColumnSchema) -> &'static ColumnSchema {
-    use std::sync::{Mutex, OnceLock};
-    static TABLE: OnceLock<Mutex<Vec<&'static ColumnSchema>>> = OnceLock::new();
-    let lock = TABLE.get_or_init(|| Mutex::new(Vec::new()));
-    let mut guard = match lock.lock() {
-        Ok(g) => g,
-        Err(p) => p.into_inner(),
-    };
-    for existing in guard.iter() {
-        if **existing == schema {
-            return existing;
-        }
-    }
-    let leaked: &'static ColumnSchema = Box::leak(Box::new(schema));
-    guard.push(leaked);
-    leaked
 }
 
 /// Inferred signature for a function value (closures returned from
@@ -386,41 +318,16 @@ pub fn intern_column_schema(schema: ColumnSchema) -> &'static ColumnSchema {
 ///   * `params` carries positional inferred-or-default types and may be
 ///     shorter than the real arity (we only fill entries we can infer).
 ///
-/// Interned via `intern_function_signature` so `RType` stays `Copy`.
+/// Stored behind an `Arc` on `RType` (see `RType::fn_sig`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionSignature {
     /// Positional parameter types the checker could infer from
     /// defaults or call sites. May be shorter than the real arity;
     /// missing entries are treated as opaque by callers.
     pub params: Vec<RType>,
-    /// Joined return type of the function body. `RType::UNKNOWN` if the
+    /// Joined return type of the function body. `RType::unknown()` if the
     /// body gave us nothing to work with.
     pub return_type: Box<RType>,
-}
-
-/// Intern a runtime-built `FunctionSignature` into
-/// `&'static FunctionSignature` so it can be stored in a `Copy`
-/// `RType`. Same caching/leaking pattern as `intern_column_schema`:
-/// identical signatures collapse to the same static reference, and the
-/// storage is leaked for the program's lifetime (acceptable for v1:
-/// the number of distinct closure signatures in a run is bounded by
-/// the source's literal `function(...) ...` expressions).
-pub fn intern_function_signature(sig: FunctionSignature) -> &'static FunctionSignature {
-    use std::sync::{Mutex, OnceLock};
-    static TABLE: OnceLock<Mutex<Vec<&'static FunctionSignature>>> = OnceLock::new();
-    let lock = TABLE.get_or_init(|| Mutex::new(Vec::new()));
-    let mut guard = match lock.lock() {
-        Ok(g) => g,
-        Err(p) => p.into_inner(),
-    };
-    for existing in guard.iter() {
-        if **existing == sig {
-            return existing;
-        }
-    }
-    let leaked: &'static FunctionSignature = Box::leak(Box::new(sig));
-    guard.push(leaked);
-    leaked
 }
 
 /// A fully-described R type at the granularity v1 cares about. Includes
@@ -428,17 +335,24 @@ pub fn intern_function_signature(sig: FunctionSignature) -> &'static FunctionSig
 /// frame columns, named list shape); arithmetic / comparison strip the
 /// class and schema (matching R), and control-flow `join` keeps both
 /// only when both sides agree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `RType` is `Clone` (not `Copy`): the `columns` and `fn_sig` fields
+/// hold `Arc`-shared heap data, and the `class` names are `Arc<str>`.
+/// Cloning bumps refcounts and is cheap. The previous design held these
+/// as `&'static` references into globally-leaked intern tables; the Arcs
+/// are released when the owning value is dropped, so long-running LSP
+/// sessions no longer accumulate schemas and class names unboundedly.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RType {
     pub mode: Mode,
     pub length: Length,
     pub na: NaFlag,
     pub class: ClassVector,
-    /// Optional record schema for data frames and named lists. Interned
-    /// via `intern_column_schema` so this field stays `Copy`. `None`
-    /// means "we don't know the shape" (the conservative default for
-    /// values whose construction we can't see).
-    pub columns: Option<&'static ColumnSchema>,
+    /// Optional record schema for data frames and named lists. Shared
+    /// via `Arc` so cloning an `RType` is cheap. `None` means "we don't
+    /// know the shape" (the conservative default for values whose
+    /// construction we can't see).
+    pub columns: Option<Arc<ColumnSchema>>,
     /// Optional inferred signature for `Mode::Function` values. Carries
     /// the joined return type (and any positional param types we could
     /// infer) for closures returned from function factories like
@@ -446,26 +360,33 @@ pub struct RType {
     ///
     /// `None` for opaque functions (built-ins without a typeshed entry,
     /// user functions whose body we couldn't walk, or closures deeper
-    /// than the 3-level nesting cap). Interned via
-    /// `intern_function_signature` so this field stays `Copy`.
+    /// than the 3-level nesting cap).
     ///
     /// For non-`Function` modes this is always `None`; arithmetic and
     /// comparison ops clear it (you cannot meaningfully add two
     /// closures).
-    pub fn_sig: Option<&'static FunctionSignature>,
+    pub fn_sig: Option<Arc<FunctionSignature>>,
 }
 
 impl RType {
-    pub const UNKNOWN: RType = RType {
-        mode: Mode::Opaque,
-        length: Length::Unknown,
-        na: NaFlag(true),
-        class: ClassVector::unknown(),
-        columns: None,
-        fn_sig: None,
-    };
+    /// The opaque "unknown" type: opaque mode, unknown length, no class
+    /// or schema. Used whenever inference gives up.
+    ///
+    /// This is a function (not a `const`) because `RType`'s `Arc` fields
+    /// cannot be constructed in a const context. Callers that previously
+    /// wrote `RType::UNKNOWN` should call `RType::unknown()`.
+    pub fn unknown() -> RType {
+        RType {
+            mode: Mode::Opaque,
+            length: Length::Unknown,
+            na: NaFlag(true),
+            class: ClassVector::unknown(),
+            columns: None,
+            fn_sig: None,
+        }
+    }
 
-    pub const fn new(mode: Mode, length: Length, na: bool) -> Self {
+    pub fn new(mode: Mode, length: Length, na: bool) -> Self {
         RType {
             mode,
             length,
@@ -477,20 +398,17 @@ impl RType {
     }
 
     /// A scalar literal of the given mode.
-    pub const fn scalar(mode: Mode, na: bool) -> Self {
+    pub fn scalar(mode: Mode, na: bool) -> Self {
         Self::new(mode, Length::One, na)
     }
 
-    /// Return a copy of `self` with the S3 class vector replaced. The
-    /// caller is responsible for providing interned static strings; use
-    /// `intern_class_name` for runtime-derived names.
-    pub const fn with_class(self, class: ClassVector) -> Self {
+    /// Return a copy of `self` with the S3 class vector replaced.
+    pub fn with_class(self, class: ClassVector) -> Self {
         RType { class, ..self }
     }
 
-    /// Return a copy of `self` with the column schema replaced. The
-    /// caller is responsible for interning via `intern_column_schema`.
-    pub const fn with_columns(self, schema: &'static ColumnSchema) -> Self {
+    /// Return a copy of `self` with the column schema replaced.
+    pub fn with_columns(self, schema: Arc<ColumnSchema>) -> Self {
         RType {
             columns: Some(schema),
             ..self
@@ -498,11 +416,10 @@ impl RType {
     }
 
     /// Return a copy of `self` with the function signature replaced.
-    /// The caller is responsible for interning via
-    /// `intern_function_signature`. Only meaningful when `mode` is
-    /// `Mode::Function`; on other modes the signature is silently
-    /// dropped (arithmetic / comparison clear it).
-    pub const fn with_fn_sig(self, sig: &'static FunctionSignature) -> Self {
+    /// Only meaningful when `mode` is `Mode::Function`; on other modes
+    /// the signature is silently dropped (arithmetic / comparison clear
+    /// it).
+    pub fn with_fn_sig(self, sig: Arc<FunctionSignature>) -> Self {
         RType {
             fn_sig: Some(sig),
             ..self
@@ -575,7 +492,7 @@ impl RType {
     /// information rather than guessing.
     pub fn join(self, other: RType) -> RType {
         if matches!(self.mode, Mode::Opaque) || matches!(other.mode, Mode::Opaque) {
-            return RType::UNKNOWN;
+            return RType::unknown();
         }
         if self == other {
             return self;
@@ -631,10 +548,10 @@ impl RType {
     /// list it is a length-1 list; for opaque input it stays opaque.
     /// The class and column schema are dropped: iterating over a classed
     /// vector yields the bare elements in R.
-    pub fn element(self) -> RType {
+    pub fn element(&self) -> RType {
         match self.mode {
             Mode::Null => RType::new(Mode::Null, Length::Zero, false),
-            Mode::Opaque => RType::UNKNOWN,
+            Mode::Opaque => RType::unknown(),
             _ => RType::new(self.mode, Length::One, self.na.0),
         }
     }
@@ -710,7 +627,7 @@ impl RType {
             let mut first = true;
             f.write_str(":")?;
             for i in 0..(self.class.len as usize).min(4) {
-                if let Some(n) = self.class.names[i] {
+                if let Some(n) = &self.class.names[i] {
                     if !first {
                         f.write_str(",")?;
                     }
@@ -724,7 +641,7 @@ impl RType {
         // Column schema annotation. Abbreviated to the first 3 columns
         // plus `...` when the schema has more entries, to keep the
         // display readable for wide data frames.
-        if let Some(schema) = self.columns {
+        if let Some(schema) = &self.columns {
             f.write_str("{")?;
             let cols = &schema.columns;
             let limit = 3;
@@ -742,7 +659,7 @@ impl RType {
         // Function signature annotation for closures whose return type
         // we could infer. Shown as `-> <return_type>` so it visually
         // resembles R's own `function() {}` shape.
-        if let Some(sig) = self.fn_sig {
+        if let Some(sig) = &self.fn_sig {
             write!(f, " -> {}", sig.return_type)?;
         }
         Ok(())
@@ -793,7 +710,7 @@ mod tests {
     #[test]
     fn join_with_opaque_is_unknown() {
         let i = RType::scalar(Mode::Integer, false);
-        assert_eq!(i.join(RType::UNKNOWN), RType::UNKNOWN);
+        assert_eq!(i.join(RType::unknown()), RType::unknown());
     }
 
     #[test]
@@ -845,7 +762,7 @@ mod tests {
     #[test]
     fn class_vector_single_exposes_first() {
         let cv = ClassVector::single("foo");
-        assert_eq!(cv.first(), Some("foo"));
+        assert_eq!(cv.first().as_deref(), Some("foo"));
         assert!(cv.has_known_class());
         assert!(cv.contains("foo"));
         assert!(!cv.contains("bar"));
@@ -864,10 +781,10 @@ mod tests {
     }
 
     #[test]
-    fn class_vector_from_static_slice_truncates_to_four() {
-        let cv = ClassVector::from_static_slice(&["a", "b", "c", "d", "e"]);
+    fn class_vector_from_slice_truncates_to_four() {
+        let cv = ClassVector::from_slice(&["a", "b", "c", "d", "e"]);
         assert_eq!(cv.len, 4);
-        assert_eq!(cv.first(), Some("a"));
+        assert_eq!(cv.first().as_deref(), Some("a"));
         assert!(cv.contains("d"));
         assert!(!cv.contains("e"));
     }
@@ -894,8 +811,8 @@ mod tests {
     #[test]
     fn join_preserves_class_when_both_sides_agree() {
         let class = ClassVector::single("lm");
-        let lhs = RType::scalar(Mode::List, false).with_class(class);
-        let rhs = RType::scalar(Mode::List, false).with_class(class);
+        let lhs = RType::scalar(Mode::List, false).with_class(class.clone());
+        let rhs = RType::scalar(Mode::List, false).with_class(class.clone());
         let joined = lhs.join(rhs);
         assert_eq!(joined.class, class);
     }
@@ -912,9 +829,9 @@ mod tests {
     #[test]
     fn join_class_unknown_when_one_side_unknown() {
         let lhs = RType::scalar(Mode::List, false).with_class(ClassVector::single("lm"));
-        let rhs = RType::UNKNOWN; // unknown class
+        let rhs = RType::unknown(); // unknown class
         let joined = lhs.join(rhs);
-        assert_eq!(joined, RType::UNKNOWN);
+        assert_eq!(joined, RType::unknown());
         assert!(joined.class.is_unknown());
     }
 
@@ -937,24 +854,6 @@ mod tests {
     }
 
     #[test]
-    fn intern_class_name_is_idempotent() {
-        let a = intern_class_name("data.frame");
-        let b = intern_class_name("data.frame");
-        assert_eq!(
-            a.as_ptr(),
-            b.as_ptr(),
-            "same content must intern to same static"
-        );
-        assert_eq!(a, "data.frame");
-    }
-
-    #[test]
-    fn intern_class_name_user_defined() {
-        let a = intern_class_name("zzz_user_class_123");
-        assert_eq!(a, "zzz_user_class_123");
-    }
-
-    #[test]
     fn column_schema_lookups_by_name() {
         let schema = ColumnSchema {
             columns: vec![
@@ -970,43 +869,14 @@ mod tests {
     }
 
     #[test]
-    fn intern_column_schema_collapses_identical() {
-        let s1 = intern_column_schema(ColumnSchema {
-            columns: vec![("x".to_string(), RType::scalar(Mode::Double, false))],
-        });
-        let s2 = intern_column_schema(ColumnSchema {
-            columns: vec![("x".to_string(), RType::scalar(Mode::Double, false))],
-        });
-        // Identical content must intern to the same static reference.
-        assert!(
-            std::ptr::eq(s1, s2),
-            "identical schemas should intern to the same static"
-        );
-    }
-
-    #[test]
-    fn intern_column_schema_keeps_distinct() {
-        let s1 = intern_column_schema(ColumnSchema {
-            columns: vec![("x".to_string(), RType::scalar(Mode::Double, false))],
-        });
-        let s2 = intern_column_schema(ColumnSchema {
-            columns: vec![("y".to_string(), RType::scalar(Mode::Double, false))],
-        });
-        assert!(
-            !std::ptr::eq(s1, s2),
-            "distinct schemas should get distinct statics"
-        );
-    }
-
-    #[test]
     fn rtype_with_columns_roundtrips() {
-        let schema = intern_column_schema(ColumnSchema {
+        let schema = Arc::new(ColumnSchema {
             columns: vec![(
                 "mpg".to_string(),
                 RType::new(Mode::Double, Length::Known(32), false),
             )],
         });
-        let t = RType::new(Mode::List, Length::Known(1), false).with_columns(schema);
+        let t = RType::new(Mode::List, Length::Known(1), false).with_columns(schema.clone());
         assert_eq!(t.columns, Some(schema));
         // `with_columns` must not disturb other fields.
         assert_eq!(t.mode, Mode::List);
@@ -1015,7 +885,7 @@ mod tests {
 
     #[test]
     fn arith_strips_columns() {
-        let schema = intern_column_schema(ColumnSchema {
+        let schema = Arc::new(ColumnSchema {
             columns: vec![("x".to_string(), RType::scalar(Mode::Double, false))],
         });
         let lhs = RType::scalar(Mode::Double, false).with_columns(schema);
@@ -1027,7 +897,7 @@ mod tests {
 
     #[test]
     fn compare_strips_columns() {
-        let schema = intern_column_schema(ColumnSchema {
+        let schema = Arc::new(ColumnSchema {
             columns: vec![("x".to_string(), RType::scalar(Mode::Double, false))],
         });
         let lhs = RType::scalar(Mode::Double, false).with_columns(schema);
@@ -1039,21 +909,21 @@ mod tests {
 
     #[test]
     fn join_preserves_columns_when_both_sides_agree() {
-        let schema = intern_column_schema(ColumnSchema {
+        let schema = Arc::new(ColumnSchema {
             columns: vec![("x".to_string(), RType::scalar(Mode::Double, false))],
         });
-        let lhs = RType::scalar(Mode::List, false).with_columns(schema);
-        let rhs = RType::scalar(Mode::List, false).with_columns(schema);
+        let lhs = RType::scalar(Mode::List, false).with_columns(schema.clone());
+        let rhs = RType::scalar(Mode::List, false).with_columns(schema.clone());
         let joined = lhs.join(rhs);
         assert_eq!(joined.columns, Some(schema));
     }
 
     #[test]
     fn join_drops_columns_when_sides_differ() {
-        let s1 = intern_column_schema(ColumnSchema {
+        let s1 = Arc::new(ColumnSchema {
             columns: vec![("a".to_string(), RType::scalar(Mode::Double, false))],
         });
-        let s2 = intern_column_schema(ColumnSchema {
+        let s2 = Arc::new(ColumnSchema {
             columns: vec![("b".to_string(), RType::scalar(Mode::Double, false))],
         });
         let lhs = RType::scalar(Mode::List, false).with_columns(s1);
@@ -1068,7 +938,7 @@ mod tests {
         let cols: Vec<(String, RType)> = (0..5)
             .map(|i| (format!("c{}", i), RType::scalar(Mode::Double, false)))
             .collect();
-        let schema = intern_column_schema(ColumnSchema { columns: cols });
+        let schema = Arc::new(ColumnSchema { columns: cols });
         let t = RType::new(Mode::List, Length::Known(5), false).with_columns(schema);
         let s = format!("{}", t);
         assert!(s.contains("c0:"), "missing c0: {}", s);
@@ -1079,44 +949,12 @@ mod tests {
     }
 
     #[test]
-    fn intern_function_signature_collapses_identical() {
-        let s1 = intern_function_signature(FunctionSignature {
-            params: vec![RType::scalar(Mode::Double, false)],
-            return_type: Box::new(RType::scalar(Mode::Integer, false)),
-        });
-        let s2 = intern_function_signature(FunctionSignature {
-            params: vec![RType::scalar(Mode::Double, false)],
-            return_type: Box::new(RType::scalar(Mode::Integer, false)),
-        });
-        assert!(
-            std::ptr::eq(s1, s2),
-            "identical signatures should intern to the same static"
-        );
-    }
-
-    #[test]
-    fn intern_function_signature_keeps_distinct() {
-        let s1 = intern_function_signature(FunctionSignature {
-            params: vec![],
-            return_type: Box::new(RType::scalar(Mode::Integer, false)),
-        });
-        let s2 = intern_function_signature(FunctionSignature {
-            params: vec![],
-            return_type: Box::new(RType::scalar(Mode::Double, false)),
-        });
-        assert!(
-            !std::ptr::eq(s1, s2),
-            "distinct signatures should get distinct statics"
-        );
-    }
-
-    #[test]
     fn rtype_with_fn_sig_roundtrips() {
-        let sig = intern_function_signature(FunctionSignature {
+        let sig = Arc::new(FunctionSignature {
             params: vec![RType::scalar(Mode::Double, false)],
             return_type: Box::new(RType::scalar(Mode::Integer, false)),
         });
-        let t = RType::scalar(Mode::Function, false).with_fn_sig(sig);
+        let t = RType::scalar(Mode::Function, false).with_fn_sig(sig.clone());
         assert_eq!(t.fn_sig, Some(sig));
         assert_eq!(t.mode, Mode::Function);
     }
@@ -1125,7 +963,7 @@ mod tests {
     fn rtype_default_fn_sig_is_none() {
         // All standard constructors must produce fn_sig = None so the
         // signature is opt-in only.
-        assert!(RType::UNKNOWN.fn_sig.is_none());
+        assert!(RType::unknown().fn_sig.is_none());
         assert!(RType::scalar(Mode::Function, false).fn_sig.is_none());
         assert!(RType::new(Mode::Integer, Length::One, false)
             .fn_sig
@@ -1138,7 +976,7 @@ mod tests {
         // arith_result permits it (it doesn't for Function), the
         // signature must not survive. We exercise the strip via a
         // classed list whose schema we know survives only via join.
-        let sig = intern_function_signature(FunctionSignature {
+        let sig = Arc::new(FunctionSignature {
             params: vec![],
             return_type: Box::new(RType::scalar(Mode::Integer, false)),
         });
@@ -1150,23 +988,23 @@ mod tests {
 
     #[test]
     fn join_preserves_fn_sig_when_both_sides_agree() {
-        let sig = intern_function_signature(FunctionSignature {
+        let sig = Arc::new(FunctionSignature {
             params: vec![],
             return_type: Box::new(RType::scalar(Mode::Integer, false)),
         });
-        let lhs = RType::scalar(Mode::Function, false).with_fn_sig(sig);
-        let rhs = RType::scalar(Mode::Function, false).with_fn_sig(sig);
+        let lhs = RType::scalar(Mode::Function, false).with_fn_sig(sig.clone());
+        let rhs = RType::scalar(Mode::Function, false).with_fn_sig(sig.clone());
         let joined = lhs.join(rhs);
         assert_eq!(joined.fn_sig, Some(sig));
     }
 
     #[test]
     fn join_drops_fn_sig_when_sides_differ() {
-        let s1 = intern_function_signature(FunctionSignature {
+        let s1 = Arc::new(FunctionSignature {
             params: vec![],
             return_type: Box::new(RType::scalar(Mode::Integer, false)),
         });
-        let s2 = intern_function_signature(FunctionSignature {
+        let s2 = Arc::new(FunctionSignature {
             params: vec![],
             return_type: Box::new(RType::scalar(Mode::Double, false)),
         });
@@ -1178,7 +1016,7 @@ mod tests {
 
     #[test]
     fn rtype_display_includes_fn_sig() {
-        let sig = intern_function_signature(FunctionSignature {
+        let sig = Arc::new(FunctionSignature {
             params: vec![],
             return_type: Box::new(RType::scalar(Mode::Integer, false)),
         });

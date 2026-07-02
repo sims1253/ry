@@ -1908,7 +1908,7 @@ fn collect_completions(
             let trimmed = before_cursor.trim_end().trim_end_matches('$');
             if let Some(var_name) = extract_last_identifier(trimmed) {
                 if let Some(t) = scope.get(&var_name) {
-                    if let Some(schema) = t.columns {
+                    if let Some(schema) = &t.columns {
                         let mut items: Vec<CompletionItem> = schema
                             .columns
                             .iter()

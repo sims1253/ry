@@ -19,6 +19,10 @@ enum Expectation {
     Codes(Vec<String>),
     /// No diagnostics at all.
     None,
+    /// At least one parse/syntax error (`RY000`) must be emitted. This
+    /// pins Phase 1.2's parse-error reporting; until `RY000` is
+    /// registered and surfaced, fixtures using this marker will fail.
+    ParseError,
 }
 
 #[derive(Debug)]
@@ -43,6 +47,9 @@ fn parse_marker(src: &str) -> Option<Expectation> {
     // `# no-diag` is a standalone marker; `# expect: ...` is colon-delimited.
     if body.eq_ignore_ascii_case("no-diag") || body.eq_ignore_ascii_case("no_diag") {
         return Some(Expectation::None);
+    }
+    if body.eq_ignore_ascii_case("expect-parse-error") || body.eq_ignore_ascii_case("expect_parse_error") {
+        return Some(Expectation::ParseError);
     }
     let (key, value) = body.split_once(':')?;
     let key = key.trim();
@@ -157,6 +164,7 @@ fn corpus_check_each_fixture() {
         }
         let ok = match &fx.expected {
             Expectation::None => got.is_empty(),
+            Expectation::ParseError => got_codes.contains_key("RY000"),
             Expectation::Codes(expected) => {
                 let mut want: BTreeMap<&str, usize> = BTreeMap::new();
                 for c in expected {
@@ -199,6 +207,7 @@ fn corpus_summary() {
         let codes: Vec<&str> = got.iter().map(|(c, _)| c.as_str()).collect();
         let expected_str = match &fx.expected {
             Expectation::None => "(none)".to_string(),
+            Expectation::ParseError => "(parse-error)".to_string(),
             Expectation::Codes(c) => c.join(","),
         };
         let result = if codes.is_empty() {

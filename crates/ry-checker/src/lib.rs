@@ -23,7 +23,7 @@ use ry_core::types::{
     FunctionSignature, Length, Mode, RType,
 };
 use ry_core::Span;
-use ry_typeshed::{load_base, FunctionSig, JsonRType, ReturnSpec, Typeshed};
+use ry_typeshed::{load_base_cached, FunctionSig, JsonRType, ReturnSpec, Typeshed};
 use std::collections::HashMap;
 
 /// S3 generics we recognize when collecting method definitions of the
@@ -632,9 +632,15 @@ pub(crate) const MAX_FIXPOINT_DEPTH: usize = 8;
 pub(crate) const MAX_CLOSURE_DEPTH: usize = 3;
 
 pub struct Checker {
-    typeshed: Typeshed,
+    typeshed: &'static Typeshed,
     pub(crate) diagnostics: Vec<Diagnostic>,
     pub(crate) path: String,
+    /// When true, `emit` is a no-op. Set during pass-2 (fixpoint) return-
+    /// type refinement and closure-signature building so the single
+    /// inference engine can be used for both the pure and the diagnostic
+    /// walk: pass 2 runs the identical `infer` with `discarding = true`,
+    /// pass 3 with `false`. This is the Phase 2 unification mechanism.
+    discarding: bool,
     /// User-defined functions collected in pass 1.
     pub(crate) fn_table: FnTable,
     /// Inferred return types, refined by the fixpoint loop.
@@ -645,11 +651,12 @@ pub struct Checker {
 
 impl Checker {
     pub fn new(path: &str) -> Self {
-        let typeshed = load_base().expect("typeshed must load");
+        let typeshed = load_base_cached().expect("typeshed must load");
         Self {
             typeshed,
             diagnostics: Vec::new(),
             path: path.to_string(),
+            discarding: false,
             fn_table: FnTable::default(),
             return_slots: ReturnSlots::default(),
             inferring: Vec::new(),
@@ -658,6 +665,12 @@ impl Checker {
 
     pub fn check(&mut self, file: &SourceFile) -> &[Diagnostic] {
         self.path = file.path.clone();
+
+        // Parse errors first: a syntax error means the recovered tree is
+        // unreliable, so RY000 is the primary signal for broken input. We
+        // still run the checker on the recovered tree (downstream
+        // diagnostics may be noise, but ty takes the same approach).
+        self.emit_parse_errors(file);
 
         // Pass 1: collect function definitions into the FnTable. We don't
         // emit diagnostics yet - the body's `return` types depend on the
@@ -680,6 +693,7 @@ impl Checker {
     /// variable shows its type.
     pub fn check_with_scope(&mut self, file: &SourceFile) -> (Vec<Diagnostic>, Scope) {
         self.path = file.path.clone();
+        self.emit_parse_errors(file);
         self.collect_fns(&file.stmts);
         self.run_fixpoint();
         let mut scope = Scope::default();
@@ -697,11 +711,12 @@ impl Checker {
     /// shared across files. The fresh checker starts with an empty
     /// diagnostics vec and an empty `inferring` stack.
     pub(crate) fn with_tables(path: &str, fn_table: FnTable, return_slots: ReturnSlots) -> Self {
-        let typeshed = load_base().expect("typeshed must load");
+        let typeshed = load_base_cached().expect("typeshed must load");
         Self {
             typeshed,
             diagnostics: Vec::new(),
             path: path.to_string(),
+            discarding: false,
             fn_table,
             return_slots,
             inferring: Vec::new(),
@@ -750,6 +765,7 @@ impl Checker {
     /// first if you want only this file's diagnostics.
     pub(crate) fn emit_diagnostics(&mut self, file: &SourceFile) {
         self.path = file.path.clone();
+        self.emit_parse_errors(file);
         let mut scope = Scope::default();
         for s in &file.stmts {
             self.check_stmt(s, &mut scope);
@@ -767,8 +783,32 @@ impl Checker {
     }
 
     fn emit(&mut self, severity: Severity, span: Span, code: &'static str, msg: impl Into<String>) {
+        if self.discarding {
+            // Pass 2 (fixpoint) and closure-signature building run the
+            // single inference engine in "discarding" mode: types are
+            // computed but no diagnostics are recorded. This keeps pass 2
+            // from double-emitting (diagnostics are produced in pass 3
+            // against the refined FnTable).
+            return;
+        }
         self.diagnostics
             .push(Diagnostic::new(severity, span, &self.path, code, msg));
+    }
+
+    /// Surface parse errors collected by `RParser` as `RY000`
+    /// (syntax-error) diagnostics. Each tree-sitter `ERROR` / `MISSING`
+    /// node becomes one diagnostic. Always emitted, regardless of the
+    /// checker's other findings: a broken region of input is the primary
+    /// signal that the file is malformed.
+    fn emit_parse_errors(&mut self, file: &SourceFile) {
+        for span in &file.parse_errors {
+            self.emit(
+                Severity::Error,
+                *span,
+                "RY000",
+                "syntax error: unparseable region (recovered tree may be unreliable)",
+            );
+        }
     }
 
     /// Pass 1: walk top-level (and only top-level) statements, collecting
@@ -865,7 +905,7 @@ impl Checker {
     ///
     /// Recursion is bounded by the AST's literal nesting (small in
     /// practice). The inference depth is separately bounded by
-    /// `MAX_CLOSURE_DEPTH` in `build_function_signature_pure`.
+    /// `MAX_CLOSURE_DEPTH` in `build_function_signature`.
     fn collect_nested_fns_in_body(&mut self, outer: &str, body: &[Stmt]) {
         for s in body {
             self.collect_nested_fns_stmt(outer, s);
@@ -981,13 +1021,13 @@ impl Checker {
         // Walk the body in source order, simulating each statement's
         // effect on the scope so the trailing return expression can
         // reference bindings established earlier in the body. This is
-        // the same simulation `build_function_signature_pure` uses for
+        // the same simulation `build_function_signature` uses for
         // nested closures; we apply it at the top level too so
         // named-return closures (`g <- function() { 1L }; g`) resolve.
         //
-        // We use the pure inference path (no diagnostics) so pass 2
-        // does not double-emit; diagnostics are produced in pass 3
-        // against the fully refined FnTable.
+        // We run the single inference engine in discarding mode (no
+        // diagnostics) so pass 2 does not double-emit; diagnostics are
+        // produced in pass 3 against the fully refined FnTable.
         for s in &body_clone {
             self.collect_returns_and_simulate_at_depth(s, &mut scope, &mut returns, 0);
         }
@@ -997,7 +1037,7 @@ impl Checker {
         // `trailing_return_type` handles both forms and attaches an
         // inferred `fn_sig` when the trailing expression is itself a
         // function literal (the closure-factory pattern).
-        if let Some(t) = self.trailing_return_type(&body_clone, &scope, 0) {
+        if let Some(t) = self.trailing_return_type(&body_clone, &mut scope, 0) {
             returns.push(t);
         }
 
@@ -1020,7 +1060,7 @@ impl Checker {
     /// return-collector, this takes `&mut Scope` and processes
     /// `Stmt::Assign` so later statements see the binding. Used by both
     /// `refine_fn_return` (for top-level user functions) and
-    /// `build_function_signature_pure` (for nested closures) so the
+    /// `build_function_signature` (for nested closures) so the
     /// closure-factory-with-named-return pattern
     /// (`g <- function() { 1L }; g`) resolves.
     ///
@@ -1036,7 +1076,7 @@ impl Checker {
     ///   * Indexed assignment (`x[i] <- v`) does not update the scope
     ///     (we don't model per-element mutation in v1).
     fn collect_returns_and_simulate_at_depth(
-        &self,
+        &mut self,
         s: &Stmt,
         scope: &mut Scope,
         returns: &mut Vec<RType>,
@@ -1049,7 +1089,7 @@ impl Checker {
                 }
             }
             Stmt::Assign { target, value, .. } => {
-                let vt = self.infer_pure_at_depth(value, scope, depth);
+                let vt = self.infer_discarding(value, scope);
                 if let Expr::Ident { name, .. } = target {
                     scope.insert(name.clone(), vt);
                 }
@@ -1086,7 +1126,7 @@ impl Checker {
             }
             Stmt::Return { value, .. } => {
                 if let Some(v) = value {
-                    returns.push(self.infer_pure_at_depth(v, scope, depth));
+                    returns.push(self.infer_discarding(v, scope));
                 } else {
                     returns.push(RType::new(Mode::Null, Length::Zero, false));
                 }
@@ -1098,20 +1138,20 @@ impl Checker {
     /// return the type of its argument; otherwise None.
     ///
     /// Depth-tracked so a `return(function() { ... })` builds the inner
-    /// signature at the right depth. Threads the closure-nesting depth
-    /// through to `infer_pure_at_depth`.
+    /// signature at the right depth. Uses the non-emitting inference
+    /// entry point (`infer_discarding`).
     fn try_infer_return_call_at_depth(
-        &self,
+        &mut self,
         e: &Expr,
-        scope: &Scope,
-        depth: usize,
+        scope: &mut Scope,
+        _depth: usize,
     ) -> Option<RType> {
         if let Expr::Call { func, args, .. } = e {
             if let Expr::Ident { name, .. } = func.as_ref() {
                 if name == "return" || name == "invisible" {
                     return Some(
                         args.first()
-                            .map(|a| self.infer_pure_at_depth(&a.value, scope, depth))
+                            .map(|a| self.infer_discarding(&a.value, scope))
                             .unwrap_or(RType::new(Mode::Null, Length::Zero, false)),
                     );
                 }
@@ -1120,242 +1160,20 @@ impl Checker {
         None
     }
 
-    /// Non-mutating, depth-tracked variant of `infer`, used during pass
-    /// 2 refinement so we don't double-emit diagnostics. Diagnostics
-    /// are produced in pass 3 against the fully refined FnTable.
+    /// The non-emitting inference entry point used during pass-2 fixpoint
+    /// refinement and closure-signature building.
     ///
-    /// This is also the path that builds `fn_sig` for closures: when we
-    /// encounter an `Expr::Function` literal we walk its body to infer
-    /// its return type and attach the resulting signature. Closure
-    /// nesting is bounded by `MAX_CLOSURE_DEPTH`.
-    ///
-    /// `depth` counts how many closure bodies we have descended into;
-    /// once it reaches `MAX_CLOSURE_DEPTH` we stop building nested
-    /// signatures and return opaque `Function` values (matching the
-    /// documented scope limit). Top-level expressions start at depth 0;
-    /// callers that don't care about depth tracking should pass 0.
-    fn infer_pure_at_depth(&self, e: &Expr, scope: &Scope, depth: usize) -> RType {
-        match e {
-            Expr::Logical(_, _) => RType::scalar(Mode::Logical, false),
-            Expr::Integer(_, _) => RType::scalar(Mode::Integer, false),
-            Expr::Double(_, _) => RType::scalar(Mode::Double, false),
-            Expr::String(_, _) => RType::scalar(Mode::Character, false),
-            Expr::Null(_) => RType::new(Mode::Null, Length::Zero, false),
-            Expr::Na(t, _) => *t,
-            Expr::Ident { name, .. } => scope.get(name).copied().unwrap_or(RType::UNKNOWN),
-            Expr::BinOp { op, lhs, rhs, .. } => {
-                // `:` sequence operator: when both operands are
-                // integer-valued literals we can pin the result length
-                // exactly as `|b - a| + 1`. This mirrors the pass-3
-                // (`infer`) literal fast path so a function whose body
-                // is `1:10` gets a precise `integer<10>` return type
-                // rather than `Length::Unknown`. Non-literal operands
-                // fall through to `infer_binop_pure`'s lattice-based
-                // `seq` (Unknown length).
-                if matches!(op, BinOpKind::Colon) {
-                    if let (Some(a), Some(b)) = (extract_literal_int(lhs), extract_literal_int(rhs))
-                    {
-                        let len = (b - a).unsigned_abs() as usize;
-                        let len = len.saturating_add(1);
-                        if len > 0 {
-                            return RType::new(Mode::Integer, Length::Known(len), false);
-                        }
-                    }
-                }
-                let lt = self.infer_pure_at_depth(lhs, scope, depth);
-                let rt = self.infer_pure_at_depth(rhs, scope, depth);
-                self.infer_binop_pure(*op, lt, rt)
-            }
-            Expr::UnaryOp { op, expr, .. } => {
-                let t = self.infer_pure_at_depth(expr, scope, depth);
-                match op {
-                    UnaryOpKind::Neg => t,
-                    UnaryOpKind::Not => RType::new(Mode::Logical, t.length, t.na.0),
-                }
-            }
-            Expr::Call { func, args, .. } => {
-                // IIFE in pass 2: (function() 1L)()
-                if let Expr::Function { params, body, .. } = func.as_ref() {
-                    let fn_val = self.function_value_from_literal(params, body, scope, depth);
-                    if let Some(sig) = fn_val.fn_sig {
-                        return *sig.return_type;
-                    }
-                    return RType::UNKNOWN;
-                }
-                if let Expr::Ident { name, .. } = func.as_ref() {
-                    // Indirect call through a closure value: if the name
-                    // is bound in scope to a `Function`-typed value with
-                    // a `fn_sig`, the call resolves to the signature's
-                    // return type. This unblocks the
-                    // `c <- make_counter(); c()` pattern without needing
-                    // a FnTable entry for `c`.
-                    if let Some(t) = scope.get(name) {
-                        if matches!(t.mode, Mode::Function) {
-                            if let Some(sig) = t.fn_sig {
-                                return *sig.return_type;
-                            }
-                            // Bound function value without an inferred
-                            // signature: opaque. Fall through to the
-                            // FnTable / typeshed paths below only if
-                            // those could plausibly match (they can't
-                            // for a scope-local name, but the check is
-                            // cheap and keeps the fallthrough explicit).
-                        }
-                    }
-                    // Direct recursion: read the current best estimate
-                    // from the return slot table.
-                    if let Some(f) = self.fn_table.fns.get(name) {
-                        return self.return_slots.get(f.return_slot);
-                    }
-                    if name == "c" {
-                        let arg_types: Vec<RType> = args
-                            .iter()
-                            .map(|a| self.infer_pure_at_depth(&a.value, scope, depth))
-                            .collect();
-                        return self.infer_c_pure(&arg_types);
-                    }
-                    if name == "list" || name == "data.frame" {
-                        // Pass 2 (pure) mirrors pass 3 minus diagnostics.
-                        // We rebuild the schema so the refined return
-                        // type is correct for column access in callers.
-                        let arg_types: Vec<RType> = args
-                            .iter()
-                            .map(|a| self.infer_pure_at_depth(&a.value, scope, depth))
-                            .collect();
-                        let length = Length::Known(arg_types.len());
-                        let base = if name == "data.frame" {
-                            RType::new(Mode::List, length, false)
-                                .with_class(ClassVector::single(intern_class_name("data.frame")))
-                        } else {
-                            RType::new(Mode::List, length, false)
-                        };
-                        let schema = build_named_schema(&arg_types, args);
-                        return match schema {
-                            Some(s) => base.with_columns(intern_column_schema(s)),
-                            None => base,
-                        };
-                    }
-                    // Higher-order built-ins: model the callback in
-                    // pass 2 too, so the refined return type of a
-                    // user-fn that uses `lapply` etc. is correct.
-                    if let Some(rt) = {
-                        let ho_args: Vec<RType> = args
-                            .iter()
-                            .map(|a| self.infer_pure_at_depth(&a.value, scope, depth))
-                            .collect();
-                        self.infer_higher_order_call(name, args, &ho_args, scope)
-                    } {
-                        return rt;
-                    }
-                    // Literal-arg length inference for `rep`, `seq`,
-                    // `seq.int`. These have typeshed entries that
-                    // conservatively return `Length::Unknown`; when the
-                    // relevant arguments are literals we can pin the
-                    // result length exactly. Mirrors the pass-3
-                    // (`infer`) interception, placed after the FnTable
-                    // and higher-order lookups and before the typeshed
-                    // so the precise length is preferred. This is what
-                    // lets a function whose body is `rep(1:3, 2)` get a
-                    // precise `integer<6>` return type.
-                    if name == "rep" {
-                        let ho_args: Vec<RType> = args
-                            .iter()
-                            .map(|a| self.infer_pure_at_depth(&a.value, scope, depth))
-                            .collect();
-                        return self.infer_rep(args, &ho_args, Span::default());
-                    }
-                    if name == "seq" || name == "seq.int" {
-                        let ho_args: Vec<RType> = args
-                            .iter()
-                            .map(|a| self.infer_pure_at_depth(&a.value, scope, depth))
-                            .collect();
-                        return self.infer_seq(args, &ho_args, Span::default());
-                    }
-                    if let Some(sig) = self.typeshed.functions.get(name) {
-                        let arg_types: Vec<RType> = args
-                            .iter()
-                            .map(|a| self.infer_pure_at_depth(&a.value, scope, depth))
-                            .collect();
-                        return self.apply_sig_pure(sig, &arg_types);
-                    }
-                }
-                RType::UNKNOWN
-            }
-            Expr::Index {
-                base, kind, args, ..
-            } => {
-                let bt = self.infer_pure_at_depth(base, scope, depth);
-                match kind {
-                    IndexKind::Single => bt,
-                    IndexKind::Dollar => {
-                        // Pass 2 (pure) mirrors pass 3 minus diagnostics.
-                        // The column name lives on `args[0].name`; if we
-                        // have a schema, return the column's type, else
-                        // fall back to the length-1 default.
-                        let col = args.first().and_then(|a| a.name.as_deref());
-                        if let (Some(name), Some(schema)) = (col, bt.columns) {
-                            if let Some(t) = schema.get(name) {
-                                return t;
-                            }
-                        }
-                        RType::new(bt.mode, Length::One, bt.na.0)
-                    }
-                    IndexKind::Double => {
-                        // `df[["col"]]` or `x[[i]]`: string literal or
-                        // integer literal index.
-                        if let Some(Expr::String(name, _)) = args.first().map(|a| &a.value) {
-                            if let Some(schema) = bt.columns {
-                                if let Some(t) = schema.get(name) {
-                                    return t;
-                                }
-                            }
-                            return RType::new(bt.mode, Length::One, bt.na.0);
-                        }
-                        let int_idx = match args.first().map(|a| &a.value) {
-                            Some(Expr::Integer(i, _)) => Some(*i as f64),
-                            Some(Expr::Double(f, _)) => Some(*f),
-                            _ => None,
-                        };
-                        if let Some(idx) = int_idx {
-                            if let Some(schema) = bt.columns {
-                                let key = format!("[[{}]]", idx as i64);
-                                if let Some(t) = schema.get(&key) {
-                                    return t;
-                                }
-                                if let Some(common) = homogeneous_list_element_type(schema) {
-                                    return common;
-                                }
-                            }
-                            return RType::UNKNOWN;
-                        }
-                        RType::new(bt.mode, Length::One, bt.na.0)
-                    }
-                }
-            }
-            Expr::Function { params, body, .. } => {
-                // Closure literal: build an inferred signature by
-                // walking the inner body with the captured scope plus
-                // the function's own params. Bounded by
-                // `MAX_CLOSURE_DEPTH`; beyond that we return an opaque
-                // `Function` value (no `fn_sig`).
-                self.function_value_from_literal(params, body, scope, depth)
-            }
-            Expr::If {
-                cond, then, else_, ..
-            } => {
-                // Pass 2 (pure): infer both branches without emitting
-                // diagnostics, then join. Mirrors pass 3's
-                // `infer_if_expr` minus the diagnostic emission.
-                let _ = self.infer_pure_at_depth(cond, scope, depth);
-                let then_t = self.infer_pure_at_depth(then, scope, depth);
-                let else_t = else_
-                    .as_ref()
-                    .map(|e| self.infer_pure_at_depth(e, scope, depth))
-                    .unwrap_or(RType::new(Mode::Null, Length::Zero, false));
-                then_t.join(else_t)
-            }
-            Expr::Unknown(_) => RType::UNKNOWN,
-        }
+    /// Phase 2 unified the two parallel inference engines into one: this
+    /// runs the single diagnostic `infer` with `discarding` enabled, so
+    /// the type computation (including the full `Expr::Ident` resolution
+    /// ladder, all `Expr::Call` cases, narrowing, etc.) is shared between
+    /// the pure and the diagnostic walks.
+    fn infer_discarding(&mut self, e: &Expr, scope: &mut Scope) -> RType {
+        let prev = self.discarding;
+        self.discarding = true;
+        let t = self.infer(e, scope);
+        self.discarding = prev;
+        t
     }
 
     /// Build a `Mode::Function` `RType` (with `fn_sig` when we can
@@ -1368,7 +1186,7 @@ impl Checker {
     /// nested signatures and return an opaque `Function` value, as
     /// documented in the closure-support scope limits.
     fn function_value_from_literal(
-        &self,
+        &mut self,
         params: &[Param],
         body: &[Stmt],
         captured_scope: &Scope,
@@ -1378,7 +1196,7 @@ impl Checker {
         if depth >= MAX_CLOSURE_DEPTH {
             return base;
         }
-        match self.build_function_signature_pure(params, body, captured_scope, depth) {
+        match self.build_function_signature(params, body, captured_scope, depth) {
             Some(sig) => base.with_fn_sig(sig),
             None => base,
         }
@@ -1396,8 +1214,8 @@ impl Checker {
     /// a closure that closes over mutable state (a binding reassigned
     /// in the body) sees the captured value rather than the final
     /// mutated value. This is the documented approximation.
-    fn build_function_signature_pure(
-        &self,
+    fn build_function_signature(
+        &mut self,
         params: &[Param],
         body: &[Stmt],
         captured_scope: &Scope,
@@ -1440,7 +1258,7 @@ impl Checker {
         // statement position) is also the implicit return value - this
         // is the closure-factory pattern: `function() { function() { 1L } }`
         // has a `Stmt::FunctionDef` as its body's last statement.
-        if let Some(t) = self.trailing_return_type(body, &scope, depth + 1) {
+        if let Some(t) = self.trailing_return_type(body, &mut scope, depth + 1) {
             returns.push(t);
         }
         if returns.is_empty() {
@@ -1470,14 +1288,19 @@ impl Checker {
     /// an expression-like form, or the trailing expression is a
     /// `return(...)` call (which `collect_returns_stmt_at_depth`
     /// already counted).
-    fn trailing_return_type(&self, body: &[Stmt], scope: &Scope, depth: usize) -> Option<RType> {
+    fn trailing_return_type(
+        &mut self,
+        body: &[Stmt],
+        scope: &mut Scope,
+        depth: usize,
+    ) -> Option<RType> {
         let last = body.last()?;
         match last {
             Stmt::Expr(e) => {
                 if is_return_call(e) {
                     None
                 } else {
-                    Some(self.infer_pure_at_depth(e, scope, depth))
+                    Some(self.infer_discarding(e, scope))
                 }
             }
             Stmt::FunctionDef { params, body, .. } => {
@@ -1490,133 +1313,35 @@ impl Checker {
         }
     }
 
-    fn infer_binop_pure(&self, op: BinOpKind, lt: RType, rt: RType) -> RType {
-        match op {
-            BinOpKind::Colon => lt.seq(rt),
-            BinOpKind::Add
-            | BinOpKind::Sub
-            | BinOpKind::Mul
-            | BinOpKind::Div
-            | BinOpKind::Pow
-            | BinOpKind::Mod
-            | BinOpKind::IDiv => lt.arith(rt).unwrap_or(RType::UNKNOWN),
-            BinOpKind::Lt
-            | BinOpKind::Le
-            | BinOpKind::Gt
-            | BinOpKind::Ge
-            | BinOpKind::Eq
-            | BinOpKind::Ne
-            | BinOpKind::In
-            | BinOpKind::NotIn => lt.compare(rt).unwrap_or(RType::UNKNOWN),
-            BinOpKind::And | BinOpKind::AndAnd | BinOpKind::Or | BinOpKind::OrOr => {
-                let length = if matches!(op, BinOpKind::AndAnd | BinOpKind::OrOr) {
-                    Length::One
-                } else {
-                    lt.length.binary(rt.length)
-                };
-                RType::new(Mode::Logical, length, true)
-            }
-            BinOpKind::Assign | BinOpKind::SuperAssign => rt,
-            BinOpKind::PipeForward
-            | BinOpKind::PipeTee
-            | BinOpKind::PipeAssign
-            | BinOpKind::PipeBind => RType::UNKNOWN,
-        }
-    }
-
-    fn infer_c_pure(&self, arg_types: &[RType]) -> RType {
-        if arg_types.is_empty() {
-            return RType::new(Mode::Null, Length::Zero, false);
-        }
-        let mut mode = Mode::Null;
-        let mut total_len: usize = 0;
-        let mut any_na = false;
-        for t in arg_types {
-            mode = if mode.coerce_rank() >= t.mode.coerce_rank() {
-                mode
-            } else {
-                t.mode
-            };
-            any_na = any_na || t.na.0;
-            total_len = total_len.saturating_add(match t.length {
-                Length::Zero => 0,
-                Length::One => 1,
-                Length::Known(n) => n,
-                Length::Unknown => return RType::new(mode, Length::Unknown, any_na),
-            });
-        }
-        RType::new(mode, Length::Known(total_len), any_na)
-    }
-
-    fn apply_sig_pure(&self, sig: &FunctionSig, arg_types: &[RType]) -> RType {
-        let first = arg_types.first().copied().unwrap_or(RType::UNKNOWN);
-        match &sig.return_ {
-            ReturnSpec::Slot(s) => match s.as_str() {
-                "arg0" => first,
-                s if s.starts_with("arg") => {
-                    let idx: usize = s[3..].parse().unwrap_or(0);
-                    arg_types.get(idx).copied().unwrap_or(RType::UNKNOWN)
-                }
-                _ => RType::UNKNOWN,
-            },
-            ReturnSpec::Concrete(c) => {
-                let mode = match c.mode.as_str() {
-                    "logical" => Mode::Logical,
-                    "integer" => Mode::Integer,
-                    "double" => Mode::Double,
-                    "character" => Mode::Character,
-                    "complex" => Mode::Complex,
-                    "raw" => Mode::Raw,
-                    "list" => Mode::List,
-                    "null" => Mode::Null,
-                    "function" => Mode::Function,
-                    "opaque" => Mode::Opaque,
-                    "double_or_int" => {
-                        if matches!(first.mode, Mode::Integer) {
-                            Mode::Integer
-                        } else {
-                            Mode::Double
-                        }
-                    }
-                    "arg0" => first.mode,
-                    "arg1" => arg_types.get(1).map(|t| t.mode).unwrap_or(Mode::Opaque),
-                    "arg2" => arg_types.get(2).map(|t| t.mode).unwrap_or(Mode::Opaque),
-                    "yes_or_no" => {
-                        let yes = arg_types.get(1).copied().unwrap_or(RType::UNKNOWN);
-                        let no = arg_types.get(2).copied().unwrap_or(RType::UNKNOWN);
-                        yes.join(no).mode
-                    }
-                    _ => Mode::Opaque,
-                };
-                let length = match c.length.as_str() {
-                    "0" => Length::Zero,
-                    "1" => Length::One,
-                    "unknown" => Length::Unknown,
-                    "arg0" => first.length,
-                    "arg1" => arg_types
-                        .get(1)
-                        .map(|t| t.length)
-                        .unwrap_or(Length::Unknown),
-                    "arg2" => arg_types
-                        .get(2)
-                        .map(|t| t.length)
-                        .unwrap_or(Length::Unknown),
-                    "longest_arg" => longest_arg_length(arg_types),
-                    "n_args" => Length::Known(arg_types.len()),
-                    "x_times" => rep_length(arg_types),
-                    "test" => first.length,
-                    _ => Length::Unknown,
-                };
-                RType::new(mode, length, c.na)
-            }
-        }
-    }
-
     fn check_stmt(&mut self, s: &Stmt, scope: &mut Scope) {
         match s {
             Stmt::Assign { target, value, .. } => {
                 let vt = self.infer(value, scope);
                 self.assign_target(target, vt, scope);
+                // Named function bodies (`f <- function(...) body`) must
+                // be walked for diagnostics. The `Expr::Function` ->
+                // `function_value_from_literal` path runs in discarding
+                // mode and emits nothing, so without this stopgap almost
+                // all real R code (which lives in named function bodies)
+                // would go unchecked. This mirrors the `Stmt::FunctionDef`
+                // arm. The longer-term plan is to fuse this body walk
+                // with the return-type walk (`collect_returns_and_simulate`)
+                // so each body is walked exactly once; that fusion is
+                // deferred to a follow-up after the type-representation
+                // rewrite.
+                if let Expr::Function { params, body, .. } = value {
+                    let mut fn_scope = scope.clone();
+                    for p in params {
+                        let t = match &p.default {
+                            Some(e) => self.infer(e, &mut fn_scope),
+                            None => RType::UNKNOWN,
+                        };
+                        fn_scope.insert(p.name.clone(), t);
+                    }
+                    for s in body {
+                        self.check_stmt(s, &mut fn_scope);
+                    }
+                }
             }
             Stmt::Expr(e) => {
                 self.infer(e, scope);
@@ -1661,12 +1386,20 @@ impl Checker {
                 // negative (which we model only for `is.null`).
                 let narrowing = extract_type_narrowing(cond);
                 let (then_scope, else_scope) = apply_narrowing(scope, &narrowing);
+                // Clone the branch scope ONCE and reuse it for every
+                // statement in the branch, so sequential bindings inside
+                // the branch resolve each other (e.g. `tmp <- 1; out <-
+                // tmp + 1`). The earlier code cloned per-statement, which
+                // wiped `tmp` before `out` was checked and caused a
+                // spurious RY010.
+                let mut then_scope = then_scope;
                 for s in then {
-                    self.check_stmt(s, &mut then_scope.clone());
+                    self.check_stmt(s, &mut then_scope);
                 }
                 if let Some(else_) = else_ {
+                    let mut else_scope = else_scope;
                     for s in else_ {
-                        self.check_stmt(s, &mut else_scope.clone());
+                        self.check_stmt(s, &mut else_scope);
                     }
                 }
             }
@@ -1934,9 +1667,9 @@ impl Checker {
             }
             Expr::Function { params, body, .. } => {
                 // Pass 3: build a `Mode::Function` value with an
-                // inferred `fn_sig` when we can. This mirrors pass 2's
-                // `infer_pure` so a function literal in a top-level
-                // expression (`g <- f(); v <- (function() 1L)()`)
+                // inferred `fn_sig` when we can. This mirrors the
+                // non-emitting inference path so a function literal in a
+                // top-level expression (`g <- f(); v <- (function() 1L)()`)
                 // resolves the same way as one inside a return slot.
                 self.function_value_from_literal(params, body, scope, 0)
             }
@@ -2837,7 +2570,7 @@ impl Checker {
     /// (e.g. `list` for `lapply`), so callers still get a useful upper
     /// bound on the mode without false positives.
     fn infer_higher_order_call(
-        &self,
+        &mut self,
         name: &str,
         args: &[Arg],
         arg_types: &[RType],
@@ -2847,13 +2580,13 @@ impl Checker {
         Some(self.infer_ho_result(&ho, args, arg_types, scope))
     }
 
-    /// Per-builtin result-type computation. Shared between pass 2 (pure,
-    /// via `infer_ho_result_pure`) and pass 3 (diagnostic-emitting).
-    /// This is the pass-3 entry point: it calls `self.infer` on data
+    /// Per-builtin result-type computation. Used by both pass 2 (pure,
+    /// via `infer_discarding`) and pass 3 (diagnostic-emitting). This is
+    /// the pass-3 entry point: it calls `self.infer` on data
     /// arguments (which may emit RY010 etc.) before computing the
     /// element type.
     fn infer_ho_result(
-        &self,
+        &mut self,
         ho: &HigherOrderFunc,
         args: &[Arg],
         arg_types: &[RType],
@@ -2894,7 +2627,7 @@ impl Checker {
     /// `lapply(X, FUN, ...)`: applies `FUN` to each element of `X`,
     /// returning a list of the same length. The element type of `X`
     /// becomes the callback's first argument.
-    fn ho_lapply(&self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
+    fn ho_lapply(&mut self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
         let x_type = arg_types.first().copied().unwrap_or(RType::UNKNOWN);
         let elem = x_type.element();
         let cb = Self::extract_callback(args, &["FUN"], 1);
@@ -2929,7 +2662,7 @@ impl Checker {
     /// callback returns length-`k` vectors, the result is a matrix. We
     /// model the common case: callback returns atomic length-1, so the
     /// result is a vector of the callback's return mode with X's length.
-    fn ho_sapply(&self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
+    fn ho_sapply(&mut self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
         let x_type = arg_types.first().copied().unwrap_or(RType::UNKNOWN);
         let elem = x_type.element();
         let cb = Self::extract_callback(args, &["FUN"], 1);
@@ -2957,7 +2690,7 @@ impl Checker {
     /// both are known (R stacks the callback outputs column-wise), but
     /// for v1 we approximate as FUN.VALUE's mode with X's length when
     /// FUN.VALUE is length-1, else opaque length.
-    fn ho_vapply(&self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
+    fn ho_vapply(&mut self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
         let x_type = arg_types.first().copied().unwrap_or(RType::UNKNOWN);
         let fun_value = arg_types.get(2).copied().unwrap_or(RType::UNKNOWN);
         // Walk the callback for type information (its body may reference
@@ -2976,7 +2709,7 @@ impl Checker {
     /// `Map(f, ...)`: applies `f` to corresponding elements of all
     /// arguments, returning a list. Each argument contributes its
     /// element type as a callback argument.
-    fn ho_map(&self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
+    fn ho_map(&mut self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
         // First positional arg is `f`; subsequent positional args are
         // the vectors to map over. Named `f = ...` is also recognized.
         let cb = Self::extract_callback(args, &["f"], 0);
@@ -2993,7 +2726,7 @@ impl Checker {
     /// `rapply(L, f, ...)`: recursively applies `f` to each leaf of
     /// list `L`. The result is a list of the same shape. We model only
     /// the top-level shape: result is a list with L's length.
-    fn ho_rapply(&self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
+    fn ho_rapply(&mut self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
         let l_type = arg_types.first().copied().unwrap_or(RType::UNKNOWN);
         // Walk the callback for type information.
         if let Some(cb) = Self::extract_callback(args, &["f", "FUN"], 1) {
@@ -3005,7 +2738,7 @@ impl Checker {
     /// `Reduce(f, x, ...)`: left-fold. The result type is the element
     /// type of `x` (the accumulator starts as `x[[1]]`). For an empty
     /// `x` with no `init`, R errors; we stay opaque in that case.
-    fn ho_reduce(&self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
+    fn ho_reduce(&mut self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
         let x_type = arg_types.get(1).copied().unwrap_or(RType::UNKNOWN);
         // Walk the callback for type information. The callback takes two
         // args: the accumulator and the next element, both of x's
@@ -3020,7 +2753,7 @@ impl Checker {
     /// `Filter(f, x)`: returns the subset of `x` where `f` returns
     /// TRUE. The result type is `x`'s type (same mode, possibly shorter
     /// length which we cannot know statically).
-    fn ho_filter(&self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
+    fn ho_filter(&mut self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
         let x_type = arg_types.get(1).copied().unwrap_or(RType::UNKNOWN);
         if let Some(cb) = Self::extract_callback(args, &["f", "FUN"], 0) {
             let _ = self.callback_return_type(cb, &[x_type.element()], scope);
@@ -3030,7 +2763,7 @@ impl Checker {
 
     /// `Find(f, x)`: returns the first element of `x` where `f` returns
     /// TRUE, or NULL. The result type is the element type (or NULL).
-    fn ho_find(&self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
+    fn ho_find(&mut self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
         let x_type = arg_types.get(1).copied().unwrap_or(RType::UNKNOWN);
         if let Some(cb) = Self::extract_callback(args, &["f", "FUN"], 0) {
             let _ = self.callback_return_type(cb, &[x_type.element()], scope);
@@ -3041,7 +2774,7 @@ impl Checker {
     /// `Position(f, x)`: returns the integer index of the first element
     /// where `f` returns TRUE, or NA_integer_. The result is always
     /// integer length-1.
-    fn ho_position(&self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
+    fn ho_position(&mut self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
         let x_type = arg_types.get(1).copied().unwrap_or(RType::UNKNOWN);
         if let Some(cb) = Self::extract_callback(args, &["f", "FUN"], 0) {
             let _ = self.callback_return_type(cb, &[x_type.element()], scope);
@@ -3052,7 +2785,7 @@ impl Checker {
     /// `do.call(fun, args, ...)`: invokes `fun` with the arguments in
     /// `args` (a list). We model only the case where `fun` is a named
     /// function (user-fn or typeshed). The result is `fun`'s return type.
-    fn ho_do_call(&self, args: &[Arg], arg_types: &[RType], _scope: &Scope) -> RType {
+    fn ho_do_call(&mut self, args: &[Arg], arg_types: &[RType], _scope: &Scope) -> RType {
         let fun_expr = args.first().map(|a| &a.value);
         let _ = arg_types;
         match fun_expr {
@@ -3063,7 +2796,7 @@ impl Checker {
                 }
                 // Typeshed: apply the signature with no arg types.
                 if let Some(sig) = self.typeshed.functions.get(name) {
-                    return self.apply_sig_pure(sig, &[]);
+                    return self.apply_sig(name, sig, &[], &[], Span::default());
                 }
                 RType::UNKNOWN
             }
@@ -3091,7 +2824,7 @@ impl Checker {
     /// return type is opaque (caller falls back to the conservative
     /// per-builtin default).
     fn callback_return_type(
-        &self,
+        &mut self,
         callback: &Expr,
         call_arg_types: &[RType],
         scope: &Scope,
@@ -3128,7 +2861,13 @@ impl Checker {
                 }
                 // Typeshed function?
                 if let Some(sig) = self.typeshed.functions.get(lookup_name) {
-                    return Some(self.apply_sig_pure(sig, call_arg_types));
+                    return Some(self.apply_sig(
+                        lookup_name,
+                        sig,
+                        call_arg_types,
+                        &[],
+                        Span::default(),
+                    ));
                 }
                 None
             }
@@ -3138,11 +2877,11 @@ impl Checker {
 
     /// Walk an anonymous function literal's body to infer its return
     /// type, given the argument types the caller will pass. Similar to
-    /// `build_function_signature_pure` but takes explicit argument
+    /// `build_function_signature` but takes explicit argument
     /// types rather than inferring from defaults. Used by
     /// `callback_return_type` for the inline-literal case.
     fn callback_literal_return(
-        &self,
+        &mut self,
         params: &[Param],
         body: &[Stmt],
         call_arg_types: &[RType],
@@ -3161,7 +2900,7 @@ impl Checker {
         for s in body {
             self.collect_returns_and_simulate_at_depth(s, &mut scope, &mut returns, depth + 1);
         }
-        if let Some(t) = self.trailing_return_type(body, &scope, depth + 1) {
+        if let Some(t) = self.trailing_return_type(body, &mut scope, depth + 1) {
             returns.push(t);
         }
         if returns.is_empty() {
@@ -3689,7 +3428,15 @@ impl Checker {
         // the first *parameter* (by name), not the first positional arg.
         // When `sig.params` is empty or only contains `...`, fall back
         // to raw positional indexing.
-        let matched = if sig.params.is_empty() || sig.params.iter().all(|p| p == "...") {
+        let matched = if sig.params.is_empty()
+            || sig.params.iter().all(|p| p == "...")
+            // When the caller has argument *types* but no `Arg` slice
+            // (e.g. `callback_return_type` inferring a typeshed callback
+            // from the element types a higher-order function will pass),
+            // named-arg matching has nothing to work from: use the types
+            // positionally so `arg0`/`arg1`/... resolve correctly.
+            || args.is_empty()
+        {
             arg_types.to_vec()
         } else {
             match_args_to_params(&sig.params, args, arg_types)
@@ -6416,7 +6163,7 @@ mod tests {
     //
     // These cover the three code-review fixes: (1) literal lengths
     // now propagate through function return types because the literal
-    // fast paths live in pass 2 (`infer_pure_at_depth`) as well as
+    // fast paths live in pass 2 (`infer_discarding`) as well as
     // pass 3; (2) `infer_rep` counts only unnamed args when binding
     // positional `times`/`each`; (3) `infer_rep` never emits
     // `Length::Known(0)` or treats negative multipliers as known.
@@ -6840,5 +6587,40 @@ mod tests {
     fn dollar_on_opaque_no_warning() {
         let diags = check("x <- some_unknown_thing\nval <- x$col\n");
         assert!(diags.iter().all(|d| d.code != "RY061"), "got {:?}", diags);
+    }
+
+    /// PLAN Phase 2 acceptance: running the checker twice on the same
+    /// input must yield identical diagnostics. The fixpoint/refinement
+    /// machinery walks function tables whose iteration order is not
+    /// semantically meaningful, so any order-leak that bleeds into
+    /// observed types would show up here.
+    #[test]
+    fn diagnostics_are_deterministic_across_runs() {
+        let sources = [
+            // recursion (cycle detection in the fixpoint)
+            "f <- function(n) { if (n > 0) f(n - 1) else 0L }\nx <- f(3) + 1\n",
+            // mutual / cross-referencing function bodies
+            "f <- function() { g() }\ng <- function() { 1L }\nx <- f() + 1\n",
+            // a body with an arithmetic error + unbound var (exercises the
+            // Phase-1 function-body walk in both passes)
+            "h <- function() { a <- \"x\" + 1; b <- missing_thing }\n",
+            // higher-order callback inference
+            "v <- sapply(c(1.0, 2.0), function(x) x * 2)\ny <- v + 1\n",
+            // a clean file (no diagnostics) with a closure factory
+            "make_adder <- function(x) function(y) x + y\nadd5 <- make_adder(5)\nz <- add5(3)\n",
+        ];
+        for src in sources {
+            let d1 = check(src);
+            let d2 = check(src);
+            // Compare on the semantically meaningful fields; `Diagnostic`
+            // also carries `path` (constant here) and `message` (stable).
+            let key = |d: &Diagnostic| (d.code, d.severity, d.span.start, d.span.end);
+            let k1: Vec<_> = d1.iter().map(key).collect();
+            let k2: Vec<_> = d2.iter().map(key).collect();
+            assert_eq!(
+                k1, k2,
+                "non-deterministic diagnostics for src={src:?}\n  run1={d1:?}\n  run2={d2:?}"
+            );
+        }
     }
 }

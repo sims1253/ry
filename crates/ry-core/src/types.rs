@@ -55,11 +55,18 @@ impl Mode {
     pub fn arith_result(self, other: Mode) -> Option<Mode> {
         use Mode::*;
         match (self, other) {
-            (Null, x) | (x, Null) => Some(x),
-            (Opaque, _) | (_, Opaque) => Some(Opaque),
+            // Rejections first, so NULL paired with a non-arithmetic mode
+            // errors (R: `NULL + "a"` -> "non-numeric argument"). Before
+            // this reorder, the (Null, x) arm ran first and turned
+            // `NULL + "a"` into Some(Character).
             (Character, _) | (_, Character) => None,
             (List, _) | (_, List) => None,
             (Function, _) | (_, Function) => None,
+            // NULL paired with an arithmetic-valid mode yields that mode
+            // (at length zero -- handled at the RType layer, which knows
+            // about length; Mode has no length dimension).
+            (Null, x) | (x, Null) => Some(x),
+            (Opaque, _) | (_, Opaque) => Some(Opaque),
             (Raw, Raw) => Some(Raw),
             _ => {
                 let r = self.coerce_rank().max(other.coerce_rank());
@@ -126,14 +133,11 @@ impl Length {
         match (self, other) {
             (Zero, _) | (_, Zero) => Zero,
             (One, x) | (x, One) => x,
-            (Known(a), Known(b)) => {
-                if a % b == 0 || b % a == 0 {
-                    Known(a.max(b))
-                } else {
-                    // R would warn but produce max(a, b); model as Known.
-                    Known(a.max(b))
-                }
-            }
+            // R recycles to max(a, b) (warning if neither divides the
+            // other); we model both cases as Known(max). The previous
+            // code had two identical branches here for the divides/does-
+            // not-divide cases -- collapsed to one.
+            (Known(a), Known(b)) => Known(a.max(b)),
             (Known(_), Unknown) | (Unknown, Known(_)) | (Unknown, Unknown) => Unknown,
         }
     }
@@ -434,7 +438,13 @@ impl RType {
     /// on the operator; we conservatively report the bare atomic mode).
     pub fn arith(self, rhs: RType) -> Option<RType> {
         let mode = self.mode.arith_result(rhs.mode)?;
-        let length = self.length.binary(rhs.length);
+        // R returns a zero-length vector when one operand is NULL (e.g.
+        // `NULL + 1` -> `numeric(0)`); model the length as Zero in that
+        // case, overriding the normal recycling rule.
+        let length = match (self.mode, rhs.mode) {
+            (Mode::Null, _) | (_, Mode::Null) => Length::Zero,
+            _ => self.length.binary(rhs.length),
+        };
         let na = NaFlag(self.na.0 || rhs.na.0 || mode == Mode::Double);
         Some(RType {
             mode,
@@ -669,6 +679,27 @@ impl RType {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arith_null_plus_character_errors() {
+        // R: `NULL + "a"` errors with "non-numeric argument to binary
+        // operator". The Character rejection must run before the Null
+        // arm (this is the bug PLAN finding 7 calls out).
+        let n = RType::new(Mode::Null, Length::Zero, false);
+        let c = RType::scalar(Mode::Character, false);
+        assert!(n.arith(c).is_none(), "NULL + \"a\" must error");
+        assert!(c.arith(n).is_none(), "\"a\" + NULL must error");
+    }
+
+    #[test]
+    fn arith_null_plus_int_is_zero_length() {
+        // R: `NULL + 1` returns numeric(0). The mode is Double (R coerces
+        // the NULL+int pair up) and the length is Zero.
+        let n = RType::new(Mode::Null, Length::Zero, false);
+        let i = RType::scalar(Mode::Integer, false);
+        let r = n.arith(i).unwrap();
+        assert_eq!(r.length, Length::Zero, "NULL + 1 must be length 0");
+    }
 
     #[test]
     fn arith_integer_double_promotes() {

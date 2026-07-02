@@ -1,2 +1,5 @@
 /target
 **/*.rs.bk
+
+# Logo concepts are kept local, not tracked
+/assets/logo-concept-*

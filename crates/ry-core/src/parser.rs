@@ -48,22 +48,47 @@ impl RParser {
         let mut stmts = Vec::new();
         let mut cursor = root.walk();
         for child in root.named_children(&mut cursor) {
+            // A top-level `{ a <- 1; b <- 2 }` braced expression must
+            // splice ALL of its child statements into the surrounding
+            // statement list, not just the last one. The earlier
+            // `lower_braced_as_stmt` discarded earlier siblings.
+            if child.kind() == "braced_expression" {
+                let mut inner_cursor = child.walk();
+                for inner in child.named_children(&mut inner_cursor) {
+                    if let Some(stmt) = self.lower_stmt(inner, src) {
+                        stmts.push(stmt);
+                    }
+                }
+                continue;
+            }
             if let Some(stmt) = self.lower_stmt(child, src) {
                 stmts.push(stmt);
             }
         }
+        // tree-sitter always returns a tree, even for broken input; it
+        // marks unrecoverable regions with `ERROR` nodes and missing
+        // tokens with `MISSING` nodes. Collect these so the checker can
+        // surface them as RY000 instead of silently checking a recovered
+        // (and possibly nonsense) tree.
+        let parse_errors = collect_parse_errors(root);
         Ok(SourceFile {
             path: path.to_string(),
             stmts,
+            parse_errors,
         })
     }
 
-    fn span(&self, n: Node, src: &str) -> Span {
+    fn span(&self, n: Node, _src: &str) -> Span {
         let start = n.start_byte();
         let end = n.end_byte();
-        let line = n.start_position().row;
-        let col = char_col(src, start);
-        Span::new(start, end, line, col)
+        let pos = n.start_position();
+        // tree-sitter reports both row and column for free; the previous
+        // implementation discarded `.column` and recomputed a *char*
+        // column by rescanning the whole file from byte 0 for every node
+        // (O(n^2) total). We now use the byte column tree-sitter gives us
+        // directly. `Span::col` is therefore byte-indexed within the line;
+        // diagnostics rendering that need a char column convert per-line.
+        Span::new(start, end, pos.row, pos.column)
     }
 
     fn lower_stmt(&self, n: Node, src: &str) -> Option<Stmt> {
@@ -105,7 +130,11 @@ impl RParser {
     fn try_lower_assign(&self, n: Node, src: &str) -> Option<Stmt> {
         let op_node = n.child_by_field_name("operator")?;
         let op_text = text(op_node, src)?;
-        if !matches!(op_text.as_str(), "<-" | "<<" | "=" | "->" | "->>") {
+        // Note: tree-sitter-r emits the super-assignment operator as the
+        // token `<<-`, NOT `<<`. Matching `<<` (as this code once did)
+        // silently fails for every super-assignment and lets it fall
+        // through to `lower_binary`, which mis-lowers it.
+        if !matches!(op_text.as_str(), "<-" | "<<-" | "=" | "->" | "->>") {
             return None;
         }
         let lhs = n.child_by_field_name("lhs")?;
@@ -114,6 +143,24 @@ impl RParser {
             (self.lower_expr(rhs, src)?, self.lower_expr(lhs, src)?)
         } else {
             (self.lower_expr(lhs, src)?, self.lower_expr(rhs, src)?)
+        };
+        // Super-assignment (`<<-`) must be recorded as such so the checker
+        // (and AST consumers) can distinguish it from plain assignment.
+        // The statement form `x <<- v` lowers to `Stmt::Assign` carrying
+        // the marker on the inner `Expr::BinOp` (mirroring how the rest of
+        // the AST represents assignment-as-expression).
+        let value = if op_text.as_str() == "<<-" {
+            // Re-wrap the RHS so the SuperAssign marker survives in a form
+            // downstream code already understands.
+            let span = self.span(n, src);
+            Expr::BinOp {
+                op: BinOpKind::SuperAssign,
+                lhs: Box::new(target.clone()),
+                rhs: Box::new(value),
+                span,
+            }
+        } else {
+            value
         };
         Some(Stmt::Assign {
             target,
@@ -200,10 +247,13 @@ impl RParser {
         }
     }
 
-    /// A braced expression used as a top-level statement. We splice the
-    /// *last* child as the statement, losing earlier siblings. This is a
-    /// known v1 limitation; at top level braces are rare and a proper
-    /// Block variant is a future task.
+    /// A braced expression used as a statement. Only the last child's value
+    /// is kept as the statement; earlier siblings are dropped. This is a
+    /// v1 limitation that only bites when a braced block appears in a
+    /// nested statement position (e.g. as a function-body branch). At
+    /// *top* level, `RParser::parse` splices all children directly into
+    /// the statement list (see that function), so `{ a <- 1; b <- 2 }`
+    /// at the top of a file preserves both statements.
     fn lower_braced_as_stmt(&self, n: Node, src: &str) -> Option<Stmt> {
         let mut cur = n.walk();
         let mut last: Option<Stmt> = None;
@@ -271,10 +321,21 @@ impl RParser {
             "integer" => {
                 let raw = text(n, src)?;
                 let stripped = raw.trim_end_matches('L').trim_end_matches('l');
-                stripped
-                    .parse::<i64>()
-                    .ok()
-                    .map(|v| Expr::Integer(v, self.span(n, src)))
+                let span = self.span(n, src);
+                // Integer literals that don't fit `i64` (e.g. `1e5L`,
+                // `0x10L` for non-hex, very large values) must NOT cause
+                // the whole statement to vanish. Earlier code returned
+                // `None` here, and `?`-propagation in `lower_binary` /
+                // `try_lower_assign` dropped the enclosing statement
+                // entirely. Fall back to a double, then to `Unknown`, but
+                // always produce *some* expression.
+                if let Ok(v) = stripped.parse::<i64>() {
+                    Some(Expr::Integer(v, span))
+                } else if let Ok(d) = stripped.parse::<f64>() {
+                    Some(Expr::Double(d, span))
+                } else {
+                    Some(Expr::Unknown(span))
+                }
             }
             "float" | "nan" | "inf" => {
                 let raw = text(n, src)?;
@@ -410,7 +471,9 @@ impl RParser {
         let op = match op_text.as_str() {
             "+" => BinOpKind::Add,
             "-" => BinOpKind::Sub,
-            "*" | "**" => BinOpKind::Mul,
+            // `**` is R's alternate spelling of `^` (power), not multiply.
+            "*" => BinOpKind::Mul,
+            "**" => BinOpKind::Pow,
             "/" => BinOpKind::Div,
             "^" => BinOpKind::Pow,
             "%%" => BinOpKind::Mod,
@@ -435,8 +498,10 @@ impl RParser {
             // inner assignment in `a <- b <- 1L`). These return the
             // assigned value in R, so `infer_binop` returns the RHS
             // type for them. `->` and `->>` are right-to-left, so we
-            // swap the operands.
-            "<-" | "=" | "<<" => BinOpKind::Assign,
+            // swap the operands. tree-sitter-r emits the
+            // super-assignment token as `<<-` (not `<<`).
+            "<-" | "=" => BinOpKind::Assign,
+            "<<-" => BinOpKind::SuperAssign,
             "->" | "->>" => {
                 // Right-assigned: `a -> b` is `b <- a`. Swap operands.
                 return Some(Expr::BinOp {
@@ -577,6 +642,39 @@ fn text(n: Node, src: &str) -> Option<String> {
     n.utf8_text(src.as_bytes()).ok().map(String::from)
 }
 
+/// Walk the parse tree and collect spans of `ERROR` and `MISSING` nodes.
+///
+/// tree-sitter produces a recovered tree for malformed input: regions it
+/// could not parse become `ERROR` nodes, and tokens it had to insert to
+/// repair the tree become `MISSING` nodes. `root.has_error()` is the cheap
+/// "is anything broken" check; this function walks the tree when that is
+/// true to extract the individual broken regions for per-node diagnostics.
+fn collect_parse_errors(root: tree_sitter::Node) -> Vec<Span> {
+    if !root.has_error() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    // Pre-order DFS over ALL nodes (named and anonymous). `ERROR` and
+    // `MISSING` are node kinds tree-sitter emits specially.
+    let mut stack: Vec<tree_sitter::Node> = vec![root];
+    while let Some(node) = stack.pop() {
+        let kind = node.kind();
+        if kind == "ERROR" || node.is_missing() {
+            let start = node.start_byte();
+            let end = node.end_byte().max(start);
+            let pos = node.start_position();
+            out.push(Span::new(start, end, pos.row, pos.column));
+            // Still descend: nested ERROR/MISSING nodes get their own spans
+            // so a single broken region reports each missing token once.
+        }
+        let mut child_cursor = node.walk();
+        for child in node.children(&mut child_cursor) {
+            stack.push(child);
+        }
+    }
+    out
+}
+
 /// Find the namespace operator token (`::` or `:::`) among a
 /// `namespace_operator` node's anonymous children. Returns `None` if
 /// neither token is present (malformed input).
@@ -598,17 +696,24 @@ fn namespace_op(n: Node, src: &str) -> Option<&'static str> {
     None
 }
 
-fn char_col(src: &str, byte_offset: usize) -> usize {
-    let mut col = 0;
-    for (b, ch) in src.char_indices() {
-        if b >= byte_offset {
+/// Convert a byte column within a single line to a character column.
+///
+/// Used by diagnostic rendering when a human-visible column is needed. The
+/// previous per-node column computation rescanned the entire file from byte
+/// 0 for every AST node (O(n^2) total, 47s on 20k lines); this only ever
+/// scans the one line the column lives on.
+///
+/// `line_start` is the byte offset of the start of the line containing the
+/// column, and `byte_col` is the byte offset of the target within that line.
+#[allow(dead_code)] // no diagnostic renderer consumes char columns yet
+pub(crate) fn byte_col_to_char_col(line: &str, byte_col: usize) -> usize {
+    let mut col = 0usize;
+    for (b, ch) in line.char_indices() {
+        if b >= byte_col {
             break;
         }
-        if ch == '\n' {
-            col = 0;
-        } else {
-            col += 1;
-        }
+        let _ = ch;
+        col += 1;
     }
     col
 }

@@ -15,6 +15,12 @@ pub struct Rule {
 /// All rules currently emitted by the checker. Keep codes lexicographic.
 pub const RULES: &[Rule] = &[
     Rule {
+        code: "RY000",
+        name: "syntax-error",
+        default_severity: Severity::Error,
+        summary: "Unparseable input. tree-sitter could not recover this region; subsequent diagnostics may be unreliable.",
+    },
+    Rule {
         code: "RY001",
         name: "invalid-condition",
         default_severity: Severity::Warning,

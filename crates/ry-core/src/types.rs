@@ -552,7 +552,11 @@ impl RType {
     /// (`if (cond)`, `while (cond)`). R requires a length-1 logical, but
     /// will accept any length-1 atomic and silently coerce.
     pub fn invalid_condition(&self) -> bool {
-        matches!(self.mode, Mode::List | Mode::Function | Mode::Opaque)
+        // Opaque is the "we don't know" type (untyped function params,
+        // unknown returns). Flagging it as an invalid condition would be a
+        // false positive on essentially every function body that branches
+        // on an untyped parameter. Treat opaque as "not provably invalid".
+        matches!(self.mode, Mode::List | Mode::Function)
             || matches!(self.length, Length::Zero)
     }
 

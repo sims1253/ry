@@ -11,6 +11,11 @@ use crate::types::RType;
 pub struct SourceFile {
     pub path: String,
     pub stmts: Vec<Stmt>,
+    /// Parse errors (tree-sitter `ERROR` / `MISSING` nodes) discovered
+    /// during parsing. Each entry's span points at the broken region.
+    /// The checker surfaces these as `RY000` (syntax-error) diagnostics so
+    /// that malformed input no longer checks "clean".
+    pub parse_errors: Vec<Span>,
 }
 
 #[derive(Debug, Clone)]

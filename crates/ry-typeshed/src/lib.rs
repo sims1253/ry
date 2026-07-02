@@ -161,6 +161,40 @@ pub fn load_base() -> Result<Typeshed, TypeshedError> {
     })
 }
 
+/// Load the base typeshed once and cache it for the life of the process.
+///
+/// The base typeshed is a compile-time-embedded 61KB JSON document that
+/// never changes after startup. Parsing it on every `Checker::new` (which
+/// happens once per file in a `Project`, and once per keystroke in the
+/// LSP) is pure waste. This caches the parsed value in a `OnceLock` so the
+/// JSON is deserialized exactly once; subsequent callers receive a
+/// reference to the cached `Typeshed`.
+///
+/// Callers that mutate the typeshed (none do today, but the API allows it)
+/// should `.clone()` the returned reference rather than mutating the cache.
+pub fn load_base_cached() -> Result<&'static Typeshed, TypeshedError> {
+    static CACHE: std::sync::OnceLock<Typeshed> = std::sync::OnceLock::new();
+    // `get_or_try_init` is still unstable, so initialize eagerly via
+    // `get_or_init`. The base typeshed is a compile-time-embedded JSON
+    // document that always parses; a failure here is a build-time data
+    // bug, not a runtime condition, so panicking during first access is
+    // acceptable (and matches the existing `load_base().expect()` callers).
+    if let Some(cached) = CACHE.get() {
+        return Ok(cached);
+    }
+    let typeshed = load_base()?;
+    // Another thread may have raced us; `set` returns the winner's value.
+    let cached = match CACHE.set(typeshed) {
+        Ok(()) => CACHE.get().expect("cache just set"),
+        Err(loser) => {
+            // We lost the race; the winner's value is already in the cache.
+            let _ = loser;
+            CACHE.get().expect("cache set by racing thread")
+        }
+    };
+    Ok(cached)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

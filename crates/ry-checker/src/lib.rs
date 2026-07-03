@@ -3896,8 +3896,14 @@ fn is_dot_pronoun(e: &Expr) -> bool {
 enum Narrowing {
     /// No refinement could be extracted from the condition.
     None,
-    /// `var` is narrowed to `mode` in the positive (then) branch.
-    Positive { var: String, mode: Mode },
+    /// `var` is narrowed to `target` in the positive (then) branch.
+    /// `target` is a full RType: a scalar mode for single-mode
+    /// predicates (`is.double`, `is.integer`, ...), or a union for
+    /// group predicates (`is.numeric` -> union[integer, double]). This
+    /// replaces the old `Mode`-only form, which could not distinguish
+    /// `is.numeric` (a group) from `is.double` (a single mode) and so
+    /// rewrote a known Integer to Double.
+    Positive { var: String, target: RType },
     /// `var` is narrowed away from `mode` in the negative (else) branch.
     /// Only meaningful for `is.null` (negation = non-null).
     Negative { var: String, mode: Mode },
@@ -3920,7 +3926,7 @@ fn extract_type_narrowing(cond: &Expr) -> Narrowing {
             let Expr::Ident { name, .. } = func.as_ref() else {
                 return Narrowing::None;
             };
-            let Some(mode) = predicate_mode(name) else {
+            let Some(target) = predicate_target(name) else {
                 return Narrowing::None;
             };
             let Some(var) = args.first().and_then(|a| match &a.value {
@@ -3929,7 +3935,12 @@ fn extract_type_narrowing(cond: &Expr) -> Narrowing {
             }) else {
                 return Narrowing::None;
             };
-            Narrowing::Positive { var, mode }
+            // For the negated-null case we need a bare Mode on the
+            // Negative variant; extract it from the target.
+            if name == "is.null" {
+                return Narrowing::Negative { var, mode: Mode::Null };
+            }
+            Narrowing::Positive { var, target }
         }
         Expr::UnaryOp {
             op: UnaryOpKind::Not,
@@ -3945,33 +3956,40 @@ fn extract_type_narrowing(cond: &Expr) -> Narrowing {
             let Expr::Ident { name, .. } = func.as_ref() else {
                 return Narrowing::None;
             };
-            let Some(mode) = predicate_mode(name) else {
-                return Narrowing::None;
-            };
             let Some(var) = args.first().and_then(|a| match &a.value {
                 Expr::Ident { name, .. } => Some(name.clone()),
                 _ => None,
             }) else {
                 return Narrowing::None;
             };
-            Narrowing::Negative { var, mode }
+            // Only `!is.null(x)` is modeled as a negation.
+            if name != "is.null" {
+                return Narrowing::None;
+            }
+            Narrowing::Negative { var, mode: Mode::Null }
         }
         _ => Narrowing::None,
     }
 }
 
-/// Map a type predicate name to the `Mode` it tests for.
-fn predicate_mode(name: &str) -> Option<Mode> {
+/// Map a type predicate name to the `RType` it tests for. Group
+/// predicates return a union: `is.numeric` matches integer OR double,
+/// so its narrowing target is `union[integer, double]` (NOT plain
+/// Double, which would rewrite a known Integer to Double).
+fn predicate_target(name: &str) -> Option<RType> {
     match name {
-        "is.numeric" => Some(Mode::Double), // numeric = double or integer
-        "is.double" => Some(Mode::Double),
-        "is.integer" => Some(Mode::Integer),
-        "is.character" => Some(Mode::Character),
-        "is.logical" => Some(Mode::Logical),
-        "is.complex" => Some(Mode::Complex),
-        "is.list" => Some(Mode::List),
-        "is.null" => Some(Mode::Null),
-        "is.raw" => Some(Mode::Raw),
+        // numeric = double or integer (a group, not a single mode).
+        "is.numeric" => Some(
+            RType::scalar(Mode::Integer).join(RType::scalar(Mode::Double)),
+        ),
+        "is.double" => Some(RType::scalar(Mode::Double)),
+        "is.integer" => Some(RType::scalar(Mode::Integer)),
+        "is.character" => Some(RType::scalar(Mode::Character)),
+        "is.logical" => Some(RType::scalar(Mode::Logical)),
+        "is.complex" => Some(RType::scalar(Mode::Complex)),
+        "is.list" => Some(RType::scalar(Mode::List)),
+        "is.null" => Some(RType::new(Mode::Null, Length::Zero)),
+        "is.raw" => Some(RType::scalar(Mode::Raw)),
         _ => None,
     }
 }
@@ -3993,31 +4011,63 @@ fn apply_narrowing(base: &Scope, narrowing: &Narrowing) -> (Scope, Scope) {
     let (mut then_scope, mut else_scope) = (base.clone(), base.clone());
     match narrowing {
         Narrowing::None => {}
-        Narrowing::Positive { var, mode } => {
+        Narrowing::Positive { var, target } => {
+            // New rule (PLAN Phase 3 item 4): a predicate narrows only
+            // when the existing type is opaque (untyped) or a union that
+            // already contains the predicate's mode. A KNOWN type is
+            // never rewritten: `is.numeric(x)` on a known Integer must
+            // NOT rewrite it to Double (the old coerce_rank comparison
+            // did exactly that).
             if let Some(existing) = then_scope.get(var).cloned() {
-                // Only narrow if the existing type is opaque or wider
-                // than the predicate's mode. If the existing type is
-                // already concrete and incompatible, the narrowing is
-                // vacuous (the branch is dead code).
-                if matches!(existing.mode, Mode::Opaque) {
+                let should_install = match existing.mode {
+                    Mode::Opaque => true,
+                    Mode::Union => {
+                        // Existing union: only narrow if it contains the
+                        // predicate's mode (the predicate confirms one
+                        // member); otherwise leave untouched.
+                        target.mode == Mode::Union
+                            || existing
+                                .members
+                                .as_ref()
+                                .map(|ms| {
+                                    ms.iter().any(|m| {
+                                        target.mode == Mode::Union
+                                            || m.mode == target.mode
+                                    })
+                                })
+                                .unwrap_or(false)
+                    }
+                    other => {
+                        // Known atomic: narrow only if it already
+                        // matches the predicate (idempotent). Incompatible
+                        // known modes are left untouched.
+                        if target.mode == Mode::Union {
+                            target
+                                .members
+                                .as_ref()
+                                .map(|ms| ms.iter().any(|m| m.mode == other))
+                                .unwrap_or(false)
+                        } else {
+                            other == target.mode
+                        }
+                    }
+                };
+                if should_install && existing.mode != Mode::Opaque {
+                    // The existing union/known already reflects this; no
+                    // change needed.
+                } else if should_install {
                     then_scope.insert(
                         var.clone(),
-                        RType::new(*mode, existing.length),
-                    );
-                } else if existing.mode.coerce_rank() <= mode.coerce_rank() {
-                    // The existing mode is at or below the predicate's
-                    // mode on the coercion ladder; the narrowing is
-                    // valid. Use the predicate's mode (which may be
-                    // more specific).
-                    then_scope.insert(
-                        var.clone(),
-                        RType::new(*mode, existing.length),
+                        RType {
+                            mode: target.mode,
+                            length: existing.length,
+                            ..target.clone()
+                        },
                     );
                 }
             }
             // For is.null, the else branch knows var is NOT null.
-            // We only model this when mode is Null.
-            if matches!(mode, Mode::Null) {
+            if target.mode == Mode::Null {
                 if let Some(existing) = else_scope.get(var).cloned() {
                     if matches!(existing.mode, Mode::Null) {
                         // var was null, but we're in the else branch

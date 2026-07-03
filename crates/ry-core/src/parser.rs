@@ -356,13 +356,11 @@ impl RParser {
             "na" => {
                 let raw = text(n, src)?;
                 let t = match raw.as_str() {
-                    "NA" => crate::types::RType::scalar(crate::types::Mode::Logical, true),
-                    "NA_integer_" => crate::types::RType::scalar(crate::types::Mode::Integer, true),
-                    "NA_real_" => crate::types::RType::scalar(crate::types::Mode::Double, true),
-                    "NA_complex_" => crate::types::RType::scalar(crate::types::Mode::Complex, true),
-                    "NA_character_" => {
-                        crate::types::RType::scalar(crate::types::Mode::Character, true)
-                    }
+                    "NA" => crate::types::RType::scalar(crate::types::Mode::Logical),
+                    "NA_integer_" => crate::types::RType::scalar(crate::types::Mode::Integer),
+                    "NA_real_" => crate::types::RType::scalar(crate::types::Mode::Double),
+                    "NA_complex_" => crate::types::RType::scalar(crate::types::Mode::Complex),
+                    "NA_character_" => crate::types::RType::scalar(crate::types::Mode::Character),
                     _ => crate::types::RType::unknown(),
                 };
                 Some(Expr::Na(t, self.span(n, src)))

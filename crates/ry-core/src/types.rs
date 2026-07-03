@@ -160,11 +160,6 @@ impl Length {
     }
 }
 
-/// Whether a value may contain `NA`. R's NA has type-specific forms
-/// (`NA_real_`, `NA_integer_`, `NA_character_`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct NaFlag(pub bool);
-
 /// S3 class attribute. Up to 4 class names. Class names are held as
 /// `Arc<str>` so a runtime-derived name (e.g. from `structure(class =
 /// my_var)`) does not require a global intern table; the `Arc` is cheap
@@ -367,7 +362,6 @@ pub struct FunctionSignature {
 pub struct RType {
     pub mode: Mode,
     pub length: Length,
-    pub na: NaFlag,
     pub class: ClassVector,
     /// Optional record schema for data frames and named lists. Shared
     /// via `Arc` so cloning an `RType` is cheap. `None` means "we don't
@@ -413,7 +407,6 @@ impl RType {
         RType {
             mode: Mode::Opaque,
             length: Length::Unknown,
-            na: NaFlag(true),
             class: ClassVector::unknown(),
             columns: None,
             fn_sig: None,
@@ -421,11 +414,10 @@ impl RType {
         }
     }
 
-    pub fn new(mode: Mode, length: Length, na: bool) -> Self {
+    pub fn new(mode: Mode, length: Length) -> Self {
         RType {
             mode,
             length,
-            na: NaFlag(na),
             class: ClassVector::empty(),
             columns: None,
             fn_sig: None,
@@ -434,8 +426,8 @@ impl RType {
     }
 
     /// A scalar literal of the given mode.
-    pub fn scalar(mode: Mode, na: bool) -> Self {
-        Self::new(mode, Length::One, na)
+    pub fn scalar(mode: Mode) -> Self {
+        Self::new(mode, Length::One)
     }
 
     /// Return a copy of `self` with the S3 class vector replaced.
@@ -496,11 +488,9 @@ impl RType {
             (Mode::Null, _) | (_, Mode::Null) => Length::Zero,
             _ => self.length.binary(rhs.length),
         };
-        let na = NaFlag(self.na.0 || rhs.na.0 || mode == Mode::Double);
         Some(RType {
             mode,
             length,
-            na,
             // Arithmetic on S3 objects strips the class in R, and the
             // column schema is meaningless on the atomic result. The
             // function signature is likewise dropped: you cannot add
@@ -524,7 +514,6 @@ impl RType {
         Some(RType {
             mode,
             length,
-            na: NaFlag(true),
             class: ClassVector::empty(),
             columns: None,
             fn_sig: None,
@@ -582,9 +571,9 @@ impl RType {
     /// vector yields the bare elements in R.
     pub fn element(&self) -> RType {
         match self.mode {
-            Mode::Null => RType::new(Mode::Null, Length::Zero, false),
+            Mode::Null => RType::new(Mode::Null, Length::Zero),
             Mode::Opaque => RType::unknown(),
-            _ => RType::new(self.mode, Length::One, self.na.0),
+            _ => RType::new(self.mode, Length::One),
         }
     }
 
@@ -616,7 +605,7 @@ impl RType {
             // integer (matching the overwhelmingly common case).
             Mode::Integer
         };
-        RType::new(mode, Length::Unknown, false)
+        RType::new(mode, Length::Unknown)
     }
 }
 
@@ -663,11 +652,9 @@ fn union_of(a: RType, b: RType) -> RType {
         .map(|m| m.length)
         .reduce(|a, b| if a == b { a } else { Length::Unknown })
         .unwrap_or(Length::Unknown);
-    let na = NaFlag(members.iter().any(|m| m.na.0));
     RType {
         mode: Mode::Union,
         length,
-        na,
         class: ClassVector::empty(),
         columns: None,
         fn_sig: None,
@@ -730,24 +717,12 @@ impl fmt::Display for RType {
             Length::Zero => "0",
             Length::One => "1",
             Length::Known(n) => {
-                let core = write!(
-                    f,
-                    "{}<len={}>{}`",
-                    mode,
-                    n,
-                    if self.na.0 { "?NA" } else { "" }
-                );
+                let core = write!(f, "{}<len={}>", mode, n);
                 return self.fmt_class(f, core);
             }
             Length::Unknown => "?",
         };
-        let core = write!(
-            f,
-            "{}<len={}>{}`",
-            mode,
-            len,
-            if self.na.0 { "?NA" } else { "" }
-        );
+        let core = write!(f, "{}<len={}>", mode, len);
         self.fmt_class(f, core)
     }
 }

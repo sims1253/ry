@@ -1015,7 +1015,7 @@ impl Checker {
         }
         // The function's own name is in scope as a function value, so
         // recursive calls resolve to a user-fn lookup.
-        scope.insert(name.to_string(), RType::scalar(Mode::Function, false));
+        scope.insert(name.to_string(), RType::scalar(Mode::Function));
 
         let mut returns: Vec<RType> = Vec::new();
         // Walk the body in source order, simulating each statement's
@@ -1128,7 +1128,7 @@ impl Checker {
                 if let Some(v) = value {
                     returns.push(self.infer_discarding(v, scope));
                 } else {
-                    returns.push(RType::new(Mode::Null, Length::Zero, false));
+                    returns.push(RType::new(Mode::Null, Length::Zero));
                 }
             }
         }
@@ -1152,7 +1152,7 @@ impl Checker {
                     return Some(
                         args.first()
                             .map(|a| self.infer_discarding(&a.value, scope))
-                            .unwrap_or(RType::new(Mode::Null, Length::Zero, false)),
+                            .unwrap_or(RType::new(Mode::Null, Length::Zero)),
                     );
                 }
             }
@@ -1192,7 +1192,7 @@ impl Checker {
         captured_scope: &Scope,
         depth: usize,
     ) -> RType {
-        let base = RType::scalar(Mode::Function, false);
+        let base = RType::scalar(Mode::Function);
         if depth >= MAX_CLOSURE_DEPTH {
             return base;
         }
@@ -1482,11 +1482,11 @@ impl Checker {
     /// Infer the type of an expression, emitting diagnostics for misuse.
     fn infer(&mut self, e: &Expr, scope: &mut Scope) -> RType {
         match e {
-            Expr::Logical(_, _) => RType::scalar(Mode::Logical, false),
-            Expr::Integer(_, _) => RType::scalar(Mode::Integer, false),
-            Expr::Double(_, _) => RType::scalar(Mode::Double, false),
-            Expr::String(_, _) => RType::scalar(Mode::Character, false),
-            Expr::Null(_) => RType::new(Mode::Null, Length::Zero, false),
+            Expr::Logical(_, _) => RType::scalar(Mode::Logical),
+            Expr::Integer(_, _) => RType::scalar(Mode::Integer),
+            Expr::Double(_, _) => RType::scalar(Mode::Double),
+            Expr::String(_, _) => RType::scalar(Mode::Character),
+            Expr::Null(_) => RType::new(Mode::Null, Length::Zero),
             Expr::Na(t, _) => t.clone(),
             Expr::Ident { name, span } => match scope.get(name) {
                 Some(t) => t.clone(),
@@ -1503,12 +1503,12 @@ impl Checker {
                     // order call handlers resolve the signature when
                     // the callback is invoked.
                     if self.typeshed.functions.contains_key(name) {
-                        return RType::scalar(Mode::Function, false);
+                        return RType::scalar(Mode::Function);
                     }
                     // User-defined function in the FnTable used as a
                     // value? Same treatment.
                     if self.fn_table.fns.contains_key(name) {
-                        return RType::scalar(Mode::Function, false);
+                        return RType::scalar(Mode::Function);
                     }
                     // Cross-file variable defined in another file of
                     // the project (or a top-level assignment later in
@@ -1591,7 +1591,7 @@ impl Checker {
                         let len = (b - a).unsigned_abs() as usize;
                         let len = len.saturating_add(1);
                         if len > 0 {
-                            return RType::new(Mode::Integer, Length::Known(len), false);
+                            return RType::new(Mode::Integer, Length::Known(len));
                         }
                     }
                 }
@@ -1651,7 +1651,7 @@ impl Checker {
                                 format!("cannot apply `!` to `{}`", t.mode),
                             );
                         }
-                        RType::new(Mode::Logical, t.length, t.na.0)
+                        RType::new(Mode::Logical, t.length)
                     }
                 }
             }
@@ -1732,7 +1732,7 @@ impl Checker {
                     );
                 }
                 if matches!(op, BinOpKind::AndAnd | BinOpKind::OrOr) {
-                    return RType::new(Mode::Logical, Length::One, t.na.0);
+                    return RType::new(Mode::Logical, Length::One);
                 }
                 return t;
             }
@@ -1785,7 +1785,7 @@ impl Checker {
                     }
                 }
             }
-            return RType::new(Mode::Logical, length, true);
+            return RType::new(Mode::Logical, length);
         }
         // Arithmetic.
         let lt_mode = lt.mode;
@@ -1948,7 +1948,7 @@ impl Checker {
         let then_t = self.infer(then, &mut then_scope.clone());
         let else_t = match else_ {
             Some(e) => self.infer(e, &mut else_scope.clone()),
-            None => RType::new(Mode::Null, Length::Zero, false),
+            None => RType::new(Mode::Null, Length::Zero),
         };
         let _ = span;
         then_t.join(else_t)
@@ -2072,7 +2072,7 @@ impl Checker {
         // spurious RY010 on every `library(magrittr)` etc. Return NULL
         // (these functions return invisible(NULL) at runtime).
         if name == "library" || name == "require" {
-            return RType::new(Mode::Null, Length::Zero, false);
+            return RType::new(Mode::Null, Length::Zero);
         }
 
         // NSE-symbol functions: take bare symbol arguments that should
@@ -2117,7 +2117,7 @@ impl Checker {
             for a in args {
                 let _ = self.infer(&a.value, scope);
             }
-            return RType::new(Mode::Integer, Length::Unknown, true)
+            return RType::new(Mode::Integer, Length::Unknown)
                 .with_class(ClassVector::single("factor"));
         }
 
@@ -2530,7 +2530,7 @@ impl Checker {
             }
             let _ = self.infer(&a.value, &mut local);
         }
-        RType::new(Mode::List, Length::One, false)
+        RType::new(Mode::List, Length::One)
             .with_class(ClassVector::single("data.frame"))
     }
 
@@ -2640,7 +2640,7 @@ impl Checker {
         let cb_ret = cb.and_then(|c| self.callback_return_type(c, &[elem], scope));
         let length = x_type.length;
         let element_type = cb_ret.unwrap_or(RType::unknown());
-        let mut result = RType::new(Mode::List, length, false);
+        let mut result = RType::new(Mode::List, length);
         // Always build a schema when we know the element type, even if
         // the list length is unknown. We create a single `[[1]]` entry
         // so that `result[[1]]` and `homogeneous_list_element_type`
@@ -2679,13 +2679,13 @@ impl Checker {
                     && !matches!(t.mode, Mode::List | Mode::Opaque) =>
             {
                 // Simplification to a vector of the callback's mode.
-                RType::new(t.mode, x_type.length, t.na.0)
+                RType::new(t.mode, x_type.length)
             }
             // Could not infer the callback, or it returns non-scalar /
             // list values: conservatively report a list (the
             // unsimplified form). This avoids false positives while
             // still giving a useful mode upper bound.
-            _ => RType::new(Mode::List, x_type.length, false),
+            _ => RType::new(Mode::List, x_type.length),
         }
     }
 
@@ -2707,8 +2707,8 @@ impl Checker {
             let _ = self.callback_return_type(cb, &[elem], scope);
         }
         match fun_value.length {
-            Length::One => RType::new(fun_value.mode, x_type.length, fun_value.na.0),
-            _ => RType::new(fun_value.mode, Length::Unknown, fun_value.na.0),
+            Length::One => RType::new(fun_value.mode, x_type.length),
+            _ => RType::new(fun_value.mode, Length::Unknown),
         }
     }
 
@@ -2726,7 +2726,7 @@ impl Checker {
         // arg's length, or Unknown if absent.
         let length = arg_types.get(1).map(|t| t.length).unwrap_or(Length::Zero);
         let _ = cb_ret; // Mode is list regardless of callback return.
-        RType::new(Mode::List, length, false)
+        RType::new(Mode::List, length)
     }
 
     /// `rapply(L, f, ...)`: recursively applies `f` to each leaf of
@@ -2738,7 +2738,7 @@ impl Checker {
         if let Some(cb) = Self::extract_callback(args, &["f", "FUN"], 1) {
             let _ = self.callback_return_type(cb, &[RType::unknown()], scope);
         }
-        RType::new(Mode::List, l_type.length, false)
+        RType::new(Mode::List, l_type.length)
     }
 
     /// `Reduce(f, x, ...)`: left-fold. The result type is the element
@@ -2785,7 +2785,7 @@ impl Checker {
         if let Some(cb) = Self::extract_callback(args, &["f", "FUN"], 0) {
             let _ = self.callback_return_type(cb, &[x_type.element()], scope);
         }
-        RType::scalar(Mode::Integer, true)
+        RType::scalar(Mode::Integer)
     }
 
     /// `do.call(fun, args, ...)`: invokes `fun` with the arguments in
@@ -3071,24 +3071,22 @@ impl Checker {
 
     fn infer_c(&mut self, args: &[Arg], arg_types: &[RType], _span: Span) -> RType {
         if arg_types.is_empty() {
-            return RType::new(Mode::Null, Length::Zero, false);
+            return RType::new(Mode::Null, Length::Zero);
         }
         let mut mode = Mode::Null;
         let mut total_len: usize = 0;
-        let mut any_na = false;
         for t in arg_types {
             mode = if mode.coerce_rank() >= t.mode.coerce_rank() {
                 mode
             } else {
                 t.mode
             };
-            any_na = any_na || t.na.0;
             total_len = total_len.saturating_add(match t.length {
                 Length::Zero => 0,
                 Length::One => 1,
                 Length::Known(n) => n,
                 Length::Unknown => {
-                    return RType::new(mode, Length::Unknown, any_na);
+                    return RType::new(mode, Length::Unknown);
                 }
             });
         }
@@ -3097,11 +3095,7 @@ impl Checker {
         } else {
             Length::Known(total_len)
         };
-        RType::new(
-            mode,
-            length,
-            any_na || matches!(mode, Mode::Character | Mode::Double),
-        )
+        RType::new(mode, length)
     }
 
     /// Infer the type of `list(...)`. The result is always a list whose
@@ -3115,7 +3109,7 @@ impl Checker {
     /// downstream.
     fn infer_list(&mut self, arg_types: &[RType], args: &[Arg], _span: Span) -> RType {
         let length = Length::Known(arg_types.len());
-        let base = RType::new(Mode::List, length, false);
+        let base = RType::new(Mode::List, length);
         let schema = build_named_schema(arg_types, args);
         if let Some(s) = schema {
             base.with_columns(Arc::new(s))
@@ -3174,7 +3168,6 @@ impl Checker {
             .map(|t| RType {
                 mode: t.mode,
                 length: common_len,
-                na: t.na,
                 class: t.class.clone(),
                 // Nested column schemas on a data-frame column would
                 // mean nested data frames; v1 keeps those opaque.
@@ -3195,7 +3188,7 @@ impl Checker {
 
         let class = ClassVector::single("data.frame");
         let base =
-            RType::new(Mode::List, Length::Known(filtered_types.len()), false).with_class(class);
+            RType::new(Mode::List, Length::Known(filtered_types.len())).with_class(class);
         match schema {
             Some(s) => base.with_columns(Arc::new(s)),
             None => base,
@@ -3394,7 +3387,7 @@ impl Checker {
         // `extract_literal_int` returns None for them, which makes the
         // formula fall through to Unknown.)
         if (lo_supplied && lo_val.is_none()) || (by_supplied && by_val.is_none()) {
-            return RType::new(mode, Length::Unknown, false);
+            return RType::new(mode, Length::Unknown);
         }
 
         // `length.out` wins over `by` when both are present.
@@ -3420,7 +3413,7 @@ impl Checker {
         } else {
             Length::Unknown
         };
-        RType::new(mode, length, false)
+        RType::new(mode, length)
     }
 
     fn apply_sig(
@@ -3513,7 +3506,7 @@ impl Checker {
                     _ => Length::Unknown,
                 };
                 let _ = name;
-                RType::new(mode, length, c.na)
+                RType::new(mode, length)
             }
         }
     }
@@ -3596,7 +3589,7 @@ impl Checker {
                 if matches!(bt.mode, Mode::List | Mode::Opaque | Mode::Function) {
                     RType::unknown()
                 } else {
-                    RType::new(bt.mode, Length::One, bt.na.0)
+                    RType::new(bt.mode, Length::One)
                 }
             }
             IndexKind::Double => {
@@ -3621,7 +3614,7 @@ impl Checker {
                     if matches!(bt.mode, Mode::List | Mode::Opaque | Mode::Function) {
                         return RType::unknown();
                     }
-                    return RType::new(bt.mode, Length::One, bt.na.0);
+                    return RType::new(bt.mode, Length::One);
                 }
                 // Integer or double literal index: look up `[[N]]` in
                 // the schema. In R, `1` is a double, `1L` is an integer;
@@ -3653,7 +3646,7 @@ impl Checker {
                 if let Some(a) = args.first() {
                     self.infer(&a.value, scope);
                 }
-                RType::new(bt.mode, Length::One, bt.na.0)
+                RType::new(bt.mode, Length::One)
             }
             IndexKind::Single => {
                 // Single-bracket subsetting semantics are complex
@@ -3724,11 +3717,11 @@ pub fn apply_filter_to_diagnostics(diagnostics: &mut Vec<Diagnostic>, filter: &S
 /// carries enough information.
 fn infer_literal_default(e: &Expr) -> RType {
     match e {
-        Expr::Logical(_, _) => RType::scalar(Mode::Logical, false),
-        Expr::Integer(_, _) => RType::scalar(Mode::Integer, false),
-        Expr::Double(_, _) => RType::scalar(Mode::Double, false),
-        Expr::String(_, _) => RType::scalar(Mode::Character, false),
-        Expr::Null(_) => RType::new(Mode::Null, Length::Zero, false),
+        Expr::Logical(_, _) => RType::scalar(Mode::Logical),
+        Expr::Integer(_, _) => RType::scalar(Mode::Integer),
+        Expr::Double(_, _) => RType::scalar(Mode::Double),
+        Expr::String(_, _) => RType::scalar(Mode::Character),
+        Expr::Null(_) => RType::new(Mode::Null, Length::Zero),
         Expr::Na(t, _) => t.clone(),
         // Anything more complex (call, ident, binop) needs a scope; defer
         // to the first fixpoint iteration by starting as UNKNOWN.
@@ -4009,7 +4002,7 @@ fn apply_narrowing(base: &Scope, narrowing: &Narrowing) -> (Scope, Scope) {
                 if matches!(existing.mode, Mode::Opaque) {
                     then_scope.insert(
                         var.clone(),
-                        RType::new(*mode, existing.length, existing.na.0),
+                        RType::new(*mode, existing.length),
                     );
                 } else if existing.mode.coerce_rank() <= mode.coerce_rank() {
                     // The existing mode is at or below the predicate's
@@ -4018,7 +4011,7 @@ fn apply_narrowing(base: &Scope, narrowing: &Narrowing) -> (Scope, Scope) {
                     // more specific).
                     then_scope.insert(
                         var.clone(),
-                        RType::new(*mode, existing.length, existing.na.0),
+                        RType::new(*mode, existing.length),
                     );
                 }
             }
@@ -4047,7 +4040,7 @@ fn apply_narrowing(base: &Scope, narrowing: &Narrowing) -> (Scope, Scope) {
                 if matches!(existing.mode, Mode::Opaque) || existing.mode == *mode {
                     else_scope.insert(
                         var.clone(),
-                        RType::new(*mode, existing.length, existing.na.0),
+                        RType::new(*mode, existing.length),
                     );
                 }
             }
@@ -4295,7 +4288,7 @@ fn json_rtype_to_rtype(jt: &JsonRType) -> RType {
         let refs: Vec<&str> = jt.class.iter().map(|s| s.as_str()).collect();
         ClassVector::from_slice(&refs)
     };
-    let base = RType::new(mode, length, jt.na).with_class(class);
+    let base = RType::new(mode, length).with_class(class);
     if jt.columns.is_empty() {
         return base;
     }
@@ -4342,7 +4335,7 @@ fn json_rtype_to_rtype_shallow(jt: &JsonRType) -> RType {
         let refs: Vec<&str> = jt.class.iter().map(|s| s.as_str()).collect();
         ClassVector::from_slice(&refs)
     };
-    RType::new(mode, length, jt.na).with_class(class)
+    RType::new(mode, length).with_class(class)
 }
 
 #[cfg(test)]

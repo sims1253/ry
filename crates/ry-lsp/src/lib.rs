@@ -248,14 +248,6 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        // Find the identifier at the hover position. We look for a
-        // word-like character sequence around the cursor.
-        let identifier =
-            find_identifier_at_position(&text, position.line as usize, position.character as usize);
-        let Some(identifier) = identifier else {
-            return Ok(None);
-        };
-
         // Parse and check the file to get the scope.
         let mut parser = match RParser::new() {
             Ok(p) => p,
@@ -267,6 +259,14 @@ impl LanguageServer for Backend {
         };
         let mut checker = ry_checker::Checker::new(&path);
         let (_, scope) = checker.check_with_scope(&file);
+
+        // Find the identifier at the hover position via an AST walk
+        // (smallest enclosing Expr::Ident), so non-ASCII identifiers and
+        // identifiers in any syntactic position resolve correctly.
+        let byte_offset = position_to_byte_offset_pos(&text, position);
+        let Some((identifier, _)) = find_ident_at_offset(&file, byte_offset) else {
+            return Ok(None);
+        };
 
         // Look up the identifier in the scope.
         if let Some(t) = scope.get(&identifier) {
@@ -304,15 +304,6 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        // Reuse the same word-finding helper as `hover` to extract the
-        // identifier under the cursor. Returns `None` (no definition)
-        // for operators, numbers, and keywords.
-        let identifier =
-            find_identifier_at_position(&text, position.line as usize, position.character as usize);
-        let Some(identifier) = identifier else {
-            return Ok(None);
-        };
-
         // Parse the current document. We do not need the checker's
         // scope here: definitions live in the AST, not the type
         // environment.
@@ -323,6 +314,13 @@ impl LanguageServer for Backend {
         let file = match parser.parse(&path, &text) {
             Ok(f) => f,
             Err(_) => return Ok(None),
+        };
+
+        // Find the identifier under the cursor via an AST walk. Returns
+        // `None` (no definition) for operators, numbers, and keywords.
+        let byte_offset = position_to_byte_offset_pos(&text, position);
+        let Some((identifier, _)) = find_ident_at_offset(&file, byte_offset) else {
+            return Ok(None);
         };
 
         let locations = find_definition_locations(&file, &identifier, &uri);
@@ -353,16 +351,6 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        // Reuse the same word-finding helper as `hover` /
-        // `goto_definition` to extract the identifier under the
-        // cursor. Returns `None` (no references) for operators,
-        // numbers, and keywords.
-        let identifier =
-            find_identifier_at_position(&text, position.line as usize, position.character as usize);
-        let Some(identifier) = identifier else {
-            return Ok(None);
-        };
-
         // A single parser instance is reused across all documents;
         // tree-sitter's `Parser` is designed to be reused and this
         // avoids the per-file allocation cost of `publish_diagnostics`'s
@@ -372,14 +360,30 @@ impl LanguageServer for Backend {
             Err(_) => return Ok(None),
         };
 
+        // Find the identifier under the cursor via an AST walk of the
+        // current document. Returns `None` for operators, numbers, and
+        // keywords.
+        let current_file = match parser.parse(&path, &text) {
+            Ok(f) => f,
+            Err(_) => return Ok(None),
+        };
+        let byte_offset = position_to_byte_offset_pos(&text, position);
+        let Some((identifier, _)) = find_ident_at_offset(&current_file, byte_offset) else {
+            return Ok(None);
+        };
+
         let mut all_locations = Vec::new();
         for (doc_path, doc_text) in &docs {
-            let file = match parser.parse(doc_path, doc_text) {
-                Ok(f) => f,
-                // Skip documents that fail to parse rather than
-                // aborting the whole search; a syntax error in one
-                // file shouldn't hide references in another.
-                Err(_) => continue,
+            let file = if doc_path == &path {
+                current_file.clone()
+            } else {
+                match parser.parse(doc_path, doc_text) {
+                    // Skip documents that fail to parse rather than
+                    // aborting the whole search; a syntax error in one
+                    // file shouldn't hide references in another.
+                    Ok(f) => f,
+                    Err(_) => continue,
+                }
             };
             let doc_uri = path_to_uri(doc_path);
             let locs = find_references_in_file(
@@ -691,20 +695,23 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        // Find the identifier at the cursor position to learn the
-        // old name. We rename ALL occurrences of that name across all
-        // open documents, mirroring how `references` works. Returns
-        // `None` (no rename) for operators, numbers, and keywords.
-        let old_name =
-            find_identifier_at_position(&text, position.line as usize, position.character as usize);
-        let Some(old_name) = old_name else {
-            return Ok(None);
-        };
-
         // A single parser instance is reused across all documents.
         let mut parser = match RParser::new() {
             Ok(p) => p,
             Err(_) => return Ok(None),
+        };
+
+        // Find the identifier at the cursor position via an AST walk to
+        // learn the old name. We rename ALL occurrences of that name
+        // across all open documents, mirroring how `references` works.
+        // Returns `None` (no rename) for operators, numbers, keywords.
+        let current_file = match parser.parse(&path, &text) {
+            Ok(f) => f,
+            Err(_) => return Ok(None),
+        };
+        let byte_offset = position_to_byte_offset_pos(&text, position);
+        let Some((old_name, _)) = find_ident_at_offset(&current_file, byte_offset) else {
+            return Ok(None);
         };
 
         // Build the per-URI edit map. For each open document we find
@@ -764,21 +771,30 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        // Validate that the cursor is on a renameable identifier
-        // before the editor shows the rename UI. We reuse the same
-        // word-finding helper as `hover` / `goto_definition`, but in
-        // its range-returning variant so we can hand the editor the
-        // exact span to highlight as the rename target. Returns
-        // `None` (rename not allowed here) for operators, numbers,
+        // Validate that the cursor is on a renameable identifier before
+        // the editor shows the rename UI. Use the AST-based finder so we
+        // get the exact span of the innermost identifier, then convert
+        // it to an LSP range. Returns `None` for operators, numbers,
         // keywords, and whitespace.
-        let (_, range) = match find_identifier_range_at_position(
-            &text,
-            position.line as usize,
-            position.character as usize,
-        ) {
-            Some(r) => r,
-            None => return Ok(None),
+        let mut parser = match RParser::new() {
+            Ok(p) => p,
+            Err(_) => return Ok(None),
         };
+        let file = match parser.parse(&path, &text) {
+            Ok(f) => f,
+            Err(_) => return Ok(None),
+        };
+        let byte_offset = position_to_byte_offset_pos(&text, position);
+        let Some((_, span)) = find_ident_at_offset(&file, byte_offset) else {
+            return Ok(None);
+        };
+        let range = span_to_range(&text, span).unwrap_or(Range {
+            start: position,
+            end: Position {
+                line: position.line,
+                character: position.character + 1,
+            },
+        });
 
         Ok(Some(PrepareRenameResponse::Range(range)))
     }
@@ -804,16 +820,6 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        // Reuse the same word-finding helper as `hover` /
-        // `references` to extract the identifier under the cursor.
-        // Returns `None` (no highlights) for operators, numbers, and
-        // keywords.
-        let identifier =
-            find_identifier_at_position(&text, position.line as usize, position.character as usize);
-        let Some(identifier) = identifier else {
-            return Ok(None);
-        };
-
         // Parse the current document. Document highlight is scoped to
         // the current file (per the LSP spec), so we only parse once.
         let mut parser = match RParser::new() {
@@ -823,6 +829,13 @@ impl LanguageServer for Backend {
         let file = match parser.parse(&path, &text) {
             Ok(f) => f,
             Err(_) => return Ok(None),
+        };
+
+        // Find the identifier under the cursor via an AST walk. Returns
+        // `None` (no highlights) for operators, numbers, and keywords.
+        let byte_offset = position_to_byte_offset_pos(&text, position);
+        let Some((identifier, _)) = find_ident_at_offset(&file, byte_offset) else {
+            return Ok(None);
         };
 
         let highlights = collect_document_highlights(&file, &identifier, &text);
@@ -1062,6 +1075,8 @@ impl Backend {
 /// `x`, `my_var`, `result`. It does not handle dotted access (`df$col`)
 /// or function call syntax; those would require parser-level position
 /// information.
+#[allow(dead_code)] // superseded by the AST-based find_ident_at_offset;
+                    // retained as a tested ASCII fallback / reference.
 fn find_identifier_at_position(text: &str, line: usize, col: usize) -> Option<String> {
     find_identifier_range_at_position(text, line, col).map(|(name, _)| name)
 }
@@ -3043,6 +3058,190 @@ fn make_ignore_file_action(uri: &Url, text: &str) -> Option<CodeAction> {
         }),
         ..Default::default()
     })
+}
+
+/// Find the smallest `Expr::Ident` whose `Span` contains `byte_offset`,
+/// returning `(name, span)`. Walks the whole AST (statements and
+/// expressions, including nested function bodies and control-flow
+/// branches) so it works for non-ASCII identifiers and identifiers
+/// inside any syntactic position -- replacing the byte-scanning
+/// `find_identifier_at_position`, which only saw a single source line
+/// and mis-handled identifiers split across cursor placements.
+///
+/// "Smallest" = the innermost identifier whose span contains the offset,
+/// so nested expressions (e.g. `f(g(x))`) resolve to `x` when the cursor
+/// is on `x`. Ties are broken by span length (shortest wins).
+fn find_ident_at_offset(file: &SourceFile, byte_offset: usize) -> Option<(String, Span)> {
+    let mut best: Option<(String, Span)> = None;
+    for stmt in &file.stmts {
+        find_ident_in_stmt(stmt, byte_offset, &mut best);
+    }
+    best
+}
+
+fn span_contains(span: Span, offset: usize) -> bool {
+    offset >= span.start && offset < span.end
+}
+
+fn consider(name: &str, span: Span, offset: usize, best: &mut Option<(String, Span)>) {
+    if !span_contains(span, offset) {
+        return;
+    }
+    if is_numeric_or_keyword(name) {
+        return;
+    }
+    let is_better = best
+        .as_ref()
+        .map(|(_, b)| span.end - span.start < b.end - b.start)
+        .unwrap_or(true);
+    if is_better {
+        *best = Some((name.to_string(), span));
+    }
+}
+
+fn find_ident_in_stmt(s: &Stmt, offset: usize, best: &mut Option<(String, Span)>) {
+    match s {
+        Stmt::Assign { target, value, .. } => {
+            find_ident_in_expr(target, offset, best);
+            find_ident_in_expr(value, offset, best);
+        }
+        Stmt::Expr(e) => find_ident_in_expr(e, offset, best),
+        Stmt::If {
+            cond, then, else_, ..
+        } => {
+            find_ident_in_expr(cond, offset, best);
+            for s in then {
+                find_ident_in_stmt(s, offset, best);
+            }
+            if let Some(e) = else_ {
+                for s in e {
+                    find_ident_in_stmt(s, offset, best);
+                }
+            }
+        }
+        Stmt::For {
+            iter,
+            body,
+            name,
+            span,
+        } => {
+            find_ident_in_expr(iter, offset, best);
+            // The loop variable binding is a bare name (no inner span;
+            // use the statement span as a coarse fallback so a cursor
+            // anywhere in the for-header can pick it up).
+            consider(name, *span, offset, best);
+            for s in body {
+                find_ident_in_stmt(s, offset, best);
+            }
+        }
+        Stmt::While { cond, body, .. } => {
+            find_ident_in_expr(cond, offset, best);
+            for s in body {
+                find_ident_in_stmt(s, offset, best);
+            }
+        }
+        Stmt::FunctionDef {
+            name,
+            params,
+            body,
+            span,
+        } => {
+            if let Some(n) = name {
+                consider(n, *span, offset, best);
+            }
+            for p in params {
+                if let Some(d) = &p.default {
+                    find_ident_in_expr(d, offset, best);
+                }
+            }
+            for s in body {
+                find_ident_in_stmt(s, offset, best);
+            }
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value {
+                find_ident_in_expr(v, offset, best);
+            }
+        }
+    }
+}
+
+fn find_ident_in_expr(e: &Expr, offset: usize, best: &mut Option<(String, Span)>) {
+    match e {
+        Expr::Ident { name, span } => consider(name, *span, offset, best),
+        Expr::BinOp { lhs, rhs, .. } => {
+            find_ident_in_expr(lhs, offset, best);
+            find_ident_in_expr(rhs, offset, best);
+        }
+        Expr::UnaryOp { expr, .. } => find_ident_in_expr(expr, offset, best),
+        Expr::Call { func, args, .. } => {
+            find_ident_in_expr(func, offset, best);
+            for a in args {
+                find_ident_in_expr(&a.value, offset, best);
+            }
+        }
+        Expr::Index { base, args, .. } => {
+            find_ident_in_expr(base, offset, best);
+            for a in args {
+                find_ident_in_expr(&a.value, offset, best);
+            }
+        }
+        Expr::If {
+            cond, then, else_, ..
+        } => {
+            find_ident_in_expr(cond, offset, best);
+            find_ident_in_expr(then, offset, best);
+            if let Some(e) = else_ {
+                find_ident_in_expr(e, offset, best);
+            }
+        }
+        Expr::Function { params, body, .. } => {
+            for p in params {
+                if let Some(d) = &p.default {
+                    find_ident_in_expr(d, offset, best);
+                }
+            }
+            for s in body {
+                find_ident_in_stmt(s, offset, best);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// True if `name` is a pure number or an R reserved word -- the
+/// byte-scanner's filter, preserved so rename/hover/go-to-def ignore
+/// keywords and numeric literals.
+fn is_numeric_or_keyword(name: &str) -> bool {
+    if name.parse::<f64>().is_ok() {
+        return true;
+    }
+    matches!(
+        name,
+        "if" | "else"
+            | "for"
+            | "while"
+            | "function"
+            | "return"
+            | "break"
+            | "next"
+            | "repeat"
+            | "in"
+            | "TRUE"
+            | "FALSE"
+            | "NULL"
+            | "NA"
+            | "NA_integer_"
+            | "NA_real_"
+            | "NA_complex_"
+            | "NA_character_"
+            | "Inf"
+            | "NaN"
+            | "T"
+            | "F"
+            | "library"
+            | "require"
+    )
 }
 
 /// Find the smallest enclosing statement whose `Span` contains the

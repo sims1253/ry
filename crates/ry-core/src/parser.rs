@@ -350,8 +350,10 @@ impl RParser {
             "complex" => Some(Expr::Unknown(self.span(n, src))),
             "string" => {
                 let raw = text(n, src)?;
-                let unquoted = &raw[1..raw.len().saturating_sub(1)];
-                Some(Expr::String(unquoted.to_string(), self.span(n, src)))
+                Some(Expr::String(
+                    unquote_r_string(raw),
+                    self.span(n, src),
+                ))
             }
             "na" => {
                 let raw = text(n, src)?;
@@ -638,6 +640,214 @@ impl RParser {
 
 fn text(n: Node, src: &str) -> Option<String> {
     n.utf8_text(src.as_bytes()).ok().map(String::from)
+}
+
+/// Unquote an R string literal, handling escape sequences and raw
+/// strings.
+///
+/// R has four string forms:
+///   * plain: `"a\nb"` / `'a\nb'` -- backslash escapes are processed.
+///   * raw:   `r"(a\nb)"` / `R"[...]"` / `r"[DELI](...)DELI"` -- the
+///     content between the delimiters is taken literally (no escape
+///     processing); the `-(...)` / `-[...]` delimiters are stripped.
+///
+/// Previously this code stripped only the first and last byte, which
+/// silently dropped escapes (`"a\nb"` became the 4-char string
+/// `a\nb`, not `a`+newline+`b`) and mishandled raw strings. Correct
+/// escape processing matters because column-name matching
+/// (`df$"my col"`, `list("a b" = 1)`) and `# ry:` directive parsing
+/// depend on the literal value.
+fn unquote_r_string(raw: &str) -> String {
+    // Raw strings: r"(...)" , r"(...){...}", R"(...)", r"[...]", etc.
+    // The opening is r/R followed by an optional dash-delimiter and a
+    // ( or [. The matching close is ) or ] followed by the same
+    // delimiter (reversed) and a quote.
+    if let Some(rest) = raw
+        .strip_prefix('r')
+        .or_else(|| raw.strip_prefix('R'))
+    {
+        if let Some(unprocessed) = try_unwrap_raw_string(rest) {
+            return unprocessed;
+        }
+        // Not actually a raw string (e.g. an identifier-looking token);
+        // fall through to ordinary processing.
+    }
+    // Ordinary quoted string: process escapes.
+    let bytes = raw.as_bytes();
+    if bytes.len() < 2 {
+        return raw.to_string();
+    }
+    let inner = &raw[1..raw.len() - 1];
+    process_r_escapes(inner)
+}
+
+/// Strip the delimiters of a raw string whose body starts after the
+/// leading `r"`/`R"` (so `body` begins at the optional `-delim(` or
+/// `(`). Returns the literal content if it parses as a raw string,
+/// else None.
+fn try_unwrap_raw_string(body: &str) -> Option<String> {
+    // Opening sequence: optional delimiter chars, then `(` or `[`.
+    // R allows `r"(...)"`, `r"-(...)-"`, `r"--(...)--"`, and the `[`
+    // bracket form likewise. We capture the delimiter and the bracket.
+    let bytes = body.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+    let (open_bracket, close_bracket) = match bytes[0] {
+        b'(' => (b'(', b')'),
+        b'[' => (b'[', b']'),
+        _ => {
+            // delimiter form: dashes then bracket
+            let mut i = 0;
+            while i < bytes.len() && bytes[i] == b'-' {
+                i += 1;
+            }
+            if i == 0 || i >= bytes.len() {
+                return None;
+            }
+            match bytes[i] {
+                b'(' => (b'(', b')'),
+                b'[' => (b'[', b']'),
+                _ => return None,
+            }
+        }
+    };
+    // Find the content start (after the opening bracket) and the
+    // matching close. For the simple (no-delimiter) form, the close is
+    // the last `)bracket"` sequence. We do a conservative search from
+    // the end for the closing `"<close>` .
+    let close_quote_seq: &[u8] = &[close_bracket, b'"'];
+    if body.len() < close_quote_seq.len() {
+        return None;
+    }
+    // The opening bracket is the FIRST bracket char in body.
+    let open_idx = body.find(open_bracket as char)?;
+    // The closing sequence is the LAST occurrence of `<close>"`.
+    let close_idx = body.rfind(std::str::from_utf8(close_quote_seq).ok()?)?;
+    if close_idx <= open_idx {
+        return None;
+    }
+    let content_start = open_idx + 1;
+    if content_start >= close_idx {
+        return Some(String::new());
+    }
+    Some(body[content_start..close_idx].to_string())
+}
+
+/// Process R string escape sequences. Handles the common cases:
+/// `\"`, `\\`, `\n`, `\r`, `\t`, `\b`, `\f`, `\v`, `\0`, `\'`, and
+/// `\uXXXX` / `\UXXXXXXXX` (4 or 8 hex digits). Unknown escapes are
+/// passed through verbatim (R warns but keeps the backslash), matching
+/// R's documented behavior.
+fn process_r_escapes(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b != b'\\' {
+            // Copy one UTF-8 char.
+            let ch_len = utf8_char_len(b);
+            if let Ok(chunk) = std::str::from_utf8(&bytes[i..i + ch_len]) {
+                out.push_str(chunk);
+            }
+            i += ch_len;
+            continue;
+        }
+        // Escape sequence.
+        if i + 1 >= bytes.len() {
+            out.push('\\');
+            break;
+        }
+        let next = bytes[i + 1];
+        let (replaced, consumed) = match next {
+            b'n' => (Some('\n'), 2),
+            b'r' => (Some('\r'), 2),
+            b't' => (Some('\t'), 2),
+            b'b' => (Some('\u{0008}'), 2),
+            b'f' => (Some('\u{000C}'), 2),
+            b'v' => (Some('\u{000B}'), 2),
+            b'0' => (Some('\0'), 2),
+            b'a' => (Some('\u{0007}'), 2),
+            b'"' => (Some('"'), 2),
+            b'\'' => (Some('\''), 2),
+            b'\\' => (Some('\\'), 2),
+            b'\n' => (None, 2), // physical line continuation: drop
+            b'u' => {
+                // \uXXXX (exactly 4 hex).
+                let hex = std::str::from_utf8(&bytes.get(i + 2..i + 6).unwrap_or(&[]))
+                    .unwrap_or("");
+                if let Ok(n) = u32::from_str_radix(hex, 16) {
+                    if let Some(c) = char::from_u32(n) {
+                        (Some(c), 6)
+                    } else {
+                        (None, 6)
+                    }
+                } else {
+                    (None, 2)
+                }
+            }
+            b'U' => {
+                // \UXXXXXXXX (exactly 8 hex).
+                let hex = std::str::from_utf8(&bytes.get(i + 2..i + 10).unwrap_or(&[]))
+                    .unwrap_or("");
+                if let Ok(n) = u32::from_str_radix(hex, 16) {
+                    if let Some(c) = char::from_u32(n) {
+                        (Some(c), 10)
+                    } else {
+                        (None, 10)
+                    }
+                } else {
+                    (None, 2)
+                }
+            }
+            b'x' => {
+                // \xXX (1-2 hex digits).
+                let mut j = i + 2;
+                let mut hex = String::new();
+                while j < bytes.len() && hex.len() < 2 && bytes[j].is_ascii_hexdigit() {
+                    hex.push(bytes[j] as char);
+                    j += 1;
+                }
+                if let Ok(n) = u32::from_str_radix(&hex, 16) {
+                    (Some(n as u8 as char), 2 + hex.len())
+                } else {
+                    (None, 2)
+                }
+            }
+            _ => (None, 2), // unknown escape: keep verbatim below
+        };
+        match replaced {
+            Some(c) => out.push(c),
+            None => {
+                // Unknown escape or line continuation: copy the backslash
+                // and the next byte verbatim (R warns but keeps them).
+                if next != b'\n' {
+                    out.push('\\');
+                    out.push(next as char);
+                }
+            }
+        }
+        i += consumed;
+    }
+    out
+}
+
+/// Length in bytes of the UTF-8 character starting with the given lead
+/// byte. Used to advance one code point at a time without pulling in a
+/// unicode crate.
+fn utf8_char_len(b: u8) -> usize {
+    if b < 0x80 {
+        1
+    } else if b >> 5 == 0b110 {
+        2
+    } else if b >> 4 == 0b1110 {
+        3
+    } else if b >> 3 == 0b11110 {
+        4
+    } else {
+        1 // invalid lead byte; advance one to make progress
+    }
 }
 
 /// Walk the parse tree and collect spans of `ERROR` and `MISSING` nodes.
@@ -1133,6 +1343,61 @@ mod tests {
                 );
             }
             other => panic!("expected UnaryOp(Neg, BinOp(Pow, ..)), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn string_escape_sequences_are_processed() {
+        use super::unquote_r_string;
+        assert_eq!(unquote_r_string(r#""a\nb""#), "a\nb");
+        assert_eq!(unquote_r_string(r#""\t""#), "\t");
+        assert_eq!(unquote_r_string(r#""\\""#), "\\");
+        assert_eq!(unquote_r_string(r#""\"""#), "\"");
+        assert_eq!(unquote_r_string(r#""a\\b""#), "a\\b");
+        // Unknown escape: keep verbatim (R warns but retains the backslash).
+        assert_eq!(unquote_r_string(r#""\q""#), r#"\q"#);
+    }
+
+    #[test]
+    fn string_unicode_escapes() {
+        use super::unquote_r_string;
+        assert_eq!(unquote_r_string(r#""\u00e9""#), "é");
+        // Malformed \u (too few hex): keep verbatim, don't panic.
+        assert_eq!(unquote_r_string(r#""\uXY""#), r#"\uXY"#);
+    }
+
+    #[test]
+    fn string_single_quotes_work() {
+        use super::unquote_r_string;
+        assert_eq!(unquote_r_string("'abc'"), "abc");
+        assert_eq!(unquote_r_string(r"'a\nb'"), "a\nb");
+    }
+
+    #[test]
+    fn raw_strings_skip_escape_processing() {
+        use super::unquote_r_string;
+        // r"(...)" -- content is literal, no escape processing.
+        assert_eq!(unquote_r_string(r#"r"(a\nb)""#), r"a\nb");
+        // R"(...)" (capital) likewise.
+        assert_eq!(unquote_r_string(r#"R"(x)""#), "x");
+        // r"[...]" bracket form.
+        assert_eq!(unquote_r_string(r#"r"[literal]""#), "literal");
+    }
+
+    #[test]
+    fn string_with_embedded_quote_directive_is_not_a_suppression() {
+        // A string literal value like "# noqa" must not be confused with
+        // a suppression comment when the parser later reasons about it.
+        // The string arm produces an Expr::String with the literal value
+        // intact (escapes processed).
+        let f = parse(r#"x <- "# noqa"
+"#);
+        match f.stmts.first() {
+            Some(Stmt::Assign {
+                value: Expr::String(s, _),
+                ..
+            }) => assert_eq!(s, "# noqa"),
+            other => panic!("expected String assign, got {:?}", other),
         }
     }
 }

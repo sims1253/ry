@@ -1672,8 +1672,18 @@ impl Checker {
                 // Pipes need structural access to `rhs` (to build a
                 // desugared call), so they bypass `infer_binop`'s
                 // type-only signature.
-                if matches!(*op, BinOpKind::PipeForward | BinOpKind::PipeAssign) {
+                if matches!(*op, BinOpKind::PipeForward) {
                     return self.infer_pipe(lhs, rhs, *span, scope);
+                }
+                if matches!(*op, BinOpKind::PipeAssign) {
+                    // `%<>%` (assignment pipe): like `%>%` but also
+                    // rebinds the LHS identifier to the result, so
+                    // `x %<>% f()` is `x <- x %>% f()`.
+                    let result = self.infer_pipe(lhs, rhs, *span, scope);
+                    if let Expr::Ident { name, .. } = lhs.as_ref() {
+                        scope.insert(name.clone(), result.clone());
+                    }
+                    return result;
                 }
                 if matches!(*op, BinOpKind::PipeTee) {
                     return self.infer_pipe_tee(lhs, rhs, scope);
@@ -1814,7 +1824,6 @@ impl Checker {
                 | BinOpKind::Eq
                 | BinOpKind::Ne
                 | BinOpKind::In
-                | BinOpKind::NotIn
         );
         let is_logic = matches!(
             op,
@@ -3976,13 +3985,11 @@ fn op_symbol(op: BinOpKind) -> &'static str {
         BinOpKind::Or => "|",
         BinOpKind::OrOr => "||",
         BinOpKind::In => "%in%",
-        BinOpKind::NotIn => "%notin%",
         BinOpKind::Assign => "<-",
         BinOpKind::SuperAssign => "<<-",
         BinOpKind::PipeForward => "%>%",
         BinOpKind::PipeTee => "%T>%",
         BinOpKind::PipeAssign => "%<>%",
-        BinOpKind::PipeBind => "%>_%",
     }
 }
 

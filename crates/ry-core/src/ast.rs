@@ -181,7 +181,6 @@ pub enum BinOpKind {
     AndAnd,
     Or,
     OrOr,
-    NotIn,
     In,
     Assign,
     SuperAssign,
@@ -195,8 +194,6 @@ pub enum BinOpKind {
     /// Modeled as PipeForward for the result type; the assignment
     /// side-effect is the caller's responsibility (see checker comment).
     PipeAssign,
-    /// `%>_%` / placeholder-free magrittr binding (kept for symmetry).
-    PipeBind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

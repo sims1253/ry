@@ -2536,26 +2536,25 @@ fn span_start_range(span: Span, name: &str) -> Range {
 /// `diagnostic_to_lsp`); the end is derived by counting newlines and
 /// characters from the start of the file up to `span.end`.
 fn span_to_range(text: &str, span: Span) -> Option<Range> {
-    let start = Position {
-        line: span.line as u32,
-        character: span.col as u32,
-    };
+    // Both endpoints go through byte_offset_to_position so the column is
+    // a UTF-16 code-unit count (the LSP spec) and start/end are computed
+    // consistently. (Span.col is a byte column from the parser; using it
+    // directly would mismatch end on non-ASCII lines.)
+    let start = byte_offset_to_position(text, span.start);
     let end = byte_offset_to_position(text, span.end);
     Some(Range { start, end })
 }
 
 /// Map a byte offset into the source text to an LSP `Position`
-/// (0-indexed line, 0-indexed character column). Mirrors the
-/// parser's `char_col` helper: each character advances the column,
-/// each newline resets it and bumps the line.
+/// (0-indexed line, 0-indexed character column).
 ///
-/// UTF-16 NOTE: the LSP spec defines `Position.character` as a UTF-16
-/// code-unit offset, not a Rust `char` count. This helper counts
-/// `char`s (Unicode scalar values), which is identical to the UTF-16
-/// count for the BMP subset that excludes astral-plane characters
-/// (emoji, rare CJK). For pure ASCII source the two counts agree
-/// exactly. For non-ASCII content this is an approximation; a future
-/// revision should compute true UTF-16 offsets for full correctness.
+/// The LSP spec defines `Position.character` as a UTF-16 code-unit
+/// offset. This helper counts UTF-16 code units (each BMP character is
+/// 1 unit; astral-plane characters -- emoji, rare CJK -- are 2). For
+/// pure ASCII source the count equals the byte count. Previously this
+/// counted Rust `char`s (Unicode scalar values), which silently
+/// mis-counted astral characters and broke positions on lines
+/// containing them.
 fn byte_offset_to_position(text: &str, byte_offset: usize) -> Position {
     let mut line = 0u32;
     let mut col = 0u32;
@@ -2567,13 +2566,57 @@ fn byte_offset_to_position(text: &str, byte_offset: usize) -> Position {
             line += 1;
             col = 0;
         } else {
-            col += 1;
+            // UTF-16 code-unit count for this scalar: 1 for the BMP,
+            // 2 for astral-plane (surrogate pair).
+            col += utf16_len(ch) as u32;
         }
     }
     Position {
         line,
         character: col,
     }
+}
+
+/// Number of UTF-16 code units a Unicode scalar value encodes to: 1 for
+/// the Basic Multilingual Plane, 2 for astral-plane characters (which
+/// become a surrogate pair).
+fn utf16_len(ch: char) -> usize {
+    if (ch as u32) >= 0x10000 {
+        2
+    } else {
+        1
+    }
+}
+
+/// Map an LSP `Position` (line, UTF-16 character column) to a byte
+/// offset into the source text. The inverse of `byte_offset_to_position`.
+/// Counts UTF-16 code units so non-ASCII (including astral) characters
+/// resolve correctly.
+fn position_to_byte_offset(text: &str, line: u32, utf16_col: u32) -> Option<usize> {
+    let mut cur_line = 0u32;
+    let mut cur_col = 0u32;
+    for (b, ch) in text.char_indices() {
+        if cur_line == line && cur_col >= utf16_col {
+            return Some(b);
+        }
+        if ch == '\n' {
+            cur_line += 1;
+            cur_col = 0;
+        } else {
+            cur_col += utf16_len(ch) as u32;
+        }
+    }
+    if cur_line == line && cur_col >= utf16_col {
+        Some(text.len())
+    } else {
+        None
+    }
+}
+
+/// Map an LSP `Position` to a byte offset. Wrapper over the line/col
+/// variant for callers that hold a `Position`.
+fn position_to_byte_offset_pos(text: &str, position: Position) -> usize {
+    position_to_byte_offset(text, position.line, position.character).unwrap_or(text.len())
 }
 
 /// Collect `FoldingRange`s for every multi-line foldable block in the
@@ -2812,14 +2855,12 @@ fn uri_to_path(uri: &Url) -> String {
 
 /// Convert a `ry_checker::Diagnostic` to an LSP `Diagnostic`.
 ///
-/// ry's `Span` carries pre-resolved 0-indexed `line` and 0-indexed
-/// `col` (in char count). LSP positions are 0-indexed lines but
-/// UTF-16 code units for the character offset. For ASCII files the two
-/// are identical; for non-ASCII content this v1 conversion is an
-/// approximation (we forward `col` unchanged). The end position is set
-/// to a single-character range anchored at the start, which editors
-/// render as a squiggle under one character. A future revision should
-/// compute a precise range from the span's byte offsets.
+/// Source-text-independent fallback: uses the span's pre-resolved
+/// `line` / `col` (byte column) directly as the character column. This
+/// is exact for ASCII and an approximation for non-ASCII; the
+/// source-aware `diagnostic_to_lsp_with_source` is preferred when the
+/// file text is available (the production diagnostic-publish path).
+/// Kept for tests and the defensive no-source fallback.
 fn diagnostic_to_lsp(d: RyDiagnostic) -> LspDiagnostic {
     let start = Position {
         line: d.span.line as u32,
@@ -2827,9 +2868,6 @@ fn diagnostic_to_lsp(d: RyDiagnostic) -> LspDiagnostic {
     };
     let end = Position {
         line: d.span.line as u32,
-        // Single-character range so the squiggle is non-empty even for
-        // zero-width spans. Future revision should use span.start/end
-        // against the source text for a precise range.
         character: (d.span.col as u32) + 1,
     };
     let severity = match d.severity {
@@ -3007,31 +3045,6 @@ fn make_ignore_file_action(uri: &Url, text: &str) -> Option<CodeAction> {
     })
 }
 
-/// Map an LSP `Position` (0-indexed line, 0-indexed character column)
-/// to a byte offset within `text`. Mirrors `byte_offset_to_position`'s
-/// ASCII assumption: each `char` advances the column by one, each
-/// newline bumps the line. For non-ASCII content this is an
-/// approximation consistent with the rest of the file.
-///
-/// Used by `find_enclosing_stmt_range` to test whether a cursor
-/// position falls within a statement's byte-offset `Span`.
-fn position_to_byte_offset(text: &str, position: Position) -> usize {
-    let mut line = 0u32;
-    let mut col = 0u32;
-    for (b, ch) in text.char_indices() {
-        if line == position.line && col >= position.character {
-            return b;
-        }
-        if ch == '\n' {
-            line += 1;
-            col = 0;
-        } else {
-            col += 1;
-        }
-    }
-    text.len()
-}
-
 /// Find the smallest enclosing statement whose `Span` contains the
 /// cursor position, returning its range as an LSP `Range`. Returns
 /// `None` when the cursor is not inside any statement (e.g. on a
@@ -3046,7 +3059,7 @@ fn position_to_byte_offset(text: &str, position: Position) -> usize {
 /// hop, and the file-level range provides the "expand all the way"
 /// step.
 fn find_enclosing_stmt_range(position: Position, file: &SourceFile, text: &str) -> Option<Range> {
-    let byte_offset = position_to_byte_offset(text, position);
+    let byte_offset = position_to_byte_offset_pos(text, position);
     let mut best: Option<Span> = None;
     for stmt in &file.stmts {
         if let Some(span) = span_of_stmt(stmt) {
@@ -5126,37 +5139,35 @@ mod tests {
         // `byte_offset_to_position` for ASCII text.
         let text = "x <- 1L\ny <- 2L\n";
         // (0, 0) -> byte 0 (the 'x').
-        assert_eq!(
-            position_to_byte_offset(
-                text,
-                Position {
-                    line: 0,
-                    character: 0,
-                }
-            ),
-            0
-        );
+        assert_eq!(position_to_byte_offset(text, 0, 0), Some(0));
         // (0, 5) -> byte 5 (the '1').
-        assert_eq!(
-            position_to_byte_offset(
-                text,
-                Position {
-                    line: 0,
-                    character: 5,
-                }
-            ),
-            5
-        );
+        assert_eq!(position_to_byte_offset(text, 0, 5), Some(5));
         // (1, 0) -> byte 8 (the 'y', right after the first '\n').
-        assert_eq!(
-            position_to_byte_offset(
-                text,
-                Position {
-                    line: 1,
-                    character: 0,
-                }
-            ),
-            8
-        );
+        assert_eq!(position_to_byte_offset(text, 1, 0), Some(8));
+    }
+
+    #[test]
+    fn utf16_position_roundtrip_on_non_ascii() {
+        // A line with a 2-byte UTF-8 char ('é', U+00E9) before the
+        // cursor. The LSP character column is a UTF-16 code-unit count,
+        // so 'é' contributes 1 unit (BMP). Byte offset of the char
+        // after 'é' is 2 (1 for 'x'... wait, build a clearer case).
+        // Text: "café_x" -- 'c','a','f','é'(2 bytes),'_','x'.
+        let text = "café_x";
+        // The byte offset of '_': c(0) a(1) f(2) é(3,4) _(5).
+        // UTF-16 col of '_': 4 (c,a,f,é each 1 unit).
+        assert_eq!(byte_offset_to_position(text, 5).character, 4);
+        assert_eq!(position_to_byte_offset(text, 0, 4), Some(5));
+    }
+
+    #[test]
+    fn utf16_position_counts_astral_as_two_units() {
+        // An astral-plane char ('😀', U+1F600) is 4 UTF-8 bytes and 2
+        // UTF-16 code units. The char after it sits at UTF-16 col 2.
+        let text = "a😀b";
+        // byte offsets: a=0, 😀=1..5, b=5.
+        assert_eq!(byte_offset_to_position(text, 5).character, 3);
+        // 'a'=1 unit, '😀'=2 units -> 'b' is at UTF-16 col 3.
+        assert_eq!(position_to_byte_offset(text, 0, 3), Some(5));
     }
 }

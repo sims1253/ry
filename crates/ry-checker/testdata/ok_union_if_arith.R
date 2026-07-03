@@ -4,5 +4,6 @@
 # arithmetic error when ALL members error. R would also produce a result
 # here on the integer path (and error at runtime only on the character
 # path), so staying quiet is the honest v1 behavior.
+p <- TRUE
 x <- if (p) 1L else "a"
 y <- x + 1

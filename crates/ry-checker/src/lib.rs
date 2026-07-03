@@ -33,8 +33,19 @@ use std::sync::Arc;
 ///
 /// The list is intentionally generous: it mirrors the generics shipped
 /// with base R plus the most commonly defined ones in CRAN packages.
-/// Anything missing falls back to plain function-call inference (and so
-/// RY050 won't fire on it, which is a deliberate conservative choice).
+/// S3 generics we recognize for method-name splitting
+/// (`<generic>.<class>`). Curated to UNAMBIGUOUS single-word dispatch
+/// generics in base R.
+///
+/// Previously this list also included short / common-word names like
+/// `t`, `c`, `format`, `is.na`, `length`, `names`, `dim`, `[`, `[[`,
+/// `$`, `rep`, `rev`, `sort`, `unique`, `head`, `tail`, `subset`,
+/// `transform`, `within`, `merge`, and the multi-segment `as.*` and
+/// `model.matrix`. Those caused false S3 registrations: e.g.
+/// `t.test <- function(x, t) ...` matched generic `t` + class `test`
+/// and misregistered as an S3 method. The trimmed list keeps only the
+/// generics whose `<g>.<rest>` form is overwhelmingly a real method
+/// (print.foo, summary.lm, ...).
 const S3_GENERICS: &[&str] = &[
     "print",
     "summary",
@@ -50,66 +61,49 @@ const S3_GENERICS: &[&str] = &[
     "update",
     "deviance",
     "anova",
-    "model.matrix",
-    "terms",
     "str",
-    "format",
-    "as.character",
+    "terms",
+];
+
+/// Names that look like `<generic>.<class>` but are NOT S3 methods.
+/// These are well-known dotted functions/packages whose leading segment
+/// happens to coincide with a (now-removed) generic, or otherwise common
+/// dotted names that must never split. Checked before any prefix match.
+const S3_DENYLIST: &[&str] = &[
+    "t.test",
+    "all.equal",
+    "file.path",
+    "Sys.time",
+    "Sys.Date",
     "as.data.frame",
-    "as.matrix",
-    "as.vector",
-    "t",
-    "is.na",
-    "length",
-    "names",
-    "dim",
-    "[",
-    "[[",
-    "$",
-    "c",
-    "rep",
-    "rev",
-    "sort",
-    "unique",
-    "head",
-    "tail",
-    "subset",
-    "transform",
-    "within",
-    "merge",
+    "tempfile",
+    "tempdir",
+    "read.csv",
+    "write.csv",
+    "data.frame",
 ];
 
 /// Returns `Some((generic, class))` if `name` matches the S3 method
-/// naming convention `<generic>.<class>` and `<generic>` is in
-/// `S3_GENERICS`. We try the longest known generic prefix first so
-/// multi-segment generics like `as.data.frame` win over the shorter
-/// `as`. This is necessary because method names like `print.as.data.frame`
-/// (rare but valid) would otherwise match the wrong prefix.
+/// naming convention `<generic>.<class>` and `<generic>` is in the
+/// curated `S3_GENERICS` table. Longest match wins (handles rare
+/// multi-segment cases). The `[0u8; 64]` scratch buffer the old code
+/// used to avoid an allocation is replaced by `format!` (this runs once
+/// per top-level assignment; the cost is negligible).
 fn split_s3_method_name(name: &str) -> Option<(&'static str, String)> {
-    // Try every known generic, keep the longest matching prefix. This
-    // is O(N) per name but N is small (40) and the function is only
-    // called once per top-level assignment.
+    if S3_DENYLIST.contains(&name) {
+        return None;
+    }
     let mut best: Option<(&'static str, String)> = None;
     for generic in S3_GENERICS {
-        // Build the prefix once per generic; cheap for our small list.
-        let mut buf = [0u8; 64];
-        let generic_bytes = generic.as_bytes();
-        if generic_bytes.len() + 1 > buf.len() {
-            continue; // Generic longer than the scratch buffer; skip.
-        }
-        buf[..generic_bytes.len()].copy_from_slice(generic_bytes);
-        buf[generic_bytes.len()] = b'.';
-        let prefix = std::str::from_utf8(&buf[..generic_bytes.len() + 1]).ok();
-        if let Some(prefix) = prefix {
-            if let Some(class) = name.strip_prefix(prefix) {
-                if class.is_empty() {
-                    continue;
-                }
-                // Prefer the longest matching prefix (more specific).
-                let is_better = best.as_ref().is_none_or(|(g, _)| g.len() < generic.len());
-                if is_better {
-                    best = Some((generic, class.to_string()));
-                }
+        let prefix = format!("{}.", generic);
+        if let Some(class) = name.strip_prefix(&prefix) {
+            if class.is_empty() {
+                continue;
+            }
+            // Prefer the longest matching prefix (more specific).
+            let is_better = best.as_ref().is_none_or(|(g, _)| g.len() < generic.len());
+            if is_better {
+                best = Some((generic, class.to_string()));
             }
         }
     }
@@ -844,7 +838,23 @@ impl Checker {
                     // (so dispatch from `print(x)` on a classed value
                     // finds it). We record the body once and share the
                     // return slot between both entries.
-                    if let Some((generic, class)) = split_s3_method_name(name) {
+                    //
+                    // First-param heuristic: S3 methods conventionally
+                    // take their dispatch object as the first parameter,
+                    // named `x`. Require that (or an empty param list,
+                    // which can't dispatch anyway) before registering as
+                    // an S3 method, so a function that merely happens to
+                    // have a dotted name isn't misregistered. The
+                    // function is still recorded as a plain function
+                    // either way.
+                    let looks_like_s3 = split_s3_method_name(name)
+                        .filter(|_| {
+                            params
+                                .first()
+                                .map(|p| p.name == "x")
+                                .unwrap_or(false)
+                        });
+                    if let Some((generic, class)) = looks_like_s3 {
                         let slot = self.record_fn(name.clone(), params, body.clone());
                         self.fn_table
                             .s3_methods

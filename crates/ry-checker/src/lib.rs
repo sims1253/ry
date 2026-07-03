@@ -845,6 +845,13 @@ impl Checker {
     /// S3 method bodies alongside regular functions; dispatch reads
     /// the refined slot via the `s3_methods` map.
     pub(crate) fn run_fixpoint(&mut self) {
+        // Pass 2 runs the unified walker in discarding mode: types are
+        // computed (for return-slot refinement) but no diagnostics are
+        // recorded. Diagnostics are produced in pass 3 (emit_diagnostics)
+        // against the fully refined FnTable. Save/restore so a panic
+        // (unreachable in practice) does not leak the flag.
+        let prev_discarding = self.discarding;
+        self.discarding = true;
         for _ in 0..MAX_FIXPOINT_DEPTH {
             let before = self.return_slots.clone();
             let names: Vec<String> = self.fn_table.fns.keys().cloned().collect();
@@ -855,6 +862,7 @@ impl Checker {
                 break;
             }
         }
+        self.discarding = prev_discarding;
     }
 
     /// Pass 3: emit diagnostics for this file using the refined tables.
@@ -1129,18 +1137,12 @@ impl Checker {
         scope.insert(name.to_string(), RType::scalar(Mode::Function));
 
         let mut returns: Vec<RType> = Vec::new();
-        // Walk the body in source order, simulating each statement's
-        // effect on the scope so the trailing return expression can
-        // reference bindings established earlier in the body. This is
-        // the same simulation `build_function_signature` uses for
-        // nested closures; we apply it at the top level too so
-        // named-return closures (`g <- function() { 1L }; g`) resolve.
-        //
-        // We run the single inference engine in discarding mode (no
-        // diagnostics) so pass 2 does not double-emit; diagnostics are
-        // produced in pass 3 against the fully refined FnTable.
+        // Walk the body via the unified walker in discarding mode, with
+        // return collection enabled. The discarding flag is set by the
+        // caller (refine_fn_return runs inside the fixpoint which sets
+        // discarding=true at the run_fixpoint entry).
         for s in body_clone.iter() {
-            self.collect_returns_and_simulate_at_depth(s, &mut scope, &mut returns, 0);
+            self.walk_stmt(s, &mut scope, Some(&mut returns));
         }
         // Trailing expression of a braced body is the implicit return.
         // A trailing `Stmt::FunctionDef` is the implicit return value
@@ -1167,108 +1169,167 @@ impl Checker {
         self.inferring.pop();
     }
 
-    /// Combined return-collector and scope-simulator. Unlike a plain
-    /// return-collector, this takes `&mut Scope` and processes
-    /// `Stmt::Assign` so later statements see the binding. Used by both
-    /// `refine_fn_return` (for top-level user functions) and
-    /// `build_function_signature` (for nested closures) so the
-    /// closure-factory-with-named-return pattern
-    /// (`g <- function() { 1L }; g`) resolves.
+    /// The unified statement walker (Phase 2.5 fusion of the former
+    /// `check_stmt` diagnostic walker and `collect_returns_and_simulate`
+    /// return-type collector). Handles BOTH diagnostic emission (gated by
+    /// `self.discarding`) AND return-type collection (when `returns` is
+    /// `Some`).
+    ///
+    /// Callers:
+    ///   * `check_stmt` (pass 3): discarding=false, returns=None.
+    ///   * `refine_fn_return` (pass 2 fixpoint): discarding=true (set by
+    ///     caller), returns=Some.
+    ///   * `build_function_signature` (closure literals, both passes):
+    ///     discarding=true (set by caller), returns=Some.
     ///
     /// Approximations (documented):
-    ///   * `if` branches are walked in sequence against the same scope;
-    ///     bindings established in the `then` branch leak into `else_`
-    ///     and into subsequent statements. This is a deliberate v1
-    ///     simplification (proper flow-sensitive scoping would require
-    ///     a full abstract interpreter).
-    ///   * Loop bodies are walked once (not to fixpoint); bindings they
-    ///     establish leak to subsequent statements. This matches the
-    ///     existing `collect_returns_stmt_at_depth` approximation.
-    ///   * Indexed assignment (`x[i] <- v`) does not update the scope
-    ///     (we don't model per-element mutation in v1).
-    fn collect_returns_and_simulate_at_depth(
-        &mut self,
-        s: &Stmt,
-        scope: &mut Scope,
-        returns: &mut Vec<RType>,
-        depth: usize,
-    ) {
+    ///   * `if` branches use `apply_narrowing` + separate child scopes
+    ///     (then/else); bindings leak into subsequent statements.
+    ///   * Loop bodies are walked once (not to fixpoint).
+    ///   * Indexed assignment (`x[i] <- v`) does not update the scope.
+    fn walk_stmt(&mut self, s: &Stmt, scope: &mut Scope, mut returns: Option<&mut Vec<RType>>) {
         match s {
-            Stmt::Expr(e) => {
-                if let Some(rt) = self.try_infer_return_call_at_depth(e, scope, depth) {
-                    returns.push(rt);
+            Stmt::Assign { target, value, .. } => {
+                let vt = self.infer(value, scope);
+                self.assign_target(target, vt, scope);
+                // Named function bodies (`f <- function(...) body`) must
+                // be walked for diagnostics. The function-value inference
+                // path (`Expr::Function` -> `function_value_from_literal`)
+                // runs in discarding mode and emits nothing on its own, so
+                // without this walk almost all real R code would go
+                // unchecked.
+                if let Expr::Function { params, body, .. } = value {
+                    let mut fn_scope = scope.clone();
+                    for p in params {
+                        let t = match &p.default {
+                            Some(e) => self.infer(e, &mut fn_scope),
+                            None => RType::unknown(),
+                        };
+                        fn_scope.insert(p.name.clone(), t);
+                    }
+                    for s in body {
+                        self.walk_stmt(s, &mut fn_scope, None);
+                    }
                 }
             }
-            Stmt::Assign { target, value, .. } => {
-                let vt = self.infer_discarding(value, scope);
-                if let Expr::Ident { name, .. } = target {
-                    scope.insert(name.clone(), vt);
+            Stmt::Expr(e) => {
+                // Detect `return(...)` / `invisible(...)` calls and collect
+                // the argument type (the function's return type).
+                if let Expr::Call { func, args, .. } = e {
+                    if let Expr::Ident { name, .. } = func.as_ref() {
+                        if name == "return" || name == "invisible" {
+                            let t = args
+                                .first()
+                                .map(|a| self.infer(&a.value, scope))
+                                .unwrap_or_else(|| RType::new(Mode::Null, Length::Zero));
+                            if let Some(r) = returns {
+                                r.push(t);
+                            }
+                            return;
+                        }
+                    }
+                }
+                self.infer(e, scope);
+            }
+            Stmt::If {
+                cond, then, else_, ..
+            } => {
+                let ct = self.infer(cond, scope);
+                if ct.invalid_condition() {
+                    self.emit(
+                        Severity::Error,
+                        span_of(cond),
+                        "RY001",
+                        format!("`if` condition is `{}`, expected length-1 logical", ct),
+                    );
+                } else if !matches!(ct.mode, Mode::Logical | Mode::Opaque | Mode::Union) {
+                    self.emit(
+                        Severity::Warning,
+                        span_of(cond),
+                        "RY001",
+                        format!(
+                            "`if` condition is `{}` (not logical); will be silently coerced",
+                            ct.mode
+                        ),
+                    );
+                } else if matches!(ct.mode, Mode::Logical) && !matches!(ct.length, Length::One) {
+                    self.emit(
+                        Severity::Warning,
+                        span_of(cond),
+                        "RY002",
+                        format!(
+                            "`if` condition has length {:?}, will only use first element",
+                            ct.length
+                        ),
+                    );
+                }
+                let narrowing = extract_type_narrowing(cond);
+                let (then_scope, else_scope) = apply_narrowing(scope, &narrowing);
+                let mut then_scope = then_scope;
+                for s in then {
+                    self.walk_stmt(s, &mut then_scope, returns.as_deref_mut());
+                }
+                if let Some(else_) = else_ {
+                    let mut else_scope = else_scope;
+                    for s in else_ {
+                        self.walk_stmt(s, &mut else_scope, returns.as_deref_mut());
+                    }
+                }
+            }
+            Stmt::For {
+                name, iter, body, ..
+            } => {
+                let iter_t = self.infer(iter, scope);
+                let mut inner = scope.clone();
+                inner.insert(name.clone(), iter_t.element());
+                for s in body {
+                    self.walk_stmt(s, &mut inner, returns.as_deref_mut());
+                }
+            }
+            Stmt::While { cond, body, .. } => {
+                let ct = self.infer(cond, scope);
+                if ct.invalid_condition() {
+                    self.emit(
+                        Severity::Error,
+                        span_of(cond),
+                        "RY001",
+                        format!("loop condition is `{}`, expected length-1 logical", ct),
+                    );
+                }
+                for s in body {
+                    self.walk_stmt(s, scope, returns.as_deref_mut());
                 }
             }
             Stmt::FunctionDef {
                 name, params, body, ..
             } => {
-                // A named function def establishes a binding whose type
-                // is a `Mode::Function` value (with `fn_sig` when we can
-                // infer it). This is what makes
-                // `f <- function() { g <- function() { 1L }; g }` resolve.
-                let vt = self.function_value_from_literal(params, body, scope, depth);
+                let vt = self.function_value_from_literal(params, body, scope, 0);
                 if let Some(n) = name {
                     scope.insert(n.clone(), vt);
                 }
-            }
-            Stmt::If {
-                cond, then, else_, ..
-            } => {
-                let _ = cond;
-                for s in then {
-                    self.collect_returns_and_simulate_at_depth(s, scope, returns, depth);
+                let mut fn_scope = scope.clone();
+                for p in params {
+                    let t = match &p.default {
+                        Some(e) => self.infer(e, &mut fn_scope),
+                        None => RType::unknown(),
+                    };
+                    fn_scope.insert(p.name.clone(), t);
                 }
-                if let Some(e) = else_ {
-                    for s in e {
-                        self.collect_returns_and_simulate_at_depth(s, scope, returns, depth);
-                    }
-                }
-            }
-            Stmt::For { body, .. } | Stmt::While { body, .. } => {
                 for s in body {
-                    self.collect_returns_and_simulate_at_depth(s, scope, returns, depth);
+                    self.walk_stmt(s, &mut fn_scope, None);
                 }
             }
             Stmt::Return { value, .. } => {
                 if let Some(v) = value {
-                    returns.push(self.infer_discarding(v, scope));
-                } else {
-                    returns.push(RType::new(Mode::Null, Length::Zero));
+                    let t = self.infer(v, scope);
+                    if let Some(r) = returns {
+                        r.push(t);
+                    }
+                } else if let Some(r) = returns {
+                    r.push(RType::new(Mode::Null, Length::Zero));
                 }
             }
         }
-    }
-
-    /// If `e` is a call to `return(...)` or `invisible(...)`, infer and
-    /// return the type of its argument; otherwise None.
-    ///
-    /// Depth-tracked so a `return(function() { ... })` builds the inner
-    /// signature at the right depth. Uses the non-emitting inference
-    /// entry point (`infer_discarding`).
-    fn try_infer_return_call_at_depth(
-        &mut self,
-        e: &Expr,
-        scope: &mut Scope,
-        _depth: usize,
-    ) -> Option<RType> {
-        if let Expr::Call { func, args, .. } = e {
-            if let Expr::Ident { name, .. } = func.as_ref() {
-                if name == "return" || name == "invisible" {
-                    return Some(
-                        args.first()
-                            .map(|a| self.infer_discarding(&a.value, scope))
-                            .unwrap_or(RType::new(Mode::Null, Length::Zero)),
-                    );
-                }
-            }
-        }
-        None
     }
 
     /// The non-emitting inference entry point used during pass-2 fixpoint
@@ -1335,6 +1396,24 @@ impl Checker {
         if body.is_empty() {
             return None;
         }
+        // Signature building is a PURE return-type computation: it must
+        // never emit diagnostics (the diagnostic walk of a function body
+        // happens via check_stmt's function-body arm in pass 3). Force
+        // discarding mode for this walk regardless of the caller's mode.
+        let prev_discarding = self.discarding;
+        self.discarding = true;
+        let result = self.build_function_signature_inner(params, body, captured_scope, depth);
+        self.discarding = prev_discarding;
+        result
+    }
+
+    fn build_function_signature_inner(
+        &mut self,
+        params: &[Param],
+        body: &[Stmt],
+        captured_scope: &Scope,
+        depth: usize,
+    ) -> Option<Arc<FunctionSignature>> {
         // Layer the inner function's params on top of the captured
         // scope. We start from a clone of the captured scope so the
         // body can reference enclosing bindings (`make_adder`'s `x`).
@@ -1361,8 +1440,10 @@ impl Checker {
         // statement's value is added separately below. Branches in `if`
         // are walked without splitting the scope (v1 approximation).
         let mut returns: Vec<RType> = Vec::new();
+        // Walk the body via the unified walker (discarding mode, return
+        // collection enabled).
         for s in body {
-            self.collect_returns_and_simulate_at_depth(s, &mut scope, &mut returns, depth + 1);
+            self.walk_stmt(s, &mut scope, Some(&mut returns));
         }
         // Trailing expression of a braced body is the implicit return.
         // A trailing `Stmt::FunctionDef` (a bare function literal in
@@ -1424,158 +1505,11 @@ impl Checker {
         }
     }
 
+    /// Pass-3 entry point: walk a top-level statement for diagnostics.
+    /// Thin wrapper over `walk_stmt` (the unified walker) with return
+    /// collection disabled and emission enabled.
     fn check_stmt(&mut self, s: &Stmt, scope: &mut Scope) {
-        match s {
-            Stmt::Assign { target, value, .. } => {
-                let vt = self.infer(value, scope);
-                self.assign_target(target, vt, scope);
-                // Named function bodies (`f <- function(...) body`) must
-                // be walked for diagnostics. The `Expr::Function` ->
-                // `function_value_from_literal` path runs in discarding
-                // mode and emits nothing, so without this stopgap almost
-                // all real R code (which lives in named function bodies)
-                // would go unchecked. This mirrors the `Stmt::FunctionDef`
-                // arm. The longer-term plan is to fuse this body walk
-                // with the return-type walk (`collect_returns_and_simulate`)
-                // so each body is walked exactly once; that fusion is
-                // deferred to a follow-up after the type-representation
-                // rewrite.
-                if let Expr::Function { params, body, .. } = value {
-                    let mut fn_scope = scope.clone();
-                    for p in params {
-                        let t = match &p.default {
-                            Some(e) => self.infer(e, &mut fn_scope),
-                            None => RType::unknown(),
-                        };
-                        fn_scope.insert(p.name.clone(), t);
-                    }
-                    for s in body {
-                        self.check_stmt(s, &mut fn_scope);
-                    }
-                }
-            }
-            Stmt::Expr(e) => {
-                self.infer(e, scope);
-            }
-            Stmt::If {
-                cond, then, else_, ..
-            } => {
-                let ct = self.infer(cond, scope);
-                if ct.invalid_condition() {
-                    self.emit(
-                        Severity::Error,
-                        span_of(cond),
-                        "RY001",
-                        format!("`if` condition is `{}`, expected length-1 logical", ct),
-                    );
-                } else if !matches!(ct.mode, Mode::Logical | Mode::Opaque) {
-                    // R coerces silently but this is almost always a bug.
-                    self.emit(
-                        Severity::Warning,
-                        span_of(cond),
-                        "RY001",
-                        format!(
-                            "`if` condition is `{}` (not logical); will be silently coerced",
-                            ct.mode
-                        ),
-                    );
-                } else if matches!(ct.mode, Mode::Logical) && !matches!(ct.length, Length::One) {
-                    self.emit(
-                        Severity::Warning,
-                        span_of(cond),
-                        "RY002",
-                        format!(
-                            "`if` condition has length {:?}, will only use first element",
-                            ct.length
-                        ),
-                    );
-                }
-                // Flow-sensitive type refinement: if the condition is a
-                // type predicate (`is.numeric(x)`, `is.null(x)`, ...),
-                // narrow `x`'s type in each branch. The `then` branch
-                // gets the positive refinement; `else_` gets the
-                // negative (which we model only for `is.null`).
-                let narrowing = extract_type_narrowing(cond);
-                let (then_scope, else_scope) = apply_narrowing(scope, &narrowing);
-                // Clone the branch scope ONCE and reuse it for every
-                // statement in the branch, so sequential bindings inside
-                // the branch resolve each other (e.g. `tmp <- 1; out <-
-                // tmp + 1`). The earlier code cloned per-statement, which
-                // wiped `tmp` before `out` was checked and caused a
-                // spurious RY010.
-                let mut then_scope = then_scope;
-                for s in then {
-                    self.check_stmt(s, &mut then_scope);
-                }
-                if let Some(else_) = else_ {
-                    let mut else_scope = else_scope;
-                    for s in else_ {
-                        self.check_stmt(s, &mut else_scope);
-                    }
-                }
-            }
-            Stmt::For {
-                name, iter, body, ..
-            } => {
-                let iter_t = self.infer(iter, scope);
-                let mut inner = scope.clone();
-                // The loop variable gets the element type of the iterator:
-                // a length-1 value of the iterator's mode (or opaque if
-                // we couldn't infer). This means `for (i in 1:10)` now
-                // gives `i : integer<1>` instead of opaque.
-                inner.insert(name.clone(), iter_t.element());
-                for s in body {
-                    self.check_stmt(s, &mut inner);
-                }
-            }
-            Stmt::While { cond, body, .. } => {
-                let ct = self.infer(cond, scope);
-                if ct.invalid_condition() {
-                    self.emit(
-                        Severity::Error,
-                        span_of(cond),
-                        "RY001",
-                        format!("loop condition is `{}`, expected length-1 logical", ct),
-                    );
-                }
-                for s in body {
-                    self.check_stmt(s, scope);
-                }
-            }
-            Stmt::FunctionDef {
-                name, params, body, ..
-            } => {
-                // Install the function in the surrounding scope. We
-                // build an inferred `fn_sig` (when possible) so a bare
-                // named function def in statement position behaves the
-                // same as `name <- function(...) body` for downstream
-                // callers. This mirrors `infer`'s handling of
-                // `Expr::Function` and `collect_returns_and_simulate_at_depth`'s
-                // handling of `Stmt::FunctionDef` in pass 2.
-                let vt = self.function_value_from_literal(params, body, scope, 0);
-                if let Some(n) = name {
-                    scope.insert(n.clone(), vt);
-                }
-                // Infer the body in a fresh scope populated with params
-                // so any diagnostics inside the body still fire.
-                let mut fn_scope = scope.clone();
-                for p in params {
-                    let t = match &p.default {
-                        Some(e) => self.infer(e, &mut fn_scope),
-                        None => RType::unknown(),
-                    };
-                    fn_scope.insert(p.name.clone(), t);
-                }
-                for s in body {
-                    self.check_stmt(s, &mut fn_scope);
-                }
-            }
-            Stmt::Return { value, .. } => {
-                if let Some(v) = value {
-                    self.infer(v, scope);
-                }
-            }
-        }
+        self.walk_stmt(s, scope, None);
     }
 
     fn assign_target(&mut self, target: &Expr, vt: RType, scope: &mut Scope) {
@@ -3016,6 +2950,11 @@ impl Checker {
         if body.is_empty() || depth >= MAX_CLOSURE_DEPTH {
             return None;
         }
+        // Pure return-type computation: force discarding so this does not
+        // double-emit diagnostics (the callback body's diagnostics come
+        // from walk_callback_for_diagnostics in pass 3).
+        let prev_discarding = self.discarding;
+        self.discarding = true;
         let mut scope = captured_scope.clone();
         for (i, p) in params.iter().enumerate() {
             let t = call_arg_types.get(i).cloned().unwrap_or(RType::unknown());
@@ -3023,11 +2962,12 @@ impl Checker {
         }
         let mut returns: Vec<RType> = Vec::new();
         for s in body {
-            self.collect_returns_and_simulate_at_depth(s, &mut scope, &mut returns, depth + 1);
+            self.walk_stmt(s, &mut scope, Some(&mut returns));
         }
         if let Some(t) = self.trailing_return_type(body, &mut scope, depth + 1) {
             returns.push(t);
         }
+        self.discarding = prev_discarding;
         if returns.is_empty() {
             return None;
         }

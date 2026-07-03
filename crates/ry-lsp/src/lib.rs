@@ -42,6 +42,9 @@ use tower_lsp::lsp_types::Diagnostic as LspDiagnostic;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
+mod util;
+use util::{byte_offset_to_position, position_to_byte_offset_pos, span_to_range};
+
 #[derive(Debug)]
 struct Backend {
     client: Client,
@@ -2550,90 +2553,6 @@ fn span_start_range(span: Span, name: &str) -> Range {
 /// The start uses the span's pre-resolved `line` / `col` (matching
 /// `diagnostic_to_lsp`); the end is derived by counting newlines and
 /// characters from the start of the file up to `span.end`.
-fn span_to_range(text: &str, span: Span) -> Option<Range> {
-    // Both endpoints go through byte_offset_to_position so the column is
-    // a UTF-16 code-unit count (the LSP spec) and start/end are computed
-    // consistently. (Span.col is a byte column from the parser; using it
-    // directly would mismatch end on non-ASCII lines.)
-    let start = byte_offset_to_position(text, span.start);
-    let end = byte_offset_to_position(text, span.end);
-    Some(Range { start, end })
-}
-
-/// Map a byte offset into the source text to an LSP `Position`
-/// (0-indexed line, 0-indexed character column).
-///
-/// The LSP spec defines `Position.character` as a UTF-16 code-unit
-/// offset. This helper counts UTF-16 code units (each BMP character is
-/// 1 unit; astral-plane characters -- emoji, rare CJK -- are 2). For
-/// pure ASCII source the count equals the byte count. Previously this
-/// counted Rust `char`s (Unicode scalar values), which silently
-/// mis-counted astral characters and broke positions on lines
-/// containing them.
-fn byte_offset_to_position(text: &str, byte_offset: usize) -> Position {
-    let mut line = 0u32;
-    let mut col = 0u32;
-    for (b, ch) in text.char_indices() {
-        if b >= byte_offset {
-            break;
-        }
-        if ch == '\n' {
-            line += 1;
-            col = 0;
-        } else {
-            // UTF-16 code-unit count for this scalar: 1 for the BMP,
-            // 2 for astral-plane (surrogate pair).
-            col += utf16_len(ch) as u32;
-        }
-    }
-    Position {
-        line,
-        character: col,
-    }
-}
-
-/// Number of UTF-16 code units a Unicode scalar value encodes to: 1 for
-/// the Basic Multilingual Plane, 2 for astral-plane characters (which
-/// become a surrogate pair).
-fn utf16_len(ch: char) -> usize {
-    if (ch as u32) >= 0x10000 {
-        2
-    } else {
-        1
-    }
-}
-
-/// Map an LSP `Position` (line, UTF-16 character column) to a byte
-/// offset into the source text. The inverse of `byte_offset_to_position`.
-/// Counts UTF-16 code units so non-ASCII (including astral) characters
-/// resolve correctly.
-fn position_to_byte_offset(text: &str, line: u32, utf16_col: u32) -> Option<usize> {
-    let mut cur_line = 0u32;
-    let mut cur_col = 0u32;
-    for (b, ch) in text.char_indices() {
-        if cur_line == line && cur_col >= utf16_col {
-            return Some(b);
-        }
-        if ch == '\n' {
-            cur_line += 1;
-            cur_col = 0;
-        } else {
-            cur_col += utf16_len(ch) as u32;
-        }
-    }
-    if cur_line == line && cur_col >= utf16_col {
-        Some(text.len())
-    } else {
-        None
-    }
-}
-
-/// Map an LSP `Position` to a byte offset. Wrapper over the line/col
-/// variant for callers that hold a `Position`.
-fn position_to_byte_offset_pos(text: &str, position: Position) -> usize {
-    position_to_byte_offset(text, position.line, position.character).unwrap_or(text.len())
-}
-
 /// Collect `FoldingRange`s for every multi-line foldable block in the
 /// file. R's foldable regions are:
 ///   * function bodies (`function() { ... }`),
@@ -3380,6 +3299,7 @@ pub async fn run() -> LspResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::*;
     use ry_checker::Diagnostic;
     use ry_core::Span;
 

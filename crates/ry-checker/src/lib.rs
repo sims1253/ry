@@ -648,9 +648,12 @@ impl Scope {
 pub(crate) struct UserFn {
     /// Parameter names with their inferred-or-default types.
     pub(crate) params: Vec<(String, RType)>,
-    /// Indices into the body Vec<Stmt>. Stored as a snapshot we can
-    /// re-walk on each fixpoint iteration.
-    pub(crate) body: Vec<Stmt>,
+    /// The function body, shared via `Arc` so the per-fixpoint-iteration
+    /// clone in `refine_fn_return` is a cheap refcount bump rather than a
+    /// deep clone of every statement. The body is immutable after
+    /// `record_fn`, so sharing is safe. `Arc` (not `Rc`) so the
+    /// `FnTable` stays `Send` -- the LSP moves it across async tasks.
+    pub(crate) body: Arc<[Stmt]>,
     /// Currently-inferred return type. Starts as UNKNOWN, refined by
     /// each fixpoint iteration. Stored as a slot index so all calls
     /// observe the latest refinement without rebuilding the table.
@@ -1081,6 +1084,9 @@ impl Checker {
             .collect();
         let slot = self.return_slots.0.len();
         self.return_slots.set(slot, RType::unknown());
+        // Wrap the body in an Rc so the per-fixpoint clone in
+        // refine_fn_return is a refcount bump, not a deep copy.
+        let body: Arc<[Stmt]> = Arc::from(body);
         let prev = self.fn_table.fns.insert(
             name.clone(),
             UserFn {
@@ -1133,7 +1139,7 @@ impl Checker {
         // We run the single inference engine in discarding mode (no
         // diagnostics) so pass 2 does not double-emit; diagnostics are
         // produced in pass 3 against the fully refined FnTable.
-        for s in &body_clone {
+        for s in body_clone.iter() {
             self.collect_returns_and_simulate_at_depth(s, &mut scope, &mut returns, 0);
         }
         // Trailing expression of a braced body is the implicit return.
@@ -1142,7 +1148,7 @@ impl Checker {
         // `trailing_return_type` handles both forms and attaches an
         // inferred `fn_sig` when the trailing expression is itself a
         // function literal (the closure-factory pattern).
-        if let Some(t) = self.trailing_return_type(&body_clone, &mut scope, 0) {
+        if let Some(t) = self.trailing_return_type(&body_clone[..], &mut scope, 0) {
             returns.push(t);
         }
 

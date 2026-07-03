@@ -95,7 +95,12 @@ pub fn render(
                 };
                 out.push_str(&format!(
                     "::{} file={},line={},col={}::{}: {}\n",
-                    level, d.path, d.span.line + 1, d.span.col + 1, d.code, d.message
+                    level,
+                    d.path,
+                    d.span.line + 1,
+                    d.span.col + 1,
+                    d.code,
+                    d.message
                 ));
             }
             out
@@ -276,7 +281,9 @@ mod tests {
         let out = render(&d, OutputFormat::Junit, &srcs);
         assert!(out.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"));
         assert!(out.contains("<testsuites name=\"ry\">"));
-        assert!(out.contains("<testsuite name=\"ry-check\" errors=\"1\" failures=\"0\" tests=\"1\">"));
+        assert!(
+            out.contains("<testsuite name=\"ry-check\" errors=\"1\" failures=\"0\" tests=\"1\">")
+        );
         assert!(out.contains("<testcase name=\"RY040: x.R:1\" classname=\"x.R\">"));
         assert!(out.contains("<error message=\"msg\" type=\"RY040\">"));
         assert!(out.contains("x.R:1:1: RY040: msg"));

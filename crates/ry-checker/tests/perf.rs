@@ -21,10 +21,7 @@ fn large_file_checks_under_two_seconds() {
     let src = lines.join("\n");
 
     let mut tmp_path = std::env::temp_dir();
-    tmp_path.push(format!(
-        "ry_perf_{}.R",
-        std::process::id()
-    ));
+    tmp_path.push(format!("ry_perf_{}.R", std::process::id()));
     {
         let mut f = std::fs::File::create(&tmp_path).expect("create temp file");
         f.write_all(src.as_bytes()).expect("write temp file");

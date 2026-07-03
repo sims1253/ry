@@ -66,9 +66,18 @@ impl Mode {
     pub fn arith_result(self, other: Mode) -> Option<Mode> {
         use Mode::*;
         match (self, other) {
-            // Rejections first, so NULL paired with a non-arithmetic mode
-            // errors (R: `NULL + "a"` -> "non-numeric argument"). Before
-            // this reorder, the (Null, x) arm ran first and turned
+            // Opaque absorbs FIRST: opaque means "we don't know", so
+            // `opaque + "x"` stays quiet (the opaque could be numeric).
+            // Handling opaque before the rejections prevents a false RY040
+            // on depth-capped / unknown operands.
+            (Opaque, _) | (_, Opaque) => Some(Opaque),
+            // Unions are distributed at the RType::arith layer; reaching
+            // here with a Union operand is a bug. Treat conservatively as
+            // opaque so a stray call doesn't panic.
+            (Union, _) | (_, Union) => Some(Opaque),
+            // Rejections: NULL paired with a non-arithmetic mode errors
+            // (R: `NULL + "a"` -> "non-numeric argument"). Before this
+            // reorder, the (Null, x) arm ran first and turned
             // `NULL + "a"` into Some(Character).
             (Character, _) | (_, Character) => None,
             (List, _) | (_, List) => None,
@@ -77,11 +86,6 @@ impl Mode {
             // (at length zero -- handled at the RType layer, which knows
             // about length; Mode has no length dimension).
             (Null, x) | (x, Null) => Some(x),
-            (Opaque, _) | (_, Opaque) => Some(Opaque),
-            // Unions are distributed at the RType::arith layer; reaching
-            // here with a Union operand is a bug. Treat conservatively as
-            // opaque so a stray call doesn't panic.
-            (Union, _) | (_, Union) => Some(Opaque),
             (Raw, Raw) => Some(Raw),
             _ => {
                 let r = self.coerce_rank().max(other.coerce_rank());
@@ -785,9 +789,12 @@ mod tests {
         // R: `NULL + "a"` errors with "non-numeric argument to binary
         // operator". The Character rejection must run before the Null
         // arm (this is the bug PLAN finding 7 calls out).
-        let n = RType::new(Mode::Null, Length::Zero, false);
-        let c = RType::scalar(Mode::Character, false);
-        assert!(n.arith(c).is_none(), "NULL + \"a\" must error");
+        let n = RType::new(Mode::Null, Length::Zero);
+        let c = RType::scalar(Mode::Character);
+        assert!(
+            n.clone().arith(c.clone()).is_none(),
+            "NULL + \"a\" must error"
+        );
         assert!(c.arith(n).is_none(), "\"a\" + NULL must error");
     }
 
@@ -795,16 +802,16 @@ mod tests {
     fn arith_null_plus_int_is_zero_length() {
         // R: `NULL + 1` returns numeric(0). The mode is Double (R coerces
         // the NULL+int pair up) and the length is Zero.
-        let n = RType::new(Mode::Null, Length::Zero, false);
-        let i = RType::scalar(Mode::Integer, false);
+        let n = RType::new(Mode::Null, Length::Zero);
+        let i = RType::scalar(Mode::Integer);
         let r = n.arith(i).unwrap();
         assert_eq!(r.length, Length::Zero, "NULL + 1 must be length 0");
     }
 
     #[test]
     fn arith_integer_double_promotes() {
-        let i = RType::scalar(Mode::Integer, false);
-        let d = RType::scalar(Mode::Double, false);
+        let i = RType::scalar(Mode::Integer);
+        let d = RType::scalar(Mode::Double);
         let r = i.arith(d).unwrap();
         assert_eq!(r.mode, Mode::Double);
         assert_eq!(r.length, Length::One);
@@ -812,8 +819,8 @@ mod tests {
 
     #[test]
     fn arith_character_fails() {
-        let s = RType::scalar(Mode::Character, false);
-        let i = RType::scalar(Mode::Integer, false);
+        let s = RType::scalar(Mode::Character);
+        let i = RType::scalar(Mode::Integer);
         assert!(s.arith(i).is_none());
     }
 
@@ -826,7 +833,7 @@ mod tests {
 
     #[test]
     fn condition_rejects_lists() {
-        let l = RType::new(Mode::List, Length::One, false);
+        let l = RType::new(Mode::List, Length::One);
         assert!(l.invalid_condition());
     }
 
@@ -835,9 +842,9 @@ mod tests {
         // Phase 3: R never coerces at a control-flow merge. `if (p) 1L
         // else 2.0` joins integer and double to an HONEST union, not to
         // Double (the old coercion-ladder behavior).
-        let i = RType::scalar(Mode::Integer, false);
-        let d = RType::scalar(Mode::Double, false);
-        let joined = i.join(d);
+        let i = RType::scalar(Mode::Integer);
+        let d = RType::scalar(Mode::Double);
+        let joined = i.clone().join(d.clone());
         assert_eq!(joined.mode, Mode::Union);
         assert_eq!(joined.mode, d.join(i).mode, "join should be symmetric");
         let members = joined.members.expect("union has members");
@@ -849,8 +856,8 @@ mod tests {
     #[test]
     fn join_equal_modes_returns_self_not_union() {
         // Same mode on both sides must NOT build a union.
-        let i = RType::scalar(Mode::Integer, false);
-        let joined = i.join(RType::scalar(Mode::Integer, false));
+        let i = RType::scalar(Mode::Integer);
+        let joined = i.join(RType::scalar(Mode::Integer));
         assert_eq!(joined.mode, Mode::Integer);
         assert!(joined.members.is_none());
     }
@@ -859,10 +866,9 @@ mod tests {
     fn arith_distributes_over_union_quiet_when_some_member_ok() {
         // union[integer, character] + 1 -> integer ok, character errors.
         // Some member succeeds -> stay quiet (no None), result integer.
-        let u = RType::scalar(Mode::Integer, false)
-            .join(RType::scalar(Mode::Character, false));
+        let u = RType::scalar(Mode::Integer).join(RType::scalar(Mode::Character));
         assert_eq!(u.mode, Mode::Union);
-        let r = u.arith(RType::scalar(Mode::Integer, false));
+        let r = u.arith(RType::scalar(Mode::Integer));
         assert!(r.is_some(), "some member ok -> not an error");
         assert_eq!(r.unwrap().mode, Mode::Integer);
     }
@@ -870,34 +876,33 @@ mod tests {
     #[test]
     fn arith_errors_when_all_union_members_invalid() {
         // union[list, function] + 1 -> both error -> None.
-        let u = RType::scalar(Mode::List, false)
-            .join(RType::scalar(Mode::Function, false));
-        let r = u.arith(RType::scalar(Mode::Integer, false));
+        let u = RType::scalar(Mode::List).join(RType::scalar(Mode::Function));
+        let r = u.arith(RType::scalar(Mode::Integer));
         assert!(r.is_none(), "all members invalid -> error");
     }
 
     #[test]
     fn join_with_opaque_is_unknown() {
-        let i = RType::scalar(Mode::Integer, false);
+        let i = RType::scalar(Mode::Integer);
         assert_eq!(i.join(RType::unknown()), RType::unknown());
     }
 
     #[test]
     fn join_equal_returns_self() {
-        let i = RType::scalar(Mode::Integer, false);
-        assert_eq!(i.join(i), i);
+        let i = RType::scalar(Mode::Integer);
+        assert_eq!(i.clone().join(i.clone()), i);
     }
 
     #[test]
     fn join_different_lengths_unknown() {
-        let a = RType::new(Mode::Integer, Length::Known(3), false);
-        let b = RType::new(Mode::Integer, Length::Known(5), false);
+        let a = RType::new(Mode::Integer, Length::Known(3));
+        let b = RType::new(Mode::Integer, Length::Known(5));
         assert_eq!(a.join(b).length, Length::Unknown);
     }
 
     #[test]
     fn element_of_vector_is_scalar() {
-        let v = RType::new(Mode::Integer, Length::Known(10), false);
+        let v = RType::new(Mode::Integer, Length::Known(10));
         let e = v.element();
         assert_eq!(e.mode, Mode::Integer);
         assert_eq!(e.length, Length::One);
@@ -905,8 +910,8 @@ mod tests {
 
     #[test]
     fn seq_int_int_is_integer() {
-        let a = RType::scalar(Mode::Integer, false);
-        let b = RType::scalar(Mode::Integer, false);
+        let a = RType::scalar(Mode::Integer);
+        let b = RType::scalar(Mode::Integer);
         assert_eq!(a.seq(b).mode, Mode::Integer);
     }
 
@@ -914,8 +919,8 @@ mod tests {
     fn seq_double_double_is_integer() {
         // R's `:` returns integer for whole-number double endpoints.
         // `1:3` produces c(1L, 2L, 3L) even though 1 and 3 are doubles.
-        let a = RType::scalar(Mode::Double, false);
-        let b = RType::scalar(Mode::Double, false);
+        let a = RType::scalar(Mode::Double);
+        let b = RType::scalar(Mode::Double);
         assert_eq!(a.seq(b).mode, Mode::Integer);
     }
 
@@ -960,8 +965,8 @@ mod tests {
 
     #[test]
     fn arith_strips_class() {
-        let lhs = RType::scalar(Mode::Double, false).with_class(ClassVector::single("lm"));
-        let rhs = RType::scalar(Mode::Double, false);
+        let lhs = RType::scalar(Mode::Double).with_class(ClassVector::single("lm"));
+        let rhs = RType::scalar(Mode::Double);
         let r = lhs.arith(rhs).unwrap();
         assert!(!r.class.is_unknown());
         assert!(!r.class.has_known_class());
@@ -970,8 +975,8 @@ mod tests {
 
     #[test]
     fn compare_strips_class() {
-        let lhs = RType::scalar(Mode::Double, false).with_class(ClassVector::single("ts"));
-        let rhs = RType::scalar(Mode::Double, false);
+        let lhs = RType::scalar(Mode::Double).with_class(ClassVector::single("ts"));
+        let rhs = RType::scalar(Mode::Double);
         let r = lhs.compare(rhs).unwrap();
         assert_eq!(r.mode, Mode::Logical);
         assert!(!r.class.has_known_class());
@@ -980,16 +985,16 @@ mod tests {
     #[test]
     fn join_preserves_class_when_both_sides_agree() {
         let class = ClassVector::single("lm");
-        let lhs = RType::scalar(Mode::List, false).with_class(class.clone());
-        let rhs = RType::scalar(Mode::List, false).with_class(class.clone());
+        let lhs = RType::scalar(Mode::List).with_class(class.clone());
+        let rhs = RType::scalar(Mode::List).with_class(class.clone());
         let joined = lhs.join(rhs);
         assert_eq!(joined.class, class);
     }
 
     #[test]
     fn join_drops_class_when_sides_differ() {
-        let lhs = RType::scalar(Mode::List, false).with_class(ClassVector::single("lm"));
-        let rhs = RType::scalar(Mode::List, false).with_class(ClassVector::single("ts"));
+        let lhs = RType::scalar(Mode::List).with_class(ClassVector::single("lm"));
+        let rhs = RType::scalar(Mode::List).with_class(ClassVector::single("ts"));
         let joined = lhs.join(rhs);
         assert!(!joined.class.has_known_class());
         assert_eq!(joined.class, ClassVector::empty());
@@ -997,7 +1002,7 @@ mod tests {
 
     #[test]
     fn join_class_unknown_when_one_side_unknown() {
-        let lhs = RType::scalar(Mode::List, false).with_class(ClassVector::single("lm"));
+        let lhs = RType::scalar(Mode::List).with_class(ClassVector::single("lm"));
         let rhs = RType::unknown(); // unknown class
         let joined = lhs.join(rhs);
         assert_eq!(joined, RType::unknown());
@@ -1006,14 +1011,14 @@ mod tests {
 
     #[test]
     fn rtype_display_includes_class_suffix() {
-        let t = RType::scalar(Mode::List, false).with_class(ClassVector::single("lm"));
+        let t = RType::scalar(Mode::List).with_class(ClassVector::single("lm"));
         let s = format!("{}", t);
         assert!(s.contains(":lm"), "expected `:lm` in display, got {}", s);
     }
 
     #[test]
     fn rtype_display_no_class_suffix_for_empty() {
-        let t = RType::scalar(Mode::Integer, false);
+        let t = RType::scalar(Mode::Integer);
         let s = format!("{}", t);
         assert!(
             !s.contains(':'),
@@ -1026,8 +1031,8 @@ mod tests {
     fn column_schema_lookups_by_name() {
         let schema = ColumnSchema {
             columns: vec![
-                ("a".to_string(), RType::scalar(Mode::Integer, false)),
-                ("b".to_string(), RType::scalar(Mode::Character, false)),
+                ("a".to_string(), RType::scalar(Mode::Integer)),
+                ("b".to_string(), RType::scalar(Mode::Character)),
             ],
         };
         assert_eq!(schema.get("a").unwrap().mode, Mode::Integer);
@@ -1042,10 +1047,10 @@ mod tests {
         let schema = Arc::new(ColumnSchema {
             columns: vec![(
                 "mpg".to_string(),
-                RType::new(Mode::Double, Length::Known(32), false),
+                RType::new(Mode::Double, Length::Known(32)),
             )],
         });
-        let t = RType::new(Mode::List, Length::Known(1), false).with_columns(schema.clone());
+        let t = RType::new(Mode::List, Length::Known(1)).with_columns(schema.clone());
         assert_eq!(t.columns, Some(schema));
         // `with_columns` must not disturb other fields.
         assert_eq!(t.mode, Mode::List);
@@ -1055,10 +1060,10 @@ mod tests {
     #[test]
     fn arith_strips_columns() {
         let schema = Arc::new(ColumnSchema {
-            columns: vec![("x".to_string(), RType::scalar(Mode::Double, false))],
+            columns: vec![("x".to_string(), RType::scalar(Mode::Double))],
         });
-        let lhs = RType::scalar(Mode::Double, false).with_columns(schema);
-        let rhs = RType::scalar(Mode::Double, false);
+        let lhs = RType::scalar(Mode::Double).with_columns(schema);
+        let rhs = RType::scalar(Mode::Double);
         let r = lhs.arith(rhs).unwrap();
         assert_eq!(r.mode, Mode::Double);
         assert!(r.columns.is_none(), "arith must strip column schema");
@@ -1067,10 +1072,10 @@ mod tests {
     #[test]
     fn compare_strips_columns() {
         let schema = Arc::new(ColumnSchema {
-            columns: vec![("x".to_string(), RType::scalar(Mode::Double, false))],
+            columns: vec![("x".to_string(), RType::scalar(Mode::Double))],
         });
-        let lhs = RType::scalar(Mode::Double, false).with_columns(schema);
-        let rhs = RType::scalar(Mode::Double, false);
+        let lhs = RType::scalar(Mode::Double).with_columns(schema);
+        let rhs = RType::scalar(Mode::Double);
         let r = lhs.compare(rhs).unwrap();
         assert_eq!(r.mode, Mode::Logical);
         assert!(r.columns.is_none(), "compare must strip column schema");
@@ -1079,10 +1084,10 @@ mod tests {
     #[test]
     fn join_preserves_columns_when_both_sides_agree() {
         let schema = Arc::new(ColumnSchema {
-            columns: vec![("x".to_string(), RType::scalar(Mode::Double, false))],
+            columns: vec![("x".to_string(), RType::scalar(Mode::Double))],
         });
-        let lhs = RType::scalar(Mode::List, false).with_columns(schema.clone());
-        let rhs = RType::scalar(Mode::List, false).with_columns(schema.clone());
+        let lhs = RType::scalar(Mode::List).with_columns(schema.clone());
+        let rhs = RType::scalar(Mode::List).with_columns(schema.clone());
         let joined = lhs.join(rhs);
         assert_eq!(joined.columns, Some(schema));
     }
@@ -1090,13 +1095,13 @@ mod tests {
     #[test]
     fn join_drops_columns_when_sides_differ() {
         let s1 = Arc::new(ColumnSchema {
-            columns: vec![("a".to_string(), RType::scalar(Mode::Double, false))],
+            columns: vec![("a".to_string(), RType::scalar(Mode::Double))],
         });
         let s2 = Arc::new(ColumnSchema {
-            columns: vec![("b".to_string(), RType::scalar(Mode::Double, false))],
+            columns: vec![("b".to_string(), RType::scalar(Mode::Double))],
         });
-        let lhs = RType::scalar(Mode::List, false).with_columns(s1);
-        let rhs = RType::scalar(Mode::List, false).with_columns(s2);
+        let lhs = RType::scalar(Mode::List).with_columns(s1);
+        let rhs = RType::scalar(Mode::List).with_columns(s2);
         let joined = lhs.join(rhs);
         assert!(joined.columns.is_none(), "differing schemas must drop");
     }
@@ -1105,10 +1110,10 @@ mod tests {
     fn rtype_display_includes_columns_abbreviated() {
         // Build a 5-column schema; display should show 3 then `...`.
         let cols: Vec<(String, RType)> = (0..5)
-            .map(|i| (format!("c{}", i), RType::scalar(Mode::Double, false)))
+            .map(|i| (format!("c{}", i), RType::scalar(Mode::Double)))
             .collect();
         let schema = Arc::new(ColumnSchema { columns: cols });
-        let t = RType::new(Mode::List, Length::Known(5), false).with_columns(schema);
+        let t = RType::new(Mode::List, Length::Known(5)).with_columns(schema);
         let s = format!("{}", t);
         assert!(s.contains("c0:"), "missing c0: {}", s);
         assert!(s.contains("c1:"), "missing c1: {}", s);
@@ -1120,10 +1125,10 @@ mod tests {
     #[test]
     fn rtype_with_fn_sig_roundtrips() {
         let sig = Arc::new(FunctionSignature {
-            params: vec![RType::scalar(Mode::Double, false)],
-            return_type: Box::new(RType::scalar(Mode::Integer, false)),
+            params: vec![RType::scalar(Mode::Double)],
+            return_type: Box::new(RType::scalar(Mode::Integer)),
         });
-        let t = RType::scalar(Mode::Function, false).with_fn_sig(sig.clone());
+        let t = RType::scalar(Mode::Function).with_fn_sig(sig.clone());
         assert_eq!(t.fn_sig, Some(sig));
         assert_eq!(t.mode, Mode::Function);
     }
@@ -1133,10 +1138,8 @@ mod tests {
         // All standard constructors must produce fn_sig = None so the
         // signature is opt-in only.
         assert!(RType::unknown().fn_sig.is_none());
-        assert!(RType::scalar(Mode::Function, false).fn_sig.is_none());
-        assert!(RType::new(Mode::Integer, Length::One, false)
-            .fn_sig
-            .is_none());
+        assert!(RType::scalar(Mode::Function).fn_sig.is_none());
+        assert!(RType::new(Mode::Integer, Length::One).fn_sig.is_none());
     }
 
     #[test]
@@ -1147,10 +1150,10 @@ mod tests {
         // classed list whose schema we know survives only via join.
         let sig = Arc::new(FunctionSignature {
             params: vec![],
-            return_type: Box::new(RType::scalar(Mode::Integer, false)),
+            return_type: Box::new(RType::scalar(Mode::Integer)),
         });
-        let lhs = RType::scalar(Mode::Integer, false).with_fn_sig(sig);
-        let rhs = RType::scalar(Mode::Integer, false);
+        let lhs = RType::scalar(Mode::Integer).with_fn_sig(sig);
+        let rhs = RType::scalar(Mode::Integer);
         let r = lhs.arith(rhs).unwrap();
         assert!(r.fn_sig.is_none(), "arith must strip fn_sig");
     }
@@ -1159,10 +1162,10 @@ mod tests {
     fn join_preserves_fn_sig_when_both_sides_agree() {
         let sig = Arc::new(FunctionSignature {
             params: vec![],
-            return_type: Box::new(RType::scalar(Mode::Integer, false)),
+            return_type: Box::new(RType::scalar(Mode::Integer)),
         });
-        let lhs = RType::scalar(Mode::Function, false).with_fn_sig(sig.clone());
-        let rhs = RType::scalar(Mode::Function, false).with_fn_sig(sig.clone());
+        let lhs = RType::scalar(Mode::Function).with_fn_sig(sig.clone());
+        let rhs = RType::scalar(Mode::Function).with_fn_sig(sig.clone());
         let joined = lhs.join(rhs);
         assert_eq!(joined.fn_sig, Some(sig));
     }
@@ -1171,14 +1174,14 @@ mod tests {
     fn join_drops_fn_sig_when_sides_differ() {
         let s1 = Arc::new(FunctionSignature {
             params: vec![],
-            return_type: Box::new(RType::scalar(Mode::Integer, false)),
+            return_type: Box::new(RType::scalar(Mode::Integer)),
         });
         let s2 = Arc::new(FunctionSignature {
             params: vec![],
-            return_type: Box::new(RType::scalar(Mode::Double, false)),
+            return_type: Box::new(RType::scalar(Mode::Double)),
         });
-        let lhs = RType::scalar(Mode::Function, false).with_fn_sig(s1);
-        let rhs = RType::scalar(Mode::Function, false).with_fn_sig(s2);
+        let lhs = RType::scalar(Mode::Function).with_fn_sig(s1);
+        let rhs = RType::scalar(Mode::Function).with_fn_sig(s2);
         let joined = lhs.join(rhs);
         assert!(joined.fn_sig.is_none(), "differing sigs must drop");
     }
@@ -1187,9 +1190,9 @@ mod tests {
     fn rtype_display_includes_fn_sig() {
         let sig = Arc::new(FunctionSignature {
             params: vec![],
-            return_type: Box::new(RType::scalar(Mode::Integer, false)),
+            return_type: Box::new(RType::scalar(Mode::Integer)),
         });
-        let t = RType::scalar(Mode::Function, false).with_fn_sig(sig);
+        let t = RType::scalar(Mode::Function).with_fn_sig(sig);
         let s = format!("{}", t);
         assert!(s.contains("->"), "missing -> in display: {}", s);
         assert!(s.contains("integer"), "missing return type: {}", s);

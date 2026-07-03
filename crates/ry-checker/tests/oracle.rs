@@ -7,8 +7,9 @@
 //! For each fixture in `testdata/oracle/`, if `Rscript` is on PATH, runs
 //! `Rscript --vanilla <file>`, records whether R errored, runs the checker,
 //! and asserts:
-//!   - `# oracle: must-flag`  + R errored       => at least one Error diag.
-//!   - `# oracle: must-pass`  + R succeeded     => no Error diag.
+//!   - `# oracle: must-flag` + R errored   => at least one Error diag.
+//!   - `# oracle: must-pass` + R succeeded => no Error diag.
+//!
 //! Skips cleanly (returns) when `Rscript` is not installed.
 
 use std::collections::BTreeMap;
@@ -25,7 +26,10 @@ enum Tag {
 
 fn tag_of(src: &str) -> Option<Tag> {
     let first = src.lines().next()?;
-    let trimmed = first.trim_start_matches([' ', '\t']).trim_start_matches('#').trim();
+    let trimmed = first
+        .trim_start_matches([' ', '\t'])
+        .trim_start_matches('#')
+        .trim();
     if trimmed.eq_ignore_ascii_case("oracle: must-flag") {
         Some(Tag::MustFlag)
     } else if trimmed.eq_ignore_ascii_case("oracle: must-pass") {
@@ -52,11 +56,7 @@ fn which(prog: &str) -> Option<std::path::PathBuf> {
 
 /// Returns true if R errored on this file (nonzero exit or "Error" on stderr).
 fn r_errors(path: &std::path::Path) -> bool {
-    let output = match Command::new("Rscript")
-        .arg("--vanilla")
-        .arg(path)
-        .output()
-    {
+    let output = match Command::new("Rscript").arg("--vanilla").arg(path).output() {
         Ok(o) => o,
         Err(_) => return true, // treat missing/failed invocation conservatively
     };
@@ -116,7 +116,9 @@ fn oracle_check_each_fixture() {
             .to_string();
         let src = fs::read_to_string(&path).expect("read fixture");
         let Some(tag) = tag_of(&src) else {
-            failures.push(format!("{name}: missing `# oracle: must-flag` / `must-pass` marker"));
+            failures.push(format!(
+                "{name}: missing `# oracle: must-flag` / `must-pass` marker"
+            ));
             continue;
         };
         total += 1;

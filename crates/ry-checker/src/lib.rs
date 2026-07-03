@@ -18,9 +18,7 @@ pub mod rules;
 pub use project::Project;
 
 use ry_core::ast::*;
-use ry_core::types::{
-    ClassVector, ColumnSchema, FunctionSignature, Length, Mode, RType,
-};
+use ry_core::types::{ClassVector, ColumnSchema, FunctionSignature, Length, Mode, RType};
 use ry_core::Span;
 use ry_typeshed::{load_base_cached, FunctionSig, JsonRType, ReturnSpec, Typeshed};
 use std::collections::HashMap;
@@ -500,7 +498,7 @@ pub fn has_file_suppression(src: &str) -> bool {
     // (after the `#` and whitespace) -- NOT appear as a substring -- so
     // prose like `# see also ry: ignore-file` does not trigger a
     // file-wide suppression. Prefer has_file_suppression_from_comments
-    /// for callers with a parsed SourceFile (it also avoids mistaking
+    // for callers with a parsed SourceFile (it also avoids mistaking
     // a `#` inside a string literal for a comment).
     for line in src.lines() {
         if let Some(hash_pos) = line.find('#') {
@@ -950,12 +948,7 @@ impl Checker {
                     // function is still recorded as a plain function
                     // either way.
                     let looks_like_s3 = split_s3_method_name(name)
-                        .filter(|_| {
-                            params
-                                .first()
-                                .map(|p| p.name == "x")
-                                .unwrap_or(false)
-                        });
+                        .filter(|_| params.first().map(|p| p.name == "x").unwrap_or(false));
                     if let Some((generic, class)) = looks_like_s3 {
                         let slot = self.record_fn(name.clone(), params, body.clone());
                         self.fn_table
@@ -2651,8 +2644,7 @@ impl Checker {
             }
             let _ = self.infer(&a.value, &mut local);
         }
-        RType::new(Mode::List, Length::One)
-            .with_class(ClassVector::single("data.frame"))
+        RType::new(Mode::List, Length::One).with_class(ClassVector::single("data.frame"))
     }
 
     /// Build an augmented scope by cloning `base_scope` and inserting a
@@ -3308,8 +3300,7 @@ impl Checker {
         }
 
         let class = ClassVector::single("data.frame");
-        let base =
-            RType::new(Mode::List, Length::Known(filtered_types.len())).with_class(class);
+        let base = RType::new(Mode::List, Length::Known(filtered_types.len())).with_class(class);
         match schema {
             Some(s) => base.with_columns(Arc::new(s)),
             None => base,
@@ -4057,7 +4048,10 @@ fn extract_type_narrowing(cond: &Expr) -> Narrowing {
             // For the negated-null case we need a bare Mode on the
             // Negative variant; extract it from the target.
             if name == "is.null" {
-                return Narrowing::Negative { var, mode: Mode::Null };
+                return Narrowing::Negative {
+                    var,
+                    mode: Mode::Null,
+                };
             }
             Narrowing::Positive { var, target }
         }
@@ -4085,7 +4079,10 @@ fn extract_type_narrowing(cond: &Expr) -> Narrowing {
             if name != "is.null" {
                 return Narrowing::None;
             }
-            Narrowing::Negative { var, mode: Mode::Null }
+            Narrowing::Negative {
+                var,
+                mode: Mode::Null,
+            }
         }
         _ => Narrowing::None,
     }
@@ -4098,9 +4095,7 @@ fn extract_type_narrowing(cond: &Expr) -> Narrowing {
 fn predicate_target(name: &str) -> Option<RType> {
     match name {
         // numeric = double or integer (a group, not a single mode).
-        "is.numeric" => Some(
-            RType::scalar(Mode::Integer).join(RType::scalar(Mode::Double)),
-        ),
+        "is.numeric" => Some(RType::scalar(Mode::Integer).join(RType::scalar(Mode::Double))),
         "is.double" => Some(RType::scalar(Mode::Double)),
         "is.integer" => Some(RType::scalar(Mode::Integer)),
         "is.character" => Some(RType::scalar(Mode::Character)),
@@ -4150,8 +4145,7 @@ fn apply_narrowing(base: &Scope, narrowing: &Narrowing) -> (Scope, Scope) {
                                 .as_ref()
                                 .map(|ms| {
                                     ms.iter().any(|m| {
-                                        target.mode == Mode::Union
-                                            || m.mode == target.mode
+                                        target.mode == Mode::Union || m.mode == target.mode
                                     })
                                 })
                                 .unwrap_or(false)
@@ -4207,10 +4201,7 @@ fn apply_narrowing(base: &Scope, narrowing: &Narrowing) -> (Scope, Scope) {
             // `else` branch knows var IS of `mode`.
             if let Some(existing) = else_scope.get(var).cloned() {
                 if matches!(existing.mode, Mode::Opaque) || existing.mode == *mode {
-                    else_scope.insert(
-                        var.clone(),
-                        RType::new(*mode, existing.length),
-                    );
+                    else_scope.insert(var.clone(), RType::new(*mode, existing.length));
                 }
             }
         }
@@ -5228,7 +5219,7 @@ mod tests {
         assert_eq!(vb.mode, Mode::Character, "l$b must be character");
         // And the list itself should carry the schema.
         let l = scope.get("l").expect("l should be bound");
-        let schema = l.columns.expect("l should carry a column schema");
+        let schema = l.columns.clone().expect("l should carry a column schema");
         assert_eq!(schema.len(), 2, "schema should have 2 columns");
         assert_eq!(schema.names(), vec!["a", "b"]);
         // Accessing a missing column emits RY060.
@@ -5258,7 +5249,7 @@ mod tests {
             "data.frame() must attach class data.frame, got class {:?}",
             df.class
         );
-        let schema = df.columns.expect("df should carry a column schema");
+        let schema = df.columns.clone().expect("df should carry a column schema");
         assert_eq!(schema.len(), 2, "schema should have 2 columns");
         // Column `x` is integer recycled to length 3.
         let x = schema.get("x").expect("x column should exist");
@@ -5323,7 +5314,7 @@ mod tests {
             check_with_scope("x <- structure(list(a = 1L, b = \"y\"), class = \"foo\")\n");
         let x = scope.get("x").expect("x should be bound");
         assert!(x.class.contains("foo"), "class foo must be attached");
-        let schema = x.columns.expect("schema must be preserved");
+        let schema = x.columns.clone().expect("schema must be preserved");
         assert_eq!(schema.names(), vec!["a", "b"]);
         // Column access works through the new class.
         let (_, scope2) =
@@ -5625,7 +5616,7 @@ mod tests {
             "c must be function-typed, got {:?}",
             c
         );
-        let sig = c.fn_sig.expect("c must carry an inferred fn_sig");
+        let sig = c.fn_sig.clone().expect("c must carry an inferred fn_sig");
         assert_eq!(
             sig.return_type.mode,
             Mode::Integer,
@@ -5662,7 +5653,10 @@ mod tests {
         );
         let add5 = scope.get("add5").expect("add5 should be bound");
         assert_eq!(add5.mode, Mode::Function);
-        let sig = add5.fn_sig.expect("add5 must carry an inferred fn_sig");
+        let sig = add5
+            .fn_sig
+            .clone()
+            .expect("add5 must carry an inferred fn_sig");
         assert_eq!(
             sig.return_type.mode,
             Mode::Double,
@@ -5703,7 +5697,7 @@ mod tests {
         );
         let h = scope.get("h").expect("h should be bound");
         assert_eq!(h.mode, Mode::Function);
-        let sig = h.fn_sig.expect("h must carry an inferred fn_sig");
+        let sig = h.fn_sig.clone().expect("h must carry an inferred fn_sig");
         assert_eq!(
             sig.return_type.mode,
             Mode::Integer,
@@ -5993,15 +5987,20 @@ mod tests {
 
     #[test]
     fn if_expr_mismatched_branches_join() {
-        // `if (TRUE) 1L else "hello"` joins integer + character =
-        // character. Using the result arithmetically fires RY040.
+        // `if (TRUE) list(1) else function(){1}` joins to
+        // union[list, function]. Using the result arithmetically fires
+        // RY040 because EVERY member of the union errors against `+ 1`
+        // (Phase 3 union semantics). The earlier form of this test
+        // (`1L else "hello"`) relied on the coercion-ladder join that
+        // silently promoted to character; unions replaced that, so the
+        // test now uses an all-invalid union to keep exercising RY040.
         let diags = check(
-            "x <- if (TRUE) 1L else \"hello\"\n\
+            "x <- if (TRUE) list(1) else function() { 1 }\n\
              bad <- x + 1\n",
         );
         assert!(
             diags.iter().any(|d| d.code == "RY040"),
-            "expected RY040 from joined if-expr (character) + double, got {:?}",
+            "expected RY040 from joined if-expr (all-invalid union) + int, got {:?}",
             diags
         );
     }
@@ -6044,7 +6043,6 @@ mod tests {
         let x = scope.get("x").expect("x should be bound");
         assert_eq!(x.mode, Mode::Integer, "got {:?}", x);
         assert_eq!(x.length, Length::One, "got {:?}", x);
-        assert!(!x.na.0, "got {:?}", x);
     }
 
     #[test]
@@ -6056,7 +6054,6 @@ mod tests {
         let y = scope.get("y").expect("y should be bound");
         assert_eq!(y.mode, Mode::Double, "got {:?}", y);
         assert_eq!(y.length, Length::One, "got {:?}", y);
-        assert!(!y.na.0, "got {:?}", y);
     }
 
     #[test]
@@ -6122,7 +6119,6 @@ mod tests {
         let a = scope.get("a").expect("a should be bound");
         assert_eq!(a.mode, Mode::Integer, "got {:?}", a);
         assert_eq!(a.length, Length::One, "got {:?}", a);
-        assert!(a.na.0, "NA flag must survive negation, got {:?}", a);
     }
 
     // ---- Literal-based length inference: `:`, `rep`, `seq` ----

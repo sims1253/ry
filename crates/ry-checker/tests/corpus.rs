@@ -48,7 +48,9 @@ fn parse_marker(src: &str) -> Option<Expectation> {
     if body.eq_ignore_ascii_case("no-diag") || body.eq_ignore_ascii_case("no_diag") {
         return Some(Expectation::None);
     }
-    if body.eq_ignore_ascii_case("expect-parse-error") || body.eq_ignore_ascii_case("expect_parse_error") {
+    if body.eq_ignore_ascii_case("expect-parse-error")
+        || body.eq_ignore_ascii_case("expect_parse_error")
+    {
         return Some(Expectation::ParseError);
     }
     let (key, value) = body.split_once(':')?;

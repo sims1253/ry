@@ -361,10 +361,7 @@ impl RParser {
             "complex" => Some(Expr::Unknown(self.span(n, src))),
             "string" => {
                 let raw = text(n, src)?;
-                Some(Expr::String(
-                    unquote_r_string(&raw),
-                    self.span(n, src),
-                ))
+                Some(Expr::String(unquote_r_string(&raw), self.span(n, src)))
             }
             "na" => {
                 let raw = text(n, src)?;
@@ -673,10 +670,7 @@ fn unquote_r_string(raw: &str) -> String {
     // The opening is r/R followed by an optional dash-delimiter and a
     // ( or [. The matching close is ) or ] followed by the same
     // delimiter (reversed) and a quote.
-    if let Some(rest) = raw
-        .strip_prefix('r')
-        .or_else(|| raw.strip_prefix('R'))
-    {
+    if let Some(rest) = raw.strip_prefix('r').or_else(|| raw.strip_prefix('R')) {
         if let Some(unprocessed) = try_unwrap_raw_string(rest) {
             return unprocessed;
         }
@@ -697,6 +691,10 @@ fn unquote_r_string(raw: &str) -> String {
 /// `(`). Returns the literal content if it parses as a raw string,
 /// else None.
 fn try_unwrap_raw_string(body: &str) -> Option<String> {
+    // `body` is the token text after the leading `r`/`R`, so it begins
+    // with a quote (`"`). Strip it (and the trailing quote, which the
+    // close-sequence search handles).
+    let body = body.strip_prefix('"')?;
     // Opening sequence: optional delimiter chars, then `(` or `[`.
     // R allows `r"(...)"`, `r"-(...)-"`, `r"--(...)--"`, and the `[`
     // bracket form likewise. We capture the delimiter and the bracket.
@@ -786,8 +784,7 @@ fn process_r_escapes(s: &str) -> String {
             b'\n' => (None, 2), // physical line continuation: drop
             b'u' => {
                 // \uXXXX (exactly 4 hex).
-                let hex = std::str::from_utf8(&bytes.get(i + 2..i + 6).unwrap_or(&[]))
-                    .unwrap_or("");
+                let hex = std::str::from_utf8(bytes.get(i + 2..i + 6).unwrap_or(&[])).unwrap_or("");
                 if let Ok(n) = u32::from_str_radix(hex, 16) {
                     if let Some(c) = char::from_u32(n) {
                         (Some(c), 6)
@@ -800,8 +797,8 @@ fn process_r_escapes(s: &str) -> String {
             }
             b'U' => {
                 // \UXXXXXXXX (exactly 8 hex).
-                let hex = std::str::from_utf8(&bytes.get(i + 2..i + 10).unwrap_or(&[]))
-                    .unwrap_or("");
+                let hex =
+                    std::str::from_utf8(bytes.get(i + 2..i + 10).unwrap_or(&[])).unwrap_or("");
                 if let Ok(n) = u32::from_str_radix(hex, 16) {
                     if let Some(c) = char::from_u32(n) {
                         (Some(c), 10)

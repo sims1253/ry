@@ -71,10 +71,12 @@ impl RParser {
         // surface them as RY000 instead of silently checking a recovered
         // (and possibly nonsense) tree.
         let parse_errors = collect_parse_errors(root);
+        let comments = collect_comments(root, src);
         Ok(SourceFile {
             path: path.to_string(),
             stmts,
             parse_errors,
+            comments,
         })
     }
 
@@ -339,19 +341,28 @@ impl RParser {
             }
             "float" | "nan" | "inf" => {
                 let raw = text(n, src)?;
+                let span = self.span(n, src);
                 let parsed = match raw.as_str() {
                     "Inf" | "inf" => f64::INFINITY,
                     "-Inf" | "-inf" => f64::NEG_INFINITY,
                     "NaN" | "nan" => f64::NAN,
-                    s => s.parse::<f64>().ok()?,
+                    s => match s.parse::<f64>() {
+                        Ok(v) => v,
+                        // A float-looking token we couldn't parse (e.g.
+                        // exotic locale or a tree-sitter quirk): do NOT
+                        // return None -- that propagates up via `?` and
+                        // drops the enclosing statement entirely. Yield
+                        // Unknown so the statement survives.
+                        Err(_) => return Some(Expr::Unknown(span)),
+                    },
                 };
-                Some(Expr::Double(parsed, self.span(n, src)))
+                Some(Expr::Double(parsed, span))
             }
             "complex" => Some(Expr::Unknown(self.span(n, src))),
             "string" => {
                 let raw = text(n, src)?;
                 Some(Expr::String(
-                    unquote_r_string(raw),
+                    unquote_r_string(&raw),
                     self.span(n, src),
                 ))
             }
@@ -848,6 +859,36 @@ fn utf8_char_len(b: u8) -> usize {
     } else {
         1 // invalid lead byte; advance one to make progress
     }
+}
+
+/// Collect every `comment` node in the tree, returning `(line, body)`
+/// pairs in source order. The body is the text AFTER the leading `#`
+/// (untrimmed). These are the ONLY lexically-real comments -- a `#`
+/// that appears inside a string literal is part of the string, not a
+/// comment, so the suppression parser must consume this list rather
+/// than scanning source lines for `#`.
+fn collect_comments(root: tree_sitter::Node, src: &str) -> Vec<crate::ast::Comment> {
+    let mut out = Vec::new();
+    let mut stack: Vec<tree_sitter::Node> = vec![root];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "comment" {
+            let pos = node.start_position();
+            let line = pos.row;
+            let col = pos.column;
+            if let Ok(full) = node.utf8_text(src.as_bytes()) {
+                // Strip the leading `#` (R comments start with exactly
+                // one `#`; any further `#` are part of the body).
+                let body = full.strip_prefix('#').unwrap_or(full).to_string();
+                out.push(crate::ast::Comment { line, col, body });
+            }
+        }
+        let mut child_cursor = node.walk();
+        for child in node.children(&mut child_cursor) {
+            stack.push(child);
+        }
+    }
+    out.sort_by_key(|c| c.line);
+    out
 }
 
 /// Walk the parse tree and collect spans of `ERROR` and `MISSING` nodes.
@@ -1390,8 +1431,8 @@ mod tests {
         // a suppression comment when the parser later reasons about it.
         // The string arm produces an Expr::String with the literal value
         // intact (escapes processed).
-        let f = parse(r#"x <- "# noqa"
-"#);
+        let src = "x <- \"# noqa\"\n";
+        let f = parse(src);
         match f.stmts.first() {
             Some(Stmt::Assign {
                 value: Expr::String(s, _),

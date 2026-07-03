@@ -16,6 +16,30 @@ pub struct SourceFile {
     /// The checker surfaces these as `RY000` (syntax-error) diagnostics so
     /// that malformed input no longer checks "clean".
     pub parse_errors: Vec<Span>,
+    /// All `comment` nodes collected during parsing, in source order.
+    /// Each entry is the comment's body (the text AFTER the leading
+    /// `#`, untrimmed) and its line number (0-indexed). The checker
+    /// uses these for lexical suppression parsing, so a `#` that
+    /// appears INSIDE a string literal is NOT mistaken for a comment.
+    pub comments: Vec<Comment>,
+}
+
+/// A source comment, collected lexically by the parser. `body` excludes
+/// the leading `#`.
+#[derive(Debug, Clone)]
+pub struct Comment {
+    /// 0-indexed line of the comment's first character.
+    pub line: usize,
+    /// 0-indexed byte column of the comment's first character (`#`).
+    /// A column of 0 means the comment starts the line (standalone);
+    /// a column > 0 means code precedes it on the line (trailing). The
+    /// suppression parser uses this to distinguish a standalone
+    /// `# ry: ignore` (applies to the NEXT line) from a trailing
+    /// `x <- bad  # ry: ignore` (applies to THIS line).
+    pub col: usize,
+    /// Comment text after the leading `#` (not trimmed; the suppression
+    /// parser trims as needed).
+    pub body: String,
 }
 
 #[derive(Debug, Clone)]

@@ -110,8 +110,10 @@ fn run(name: &str, src: &str) -> Vec<(String, Severity)> {
     c.check(&file);
     // Apply inline suppression (`# ry: ignore`, `# noqa`,
     // `# ry: ignore-file`) so corpus fixtures that test the suppression
-    // feature behave the same way the CLI / LSP do.
-    let diags = ry_checker::filter_suppressed(c.take_diagnostics(), src);
+    // feature behave the same way the CLI / LSP do. Use the lexical
+    // (comment-based) filter so a `#` inside a string literal is not
+    // mistaken for a suppression directive.
+    let diags = ry_checker::filter_suppressed_with_comments(c.take_diagnostics(), &file.comments);
     diags
         .into_iter()
         .map(|d| (d.code.to_string(), d.severity))

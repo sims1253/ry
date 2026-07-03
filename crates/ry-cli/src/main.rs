@@ -524,6 +524,7 @@ fn run_check_once(
 ) -> Result<CheckResult> {
     let mut all_diagnostics: Vec<ry_checker::Diagnostic> = Vec::new();
     let mut srcs: HashMap<String, String> = HashMap::new();
+    let mut comments: HashMap<String, Vec<ry_core::ast::Comment>> = HashMap::new();
     let mut parse_errors = 0usize;
     let mut file_count = 0usize;
 
@@ -550,8 +551,9 @@ fn run_check_once(
                 continue;
             }
         };
-        project.add_file(path_str.clone(), file);
-        srcs.insert(path_str, src);
+        project.add_file(path_str.clone(), file.clone());
+        srcs.insert(path_str.clone(), src);
+        comments.insert(path_str.clone(), file.comments);
         file_count += 1;
     }
 
@@ -559,10 +561,12 @@ fn run_check_once(
 
     // Apply inline suppression comments (`# ry: ignore`, `# noqa`,
     // `# ry: ignore-file`) before the severity filter so a suppressed
-    // error never even reaches the filter pipeline.
+    // error never even reaches the filter pipeline. Use the lexical
+    // (comment-based) filter so a `#` inside a string literal is not
+    // mistaken for a suppression directive.
     for (path, diags) in &mut per_file_diagnostics {
-        if let Some(src) = srcs.get(path) {
-            *diags = ry_checker::filter_suppressed(std::mem::take(diags), src);
+        if let Some(cs) = comments.get(path) {
+            *diags = ry_checker::filter_suppressed_with_comments(std::mem::take(diags), cs);
         }
     }
 

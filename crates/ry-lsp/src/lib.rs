@@ -986,6 +986,7 @@ impl Backend {
         // Build a multi-file Project from every open document so
         // cross-file calls resolve.
         let mut project = Project::new();
+        let mut per_file_comments: HashMap<String, Vec<ry_core::ast::Comment>> = HashMap::new();
         for (doc_path, doc_text) in &docs {
             let mut parser = match RParser::new() {
                 Ok(p) => p,
@@ -1001,6 +1002,7 @@ impl Backend {
                     continue;
                 }
             };
+            per_file_comments.insert(doc_path.clone(), file.comments.clone());
             project.add_file(doc_path.clone(), file);
         }
 
@@ -1012,12 +1014,15 @@ impl Backend {
         let source_text = docs.get(&path).map(|s| s.as_str());
         // Parse inline suppression comments once for the target file
         // (`# ry: ignore`, `# noqa`, `# ry: ignore-file`) so the
-        // per-diagnostic filter below is a cheap lookup.
-        let (file_level, suppressions) = match source_text {
-            Some(text) => {
-                let supps = ry_checker::parse_suppressions(text);
-                (ry_checker::has_file_suppression(text), supps)
-            }
+        // per-diagnostic filter below is a cheap lookup. Use the lexical
+        // (comment-based) parsers so a `#` inside a string literal is
+        // not mistaken for a directive.
+        let file_comments = per_file_comments.get(path.as_str());
+        let (file_level, suppressions) = match file_comments {
+            Some(cs) => (
+                ry_checker::has_file_suppression_from_comments(cs),
+                ry_checker::parse_suppressions_from_comments(cs),
+            ),
             None => (false, Vec::new()),
         };
         let diags_for_uri: Vec<LspDiagnostic> = per_file

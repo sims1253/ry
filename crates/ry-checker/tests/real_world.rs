@@ -1,263 +1,166 @@
-//! Real-world baseline test.
+//! Real-world snapshot tests (PLAN Phase 7 item 3).
 //!
-//! Runs the checker against a small set of vendored "realistic" R snippets
-//! (each modeled after real CRAN/base R code patterns) and *reports* the
-//! diagnostic distribution without asserting it. This catches large
-//! regressions in false-positive rate when reviewed, but does not break
-//! the build when the distribution shifts.
+//! Runs the checker against a small set of vendored "realistic" R
+//! snippets (each modeled after real CRAN/base R code patterns) and
+//! ASSERTS the exact diagnostic list via `insta` snapshots. Each
+//! diagnostic in a snapshot is triaged in a comment below the snippet:
+//! true positive or known-limitation.
 //!
-//! Use `cargo test real_world -- --nocapture` to see the table.
+//! A snapshot failing is the false-positive alarm the old assertion-free
+//! "baseline report" printers pretended to be: if the diagnostic list
+//! shifts, review the diff, update the snapshot deliberately, and record
+//! why. Run `cargo insta review` to accept intentional changes.
 
-use std::collections::BTreeMap;
-
-use ry_checker::{Checker, Project};
+use ry_checker::Checker;
 use ry_core::RParser;
 
-/// Snippets modeled on patterns observed in real R packages. None of
-/// these are *expected* to be silent; the goal is to track what we
-/// currently emit so shifts are visible in code review.
-const SNIPPETS: &[(&str, &str)] = &[
-    (
-        "base_mean_default",
-        r#"mean <- function(x, trim = 0, na.rm = FALSE) {
+/// Check `src` and return the sorted list of `(code, message)` tuples so
+/// the snapshot is stable across HashMap iteration order.
+fn check_sorted(name: &str, src: &str) -> Vec<(String, String)> {
+    let mut parser = RParser::new().expect("parser init");
+    let file = parser.parse(name, src).expect("parse");
+    let mut c = Checker::new(name);
+    c.check(&file);
+    let mut diags: Vec<(String, String)> = c
+        .take_diagnostics()
+        .into_iter()
+        .map(|d| (d.code.to_string(), d.message))
+        .collect();
+    diags.sort();
+    diags
+}
+
+// ---- Snippet: base_mean_default ----
+// Triage: (clean) -- no diagnostics expected. `mean` redefined with a
+// default arg; the body's `is.na(x)` on the opaque param `x` stays
+// quiet (opaque condition), `any(...)` resolves, `sum(x)/length(x)` is
+// fine. A future improvement: flag the rebinding of a base function.
+#[test]
+fn snapshot_base_mean_default() {
+    let src = r#"mean <- function(x, trim = 0, na.rm = FALSE) {
   if (!na.rm && any(is.na(x))) return(NA_real_)
   sum(x) / length(x)
 }
-"#,
-    ),
-    (
-        "tidyverse_pipe",
-        // Uses c(1,2,3) instead of mtcars so the snippet exercises pipe
-        // desugaring end-to-end without depending on NSE-opaque verbs.
-        r#"library(magrittr)
+"#;
+    insta::assert_yaml_snapshot!(
+        "snapshot_base_mean_default",
+        check_sorted("base_mean_default", src)
+    );
+}
+
+// ---- Snippet: tidyverse_pipe ----
+// Triage: (clean). magrittr pipe desugaring: c(1,2,3) %>% mean() %>% round(2).
+#[test]
+fn snapshot_tidyverse_pipe() {
+    let src = r#"library(magrittr)
 result <- c(1, 2, 3) %>%
   mean() %>%
   round(2)
-"#,
-    ),
-    (
-        "mtcars_dataset",
-        // Verifies the typeshed datasets table resolves `mtcars` to a
-        // list-typed value (no RY010).
-        r#"df <- mtcars
+"#;
+    insta::assert_yaml_snapshot!(
+        "snapshot_tidyverse_pipe",
+        check_sorted("tidyverse_pipe", src)
+    );
+}
+
+// ---- Snippet: mtcars_dataset ----
+// Triage: (clean). `mtcars` resolves via the typeshed dataset table to a
+// list-typed value (no RY010).
+#[test]
+fn snapshot_mtcars_dataset() {
+    let src = r#"df <- mtcars
 head(df)
-"#,
-    ),
-    (
-        "pipe_subset_nse",
-        // NSE snippet: `subset` evaluates `cyl == 4` in the caller's
-        // frame using the data.frame's columns. The checker augments
-        // the inference scope with `mtcars`'s column schema before
-        // inferring the expression argument, so `cyl` resolves to its
-        // column type and the snippet produces no diagnostics.
-        r#"library(magrittr)
+"#;
+    insta::assert_yaml_snapshot!(
+        "snapshot_mtcars_dataset",
+        check_sorted("mtcars_dataset", src)
+    );
+}
+
+// ---- Snippet: pipe_subset_nse ----
+// Triage: (clean). NSE: subset(mtcars, cyl == 4) -- `cyl` resolves via the
+// data.frame's column schema (the checker augments the inference scope).
+#[test]
+fn snapshot_pipe_subset_nse() {
+    let src = r#"library(magrittr)
 result <- mtcars %>% subset(cyl == 4)
-"#,
-    ),
-    (
-        "s3_dispatch",
-        r#"print.myclass <- function(x, ...) {
+"#;
+    insta::assert_yaml_snapshot!(
+        "snapshot_pipe_subset_nse",
+        check_sorted("pipe_subset_nse", src)
+    );
+}
+
+// ---- Snippet: s3_dispatch ----
+// Triage: (clean). print.myclass is a real S3 method (first param `x`);
+// structure(...) attaches class "myclass"; print(x) dispatches. No
+// diagnostics expected.
+#[test]
+fn snapshot_s3_dispatch() {
+    let src = r#"print.myclass <- function(x, ...) {
   cat("My class:", x$name, "\n")
   invisible(x)
 }
 x <- structure(list(name = "foo"), class = "myclass")
 print(x)
-"#,
-    ),
-    (
-        "na_propagation",
-        r#"x <- c(1, 2, NA, 4)
+"#;
+    insta::assert_yaml_snapshot!("snapshot_s3_dispatch", check_sorted("s3_dispatch", src));
+}
+
+// ---- Snippet: na_propagation ----
+// Triage: (clean). c(1, 2, NA, 4) arithmetic and mean() with na.rm.
+#[test]
+fn snapshot_na_propagation() {
+    let src = r#"x <- c(1, 2, NA, 4)
 y <- x + 10
 z <- mean(x, na.rm = TRUE)
-"#,
-    ),
-    (
-        "coercion_ladder",
-        r#"x <- c(1L, 2L, 3L)
+"#;
+    insta::assert_yaml_snapshot!(
+        "snapshot_na_propagation",
+        check_sorted("na_propagation", src)
+    );
+}
+
+// ---- Snippet: coercion_ladder ----
+// Triage: (clean). c() coercion and an if-expr join.
+#[test]
+fn snapshot_coercion_ladder() {
+    let src = r#"x <- c(1L, 2L, 3L)
 y <- c(x, 4.5)
 z <- c(y, "end")
 w <- if (length(z) > 0) z else NA
-"#,
-    ),
-    (
-        "loop_with_accumulator",
-        r#"total <- 0
+"#;
+    insta::assert_yaml_snapshot!(
+        "snapshot_coercion_ladder",
+        check_sorted("coercion_ladder", src)
+    );
+}
+
+// ---- Snippet: loop_with_accumulator ----
+// Triage: (clean). for-loop accumulator pattern.
+#[test]
+fn snapshot_loop_with_accumulator() {
+    let src = r#"total <- 0
 for (i in 1:100) {
   if (i %% 2 == 0) {
     total <- total + i
   }
 }
-"#,
-    ),
-    (
-        "vectorized_op",
-        r#"x <- 1:10
+"#;
+    insta::assert_yaml_snapshot!(
+        "snapshot_loop_with_accumulator",
+        check_sorted("loop_with_accumulator", src)
+    );
+}
+
+// ---- Snippet: vectorized_op ----
+// Triage: (clean). vectorized arithmetic + which().
+#[test]
+fn snapshot_vectorized_op() {
+    let src = r#"x <- 1:10
 y <- x * 2 + 1
 ok <- y > 5
 sel <- which(ok)
-"#,
-    ),
-];
-
-fn run(name: &str, src: &str) -> Vec<String> {
-    let mut parser = match RParser::new() {
-        Ok(p) => p,
-        Err(e) => {
-            println!("{}: parser init failed: {}", name, e);
-            return Vec::new();
-        }
-    };
-    let file = match parser.parse(name, src) {
-        Ok(f) => f,
-        Err(e) => {
-            println!("{}: parse failed: {}", name, e);
-            return Vec::new();
-        }
-    };
-    let mut c = Checker::new(name);
-    c.check(&file);
-    c.take_diagnostics()
-        .into_iter()
-        .map(|d| d.code.to_string())
-        .collect()
-}
-
-#[test]
-fn real_world_distribution() {
-    let mut grand_total: BTreeMap<String, usize> = BTreeMap::new();
-    let mut per_snippet: Vec<(&str, BTreeMap<String, usize>, usize)> = Vec::new();
-
-    for (name, src) in SNIPPETS {
-        let codes = run(name, src);
-        let mut counts: BTreeMap<String, usize> = BTreeMap::new();
-        for c in &codes {
-            *counts.entry(c.clone()).or_insert(0) += 1;
-            *grand_total.entry(c.clone()).or_insert(0) += 1;
-        }
-        per_snippet.push((name, counts.clone(), codes.len()));
-    }
-
-    println!("\n=== ry real-world baseline ===\n");
-    println!("{:<24} {:<8} codes", "snippet", "diags");
-    println!("{}", "-".repeat(64));
-    for (name, counts, n) in &per_snippet {
-        let codes_str = if counts.is_empty() {
-            "(clean)".to_string()
-        } else {
-            counts
-                .iter()
-                .map(|(k, v)| format!("{}x{}", v, k))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        println!("{:<24} {:<8} {}", name, n, codes_str);
-    }
-    println!("{}", "-".repeat(64));
-    let total: usize = per_snippet.iter().map(|(_, _, n)| *n).sum();
-    println!(
-        "{:<24} {:<8} {}",
-        "TOTAL",
-        total,
-        grand_total
-            .iter()
-            .map(|(k, v)| format!("{}x{}", v, k))
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
-    println!(
-        "\nThis is a baseline report, not an assertion. If the numbers shift\n\
-         significantly between commits, investigate false-positive regressions.\n"
-    );
-}
-
-/// Multi-file project baseline. Mirrors the single-file baseline but
-/// exercises the `Project` API: a helper file defines utilities, and a
-/// main file uses them. Like the single-file baseline this only reports
-/// the distribution without asserting it.
-#[test]
-fn real_world_multi_file_distribution() {
-    // (file_path, src) pairs modeling a small two-file project. The
-    // helper file defines a couple of utilities; the main file uses
-    // them, including one use that exercises cross-file return-type
-    // propagation (the `name()` helper returns character, so using it
-    // arithmetically would fire RY040 if the inference is correct).
-    let project_files: &[(&str, &str)] = &[
-        (
-            "helpers.R",
-            r#"double <- function(x = 1L) { x * 2L }
-name <- function() { "ry" }
-"#,
-        ),
-        (
-            "main.R",
-            r#"total <- double(21L)
-upper <- toupper(name())
-oops <- name() + 1L
-"#,
-        ),
-    ];
-
-    let mut project = Project::new();
-    for (path, src) in project_files {
-        let mut parser = match RParser::new() {
-            Ok(p) => p,
-            Err(e) => {
-                println!("{}: parser init failed: {}", path, e);
-                return;
-            }
-        };
-        let file = match parser.parse(path, src) {
-            Ok(f) => f,
-            Err(e) => {
-                println!("{}: parse failed: {}", path, e);
-                return;
-            }
-        };
-        project.add_file((*path).to_string(), file);
-    }
-
-    let per_file = project.check();
-    let mut grand_total: BTreeMap<String, usize> = BTreeMap::new();
-    let mut per_file_counts: Vec<(&str, BTreeMap<String, usize>, usize)> = Vec::new();
-    for (path, diags) in &per_file {
-        let mut counts: BTreeMap<String, usize> = BTreeMap::new();
-        for d in diags {
-            *counts.entry(d.code.to_string()).or_insert(0) += 1;
-            *grand_total.entry(d.code.to_string()).or_insert(0) += 1;
-        }
-        per_file_counts.push((path, counts, diags.len()));
-    }
-
-    println!("\n=== ry real-world multi-file baseline ===\n");
-    println!("{:<16} {:<8} codes", "file", "diags");
-    println!("{}", "-".repeat(64));
-    for (path, counts, n) in &per_file_counts {
-        let codes_str = if counts.is_empty() {
-            "(clean)".to_string()
-        } else {
-            counts
-                .iter()
-                .map(|(k, v)| format!("{}x{}", v, k))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        println!("{:<16} {:<8} {}", path, n, codes_str);
-    }
-    println!("{}", "-".repeat(64));
-    let total: usize = per_file_counts.iter().map(|(_, _, n)| *n).sum();
-    println!(
-        "{:<16} {:<8} {}",
-        "TOTAL",
-        total,
-        grand_total
-            .iter()
-            .map(|(k, v)| format!("{}x{}", v, k))
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
-    println!(
-        "\nThis is a baseline report, not an assertion. The multi-file path\n\
-         should produce at least one RY040 from `name() + 1L` if cross-file\n\
-         return-type inference is wired up correctly.\n"
-    );
+"#;
+    insta::assert_yaml_snapshot!("snapshot_vectorized_op", check_sorted("vectorized_op", src));
 }

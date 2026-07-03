@@ -1,0 +1,6 @@
+---
+source: crates/ry-checker/tests/real_world.rs
+assertion_line: 45
+expression: "check_sorted(\"base_mean_default\", src)"
+---
+[]

@@ -1,0 +1,6 @@
+---
+source: crates/ry-checker/tests/real_world.rs
+assertion_line: 147
+expression: "check_sorted(\"vectorized_op\", src)"
+---
+[]

@@ -26,6 +26,13 @@ pub enum Mode {
     Function,
     /// Environment, S4, external pointer, etc.
     Opaque,
+    /// A union of two or more modes (control-flow merge of branches with
+    /// incompatible types, e.g. `if (p) 1L else "a"`). The member list
+    /// lives on `RType::members`, NOT on this variant (Mode is Copy and
+    /// used as a HashMap key, so it carries no payload). `Mode::Union`
+    /// is bypassed by the coercion ladder: `join` builds unions instead
+    /// of promoting via `coerce_rank`.
+    Union,
 }
 
 impl Mode {
@@ -44,6 +51,10 @@ impl Mode {
             Mode::List => 6,
             Mode::Function => 7,
             Mode::Opaque => 8,
+            // Unions deliberately bypass the coercion ladder; this rank is
+            // only a sentinel so the match stays exhaustive. `join` handles
+            // unions directly rather than via coerce_rank.
+            Mode::Union => 9,
         }
     }
 
@@ -67,6 +78,10 @@ impl Mode {
             // about length; Mode has no length dimension).
             (Null, x) | (x, Null) => Some(x),
             (Opaque, _) | (_, Opaque) => Some(Opaque),
+            // Unions are distributed at the RType::arith layer; reaching
+            // here with a Union operand is a bug. Treat conservatively as
+            // opaque so a stray call doesn't panic.
+            (Union, _) | (_, Union) => Some(Opaque),
             (Raw, Raw) => Some(Raw),
             _ => {
                 let r = self.coerce_rank().max(other.coerce_rank());
@@ -88,6 +103,7 @@ impl Mode {
         use Mode::*;
         match (self, other) {
             (Opaque, _) | (_, Opaque) => Some(Opaque),
+            (Union, _) | (_, Union) => Some(Opaque),
             (List, _) | (_, List) => None,
             (Function, _) | (_, Function) => None,
             _ => Some(Logical),
@@ -108,6 +124,7 @@ impl fmt::Display for Mode {
             Mode::Null => "NULL",
             Mode::Function => "function",
             Mode::Opaque => "opaque",
+            Mode::Union => "union",
         };
         f.write_str(s)
     }
@@ -370,7 +387,20 @@ pub struct RType {
     /// comparison ops clear it (you cannot meaningfully add two
     /// closures).
     pub fn_sig: Option<Arc<FunctionSignature>>,
+    /// Members of a union type (`mode == Mode::Union`). `None` for all
+    /// non-union types. Members are bare atomic shapes (class/columns/
+    /// fn_sig cleared); the union owns those dimensions. Built by `join`
+    /// when two incompatible branches merge (e.g. `if (p) 1L else "a"`),
+    /// capped at `MAX_UNION_MEMBERS` (beyond the cap, join collapses to
+    /// `RType::unknown()`).
+    pub members: Option<Arc<[RType]>>,
 }
+
+/// Maximum number of distinct members in a union. Beyond this, `join`
+/// gives up and collapses to `RType::unknown()` (matching ty's approach
+/// to large literal unions). 4 is enough for the common control-flow
+/// merges without letting pathological joins explode.
+pub const MAX_UNION_MEMBERS: usize = 4;
 
 impl RType {
     /// The opaque "unknown" type: opaque mode, unknown length, no class
@@ -387,6 +417,7 @@ impl RType {
             class: ClassVector::unknown(),
             columns: None,
             fn_sig: None,
+            members: None,
         }
     }
 
@@ -398,6 +429,7 @@ impl RType {
             class: ClassVector::empty(),
             columns: None,
             fn_sig: None,
+            members: None,
         }
     }
 
@@ -430,13 +462,32 @@ impl RType {
         }
     }
 
+    /// Return a copy of `self` with the union members replaced.
+    pub fn with_members(self, members: Arc<[RType]>) -> Self {
+        RType {
+            members: Some(members),
+            ..self
+        }
+    }
+
     /// Result of `lhs op rhs` for an arithmetic operator, or None if the
     /// mode combination is invalid (e.g. list + numeric). Arithmetic
     /// strips any S3 class attribute and the column schema, matching
     /// R's actual semantics (arithmetic on data frames is either a loop
     /// over columns producing a new frame or a runtime error depending
     /// on the operator; we conservatively report the bare atomic mode).
+    ///
+    /// Union semantics (PLAN Phase 3 item 2): distribute over members;
+    /// the op errors ONLY if every member-pair errors. A union of
+    /// integer and character `+ 1` yields integer (the character member
+    /// errors but the integer one is fine) -> stay quiet in v1.
     pub fn arith(self, rhs: RType) -> Option<RType> {
+        distribute(self, rhs, |a, b| a.arith_atomic(b))
+    }
+
+    /// Atomic (non-union) arithmetic. The original `arith` body before
+    /// Phase 3 union support; called per-member by `arith`'s distributor.
+    fn arith_atomic(self, rhs: RType) -> Option<RType> {
         let mode = self.mode.arith_result(rhs.mode)?;
         // R returns a zero-length vector when one operand is NULL (e.g.
         // `NULL + 1` -> `numeric(0)`); model the length as Zero in that
@@ -457,12 +508,17 @@ impl RType {
             class: ClassVector::empty(),
             columns: None,
             fn_sig: None,
+            members: None,
         })
     }
 
     /// Comparison operators return plain logical values (no class, no
-    /// schema).
+    /// schema). Like `arith`, distributes over union members.
     pub fn compare(self, rhs: RType) -> Option<RType> {
+        distribute(self, rhs, |a, b| a.compare_atomic(b))
+    }
+
+    fn compare_atomic(self, rhs: RType) -> Option<RType> {
         let mode = self.mode.compare_result(rhs.mode)?;
         let length = self.length.binary(rhs.length);
         Some(RType {
@@ -472,6 +528,7 @@ impl RType {
             class: ClassVector::empty(),
             columns: None,
             fn_sig: None,
+            members: None,
         })
     }
 
@@ -479,27 +536,35 @@ impl RType {
     /// (`if (cond)`, `while (cond)`). R requires a length-1 logical, but
     /// will accept any length-1 atomic and silently coerce.
     pub fn invalid_condition(&self) -> bool {
-        // Opaque is the "we don't know" type (untyped function params,
-        // unknown returns). Flagging it as an invalid condition would be a
-        // false positive on essentially every function body that branches
-        // on an untyped parameter. Treat opaque as "not provably invalid".
-        matches!(self.mode, Mode::List | Mode::Function)
-            || matches!(self.length, Length::Zero)
+        match self.mode {
+            Mode::Union => {
+                // Invalid only if EVERY member is invalid (one valid
+                // branch means the runtime value could be a valid
+                // condition, so stay quiet -- PLAN Phase 3 item 2).
+                self.members
+                    .as_ref()
+                    .map(|m| m.iter().all(|t| t.invalid_condition()))
+                    .unwrap_or(true)
+            }
+            Mode::List | Mode::Function => true,
+            _ => matches!(self.length, Length::Zero),
+        }
     }
 
     /// Join (least upper bound) of two types, used when control flow
-    /// merges: e.g. the result of `if (cond) x else y`. The mode follows
-    /// R's coercion ladder (the higher-ranked operand wins). The length
-    /// is Unknown if the two differ, otherwise the common value. NA
-    /// propagates (true if either side can be NA).
+    /// merges: e.g. the result of `if (cond) x else y`.
     ///
-    /// Opaque is absorbing: joining anything with unknown yields unknown,
-    /// which is the correct conservative choice.
+    /// Phase 3 semantics: R NEVER coerces at a control-flow merge. If
+    /// the two branches have the same type, that type wins. Otherwise
+    /// we build an honest **union** of the two (deduplicated, capped at
+    /// `MAX_UNION_MEMBERS`, collapsing to `RType::unknown()` beyond the
+    /// cap). This replaces the old coercion-ladder join, which silently
+    /// promoted `if (p) 1L else "a"` to `character`.
     ///
-    /// The S3 class vector and column schema are preserved only when
-    /// both sides agree exactly (including the `known` flag for class).
-    /// When either side lacks information, the joined value drops that
-    /// information rather than guessing.
+    /// Opaque is absorbing: joining anything with unknown yields unknown.
+    ///
+    /// The S3 class vector, column schema, and function signature are
+    /// preserved only when both sides agree exactly; otherwise dropped.
     pub fn join(self, other: RType) -> RType {
         if matches!(self.mode, Mode::Opaque) || matches!(other.mode, Mode::Opaque) {
             return RType::unknown();
@@ -507,50 +572,7 @@ impl RType {
         if self == other {
             return self;
         }
-        let mode = if self.mode.coerce_rank() >= other.mode.coerce_rank() {
-            self.mode
-        } else {
-            other.mode
-        };
-        let length = if self.length == other.length {
-            self.length
-        } else {
-            Length::Unknown
-        };
-        let class = if !self.class.known || !other.class.known {
-            // One side has undetermined class; we can't say.
-            ClassVector::unknown()
-        } else if self.class == other.class {
-            self.class
-        } else {
-            // Both classes known but differ: result has no class.
-            ClassVector::empty()
-        };
-        // Column schemas are preserved only on exact agreement; anything
-        // else drops the schema so we don't fabricate columns the
-        // runtime value might not have.
-        let columns = if self.columns.is_some() && self.columns == other.columns {
-            self.columns
-        } else {
-            None
-        };
-        // Function signatures are preserved only on exact agreement;
-        // two branches returning closures with different signatures
-        // collapse to an opaque function (signature dropped) rather
-        // than silently picking one branch's signature.
-        let fn_sig = if self.fn_sig.is_some() && self.fn_sig == other.fn_sig {
-            self.fn_sig
-        } else {
-            None
-        };
-        RType {
-            mode,
-            length,
-            na: NaFlag(self.na.0 || other.na.0),
-            class,
-            columns,
-            fn_sig,
-        }
+        union_of(self, other)
     }
 
     /// Element type of an iterable used in `for (var in iter)`. For an
@@ -598,8 +620,111 @@ impl RType {
     }
 }
 
+/// Build a union of two (non-equal, non-opaque) types.
+///
+/// Flattens members of existing unions, deduplicates by `==`, caps at
+/// `MAX_UNION_MEMBERS` (collapsing to `RType::unknown()` beyond the cap).
+/// Members are bare atomic shapes (class/columns/fn_sig/members cleared);
+/// the union owns those dimensions. The length is the common member
+/// length if all members agree, else `Length::Unknown`.
+fn union_of(a: RType, b: RType) -> RType {
+    let mut members: Vec<RType> = Vec::new();
+    let push_dedup = |v: &mut Vec<RType>, t: RType| {
+        if !v.iter().any(|m| m == &t) {
+            v.push(t);
+        }
+    };
+    match a.mode {
+        Mode::Union => {
+            if let Some(ms) = &a.members {
+                for m in ms.iter() {
+                    push_dedup(&mut members, m.clone());
+                }
+            }
+        }
+        _ => push_dedup(&mut members, a),
+    }
+    match b.mode {
+        Mode::Union => {
+            if let Some(ms) = &b.members {
+                for m in ms.iter() {
+                    push_dedup(&mut members, m.clone());
+                }
+            }
+        }
+        _ => push_dedup(&mut members, b),
+    }
+    if members.len() > MAX_UNION_MEMBERS {
+        return RType::unknown();
+    }
+    // Length: common across members if they all agree, else Unknown.
+    let length = members
+        .iter()
+        .map(|m| m.length)
+        .reduce(|a, b| if a == b { a } else { Length::Unknown })
+        .unwrap_or(Length::Unknown);
+    let na = NaFlag(members.iter().any(|m| m.na.0));
+    RType {
+        mode: Mode::Union,
+        length,
+        na,
+        class: ClassVector::empty(),
+        columns: None,
+        fn_sig: None,
+        members: Some(Arc::from(members)),
+    }
+}
+
+/// Distribute a binary type operation over union members. The op errors
+/// (returns None) ONLY if every member-pair errors; otherwise the
+/// successful results are joined (which may itself be a union).
+fn distribute<F>(lhs: RType, rhs: RType, mut op: F) -> Option<RType>
+where
+    F: FnMut(RType, RType) -> Option<RType>,
+{
+    let lhs_members: Vec<RType> = match &lhs.members {
+        Some(ms) if lhs.mode == Mode::Union => ms.iter().cloned().collect(),
+        _ => vec![lhs],
+    };
+    let rhs_members: Vec<RType> = match &rhs.members {
+        Some(ms) if rhs.mode == Mode::Union => ms.iter().cloned().collect(),
+        _ => vec![rhs],
+    };
+    let mut oks: Vec<RType> = Vec::new();
+    for l in &lhs_members {
+        for r in &rhs_members {
+            if let Some(out) = op(l.clone(), r.clone()) {
+                oks.push(out);
+            }
+        }
+    }
+    if oks.is_empty() {
+        return None;
+    }
+    let mut iter = oks.into_iter();
+    let first = iter.next().unwrap();
+    Some(iter.fold(first, |acc, t| acc.join(t)))
+}
+
 impl fmt::Display for RType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.mode == Mode::Union {
+            // Render as `union[member1, member2, ...]`. Unions carry no
+            // class/columns/fn_sig, so fmt_class is a no-op for them.
+            f.write_str("union[")?;
+            if let Some(ms) = &self.members {
+                let mut first = true;
+                for m in ms.iter() {
+                    if !first {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{}", m)?;
+                    first = false;
+                }
+            }
+            f.write_str("]")?;
+            return Ok(());
+        }
         let mode = self.mode;
         let len = match self.length {
             Length::Zero => "0",
@@ -731,11 +856,49 @@ mod tests {
     }
 
     #[test]
-    fn join_promotes_via_coercion_ladder() {
+    fn join_of_incompatible_modes_is_a_union() {
+        // Phase 3: R never coerces at a control-flow merge. `if (p) 1L
+        // else 2.0` joins integer and double to an HONEST union, not to
+        // Double (the old coercion-ladder behavior).
         let i = RType::scalar(Mode::Integer, false);
         let d = RType::scalar(Mode::Double, false);
-        assert_eq!(i.join(d).mode, Mode::Double);
-        assert_eq!(d.join(i).mode, Mode::Double);
+        let joined = i.join(d);
+        assert_eq!(joined.mode, Mode::Union);
+        assert_eq!(joined.mode, d.join(i).mode, "join should be symmetric");
+        let members = joined.members.expect("union has members");
+        assert_eq!(members.len(), 2);
+        assert!(members.iter().any(|m| m.mode == Mode::Integer));
+        assert!(members.iter().any(|m| m.mode == Mode::Double));
+    }
+
+    #[test]
+    fn join_equal_modes_returns_self_not_union() {
+        // Same mode on both sides must NOT build a union.
+        let i = RType::scalar(Mode::Integer, false);
+        let joined = i.join(RType::scalar(Mode::Integer, false));
+        assert_eq!(joined.mode, Mode::Integer);
+        assert!(joined.members.is_none());
+    }
+
+    #[test]
+    fn arith_distributes_over_union_quiet_when_some_member_ok() {
+        // union[integer, character] + 1 -> integer ok, character errors.
+        // Some member succeeds -> stay quiet (no None), result integer.
+        let u = RType::scalar(Mode::Integer, false)
+            .join(RType::scalar(Mode::Character, false));
+        assert_eq!(u.mode, Mode::Union);
+        let r = u.arith(RType::scalar(Mode::Integer, false));
+        assert!(r.is_some(), "some member ok -> not an error");
+        assert_eq!(r.unwrap().mode, Mode::Integer);
+    }
+
+    #[test]
+    fn arith_errors_when_all_union_members_invalid() {
+        // union[list, function] + 1 -> both error -> None.
+        let u = RType::scalar(Mode::List, false)
+            .join(RType::scalar(Mode::Function, false));
+        let r = u.arith(RType::scalar(Mode::Integer, false));
+        assert!(r.is_none(), "all members invalid -> error");
     }
 
     #[test]

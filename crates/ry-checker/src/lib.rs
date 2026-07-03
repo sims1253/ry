@@ -3181,6 +3181,7 @@ impl Checker {
                 columns: None,
                 // fn_sig is meaningless on a data-frame column.
                 fn_sig: None,
+                members: None,
             })
             .collect();
 

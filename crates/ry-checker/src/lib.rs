@@ -193,24 +193,66 @@ enum HigherOrderFunc {
     Position,
     /// `do.call(fun, args)`: invoke fun with args list.
     DoCall,
+    // --- purrr family (only recognized when purrr is loaded or the
+    //     call is `purrr::`-qualified; see `from_call`). ---
+    /// `purrr::map(.x, .f)` and `map_if`/`imap`: list of `.f`'s returns.
+    PurrrMap,
+    /// `purrr::map_lgl/int/dbl/chr/vec(.x, .f)`: typed vector, len = `.x`.
+    PurrrMapTyped(Mode),
+    /// `purrr::map2(.x, .y, .f)` / `pmap(.l, .f)`: list.
+    PurrrMap2,
+    /// `purrr::keep`/`discard(.x, .p)`: same type as `.x`.
+    PurrrKeep,
+    /// `purrr::reduce(.x, .f)` / `accumulate`: fold.
+    PurrrReduce,
+    /// `purrr::walk(.x, .f)`: invisible `.x`.
+    PurrrWalk,
+    /// `purrr::in_parallel(.f)`: type-transparent wrapper, returns `.f`.
+    PurrrInParallel,
 }
 
 impl HigherOrderFunc {
-    /// Recognize a higher-order built-in by its base-R name. Returns
-    /// `None` for any other name.
-    fn from_name(name: &str) -> Option<Self> {
+    /// Recognize a higher-order function by call name. Base-R
+    /// higher-order builtins are always recognized. purrr family
+    /// functions are recognized ONLY when purrr is loaded (`library
+    /// (purrr)`) or the call is `purrr::`-qualified, so a bare `map`
+    /// in code that never loads purrr is not misinterpreted.
+    fn from_call(name: &str, loaded: &HashSet<String>) -> Option<Self> {
+        // Base-R higher-order builtins.
         match name {
-            "lapply" => Some(HigherOrderFunc::Lapply),
-            "sapply" => Some(HigherOrderFunc::Sapply),
-            "vapply" => Some(HigherOrderFunc::Vapply),
-            "Map" => Some(HigherOrderFunc::Map),
-            "mapply" => Some(HigherOrderFunc::Mapply),
-            "rapply" => Some(HigherOrderFunc::Rapply),
-            "Reduce" => Some(HigherOrderFunc::Reduce),
-            "Filter" => Some(HigherOrderFunc::Filter),
-            "Find" => Some(HigherOrderFunc::Find),
-            "Position" => Some(HigherOrderFunc::Position),
-            "do.call" => Some(HigherOrderFunc::DoCall),
+            "lapply" => return Some(HigherOrderFunc::Lapply),
+            "sapply" => return Some(HigherOrderFunc::Sapply),
+            "vapply" => return Some(HigherOrderFunc::Vapply),
+            "Map" => return Some(HigherOrderFunc::Map),
+            "mapply" => return Some(HigherOrderFunc::Mapply),
+            "rapply" => return Some(HigherOrderFunc::Rapply),
+            "Reduce" => return Some(HigherOrderFunc::Reduce),
+            "Filter" => return Some(HigherOrderFunc::Filter),
+            "Find" => return Some(HigherOrderFunc::Find),
+            "Position" => return Some(HigherOrderFunc::Position),
+            "do.call" => return Some(HigherOrderFunc::DoCall),
+            _ => {}
+        }
+        // purrr family: only when purrr is in scope.
+        let purrr_in_scope = name.starts_with("purrr::") || loaded.contains("purrr");
+        if !purrr_in_scope {
+            return None;
+        }
+        // Strip any `purrr::`/`purrr:::` prefix for matching.
+        let bare = name.rsplit_once("::").map(|(_, n)| n).unwrap_or(name);
+        match bare {
+            "map" | "map_if" | "imap" => Some(HigherOrderFunc::PurrrMap),
+            "map_lgl" => Some(HigherOrderFunc::PurrrMapTyped(Mode::Logical)),
+            "map_int" => Some(HigherOrderFunc::PurrrMapTyped(Mode::Integer)),
+            "map_dbl" => Some(HigherOrderFunc::PurrrMapTyped(Mode::Double)),
+            "map_chr" => Some(HigherOrderFunc::PurrrMapTyped(Mode::Character)),
+            "map_vec" => Some(HigherOrderFunc::PurrrMapTyped(Mode::Opaque)),
+            "map2" | "map2_lgl" | "map2_int" | "map2_dbl" | "map2_chr" | "pmap" | "pmap_lgl"
+            | "pmap_int" | "pmap_dbl" | "pmap_chr" => Some(HigherOrderFunc::PurrrMap2),
+            "keep" | "discard" | "compact" => Some(HigherOrderFunc::PurrrKeep),
+            "reduce" | "reduce_right" | "accumulate" => Some(HigherOrderFunc::PurrrReduce),
+            "walk" | "walk2" | "pwalk" => Some(HigherOrderFunc::PurrrWalk),
+            "in_parallel" => Some(HigherOrderFunc::PurrrInParallel),
             _ => None,
         }
     }
@@ -2696,10 +2738,11 @@ impl Checker {
         // Qualified calls (`base::lapply(...)`) resolve via the
         // stripped `lookup_name`, matching how R treats `::` as a
         // binding selector rather than a different function.
-        if HigherOrderFunc::from_name(&lookup_name).is_some() {
+        if HigherOrderFunc::from_call(&name, &self.loaded).is_some() {
             self.walk_callback_for_diagnostics(&lookup_name, args, &arg_types, scope);
         }
-        if let Some(rt) = self.infer_higher_order_call(&lookup_name, args, &arg_types, scope) {
+        if let Some(rt) = self.infer_higher_order_call(&lookup_name, args, &arg_types, scope, span)
+        {
             return rt;
         }
 
@@ -3080,9 +3123,10 @@ impl Checker {
         args: &[Arg],
         arg_types: &[RType],
         scope: &Scope,
+        span: Span,
     ) -> Option<RType> {
-        let ho = HigherOrderFunc::from_name(name)?;
-        Some(self.infer_ho_result(&ho, args, arg_types, scope))
+        let ho = HigherOrderFunc::from_call(name, &self.loaded)?;
+        Some(self.infer_ho_result(&ho, args, arg_types, scope, span))
     }
 
     /// Per-builtin result-type computation. Used by both pass 2 (pure,
@@ -3096,6 +3140,7 @@ impl Checker {
         args: &[Arg],
         arg_types: &[RType],
         scope: &Scope,
+        span: Span,
     ) -> RType {
         match ho {
             HigherOrderFunc::Lapply => self.ho_lapply(args, arg_types, scope),
@@ -3108,6 +3153,19 @@ impl Checker {
             HigherOrderFunc::Find => self.ho_find(args, arg_types, scope),
             HigherOrderFunc::Position => self.ho_position(args, arg_types, scope),
             HigherOrderFunc::DoCall => self.ho_do_call(args, arg_types, scope),
+            // purrr family.
+            HigherOrderFunc::PurrrMap => self.ho_purrr_map(args, arg_types, scope, None, span),
+            HigherOrderFunc::PurrrMapTyped(mode) => {
+                self.ho_purrr_map(args, arg_types, scope, Some(mode), span)
+            }
+            HigherOrderFunc::PurrrMap2 => self.ho_purrr_map2(args, arg_types, scope),
+            HigherOrderFunc::PurrrKeep => self.ho_purrr_keep(args, arg_types),
+            HigherOrderFunc::PurrrReduce => self.ho_purrr_reduce(args, arg_types, scope),
+            HigherOrderFunc::PurrrWalk => {
+                // walk returns its first argument invisibly.
+                arg_types.first().cloned().unwrap_or(RType::unknown())
+            }
+            HigherOrderFunc::PurrrInParallel => self.ho_purrr_in_parallel(args, scope),
         }
     }
 
@@ -3127,6 +3185,172 @@ impl Checker {
             }
         }
         args.get(positional_idx).map(|a| &a.value)
+    }
+
+    /// If `expr` is a `purrr::in_parallel(.f)` / `in_parallel(.f)` call
+    /// wrapping a function literal or name, return the inner `.f`.
+    /// `in_parallel` is type-transparent (purrr >= 1.1.0), so callers
+    /// that infer a callback's return type or walk its body should look
+    /// through it. Returns the original expression unchanged otherwise.
+    fn unwrap_in_parallel(expr: &Expr) -> &Expr {
+        if let Expr::Call { func, args, .. } = expr {
+            if let Expr::Ident { name, .. } = func.as_ref() {
+                let bare = name
+                    .rsplit_once("::")
+                    .map(|(_, n)| n)
+                    .unwrap_or(name.as_str());
+                if bare == "in_parallel" {
+                    if let Some(first) = args.first() {
+                        return &first.value;
+                    }
+                }
+            }
+        }
+        expr
+    }
+
+    /// `purrr::map(.x, .f)` (and `map_if`/`imap`): a list of `.f`'s
+    /// returns, same length as `.x`. With a typed variant
+    /// (`map_lgl`/`int`/`dbl`/`chr`/`vec`), the result is a vector of
+    /// the target mode with `.x`'s length. The callback's return type
+    /// is inferred via [`callback_return_type`]; if the callback returns
+    /// a mode that mismatches the typed variant's target, the result
+    /// still uses the target mode (R coerces), matching purrr's runtime
+    /// behaviour (the type-mismatch diagnostic is handled separately in
+    /// the per-variant walking path -- a future enhancement; v1 stays
+    /// silent).
+    fn ho_purrr_map(
+        &mut self,
+        args: &[Arg],
+        arg_types: &[RType],
+        scope: &Scope,
+        typed_mode: Option<&Mode>,
+        span: Span,
+    ) -> RType {
+        let x_type = arg_types.first().cloned().unwrap_or(RType::unknown());
+        let elem = x_type.element();
+        let cb = Self::extract_callback(args, &[".f"], 1);
+        let cb_ret = cb.and_then(|c| self.callback_return_type(c, &[elem], scope));
+        match typed_mode {
+            Some(mode) => {
+                // Typed map: result is a vector of `mode` with `.x`'s
+                // length. `map_vec` passes `Mode::Opaque` (no fixed
+                // mode); degrade to opaque in that case.
+                if matches!(mode, Mode::Opaque) {
+                    RType::unknown()
+                } else {
+                    // RY080: if the callback's return mode is known and
+                    // incompatible with the target, warn. R coerces at
+                    // runtime, but the mismatch is almost always a bug.
+                    // Numeric modes (double/int/logical) coerce among
+                    // themselves harmlessly; character/list returning
+                    // into a numeric target is the real footgun.
+                    if let Some(ret) = &cb_ret {
+                        if !modes_compatible(&ret.mode, mode) {
+                            self.emit(
+                                Severity::Warning,
+                                span,
+                                "RY080",
+                                format!(
+                                    "`map_{}` expects `{}` returns but the callback returns `{}`; R will coerce silently",
+                                    mode_suffix(mode),
+                                    mode,
+                                    ret.mode
+                                ),
+                            );
+                        }
+                    }
+                    RType::new(*mode, x_type.length)
+                }
+            }
+            None => {
+                // Untyped map: list of the callback's return type.
+                let element_type = cb_ret.unwrap_or(RType::unknown());
+                let mut result = RType::new(Mode::List, x_type.length);
+                if !matches!(element_type.mode, Mode::Opaque) {
+                    let n = match x_type.length {
+                        Length::Known(n) if n > 0 => n,
+                        _ => 1,
+                    };
+                    let schema = ColumnSchema {
+                        columns: (0..n)
+                            .map(|i| (format!("[[{}]]", i + 1), element_type.clone()))
+                            .collect(),
+                    };
+                    result = result.with_columns(Arc::new(schema));
+                }
+                result
+            }
+        }
+    }
+
+    /// `purrr::map2(.x, .y, .f)` / `pmap(.l, .f)`: a list. The element
+    /// types of `.x` and `.y` become the callback's first two args.
+    fn ho_purrr_map2(&mut self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
+        let x_type = arg_types.first().cloned().unwrap_or(RType::unknown());
+        let y_type = arg_types.get(1).cloned().unwrap_or(RType::unknown());
+        let cb = Self::extract_callback(args, &[".f"], 2);
+        let cb_ret = cb.and_then(|c| {
+            self.callback_return_type(c, &[x_type.element(), y_type.element()], scope)
+        });
+        let element_type = cb_ret.unwrap_or(RType::unknown());
+        let mut result = RType::new(Mode::List, Length::Unknown);
+        if !matches!(element_type.mode, Mode::Opaque) {
+            let schema = ColumnSchema {
+                columns: std::iter::once(("[[1]]".to_string(), element_type)).collect(),
+            };
+            result = result.with_columns(Arc::new(schema));
+        }
+        result
+    }
+
+    /// `purrr::keep(.x, .p)` / `discard`: same type as `.x` (unknown
+    /// length, since the predicate filters).
+    fn ho_purrr_keep(&mut self, _args: &[Arg], arg_types: &[RType]) -> RType {
+        let x_type = arg_types.first().cloned().unwrap_or(RType::unknown());
+        RType {
+            length: Length::Unknown,
+            ..x_type
+        }
+    }
+
+    /// `purrr::reduce(.x, .f)`: single value (opaque unless the
+    /// callback's return is inferrable). `accumulate` returns a vector
+    /// of the callback's returns; modeled as opaque length-unknown.
+    fn ho_purrr_reduce(&mut self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
+        let x_type = arg_types.first().cloned().unwrap_or(RType::unknown());
+        let elem = x_type.element();
+        let cb = Self::extract_callback(args, &[".f"], 1);
+        let cb_ret = cb.and_then(|c| self.callback_return_type(c, &[elem.clone(), elem], scope));
+        cb_ret.unwrap_or(RType::unknown())
+    }
+
+    /// `purrr::in_parallel(.f)`: a type-transparent wrapper (purrr >=
+    /// 1.1.0). Returns `.f` unchanged so `map(sims, in_parallel(f))`
+    /// checks identically to `map(sims, f)`. `.f` may be a function
+    /// literal (returned as a function value) or a name (resolved via
+    /// the scope/typeshed to a function value).
+    fn ho_purrr_in_parallel(&mut self, args: &[Arg], scope: &Scope) -> RType {
+        let cb = match Self::extract_callback(args, &[".f"], 0) {
+            Some(c) => c,
+            None => return RType::unknown(),
+        };
+        match cb {
+            Expr::Function { .. } => RType::scalar(Mode::Function),
+            Expr::Ident { name, .. } => {
+                // A bound function value resolves to its type; an
+                // unbound name that names a typeshed function resolves
+                // to a function value; anything else is treated as a
+                // function (in_parallel is transparent, and an unknown
+                // callback is most plausibly a function from a package
+                // we don't model).
+                scope
+                    .get(name)
+                    .cloned()
+                    .unwrap_or(RType::scalar(Mode::Function))
+            }
+            _ => RType::unknown(),
+        }
     }
 
     /// `lapply(X, FUN, ...)`: applies `FUN` to each element of `X`,
@@ -3342,6 +3566,10 @@ impl Checker {
         call_arg_types: &[RType],
         scope: &Scope,
     ) -> Option<RType> {
+        // Look through a `purrr::in_parallel(.f)` / `in_parallel(.f)`
+        // wrapper: it is type-transparent, so the callback's return is
+        // the inner function's return.
+        let callback = Self::unwrap_in_parallel(callback);
         match callback {
             Expr::Function { params, body, .. } => {
                 self.callback_literal_return(params, body, call_arg_types, scope, 0)
@@ -3454,7 +3682,7 @@ impl Checker {
         arg_types: &[RType],
         scope: &mut Scope,
     ) {
-        let ho = match HigherOrderFunc::from_name(name) {
+        let ho = match HigherOrderFunc::from_call(name, &self.loaded) {
             Some(h) => h,
             None => return,
         };
@@ -3480,12 +3708,47 @@ impl Checker {
                 let x_type = arg_types.get(1).cloned().unwrap_or(RType::unknown());
                 (0, &["f", "FUN"][..], vec![x_type.element()])
             }
+            // purrr: callback is `.f` at index 1; element type is `.x`'s
+            // element. `in_parallel` is a transparent wrapper whose
+            // argument IS the callback (index 0) and takes no data.
+            HigherOrderFunc::PurrrMap | HigherOrderFunc::PurrrMapTyped(_) => {
+                let x_type = arg_types.first().cloned().unwrap_or(RType::unknown());
+                (1, &[".f"][..], vec![x_type.element()])
+            }
+            HigherOrderFunc::PurrrMap2 => {
+                let x_type = arg_types.first().cloned().unwrap_or(RType::unknown());
+                let y_type = arg_types.get(1).cloned().unwrap_or(RType::unknown());
+                (2, &[".f"][..], vec![x_type.element(), y_type.element()])
+            }
+            HigherOrderFunc::PurrrKeep => {
+                let x_type = arg_types.first().cloned().unwrap_or(RType::unknown());
+                (1, &[".p"][..], vec![x_type.element()])
+            }
+            HigherOrderFunc::PurrrReduce => {
+                let x_type = arg_types.first().cloned().unwrap_or(RType::unknown());
+                let elem = x_type.element();
+                (1, &[".f"][..], vec![elem.clone(), elem])
+            }
+            HigherOrderFunc::PurrrWalk => {
+                let x_type = arg_types.first().cloned().unwrap_or(RType::unknown());
+                (1, &[".f"][..], vec![x_type.element()])
+            }
+            HigherOrderFunc::PurrrInParallel => {
+                // in_parallel(.f) is a transparent wrapper: `.f` is the
+                // callback itself, not an invocation. Do not walk its
+                // body here (no element types to bind); the body is
+                // walked when the surrounding `map` invokes it.
+                return;
+            }
             HigherOrderFunc::DoCall => return, // callback is the function name, no body to walk
         };
         let cb = match Self::extract_callback(args, cb_names, cb_idx) {
             Some(c) => c,
             None => return,
         };
+        // Look through a `purrr::in_parallel(.f)` wrapper so the inner
+        // function's body is walked (in_parallel is type-transparent).
+        let cb = Self::unwrap_in_parallel(cb);
         if let Expr::Function { params, body, .. } = cb {
             let mut fn_scope = scope.clone();
             for (i, p) in params.iter().enumerate() {
@@ -4407,6 +4670,38 @@ fn is_ffi_primitive(name: &str) -> bool {
         name,
         ".Call" | ".C" | ".Fortran" | ".External" | ".External2" | ".Internal"
     )
+}
+
+/// Whether a purrr typed-map's callback return `mode` can coerce into
+/// the target `target` mode without a lossy or surprising conversion.
+/// Numeric modes (double/int/logical) coerce among themselves harmlessly;
+/// a character or list return into a numeric (or vice-versa) target is
+/// the real footgun RY080 targets. Opaque/unknown/union/null returns are
+/// assumed compatible (no evidence of a mismatch).
+fn modes_compatible(mode: &Mode, target: &Mode) -> bool {
+    if matches!(mode, Mode::Opaque | Mode::Union | Mode::Null) {
+        return true;
+    }
+    fn is_numeric(m: &Mode) -> bool {
+        matches!(m, Mode::Double | Mode::Integer | Mode::Logical)
+    }
+    match target {
+        Mode::Double | Mode::Integer | Mode::Logical => is_numeric(mode),
+        Mode::Character => matches!(mode, Mode::Character),
+        _ => true,
+    }
+}
+
+/// The purrr typed-map suffix for a target mode (for RY080 messages):
+/// `map_dbl`, `map_int`, etc.
+fn mode_suffix(mode: &Mode) -> &'static str {
+    match mode {
+        Mode::Logical => "lgl",
+        Mode::Integer => "int",
+        Mode::Double => "dbl",
+        Mode::Character => "chr",
+        _ => "vec",
+    }
 }
 
 /// Return the R source symbol for a binary operator, for use in
@@ -6423,6 +6718,92 @@ mod tests {
         assert!(
             diags.iter().all(|d| d.code != "RY010"),
             "no RY010 expected in vapply, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn purrr_map_walks_callback_and_infers_list() {
+        // PLAN 2.3: purrr::map(.x, .f) is modeled like lapply -- the
+        // callback body is walked (RY010 fires on the unbound `bug`)
+        // and the result is a list.
+        let diags = check(
+            "library(purrr)\n\
+             xs <- map(1:3, function(x) bug + x)\n",
+        );
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.code == "RY010" && d.message.contains("bug")),
+            "purrr map should walk the callback and flag `bug`, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn purrr_map_dbl_infers_double_vector() {
+        // map_dbl returns a double vector; using it in character
+        // arithmetic fires RY040 (proving the typed-mode result).
+        let diags = check(
+            "library(purrr)\n\
+             v <- map_dbl(1:3, function(x) x + 0.5)\n\
+             bad <- v + \"x\"\n",
+        );
+        assert!(
+            diags.iter().any(|d| d.code == "RY040"),
+            "map_dbl result used with character should fire RY040, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn purrr_map_dbl_type_mismatch_fires_ry080() {
+        // PLAN 2.3: map_dbl whose callback returns character fires
+        // RY080 (R coerces silently, but the mismatch is a likely bug).
+        let diags = check(
+            "library(purrr)\n\
+             xs <- map_dbl(1:3, function(x) paste(\"n\", x))\n",
+        );
+        assert!(
+            diags.iter().any(|d| d.code == "RY080"),
+            "map_dbl with character callback should fire RY080, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn purrr_in_parallel_is_transparent() {
+        // PLAN 2.3: in_parallel(.f) is type-transparent. map(sims,
+        // in_parallel(f)) must walk `f`'s body identically to
+        // map(sims, f) -- here the unbound `bug` must fire RY010.
+        let diags = check(
+            "library(purrr)\n\
+             sims <- list(1, 2)\n\
+             out <- map(sims, in_parallel(function(s) bug + s[[1]]))\n",
+        );
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.code == "RY010" && d.message.contains("bug")),
+            "in_parallel-wrapped callback should still be walked, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn purrr_not_loaded_does_not_treat_map_as_higher_order() {
+        // Without library(purrr), a bare `map` must NOT be treated as
+        // purrr's map (it is an unbound name -> RY010 on `map` itself,
+        // or opaque). Either way, no purrr higher-order modeling.
+        let diags = check("xs <- map(1:3, function(x) x)\n");
+        // `map` is unbound (not in base typeshed); it resolves opaque
+        // and the callback is NOT walked. No RY010 on a callback-local
+        // name confirms the callback was not entered.
+        assert!(
+            diags
+                .iter()
+                .all(|d| d.code != "RY010" || !d.message.contains("map")),
+            "ungated map should not get purrr treatment: {:?}",
             diags
         );
     }

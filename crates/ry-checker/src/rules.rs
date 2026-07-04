@@ -104,6 +104,12 @@ pub const RULES: &[Rule] = &[
         default_severity: Severity::Error,
         summary: "A non-function value (a variable bound to a non-function, or a literal like `42()`) is being called as a function. R will error at runtime ('attempt to apply non-function' / 'could not find function').",
     },
+    Rule {
+        code: "RY080",
+        name: "map-return-type-mismatch",
+        default_severity: Severity::Warning,
+        summary: "A purrr typed-map (`map_dbl`, `map_int`, ...) callback returns a value whose mode is incompatible with the target vector type. R coerces at runtime, but the mismatch is almost always unintended.",
+    },
 ];
 
 pub fn find(code: &str) -> Option<&'static Rule> {

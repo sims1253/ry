@@ -48,5 +48,10 @@ jobs:
           Rscript --version
       - name: Audit typeshed (no fabricated entries)
         run: Rscript scripts/audit_typeshed.R
+      - name: Install purrr + mirai (for oracle fixtures)
+        # The oracle suite now includes purrr/mirai fixtures that shell
+        # out to Rscript and require both packages. Install from CRAN.
+        run: |
+          Rscript -e 'install.packages(c("purrr","mirai"), repos="https://cloud.r-project.org")'
       - name: Oracle suite
         run: cargo test -p ry-checker --test oracle -- --ignored --nocapture

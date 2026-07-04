@@ -70,50 +70,49 @@ fn source_line(src: &str, pos: usize) -> &str {
 #[test]
 fn glue_vendor_snapshot() {
     // -----------------------------------------------------------------
-    // Triage of the glue vendor snapshot (12 diagnostics as first
-    // captured). Each is classified below. Per PLAN Phase F's bar, if a
-    // single rule dominates the snapshot that rule has a systemic
-    // problem -- flagged at the end.
+    // Triage of the glue vendor snapshot.
     //
-    // RY002 (6x -- DOMINANT, systemic): `if` condition has length
-    //   `Unknown`. All six sites are scalar-boolean conditions
-    //   (`!inherits(...)`, `too_wide`, `should_collapse`,
-    //   `!requireNamespace(...)`) where ry conservatively types the
-    //   condition length as Unknown and RY002 fires. RY002 should only
-    //   fire when the length is KNOWN to be > 1; the Unknown case is a
-    //   false positive. SYSTEMIC ISSUE -- file "RY002 should not fire on
-    //   Unknown-length conditions" at the top of the next plan.
-    //     color.R:97, color.R:104, glue.R:277, sql.R:220, sql.R:242,
-    //     sql.R:255, transformer.R:22
+    // After PLAN Phase 1 (round 3), this snapshot is EMPTY -- zero
+    // diagnostics across the whole glue package. All 12 of the original
+    // false positives were resolved:
     //
-    // RY010 (3x -- known limitations, not systemic):
-    //   * glue.R:187 `glue_`, glue.R:319 `trim_` -- these are
-    //     C-entry-point NAME STRINGS passed to `.Call(glue_, ...)`, not
-    //     variable references. ry doesn't model `.Call` semantics.
-    //     Planned fix: special-case `.Call` so its first arg is not
-    //     treated as an identifier reference.
-    //   * utils.R:90 `delayedAssign` -- a base-R function not in ry's
-    //     typeshed. Planned fix: add `delayedAssign` to the typeshed.
+    // RY002 (was 6x, DOMINANT -- fixed in Phase 1.1): RY002 now fires
+    //   ONLY when the condition length is Known(n > 1), never on
+    //   Unknown. The six sites (`!inherits(...)`, `too_wide`,
+    //   `should_collapse`, `!requireNamespace(...)`) are all
+    //   scalar-boolean conditions typed length-Unknown.
     //
-    // RY070 (3x -- known limitations, not systemic):
-    //   * color.R:123 `color_fun` -- the parameter defaults to NULL and
-    //     the code guards `if (is.null(color_fun)) ... else color_fun(out)`.
-    //     ry doesn't narrow across the null-guard, so the else-branch
-    //     call types the parameter as NULL. Planned fix: flow-sensitive
-    //     null-narrowing (the `extract_type_narrowing` machinery exists
-    //     for `is.X` predicates; extend it to `is.null`).
-    //   * glue.R:191 `lengths` -- `lengths` is a base-R builtin not in
-    //     the typeshed, so the call resolves the callee to the argument
-    //     type. Planned fix: add `lengths` to the typeshed.
+    // RY010 (was 3x -- fixed across Phase 1.3/1.4):
+    //   * glue.R:187 `glue_`, glue.R:319 `trim_` -- Phase 1.3 models
+    //     `.Call`/`.C`/`.Fortran`/... so the C-entry-point first arg is
+    //     no longer treated as a variable reference.
+    //   * utils.R:90 `delayedAssign` -- Phase 1.4 added it to the
+    //     typeshed.
     //
-    // Summary: 0 true positives. 6 false positives of one systemic
-    // kind (RY002/Unknown), 6 known-limitation false positives across
-    // three distinct gaps (`.Call` modeling, missing typeshed entries,
-    // null-narrowing). The RY002 dominance is the action item.
+    // RY070 (was 3x -- fixed across Phase 1.2/1.4):
+    //   * color.R:123 `color_fun` -- Phase 1.2 null-narrowing: the
+    //     else branch of an `is.null` guard narrows NULL away.
+    //   * glue.R:191 `lengths` -- Phase 1.4 added `lengths` to the
+    //     typeshed AND fixed R's function/value namespace separation at
+    //     call sites (a local non-function binding does not shadow a
+    //     same-named function in a call).
+    //
+    // The snapshot MUST stay empty: any future diagnostic on glue is a
+    // regression. A second vendor package is pinned separately to keep
+    // the net honest now that glue is clean.
     // -----------------------------------------------------------------
 
+    let rendered = check_vendor(VENDOR_DIR);
+    insta::assert_yaml_snapshot!("glue_vendor", rendered);
+}
+
+/// Load every `.R` file under `testdata/vendor/<subdir>/R`, run
+/// `Project::check`, and return the diagnostics rendered as a sorted
+/// list of `file:line:col CODE message` strings (using the file stem
+/// for path stability).
+fn check_vendor(vendor_subdir: &str) -> Vec<String> {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let vendor_root = std::path::Path::new(manifest_dir).join(VENDOR_DIR);
+    let vendor_root = std::path::Path::new(manifest_dir).join(vendor_subdir);
 
     let mut entries: Vec<_> = match std::fs::read_dir(&vendor_root) {
         Ok(e) => e.flatten().collect(),
@@ -123,7 +122,7 @@ fn glue_vendor_snapshot() {
                 vendor_root.display(),
                 e
             );
-            return;
+            return Vec::new();
         }
     };
     entries.sort_by_key(|e| e.path());
@@ -159,6 +158,45 @@ fn glue_vendor_snapshot() {
     }
 
     let per_file = project.check();
-    let rendered = render_diags(&per_file, &srcs);
-    insta::assert_yaml_snapshot!("glue_vendor", rendered);
+    render_diags(&per_file, &srcs)
+}
+
+#[test]
+fn purrr_vendor_snapshot() {
+    // -----------------------------------------------------------------
+    // Triage of the purrr vendor snapshot (purrr 1.2.2, MIT). The second
+    // vendor net, added in PLAN Phase 1 (round 3) to keep the regression
+    // net honest now that glue is clean. purrr is the flagship tidyverse
+    // functional-programming package and the target of Phase 2.3's
+    // higher-order modeling, so most of these are EXPECTED to disappear
+    // once package awareness (Phase 2.1/2.2) and purrr modeling (Phase
+    // 2.3) land. None are true positives.
+    //
+    // RY010 (dominant): cross-package function names not yet modeled --
+    //   rlang (quo_get_expr, eval_tidy, is_bare_list, is_quosure,
+    //   as_quosure, is_bare_formula, obj_is_list), vctrs (vec_set_union),
+    //   and purrr's own C-backed impls (map_impl, map2_impl, pmap_impl).
+    //   These resolve once the package typeshed (Phase 2.2) covers rlang
+    //   and vctrs and purrr's internal helpers are registered.
+    //
+    // RY001 (2x): the `if (length(x))` idiom. `length()` returns an
+    //   integer length-1; R silently coerces integer->logical in `if`.
+    //   The rule warns about that coercion, which is harmless and
+    //   idiomatic here. Known limitation: RY001 could special-case the
+    //   `if (length(.))` / `if (nrow(.))` numeric-truthiness idiom.
+    //
+    // RY002 + RY032 (2x, same root cause): `%in%` is typed with the RHS
+    //   length instead of the LHS length. `x %in% c("a","b")` where x is
+    //   length 1 returns a length-1 logical, but ry models it as length
+    //   2 (the RHS). That wrong length then drives RY002 (condition len
+    //   2) and RY032 (`&&` on a len-2 operand). Modeling bug in `%in%`;
+    //   a separate fix from Phase 1's scope, surfaced by this net.
+    //
+    // Summary: 0 true positives. The net is doing its job -- it caught a
+    //   real `%in%` length-modeling bug and a stack of cross-package
+    //   names that Phase 2 must cover.
+    // -----------------------------------------------------------------
+
+    let rendered = check_vendor("testdata/vendor/purrr/R");
+    insta::assert_yaml_snapshot!("purrr_vendor", rendered);
 }

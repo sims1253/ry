@@ -2,15 +2,4 @@
 source: crates/ry-checker/tests/vendor_snapshot.rs
 expression: rendered
 ---
-- "color.R:104:7 RY002 `if` condition has length Unknown, will only use first element"
-- "color.R:123:5 RY070 `color_fun` is `NULL`, not a function; cannot call it"
-- "color.R:97:7 RY002 `if` condition has length Unknown, will only use first element"
-- "glue.R:187:16 RY010 variable `glue_` is not bound in this scope"
-- "glue.R:191:11 RY070 `lengths` is `integer`, not a function; cannot call it"
-- "glue.R:277:9 RY002 `if` condition has length Unknown, will only use first element"
-- "glue.R:319:9 RY010 variable `trim_` is not bound in this scope"
-- "sql.R:220:9 RY002 `if` condition has length Unknown, will only use first element"
-- "sql.R:242:13 RY002 `if` condition has length Unknown, will only use first element"
-- "sql.R:255:9 RY002 `if` condition has length Unknown, will only use first element"
-- "transformer.R:22:7 RY002 `if` condition has length Unknown, will only use first element"
-- "utils.R:90:11 RY010 variable `delayedAssign` is not bound in this scope"
+[]

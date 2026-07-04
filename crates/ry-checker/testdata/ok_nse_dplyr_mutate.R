@@ -3,5 +3,6 @@
 # on an existing column. The expression is evaluated against an
 # augmented scope where `mpg` resolves to the `mtcars` column type, so
 # the arithmetic is well-typed.
+library(dplyr)
 df <- mtcars
 df2 <- mutate(df, kml = mpg * 0.425)

@@ -5,4 +5,5 @@
 # against the augmented scope built from the piped data frame, so `cyl`,
 # `mpg`, and `hp` all resolve and no RY010 is emitted.
 library(magrittr)
+library(dplyr)
 result <- mtcars %>% filter(cyl == 4) %>% select(mpg, hp)

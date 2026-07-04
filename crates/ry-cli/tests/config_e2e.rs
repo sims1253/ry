@@ -357,3 +357,50 @@ fn color_flag_accepts_known_values() {
         );
     }
 }
+
+#[test]
+fn ry_toml_packages_enables_dplyr_nse() {
+    // Phase 2.1: a `packages = ["dplyr"]` in ry.toml makes a bare
+    // `filter(df, mpg > 0)` resolve as dplyr's NSE verb, so the column
+    // reference `mpg` (a real mtcars column) does NOT fire RY010.
+    // Without `packages` (or an inline `library(dplyr)`), `filter`
+    // falls through to regular resolution and `mpg` would be reported
+    // as unbound.
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(tmp.path().join("ry.toml"), "packages = [\"dplyr\"]\n").unwrap();
+    fs::write(
+        tmp.path().join("use.R"),
+        // `df` is the mtcars data frame from the typeshed; the dplyr
+        // NSE handler augments scope with its column schema so `mpg`
+        // resolves. No RY010 should fire on `mpg`.
+        "df <- mtcars\nsmall <- filter(df, mpg > 0)\n",
+    )
+    .unwrap();
+
+    let output = ry_check(tmp.path());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("RY010"),
+        "with packages=[\"dplyr\"], filter() NSE should suppress RY010 on `mpg`, got: {stderr}"
+    );
+}
+
+#[test]
+fn ry_toml_without_packages_does_not_gate_dplyr_nse() {
+    // Counterpart: with NO `packages` key and NO inline `library(dplyr)`,
+    // a bare `filter(df, mpg > 0)` must fall through to regular
+    // resolution, so the unbound `mpg` fires RY010.
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(
+        tmp.path().join("use.R"),
+        "df <- mtcars\nsmall <- filter(df, mpg > 0)\n",
+    )
+    .unwrap();
+
+    let output = ry_check(tmp.path());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("RY010"),
+        "without packages or library(dplyr), filter() should fall through and emit RY010 on `mpg`, got: {stderr}"
+    );
+}

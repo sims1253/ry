@@ -397,7 +397,7 @@ fn run_check(
     }
 
     // Run the initial check.
-    let result = run_check_once(&all_paths, &filter, format)?;
+    let result = run_check_once(&all_paths, &filter, format, &cfg.packages)?;
     result.print_summary(format);
 
     if !watch {
@@ -474,7 +474,7 @@ fn run_check(
             // Using ANSI escape sequences rather than `clear` command
             // for portability (no external process spawn).
             eprint!("\x1b[2J\x1b[H");
-            let result = run_check_once(&all_paths, &filter, format)?;
+            let result = run_check_once(&all_paths, &filter, format, &cfg.packages)?;
             result.print_summary(format);
         }
     }
@@ -545,6 +545,7 @@ fn run_check_once(
     all_paths: &[PathBuf],
     filter: &ry_checker::SeverityFilter,
     format: ry_checker::format::OutputFormat,
+    packages: &[String],
 ) -> Result<CheckResult> {
     let mut all_diagnostics: Vec<ry_checker::Diagnostic> = Vec::new();
     let mut srcs: HashMap<String, String> = HashMap::new();
@@ -555,6 +556,10 @@ fn run_check_once(
     // Multi-file project mode: build a single `Project` so functions
     // defined in one file are visible when checking another.
     let mut project = ry_checker::Project::new();
+    // Seed the project's loaded-packages set from `ry.toml`'s `packages`
+    // key. `Project::check` will additionally union in any per-file
+    // `library`/`require`/`requireNamespace` loads.
+    project.set_loaded(packages.iter().cloned().collect());
     // One `RParser` for the whole run: tree-sitter's parser is designed
     // to be reused across documents (the grammar is loaded once), so
     // constructing it per file is pure waste (PLAN Phase D2).

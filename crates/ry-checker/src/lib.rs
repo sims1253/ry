@@ -750,6 +750,15 @@ pub struct Checker {
     pub(crate) return_slots: Arc<ReturnSlots>,
     /// Stack of function names currently being inferred (cycle detection).
     pub(crate) inferring: Vec<String>,
+    /// Packages loaded via `library(pkg)` / `require(pkg)` /
+    /// `requireNamespace("pkg")`, plus any declared in `ry.toml`'s
+    /// `packages` key (threaded in via `set_loaded`). The dplyr NSE
+    /// verbs are gated on `dplyr` (or `tidyverse`) being present here,
+    /// so a bare `filter(df, ...)` only gets dplyr NSE treatment when
+    /// dplyr is in scope; otherwise it falls through to regular
+    /// resolution. A plain owned set per emitter (rather than Arc-shared
+    /// like the tables) is fine: it is small and rarely mutated.
+    pub(crate) loaded: HashSet<String>,
 }
 
 impl Checker {
@@ -763,6 +772,7 @@ impl Checker {
             fn_table: Arc::new(FnTable::default()),
             return_slots: Arc::new(ReturnSlots::default()),
             inferring: Vec::new(),
+            loaded: HashSet::new(),
         }
     }
 
@@ -829,6 +839,7 @@ impl Checker {
             fn_table: Arc::new(fn_table),
             return_slots: Arc::new(return_slots),
             inferring: Vec::new(),
+            loaded: HashSet::new(),
         }
     }
 
@@ -851,6 +862,7 @@ impl Checker {
             fn_table,
             return_slots,
             inferring: Vec::new(),
+            loaded: HashSet::new(),
         }
     }
 
@@ -873,6 +885,29 @@ impl Checker {
     pub(crate) fn collect_file_fns(&mut self, file: &SourceFile) {
         self.path = file.path.clone();
         self.collect_fns(&file.stmts);
+    }
+
+    /// Collect packages loaded by `library`/`require`/`requireNamespace`
+    /// anywhere in this file, WITHOUT emitting diagnostics. Returns the
+    /// set of package names so `Project::check` can union them across
+    /// files (a `library(dplyr)` in any file makes dplyr NSE verbs work
+    /// in every file, matching the plan's cross-file union intent).
+    ///
+    /// Implementation: walk the file in discarding mode so `infer_call`'s
+    /// library/require/requireNamespace recording populates `self.loaded`
+    /// via the same code path used during real checking; we then take
+    /// the set. Discarding mode guarantees no diagnostics are emitted
+    /// even though we run the full inference walker.
+    pub(crate) fn collect_file_loaded(&mut self, file: &SourceFile) -> HashSet<String> {
+        self.path = file.path.clone();
+        let prev = self.discarding;
+        self.discarding = true;
+        let mut scope = Scope::default();
+        for s in &file.stmts {
+            self.check_stmt(s, &mut scope);
+        }
+        self.discarding = prev;
+        std::mem::take(&mut self.loaded)
     }
 
     /// Pass 2: refine all function return types until convergence.
@@ -922,6 +957,15 @@ impl Checker {
 
     pub fn take_diagnostics(&mut self) -> Vec<Diagnostic> {
         std::mem::take(&mut self.diagnostics)
+    }
+
+    /// Seed the loaded-packages set. Called by `Project` (with the
+    /// union of `ry.toml` `packages` and every file's `library`/
+    /// `require`/`requireNamespace` calls) before pass-3 emission, and
+    /// by the CLI for single-file `Checker` paths. The dplyr NSE verbs
+    /// consult this set to decide whether to apply dplyr semantics.
+    pub fn set_loaded(&mut self, loaded: HashSet<String>) {
+        self.loaded = loaded;
     }
 
     /// Apply a `SeverityFilter` to the diagnostics collected so far,
@@ -2287,9 +2331,31 @@ impl Checker {
         // `library(foo)` and `require(foo)` take a package name as a bare
         // symbol, not an expression. Inferring their args would trigger
         // spurious RY010 on every `library(magrittr)` etc. Return NULL
-        // (these functions return invisible(NULL) at runtime).
+        // (these functions return invisible(NULL) at runtime). We ALSO
+        // record the package name into `self.loaded` so the dplyr NSE
+        // gating (see `infer_nse_call`) can treat dplyr/tidyverse as in
+        // scope after a `library(dplyr)` / `library(tidyverse)`.
         if name == "library" || name == "require" {
+            if let Some(first) = args.first() {
+                if let Expr::Ident { name: pkg, .. } = &first.value {
+                    self.loaded.insert(pkg.clone());
+                }
+            }
             return RType::new(Mode::Null, Length::Zero);
+        }
+
+        // `requireNamespace("pkg")` takes a STRING literal (unlike
+        // library/require, which take a bare symbol). Record the package
+        // name into `self.loaded` for the same gating reason, then fall
+        // through: requireNamespace resolves via the typeshed to a
+        // length-1 logical, so normal arg inference is harmless (the
+        // string literal has no unbound refs to fire RY010).
+        if name == "requireNamespace" {
+            if let Some(first) = args.first() {
+                if let Expr::String(pkg, _) = &first.value {
+                    self.loaded.insert(pkg.clone());
+                }
+            }
         }
 
         // Foreign-function-interface primitives (`.Call`, `.C`,
@@ -2611,7 +2677,44 @@ impl Checker {
         scope: &mut Scope,
         span: Span,
     ) -> Option<RType> {
-        let verb = NseVerb::from_name(name)?;
+        // Strip any `pkg::`/`pkg:::` prefix for verb recognition so a
+        // qualified call like `dplyr::filter(...)` still matches. The
+        // full `name` is retained below for the dplyr-qualification
+        // check in the gating logic.
+        let lookup_name = name
+            .rsplit_once("::")
+            .map(|(_, n)| n.to_string())
+            .unwrap_or_else(|| name.to_string());
+        let verb = NseVerb::from_name(&lookup_name)?;
+
+        // Gate the dplyr verbs on dplyr (or tidyverse) being loaded, OR
+        // on the call being `dplyr::`-qualified. The base-R NSE verbs
+        // (subset/with/within/transform) are always-on and never reach
+        // this check. Without this gate, a bare `filter(df, ...)` in a
+        // script that never loads dplyr would be mis-interpreted as
+        // dplyr's row filter and silently swallow column refs that are
+        // genuinely unbound; instead we fall through to regular
+        // resolution (stats::filter / opaque) so RY010 still fires.
+        // `name` carries any `pkg::` prefix (see the parser's
+        // `lower_namespace`), so `starts_with("dplyr::")` covers both
+        // `dplyr::filter` and the triple-colon `dplyr:::filter`.
+        let is_dplyr_verb = matches!(
+            verb,
+            NseVerb::Filter
+                | NseVerb::Mutate
+                | NseVerb::Summarise
+                | NseVerb::Select
+                | NseVerb::Arrange
+                | NseVerb::GroupBy
+        );
+        if is_dplyr_verb
+            && !name.starts_with("dplyr::")
+            && !self.loaded.contains("dplyr")
+            && !self.loaded.contains("tidyverse")
+        {
+            return None;
+        }
+
         // The data frame is the first positional argument. If it's
         // absent, fall through to the regular path (R would error at
         // runtime; v1 stays silent and defers).
@@ -5710,14 +5813,15 @@ mod tests {
         // NSE handler, `mpg` would be reported as unbound (RY010). The
         // handler injects the data frame's column schema so the
         // comparison is well-typed.
-        let diags = check("df <- mtcars\nsmall <- filter(df, mpg > 20)\n");
+        let diags = check("library(dplyr)\ndf <- mtcars\nsmall <- filter(df, mpg > 20)\n");
         assert!(
             diags.iter().all(|d| d.code != "RY010"),
             "dplyr filter NSE handler should suppress RY010 on column refs, got {:?}",
             diags
         );
         // `filter` preserves the data frame type.
-        let (_, scope) = check_with_scope("df <- mtcars\nsmall <- filter(df, mpg > 20)\n");
+        let (_, scope) =
+            check_with_scope("library(dplyr)\ndf <- mtcars\nsmall <- filter(df, mpg > 20)\n");
         let small = scope.get("small").expect("small should be bound");
         assert!(
             small.class.contains("data.frame"),
@@ -5735,13 +5839,15 @@ mod tests {
         // `mutate(df, kml = mpg * 0.425)` evaluates `mpg * 0.425`
         // against an augmented scope. Without the handler, `mpg` would
         // fire RY010.
-        let diags = check("df <- mtcars\ndf2 <- mutate(df, kml = mpg * 0.425)\n");
+        let diags = check("library(dplyr)\ndf <- mtcars\ndf2 <- mutate(df, kml = mpg * 0.425)\n");
         assert!(
             diags.iter().all(|d| d.code != "RY010"),
             "dplyr mutate NSE handler should suppress RY010 on column refs, got {:?}",
             diags
         );
-        let (_, scope) = check_with_scope("df <- mtcars\ndf2 <- mutate(df, kml = mpg * 0.425)\n");
+        let (_, scope) = check_with_scope(
+            "library(dplyr)\ndf <- mtcars\ndf2 <- mutate(df, kml = mpg * 0.425)\n",
+        );
         let df2 = scope.get("df2").expect("df2 should be bound");
         assert!(
             df2.class.contains("data.frame"),
@@ -5756,13 +5862,14 @@ mod tests {
         // frame. The column reference `mpg` resolves via the augmented
         // scope. The result is a fresh data frame type whose schema we
         // do not know (the columns are aggregations, not the inputs).
-        let diags = check("df <- mtcars\ns <- summarise(df, m = mean(mpg))\n");
+        let diags = check("library(dplyr)\ndf <- mtcars\ns <- summarise(df, m = mean(mpg))\n");
         assert!(
             diags.iter().all(|d| d.code != "RY010"),
             "dplyr summarise NSE handler should suppress RY010 on column refs, got {:?}",
             diags
         );
-        let (_, scope) = check_with_scope("df <- mtcars\ns <- summarise(df, m = mean(mpg))\n");
+        let (_, scope) =
+            check_with_scope("library(dplyr)\ndf <- mtcars\ns <- summarise(df, m = mean(mpg))\n");
         let s = scope.get("s").expect("s should be bound");
         assert!(
             s.class.contains("data.frame"),
@@ -5781,13 +5888,14 @@ mod tests {
         // The American-English `summarize` is an alias for `summarise`
         // and must dispatch to the same handler. `hp` resolves against
         // the augmented scope; the result is a data frame.
-        let diags = check("df <- mtcars\ns <- summarize(df, m = mean(hp))\n");
+        let diags = check("library(dplyr)\ndf <- mtcars\ns <- summarize(df, m = mean(hp))\n");
         assert!(
             diags.iter().all(|d| d.code != "RY010"),
             "dplyr summarize alias should suppress RY010 on column refs, got {:?}",
             diags
         );
-        let (_, scope) = check_with_scope("df <- mtcars\ns <- summarize(df, m = mean(hp))\n");
+        let (_, scope) =
+            check_with_scope("library(dplyr)\ndf <- mtcars\ns <- summarize(df, m = mean(hp))\n");
         let s = scope.get("s").expect("s should be bound");
         assert!(
             s.class.contains("data.frame"),
@@ -5804,6 +5912,7 @@ mod tests {
         // resolve via the augmented scope and no RY010 fires.
         let diags = check(
             "library(magrittr)\n\
+             library(dplyr)\n\
              result <- mtcars %>% filter(cyl == 4) %>% select(mpg, hp)\n",
         );
         assert!(
@@ -5816,6 +5925,7 @@ mod tests {
         // mtcars' type).
         let (_, scope) = check_with_scope(
             "library(magrittr)\n\
+             library(dplyr)\n\
              result <- mtcars %>% filter(cyl == 4) %>% select(mpg, hp)\n",
         );
         let result = scope.get("result").expect("result should be bound");
@@ -5843,11 +5953,77 @@ mod tests {
     }
 
     #[test]
+    fn nse_dplyr_filter_ungated_falls_through_when_not_loaded() {
+        // Phase 2.1 gating: a bare `filter(df, ...)` in a script that
+        // has NOT loaded dplyr must NOT be treated as dplyr's verb.
+        // The column reference `mpg` is genuinely unbound in this scope
+        // (no library(dplyr)), so RY010 must fire.
+        let diags = check("df <- mtcars\nsmall <- filter(df, mpg > 20)\n");
+        assert!(
+            diags.iter().any(|d| d.code == "RY010"),
+            "ungated filter() without library(dplyr) should fall through and emit RY010 on `mpg`, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn nse_dplyr_filter_qualified_resolves_without_library() {
+        // Phase 2.1 gating: `dplyr::filter(...)` is always treated as
+        // dplyr's verb regardless of whether dplyr is loaded, because
+        // the `dplyr::` prefix is an explicit namespace reference. So
+        // the column ref `mpg` must NOT fire RY010.
+        let diags = check("df <- mtcars\nsmall <- dplyr::filter(df, mpg > 20)\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "dplyr::-qualified filter() should suppress RY010 on column refs without library(dplyr), got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn nse_dplyr_filter_library_records_loaded() {
+        // Phase 2.1 gating: `library(dplyr)` records dplyr into the
+        // loaded set, so a subsequent `filter(df, ...)` resolves as
+        // dplyr's verb and the column ref `mpg` does NOT fire RY010.
+        let diags = check("library(dplyr)\ndf <- mtcars\nsmall <- filter(df, mpg > 20)\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "library(dplyr) + filter() should suppress RY010 on column refs, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn nse_dplyr_filter_requirenamespace_records_loaded() {
+        // `requireNamespace("dplyr")` also records into the loaded set.
+        let diags =
+            check("requireNamespace(\"dplyr\")\ndf <- mtcars\nsmall <- filter(df, mpg > 20)\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "requireNamespace(\"dplyr\") + filter() should suppress RY010 on column refs, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn nse_dplyr_filter_tidyverse_counts_as_dplyr() {
+        // `library(tidyverse)` loads dplyr transitively; the gating
+        // treats tidyverse as a synonym for dplyr.
+        let diags = check("library(tidyverse)\ndf <- mtcars\nsmall <- filter(df, mpg > 20)\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "library(tidyverse) + filter() should suppress RY010 on column refs, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
     fn nse_dplyr_arrange_groupby_preserve_type() {
         // `arrange` and `group_by` walk their column-reference args in
         // the augmented scope and preserve the input data frame type.
         let diags = check(
-            "df <- mtcars\n\
+            "library(dplyr)\n\
+             df <- mtcars\n\
              sorted <- arrange(df, mpg)\n\
              grouped <- group_by(df, cyl)\n",
         );
@@ -5857,7 +6033,8 @@ mod tests {
             diags
         );
         let (_, scope) = check_with_scope(
-            "df <- mtcars\n\
+            "library(dplyr)\n\
+             df <- mtcars\n\
              sorted <- arrange(df, mpg)\n\
              grouped <- group_by(df, cyl)\n",
         );

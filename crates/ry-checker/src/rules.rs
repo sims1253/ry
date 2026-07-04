@@ -30,7 +30,7 @@ pub const RULES: &[Rule] = &[
         code: "RY002",
         name: "condition-length",
         default_severity: Severity::Warning,
-        summary: "`if` condition has length > 1; only the first element is used.",
+        summary: "`if` condition length is known to be greater than 1; only the first element is used.",
     },
     Rule {
         code: "RY010",

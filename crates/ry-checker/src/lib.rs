@@ -1299,16 +1299,20 @@ impl Checker {
                             ct.mode
                         ),
                     );
-                } else if matches!(ct.mode, Mode::Logical) && !matches!(ct.length, Length::One) {
-                    self.emit(
-                        Severity::Warning,
-                        span_of(cond),
-                        "RY002",
-                        format!(
-                            "`if` condition has length {:?}, will only use first element",
-                            ct.length
-                        ),
-                    );
+                } else if matches!(ct.mode, Mode::Logical) {
+                    if let Length::Known(n) = ct.length {
+                        if n > 1 {
+                            self.emit(
+                                Severity::Warning,
+                                span_of(cond),
+                                "RY002",
+                                format!(
+                                    "`if` condition has length {}, will only use first element",
+                                    n
+                                ),
+                            );
+                        }
+                    }
                 }
                 let narrowing = extract_type_narrowing(cond);
                 let (then_scope, else_scope) = apply_narrowing(scope, &narrowing);
@@ -2097,16 +2101,20 @@ impl Checker {
                     ct.mode
                 ),
             );
-        } else if matches!(ct.mode, Mode::Logical) && !matches!(ct.length, Length::One) {
-            self.emit(
-                Severity::Warning,
-                span_of(cond),
-                "RY002",
-                format!(
-                    "`if` condition has length {:?}, will only use first element",
-                    ct.length
-                ),
-            );
+        } else if matches!(ct.mode, Mode::Logical) {
+            if let Length::Known(n) = ct.length {
+                if n > 1 {
+                    self.emit(
+                        Severity::Warning,
+                        span_of(cond),
+                        "RY002",
+                        format!(
+                            "`if` condition has length {}, will only use first element",
+                            n
+                        ),
+                    );
+                }
+            }
         }
         // Flow-sensitive type narrowing for the expression form too.
         //

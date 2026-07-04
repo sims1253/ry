@@ -281,10 +281,6 @@
       "params": ["x", "y"],
       "return": { "mode": "logical", "length": "1", "na": false }
     },
-    "identical_to": {
-      "params": ["x"],
-      "return": { "mode": "logical", "length": "1", "na": false }
-    },
     "ceiling": {
       "params": ["x"],
       "return": { "mode": "double", "length": "arg0", "na": false }
@@ -1186,7 +1182,6 @@
     "setNames": { "params": ["object", "nm"], "return": "arg0" },
     "unname": { "params": ["obj"], "return": "arg0" },
     "rowsum": { "params": ["x"], "return": { "mode": "double_or_int", "length": "unknown", "na": false } },
-    "colsum": { "params": ["x"], "return": { "mode": "double_or_int", "length": "unknown", "na": false } },
     "addmargins": { "params": ["A"], "return": { "mode": "opaque", "length": "unknown", "na": false } },
     "xtabs": { "params": ["formula", "data"], "return": { "mode": "opaque", "length": "unknown", "na": false } },
     "ftable": { "params": ["..."], "return": { "mode": "opaque", "length": "unknown", "na": false } },

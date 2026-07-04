@@ -46,5 +46,7 @@ jobs:
         # would let the job pass with zero coverage. Guard against that.
         run: |
           Rscript --version
+      - name: Audit typeshed (no fabricated entries)
+        run: Rscript scripts/audit_typeshed.R
       - name: Oracle suite
         run: cargo test -p ry-checker --test oracle -- --ignored --nocapture

@@ -1,5 +1,6 @@
 [package]
 name = "ry-typeshed"
+description = "Type signatures for R builtins and packages, used by the ry analyzer."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -1,5 +1,6 @@
 [package]
 name = "ry-checker"
+description = "The ry static analyzer: statement/expression checking and diagnostics for R."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

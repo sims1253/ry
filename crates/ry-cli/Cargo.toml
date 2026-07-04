@@ -1,5 +1,9 @@
 [package]
 name = "ry-cli"
+description = "Command-line interface for ry, a static analyzer for R."
+keywords = ["r", "linter", "static-analysis", "type-checker"]
+categories = ["command-line-utilities", "development-tools"]
+readme = "../../README.md"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

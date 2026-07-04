@@ -54,7 +54,7 @@ pub fn render(
     srcs: &std::collections::HashMap<String, String>,
 ) -> String {
     match format {
-        OutputFormat::Full | OutputFormat::Concise => {
+        OutputFormat::Concise => {
             let mut out = String::new();
             for d in diags {
                 let (line, col) = line_col(d, srcs);
@@ -64,6 +64,32 @@ pub fn render(
                     "{}:{}:{}: {}: [{}] {}",
                     d.path, line, col, d.severity, d.code, d.message
                 );
+            }
+            out
+        }
+        OutputFormat::Full => {
+            // Like `concise` but adds the source line and a caret under
+            // the span (PLAN Phase D3). Falls back to the concise form
+            // when the source text isn't available.
+            let mut out = String::new();
+            for d in diags {
+                let (line, col) = line_col(d, srcs);
+                use std::fmt::Write as _;
+                let _ = writeln!(
+                    out,
+                    "{}:{}:{}: {}: [{}] {}",
+                    d.path, line, col, d.severity, d.code, d.message
+                );
+                if let Some(src_line) = srcs
+                    .get(&d.path)
+                    .and_then(|src| line_containing(src, d.span.start))
+                {
+                    // The source line, then a caret line pointing at the
+                    // span's character column. Indent the caret to the
+                    // (1-based) char column computed above.
+                    let _ = writeln!(out, "  {}", src_line);
+                    let _ = writeln!(out, "  {}^", " ".repeat(col.saturating_sub(1)));
+                }
             }
             out
         }
@@ -98,7 +124,7 @@ pub fn render(
                     level,
                     d.path,
                     d.span.line + 1,
-                    d.span.col + 1,
+                    char_col_for(d, srcs),
                     d.code,
                     d.message
                 ));
@@ -173,7 +199,7 @@ pub fn render(
                     "        {}:{}:{}: {}: {}\n      </{}>\n    </testcase>\n",
                     d.path,
                     d.span.line + 1,
-                    d.span.col + 1,
+                    char_col_for(d, srcs),
                     d.code,
                     escaped,
                     tag
@@ -191,7 +217,37 @@ fn line_col(d: &Diagnostic, srcs: &std::collections::HashMap<String, String>) ->
         .and_then(|src| src.get(..d.span.start.min(src.len())))
         .map(|prefix| prefix.matches('\n').count() + 1)
         .unwrap_or_else(|| d.span.line + 1);
-    (line, d.span.col + 1)
+    let col = char_col_for(d, srcs);
+    (line, col)
+}
+
+/// Render a human-visible (1-based) character column for a diagnostic.
+/// `Span::col` is a BYTE column; non-ASCII lines would otherwise show the
+/// wrong column. When the source line is available, convert via
+/// `byte_col_to_char_col`; otherwise fall back to the raw byte column
+/// (PLAN Phase C3).
+fn char_col_for(d: &Diagnostic, srcs: &std::collections::HashMap<String, String>) -> usize {
+    match srcs
+        .get(&d.path)
+        .and_then(|src| line_containing(src, d.span.start))
+    {
+        Some(line) => ry_core::parser::byte_col_to_char_col(line, d.span.col) + 1,
+        None => d.span.col + 1,
+    }
+}
+
+/// Borrow the single line of `src` that contains byte offset `pos`, as a
+/// `&str` slice of the original source (no allocation).
+fn line_containing(src: &str, pos: usize) -> Option<&str> {
+    let bounded = pos.min(src.len());
+    // Start of the line: byte after the preceding '\n' (or 0).
+    let start = src[..bounded].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    // End of the line: the next '\n' (or end of source).
+    let end = src[bounded..]
+        .find('\n')
+        .map(|i| bounded + i)
+        .unwrap_or(src.len());
+    src.get(start..end)
 }
 
 #[cfg(test)]
@@ -210,6 +266,40 @@ mod tests {
         srcs.insert("x.R".to_string(), "y\n".to_string());
         let out = render(&d, OutputFormat::Concise, &srcs);
         assert!(out.contains("x.R:1:1: error: [RY040] msg"));
+    }
+
+    #[test]
+    fn full_format_shows_source_line_and_caret() {
+        // PLAN Phase D3: `full` = concise line + the source line + a
+        // caret under the span's column. Span points at the second char
+        // (byte col 1) of `ab`.
+        let d = vec![Diagnostic::new(
+            Severity::Error,
+            Span::new(1, 2, 0, 1),
+            "x.R",
+            "RY040",
+            "msg",
+        )];
+        let mut srcs = std::collections::HashMap::new();
+        srcs.insert("x.R".to_string(), "ab\n".to_string());
+        let out = render(&d, OutputFormat::Full, &srcs);
+        assert!(
+            out.contains("x.R:1:2: error: [RY040] msg"),
+            "header line: {out}"
+        );
+        assert!(out.contains("  ab"), "source line: {out}");
+        // Caret indented to column 2 (one space, then ^).
+        assert!(out.contains("   ^"), "caret under col 2: {out}");
+    }
+
+    #[test]
+    fn full_format_falls_back_when_source_absent() {
+        // No srcs entry: behave like concise (no source/caret lines).
+        let d = vec![diag("RY040", Severity::Error)];
+        let srcs = std::collections::HashMap::new();
+        let out = render(&d, OutputFormat::Full, &srcs);
+        assert!(out.contains("x.R:1:1: error: [RY040] msg"));
+        assert!(!out.contains("  ^"), "no caret without source: {out}");
     }
 
     #[test]
@@ -330,5 +420,56 @@ mod tests {
     #[test]
     fn parse_rejects_unknown() {
         assert!(OutputFormat::parse("xml").is_none());
+    }
+
+    #[test]
+    fn char_column_on_non_ascii_line() {
+        // PLAN Phase C3: `Span::col` is a BYTE column. On a non-ASCII line
+        // the printed column must be the CHARACTER column, not the byte
+        // column. `café_x`: bytes c(0)a(1)f(2)é(3,4)_(5)x(6); the `_` is
+        // at byte col 5 but char col 4, so the 1-indexed output is 5
+        // (the raw byte+1 would wrongly print 6).
+        let src = "café_x\n".to_string();
+        // Span pointing at `_`: start=5, col=5 (byte col).
+        let d = vec![Diagnostic::new(
+            Severity::Error,
+            Span::new(5, 6, 0, 5),
+            "x.R",
+            "RY040",
+            "msg",
+        )];
+        let mut srcs = std::collections::HashMap::new();
+        srcs.insert("x.R".to_string(), src);
+        let out = render(&d, OutputFormat::Concise, &srcs);
+        assert!(
+            out.contains("x.R:1:5: error: [RY040] msg"),
+            "expected char column 5, got: {out}"
+        );
+        assert!(
+            !out.contains("x.R:1:6:"),
+            "byte column leaked into output: {out}"
+        );
+        // Github format uses the same conversion.
+        let gh = render(&d, OutputFormat::Github, &srcs);
+        assert!(gh.contains("col=5::"), "github col should be 5, got: {gh}");
+    }
+
+    #[test]
+    fn char_column_falls_back_when_source_absent() {
+        // No srcs entry: fall back to the raw byte column (+1) rather
+        // than panicking, so the renderer degrades gracefully.
+        let d = vec![Diagnostic::new(
+            Severity::Error,
+            Span::new(5, 6, 0, 5),
+            "x.R",
+            "RY040",
+            "msg",
+        )];
+        let srcs = std::collections::HashMap::new();
+        let out = render(&d, OutputFormat::Concise, &srcs);
+        assert!(
+            out.contains("x.R:1:6:"),
+            "fallback should be byte col+1: {out}"
+        );
     }
 }

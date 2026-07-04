@@ -3,3 +3,6 @@
 
 # Logo concepts are kept local, not tracked
 /assets/logo-concept-*
+
+# Local tool caches
+/.claude/

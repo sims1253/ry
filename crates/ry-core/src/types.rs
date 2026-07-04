@@ -317,6 +317,20 @@ impl ColumnSchema {
     pub fn len(&self) -> usize {
         self.columns.len()
     }
+
+    /// If every column of this schema carries the SAME type, return that
+    /// common element type. Used to type `[[N]]` extraction (and list
+    /// `element()`) for homogeneous lists such as `list(1, 2, 3)` -- where
+    /// `lapply` / `for` should see the unwrapped `double<1>` rather than
+    /// `list<1>`. Heterogeneous or empty schemas return `None`.
+    pub fn homogeneous_element_type(&self) -> Option<RType> {
+        let first = self.columns.first().map(|(_, t)| t.clone())?;
+        if self.columns.iter().all(|(_, t)| t == &first) {
+            Some(first)
+        } else {
+            None
+        }
+    }
 }
 
 /// Inferred signature for a function value (closures returned from
@@ -466,6 +480,45 @@ impl RType {
         }
     }
 
+    /// Checked constructor for a `Mode::Union` type. All union construction
+    /// must go through here so a malformed union (`mode == Union`,
+    /// `members == None`) can never be built by accident -- the audit in
+    /// PLAN Phase A2 traced several false positives (e.g. the `if` condition
+    /// `union[]` RY001) to ad-hoc `RType::new(Mode::Union, ...)` /
+    /// `RType::new(bt.mode, ...)` sites that left `members` null.
+    ///
+    /// Panics (debug) / silently degrades (release) on an empty member list,
+    /// since a union of nothing has no sound rendering. A single-member input
+    /// collapses to that member (so "all *multi-member* union construction
+    /// goes through here"; a 1-member call is an identity).
+    pub fn union(members: Arc<[RType]>) -> Self {
+        debug_assert!(
+            !members.is_empty(),
+            "RType::union requires at least one member"
+        );
+        if members.is_empty() {
+            return RType::unknown();
+        }
+        if members.len() == 1 {
+            // A single-member "union" is just that member.
+            return (*members.first().unwrap()).clone();
+        }
+        // Length: common across members if they all agree, else Unknown.
+        let length = members
+            .iter()
+            .map(|m| m.length)
+            .reduce(|a, b| if a == b { a } else { Length::Unknown })
+            .unwrap_or(Length::Unknown);
+        RType {
+            mode: Mode::Union,
+            length,
+            class: ClassVector::empty(),
+            columns: None,
+            fn_sig: None,
+            members: Some(members),
+        }
+    }
+
     /// Result of `lhs op rhs` for an arithmetic operator, or None if the
     /// mode combination is invalid (e.g. list + numeric). Arithmetic
     /// strips any S3 class attribute and the column schema, matching
@@ -534,10 +587,15 @@ impl RType {
                 // Invalid only if EVERY member is invalid (one valid
                 // branch means the runtime value could be a valid
                 // condition, so stay quiet -- PLAN Phase 3 item 2).
-                self.members
-                    .as_ref()
-                    .map(|m| m.iter().all(|t| t.invalid_condition()))
-                    .unwrap_or(true)
+                //
+                // A malformed union (`members == None`, which only a bug
+                // can now produce) must NOT be treated as invalid -- that
+                // is exactly the RY001 `union[]` false positive PLAN Phase
+                // A2 fixed. Treat it as opaque (never invalid).
+                match self.members.as_ref() {
+                    Some(ms) => ms.iter().all(|t| t.invalid_condition()),
+                    None => false,
+                }
             }
             Mode::List | Mode::Function => true,
             _ => matches!(self.length, Length::Zero),
@@ -573,10 +631,39 @@ impl RType {
     /// list it is a length-1 list; for opaque input it stays opaque.
     /// The class and column schema are dropped: iterating over a classed
     /// vector yields the bare elements in R.
+    ///
+    /// For a `Mode::Union`, the element type is the union of each member's
+    /// element type (PLAN Phase A2). Distributing -- rather than passing
+    /// `Mode::Union` through the `_` arm and building a malformed union
+    /// with `members: None` -- is what stops `for (x in if(...) TRUE else
+    /// 1L) { if (x) ... }` from reporting `union[]` as the condition.
     pub fn element(&self) -> RType {
         match self.mode {
             Mode::Null => RType::new(Mode::Null, Length::Zero),
             Mode::Opaque => RType::unknown(),
+            Mode::List => {
+                // `[[`-style element extraction from a list yields the
+                // UNWRAPPED element, not `list<1>` (PLAN Phase A3). For a
+                // homogeneous list (`list(1, 2, 3)`) the unwrapped element
+                // type is the common column type; heterogeneous or
+                // schema-less lists degrade to unknown. Atomic vectors
+                // keep the length-1 same-mode behavior below.
+                match self.columns.as_ref() {
+                    Some(schema) => schema
+                        .homogeneous_element_type()
+                        .unwrap_or_else(RType::unknown),
+                    None => RType::unknown(),
+                }
+            }
+            Mode::Union => match self.members.as_ref() {
+                Some(ms) => {
+                    let elems: Vec<RType> = ms.iter().map(|m| m.element()).collect();
+                    let mut iter = elems.into_iter();
+                    let first = iter.next().unwrap_or_else(RType::unknown);
+                    iter.fold(first, |acc, t| acc.join(t))
+                }
+                None => RType::unknown(),
+            },
             _ => RType::new(self.mode, Length::One),
         }
     }
@@ -617,9 +704,12 @@ impl RType {
 ///
 /// Flattens members of existing unions, deduplicates by `==`, caps at
 /// `MAX_UNION_MEMBERS` (collapsing to `RType::unknown()` beyond the cap).
-/// Members are bare atomic shapes (class/columns/fn_sig/members cleared);
-/// the union owns those dimensions. The length is the common member
-/// length if all members agree, else `Length::Unknown`.
+///
+/// Member payloads (class/columns/fn_sig) are deliberately KEPT on each
+/// member: distribute-based column access in a later phase needs the
+/// per-member shape. The union itself carries no class/columns/fn_sig.
+/// The length is the common member length if all members agree, else
+/// `Length::Unknown`.
 fn union_of(a: RType, b: RType) -> RType {
     let mut members: Vec<RType> = Vec::new();
     let push_dedup = |v: &mut Vec<RType>, t: RType| {
@@ -650,20 +740,11 @@ fn union_of(a: RType, b: RType) -> RType {
     if members.len() > MAX_UNION_MEMBERS {
         return RType::unknown();
     }
-    // Length: common across members if they all agree, else Unknown.
-    let length = members
-        .iter()
-        .map(|m| m.length)
-        .reduce(|a, b| if a == b { a } else { Length::Unknown })
-        .unwrap_or(Length::Unknown);
-    RType {
-        mode: Mode::Union,
-        length,
-        class: ClassVector::empty(),
-        columns: None,
-        fn_sig: None,
-        members: Some(Arc::from(members)),
+    if members.is_empty() {
+        // Two malformed unions with no members: degrade honestly.
+        return RType::unknown();
     }
+    RType::union(Arc::from(members))
 }
 
 /// Distribute a binary type operation over union members. The op errors
@@ -700,21 +781,26 @@ where
 impl fmt::Display for RType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.mode == Mode::Union {
-            // Render as `union[member1, member2, ...]`. Unions carry no
-            // class/columns/fn_sig, so fmt_class is a no-op for them.
-            f.write_str("union[")?;
-            if let Some(ms) = &self.members {
-                let mut first = true;
-                for m in ms.iter() {
-                    if !first {
-                        f.write_str(", ")?;
+            // A malformed union (members == None) should never exist now
+            // that all construction goes through `RType::union`, but
+            // render it as `opaque` rather than the misleading `union[]`
+            // (PLAN Phase A2 defense-in-depth).
+            return match self.members.as_ref() {
+                Some(ms) => {
+                    f.write_str("union[")?;
+                    let mut first = true;
+                    for m in ms.iter() {
+                        if !first {
+                            f.write_str(", ")?;
+                        }
+                        write!(f, "{}", m)?;
+                        first = false;
                     }
-                    write!(f, "{}", m)?;
-                    first = false;
+                    f.write_str("]")?;
+                    Ok(())
                 }
-            }
-            f.write_str("]")?;
-            return Ok(());
+                None => write!(f, "opaque"),
+            };
         }
         let mode = self.mode;
         let len = match self.length {
@@ -906,6 +992,143 @@ mod tests {
         let e = v.element();
         assert_eq!(e.mode, Mode::Integer);
         assert_eq!(e.length, Length::One);
+    }
+
+    #[test]
+    fn element_of_union_distributes_over_members() {
+        // element() of a union is the join of each member's element type.
+        // PLAN Phase A2: previously the `_` arm built a malformed union
+        // (`Mode::Union`, `members: None`).
+        let u = RType::scalar(Mode::Integer).join(RType::scalar(Mode::Logical));
+        assert_eq!(u.mode, Mode::Union);
+        let e = u.element();
+        // Integer | Logical element types are scalars of each mode; the
+        // join of integer-scalar and logical-scalar is a union.
+        assert_eq!(e.mode, Mode::Union, "got {e}");
+        let members = e
+            .members
+            .expect("distributed element union must carry members");
+        assert_eq!(members.len(), 2);
+        assert!(members.iter().any(|m| m.mode == Mode::Integer));
+        assert!(members.iter().any(|m| m.mode == Mode::Logical));
+    }
+
+    #[test]
+    fn element_of_union_with_one_member_is_that_member_element() {
+        // A union of two equal modes collapses to that mode; its element
+        // is then that mode's scalar (no malformed union).
+        let u = RType::scalar(Mode::Double).join(RType::scalar(Mode::Double));
+        assert_eq!(u.mode, Mode::Double);
+        assert_eq!(u.element().mode, Mode::Double);
+    }
+
+    #[test]
+    fn element_of_homogeneous_list_unwraps() {
+        // PLAN Phase A3: iterating a list yields the UNWRAPPED element.
+        // list(1, 2, 3) has schema [[1]]=double, [[2]]=double, [[3]]=double;
+        // element() returns double<1>, NOT list<1>.
+        let schema = ColumnSchema {
+            columns: vec![
+                ("[[1]]".to_string(), RType::scalar(Mode::Double)),
+                ("[[2]]".to_string(), RType::scalar(Mode::Double)),
+            ],
+        };
+        let list = RType::new(Mode::List, Length::Known(2)).with_columns(Arc::new(schema));
+        let e = list.element();
+        assert_eq!(e.mode, Mode::Double);
+        assert_eq!(e.length, Length::One);
+    }
+
+    #[test]
+    fn element_of_heterogeneous_list_is_unknown() {
+        // list(1, "a") -> double | character: element is unknown, NOT
+        // list<1> (which would cause arithmetic false positives).
+        let schema = ColumnSchema {
+            columns: vec![
+                ("[[1]]".to_string(), RType::scalar(Mode::Double)),
+                ("[[2]]".to_string(), RType::scalar(Mode::Character)),
+            ],
+        };
+        let list = RType::new(Mode::List, Length::Known(2)).with_columns(Arc::new(schema));
+        let e = list.element();
+        assert_eq!(e, RType::unknown());
+    }
+
+    #[test]
+    fn element_of_schema_less_list_is_unknown() {
+        // A bare list with no column schema degrades to unknown.
+        let list = RType::new(Mode::List, Length::Unknown);
+        assert_eq!(list.element(), RType::unknown());
+    }
+
+    #[test]
+    fn homogeneous_element_type_returns_common_for_homogeneous_schema() {
+        let schema = ColumnSchema {
+            columns: vec![
+                ("[[1]]".to_string(), RType::scalar(Mode::Integer)),
+                ("[[2]]".to_string(), RType::scalar(Mode::Integer)),
+            ],
+        };
+        assert_eq!(
+            schema.homogeneous_element_type(),
+            Some(RType::scalar(Mode::Integer))
+        );
+    }
+
+    #[test]
+    fn homogeneous_element_type_none_for_heterogeneous_or_empty() {
+        let het = ColumnSchema {
+            columns: vec![
+                ("[[1]]".to_string(), RType::scalar(Mode::Integer)),
+                ("[[2]]".to_string(), RType::scalar(Mode::Double)),
+            ],
+        };
+        assert_eq!(het.homogeneous_element_type(), None);
+        assert_eq!(ColumnSchema::default().homogeneous_element_type(), None);
+    }
+
+    #[test]
+    fn checked_union_constructor_builds_real_union() {
+        let members: Arc<[RType]> =
+            Arc::from([RType::scalar(Mode::Integer), RType::scalar(Mode::Double)]);
+        let u = RType::union(members);
+        assert_eq!(u.mode, Mode::Union);
+        assert!(u.members.is_some(), "union must carry members");
+        assert_eq!(u.members.as_ref().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn checked_union_constructor_collapses_single_member() {
+        let members: Arc<[RType]> = Arc::from([RType::scalar(Mode::Integer)]);
+        let u = RType::union(members);
+        assert_eq!(u.mode, Mode::Integer, "single-member union collapses");
+    }
+
+    #[test]
+    #[should_panic(expected = "RType::union requires at least one member")]
+    fn checked_union_constructor_panics_on_empty() {
+        // All union construction goes through `RType::union`; an empty
+        // member list is a programmer error caught by the debug assert.
+        let members: Arc<[RType]> = Arc::from([]);
+        let _ = RType::union(members);
+    }
+
+    #[test]
+    fn malformed_union_is_never_an_invalid_condition() {
+        // Defense-in-depth: even a (bug-only) union with members == None
+        // must not be reported as an invalid condition (that was the
+        // RY001 `union[]` false positive PLAN Phase A2 fixed).
+        let malformed = RType {
+            mode: Mode::Union,
+            length: Length::One,
+            class: ClassVector::empty(),
+            columns: None,
+            fn_sig: None,
+            members: None,
+        };
+        assert!(!malformed.invalid_condition());
+        // And it renders as `opaque`, not the misleading `union[]`.
+        assert_eq!(format!("{malformed}"), "opaque");
     }
 
     #[test]

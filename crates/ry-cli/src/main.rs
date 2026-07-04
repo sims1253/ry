@@ -6,6 +6,7 @@ use clap::parser::ValueSource;
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser as ClapParser, Subcommand};
 use miette::{IntoDiagnostic, Result};
 
+mod color;
 mod config;
 
 #[derive(Debug, ClapParser)]
@@ -135,21 +136,34 @@ fn main() -> Result<ExitCode> {
             error_on_warning,
             exit_zero,
             output_format,
-            color: _,
+            color,
             watch,
-        } => run_check(
-            paths,
-            error,
-            warn,
-            ignore,
-            error_on_warning,
-            exit_zero,
-            &output_format,
-            cli.verbose,
-            cli.quiet,
-            check_matches,
-            watch,
-        ),
+        } => {
+            // Validate --color up front so an unknown value is a clear
+            // error rather than a silently-ignored flag. The resolved
+            // choice has no observable effect today (no colorized output
+            // paths exist yet) but is parsed and honors NO_COLOR, so it
+            // is forward-compatible (PLAN Phase D3).
+            if let Some(raw) = &color {
+                if let Err(e) = color::ColorChoice::parse(raw) {
+                    eprintln!("ry: {e}");
+                    return Ok(ExitCode::FAILURE);
+                }
+            }
+            run_check(
+                paths,
+                error,
+                warn,
+                ignore,
+                error_on_warning,
+                exit_zero,
+                &output_format,
+                cli.verbose,
+                cli.quiet,
+                check_matches,
+                watch,
+            )
+        }
         Cmd::Server => {
             // The LSP server reads JSON-RPC from stdin and writes
             // JSON-RPC to stdout. CRITICAL: any tracing or log output
@@ -477,6 +491,17 @@ struct CheckResult {
 
 impl CheckResult {
     fn print_summary(&self, format: ry_checker::format::OutputFormat) {
+        // Suppress the human summary line for machine-readable formats
+        // so it can't corrupt JSON/Github/Gitlab/Junit output (it goes
+        // to stderr, but consumers that merge stderr would see it). The
+        // plan calls for printing it only for the human formats (PLAN
+        // Phase D3).
+        if !matches!(
+            format,
+            ry_checker::format::OutputFormat::Full | ry_checker::format::OutputFormat::Concise
+        ) {
+            return;
+        }
         let errors = self
             .diagnostics
             .iter()
@@ -487,7 +512,6 @@ impl CheckResult {
             .iter()
             .filter(|d| d.severity == ry_checker::Severity::Warning)
             .count();
-        let _ = format;
         eprintln!(
             "ry: checked {} file(s), {} error(s), {} warning(s)",
             self.file_count, errors, warnings
@@ -531,6 +555,10 @@ fn run_check_once(
     // Multi-file project mode: build a single `Project` so functions
     // defined in one file are visible when checking another.
     let mut project = ry_checker::Project::new();
+    // One `RParser` for the whole run: tree-sitter's parser is designed
+    // to be reused across documents (the grammar is loaded once), so
+    // constructing it per file is pure waste (PLAN Phase D2).
+    let mut parser = ry_core::RParser::new().map_err(|e| miette::miette!(e))?;
 
     for path in all_paths {
         let src = match std::fs::read_to_string(path) {
@@ -542,7 +570,6 @@ fn run_check_once(
             }
         };
         let path_str = path.to_string_lossy().to_string();
-        let mut parser = ry_core::RParser::new().map_err(|e| miette::miette!(e))?;
         let file = match parser.parse(&path_str, &src) {
             Ok(f) => f,
             Err(e) => {

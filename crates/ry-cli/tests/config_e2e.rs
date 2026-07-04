@@ -308,3 +308,52 @@ fn ry_toml_malformed_aborts_with_error() {
         stderr
     );
 }
+
+#[test]
+fn color_flag_rejects_unknown_value() {
+    // PLAN Phase D3: --color is now validated. An unknown value must be
+    // a hard error with a clear message, not a silently-ignored flag.
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(tmp.path().join("ok.R"), "x <- 1\n").unwrap();
+    let bin = env!("CARGO_BIN_EXE_ry");
+    let output = Command::new(bin)
+        .arg("check")
+        .arg("--color")
+        .arg("yes")
+        .arg(tmp.path())
+        .output()
+        .expect("failed to invoke ry binary");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "unknown --color value must exit non-zero, got {:?}",
+        output.status
+    );
+    assert!(
+        stderr.contains("--color") && stderr.contains("auto"),
+        "expected a --color validation error, got: {}",
+        stderr
+    );
+}
+
+#[test]
+fn color_flag_accepts_known_values() {
+    // auto/always/never all parse cleanly and run the check.
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(tmp.path().join("ok.R"), "x <- 1\n").unwrap();
+    let bin = env!("CARGO_BIN_EXE_ry");
+    for ok in ["auto", "always", "never"] {
+        let output = Command::new(bin)
+            .arg("check")
+            .arg("--color")
+            .arg(ok)
+            .arg(tmp.path())
+            .output()
+            .expect("failed to invoke ry binary");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !stderr.contains("unknown `--color`"),
+            "--color={ok} should be accepted, got stderr: {stderr}"
+        );
+    }
+}

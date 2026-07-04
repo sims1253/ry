@@ -11,9 +11,11 @@ members = [
 [workspace.package]
 version = "0.0.1"
 edition = "2021"
-rust-version = "1.76"
+# 1.82 is required for `Option::is_none_or` (used in ry-checker) and
+# other recent-stable APIs; the previous 1.76 floor would not build.
+rust-version = "1.82"
 license = "MIT OR Apache-2.0"
-repository = "https://example.invalid/ry"
+repository = "https://github.com/sims1253/ry"
 authors = ["ry contributors"]
 
 [workspace.dependencies]

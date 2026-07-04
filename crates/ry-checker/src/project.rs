@@ -20,6 +20,7 @@ use crate::{
     apply_filter_to_diagnostics, Checker, Diagnostic, FnTable, ReturnSlots, SeverityFilter,
 };
 use ry_core::SourceFile;
+use std::sync::Arc;
 
 /// A multi-file R project. Functions defined in any file are visible
 /// to all other files. The fixpoint loop refines returns across the
@@ -113,16 +114,24 @@ impl Project {
         self.return_slots = return_slots;
 
         // Pass 3: per-file diagnostic emission. Each file gets a fresh
-        // Checker whose tables are the (now refined) shared tables.
-        // We give the checker a clone of the tables so the Project
-        // keeps them cached for the next `check()` call.
+        // Checker that SHARES the refined tables via an `Arc` handle --
+        // pass 3 is read-only on the tables (every mutation site is in
+        // passes 1/2), so only the refcount is bumped per file, not the
+        // tables themselves (PLAN Phase D1).
         let mut per_file: Vec<(String, Vec<Diagnostic>)> = Vec::with_capacity(self.files.len());
+        let fn_table = Arc::new(std::mem::take(&mut self.fn_table));
+        let return_slots = Arc::new(std::mem::take(&mut self.return_slots));
         for (path, file) in &self.files {
             let mut emitter =
-                Checker::with_tables(path, self.fn_table.clone(), self.return_slots.clone());
+                Checker::with_shared_tables(path, Arc::clone(&fn_table), Arc::clone(&return_slots));
             emitter.emit_diagnostics(file);
             per_file.push((path.clone(), emitter.take_diagnostics()));
         }
+        // Restore the tables onto the Project for the next `check()` call.
+        // Every emitter above has been dropped, so the Arc refcount is 1
+        // and `unwrap_or_clone` returns the owned value without cloning.
+        self.fn_table = Arc::unwrap_or_clone(fn_table);
+        self.return_slots = Arc::unwrap_or_clone(return_slots);
 
         self.diagnostics = per_file.clone();
         per_file

@@ -738,10 +738,16 @@ pub struct Checker {
     /// walk: pass 2 runs the identical `infer` with `discarding = true`,
     /// pass 3 with `false`. This is the Phase 2 unification mechanism.
     discarding: bool,
-    /// User-defined functions collected in pass 1.
-    pub(crate) fn_table: FnTable,
-    /// Inferred return types, refined by the fixpoint loop.
-    pub(crate) return_slots: ReturnSlots,
+    /// User-defined functions collected in pass 1. Stored behind an `Arc`
+    /// so the multi-file `Project` can share the refined tables across
+    /// per-file pass-3 emitters without deep-cloning them (PLAN Phase D1).
+    /// Mutation goes through `Arc::make_mut` (a copy-on-write clone when
+    /// the refcount is >1); passes 1/2 own their tables uniquely, and pass
+    /// 3 only reads, so the COW clone never actually fires in practice.
+    pub(crate) fn_table: Arc<FnTable>,
+    /// Inferred return types, refined by the fixpoint loop. Same Arc-shared
+    /// story as `fn_table`.
+    pub(crate) return_slots: Arc<ReturnSlots>,
     /// Stack of function names currently being inferred (cycle detection).
     pub(crate) inferring: Vec<String>,
 }
@@ -754,8 +760,8 @@ impl Checker {
             diagnostics: Vec::new(),
             path: path.to_string(),
             discarding: false,
-            fn_table: FnTable::default(),
-            return_slots: ReturnSlots::default(),
+            fn_table: Arc::new(FnTable::default()),
+            return_slots: Arc::new(ReturnSlots::default()),
             inferring: Vec::new(),
         }
     }
@@ -790,13 +796,16 @@ impl Checker {
     /// variable shows its type.
     pub fn check_with_scope(&mut self, file: &SourceFile) -> (Vec<Diagnostic>, Scope) {
         self.path = file.path.clone();
+        // Clear diagnostics FIRST so we start fresh (the caller may call
+        // this multiple times on the same checker instance), THEN emit
+        // parse errors. The previous order emitted RY000s and then wiped
+        // them with `clear()`, so this API path never surfaced syntax
+        // errors (PLAN Phase C2).
+        self.diagnostics.clear();
         self.emit_parse_errors(file);
         self.collect_fns(&file.stmts);
         self.run_fixpoint();
         let mut scope = Scope::default();
-        // Clear diagnostics so we start fresh (the caller may call this
-        // multiple times on the same checker instance).
-        self.diagnostics.clear();
         for s in &file.stmts {
             self.check_stmt(s, &mut scope);
         }
@@ -804,10 +813,35 @@ impl Checker {
     }
 
     /// Construct a checker that uses pre-populated function tables.
-    /// Used by `Project` for multi-file checking, where the tables are
-    /// shared across files. The fresh checker starts with an empty
+    /// Used by `Project` for passes 1 and 2, where a single throwaway
+    /// checker owns the (mutable) tables and hands them back via
+    /// [`into_tables`]. The fresh checker starts with an empty
     /// diagnostics vec and an empty `inferring` stack.
+    ///
+    /// [`into_tables`]: Checker::into_tables
     pub(crate) fn with_tables(path: &str, fn_table: FnTable, return_slots: ReturnSlots) -> Self {
+        let typeshed = load_base_cached().expect("typeshed must load");
+        Self {
+            typeshed,
+            diagnostics: Vec::new(),
+            path: path.to_string(),
+            discarding: false,
+            fn_table: Arc::new(fn_table),
+            return_slots: Arc::new(return_slots),
+            inferring: Vec::new(),
+        }
+    }
+
+    /// Construct a checker that SHARES the given tables by `Arc` handle
+    /// (no deep clone). Used by `Project` pass 3, which is read-only on
+    /// the tables (every mutation site lives in passes 1/2). This is the
+    /// PLAN Phase D1 optimization: per-file diagnostic emission clones
+    /// only the refcounted handle, not the tables themselves.
+    pub(crate) fn with_shared_tables(
+        path: &str,
+        fn_table: Arc<FnTable>,
+        return_slots: Arc<ReturnSlots>,
+    ) -> Self {
         let typeshed = load_base_cached().expect("typeshed must load");
         Self {
             typeshed,
@@ -824,7 +858,13 @@ impl Checker {
     /// move a populated `FnTable`/`ReturnSlots` out of a throwaway
     /// checker and into a shared `Project`.
     pub(crate) fn into_tables(self) -> (FnTable, ReturnSlots) {
-        (self.fn_table, self.return_slots)
+        // `Arc::unwrap_or_clone` avoids a deep clone when the checker is
+        // the sole owner (always true for the pass-1/2 throwaway checkers
+        // `Project` uses); falls back to a clone if shared.
+        (
+            Arc::unwrap_or_clone(self.fn_table),
+            Arc::unwrap_or_clone(self.return_slots),
+        )
     }
 
     /// Pass 1: collect function definitions from this file into the
@@ -853,7 +893,10 @@ impl Checker {
         let prev_discarding = self.discarding;
         self.discarding = true;
         for _ in 0..MAX_FIXPOINT_DEPTH {
-            let before = self.return_slots.clone();
+            // Snapshot the *contents* (not the Arc handle) for the
+            // convergence check -- cloning the Arc would alias the same
+            // data and the comparison would always be equal.
+            let before = (*self.return_slots).clone();
             let names: Vec<String> = self.fn_table.fns.keys().cloned().collect();
             for name in names {
                 self.refine_fn_return(&name);
@@ -938,7 +981,9 @@ impl Checker {
                 // to be resolvable from other files (and from later in
                 // this same file) without triggering RY010.
                 if let Expr::Ident { name, .. } = target {
-                    self.fn_table.known_vars.insert(name.clone());
+                    Arc::make_mut(&mut self.fn_table)
+                        .known_vars
+                        .insert(name.clone());
                 }
                 if let (Expr::Ident { name, .. }, Expr::Function { params, body, .. }) =
                     (target, value)
@@ -962,7 +1007,7 @@ impl Checker {
                         .filter(|_| params.first().map(|p| p.name == "x").unwrap_or(false));
                     if let Some((generic, class)) = looks_like_s3 {
                         let slot = self.record_fn(name.clone(), params, body.clone());
-                        self.fn_table
+                        Arc::make_mut(&mut self.fn_table)
                             .s3_methods
                             .insert((generic.to_string(), class), slot);
                     } else {
@@ -989,7 +1034,9 @@ impl Checker {
                 // (rare but possible for named-form function
                 // definitions), record that name in `known_vars` so
                 // cross-file references to it don't trigger RY010.
-                self.fn_table.known_vars.insert(n.clone());
+                Arc::make_mut(&mut self.fn_table)
+                    .known_vars
+                    .insert(n.clone());
             }
             Stmt::If { then, else_, .. } => {
                 for s in then {
@@ -1091,11 +1138,11 @@ impl Checker {
             })
             .collect();
         let slot = self.return_slots.0.len();
-        self.return_slots.set(slot, RType::unknown());
+        Arc::make_mut(&mut self.return_slots).set(slot, RType::unknown());
         // Wrap the body in an Rc so the per-fixpoint clone in
         // refine_fn_return is a refcount bump, not a deep copy.
         let body: Arc<[Stmt]> = Arc::from(body);
-        let prev = self.fn_table.fns.insert(
+        let prev = Arc::make_mut(&mut self.fn_table).fns.insert(
             name.clone(),
             UserFn {
                 params,
@@ -1165,7 +1212,7 @@ impl Checker {
             let first = iter.next().unwrap_or(RType::unknown());
             iter.fold(first, |acc, t| acc.join(t))
         };
-        self.return_slots.set(slot, joined);
+        Arc::make_mut(&mut self.return_slots).set(slot, joined);
         self.inferring.pop();
     }
 
@@ -1266,15 +1313,21 @@ impl Checker {
                 let narrowing = extract_type_narrowing(cond);
                 let (then_scope, else_scope) = apply_narrowing(scope, &narrowing);
                 let mut then_scope = then_scope;
+                let mut else_scope = else_scope;
+                let has_else = else_.is_some();
                 for s in then {
                     self.walk_stmt(s, &mut then_scope, returns.as_deref_mut());
                 }
                 if let Some(else_) = else_ {
-                    let mut else_scope = else_scope;
                     for s in else_ {
                         self.walk_stmt(s, &mut else_scope, returns.as_deref_mut());
                     }
                 }
+                // Merge branch bindings back into the parent scope. In R,
+                // assignments inside an `if` branch leak to the enclosing
+                // scope, so a name bound conditionally must still be visible
+                // after the `if` (otherwise uses fire RY010 false positives).
+                self.merge_branch_bindings(scope, then_scope, else_scope, has_else);
             }
             Stmt::For {
                 name, iter, body, ..
@@ -1332,10 +1385,69 @@ impl Checker {
         }
     }
 
-    /// The non-emitting inference entry point used during pass-2 fixpoint
-    /// refinement and closure-signature building.
+    /// Merge bindings introduced inside the two `if` branches back into the
+    /// parent `scope`.
     ///
-    /// Phase 2 unified the two parallel inference engines into one: this
+    /// A name that is newly bound in BOTH branches gets the join of the two
+    /// branch types. A name bound in only one branch (or when there is no
+    /// `else`) is inserted into the parent as [`RType::unknown`]: there is no
+    /// sound type for "possibly missing" in the current model, and the goal
+    /// here is solely to stop RY010 false positives on the conditional
+    /// assignment idiom. Modeling "definitely unbound" as a diagnostic is a
+    /// separate future rule and intentionally out of scope.
+    ///
+    /// "Newly bound" means present in the branch scope but absent from the
+    /// parent (or bound to a different type): names that already existed in
+    /// the parent with the same type are left untouched.
+    fn merge_branch_bindings(
+        &self,
+        scope: &mut Scope,
+        then_scope: Scope,
+        else_scope: Scope,
+        has_else: bool,
+    ) {
+        // Collect the candidate names (only those that differ from the
+        // parent) without holding a borrow of `scope` while we mutate it.
+        let mut branch_types: HashMap<String, (Option<RType>, Option<RType>)> =
+            HashMap::with_capacity(then_scope.bindings.len());
+        for (name, t) in &then_scope.bindings {
+            match scope.get(name) {
+                Some(existing) if existing == t => {}
+                _ => {
+                    branch_types.entry(name.clone()).or_insert((None, None)).0 = Some(t.clone());
+                }
+            }
+        }
+        if has_else {
+            for (name, t) in &else_scope.bindings {
+                match scope.get(name) {
+                    Some(existing) if existing == t => {}
+                    _ => {
+                        branch_types.entry(name.clone()).or_insert((None, None)).1 =
+                            Some(t.clone());
+                    }
+                }
+            }
+        }
+        for (name, (then_t, else_t)) in branch_types {
+            let merged = match (then_t, else_t) {
+                (Some(a), Some(b)) => a.join(b),
+                (Some(a), None) | (None, Some(a)) => a.join(RType::unknown()),
+                (None, None) => continue,
+            };
+            // If the name already existed in the parent with a *different*
+            // type, fold that prior type into the merge so a branch
+            // reassignment doesn't silently degrade a precise parent type
+            // to unknown (e.g. `s <- 1L; if (c) { s <- "x" }` keeps `s` as
+            // union[integer, character] rather than collapsing to unknown).
+            let merged = match scope.get(&name) {
+                Some(p) => p.clone().join(merged),
+                None => merged,
+            };
+            scope.insert(name, merged);
+        }
+    }
+
     /// runs the single diagnostic `infer` with `discarding` enabled, so
     /// the type computation (including the full `Expr::Ident` resolution
     /// ladder, all `Expr::Call` cases, narrowing, etc.) is shared between
@@ -1997,6 +2109,16 @@ impl Checker {
             );
         }
         // Flow-sensitive type narrowing for the expression form too.
+        //
+        // Limitation (PLAN Phase A1): the branch scopes here are clones, and
+        // `BinOpKind::Assign` in expression position (e.g.
+        // `y <- if (c) (x <- 1) else (x <- 2); x`) mutates only the clone, so
+        // any binding introduced inside an `if` *expression* is silently
+        // dropped. The statement-form `Stmt::If` merges its branch bindings
+        // back into the parent (see `merge_branch_bindings`); doing the same
+        // for the expression form is deferred to a later phase because
+        // expression-position assignment is rare and merging here would
+        // require plumbing owned branch scopes back to the caller.
         let narrowing = extract_type_narrowing(cond);
         let (then_scope, else_scope) = apply_narrowing(scope, &narrowing);
         let then_t = self.infer(then, &mut then_scope.clone());
@@ -2096,6 +2218,23 @@ impl Checker {
         let name = match func {
             Expr::Ident { name, .. } => name.clone(),
             _ => {
+                // Calling a literal value (`42()`, `"x"()`, `TRUE()`,
+                // `NULL()`) is always a runtime error in R ("attempt to
+                // apply non-function"). Flag it (PLAN Phase B2). Other
+                // non-Ident callees (index expressions, calls returning
+                // functions) stay silent as before.
+                if let Some(mode) = literal_callee_mode(func) {
+                    self.emit(
+                        Severity::Error,
+                        span,
+                        "RY070",
+                        format!("cannot call a value of mode `{}`", mode),
+                    );
+                    for a in args {
+                        self.infer(&a.value, scope);
+                    }
+                    return RType::unknown();
+                }
                 self.infer(func, scope);
                 for a in args {
                     self.infer(&a.value, scope);
@@ -2696,7 +2835,7 @@ impl Checker {
         let mut result = RType::new(Mode::List, length);
         // Always build a schema when we know the element type, even if
         // the list length is unknown. We create a single `[[1]]` entry
-        // so that `result[[1]]` and `homogeneous_list_element_type`
+        // so that `result[[1]]` and `ColumnSchema::homogeneous_element_type`
         // can resolve the element type. When the length IS known, we
         // create explicit entries for each index.
         if !matches!(element_type.mode, Mode::Opaque) {
@@ -2729,7 +2868,7 @@ impl Checker {
         match cb_ret {
             Some(t)
                 if matches!(t.length, Length::One)
-                    && !matches!(t.mode, Mode::List | Mode::Opaque) =>
+                    && !matches!(t.mode, Mode::List | Mode::Opaque | Mode::Union) =>
             {
                 // Simplification to a vector of the callback's mode.
                 RType::new(t.mode, x_type.length)
@@ -2759,9 +2898,17 @@ impl Checker {
             let elem = x_type.element();
             let _ = self.callback_return_type(cb, &[elem], scope);
         }
+        // FUN.VALUE is the authoritative template. A union template
+        // (unusual but possible) would build a malformed union via
+        // `RType::new`; degrade to opaque in that case.
+        let fv_mode = if matches!(fun_value.mode, Mode::Union) {
+            Mode::Opaque
+        } else {
+            fun_value.mode
+        };
         match fun_value.length {
-            Length::One => RType::new(fun_value.mode, x_type.length),
-            _ => RType::new(fun_value.mode, Length::Unknown),
+            Length::One => RType::new(fv_mode, x_type.length),
+            _ => RType::new(fv_mode, Length::Unknown),
         }
     }
 
@@ -3134,7 +3281,15 @@ impl Checker {
         }
         let mut mode = Mode::Null;
         let mut total_len: usize = 0;
+        // A union arg would win the coerce-rank ladder and leave `mode ==
+        // Union`, which `RType::new` then turns into a malformed union.
+        // Track it and degrade to opaque at the end (PLAN Phase A2).
+        let mut saw_union = false;
         for t in arg_types {
+            if matches!(t.mode, Mode::Union) {
+                saw_union = true;
+                continue;
+            }
             mode = if mode.coerce_rank() >= t.mode.coerce_rank() {
                 mode
             } else {
@@ -3145,7 +3300,7 @@ impl Checker {
                 Length::One => 1,
                 Length::Known(n) => n,
                 Length::Unknown => {
-                    return RType::new(mode, Length::Unknown);
+                    return RType::new(collapse_c_mode(mode, saw_union), Length::Unknown);
                 }
             });
         }
@@ -3154,7 +3309,7 @@ impl Checker {
         } else {
             Length::Known(total_len)
         };
-        RType::new(mode, length)
+        RType::new(collapse_c_mode(mode, saw_union), length)
     }
 
     /// Infer the type of `list(...)`. The result is always a list whose
@@ -3539,13 +3694,29 @@ impl Checker {
                     // "arg2" as a mode spec: use the third param's mode.
                     "arg2" => matched.get(2).map(|t| t.mode).unwrap_or(Mode::Opaque),
                     // "yes_or_no": join of the second and third params'
-                    // modes (for `ifelse(test, yes, no)`).
+                    // modes (for `ifelse(test, yes, no)`). The join may be
+                    // a union; taking `.mode` drops the members and would
+                    // build a malformed union below, so collapse a union
+                    // mode to opaque (PLAN Phase A2).
                     "yes_or_no" => {
                         let yes = matched.get(1).cloned().unwrap_or(RType::unknown());
                         let no = matched.get(2).cloned().unwrap_or(RType::unknown());
-                        yes.join(no).mode
+                        let joined = yes.join(no).mode;
+                        if matches!(joined, Mode::Union) {
+                            Mode::Opaque
+                        } else {
+                            joined
+                        }
                     }
                     _ => Mode::Opaque,
+                };
+                // The arg-N mode specs copy a param's mode verbatim; if a
+                // caller passes a union there, that mode is `Mode::Union`
+                // and would build a malformed union. Collapse to opaque.
+                let mode = if matches!(mode, Mode::Union) {
+                    Mode::Opaque
+                } else {
+                    mode
                 };
                 let length = match c.length.as_str() {
                     "0" => Length::Zero,
@@ -3634,17 +3805,31 @@ impl Checker {
                         if let Some(t) = schema.get(name) {
                             return t;
                         }
-                        self.emit_undefined_column(name, schema, span);
-                        // Fall through to the conservative default so
-                        // downstream code still has *a* type to work
-                        // with after the diagnostic.
+                        // RY060 for a `$` schema miss only on data frames.
+                        // In R, `list(a=1)$missing` returns NULL (no
+                        // error); only data frames make a missing `$`
+                        // name a hard error worth flagging (PLAN Phase
+                        // A4). Mirror the `[[`-with-string guard below.
+                        if bt.class.contains("data.frame") {
+                            self.emit_undefined_column(name, schema, span);
+                            // Fall through to the conservative default so
+                            // downstream code still has *a* type to work
+                            // with after the diagnostic.
+                        } else {
+                            // Plain list `$` miss yields NULL in R.
+                            return RType::new(Mode::Null, Length::Zero);
+                        }
                     }
                 }
                 // No schema (or column not found after RY060): for
                 // list-like types, return opaque since we don't know
                 // the element type. For other types, return a length-1
-                // value of the base mode.
-                if matches!(bt.mode, Mode::List | Mode::Opaque | Mode::Function) {
+                // value of the base mode. A union base would build a
+                // malformed union here, so degrade to opaque (PLAN A2).
+                if matches!(
+                    bt.mode,
+                    Mode::List | Mode::Opaque | Mode::Function | Mode::Union
+                ) {
                     RType::unknown()
                 } else {
                     RType::new(bt.mode, Length::One)
@@ -3669,7 +3854,10 @@ impl Checker {
                             self.emit_undefined_column(name, schema, span);
                         }
                     }
-                    if matches!(bt.mode, Mode::List | Mode::Opaque | Mode::Function) {
+                    if matches!(
+                        bt.mode,
+                        Mode::List | Mode::Opaque | Mode::Function | Mode::Union
+                    ) {
                         return RType::unknown();
                     }
                     return RType::new(bt.mode, Length::One);
@@ -3691,7 +3879,7 @@ impl Checker {
                         // Index not in schema: if all elements have the
                         // same type (homogeneous list from lapply etc.),
                         // return that common type. Otherwise opaque.
-                        if let Some(common) = homogeneous_list_element_type(schema) {
+                        if let Some(common) = schema.homogeneous_element_type() {
                             return common;
                         }
                     }
@@ -3700,11 +3888,16 @@ impl Checker {
                     return RType::unknown();
                 }
                 // Non-literal arg: infer it for diagnostics, then return
-                // the conservative default.
+                // the conservative default. A union base would build a
+                // malformed union, so degrade to opaque (PLAN A2).
                 if let Some(a) = args.first() {
                     self.infer(&a.value, scope);
                 }
-                RType::new(bt.mode, Length::One)
+                if matches!(bt.mode, Mode::Union) {
+                    RType::unknown()
+                } else {
+                    RType::new(bt.mode, Length::One)
+                }
             }
             IndexKind::Single => {
                 // Single-bracket subsetting semantics are complex
@@ -4144,10 +4337,18 @@ fn apply_narrowing(base: &Scope, narrowing: &Narrowing) -> (Scope, Scope) {
                     then_scope.insert(var.clone(), RType::unknown());
                 }
             }
-            // `else` branch knows var IS of `mode`.
+            // `else` branch knows var IS of `mode`. A union mode would
+            // build a malformed union here, so degrade to opaque (PLAN A2).
+            // (Unreachable today -- `Narrowing::Negative` only ever carries
+            // `Mode::Null` -- but kept as defense in depth.)
             if let Some(existing) = else_scope.get(var).cloned() {
                 if matches!(existing.mode, Mode::Opaque) || existing.mode == *mode {
-                    else_scope.insert(var.clone(), RType::new(*mode, existing.length));
+                    let t = if matches!(*mode, Mode::Union) {
+                        RType::unknown()
+                    } else {
+                        RType::new(*mode, existing.length)
+                    };
+                    else_scope.insert(var.clone(), t);
                 }
             }
         }
@@ -4200,24 +4401,6 @@ fn parse_class_literal(e: &Expr) -> ClassLiteral {
 }
 
 /// Build a `ColumnSchema` from a `list(...)` / `data.frame(...)` argument
-/// If all elements in a column schema have the same type (a homogeneous
-/// list, like `lapply` output), return that common type. Used by `[[`
-/// indexing when the specific index isn't in the schema but all
-/// elements are known to be the same type. Returns `None` for
-/// heterogeneous lists or empty schemas.
-fn homogeneous_list_element_type(schema: &ColumnSchema) -> Option<RType> {
-    if schema.columns.is_empty() {
-        return None;
-    }
-    let first = schema.columns.first()?.1.clone();
-    for (_, t) in &schema.columns {
-        if t != &first {
-            return None;
-        }
-    }
-    Some(first)
-}
-
 /// Match call arguments to function parameters using R's standard
 /// argument matching rules. Returns a vector indexed by parameter
 /// position, where each entry is the type of the argument bound to
@@ -4278,6 +4461,33 @@ fn match_args_to_params(sig_params: &[String], args: &[Arg], arg_types: &[RType]
         // or are dropped; we can't assign them to a named slot.
     }
     matched
+}
+
+/// Resolve the resulting mode for `c(...)`. If any argument was a union,
+/// the coerce-rank ladder doesn't apply soundly, so degrade to opaque
+/// rather than emitting a malformed union (PLAN Phase A2).
+fn collapse_c_mode(mode: Mode, saw_union: bool) -> Mode {
+    if saw_union {
+        Mode::Opaque
+    } else {
+        mode
+    }
+}
+
+/// If `e` is a literal expression (`42`, `"x"`, `TRUE`, `NULL`, `NA`),
+/// return the mode that calling it would error with (PLAN Phase B2).
+/// Non-literal callees return `None` so the caller stays silent.
+fn literal_callee_mode(e: &Expr) -> Option<Mode> {
+    match e {
+        Expr::Logical(_, _) => Some(Mode::Logical),
+        Expr::Integer(_, _) => Some(Mode::Integer),
+        Expr::Double(_, _) => Some(Mode::Double),
+        Expr::String(_, _) => Some(Mode::Character),
+        Expr::Null(_) => Some(Mode::Null),
+        // `NA` carries its own mode (NA, NA_real_, NA_integer_, ...).
+        Expr::Na(t, _) => Some(t.mode),
+        _ => None,
+    }
 }
 
 /// Compute the longest known length among a slice of argument types.
@@ -4469,7 +4679,7 @@ mod tests {
         // types are refined before we walk for the final scope.
         c.collect_fns(&f.stmts);
         for _ in 0..MAX_FIXPOINT_DEPTH {
-            let before = c.return_slots.clone();
+            let before = (*c.return_slots).clone();
             let names: Vec<String> = c.fn_table.fns.keys().cloned().collect();
             for name in names {
                 c.refine_fn_return(&name);
@@ -5168,11 +5378,13 @@ mod tests {
         let schema = l.columns.clone().expect("l should carry a column schema");
         assert_eq!(schema.len(), 2, "schema should have 2 columns");
         assert_eq!(schema.names(), vec!["a", "b"]);
-        // Accessing a missing column emits RY060.
+        // Accessing a missing column on a PLAIN list is silent: in R
+        // `l$missing` returns NULL, so RY060 is scoped to data frames
+        // (PLAN Phase A4). Only data-frame misses fire RY060.
         let diags = check("l <- list(a = 1L)\nbad <- l$missing\n");
         assert!(
-            diags.iter().any(|d| d.code == "RY060"),
-            "expected RY060 on missing list column, got {:?}",
+            diags.iter().all(|d| d.code != "RY060"),
+            "plain-list `$` miss must not fire RY060, got {:?}",
             diags
         );
     }
@@ -6671,6 +6883,49 @@ mod tests {
     }
 
     #[test]
+    fn calling_integer_literal_emits_ry070() {
+        // PLAN Phase B2: calling a literal (`42()`) errors in R.
+        let diags = check("y <- 42()\n");
+        assert!(
+            diags.iter().any(|d| d.code == "RY070"),
+            "calling integer literal `42()` should emit RY070, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn calling_string_literal_emits_ry070() {
+        let diags = check("y <- \"x\"()\n");
+        assert!(
+            diags.iter().any(|d| d.code == "RY070"),
+            "calling string literal should emit RY070, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn calling_null_literal_emits_ry070() {
+        let diags = check("y <- NULL()\n");
+        assert!(
+            diags.iter().any(|d| d.code == "RY070"),
+            "calling NULL literal should emit RY070, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn calling_index_expression_stays_silent() {
+        // Non-literal non-Ident callees (index expressions, calls
+        // returning functions) must stay silent as before.
+        let diags = check("lst <- list(function() 1)\ny <- lst[[1]]()\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY070"),
+            "calling an index expression should not emit RY070, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
     fn dollar_on_integer_emits_ry061() {
         let diags = check("x <- 1:10\nval <- x$col\n");
         assert!(diags.iter().any(|d| d.code == "RY061"), "got {:?}", diags);
@@ -6733,5 +6988,181 @@ mod tests {
                 "non-deterministic diagnostics for src={src:?}\n  run1={d1:?}\n  run2={d2:?}"
             );
         }
+    }
+
+    #[test]
+    fn if_branch_binding_in_both_branches_is_visible_afterwards() {
+        // `r` is bound in both branches; the merged type is the join of
+        // character ("pos"/"neg"). Use after the `if` must be RY010-free.
+        let src = "f <- function(a) {\n  if (a > 0) { r <- \"pos\" } else { r <- \"neg\" }\n  paste(r)\n}\n";
+        let diags = check(src);
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "branch-local binding leaked to after the `if` must not fire RY010, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn if_branch_binding_in_single_branch_is_unknown_but_visible() {
+        // No `else`: `v` is possibly missing. We don't model "definitely
+        // unbound"; the name is inserted as unknown so the use is silent.
+        let (diags, top) = check_with_scope("if (TRUE) { v <- 1 }\nv\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "single-branch binding must be visible (as unknown) after the `if`, got {:?}",
+            diags
+        );
+        let t = top.get("v").expect("v should be bound at top level");
+        assert!(
+            matches!(t.mode, Mode::Opaque),
+            "single-branch binding should degrade to unknown (opaque), got {:?}",
+            t
+        );
+    }
+
+    #[test]
+    fn if_branch_join_type_is_union_when_branches_disagree() {
+        // `s` bound to integer in one branch and character in the other:
+        // the merged type is the join of integer and character, a union.
+        let (diags, top) = check_with_scope("if (TRUE) { s <- 1L } else { s <- \"x\" }\ns\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "both-branch binding must not fire RY010, got {:?}",
+            diags
+        );
+        let t = top.get("s").expect("s should be bound at top level");
+        assert!(
+            matches!(t.mode, Mode::Union),
+            "disagreeing branches should join to a union, got {:?}",
+            t
+        );
+    }
+
+    #[test]
+    fn if_branch_reassignment_over_existing_type_stays_visible() {
+        // `s <- 1L` then reassigned to `"x"` inside a single branch (no
+        // else). The plan specifies single-branch bindings degrade to
+        // unknown (opaque), since there is no sound type for "possibly
+        // missing". What matters is that the use after the `if` stays
+        // RY010-free; the merged type is opaque by design.
+        let (diags, top) = check_with_scope("s <- 1L\nif (TRUE) { s <- \"x\" }\ns\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "reassigned branch binding must not fire RY010, got {:?}",
+            diags
+        );
+        let t = top.get("s").expect("s should be bound at top level");
+        assert!(
+            matches!(t.mode, Mode::Opaque),
+            "single-branch reassignment degrades to unknown (opaque) per plan, got {:?}",
+            t
+        );
+    }
+
+    #[test]
+    fn if_branch_both_branches_over_existing_type_folds_parent() {
+        // `s <- 1L` (parent Integer) then reassigned in BOTH branches to
+        // character. The merged branch type is character; folding the
+        // parent's integer in yields union[integer, character] rather than
+        // losing the parent's prior type.
+        let (diags, top) =
+            check_with_scope("s <- 1L\nif (TRUE) { s <- \"a\" } else { s <- \"b\" }\ns\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "both-branch reassignment must not fire RY010, got {:?}",
+            diags
+        );
+        let t = top.get("s").expect("s should be bound at top level");
+        assert!(
+            matches!(t.mode, Mode::Union),
+            "both-branch reassignment over a different parent type should fold the parent in (union), got {:?}",
+            t
+        );
+    }
+
+    #[test]
+    fn lapply_list_arith_does_not_fire_ry040() {
+        // PLAN Phase A3: iterating a list yields the unwrapped element,
+        // so arithmetic inside the callback must not fire RY040.
+        let src = "out <- lapply(list(1, 2, 3), function(x) x * 2)\n";
+        let diags = check(src);
+        assert!(
+            diags.iter().all(|d| d.code != "RY040"),
+            "lapply over a homogeneous list must not fire RY040, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn dollar_missing_on_plain_list_does_not_fire_ry060() {
+        // PLAN Phase A4: `$` on a plain list with a missing name returns
+        // NULL in R; RY060 must only fire for data frames.
+        let diags = check("v <- list(a = 1, b = 2)$missing\n");
+        assert!(
+            diags.iter().all(|d| d.code != "RY060"),
+            "`$` miss on a plain list must not fire RY060, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn dollar_missing_on_plain_list_returns_null() {
+        // PLAN Phase A4: the returned value matches R's NULL (not unknown).
+        let (_, scope) = check_with_scope("v <- list(a = 1, b = 2)$missing\n");
+        let v = scope.get("v").expect("v should be bound");
+        assert!(
+            matches!(v.mode, Mode::Null),
+            "plain-list `$` miss should return NULL, got {:?}",
+            v
+        );
+        assert!(
+            matches!(v.length, Length::Zero),
+            "NULL length should be Zero, got {:?}",
+            v
+        );
+    }
+
+    #[test]
+    fn dollar_missing_on_data_frame_still_fires_ry060() {
+        // PLAN Phase A4: the data-frame case is a real bug and must keep
+        // firing. `mtcars` is a data frame in the typeshed.
+        let diags = check("df <- mtcars\nbad <- df$nonexistent\n");
+        assert!(
+            diags.iter().any(|d| d.code == "RY060"),
+            "`$` miss on a data frame must still fire RY060, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn for_over_homogeneous_list_does_not_fire_ry040() {
+        // `for (el in list(1, 2, 3))` binds `el` to the unwrapped element
+        // (double<1>) inside the loop body, so accumulating into `total`
+        // is well-typed. (The loop var lives in the loop's child scope,
+        // so we assert on the absence of RY040, not on `el`'s binding.)
+        let diags =
+            check_with_scope("total <- 0\nfor (el in list(1, 2, 3)) { total <- total + el }\n").0;
+        assert!(
+            diags.iter().all(|d| d.code != "RY040"),
+            "for over a homogeneous list must not fire RY040 on the body, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn public_check_with_scope_surfaces_ry000_on_broken_file() {
+        // PLAN Phase C2: `check_with_scope` used to clear diagnostics
+        // AFTER emitting parse errors, wiping the RY000s. It must now
+        // surface them.
+        let mut p = RParser::new().unwrap();
+        let f = p.parse("test.R", "f <- function( { 1 }\n").unwrap();
+        let mut c = Checker::new("test.R");
+        let (diags, _scope) = c.check_with_scope(&f);
+        assert!(
+            diags.iter().any(|d| d.code == "RY000"),
+            "check_with_scope must surface RY000 on a broken file, got {:?}",
+            diags
+        );
     }
 }

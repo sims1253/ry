@@ -1,0 +1,233 @@
+---
+output: github_document
+---
+
+<!-- README.md is generated from README.Rmd. Edit README.Rmd, then
+     render with `Rscript -e 'rmarkdown::render("README.Rmd")'`.
+     Chunks that invoke `ry` run only when the binary is on PATH
+     (docs CI builds it first), so the output below is real, not
+     hand-written. -->
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment  = "#>",
+  error    = TRUE   # `ry check` exits non-zero on findings; that is the point
+)
+has_ry <- nzchar(Sys.which("ry"))
+knitr::opts_chunk$set(eval = has_ry)
+```
+
+# ry
+
+[![CI](https://github.com/sims1253/ry/actions/workflows/ci.yml/badge.svg)](https://github.com/sims1253/ry/actions/workflows/ci.yml)
+
+`ry` is a fast static checker for the R language, written in Rust and
+inspired by [astral-sh/ty](https://github.com/astral-sh/ty). It parses R
+source with [tree-sitter-r](https://github.com/r-lib/tree-sitter-r),
+infers types across your whole project, and reports likely bugs before
+you run the code: calling a non-function, arithmetic on incompatible
+types, misspelled data frame columns, unbound variables, malformed `if`
+conditions, and more.
+
+R will happily coerce, recycle, and partially match its way past most of
+these mistakes at runtime and hand you a statistically wrong answer
+instead of an error. ry's job is to catch the mistake while it is still
+cheap.
+
+## Who this is for
+
+ry is built to support **education, practice, and research around
+principled Bayesian workflows** in R:
+
+- **Education.** Every diagnostic explains what R would silently do at
+  runtime, so the checker doubles as a teacher of R's semantics. The
+  [rule reference](docs/rules/) is written as teaching material, and the
+  repository ships graded [exercises](exercises/) and a fully worked
+  [Bayesian workflow demo](demos/bayesian-workflow/) -- plus a
+  [broken twin](demos/bayesian-workflow-broken/) with seeded, realistic
+  workflow bugs for practice.
+- **Practice.** The demo workflow uses the modern parallel idiom --
+  `purrr::in_parallel()` on `mirai` daemons -- and ry type-checks the
+  parallel code exactly like its sequential equivalent.
+- **Research.** Diagnostics are available as structured JSON
+  (`--output-format json`, `--statistics`), so ry can instrument code
+  quality across a corpus or a classroom. See
+  [docs/architecture](docs/architecture.qmd) for the methodology,
+  including how ry's claims are validated against R itself.
+
+ry is **not** a formatter (pair it with `air` or `styler`) and not a
+replacement for `lintr`'s style rules. It focuses on type- and
+scope-driven diagnostics that need a whole-program view, and it prefers
+staying silent over crying wolf: every rule is validated against an R
+oracle and real CRAN code so that a warning from ry is worth reading.
+
+## Install
+
+ry is a Cargo workspace; build from source (Rust 1.82 or newer):
+
+```sh
+git clone https://github.com/sims1253/ry
+cd ry
+cargo build --release
+# binary at target/release/ry
+```
+
+Prebuilt binaries and an R-side installer are planned; see `PLAN.md`.
+
+## Quickstart
+
+Point `ry check` at files, directories, or a project root. `.R`, `.Rmd`,
+and `.qmd` files are picked up; R chunks in Quarto and R Markdown
+documents are checked with diagnostics mapped back to the host file's
+line numbers.
+
+```{bash quickstart}
+ry check examples/smoke.R
+```
+
+Diagnostics use the `full` format by default: the offending line, a
+marker under the exact span, and -- where ry can help -- a `help:` line
+with a suggestion:
+
+```
+analysis.R:12:8: error: [RY060] data frame has no column `dispp`
+    mean(d$dispp)
+           ^~~~~
+    help: did you mean `disp`? available columns: mpg, cyl, disp, ...
+```
+
+Exit codes are CI-friendly: non-zero when any error-level diagnostic
+fires (`--exit-zero` overrides; `--error-on-warning` promotes warnings).
+
+## Package awareness
+
+ry tracks `library()` / `require()` calls and resolves functions against
+per-package type stubs, so the same name means the right thing in
+context: `filter()` is `stats::filter` until dplyr is loaded, and
+`dplyr::filter(df, x > 0)` resolves the column `x` against `df`'s schema
+either way. Stubs currently ship for base R (plus stats/utils), dplyr,
+purrr, mirai, and a minimal Bayesian stack (posterior, brms, loo,
+cmdstanr, bayesplot). Packages loaded outside the checked sources (e.g.
+in a startup file) can be declared in `ry.toml`.
+
+Parallel purrr code checks like sequential code:
+
+```r
+library(purrr)
+library(mirai)
+
+daemons(4)
+fits <- map(simulations, in_parallel(function(s) fit_one(s)))
+rhats <- map_dbl(fits, function(f) max_rhat(f))
+```
+
+`in_parallel()` is type-transparent to ry, and the `map_*` family checks
+the callback's return mode against the requested vector type -- a
+`map_dbl` whose callback returns character is a diagnostic, not a
+runtime surprise halfway through your simulation study.
+
+## Learning materials
+
+| Where | What |
+|---|---|
+| `docs/` | Quarto site: getting started, the type model as a tour of R's runtime semantics, rule reference, editor setup, CI recipes, architecture. |
+| `demos/bayesian-workflow/` | A principled Bayesian workflow (prior predictive checks, fitting, diagnostics, posterior predictive checks, parallel simulation-based calibration) that checks clean. |
+| `demos/bayesian-workflow-broken/` | The same workflow with seeded bugs, one diagnostic each; `ANSWERS.md` explains the statistical consequence of every bug. |
+| `exercises/` | Koan-style exercises: edit each file until `ry check` is green. Ordered to teach the type model incrementally. |
+
+## Configuration (`ry.toml`)
+
+Discovered by walking up from the checked path. All keys optional:
+
+```toml
+# Promote / demote / disable rules by code (RY040), name
+# (invalid-arithmetic), or "all".
+error  = ["RY040"]
+warn   = ["RY070"]
+ignore = ["RY033"]
+
+# Packages attached outside the checked sources.
+packages = ["dplyr"]
+
+error-on-warning = false
+exit-zero        = false
+output-format    = "full"     # full | concise | json | github | gitlab | junit
+
+# gitignore-style patterns, relative to this ry.toml's directory.
+exclude = ["renv", "tests/snaps/**"]
+```
+
+CLI flags override the config only when passed explicitly.
+
+## Inline suppression
+
+```r
+x <- bad  # ry: ignore                 # suppress all rules on this line
+x <- bad  # ry: ignore[RY010, RY040]   # suppress specific rules
+x <- bad  # noqa: RY010                # flake8/ruff-compatible alias
+
+# ry: ignore                           # standalone: suppresses the next line
+# ry: ignore-file                      # file-level, anywhere in the file
+```
+
+## Editors
+
+`ry server` speaks the Language Server Protocol over stdio: diagnostics
+as you type (debounced, cached parses), hover with inferred types,
+go-to-definition, references, rename, completion, signature help, inlay
+hints, folding, and quick-fix actions that insert suppression comments.
+Setup guides for VS Code, Positron, Neovim, and Helix are in
+[docs/editors](docs/editors.qmd).
+
+## CI
+
+`--output-format github` emits workflow-command annotations; `gitlab`
+and `junit` cover the other major CI systems. `--statistics` prints
+per-rule counts for corpus work. A minimal GitHub Actions step:
+
+```yaml
+- run: ry check --output-format github .
+```
+
+## Rules
+
+The table below is generated from the checker's own rule registry at
+render time, so it cannot drift from the binary. Defaults can be
+overridden per-project; `ry rule RY040` prints the long-form
+explanation with examples.
+
+```{r rules-table, echo = FALSE, results = "asis"}
+rules <- jsonlite::fromJSON(
+  system2("ry", c("explain-rule", "--output-format", "json"), stdout = TRUE)
+)
+knitr::kable(rules[, c("code", "name", "severity", "summary")])
+```
+
+## How ry stays honest
+
+- **The R oracle.** Every behavioral claim is checked against R itself:
+  a fixture corpus is executed by an R driver (in parallel, via
+  `purrr::in_parallel()` on mirai daemons -- the same idiom the demos
+  teach) and ry must agree with R's verdict. Runs in CI;
+  `cargo test -p ry-checker --test oracle -- --ignored` locally.
+- **Vendored CRAN code.** ry runs over vendored real-world packages and
+  snapshots every diagnostic; the snapshot is triaged line by line, and
+  a rule that dominates the snapshot is treated as broken.
+- **Self-verifying docs.** Each rule's documented bad example is run
+  against the checker in the test suite; this README is rendered with
+  the real binary.
+
+Known gaps are tracked in `PLAN.md` (no S4/R6/environment modeling, no
+NAMESPACE resolution, no NA tracking yet).
+
+## Contributing and architecture
+
+Start with [ARCHITECTURE.md](ARCHITECTURE.md) (crate map, the three-pass
+project check, where to add a rule) and
+[CONTRIBUTING.md](CONTRIBUTING.md) (build gate, fixture conventions, and
+the no-false-positives bar every new rule must clear).
+
+## License
+
+MIT OR Apache-2.0.

@@ -899,7 +899,7 @@ fn collect_parse_errors(root: tree_sitter::Node) -> Vec<Span> {
     if !root.has_error() {
         return Vec::new();
     }
-    let mut out = Vec::new();
+    let mut out: Vec<Span> = Vec::new();
     // Pre-order DFS over ALL nodes (named and anonymous). `ERROR` and
     // `MISSING` are node kinds tree-sitter emits specially.
     let mut stack: Vec<tree_sitter::Node> = vec![root];
@@ -918,6 +918,19 @@ fn collect_parse_errors(root: tree_sitter::Node) -> Vec<Span> {
             stack.push(child);
         }
     }
+    // A parent ERROR frequently wraps a MISSING token at the SAME byte
+    // range (zero-width), so the raw walk reports the identical span
+    // twice -- e.g. a broken file printed `1:16` for both the ERROR and
+    // its missing child. Deduplicate on the (start, end) byte pair,
+    // preserving a stable (row, column) order for deterministic output.
+    out.sort_by(|a, b| {
+        a.start
+            .cmp(&b.start)
+            .then(a.end.cmp(&b.end))
+            .then(a.line.cmp(&b.line))
+            .then(a.col.cmp(&b.col))
+    });
+    out.dedup_by(|a, b| a.start == b.start && a.end == b.end);
     out
 }
 
@@ -951,8 +964,7 @@ fn namespace_op(n: Node, src: &str) -> Option<&'static str> {
 ///
 /// `line_start` is the byte offset of the start of the line containing the
 /// column, and `byte_col` is the byte offset of the target within that line.
-#[allow(dead_code)] // no diagnostic renderer consumes char columns yet
-pub(crate) fn byte_col_to_char_col(line: &str, byte_col: usize) -> usize {
+pub fn byte_col_to_char_col(line: &str, byte_col: usize) -> usize {
     let mut col = 0usize;
     for (b, ch) in line.char_indices() {
         if b >= byte_col {
@@ -1436,6 +1448,27 @@ mod tests {
                 ..
             }) => assert_eq!(s, "# noqa"),
             other => panic!("expected String assign, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_error_spans_are_deduplicated() {
+        // A broken region often surfaces as an ERROR node wrapping a
+        // MISSING token at the SAME byte range, which used to emit the
+        // identical `line:col` twice. The spans must be deduplicated on
+        // the (start, end) byte pair (PLAN Phase C1).
+        let f = parse("f <- function( { 1 }\n");
+        assert!(
+            !f.parse_errors.is_empty(),
+            "expected at least one parse error"
+        );
+        let mut seen = std::collections::HashSet::new();
+        for s in &f.parse_errors {
+            assert!(
+                seen.insert((s.start, s.end)),
+                "duplicate parse-error span: {:?}",
+                s
+            );
         }
     }
 }

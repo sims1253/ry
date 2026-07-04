@@ -1,429 +1,474 @@
-# ry rewrite plan
+# ry plan (round 3): from correct prototype to teachable tool
 
-This plan rebuilds the core of `ry` (an R type checker modeled on astral's `ty`)
-around the findings of a full-codebase review (2026-07). It is written to be
-executed by an agent with no prior context. Work through the phases in order;
-each phase has explicit acceptance criteria. Do not start a later phase while
-an earlier phase's criteria fail.
+## Where we are
 
-## Context: what is wrong today (verified findings)
+Round 2 (the previous PLAN.md) is fully implemented in the working tree:
+the oracle suite is green with R installed (44 fixtures), the glue vendor
+snapshot exists and is triaged, the LSP is modularized with parse/scope
+caching and debounced diagnostics, the CLI has honest flags, and
+`cargo test --workspace` + clippy + fmt all pass. Verified 2026-07-04.
 
-The workspace has 5 crates: `ry-core` (AST, types, tree-sitter parser adapter),
-`ry-checker` (inference + diagnostics, 6.8k lines), `ry-typeshed` (JSON base-R
-signatures), `ry-cli`, `ry-lsp` (5.2k lines, one file). All 354 tests pass, but:
+The review verdict: the architecture is sound and nothing needs to be
+scrapped. Keep tree-sitter -> owned AST -> walk/infer with a fixpoint
+over the shared `FnTable`; do NOT adopt salsa in this round. The work
+now is of a different kind:
 
-1. **Named function bodies are never checked.** `f <- function() { "hello" + 1 }`
-   produces zero diagnostics. Pass 3 (`check_stmt` on `Stmt::Assign`) infers the
-   RHS via `infer` -> `Expr::Function` arm (`crates/ry-checker/src/lib.rs:1935`)
-   -> `function_value_from_literal`, which is the pure pass-2 path that emits no
-   diagnostics. Only bare statement-position `function()` literals
-   (`lib.rs:1701`) and HOF callbacks (`walk_callback_for_diagnostics`) get
-   diagnostic walks. Almost all real R code lives in named function bodies.
-2. **Parsing is O(n^2).** `char_col` (`crates/ry-core/src/parser.rs:601`) rescans
-   the file from byte 0 for every node's span. Measured: 5k lines 2.5s,
-   10k lines 11.6s, 20k lines 47s. tree-sitter already provides the column via
-   `node.start_position().column`; the code uses `.row` and discards `.column`.
-3. **Syntax errors are silently swallowed.** tree-sitter always returns a tree;
-   `root.has_error()` is never consulted. Broken files check "clean" (plus
-   garbage diagnostics from error-node fragments).
-4. **Two parallel inference engines.** `infer_pure_at_depth` (pass 2, no
-   diagnostics) and `infer` (pass 3, diagnostics) duplicate every expression
-   form and are kept in sync by hand. Finding 1 is a direct symptom.
-5. **`RType: Copy` is propped up by leaked global intern tables.**
-   `intern_class_name` / `intern_column_schema` / `intern_function_signature`
-   (`crates/ry-core/src/types.rs:286,352,408`) `Box::leak` into
-   `OnceLock<Mutex<Vec<&'static _>>>` with O(n) linear scans. Unbounded memory
-   growth in LSP sessions; global state shared across checks.
-6. **Parser correctness bugs:**
-   - `<<-` unrecognized: `try_lower_assign` and `lower_binary` match the string
-     `"<<"` (`parser.rs:108,439`), but tree-sitter-r emits `<<-`. Super-assign
-     statements lower to `Expr::Unknown` and are dropped.
-   - `**` mapped to `Mul` (`parser.rs:413`); in R `**` is `^` (power).
-   - Integer literals that fail `i64` parse (`1e5L`, `0x10L`) return `None`,
-     and `?`-propagation in `lower_binary`/`try_lower_assign` silently deletes
-     the whole enclosing statement.
-   - `lower_braced_as_stmt` (`parser.rs:207`) keeps only the last statement of
-     a top-level `{ ... }` block.
-   - String lowering strips quotes but not escape sequences; raw strings
-     `r"(...)"` unhandled.
-7. **Type-model semantic bugs:**
-   - `arith_result` (`types.rs:54`): `(Null, x) => Some(x)` precedes the
-     Character rejection, so `NULL + "a"` types as character; R errors.
-   - `join` (`types.rs:572`) collapses branches via the coercion ladder:
-     `if (p) 1L else "a"` types as `character`. R never coerces at `if`; the
-     honest answer is a union.
-   - `apply_narrowing` (`lib.rs:4245`) misuses `coerce_rank` as a subtype
-     lattice: `is.numeric(x)` rewrites a known-integer to Double; `is.list(x)`
-     on a character "narrows" it to List.
-   - The NA flag carries no signal (`arith` sets it for every double; `infer_c`
-     for every character/double).
-   - `S3_GENERICS` contains `t`, `c`, `format`, ... so `t.test <- function(...)`
-     is misregistered as S3 method `t` for class `"test"`
-     (`split_s3_method_name`, `lib.rs:88`).
-8. **Suppression parsing is textual:** `parse_suppressions` /
-   `has_file_suppression` (`lib.rs:321,438`) find `#` inside string literals,
-   and `ry: ignore-file` matches as a substring of any comment prose.
-9. **Waste:** typeshed JSON (61KB) reparsed on every `Checker::new`;
-   `Project::check` clones `FnTable` + `ReturnSlots` per file
-   (`crates/ry-checker/src/project.rs:120-125`); `refine_fn_return` clones
-   function bodies per fixpoint iteration; LSP rebuilds and rechecks the whole
-   project on every keystroke (`crates/ry-lsp/src/lib.rs:977`).
-10. **Tests measure the implementation, not R.** Every `err_*` corpus fixture
-    is top-level code; the "real_world" tests print tables and assert nothing.
-11. **Small stuff:** MSRV claims 1.76 but uses `Option::is_none_or` (1.82+);
-    `--color` parsed and ignored; `--output-format full` behaves as `concise`;
-    dead enum variants (`BinOpKind::NotIn`, `PipeBind`, `ReturnTypeSlot`);
-    `Length::binary` has two identical `Known/Known` branches; no README;
-    `repository = "https://example.invalid/ry"`.
+1. The tool's mission is changing. ry is to become a tool for
+   **education, practice, and research around principled Bayesian
+   workflows in R**. That means the code it must check cleanly is
+   tidyverse-flavored workflow code (purrr, dplyr, posterior, brms) and
+   parallel execution via purrr's mirai integration (`purrr::in_parallel`,
+   purrr >= 1.1.0) -- not just base R. It also means documentation,
+   demos, and exercises are first-class deliverables, not afterthoughts.
+2. The last systemic false positives (identified by the vendor snapshot's
+   own triage) must die before any teaching material ships -- a checker
+   that cries wolf teaches the wrong lesson.
+3. `crates/ry-checker/src/lib.rs` is 7,168 lines. The LSP got split in
+   round 2; the checker did not. This is the one piece of structural rot.
 
-## What to preserve (do not regress)
+Execute phases in order. Phase 5 (docs/teaching) may proceed in parallel
+with 3/4 once Phase 1 and 2 are done.
 
-- The `RType` dimensions: mode, length, S3 class vector, column schema. The
-  column-schema -> NSE augmented-scope mechanism (`subset(df, cyl == 4)`
-  resolving `cyl` against the schema) and the HOF callback-return modeling are
-  the project's best ideas. Keep the semantics; change the representation.
-- Typeshed as data (JSON with slot-based return specs).
-- The product surface: rule codes RY001-RY070 and their meanings, `# ry:
-  ignore` / `# noqa` suppression, `--error/--warn/--ignore` filters, `ry.toml`
-  discovery and CLI-override precedence, output formats, corpus harness format
-  (`# expect:` / `# no-diag` first-line markers).
-- Existing corpus fixtures must keep passing unless a fixture itself encodes a
-  bug (if so, fix the fixture and note it in the commit message).
+Build/test gate before every commit: `cargo test --workspace && cargo
+clippy --workspace --all-targets -- -D warnings && cargo fmt --all --
+--check`. Oracle (requires R): `cargo test -p ry-checker --test oracle
+-- --ignored`.
 
-Build/test commands: `cargo build --release`, `cargo test --workspace`.
-Rules from the repo owner: never run `git` commands (the user commits), no
-emojis anywhere, do not add dependencies by editing Cargo.toml by hand where an
-installer exists (for Rust, adding to Cargo.toml is fine — use `cargo add`).
+Repo rules: the user runs git themselves -- prepare changes, do not
+commit unless asked. No emojis anywhere. Do not delete files without
+asking; move superseded material instead.
 
 ---
 
-## Phase 0 — Pin behavior with tests that can fail (do this first)
+## Phase 0 -- Hygiene (blocking, tiny)
 
-Goal: make the rewrite verifiable before touching any implementation.
+1. **License files.** The workspace claims `MIT OR Apache-2.0` but the
+   repo root has no LICENSE file. Add `LICENSE-MIT` and
+   `LICENSE-APACHE` (standard texts, copyright "ry contributors").
+2. **Crate metadata.** Every `crates/*/Cargo.toml` lacks `description`.
+   Add one line each; add `keywords = ["r", "linter", "static-analysis",
+   "type-checker"]` and `categories` to `ry-cli`. Point `readme` at the
+   workspace README where sensible.
+3. **Typeshed audit for fabricated entries.** `base_r.json` contains at
+   least two functions that DO NOT EXIST in base R: `identical_to` and
+   `colsum` (R has `rowsum` and `colSums`, not `colsum`). Add a check to
+   the oracle CI job: a small R script that walks every function name in
+   the typeshed and asserts `exists(name)` in a vanilla R session
+   (search all default-attached packages). Fix what it finds. This
+   prevents hallucinated entries from accumulating.
 
-1. **Function-body fixtures.** Add corpus fixtures under
-   `crates/ry-checker/testdata/`:
-   - `err_fnbody_arith.R`: `# expect: RY040` with `"a" + 1` inside
-     `f <- function() { ... }`.
-   - `err_fnbody_unbound.R`: `# expect: RY010` with an undefined variable
-     inside a named function body.
-   - `err_fnbody_nested_if.R`: `# expect: RY040` inside an `if` inside a named
-     function.
-   - `ok_fnbody_sequential.R`: `# no-diag` — sequential bindings inside a
-     function's `if` branch (`tmp <- 1; out <- tmp + 1`) must not fire RY010.
-   These will FAIL against the current code. That is the point: they define
-   done for Phase 2.
-2. **Parse-error fixture.** Extend the corpus harness (`tests/corpus.rs`) with
-   a new marker `# expect-parse-error`, and a fixture containing broken syntax.
-   Wire it to whatever parse-error reporting Phase 1 introduces.
-3. **Parser round-trip tests** in `ry-core` for: `x <<- 1` (must lower to a
-   super-assignment, not Unknown), `2 ** 3` (must be Pow), `1e5L` and `0x10L`
-   (statement must not vanish; a fallback typed literal or Unknown *expression*
-   is fine, a dropped *statement* is not), top-level `{ a <- 1; b <- 2 }`
-   (both statements preserved).
-4. **Performance regression test.** Add `crates/ry-checker/tests/perf.rs`
-   (marked `#[ignore]` so CI opt-in): generate a 20k-line file in a tempdir,
-   parse + check, assert wall time under 2 seconds. Include the generation
-   snippet from this plan's appendix.
-5. **Oracle harness (skeleton now, corpus later).** New test binary
-   `crates/ry-checker/tests/oracle.rs`, `#[ignore]` by default, that for each
-   fixture in `testdata/oracle/`: runs `Rscript --vanilla <file>` if `Rscript`
-   is on PATH (skip cleanly otherwise), records whether R errors, runs the
-   checker, and asserts: R-errors => at least one ry error-severity diagnostic
-   (for fixtures tagged `# oracle: must-flag`), R-succeeds => no error-severity
-   diagnostics (for fixtures tagged `# oracle: must-pass`). Seed it with ~10
-   fixtures covering `<<-`, `**`, `NULL + "a"`, arithmetic on character,
-   `$` on atomic, calling a non-function.
+## Phase 1 -- Kill the remaining systemic false positives
 
-Acceptance: `cargo test --workspace` runs; the new function-body and parser
-tests fail (expected-fail list documented in the PR/commit description);
-everything previously green stays green.
+These four items come straight from the vendor snapshot triage in
+`crates/ry-checker/tests/vendor_snapshot.rs`. After all four, the glue
+snapshot should contain ZERO diagnostics -- update it and assert
+emptiness in the triage comment.
 
-## Phase 1 — Showstopper fixes inside the current architecture
+### 1.1 RY002 must not fire on Unknown-length conditions (dominant FP)
 
-These are small, surgical, and de-risk the rewrite. Land them before the big
-refactor so bisection stays possible.
+`walk_stmt`'s `Stmt::If` arm (`crates/ry-checker/src/lib.rs:1302`) and
+`infer_if_expr` (~line 2104) emit RY002 whenever the condition's length
+is not `One` -- including `Length::Unknown`. Six of the twelve glue
+diagnostics are this. `if (!inherits(x, "foo"))` types as
+logical<len=?> and warns.
 
-1. **Fix quadratic columns.** In `RParser::span` (`parser.rs:61-67`), use
-   `n.start_position().column` (byte column) directly. If char columns are
-   required for diagnostics, convert byte->char within the single line only
-   (slice the line, count chars), never the whole file. Delete `char_col`.
-   Verify with the Phase 0 perf test: 20k lines must check in well under 2s.
-2. **Surface parse errors.** After parsing, if `tree.root_node().has_error()`,
-   walk the tree for `ERROR` / `MISSING` nodes and emit a parse diagnostic per
-   node (new rule `RY000` / name `syntax-error`, severity Error, registered in
-   `rules.rs` keeping codes lexicographic). Plumb through `Checker`/`Project`
-   /CLI/LSP so a broken file exits nonzero and shows the error location.
-   Decision: still run the checker on the recovered tree (diagnostics beyond
-   the error may be noise, ty checks anyway; match that) — but always emit the
-   RY000s.
-3. **Check named function bodies.** Minimal fix within the current dual-engine
-   design (the real fix is Phase 2, but do not leave the hole open):
-   in `check_stmt`'s `Stmt::Assign` arm, when `value` is `Expr::Function`,
-   additionally walk the body with `check_stmt` in a child scope seeded with
-   params (mirror the existing `Stmt::FunctionDef` arm at `lib.rs:1701-1727`).
-   While here, fix the per-statement scope-clone bug in the `Stmt::If` arm
-   (`lib.rs:1664-1671`): clone `then_scope` ONCE before the loop, not once per
-   statement, so sequential bindings inside a branch resolve
-   (`ok_fnbody_sequential.R` covers this).
-4. **Parser bug batch:** `"<<"` -> `"<<-"` in both match sites; map `**` to
-   `Pow`; integer-literal fallback (on `i64` parse failure lower to
-   `Expr::Double` if it parses as f64, else `Expr::Unknown(span)` — never
-   propagate `None` upward from a literal); make `lower_braced_as_stmt`
-   preserve all statements (either introduce `Stmt::Block(Vec<Stmt>)` or
-   return multiple statements via a smallvec/Vec — `lower_stmt` callers must
-   splice).
-5. **Typeshed loaded once.** Wrap `load_base()` in a `OnceLock<Typeshed>` (or
-   `LazyLock`) and have `Checker::new`/`with_tables` take `&'static Typeshed`
-   or a cheap `Arc<Typeshed>`.
+Fix: RY002 fires ONLY on `Length::Known(n) if n > 1` (and `Length::Zero`
+stays RY001 via `invalid_condition`). Audit for a third emission site
+(`while`) and apply the same rule. Update the RY002 summary in
+`rules.rs` to say "condition length is known to be greater than 1".
+Corpus fixture: `ok_if_unknown_length_condition.R` with the
+`!inherits(...)` and bare-parameter patterns from glue.
 
-Acceptance: Phase 0's function-body, parser, and perf tests pass. Full suite
-green. Manual probe: the three showstopper snippets from the review behave
-(function-body errors flagged; 20k lines < 2s; broken file reports RY000 and
-exits nonzero).
+### 1.2 Null-narrowing on `is.null` guards
 
-## Phase 2 — Single inference engine
+`color.R:123` FP: a parameter defaulting to `NULL`, guarded by
+`if (is.null(x)) ... else x(out)`, still types as NULL in the else
+branch and fires RY070. The `extract_type_narrowing` machinery exists
+for `is.numeric`-style predicates; extend it to `is.null`:
+then-branch narrows the binding to NULL, else-branch narrows it AWAY
+from NULL. There is no complement type in the model, so else-branch
+narrowing replaces a known-NULL (or NULL-containing-union) binding with
+`RType::unknown()` (or the union minus the NULL member). Also handle the
+negated form `if (!is.null(x))` (swap branches).
 
-Goal: delete the pure/impure duplication; one engine, one truth.
+### 1.3 Model `.Call` and friends
 
-1. Introduce a sink abstraction in `ry-checker`:
-   ```rust
-   pub(crate) trait DiagSink { fn emit(&mut self, d: Diagnostic); }
-   pub(crate) struct Collect<'a>(&'a mut Vec<Diagnostic>);
-   pub(crate) struct Discard;
-   ```
-   (Or an enum; trait-object vs generic is implementor's choice — measure, but
-   a generic parameter monomorphizes fine here.)
-2. Rewrite the expression/statement walkers as ONE set of functions
-   parameterized by the sink: `infer(&self_ctx, expr, &mut scope, &mut sink)`.
-   Pass 2 (fixpoint refinement) calls with `Discard`; pass 3 with `Collect`.
-   Fold in, and then DELETE: `infer_pure_at_depth`, `infer_binop_pure`,
-   `infer_c_pure`, `apply_sig_pure`, and every "mirrors pass 3 minus
-   diagnostics" comment. `collect_returns_and_simulate_at_depth` becomes the
-   single body-walking routine used by both return inference and diagnostics
-   (diagnostics emission is just the sink choice).
-3. Function bodies get exactly one walking policy: when pass 3 encounters a
-   function literal (named or anonymous, assigned or bare), it walks the body
-   once with `Collect` in a child scope (params seeded from defaults/UNKNOWN,
-   enclosing bindings visible). Return-type inference reuses the same walk's
-   result rather than re-walking. Remove the Phase 1 stopgap double-walk.
-   Guard against double-emission: a body must be walked with `Collect` exactly
-   once per check (fixpoint iterations use `Discard`).
-4. Scope semantics: pick ONE model and document it in the module header.
-   Recommended v1 model: statements in a block share a scope sequentially;
-   `if` branches each get a child scope cloned from the parent; bindings from
-   branches do NOT merge back (conservative; matches current pass-3 intent,
-   minus the per-statement clone bug). Loops walk once with a child scope.
-5. Keep the 3-pass shape (collect -> fixpoint -> emit) but stop cloning
-   function bodies per refinement: store bodies once (e.g. `Rc<[Stmt]>` in
-   `UserFn`) and iterate by reference.
+`glue.R:187/319` FP: `.Call(glue_, ...)` treats the C entry-point symbol
+as a variable read and fires RY010. In `infer_call`, when the callee is
+one of `.Call`, `.C`, `.Fortran`, `.External`, `.External2`,
+`.Internal`: do not treat a bare-identifier FIRST argument as a variable
+reference (skip RY010 for it), infer remaining args normally, return
+`RType::unknown()`.
 
-Acceptance: all corpus fixtures pass, including Phase 0 additions; line count
-of `ry-checker/src/lib.rs` drops substantially (expect roughly -1.5k lines);
-grep finds no `_pure` inference functions; running the checker twice on the
-same input yields identical diagnostics (add a determinism test).
+### 1.4 Typeshed additions (missing base functions seen in the wild)
 
-## Phase 3 — Type representation: kill the leaked globals, add unions
+Add: `lengths` (integer, length unknown), `delayedAssign` (NULL),
+`inherits` (logical, length 1), `requireNamespace` (logical, length 1),
+`isTRUE`, `isFALSE`, `nzchar`, `xor`, `Negate` (function), `Recall`
+(unknown), `on.exit` (NULL), `match.arg` (character, length 1). All
+predicates return length-1 logical -- that plus 1.1 is what silences the
+glue RY002s at the root.
 
-1. **Session-owned interner.** New `TypeInterner` struct owned by the check
-   session (`Checker` / `Project`), not a global:
-   - `RType` stops being `Copy`-via-leak. Two acceptable designs; pick one:
-     a. ID-based (recommended, matches ty/ruff): `Ty(u32)` handles, all
-        structural data lives in the interner; `RType` becomes a small POD of
-        ids + enums and stays `Copy`.
-     b. `Arc`-based: `class: Option<Arc<ClassVec>>`, `columns:
-        Option<Arc<ColumnSchema>>`, `fn_sig: Option<Arc<FunctionSignature>>`,
-        `RType: Clone` (cheap). Simpler; fine if (a) is too invasive.
-   - Delete `intern_class_name`, `intern_column_schema`,
-     `intern_function_signature` and their `OnceLock<Mutex<...>>` tables.
-     Nothing may call `Box::leak` in the type layer.
-   - Interner lookups must be hashed (HashMap keyed by content), not linear
-     scans.
-2. **Union type.** Add `Mode::Union` support via the interner: a bounded union
-   (cap at ~4 members like ty's approach to literal unions; join collapses to
-   UNKNOWN beyond the cap). `join` becomes: equal -> self; otherwise build a
-   union of the two (deduplicated), never coercion-ladder promotion.
-   Update consumers: `arith`/`compare` over a union distribute over members
-   (error only if ALL members error; warn if SOME error is out of scope for
-   now); `invalid_condition` true only if all members invalid. Fixtures:
-   `x <- if (p) 1L else "a"; y <- x + 1` should NOT be an error (character
-   member would error, integer member is fine -> stay quiet in v1),
-   and `x <- if (p) list(1) else function() 1; x + 1` SHOULD error (all
-   members invalid).
-3. **Fix arith/compare tables** (`types.rs`): move the Character/List/Function
-   rejections BEFORE the Null arm so `NULL + "a"` is an error; keep
-   `NULL + 1` -> numeric-with-length-0 semantics (R returns `numeric(0)`;
-   model as `Length::Zero`). Delete the duplicate `Known/Known` branches in
-   `Length::binary` (single arm).
-4. **Narrowing rewrite** (`apply_narrowing`): replace coerce_rank comparisons
-   with explicit compatibility: a predicate narrows only when the existing
-   mode is Opaque or a union containing the predicate's mode; `is.numeric`
-   narrows to union(integer, double), never rewriting a known Integer to
-   Double; incompatible known modes leave the scope untouched (optionally
-   flag dead branch later — out of scope).
-5. **NA flag decision:** remove `NaFlag` from `RType` entirely OR make it
-   honest (literals: false; `NA` literals: true; `c()`/arith: OR of inputs
-   only — no blanket true-for-double). Recommended: remove; no diagnostic
-   consumes it. If removed, update Display and typeshed JSON handling
-   (ignore the `na` field on load).
-6. **S3 method-name splitting:** replace the generous `S3_GENERICS` prefix
-   scan with a curated table and an explicit denylist of well-known
-   dotted-but-not-method names (`t.test`, `all.equal`, `as.data.frame` when it
-   IS the generic, `file.path`, `Sys.time`, ...). Registration should also
-   require the function's first parameter to be named like the generic's
-   (usually `x` or matching typeshed) — cheap heuristic, cuts most collisions.
-   Delete the `[0u8; 64]` stack-buffer prefix construction; use `format!`.
+Acceptance: glue vendor snapshot is empty; oracle stays green; add a
+SECOND vendored package to keep the net honest now that glue is clean
+(candidate: a small MIT/GPL-compatible tidyverse-adjacent package with
+purrr usage -- check the license, include it, triage its snapshot the
+same way).
 
-Acceptance: no `Box::leak` in the workspace (`grep -rn "Box::leak" crates/` is
-empty); memory does not grow across repeated checks (add a loop-100-checks
-test asserting interner size stabilizes for identical input); union fixtures
-pass; all prior corpus fixtures still pass (some may need updating where they
-encoded coercion-ladder joins — update them deliberately and say so).
+## Phase 2 -- Package awareness and the workflow typeshed
 
-## Phase 4 — Lossless parsing and suppression correctness
+The single biggest semantic hole: ry has no notion of `library()`. The
+dplyr NSE verbs (`filter`, `select`, `mutate`, ...) are recognized by
+bare name unconditionally (`NseVerb::from_name`,
+`crates/ry-checker/src/lib.rs:144`), which mis-types `stats::filter` in
+code that never loads dplyr. Meanwhile the packages the target audience
+actually uses (purrr, posterior, brms, mirai) are absent entirely.
 
-1. **Statement-drop audit.** Grep `ry-core/src/parser.rs` for every `?` /
-   `None` return in `lower_stmt`/`lower_expr` paths and ensure the invariant:
-   a lowering failure inside an expression yields `Expr::Unknown(span)`; a
-   statement is dropped ONLY for pure comment/whitespace nodes. Add a debug
-   assertion counter test: for each corpus file, number of lowered top-level
-   statements equals the number of named non-comment top-level CST children.
-2. **String literals:** process escape sequences (`\"`, `\\`, `\n`, `\t`,
-   `\u{...}` at minimum) and handle raw strings `r"(...)"` / `R"[...]"` by
-   slicing the delimiters. Column-name matching (`df$"my col"` and
-   `list("a b" = 1)`) depends on this being right.
-3. **Suppression comments become lexical.** Reimplement
-   `parse_suppressions` / `has_file_suppression` on tree-sitter comment
-   tokens instead of `line.find('#')`: collect all `comment` nodes with their
-   line numbers during parse (expose from `ry-core`), then parse directives
-   from those texts only. `ignore-file` must anchor: the comment body, after
-   trimming, must START with `ry: ignore-file` (no substring matching).
-4. **`%<>%` semantics:** in `infer_pipe`, when the overall expression is
-   `lhs %<>% rhs` and `lhs` is an identifier, rebind the identifier in scope
-   to the result type. Delete `BinOpKind::NotIn` and `PipeBind` (unproduced)
-   or wire `%notin%` if trivially available in the grammar — deleting is fine.
+### 2.1 Track loaded packages
 
-Acceptance: new parser tests pass; a fixture with `x <- "# noqa"` followed by
-a real diagnostic on the same line still reports the diagnostic; corpus green.
+- `Checker` gains a `loaded: HashSet<String>` populated from
+  `library(pkg)` / `require(pkg)` / `requireNamespace("pkg")` calls
+  (the library/require special case at `lib.rs:2267` already sees the
+  bare name; record it instead of only returning NULL).
+- `Project` unions loaded packages across files (R scripts `source()`
+  each other; per-file precision is not worth the FPs).
+- `ry.toml` gains `packages = ["dplyr", ...]` to declare packages loaded
+  implicitly (e.g. via a startup file); merge with the detected set.
+- Qualified calls `pkg::fun(...)` resolve against pkg's typeshed without
+  requiring `library(pkg)`. Verify the parser/lowering preserves `::`
+  (add a test: `dplyr::filter(df, x > 1)` and `stats::filter(x, rep(1, 3))`
+  resolve differently).
 
-## Phase 5 — Batch performance and plumbing hygiene
+### 2.2 Split the typeshed by package
 
-1. `Project::check` pass 3: stop cloning `FnTable`/`ReturnSlots` per file.
-   Restructure `Checker` so the shared tables are borrowed (`&FnTable`,
-   `&ReturnSlots`) by an emitter that owns only per-file state. If borrow
-   structure fights the current `&mut self` methods, wrap shared tables in
-   `Rc` and clone the `Rc`, not the tables.
-2. One `RParser` per run, not per file (CLI `run_check_once` and LSP both
-   construct per-file parsers today).
-3. CLI honesty: implement `--color` (or remove the flag); implement `full`
-   output format with a source snippet + caret line (the `srcs` map is already
-   plumbed into `render`); `print_summary` should not print the human summary
-   line when the format is json/gitlab/junit (machine consumers).
-4. Metadata: set `rust-version = "1.82"` (or drop `is_none_or` and keep 1.76 —
-   pick one, verify with `cargo +1.x check` note in commit message); fix
-   `repository`; write a README.md (what works, what does not, how to run,
-   rule table generated from `rules.rs`).
-5. Delete dead code: `ReturnTypeSlot` in ry-typeshed, unused enum variants,
-   the identical-branch code found in review. Run `cargo clippy --workspace
-   -- -D warnings` and fix what it finds; add that to the acceptance bar.
+- Rename `data/base_r.json` to `data/base.json` (it holds base + stats +
+  utils; splitting those three is optional -- they are always attached).
+- New files: `data/dplyr.json`, `data/purrr.json`, `data/mirai.json`,
+  `data/bayes.json` (posterior, brms, loo, cmdstanr, bayesplot --
+  minimal entries, mostly opaque-with-class returns).
+- `ry-typeshed` gains `load_package(name) -> Option<&Typeshed>` and a
+  merged-view API respecting load order (later `library()` masks
+  earlier). `load_base_cached` keeps working for base.
+- Gate the dplyr NSE verbs on dplyr (or tidyverse) being loaded or the
+  call being `dplyr::`-qualified. Un-gated `filter` resolves to
+  `stats::filter` (returns opaque ts). `subset`/`with`/`within`/
+  `transform` stay always-on (they are base).
 
-Acceptance: `cargo clippy --workspace -- -D warnings` clean; perf test still
-under budget; `ry check --output-format json` emits only JSON on stdout.
+### 2.3 purrr and mirai (the parallel-execution story)
 
-## Phase 6 — LSP rework (bounded scope)
+Model the purrr map family exactly like the base higher-order builtins
+(extend `HigherOrderFunc` or add a parallel `PurrrFunc` enum -- prefer
+extending, the machinery in `ho_lapply`/`callback_return_type` is
+reusable):
 
-Do NOT grow LSP features in this phase. Make what exists correct and cheap.
+- `map(x, f)` -> list of f's return (lapply semantics).
+- `map_lgl/int/dbl/chr/vec(x, f)` -> vector of the target mode, length
+  unknown; check the callback's return mode against the target mode and
+  emit RY040-adjacent diagnostics on mismatch (new fixture pair).
+- `map2`, `pmap`, `imap` -> list; `walk/walk2` -> invisible first arg.
+- `keep`, `discard` -> same type as input; `reduce`, `accumulate` ->
+  like `Reduce`.
+- `in_parallel(f)` (purrr >= 1.1.0) -> returns `f` unchanged
+  (type-transparent wrapper). This is the key entry: workflow code will
+  read `map(sims, in_parallel(function(s) fit_one(s)))` and must check
+  identically to the sequential version.
+- mirai minimal: `daemons(n)` -> invisible, `mirai(expr)` -> opaque
+  class "mirai", `collect_mirai`/`call_mirai` -> unknown.
 
-1. **Position handling:** implement UTF-16 <-> byte offset conversion for LSP
-   positions (negotiate `positionEncoding` if the client offers utf-8). All
-   find-identifier logic must go through AST lookup: add a
-   `node_at_position(file, byte_offset) -> Option<&Expr/ident span>` query in
-   `ry-core` (walk the AST spans; they exist) and delete the byte-scanning
-   `find_identifier_at_position` family. R identifiers are not ASCII-only.
-2. **Debounce + cache:** keep parsed `SourceFile`s in `State` keyed by doc
-   version; on `did_change`, re-parse ONLY the changed doc; re-run the project
-   check debounced (~150ms) rather than per keystroke. Full incrementality
-   (salsa) is explicitly out of scope for this plan — but structure the entry
-   point as a pure function `check_project(docs: &BTreeMap<Path, SourceFile>)
-   -> Diagnostics` so a query system can be introduced behind it later.
-3. **Split the file.** `ry-lsp/src/lib.rs` (5.2k lines) into modules:
-   `backend.rs` (LanguageServer impl), `position.rs`, `symbols.rs`,
-   `navigation.rs` (defs/refs/rename/highlight), `hints.rs`
-   (inlay/completion/signature), `folding.rs`, `diagnostics.rs`. No behavior
-   changes in the split commit.
+Fixtures: `ok_purrr_map_dbl.R`, `ok_purrr_in_parallel.R`,
+`err_purrr_map_dbl_type_mismatch.R`, plus oracle fixtures where R can
+arbitrate (purrr installed in the oracle CI job -- add
+`r-lib/actions/setup-r-dependencies` or a plain
+`Rscript -e 'install.packages(c("purrr","mirai"))'` step).
 
-Acceptance: existing LSP unit tests pass; new tests for UTF-16 position
-mapping on a line containing non-ASCII; a rename on a non-ASCII identifier
-works; typing in a 30-file project does not re-parse unchanged files (assert
-via a parse-counter in tests).
+### 2.4 Bayesian stack minimal signatures
 
-## Phase 7 — Grounding: the R oracle corpus
+Just enough that the Phase 5 demo checks clean, all in `bayes.json`:
+`brms::brm` -> opaque class "brmsfit"; `posterior::as_draws_df` ->
+data.frame-classed list with unknown columns; `posterior::summarise_draws`
+-> data.frame; `posterior_predict`/`posterior_epred` -> opaque;
+`loo::loo` -> opaque class "loo"; `bayesplot::ppc_dens_overlay` ->
+opaque class "ggplot". Do not attempt to model draws shapes in this
+round.
 
-Promote the Phase 0 skeleton into the project's main quality gate.
+### 2.5 Typeshed generator (sustainability)
 
-1. Expand `testdata/oracle/` to 40+ fixtures spanning: coercion ladder, `:`
-   semantics (`-1:3`, fractional endpoints), recycling warnings, `[[` vs `[`
-   vs `$`, S3 dispatch with and without `default`, NSE verbs, HOFs, closures
-   and `<<-` state, `switch` fallthrough (`a=`, `b=2`), `tryCatch`.
-2. CI-style script `scripts/oracle.sh`: runs the ignored oracle tests when
-   `Rscript` is available (`cargo test --test oracle -- --ignored`).
-3. Vendor ONE small real CRAN package's R sources (pick something base-R-only,
-   e.g. `glue`'s R/ directory or similar, ~1-2k lines) under
-   `testdata/vendor/<pkg>/`, license permitting (MIT-licensed package; keep
-   its LICENSE file). Add a snapshot test (use `insta`; add via `cargo add
-   insta --dev -p ry-checker`) asserting the exact diagnostic list. Every
-   diagnostic in that snapshot must be triaged in a comment: true positive or
-   known-limitation with a linked plan item. The snapshot failing = the
-   false-positive alarm the current "baseline report" tests pretend to be.
-   Then delete or convert the assertion-free `real_world.rs` printers.
+Hand-writing JSON does not scale past base R. Add
+`scripts/gen_typeshed.R`: given a package name, emits a DRAFT JSON with
+one entry per exported function (`formals()` for params, return type
+"unknown"), for a human to refine. Wire the Phase 0.3 `exists()` audit
+and this generator into the same script family. The generator is a
+curation aid, not an oracle -- say so in its header.
 
-Acceptance: oracle suite green locally with R installed; vendor snapshot
-committed and triaged; `real_world.rs` no longer contains assertion-free
-tests.
+## Phase 3 -- Checker structure and parallel execution
 
----
+### 3.1 Split `ry-checker/src/lib.rs` (7,168 lines)
 
-## Explicit non-goals for this plan
+Same treatment the LSP got in round 2: mechanical module split, no
+behavior change, one commit. Target layout:
 
-- Salsa/incremental computation. Deferred deliberately; Phase 6.2's pure-entry
-  refactor is the seam where it lands later. Do not hand-roll a cache layer.
-- New diagnostics/rules beyond RY000 (syntax-error).
-- S4/R6/environments modeling, package DESCRIPTION/NAMESPACE resolution,
-  cross-package typeshed generation. All future work.
-- LSP feature additions (semantic tokens, formatting, etc.).
+- `diagnostics.rs` -- `Severity`, `Diagnostic`, `emit`, severity filter.
+- `suppress.rs` -- suppression parsing/filtering (lines ~298-575).
+- `scope.rs` -- `Scope`, `FnTable`, `ReturnSlots`, fixpoint plumbing.
+- `walk.rs` -- `walk_stmt`, branch-binding merge, narrowing.
+- `infer/mod.rs` -- `infer`, `infer_binop`, literals, pipes, if/switch.
+- `infer/call.rs` -- `infer_call`, `apply_sig`, structure/trycatch.
+- `infer/nse.rs` -- `NseVerb` and the `infer_nse_*` family.
+- `infer/higher_order.rs` -- `HigherOrderFunc`, `ho_*`, callbacks.
+- `infer/index.rs` -- `infer_index`, `$`/`[[`/`[`, column diagnostics.
+- Unit tests move next to their subjects; integration tests untouched.
 
-## Sequencing and commit discipline
+Acceptance: `lib.rs` under 300 lines (module decls, re-exports,
+`Checker` struct + constructors); test counts identical before/after.
 
-- One phase per PR-sized change set; within phases, the numbered items are
-  commit-sized. Phase 1 items 1-3 may land as separate commits on day one.
-- Never mix a behavior fix with the Phase 2/3 refactors in one commit.
-- Each commit message states which plan item it implements and which
-  acceptance tests cover it. The user runs git themselves; prepare changes
-  and report — do not commit unless asked.
+### 3.2 Parallelize the Rust side with rayon
 
-## Appendix: verification probes
+`Project::check` pass 3 is embarrassingly parallel: per-file emitters
+share the tables via `Arc` already (`project.rs:120-129`). Add `rayon`
+as a workspace dependency and `par_iter` the emission loop. Parsing in
+the CLI (`run_check_once`) can parallelize with one `RParser` per rayon
+thread (`thread_local!` -- tree-sitter parsers are not `Send`). Extend
+`perf.rs` with a before/after note; keep the 2s budgets.
 
-Perf file generator:
-```
-python3 - <<'EOF'
-lines = [f'x{i} <- c({i}, {i+1}) * 2' for i in range(20000)]
-open('big.R','w').write('\n'.join(lines))
-EOF
-```
-Budget: `ry check big.R` under 2s release-mode.
+### 3.3 Parallelize the oracle with purrr + mirai (dogfooding)
 
-Showstopper probes (all must produce the noted result after Phase 1):
+The oracle currently spawns one `Rscript --vanilla` per fixture,
+serially (~8s wall for 44 fixtures, and growing with Phase 2's new
+fixtures). Replace the per-fixture spawn with a single driver:
+
+- `scripts/oracle_driver.R`: takes the fixture directory, sets up
+  `mirai::daemons(parallelism)`, and evaluates every fixture via
+  `purrr::map(files, in_parallel(function(f) ...))`, each wrapped in
+  `tryCatch(eval(parse(f), envir = new.env()), error = ...)`. Emits one
+  JSON object per fixture (`{file, errored, message}`) on stdout.
+- Isolation caveat: daemons persist across fixtures, so a fixture that
+  attaches a package or writes globals could leak state. Document this
+  in the driver header; fixtures must stay side-effect-free (they are
+  today). Keep the old per-fixture `Rscript` path in `oracle.rs` as a
+  fallback when purrr/mirai are not installed (probe with a quick
+  `Rscript -e 'requireNamespace("purrr")'`).
+- `oracle.rs` invokes the driver once, parses the JSON, and applies the
+  existing must-flag/must-pass/known-gap logic unchanged. The
+  stderr-contains-"Error" heuristic dies with the old path (the driver
+  reports errors structurally); note that locale-dependent matching was
+  a latent bug.
+- CI: install purrr + mirai in the oracle job so the parallel path is
+  what CI exercises.
+
+This is deliberately the same purrr/mirai pattern the Phase 5 demo
+teaches -- the repo uses the tool the docs preach.
+
+## Phase 4 -- CLI and LSP UX
+
+1. **Real color output.** `--color` is parsed but has no effect
+   (`color.rs`). Implement it: `anstream` + `owo-colors` (or manual ANSI
+   if the dependency footprint offends). Style like ruff/ty: bold file
+   path, red "error" / yellow "warning", dimmed rule code, the caret
+   line colored to match severity. `auto` = isatty && !NO_COLOR; honor
+   CLICOLOR_FORCE. Update the README section that currently documents
+   the flag as inert.
+2. **`full` becomes the default output format** (ty's default). The
+   caret line should underline the whole span (`^~~~~`), not a single
+   `^` (`format.rs:91`). `concise` remains available via flag/config.
+3. **Human diagnostics go to stdout.** `run_check_once` prints
+   concise/full to STDERR (`main.rs:621`), so `ry check > log` captures
+   nothing. Flip: diagnostics -> stdout, the summary line and watch-mode
+   chrome -> stderr (matches ruff). Machine formats already use stdout.
+4. **"Did you mean" suggestions.** Cheap, high teaching value:
+   - RY060 (undefined column): suggest the nearest column name
+     (Levenshtein distance <= 2) and list available columns (already
+     partially done in `emit_undefined_column` -- verify and extend).
+   - RY010 (unbound variable): suggest the nearest in-scope binding.
+   - RY070: mention where the non-function value was bound ("`f` was
+     assigned `integer` at line 3") if the binding site is known.
+   Render as a `help:` second line in `full` format and as
+   `relatedInformation` in the LSP.
+5. **`ry check --statistics`**: per-rule counts after the run (ruff's
+   `--statistics`). Ten lines of code, essential for the Phase 6
+   corpus-research use case.
+6. **Watch mode**: replace the 500ms poll with the `notify` crate;
+   print the check duration and a timestamp on each cycle.
+7. **`ry rule` alias** for `ry explain-rule` (matches `ruff rule`), and
+   `ry explain-rule --output-format markdown` emitting the long-form
+   rule doc (see Phase 5.2) so docs and CLI share one source.
+8. **R Markdown / Quarto support.** The education audience writes
+   `.qmd`/`.Rmd`, not bare `.R`. Teach the CLI to extract fenced
+   ```` ```{r} ```` chunks (concatenated per document, chunk options
+   ignored except `eval=FALSE` which skips the chunk), map spans back to
+   host-file line numbers, and check them as one virtual file.
+   `collect_r_files` picks up `.qmd`/`.Rmd`/`.rmd`. This is the largest
+   Phase 4 item; land it last and behind solid fixtures (a demo .qmd
+   with a seeded error on a known line asserting the reported line
+   number is the HOST file's).
+9. **LSP workspace scan.** `State.root` is stored and unused
+   (`backend.rs:68`). At `initialize`, scan the workspace for `.R` files
+   and include them in the `Project` so cross-file resolution works for
+   files that are not open. Cache by mtime; this is not salsa, just a
+   coarse preload.
+
+## Phase 5 -- Documentation, demos, exercises, teaching material
+
+This phase is a deliverable, not decoration. The audience: R users in
+applied statistics who have never run a static analyzer, students in a
+Bayesian workflow course, and researchers who want to instrument code
+quality.
+
+### 5.1 Docs site as Quarto
+
+`docs/` is a Quarto website (the audience knows Quarto; it renders R
+chunks and can literally run `ry` in bash chunks during CI). Pages:
+
+- `index.qmd` -- what/why, 90-second tour with real output.
+- `getting-started.qmd` -- install, first check, reading a diagnostic.
+- `rules/index.qmd` + one page per rule (see 5.2).
+- `types.qmd` -- the type model: Mode/Length lattice, unions at
+  control-flow merges, what "opaque" means, and a table of "what R does
+  at runtime vs what ry says" for each teaching example. This page IS
+  the education artifact -- it teaches R's coercion semantics through
+  the checker's eyes.
+- `configuration.qmd` -- ry.toml, suppression, severity model.
+- `editors.qmd` -- VS Code, Neovim, Helix, and Positron setup (Positron
+  matters for this audience).
+- `ci.qmd` -- GitHub Actions recipes using `--output-format github`.
+- `architecture.qmd` -- crate map, three-pass Project check, fixpoint,
+  oracle methodology. Doubles as the research-methods description.
+- `faq.qmd` -- vs lintr, vs R CMD check, why Rust, soundness stance
+  (ry prefers silence over false positives; what that trades away).
+
+CI: a `docs` job renders the site (needs R + Quarto + the built `ry`
+binary on PATH so bash chunks run for real -- output in docs can never
+drift from behavior).
+
+### 5.2 Rule docs from one source of truth
+
+Extend `rules::Rule` with `explanation: &'static str` (long-form
+markdown: what R does at runtime, a bad example, a good example, when
+to suppress) and `example: &'static str` (a runnable snippet). The
+Quarto rule pages are generated from this table
+(`scripts/gen_rule_docs.rs` or a small xtask); `ry explain-rule RY040`
+prints the same text. A unit test asserts every rule has a non-empty
+explanation and that the bad example actually triggers the rule (run
+the checker on it in the test) -- self-verifying documentation.
+
+### 5.3 The Bayesian workflow demo (flagship)
+
+`demos/bayesian-workflow/` -- a Quarto document implementing a
+principled workflow on a simulated dataset, structured by stages:
+prior predictive checks, fitting (brms; chunks tagged `eval=FALSE` so
+docs CI does not need Stan -- ry checks code without running it, which
+is exactly the point), convergence diagnostics via posterior,
+posterior predictive checks, and simulation-based calibration where the
+replications run through `purrr::map(sims, in_parallel(...))` with
+`mirai::daemons()`. The demo must check completely clean with Phase 2's
+typeshed. A closing section shows `ry check demos/bayesian-workflow`
+output as proof.
+
+`demos/bayesian-workflow-broken/` -- the same workflow with ~10 seeded,
+realistic bugs (a misspelled column after a `mutate`, a
+character-vs-numeric comparison on a factor level, `lapply` where the
+callback receives the wrong shape, an unbound variable inside a purrr
+lambda, calling a data frame as a function, a length->1 vector in an
+`if`). Each bug is one ry diagnostic. `ANSWERS.md` maps each diagnostic
+to the workflow mistake it represents and WHY the statistical result
+would have been silently wrong -- this file is the teaching payload.
+A CI test pins the expected diagnostic set (insta snapshot) so the
+exercises never rot.
+
+### 5.4 Exercises (koans)
+
+`exercises/01_conditions.R` through `~08_higher_order.R`: each file
+opens with instructions in comments and contains code that fails
+`ry check`; the student edits until green. Ordered to teach the type
+model incrementally (conditions -> arithmetic/coercion -> scoping ->
+data frame schemas -> NSE -> closures -> higher-order -> purrr).
+`exercises/README.md` explains the loop (`ry check exercises/01_*.R`,
+fix, repeat). Solutions live in `exercises/solutions/` with a CI test
+asserting every solution is clean and every exercise is NOT.
+
+### 5.5 Repo-level docs
+
+- `README.Rmd` renders to `README.md` (the standard R-community
+  convention; being rendered with knitr, its output blocks can never
+  lie). The README rewrite is handled separately from this plan -- do
+  not edit `README.Rmd`/`README.md` beyond keeping the render fresh.
+- `ARCHITECTURE.md` -- one page: crate map, data flow, where to add a
+  rule (link to the rules-from-one-source machinery), how the oracle
+  and vendor nets work.
+- `CONTRIBUTING.md` -- build/test gate, fixture conventions
+  (`ok_*`/`err_*`/oracle tags), the no-false-positives bar for new
+  rules (every new rule needs an oracle or vendor justification).
+- Logo: deferred. Leave `assets/logo-concept-*.svg` untouched; do not
+  wire any logo into the README or docs site this round.
+
+## Phase 6 -- Backlog (documented, NOT implemented this round)
+
+Keep this list at the bottom of PLAN.md when revising; these are the
+research/future directions the docs may reference as "planned":
+
+- **WASM playground**: ry-core/ry-checker compile to wasm32 (tree-sitter
+  supports it); a browser playground like ruff's is the single biggest
+  education multiplier. Blocked on nothing technical, just effort.
+- **Salsa/incrementality** and LSP workspace indexing beyond the Phase
+  4.9 preload.
+- **Possibly-unbound diagnostics** (RY011): branch-merge machinery
+  already distinguishes one-branch bindings; needs a low-FP design.
+- **NA tracking**: the `na` flag exists in the typeshed JSON but is
+  unused by the checker.
+- **S4 / R6 / environments; NAMESPACE parsing** for package development.
+- **Distribution**: cargo-dist for prebuilt binaries on GitHub
+  releases; an R wrapper package (install ry via
+  `install.packages`-adjacent UX, like `styler`/`air` precedents);
+  crates.io publish once the name is settled.
+- **Research instrumentation**: `scripts/cran_survey.R` -- run ry over
+  the top-N CRAN packages, aggregate `--output-format json` +
+  `--statistics`, measure diagnostic rates per rule; the methodology
+  section in `architecture.qmd` describes how to cite it. Study idea:
+  does ry-in-the-editor change error rates in student Bayesian
+  workflow assignments?
+- **Property-based oracle**: generate random well-typed/ill-typed R
+  programs and compare ry vs R, instead of hand-written fixtures only.
+
+## Explicitly out of scope this round
+
+Salsa; new diagnostic codes beyond what Phases 1-2 need; S4/R6;
+modeling draws shapes/dimensions in the Bayesian typeshed; the WASM
+playground; auto-fix.
+
+## Suggested commit sequence
+
+Phase 0 as one commit. 1.1-1.4 as four commits (fix + fixtures each),
+then one commit re-snapshotting glue + adding the second vendor package.
+2.1, 2.2, 2.3, 2.4+2.5 as four commits. 3.1 as ONE mechanical commit,
+3.2 and 3.3 separately. Phase 4 items individually (4.8 last). Phase 5:
+5.1+5.2 together, 5.3, 5.4, 5.5 separately. Run the full gate before
+each; run the oracle whenever fixtures or the typeshed change.
+
+## Appendix: regression probes for Phase 1 (all must be clean)
+
 ```r
-# must flag RY040 + RY010:
-f <- function() { x <- "hello" + 1; y <- undefined_variable_xyz; x }
-# must flag RY040 (super-assign recognized):
-x <<- "a" + 1
-# must not lose statements (m unbound would be a bug; n must be bound):
-n <- 1e5L
-m <- n + 1
-# must report RY000 syntax error, nonzero exit:
-f <- function( {
-  broken syntax ((
-# must NOT warn RY010 on tmp/out (sequential branch bindings):
-g <- function(flag) { if (flag) { tmp <- 1; out <- tmp + 1 }; NULL }
+# 1.1 -- unknown-length conditions stay quiet (no RY002):
+f <- function(x) { if (!inherits(x, "foo")) stop("nope"); x }
+g <- function(flag) { if (flag) 1 else 2 }
+
+# 1.2 -- null-guard narrowing (no RY070 in the else branch):
+h <- function(fun = NULL) {
+  if (is.null(fun)) identity(1) else fun(1)
+}
+
+# 1.3 -- .Call first arg is not a variable read (no RY010):
+glue_c <- function(x) .Call(glue_, x)
+
+# 1.4 -- predicates are length-1 logical (no RY001/RY002):
+if (requireNamespace("purrr", quietly = TRUE) && isTRUE(TRUE)) print(1)
+
+# Phase 2 -- package gating (stats::filter is NOT dplyr):
+y <- stats::filter(1:10, rep(1/3, 3))   # no NSE, no RY060
+library(dplyr)
+d <- filter(data.frame(a = 1), a > 0)   # NSE resolves column `a`
+
+# Phase 2.3 -- purrr + mirai (all clean):
+library(purrr)
+library(mirai)
+daemons(2)
+out <- map_dbl(1:4, in_parallel(function(i) i * 2))
 ```

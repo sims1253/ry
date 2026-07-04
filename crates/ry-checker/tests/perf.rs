@@ -10,6 +10,7 @@ use std::io::Write;
 use std::time::Instant;
 
 use ry_checker::Checker;
+use ry_checker::Project;
 use ry_core::RParser;
 
 #[test]
@@ -42,6 +43,39 @@ fn large_file_checks_under_two_seconds() {
     assert!(
         elapsed.as_secs_f64() < 2.0,
         "20k-line check took {:.3}s (budget 2.0s)",
+        elapsed.as_secs_f64()
+    );
+}
+
+/// PLAN Phase D1: a 100-file `Project` used to deep-clone the shared
+/// `FnTable`/`ReturnSlots` once per file in pass 3. The tables are now
+/// `Arc`-shared, so only the handle is cloned. This is a wall-clock
+/// budget (not an allocation counter) and is `#[ignore]`'d like the
+/// single-file perf test.
+#[test]
+#[ignore]
+fn hundred_file_project_checks_quickly() {
+    let mut parser = RParser::new().expect("parser init");
+    let mut project = Project::new();
+    for i in 0..100 {
+        // Each file defines a function and calls one from another file,
+        // so the shared FnTable is non-trivial and the fixpoint loop runs.
+        let src =
+            format!("f{i} <- function(x) x * {i}\ng{i} <- function(x) f{i}(x) + 1\nh <- f{i}(2)\n");
+        let file = parser
+            .parse(&format!("file{i}.R"), &src)
+            .unwrap_or_else(|e| panic!("parse file{i}: {e}"));
+        project.add_file(format!("file{i}.R"), file);
+    }
+
+    let start = Instant::now();
+    let diags = project.check();
+    let elapsed = start.elapsed();
+
+    assert_eq!(diags.len(), 100, "one diagnostic-vec per file");
+    assert!(
+        elapsed.as_secs_f64() < 2.0,
+        "100-file project check took {:.3}s (budget 2.0s)",
         elapsed.as_secs_f64()
     );
 }

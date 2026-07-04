@@ -2292,6 +2292,29 @@ impl Checker {
             return RType::new(Mode::Null, Length::Zero);
         }
 
+        // Foreign-function-interface primitives (`.Call`, `.C`,
+        // `.Fortran`, `.External`, `.External2`, `.Internal`). Their
+        // FIRST argument is a C/Fortran entry-point symbol, conventionally
+        // written as a bare identifier or backtick symbol (e.g.
+        // `.Call(glue_, x)`), NOT a variable reference. Inferring it
+        // normally would fire a spurious RY010. Skip RY010 on a
+        // bare-symbol first arg, infer the remaining args normally, and
+        // return opaque (the return type depends on the native routine).
+        if is_ffi_primitive(&name) {
+            for (i, a) in args.iter().enumerate() {
+                if i == 0 {
+                    // The entry-point symbol: a bare identifier or
+                    // backtick-quoted name is not a variable read.
+                    let is_symbol = matches!(&a.value, Expr::Ident { .. });
+                    if is_symbol {
+                        continue;
+                    }
+                }
+                let _ = self.infer(&a.value, scope);
+            }
+            return RType::unknown();
+        }
+
         // NSE-symbol functions: take bare symbol arguments that should
         // NOT be resolved as variable references. These are commonly
         // used in metaprogramming and NSE contexts where the argument
@@ -4113,6 +4136,16 @@ fn is_nse_symbol_fn(name: &str) -> bool {
         | "delayedAssign" | "makeActiveBinding"
         // data.table NSE
         | "setkey" | "setkeyv" | "setindex" | "setindexv"
+    )
+}
+
+/// R's foreign-function-interface primitives. Their first argument is a
+/// native routine entry-point symbol (a bare identifier or backtick
+/// name), not a variable reference, so RY010 must not fire on it.
+fn is_ffi_primitive(name: &str) -> bool {
+    matches!(
+        name,
+        ".Call" | ".C" | ".Fortran" | ".External" | ".External2" | ".Internal"
     )
 }
 

@@ -21,7 +21,7 @@ use ry_core::ast::*;
 use ry_core::types::{ClassVector, ColumnSchema, FunctionSignature, Length, Mode, RType};
 use ry_core::Span;
 use ry_typeshed::{load_base_cached, FunctionSig, JsonRType, ReturnSpec, Typeshed};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// S3 generics we recognize when collecting method definitions of the
@@ -1315,7 +1315,7 @@ impl Checker {
                     }
                 }
                 let narrowing = extract_type_narrowing(cond);
-                let (then_scope, else_scope) = apply_narrowing(scope, &narrowing);
+                let (then_scope, else_scope, narrowed) = apply_narrowing(scope, &narrowing);
                 let mut then_scope = then_scope;
                 let mut else_scope = else_scope;
                 let has_else = else_.is_some();
@@ -1331,7 +1331,7 @@ impl Checker {
                 // assignments inside an `if` branch leak to the enclosing
                 // scope, so a name bound conditionally must still be visible
                 // after the `if` (otherwise uses fire RY010 false positives).
-                self.merge_branch_bindings(scope, then_scope, else_scope, has_else);
+                self.merge_branch_bindings(scope, then_scope, else_scope, has_else, &narrowed);
             }
             Stmt::For {
                 name, iter, body, ..
@@ -1409,12 +1409,23 @@ impl Checker {
         then_scope: Scope,
         else_scope: Scope,
         has_else: bool,
+        narrowed: &HashSet<String>,
     ) {
         // Collect the candidate names (only those that differ from the
         // parent) without holding a borrow of `scope` while we mutate it.
         let mut branch_types: HashMap<String, (Option<RType>, Option<RType>)> =
             HashMap::with_capacity(then_scope.bindings.len());
         for (name, t) in &then_scope.bindings {
+            // A name whose only change is a type-narrowing refinement
+            // (recorded in `narrowed`) is branch-local: folding it back
+            // would degrade a precise parent type (e.g. known-NULL ->
+            // opaque) and mask later errors. Skip it. A genuine
+            // reassignment to the same type is a no-op anyway; a real
+            // reassignment to a narrowed name is rare and the cost is a
+            // missed diagnostic (false negative), never a false positive.
+            if narrowed.contains(name) {
+                continue;
+            }
             match scope.get(name) {
                 Some(existing) if existing == t => {}
                 _ => {
@@ -1424,6 +1435,11 @@ impl Checker {
         }
         if has_else {
             for (name, t) in &else_scope.bindings {
+                // See the then-branch loop: a pure narrowing refinement
+                // is branch-local.
+                if narrowed.contains(name) {
+                    continue;
+                }
                 match scope.get(name) {
                     Some(existing) if existing == t => {}
                     _ => {
@@ -2128,7 +2144,7 @@ impl Checker {
         // expression-position assignment is rare and merging here would
         // require plumbing owned branch scopes back to the caller.
         let narrowing = extract_type_narrowing(cond);
-        let (then_scope, else_scope) = apply_narrowing(scope, &narrowing);
+        let (then_scope, else_scope, _narrowed) = apply_narrowing(scope, &narrowing);
         let then_t = self.infer(then, &mut then_scope.clone());
         let else_t = match else_ {
             Some(e) => self.infer(e, &mut else_scope.clone()),
@@ -4192,14 +4208,10 @@ fn extract_type_narrowing(cond: &Expr) -> Narrowing {
             }) else {
                 return Narrowing::None;
             };
-            // For the negated-null case we need a bare Mode on the
-            // Negative variant; extract it from the target.
-            if name == "is.null" {
-                return Narrowing::Negative {
-                    var,
-                    mode: Mode::Null,
-                };
-            }
+            // `is.null(x)` (non-negated): fall through to Positive with
+            // target = NULL. The Positive arm narrows `var` to NULL in the
+            // then branch and narrows it AWAY from NULL in the else branch
+            // (the case the plan calls out: `if (is.null(x)) ... else x()`).
             Narrowing::Positive { var, target }
         }
         Expr::UnaryOp {
@@ -4255,6 +4267,41 @@ fn predicate_target(name: &str) -> Option<RType> {
     }
 }
 
+/// Narrow a type away from NULL: the value is known to be non-null in
+/// this branch. Returns `None` when nothing changes (the type carries no
+/// NULL member to remove).
+///
+/// - Pure `Null`: degrade to opaque (we know nothing else about it).
+/// - A union containing a NULL member: rebuild the union without NULL.
+///   If NULL was the only member this collapses to opaque via the empty
+///   case; if exactly one non-null member remains, the union collapses
+///   to that member (see `RType::union`).
+/// - Anything else: unchanged (`None`).
+fn narrow_away_from_null(t: &RType) -> Option<RType> {
+    match t.mode {
+        Mode::Null => Some(RType::unknown()),
+        Mode::Union => {
+            let members = t.members.as_ref()?;
+            // Only act if at least one member is NULL.
+            if !members.iter().any(|m| m.mode == Mode::Null) {
+                return None;
+            }
+            let kept: Vec<RType> = members
+                .iter()
+                .filter(|m| m.mode != Mode::Null)
+                .cloned()
+                .collect();
+            if kept.is_empty() {
+                // Union was NULL-only; we only know it's non-null now.
+                Some(RType::unknown())
+            } else {
+                Some(RType::union(Arc::from(kept)))
+            }
+        }
+        _ => None,
+    }
+}
+
 /// Apply a narrowing to produce separate scopes for the `then` and
 /// `else_` branches. Returns `(then_scope, else_scope)` where each is
 /// a clone of `base` with the appropriate binding updated.
@@ -4268,8 +4315,14 @@ fn predicate_target(name: &str) -> Option<RType> {
 /// scope narrows `var` to `mode`. This handles `!is.null(x)`: the
 /// `then` branch knows `x` is non-null, the `else` branch knows `x`
 /// is null.
-fn apply_narrowing(base: &Scope, narrowing: &Narrowing) -> (Scope, Scope) {
+fn apply_narrowing(base: &Scope, narrowing: &Narrowing) -> (Scope, Scope, HashSet<String>) {
     let (mut then_scope, mut else_scope) = (base.clone(), base.clone());
+    // Names refined by narrowing (in either branch). These must NOT be
+    // merged back into the parent by `merge_branch_bindings`: a refinement
+    // is branch-local, and folding it into the parent would degrade a
+    // precise parent type (e.g. known-NULL -> opaque) and mask later
+    // errors. The parent's pre-`if` type is what holds after the `if`.
+    let mut narrowed: HashSet<String> = HashSet::new();
     match narrowing {
         Narrowing::None => {}
         Narrowing::Positive { var, target } => {
@@ -4324,25 +4377,35 @@ fn apply_narrowing(base: &Scope, narrowing: &Narrowing) -> (Scope, Scope) {
                             ..target.clone()
                         },
                     );
+                    narrowed.insert(var.clone());
                 }
             }
             // For is.null, the else branch knows var is NOT null.
             if target.mode == Mode::Null {
                 if let Some(existing) = else_scope.get(var).cloned() {
-                    if matches!(existing.mode, Mode::Null) {
-                        // var was null, but we're in the else branch
-                        // (not null). Make it opaque since we don't
-                        // know what else it could be.
-                        else_scope.insert(var.clone(), RType::unknown());
+                    if let Some(n) = narrow_away_from_null(&existing) {
+                        else_scope.insert(var.clone(), n);
+                        narrowed.insert(var.clone());
                     }
                 }
             }
         }
         Narrowing::Negative { var, mode } => {
             // The negation: `then` branch knows var is NOT of `mode`.
-            if let Some(existing) = then_scope.get(var).cloned() {
+            // For `!is.null(x)` (the only Negative emitted today), narrow
+            // NULL away from the then branch -- same helper as the Positive
+            // else branch.
+            if *mode == Mode::Null {
+                if let Some(existing) = then_scope.get(var).cloned() {
+                    if let Some(n) = narrow_away_from_null(&existing) {
+                        then_scope.insert(var.clone(), n);
+                        narrowed.insert(var.clone());
+                    }
+                }
+            } else if let Some(existing) = then_scope.get(var).cloned() {
                 if existing.mode == *mode {
                     then_scope.insert(var.clone(), RType::unknown());
+                    narrowed.insert(var.clone());
                 }
             }
             // `else` branch knows var IS of `mode`. A union mode would
@@ -4357,11 +4420,12 @@ fn apply_narrowing(base: &Scope, narrowing: &Narrowing) -> (Scope, Scope) {
                         RType::new(*mode, existing.length)
                     };
                     else_scope.insert(var.clone(), t);
+                    narrowed.insert(var.clone());
                 }
             }
         }
     }
-    (then_scope, else_scope)
+    (then_scope, else_scope, narrowed)
 }
 
 /// Result of trying to read a class literal from a `class = ...`

@@ -1,6 +1,6 @@
 # Audit typeshed for fabricated entries.
 #
-# Walks every name in base_r.json and asserts it exists in a vanilla R
+# Walks every name in base.json and asserts it exists in a vanilla R
 # session. Catches hallucinated typeshed entries.
 #
 # This script is base-R only: it does not depend on jsonlite (or any
@@ -22,7 +22,7 @@ script_dir <- tryCatch({
   }
 }, error = function(e) ".")
 
-data_path <- file.path(script_dir, "..", "crates", "ry-typeshed", "data", "base_r.json")
+data_path <- file.path(script_dir, "..", "crates", "ry-typeshed", "data", "base.json")
 data_path <- normalizePath(data_path, mustWork = TRUE)
 
 # Read the file as plain text and extract the function-name keys. The

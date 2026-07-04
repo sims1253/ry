@@ -20,7 +20,9 @@ pub use project::Project;
 use ry_core::ast::*;
 use ry_core::types::{ClassVector, ColumnSchema, FunctionSignature, Length, Mode, RType};
 use ry_core::Span;
-use ry_typeshed::{load_base_cached, FunctionSig, JsonRType, ReturnSpec, Typeshed};
+use ry_typeshed::{
+    is_known_package, load_base_cached, load_package, FunctionSig, JsonRType, ReturnSpec, Typeshed,
+};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -968,6 +970,135 @@ impl Checker {
         self.loaded = loaded;
     }
 
+    /// Resolve a function signature by name, consulting (in order):
+    ///   1. a `pkg::fun` / `pkg:::fun` qualified name -- looked up in
+    ///      `load_package(pkg)` directly, bypassing base and loaded
+    ///      packages (a qualified call is an explicit reference);
+    ///   2. the base typeshed (`self.typeshed`);
+    ///   3. each loaded package that ships signatures (reverse load
+    ///      order so the most-recently-loaded package wins, mirroring
+    ///      R's search path).
+    ///
+    /// Returns the signature and the resolved call name (the bare
+    /// function name, suitable for `apply_sig`'s slot resolution).
+    /// Returns `None` when no package knows the name.
+    fn resolve_typeshed_sig(&self, name: &str) -> Option<FunctionSig> {
+        // Qualified call: explicit package reference.
+        if let Some((pkg_raw, fun)) = name.rsplit_once("::") {
+            // `pkg:::fun` splits as ("pkg:", "fun"); trim the trailing
+            // colon to recover the package name.
+            let pkg = pkg_raw.trim_end_matches(':');
+            if let Some(t) = load_package(pkg) {
+                if let Some(sig) = t.functions.get(fun) {
+                    return Some(sig.clone());
+                }
+            }
+            // The package is either unknown to ry (no embedded
+            // signatures) or doesn't define `fun`. For base/stats/utils
+            // (merged into `base.json`) and any other always-attached
+            // package, fall back to the BASE typeshed under the STRIPPED
+            // name: `stats::rnorm(10)` resolves as base's `rnorm`.
+            if let Some(sig) = self.typeshed.functions.get(fun) {
+                return Some(sig.clone());
+            }
+            // And under loaded packages, stripped name (a qualified call
+            // to a package we have signatures for but where the function
+            // lives under a different name is unlikely, but be thorough).
+            for pk in [
+                "dplyr",
+                "purrr",
+                "mirai",
+                "brms",
+                "posterior",
+                "loo",
+                "bayesplot",
+                "cmdstanr",
+            ] {
+                if !self.loaded.contains(pk) {
+                    continue;
+                }
+                if let Some(t) = load_package(pk) {
+                    if let Some(sig) = t.functions.get(fun) {
+                        return Some(sig.clone());
+                    }
+                }
+            }
+            return None;
+        }
+        // Unqualified: base typeshed, then loaded packages (fixed
+        // priority order; see the comment on masking below).
+        if let Some(sig) = self.typeshed.functions.get(name) {
+            return Some(sig.clone());
+        }
+        // Loaded packages. R's actual masking depends on search-path
+        // position; we approximate with a fixed priority order over the
+        // packages that ship signatures (most function names are
+        // disjoint across these packages, so masking rarely bites).
+        // `loaded` is a HashSet (unordered) so we walk a deterministic
+        // known-packages list and check membership.
+        for pkg in [
+            "dplyr",
+            "purrr",
+            "mirai",
+            "brms",
+            "posterior",
+            "loo",
+            "bayesplot",
+            "cmdstanr",
+        ] {
+            if !self.loaded.contains(pkg) {
+                continue;
+            }
+            if let Some(t) = load_package(pkg) {
+                if let Some(sig) = t.functions.get(name) {
+                    return Some(sig.clone());
+                }
+            }
+        }
+        None
+    }
+
+    /// Whether any package (base, loaded, or explicitly qualified)
+    /// provides a function named `name`. Used by the RY070 path to
+    /// implement R's function/value namespace separation (a non-function
+    /// binding is skipped at a call site if a same-named function exists
+    /// somewhere). Mirrors [`resolve_typeshed_sig`] plus the FnTable.
+    fn has_function_anywhere(&self, name: &str) -> bool {
+        // Qualified: check the named package.
+        if let Some((pkg_raw, fun)) = name.rsplit_once("::") {
+            let pkg = pkg_raw.trim_end_matches(':');
+            if let Some(t) = load_package(pkg) {
+                if t.functions.contains_key(fun) {
+                    return true;
+                }
+            }
+        }
+        if self.typeshed.functions.contains_key(name) {
+            return true;
+        }
+        // Loaded packages (fixed priority order; see resolve_typeshed_sig).
+        for pkg in [
+            "dplyr",
+            "purrr",
+            "mirai",
+            "brms",
+            "posterior",
+            "loo",
+            "bayesplot",
+            "cmdstanr",
+        ] {
+            if !self.loaded.contains(pkg) {
+                continue;
+            }
+            if let Some(t) = load_package(pkg) {
+                if t.functions.contains_key(name) {
+                    return true;
+                }
+            }
+        }
+        self.fn_table.fns.contains_key(name)
+    }
+
     /// Apply a `SeverityFilter` to the diagnostics collected so far,
     /// mutating severities (or dropping suppressed ones) in place.
     pub fn apply_filter(&mut self, filter: &SeverityFilter) {
@@ -1726,6 +1857,16 @@ impl Checker {
                     if self.typeshed.functions.contains_key(name) {
                         return RType::scalar(Mode::Function);
                     }
+                    // A function from a loaded package (e.g. purrr's
+                    // `map` used as a value) resolves to a function too.
+                    if self.loaded.iter().any(|pkg| {
+                        is_known_package(pkg)
+                            && load_package(pkg)
+                                .map(|t| t.functions.contains_key(name))
+                                .unwrap_or(false)
+                    }) {
+                        return RType::scalar(Mode::Function);
+                    }
                     // User-defined function in the FnTable used as a
                     // value? Same treatment.
                     if self.fn_table.fns.contains_key(name) {
@@ -2481,8 +2622,7 @@ impl Checker {
                 // through to the resolution below instead of firing RY070.
                 // Only when no function of that name exists anywhere does
                 // calling the non-function value warrant RY070.
-                let has_function_elsewhere = self.typeshed.functions.contains_key(&lookup_name)
-                    || self.fn_table.fns.contains_key(&lookup_name);
+                let has_function_elsewhere = self.has_function_anywhere(&name);
                 if !has_function_elsewhere {
                     // RY070: a non-function value is being called as if it
                     // were a function. R errors at runtime with
@@ -2588,11 +2728,12 @@ impl Checker {
             return self.infer_seq(args, &arg_types, span);
         }
 
-        // Look up in the typeshed. We use the stripped `lookup_name`
-        // so `stats::rnorm(10)` resolves against the typeshed's `rnorm`
-        // entry, and `base::list(...)` resolves against `list` (after
-        // the unqualified-`name` special-case above fell through).
-        if let Some(sig) = self.typeshed.functions.get(&lookup_name).cloned() {
+        // Look up in the typeshed. A qualified call (`pkg::fun`) is
+        // resolved against `load_package(pkg)`; an unqualified call
+        // falls back from base to loaded packages (reverse load order).
+        // We pass the full `name` (with any `pkg::` prefix) so the
+        // resolver can dispatch on qualification.
+        if let Some(sig) = self.resolve_typeshed_sig(&name) {
             return self.apply_sig(&lookup_name, &sig, &arg_types, args, span);
         }
 
@@ -7005,6 +7146,28 @@ mod tests {
             diags.iter().all(|d| d.code != "RY010"),
             "qualified value `S7::class_any` should not emit RY010, got {:?}",
             diags
+        );
+    }
+
+    #[test]
+    fn dplyr_filter_and_stats_filter_resolve_differently() {
+        // PLAN Phase 2.2 verification: `dplyr::filter(df, ...)` resolves
+        // against the dplyr typeshed (data.frame return) while
+        // `stats::filter(x, ...)` resolves against base's stats `filter`
+        // (a time-series filter, opaque). The two must NOT be confused.
+        let (_, scope) = check_with_scope("df <- mtcars\na <- dplyr::filter(df, mpg > 20)\n");
+        let a = scope.get("a").expect("a bound");
+        assert!(
+            a.class.contains("data.frame"),
+            "dplyr::filter should return a data.frame-classed value, got class {:?}",
+            a.class
+        );
+        let (_, scope2) = check_with_scope("b <- stats::filter(1:10, rep(1, 3))\n");
+        let b = scope2.get("b").expect("b bound");
+        assert!(
+            !b.class.contains("data.frame"),
+            "stats::filter must NOT be data.frame-classed, got class {:?}",
+            b.class
         );
     }
 

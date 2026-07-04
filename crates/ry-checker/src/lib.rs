@@ -2406,18 +2406,34 @@ impl Checker {
                 // choice (no false positives, possible false negatives).
                 return RType::unknown();
             } else if !matches!(t.mode, Mode::Opaque) {
-                // RY070: a non-function value is being called as if it
-                // were a function. R errors at runtime with
-                // "could not find function". Args have already been
-                // inferred above, so we just emit and return opaque
-                // (re-inferring would double-emit arg diagnostics).
-                self.emit(
-                    Severity::Error,
-                    span,
-                    "RY070",
-                    format!("`{}` is `{}`, not a function; cannot call it", name, t.mode),
-                );
-                return RType::unknown();
+                // R's function/value namespace separation: when a name is
+                // CALLED, R searches the environment chain for a *function*
+                // named `name` and skips non-function bindings. So a local
+                // non-function binding (e.g. `lengths <- lengths(x)`) does
+                // NOT shadow a same-named function in the typeshed or
+                // FnTable at a call site. If such a function exists, fall
+                // through to the resolution below instead of firing RY070.
+                // Only when no function of that name exists anywhere does
+                // calling the non-function value warrant RY070.
+                let has_function_elsewhere = self.typeshed.functions.contains_key(&lookup_name)
+                    || self.fn_table.fns.contains_key(&lookup_name);
+                if !has_function_elsewhere {
+                    // RY070: a non-function value is being called as if it
+                    // were a function. R errors at runtime with
+                    // "could not find function". Args have already been
+                    // inferred above, so we just emit and return opaque
+                    // (re-inferring would double-emit arg diagnostics).
+                    self.emit(
+                        Severity::Error,
+                        span,
+                        "RY070",
+                        format!("`{}` is `{}`, not a function; cannot call it", name, t.mode),
+                    );
+                    return RType::unknown();
+                }
+                // A function exists elsewhere; fall through to resolve it
+                // (the local non-function binding is ignored at the call
+                // site, matching R).
             }
             // Opaque: fall through; the name might still resolve via
             // the FnTable or typeshed below.

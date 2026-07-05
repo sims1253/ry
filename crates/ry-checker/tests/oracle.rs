@@ -326,8 +326,11 @@ fn oracle_check_each_fixture() {
         }
         total += 1;
 
-        let r_errored = match &driver_map {
-            Some(map) => map.get(&name).copied().unwrap_or(true),
+        let (r_errored, r_message) = match &driver_map {
+            Some(map) => map
+                .get(&name)
+                .cloned()
+                .unwrap_or((true, "fixture missing from driver output".to_string())),
             None => r_errors(&path),
         };
         let errs = checker_errors(&name, &src);
@@ -378,8 +381,12 @@ fn oracle_check_each_fixture() {
                 continue;
             }
             (Tag::MustPass, true) => {
+                // Include R's actual error so an environment problem
+                // (missing package, sandbox restriction) is readable
+                // straight from the CI log instead of requiring a
+                // reproduction.
                 failures.push(format!(
-                    "{name}: tagged must-pass but R errored; cannot assert"
+                    "{name}: tagged must-pass but R errored; cannot assert (R said: {r_message})"
                 ));
                 continue;
             }

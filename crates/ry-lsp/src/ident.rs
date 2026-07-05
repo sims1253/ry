@@ -1,4 +1,4 @@
-//! AST-based identifier-at-offset lookup (PLAN Phase E3).
+//! AST-based identifier-at-offset lookup.
 //!
 //! `find_ident_at_offset` walks the whole AST to resolve the innermost
 //! `Expr::Ident` whose span contains a byte offset, used by hover,

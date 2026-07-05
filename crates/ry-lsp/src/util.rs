@@ -5,7 +5,7 @@
 //! and ry's `Span` use) and LSP `Position`s, counting UTF-16 code units
 //! so non-ASCII (including astral-plane) characters resolve correctly.
 //!
-//! Extracted from `lib.rs` (Phase 6 item 3 module split) because they
+//! Extracted from `lib.rs` because they
 //! are pure functions with no dependency on the `Backend`/`State` and
 //! are reused across every LSP handler.
 

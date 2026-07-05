@@ -378,11 +378,11 @@ pub struct Checker {
     /// type refinement and closure-signature building so the single
     /// inference engine can be used for both the pure and the diagnostic
     /// walk: pass 2 runs the identical `infer` with `discarding = true`,
-    /// pass 3 with `false`. This is the Phase 2 unification mechanism.
+    /// pass 3 with `false`.
     discarding: bool,
     /// User-defined functions collected in pass 1. Stored behind an `Arc`
     /// so the multi-file `Project` can share the refined tables across
-    /// per-file pass-3 emitters without deep-cloning them (PLAN Phase D1).
+    /// per-file pass-3 emitters without deep-cloning them.
     /// Mutation goes through `Arc::make_mut` (a copy-on-write clone when
     /// the refcount is >1); passes 1/2 own their tables uniquely, and pass
     /// 3 only reads, so the COW clone never actually fires in practice.
@@ -452,7 +452,7 @@ impl Checker {
         // this multiple times on the same checker instance), THEN emit
         // parse errors. The previous order emitted RY000s and then wiped
         // them with `clear()`, so this API path never surfaced syntax
-        // errors (PLAN Phase C2).
+        // errors.
         self.diagnostics.clear();
         self.emit_parse_errors(file);
         self.collect_fns(&file.stmts);
@@ -488,7 +488,7 @@ impl Checker {
     /// Construct a checker that SHARES the given tables by `Arc` handle
     /// (no deep clone). Used by `Project` pass 3, which is read-only on
     /// the tables (every mutation site lives in passes 1/2). This is the
-    /// PLAN Phase D1 optimization: per-file diagnostic emission clones
+    /// Sharing optimization: per-file diagnostic emission clones
     /// only the refcounted handle, not the tables themselves.
     pub(crate) fn with_shared_tables(
         path: &str,
@@ -1031,9 +1031,7 @@ impl Checker {
         self.inferring.pop();
     }
 
-    /// The unified statement walker (Phase 2.5 fusion of the former
-    /// `check_stmt` diagnostic walker and `collect_returns_and_simulate`
-    /// return-type collector). Handles BOTH diagnostic emission (gated by
+    /// The unified statement walker. Handles BOTH diagnostic emission (gated by
     /// `self.discarding`) AND return-type collection (when `returns` is
     /// `Some`).
     ///
@@ -1974,7 +1972,7 @@ impl Checker {
         }
         // Flow-sensitive type narrowing for the expression form too.
         //
-        // Limitation (PLAN Phase A1): the branch scopes here are clones, and
+        // Limitation: the branch scopes here are clones, and
         // `BinOpKind::Assign` in expression position (e.g.
         // `y <- if (c) (x <- 1) else (x <- 2); x`) mutates only the clone, so
         // any binding introduced inside an `if` *expression* is silently
@@ -2084,7 +2082,7 @@ impl Checker {
             _ => {
                 // Calling a literal value (`42()`, `"x"()`, `TRUE()`,
                 // `NULL()`) is always a runtime error in R ("attempt to
-                // apply non-function"). Flag it (PLAN Phase B2). Other
+                // apply non-function"). Flag it. Other
                 // non-Ident callees (index expressions, calls returning
                 // functions) stay silent as before.
                 if let Some(mode) = literal_callee_mode(func) {
@@ -3466,7 +3464,7 @@ impl Checker {
         let mut total_len: usize = 0;
         // A union arg would win the coerce-rank ladder and leave `mode ==
         // Union`, which `RType::new` then turns into a malformed union.
-        // Track it and degrade to opaque at the end (PLAN Phase A2).
+        // Track it and degrade to opaque at the end.
         let mut saw_union = false;
         for t in arg_types {
             if matches!(t.mode, Mode::Union) {
@@ -3880,7 +3878,7 @@ impl Checker {
                     // modes (for `ifelse(test, yes, no)`). The join may be
                     // a union; taking `.mode` drops the members and would
                     // build a malformed union below, so collapse a union
-                    // mode to opaque (PLAN Phase A2).
+                    // mode to opaque.
                     "yes_or_no" => {
                         let yes = matched.get(1).cloned().unwrap_or(RType::unknown());
                         let no = matched.get(2).cloned().unwrap_or(RType::unknown());
@@ -3991,8 +3989,7 @@ impl Checker {
                         // RY060 for a `$` schema miss only on data frames.
                         // In R, `list(a=1)$missing` returns NULL (no
                         // error); only data frames make a missing `$`
-                        // name a hard error worth flagging (PLAN Phase
-                        // A4). Mirror the `[[`-with-string guard below.
+                        // name a hard error worth flagging. Mirror the `[[`-with-string guard below.
                         if bt.class.contains("data.frame") {
                             self.emit_undefined_column(name, schema, span);
                             // Fall through to the conservative default so
@@ -4008,7 +4005,7 @@ impl Checker {
                 // list-like types, return opaque since we don't know
                 // the element type. For other types, return a length-1
                 // value of the base mode. A union base would build a
-                // malformed union here, so degrade to opaque (PLAN A2).
+                // malformed union here, so degrade to opaque.
                 if matches!(
                     bt.mode,
                     Mode::List | Mode::Opaque | Mode::Function | Mode::Union
@@ -4072,7 +4069,7 @@ impl Checker {
                 }
                 // Non-literal arg: infer it for diagnostics, then return
                 // the conservative default. A union base would build a
-                // malformed union, so degrade to opaque (PLAN A2).
+                // malformed union, so degrade to opaque.
                 if let Some(a) = args.first() {
                     self.infer(&a.value, scope);
                 }
@@ -4530,7 +4527,7 @@ fn apply_narrowing(base: &Scope, narrowing: &Narrowing) -> (Scope, Scope, HashSe
     match narrowing {
         Narrowing::None => {}
         Narrowing::Positive { var, target } => {
-            // New rule (PLAN Phase 3 item 4): a predicate narrows only
+            // New rule: a predicate narrows only
             // when the existing type is opaque (untyped) or a union that
             // already contains the predicate's mode. A KNOWN type is
             // never rewritten: `is.numeric(x)` on a known Integer must
@@ -4613,7 +4610,7 @@ fn apply_narrowing(base: &Scope, narrowing: &Narrowing) -> (Scope, Scope, HashSe
                 }
             }
             // `else` branch knows var IS of `mode`. A union mode would
-            // build a malformed union here, so degrade to opaque (PLAN A2).
+            // build a malformed union here, so degrade to opaque.
             // (Unreachable today -- `Narrowing::Negative` only ever carries
             // `Mode::Null` -- but kept as defense in depth.)
             if let Some(existing) = else_scope.get(var).cloned() {
@@ -4741,7 +4738,7 @@ fn match_args_to_params(sig_params: &[String], args: &[Arg], arg_types: &[RType]
 
 /// Resolve the resulting mode for `c(...)`. If any argument was a union,
 /// the coerce-rank ladder doesn't apply soundly, so degrade to opaque
-/// rather than emitting a malformed union (PLAN Phase A2).
+/// rather than emitting a malformed union.
 fn collapse_c_mode(mode: Mode, saw_union: bool) -> Mode {
     if saw_union {
         Mode::Opaque
@@ -4751,7 +4748,7 @@ fn collapse_c_mode(mode: Mode, saw_union: bool) -> Mode {
 }
 
 /// If `e` is a literal expression (`42`, `"x"`, `TRUE`, `NULL`, `NA`),
-/// return the mode that calling it would error with (PLAN Phase B2).
+/// return the mode that calling it would error with.
 /// Non-literal callees return `None` so the caller stays silent.
 fn literal_callee_mode(e: &Expr) -> Option<Mode> {
     match e {
@@ -5683,7 +5680,7 @@ mod tests {
         assert_eq!(schema.names(), vec!["a", "b"]);
         // Accessing a missing column on a PLAIN list is silent: in R
         // `l$missing` returns NULL, so RY060 is scoped to data frames
-        // (PLAN Phase A4). Only data-frame misses fire RY060.
+        //. Only data-frame misses fire RY060.
         let diags = check("l <- list(a = 1L)\nbad <- l$missing\n");
         assert!(
             diags.iter().all(|d| d.code != "RY060"),
@@ -6033,7 +6030,7 @@ mod tests {
 
     #[test]
     fn nse_dplyr_filter_ungated_falls_through_when_not_loaded() {
-        // Phase 2.1 gating: a bare `filter(df, ...)` in a script that
+        // Package gating: a bare `filter(df, ...)` in a script that
         // has NOT loaded dplyr must NOT be treated as dplyr's verb.
         // The column reference `mpg` is genuinely unbound in this scope
         // (no library(dplyr)), so RY010 must fire.
@@ -6047,7 +6044,7 @@ mod tests {
 
     #[test]
     fn nse_dplyr_filter_qualified_resolves_without_library() {
-        // Phase 2.1 gating: `dplyr::filter(...)` is always treated as
+        // Package gating: `dplyr::filter(...)` is always treated as
         // dplyr's verb regardless of whether dplyr is loaded, because
         // the `dplyr::` prefix is an explicit namespace reference. So
         // the column ref `mpg` must NOT fire RY010.
@@ -6061,7 +6058,7 @@ mod tests {
 
     #[test]
     fn nse_dplyr_filter_library_records_loaded() {
-        // Phase 2.1 gating: `library(dplyr)` records dplyr into the
+        // Package gating: `library(dplyr)` records dplyr into the
         // loaded set, so a subsequent `filter(df, ...)` resolves as
         // dplyr's verb and the column ref `mpg` does NOT fire RY010.
         let diags = check("library(dplyr)\ndf <- mtcars\nsmall <- filter(df, mpg > 20)\n");
@@ -6367,7 +6364,7 @@ mod tests {
 
     #[test]
     fn purrr_map_walks_callback_and_infers_list() {
-        // PLAN 2.3: purrr::map(.x, .f) is modeled like lapply -- the
+        // purrr::map(.x, .f) is modeled like lapply -- the
         // callback body is walked (RY010 fires on the unbound `bug`)
         // and the result is a list.
         let diags = check(
@@ -6401,7 +6398,7 @@ mod tests {
 
     #[test]
     fn purrr_map_dbl_type_mismatch_fires_ry080() {
-        // PLAN 2.3: map_dbl whose callback returns character fires
+        // map_dbl whose callback returns character fires
         // RY080 (R coerces silently, but the mismatch is a likely bug).
         let diags = check(
             "library(purrr)\n\
@@ -6416,7 +6413,7 @@ mod tests {
 
     #[test]
     fn purrr_in_parallel_is_transparent() {
-        // PLAN 2.3: in_parallel(.f) is type-transparent. map(sims,
+        // in_parallel(.f) is type-transparent. map(sims,
         // in_parallel(f)) must walk `f`'s body identically to
         // map(sims, f) -- here the unbound `bug` must fire RY010.
         let diags = check(
@@ -6611,10 +6608,7 @@ mod tests {
         // `if (TRUE) list(1) else function(){1}` joins to
         // union[list, function]. Using the result arithmetically fires
         // RY040 because EVERY member of the union errors against `+ 1`
-        // (Phase 3 union semantics). The earlier form of this test
-        // (`1L else "hello"`) relied on the coercion-ladder join that
-        // silently promoted to character; unions replaced that, so the
-        // test now uses an all-invalid union to keep exercising RY040.
+        // (an op on a union errors only when ALL members error).
         let diags = check(
             "x <- if (TRUE) list(1) else function() { 1 }\n\
              bad <- x + 1\n",
@@ -7175,7 +7169,7 @@ mod tests {
 
     #[test]
     fn dplyr_filter_and_stats_filter_resolve_differently() {
-        // PLAN Phase 2.2 verification: `dplyr::filter(df, ...)` resolves
+        // `dplyr::filter(df, ...)` resolves
         // against the dplyr typeshed (data.frame return) while
         // `stats::filter(x, ...)` resolves against base's stats `filter`
         // (a time-series filter, opaque). The two must NOT be confused.
@@ -7369,7 +7363,7 @@ mod tests {
 
     #[test]
     fn calling_integer_literal_emits_ry070() {
-        // PLAN Phase B2: calling a literal (`42()`) errors in R.
+        // Calling a literal (`42()`) errors in R.
         let diags = check("y <- 42()\n");
         assert!(
             diags.iter().any(|d| d.code == "RY070"),
@@ -7440,7 +7434,7 @@ mod tests {
         assert!(diags.iter().all(|d| d.code != "RY061"), "got {:?}", diags);
     }
 
-    /// PLAN Phase 2 acceptance: running the checker twice on the same
+    /// Idempotence: running the checker twice on the same
     /// input must yield identical diagnostics. The fixpoint/refinement
     /// machinery walks function tables whose iteration order is not
     /// semantically meaningful, so any order-leak that bleeds into
@@ -7453,7 +7447,7 @@ mod tests {
             // mutual / cross-referencing function bodies
             "f <- function() { g() }\ng <- function() { 1L }\nx <- f() + 1\n",
             // a body with an arithmetic error + unbound var (exercises the
-            // Phase-1 function-body walk in both passes)
+            // function-body walk in both passes)
             "h <- function() { a <- \"x\" + 1; b <- missing_thing }\n",
             // higher-order callback inference
             "v <- sapply(c(1.0, 2.0), function(x) x * 2)\ny <- v + 1\n",
@@ -7568,7 +7562,7 @@ mod tests {
 
     #[test]
     fn lapply_list_arith_does_not_fire_ry040() {
-        // PLAN Phase A3: iterating a list yields the unwrapped element,
+        // Iterating a list yields the unwrapped element,
         // so arithmetic inside the callback must not fire RY040.
         let src = "out <- lapply(list(1, 2, 3), function(x) x * 2)\n";
         let diags = check(src);
@@ -7581,7 +7575,7 @@ mod tests {
 
     #[test]
     fn dollar_missing_on_plain_list_does_not_fire_ry060() {
-        // PLAN Phase A4: `$` on a plain list with a missing name returns
+        // `$` on a plain list with a missing name returns
         // NULL in R; RY060 must only fire for data frames.
         let diags = check("v <- list(a = 1, b = 2)$missing\n");
         assert!(
@@ -7593,7 +7587,7 @@ mod tests {
 
     #[test]
     fn dollar_missing_on_plain_list_returns_null() {
-        // PLAN Phase A4: the returned value matches R's NULL (not unknown).
+        // The returned value matches R's NULL (not unknown).
         let (_, scope) = check_with_scope("v <- list(a = 1, b = 2)$missing\n");
         let v = scope.get("v").expect("v should be bound");
         assert!(
@@ -7610,7 +7604,7 @@ mod tests {
 
     #[test]
     fn dollar_missing_on_data_frame_still_fires_ry060() {
-        // PLAN Phase A4: the data-frame case is a real bug and must keep
+        // The data-frame case is a real bug and must keep
         // firing. `mtcars` is a data frame in the typeshed.
         let diags = check("df <- mtcars\nbad <- df$nonexistent\n");
         assert!(
@@ -7637,7 +7631,7 @@ mod tests {
 
     #[test]
     fn public_check_with_scope_surfaces_ry000_on_broken_file() {
-        // PLAN Phase C2: `check_with_scope` used to clear diagnostics
+        // Regression: `check_with_scope` used to clear diagnostics
         // AFTER emitting parse errors, wiping the RY000s. It must now
         // surface them.
         let mut p = RParser::new().unwrap();

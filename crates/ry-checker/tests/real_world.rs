@@ -1,4 +1,4 @@
-//! Real-world snapshot tests (PLAN Phase 7 item 3).
+//! Real-world snapshot tests.
 //!
 //! Runs the checker against a small set of vendored "realistic" R
 //! snippets (each modeled after real CRAN/base R code patterns) and

@@ -1,8 +1,8 @@
-//! R oracle harness (PLAN.md Phase 0.5 / Phase 7).
+//! R oracle harness.
 //!
 //! `#[ignore]`'d by default; run with
 //! `cargo test -p ry-checker --test oracle -- --ignored --nocapture`
-//! (or `scripts/oracle.sh` once Phase 7 adds it).
+//! (or `scripts/oracle.sh`).
 //!
 //! For each fixture in `testdata/oracle/`, if `Rscript` is on PATH, runs
 //! `Rscript --vanilla <file>`, records whether R errored, runs the checker,
@@ -271,7 +271,7 @@ fn oracle_check_each_fixture() {
     };
     entries.sort_by_key(|e| e.path());
 
-    // PLAN Phase 3.3: prefer the parallel oracle driver (a single
+    // Prefer the parallel oracle driver (a single
     // Rscript invocation that evaluates every fixture via purrr::map +
     // mirai::in_parallel, dogfooding the very pattern the tool checks).
     // Fall back to the serial per-fixture Rscript path when purrr/mirai

@@ -1,4 +1,4 @@
-//! Document- and workspace-symbol collection (PLAN Phase E3).
+//! Document- and workspace-symbol collection.
 
 use ry_checker::Scope;
 use ry_core::{Expr, Span, Stmt};

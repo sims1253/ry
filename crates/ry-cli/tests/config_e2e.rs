@@ -237,7 +237,7 @@ fn ry_toml_cli_flag_overrides_config_output_format() {
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    // concise format now goes to stdout (Phase 4 item 3) and is NOT a
+    // concise format goes to stdout and is NOT a
     // JSON array.
     let _ = stderr;
     assert!(
@@ -313,7 +313,7 @@ fn ry_toml_malformed_aborts_with_error() {
 
 #[test]
 fn color_flag_rejects_unknown_value() {
-    // PLAN Phase D3: --color is now validated. An unknown value must be
+    // --color is validated. An unknown value must be
     // a hard error with a clear message, not a silently-ignored flag.
     let tmp = tempfile::tempdir().unwrap();
     fs::write(tmp.path().join("ok.R"), "x <- 1\n").unwrap();
@@ -362,7 +362,7 @@ fn color_flag_accepts_known_values() {
 
 #[test]
 fn ry_toml_packages_enables_dplyr_nse() {
-    // Phase 2.1: a `packages = ["dplyr"]` in ry.toml makes a bare
+    // A `packages = ["dplyr"]` in ry.toml makes a bare
     // `filter(df, mpg > 0)` resolve as dplyr's NSE verb, so the column
     // reference `mpg` (a real mtcars column) does NOT fire RY010.
     // Without `packages` (or an inline `library(dplyr)`), `filter`

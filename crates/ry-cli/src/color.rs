@@ -1,4 +1,4 @@
-//! `--color` handling (PLAN Phase D3).
+//! `--color` handling.
 //!
 //! The CLI does not currently emit any colorized output: the human
 //! formats (`concise`, `full`) are plain text. To stop advertising a
@@ -38,7 +38,7 @@ impl ColorChoice {
     ///
     /// Today the CLI emits no colorized output, so callers can consult
     /// this for forward compatibility but it does not change rendering.
-    #[allow(dead_code)] // no colorized output paths exist yet (PLAN D3)
+    #[allow(dead_code)] // no colorized output paths exist yet
     pub fn should_color(self) -> bool {
         if std::env::var_os("NO_COLOR")
             .map(|v| !v.is_empty())

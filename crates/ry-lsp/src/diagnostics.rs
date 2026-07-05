@@ -1,4 +1,4 @@
-//! Diagnostic-conversion and code-action helpers (PLAN Phase E3).
+//! Diagnostic-conversion and code-action helpers.
 //!
 //! These translate ry's own `Diagnostic` type into LSP `Diagnostic`s
 //! (with precise byte-offset-derived ranges) and build the `CodeAction`s

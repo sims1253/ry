@@ -1,5 +1,5 @@
 //! Go-to-definition, references, document-highlight, and rename helpers
-//! (PLAN Phase E3).
+//!.
 //!
 //! These walk the AST to find definition sites, references, and
 //! read/write occurrences of an identifier. They are pure functions over

@@ -1,6 +1,6 @@
 # no-diag
 # `is.null` guards narrow across the branch: the non-null branch may
-# call the value as a function. (PLAN Phase 1.2.)
+# call the value as a function.
 f <- function(fun = NULL) {
   if (is.null(fun)) identity(1) else fun(1)
 }

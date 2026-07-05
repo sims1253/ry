@@ -1965,7 +1965,7 @@ fn utf16_position_counts_astral_as_two_units() {
 
 #[test]
 fn edit_one_file_in_workspace_reparses_only_that_file() {
-    // PLAN Phase E1 acceptance: editing one file in a multi-file
+    // Cache acceptance: editing one file in a multi-file
     // workspace must parse ONLY that file. We simulate the LSP document
     // cache directly on a bare `State` (which is what `parsed_file`
     // reads/writes), bypassing the `tower_lsp::Client` plumbing that

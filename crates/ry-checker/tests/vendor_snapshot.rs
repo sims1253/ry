@@ -1,4 +1,4 @@
-//! Vendored CRAN package regression net (PLAN.md Phase F).
+//! Vendored CRAN package regression net.
 //!
 //! Runs `Project::check` over the vendored `glue` R sources and
 //! snapshots every diagnostic as `path:line:col CODE message`, sorted.
@@ -72,32 +72,10 @@ fn glue_vendor_snapshot() {
     // -----------------------------------------------------------------
     // Triage of the glue vendor snapshot.
     //
-    // After PLAN Phase 1 (round 3), this snapshot is EMPTY -- zero
-    // diagnostics across the whole glue package. All 12 of the original
-    // false positives were resolved:
+    // The snapshot is EMPTY: zero diagnostics across the whole glue
+    // package.
     //
-    // RY002 (was 6x, DOMINANT -- fixed in Phase 1.1): RY002 now fires
-    //   ONLY when the condition length is Known(n > 1), never on
-    //   Unknown. The six sites (`!inherits(...)`, `too_wide`,
-    //   `should_collapse`, `!requireNamespace(...)`) are all
-    //   scalar-boolean conditions typed length-Unknown.
-    //
-    // RY010 (was 3x -- fixed across Phase 1.3/1.4):
-    //   * glue.R:187 `glue_`, glue.R:319 `trim_` -- Phase 1.3 models
-    //     `.Call`/`.C`/`.Fortran`/... so the C-entry-point first arg is
-    //     no longer treated as a variable reference.
-    //   * utils.R:90 `delayedAssign` -- Phase 1.4 added it to the
-    //     typeshed.
-    //
-    // RY070 (was 3x -- fixed across Phase 1.2/1.4):
-    //   * color.R:123 `color_fun` -- Phase 1.2 null-narrowing: the
-    //     else branch of an `is.null` guard narrows NULL away.
-    //   * glue.R:191 `lengths` -- Phase 1.4 added `lengths` to the
-    //     typeshed AND fixed R's function/value namespace separation at
-    //     call sites (a local non-function binding does not shadow a
-    //     same-named function in a call).
-    //
-    // The snapshot MUST stay empty: any future diagnostic on glue is a
+    // It MUST stay empty: any future diagnostic on glue is a
     // regression. A second vendor package is pinned separately to keep
     // the net honest now that glue is clean.
     // -----------------------------------------------------------------
@@ -165,36 +143,11 @@ fn check_vendor(vendor_subdir: &str) -> Vec<String> {
 fn purrr_vendor_snapshot() {
     // -----------------------------------------------------------------
     // Triage of the purrr vendor snapshot (purrr 1.2.2, MIT). The second
-    // vendor net, added in PLAN Phase 1 (round 3) to keep the regression
-    // net honest now that glue is clean. purrr is the flagship tidyverse
-    // functional-programming package and the target of Phase 2.3's
-    // higher-order modeling, so the remaining names are EXPECTED to
-    // disappear once package awareness (Phase 2.1/2.2) and purrr modeling
-    // (Phase 2.3) land. None are true positives.
+    // vendor net alongside glue; purrr is the flagship tidyverse
+    // functional-programming package.
     //
-    // On its first round this net caught two real defects, now BOTH FIXED:
-    //
-    //   * The `%in%` length-modeling bug. `x %in% table` returns a logical
-    //     vector of length(x); the RHS (`table`) length is irrelevant. ry
-    //     had typed the result with the RHS length, so `x %in% c("a","b")`
-    //     on a length-1 `x` came out length-2 and drove an RY002
-    //     (condition length 2, compat-types-check.R:267) and an RY032
-    //     (`&&` on a length-2 operand, superseded-simplify.R:120). Fixed
-    //     in `infer_binop`: `%in%` is now Mode::Logical with the LHS
-    //     length. Both diagnostics are gone.
-    //   * Two base-R typeshed gaps: `identity` and `unclass` were missing,
-    //     firing RY010 ("not bound"). Both are now in base.json, so those
-    //     two RY010s are gone.
-    //
-    // Also fixed here: the RY001 `if (length(x))` numeric-truthiness idiom
-    //   (was 2x). `length`/`nrow`/`ncol` return an integer length-1 that R
-    //   silently coerces to logical in `if`; the coercion warning is pure
-    //   noise on this idiom (e.g. compat-obj-type.R:305). RY001's coercion
-    //   arm is now suppressed for a direct call to `length`/`nrow`/`ncol`.
-    //
-    // The ENTIRE remaining snapshot is RY010: cross-package function and
-    // constant names not yet modeled. There are NO true positives and no
-    // RY001/RY002/RY032 left.
+    // The ENTIRE snapshot is RY010: cross-package function and constant
+    // names not yet modeled. There are NO true positives.
     //
     //   * rlang functions: quo_get_expr, eval_tidy, is_bare_list,
     //     is_bare_formula, as_quosure, is_quosure, obj_is_list, is_zap.
@@ -205,11 +158,8 @@ fn purrr_vendor_snapshot() {
     //   * purrr's own C-backed entry points: map_impl, map2_impl,
     //     pmap_impl.
     //
-    //   These resolve once the package typeshed (Phase 2.2) covers rlang
-    //   and vctrs and purrr's internal helpers are registered.
-    //
-    // Summary: 0 true positives; every remaining diagnostic is a
-    //   cross-package RY010 that Phase 2 must cover.
+    // These resolve once the package typeshed covers rlang and vctrs
+    // and purrr's internal helpers are registered (see ROADMAP.md).
     // -----------------------------------------------------------------
 
     let rendered = check_vendor("testdata/vendor/purrr/R");

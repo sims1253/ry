@@ -3,7 +3,7 @@
 # oracle_driver.R -- evaluate every oracle fixture in parallel via
 # purrr::map + mirai::in_parallel, emitting one JSON object per fixture.
 #
-# This is the dogfood path for PLAN Phase 3.3: the oracle suite (which
+# This is the dogfood path: the oracle suite (which
 # spawns one Rscript --vanilla per fixture serially, ~8s wall for ~50
 # fixtures) is replaced by a SINGLE Rscript invocation that sets up
 # mirai daemons and evaluates each fixture through purrr's parallel map.

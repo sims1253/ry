@@ -153,7 +153,7 @@ fn main() -> Result<ExitCode> {
             // error rather than a silently-ignored flag. The resolved
             // choice has no observable effect today (no colorized output
             // paths exist yet) but is parsed and honors NO_COLOR, so it
-            // is forward-compatible (PLAN Phase D3).
+            // is forward-compatible.
             if let Some(raw) = &color {
                 if let Err(e) = color::ColorChoice::parse(raw) {
                     eprintln!("ry: {e}");
@@ -506,8 +506,7 @@ impl CheckResult {
         // Suppress the human summary line for machine-readable formats
         // so it can't corrupt JSON/Github/Gitlab/Junit output (it goes
         // to stderr, but consumers that merge stderr would see it). The
-        // plan calls for printing it only for the human formats (PLAN
-        // Phase D3).
+        // plan calls for printing it only for the human formats.
         let is_human = matches!(
             format,
             ry_checker::format::OutputFormat::Full | ry_checker::format::OutputFormat::Concise
@@ -599,7 +598,7 @@ fn run_check_once(
     // `library`/`require`/`requireNamespace` loads.
     project.set_loaded(packages.iter().cloned().collect());
 
-    // Parallel file parsing (PLAN Phase 3.2). tree-sitter parsers are
+    // Parallel file parsing. tree-sitter parsers are
     // NOT `Send`, so each rayon thread keeps its own `RParser` in a
     // `thread_local!` (the grammar is loaded once per thread; the
     // thread pool is reused across this run). Parsed files come back in

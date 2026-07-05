@@ -1,4 +1,4 @@
-//! Folding-range computation and shared AST-span helpers (PLAN Phase E3).
+//! Folding-range computation and shared AST-span helpers.
 //!
 //! Collects `FoldingRange`s for every multi-line foldable block, and
 //! exposes `span_of_stmt` / `span_of_expr` (also used by the

@@ -1,4 +1,4 @@
-//! Inlay-hint, completion, and signature-help helpers (PLAN Phase E3).
+//! Inlay-hint, completion, and signature-help helpers.
 
 use ry_checker::Scope;
 use ry_core::{Expr, Mode, SourceFile, Stmt};

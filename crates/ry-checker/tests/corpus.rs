@@ -19,9 +19,7 @@ enum Expectation {
     Codes(Vec<String>),
     /// No diagnostics at all.
     None,
-    /// At least one parse/syntax error (`RY000`) must be emitted. This
-    /// pins Phase 1.2's parse-error reporting; until `RY000` is
-    /// registered and surfaced, fixtures using this marker will fail.
+    /// At least one parse/syntax error (`RY000`) must be emitted.
     ParseError,
 }
 

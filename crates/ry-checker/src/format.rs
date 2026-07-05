@@ -69,7 +69,7 @@ pub fn render(
         }
         OutputFormat::Full => {
             // Like `concise` but adds the source line and a caret under
-            // the span (PLAN Phase D3). Falls back to the concise form
+            // the span. Falls back to the concise form
             // when the source text isn't available.
             let mut out = String::new();
             for d in diags {
@@ -252,7 +252,7 @@ fn span_char_width(d: &Diagnostic, src_line: &str) -> usize {
 /// `Span::col` is a BYTE column; non-ASCII lines would otherwise show the
 /// wrong column. When the source line is available, convert via
 /// `byte_col_to_char_col`; otherwise fall back to the raw byte column
-/// (PLAN Phase C3).
+///.
 fn char_col_for(d: &Diagnostic, srcs: &std::collections::HashMap<String, String>) -> usize {
     match srcs
         .get(&d.path)
@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn full_format_shows_source_line_and_caret() {
-        // PLAN Phase D3: `full` = concise line + the source line + a
+        // `full` = concise line + the source line + a
         // caret under the span's column. Span points at the second char
         // (byte col 1) of `ab`.
         let d = vec![Diagnostic::new(
@@ -451,7 +451,7 @@ mod tests {
 
     #[test]
     fn char_column_on_non_ascii_line() {
-        // PLAN Phase C3: `Span::col` is a BYTE column. On a non-ASCII line
+        // `Span::col` is a BYTE column. On a non-ASCII line
         // the printed column must be the CHARACTER column, not the byte
         // column. `café_x`: bytes c(0)a(1)f(2)é(3,4)_(5)x(6); the `_` is
         // at byte col 5 but char col 4, so the 1-indexed output is 5

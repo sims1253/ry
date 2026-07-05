@@ -1456,7 +1456,7 @@ mod tests {
         // A broken region often surfaces as an ERROR node wrapping a
         // MISSING token at the SAME byte range, which used to emit the
         // identical `line:col` twice. The spans must be deduplicated on
-        // the (start, end) byte pair (PLAN Phase C1).
+        // the (start, end) byte pair.
         let f = parse("f <- function( { 1 }\n");
         assert!(
             !f.parse_errors.is_empty(),

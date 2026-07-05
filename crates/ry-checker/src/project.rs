@@ -148,11 +148,11 @@ impl Project {
         // Checker that SHARES the refined tables via an `Arc` handle --
         // pass 3 is read-only on the tables (every mutation site is in
         // passes 1/2), so only the refcount is bumped per file, not the
-        // tables themselves (PLAN Phase D1).
+        // tables themselves.
         //
         // The emission loop is embarrassingly parallel: each file's
         // Checker is independent and the Arc-shared tables are read-
-        // only, so we rayon-`par_iter` it (PLAN Phase 3.2). Diagnostics
+        // only, so we rayon-`par_iter` it. Diagnostics
         // come back in arbitrary thread order; we re-sort to match the
         // input file order so callers see a stable, deterministic vec.
         let fn_table = Arc::new(std::mem::take(&mut self.fn_table));

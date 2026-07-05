@@ -1,7 +1,7 @@
 //! Diagnostic data types, severity overrides, and inline-suppression
 //! parsing/filtering.
 //!
-//! Extracted from `lib.rs` (PLAN Phase 3.1) without behavior change.
+//! Extracted from `lib.rs` without behavior change.
 //! This module is self-contained: it depends only on `ry_core::Span`,
 //! `ry_core::ast::Comment`, and the rule registry (`crate::rules`).
 

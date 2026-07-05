@@ -17,7 +17,7 @@
 //!     `foldingRange`, `codeAction`, `selectionRange`, `documentHighlight`
 //!   * Graceful shutdown via `shutdown` / `exit`
 //!
-//! Architecture (PLAN Phase E3): this file is intentionally small --
+//! Architecture: this file is intentionally small --
 //! module declarations + the `run()` entry point. All request-handler
 //! logic lives in [`backend`] (`Backend`, `State`, the
 //! `LanguageServer` impl, and the parse/scope/debounce caches); the

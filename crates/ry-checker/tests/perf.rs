@@ -1,12 +1,12 @@
-//! Performance regression test (PLAN.md Phase 0.4).
+//! Performance regression tests.
 //!
 //! `#[ignore]`'d so CI is opt-in. Run with `cargo test -p ry-checker --test
 //! perf -- --ignored --nocapture`. Generates a 20k-line file, parses +
 //! checks it, and asserts wall time under 2 seconds (release-mode budget).
-//! Today the parser is O(n^2) (`char_col` rescans from byte 0 per node,
-//! PLAN finding 2); this test fails until Phase 1.1 lands.
+//! The budget guards the linear-time parsing contract (the parser was
+//! once O(n^2): `char_col` rescanned from byte 0 per node).
 //!
-//! PLAN Phase 3.2 note: `Project::check` pass 3 is now rayon-parallel
+//! `Project::check` pass 3 is rayon-parallel
 //! (per-file emitters share the Arc tables read-only), and the CLI's
 //! parse loop runs through a rayon thread-local parser pool. The 2s
 //! budgets below are unchanged -- parallelism is a bonus for
@@ -54,7 +54,7 @@ fn large_file_checks_under_two_seconds() {
     );
 }
 
-/// PLAN Phase D1: a 100-file `Project` used to deep-clone the shared
+/// A 100-file `Project` used to deep-clone the shared
 /// `FnTable`/`ReturnSlots` once per file in pass 3. The tables are now
 /// `Arc`-shared, so only the handle is cloned. This is a wall-clock
 /// budget (not an allocation counter) and is `#[ignore]`'d like the

@@ -2,7 +2,7 @@
 # pkg::-qualified calls resolve against the named package's typeshed
 # WITHOUT requiring library(). Covers dplyr, purrr, mirai, and the
 # multi-package bayes typeshed (brms/posterior/loo/bayesplot/cmdstanr).
-# (PLAN Phase 2.2.)
+#
 xs <- purrr::map(1:3, function(x) x * 2)
 dbls <- purrr::map_dbl(1:3, function(x) x + 0.5)
 m <- mirai::mirai(sqrt(2))

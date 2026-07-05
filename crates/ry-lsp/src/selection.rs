@@ -1,4 +1,4 @@
-//! Selection-range and identifier-range helpers (PLAN Phase E3).
+//! Selection-range and identifier-range helpers.
 
 use ry_core::{SourceFile, Span};
 use tower_lsp::lsp_types::{Position, Range, SelectionRange};

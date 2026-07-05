@@ -483,7 +483,7 @@ impl RType {
     /// Checked constructor for a `Mode::Union` type. All union construction
     /// must go through here so a malformed union (`mode == Union`,
     /// `members == None`) can never be built by accident -- the audit in
-    /// PLAN Phase A2 traced several false positives (e.g. the `if` condition
+    /// An audit traced several false positives (e.g. the `if` condition
     /// `union[]` RY001) to ad-hoc `RType::new(Mode::Union, ...)` /
     /// `RType::new(bt.mode, ...)` sites that left `members` null.
     ///
@@ -526,7 +526,7 @@ impl RType {
     /// over columns producing a new frame or a runtime error depending
     /// on the operator; we conservatively report the bare atomic mode).
     ///
-    /// Union semantics (PLAN Phase 3 item 2): distribute over members;
+    /// Union semantics: distribute over members;
     /// the op errors ONLY if every member-pair errors. A union of
     /// integer and character `+ 1` yields integer (the character member
     /// errors but the integer one is fine) -> stay quiet in v1.
@@ -534,8 +534,8 @@ impl RType {
         distribute(self, rhs, |a, b| a.arith_atomic(b))
     }
 
-    /// Atomic (non-union) arithmetic. The original `arith` body before
-    /// Phase 3 union support; called per-member by `arith`'s distributor.
+    /// Atomic (non-union) arithmetic; called per-member by `arith`'s
+    /// distributor.
     fn arith_atomic(self, rhs: RType) -> Option<RType> {
         let mode = self.mode.arith_result(rhs.mode)?;
         // R returns a zero-length vector when one operand is NULL (e.g.
@@ -586,12 +586,13 @@ impl RType {
             Mode::Union => {
                 // Invalid only if EVERY member is invalid (one valid
                 // branch means the runtime value could be a valid
-                // condition, so stay quiet -- PLAN Phase 3 item 2).
+                // condition, so stay quiet).
                 //
                 // A malformed union (`members == None`, which only a bug
                 // can now produce) must NOT be treated as invalid -- that
-                // is exactly the RY001 `union[]` false positive PLAN Phase
-                // A2 fixed. Treat it as opaque (never invalid).
+                // is exactly the RY001 `union[]` false positive the checked
+                // constructor exists to prevent. Treat it as opaque
+                // (never invalid).
                 match self.members.as_ref() {
                     Some(ms) => ms.iter().all(|t| t.invalid_condition()),
                     None => false,
@@ -605,7 +606,7 @@ impl RType {
     /// Join (least upper bound) of two types, used when control flow
     /// merges: e.g. the result of `if (cond) x else y`.
     ///
-    /// Phase 3 semantics: R NEVER coerces at a control-flow merge. If
+    /// R NEVER coerces at a control-flow merge. If
     /// the two branches have the same type, that type wins. Otherwise
     /// we build an honest **union** of the two (deduplicated, capped at
     /// `MAX_UNION_MEMBERS`, collapsing to `RType::unknown()` beyond the
@@ -633,7 +634,7 @@ impl RType {
     /// vector yields the bare elements in R.
     ///
     /// For a `Mode::Union`, the element type is the union of each member's
-    /// element type (PLAN Phase A2). Distributing -- rather than passing
+    /// element type. Distributing -- rather than passing
     /// `Mode::Union` through the `_` arm and building a malformed union
     /// with `members: None` -- is what stops `for (x in if(...) TRUE else
     /// 1L) { if (x) ... }` from reporting `union[]` as the condition.
@@ -643,7 +644,7 @@ impl RType {
             Mode::Opaque => RType::unknown(),
             Mode::List => {
                 // `[[`-style element extraction from a list yields the
-                // UNWRAPPED element, not `list<1>` (PLAN Phase A3). For a
+                // UNWRAPPED element, not `list<1>`. For a
                 // homogeneous list (`list(1, 2, 3)`) the unwrapped element
                 // type is the common column type; heterogeneous or
                 // schema-less lists degrade to unknown. Atomic vectors
@@ -784,7 +785,7 @@ impl fmt::Display for RType {
             // A malformed union (members == None) should never exist now
             // that all construction goes through `RType::union`, but
             // render it as `opaque` rather than the misleading `union[]`
-            // (PLAN Phase A2 defense-in-depth).
+            // (defense in depth).
             return match self.members.as_ref() {
                 Some(ms) => {
                     f.write_str("union[")?;
@@ -874,7 +875,7 @@ mod tests {
     fn arith_null_plus_character_errors() {
         // R: `NULL + "a"` errors with "non-numeric argument to binary
         // operator". The Character rejection must run before the Null
-        // arm (this is the bug PLAN finding 7 calls out).
+        // arm (a past coercion-order bug).
         let n = RType::new(Mode::Null, Length::Zero);
         let c = RType::scalar(Mode::Character);
         assert!(
@@ -925,7 +926,7 @@ mod tests {
 
     #[test]
     fn join_of_incompatible_modes_is_a_union() {
-        // Phase 3: R never coerces at a control-flow merge. `if (p) 1L
+        // R never coerces at a control-flow merge. `if (p) 1L
         // else 2.0` joins integer and double to an HONEST union, not to
         // Double (the old coercion-ladder behavior).
         let i = RType::scalar(Mode::Integer);
@@ -997,7 +998,7 @@ mod tests {
     #[test]
     fn element_of_union_distributes_over_members() {
         // element() of a union is the join of each member's element type.
-        // PLAN Phase A2: previously the `_` arm built a malformed union
+        // Previously the `_` arm built a malformed union
         // (`Mode::Union`, `members: None`).
         let u = RType::scalar(Mode::Integer).join(RType::scalar(Mode::Logical));
         assert_eq!(u.mode, Mode::Union);
@@ -1024,7 +1025,7 @@ mod tests {
 
     #[test]
     fn element_of_homogeneous_list_unwraps() {
-        // PLAN Phase A3: iterating a list yields the UNWRAPPED element.
+        // Iterating a list yields the UNWRAPPED element.
         // list(1, 2, 3) has schema [[1]]=double, [[2]]=double, [[3]]=double;
         // element() returns double<1>, NOT list<1>.
         let schema = ColumnSchema {
@@ -1117,7 +1118,7 @@ mod tests {
     fn malformed_union_is_never_an_invalid_condition() {
         // Defense-in-depth: even a (bug-only) union with members == None
         // must not be reported as an invalid condition (that was the
-        // RY001 `union[]` false positive PLAN Phase A2 fixed).
+        // RY001 `union[]` false positive fixed by the checked constructor).
         let malformed = RType {
             mode: Mode::Union,
             length: Length::One,

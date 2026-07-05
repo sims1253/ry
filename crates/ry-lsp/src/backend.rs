@@ -1,10 +1,10 @@
 //! LSP backend: `Backend`, `State`, the `LanguageServer` impl, and the
-//! document cache / debounce machinery (PLAN Phase E3 -- extracted from
+//! document cache / debounce machinery (extracted from
 //! `lib.rs` so `lib.rs` is just module declarations + `run()`).
 //!
 //! All request handlers read the cached parse (`State::parsed`) and the
 //! cached single-file scope (`State::scopes`) instead of re-parsing /
-//! re-checking on every request (PLAN Phase E1/E2). Diagnostics are
+//! re-checking on every request. Diagnostics are
 //! debounced via `schedule_diagnostics`.
 
 use crate::diagnostics::{
@@ -49,17 +49,17 @@ pub(super) struct State {
     /// path -> (version, parsed SourceFile). Populated lazily by the
     /// request handlers and invalidated by `update_doc`. Reading the
     /// cached parse lets every handler avoid re-parsing on each request
-    /// (PLAN Phase E1). `SourceFile` is `Send`; `RParser` is NOT, so the
+    ///. `SourceFile` is `Send`; `RParser` is NOT, so the
     /// parser is constructed per request and only the result is cached.
     parsed: HashMap<String, (i32, SourceFile)>,
     /// path -> (version, top-level Scope from `check_with_scope`).
     /// Reused by hover/inlay/completion so they don't re-run the
-    /// single-file check on every request (PLAN Phase E2). Invalidated
+    /// single-file check on every request. Invalidated
     /// by `update_doc` alongside the parse cache.
     scopes: HashMap<String, (i32, ry_checker::Scope)>,
     /// Debounce counter per path. `schedule_diagnostics` bumps this and
     /// spawns a task that sleeps, then only publishes if its generation
-    /// is still the latest (PLAN Phase E2). A newer edit during the
+    /// is still the latest. A newer edit during the
     /// sleep window wins and the stale task aborts.
     diag_generation: HashMap<String, u64>,
     /// Workspace root, set at `initialize`. Used only for diagnostics
@@ -70,7 +70,7 @@ pub(super) struct State {
     /// `parsed_file` -- i.e. every cache MISS. The E1 acceptance test
     /// asserts that editing one file in a multi-file workspace parses
     /// only that file, so this counter must NOT rise for cache hits
-    /// (PLAN Phase E1).
+    ///.
     #[cfg(test)]
     pub(super) parse_count: Arc<std::sync::atomic::AtomicUsize>,
 }
@@ -80,7 +80,7 @@ impl State {
     /// latest recorded version, else `None`. Pure cache read -- does
     /// NOT parse. Split out of `parsed_file` so the cache behavior is
     /// unit-testable on a bare `State` without constructing a
-    /// `tower_lsp::Client` (PLAN Phase E1).
+    /// `tower_lsp::Client`.
     pub(super) fn cached_parse(&self, path: &str) -> Option<SourceFile> {
         let version = self.versions.get(path).copied()?;
         let (cached_v, file) = self.parsed.get(path)?;
@@ -291,7 +291,7 @@ impl LanguageServer for Backend {
         if let Some(change) = params.content_changes.into_iter().next() {
             self.update_doc(path, change.text, version).await;
             // Debounced: a burst of keystrokes coalesces into a single
-            // diagnostic publish (PLAN Phase E2).
+            // diagnostic publish.
             self.schedule_diagnostics(uri).await;
         }
     }
@@ -334,8 +334,7 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        // Parse (cached: PLAN Phase E1) and reuse the cached scope (PLAN
-        // Phase E2) for the type lookup.
+        // Parse (cached) and reuse the cached scope for the type lookup.
         let Some(file) = self.parsed_file(&path).await else {
             return Ok(None);
         };
@@ -387,7 +386,7 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        // Parse the current document (cached: PLAN Phase E1). We do not
+        // Parse the current document (cached). We do not
         // need the checker's scope here: definitions live in the AST,
         // not the type environment.
         let Some(file) = self.parsed_file(&path).await else {
@@ -430,7 +429,7 @@ impl LanguageServer for Backend {
         };
 
         // Find the identifier under the cursor via an AST walk of the
-        // current document (cached: PLAN Phase E1). Returns `None` for
+        // current document (cached). Returns `None` for
         // operators, numbers, and keywords.
         let Some(current_file) = self.parsed_file(&path).await else {
             return Ok(None);
@@ -486,8 +485,8 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        // Reuse the cached parse (PLAN Phase E1) and cached single-file
-        // scope (PLAN Phase E2) so the symbol panel doesn't re-check on
+        // Reuse the cached parse and cached single-file
+        // scope so the symbol panel doesn't re-check on
         // every request. Symbols nested inside function bodies fall back
         // to "function" / "variable" since the top-level scope does not
         // track locals.
@@ -520,7 +519,7 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        // Parse the document (cached: PLAN Phase E1). On any parse
+        // Parse the document (cached). On any parse
         // failure we return `None` (no hints) rather than erroring, so
         // the editor simply shows nothing instead of a broken state.
         // Mirrors `document_symbol`.
@@ -528,7 +527,7 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        // Reuse the cached single-file scope (PLAN Phase E2) for the
+        // Reuse the cached single-file scope for the
         // inferred type annotations.
         let Some(scope) = self.scope_for(&path).await else {
             return Ok(None);
@@ -568,7 +567,7 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        // Reuse the cached scope (PLAN Phase E2), which parses lazily
+        // Reuse the cached scope, which parses lazily
         // via the parse cache. Mirrors `hover` and `inlay_hint`: on any
         // parse failure we return `None` (no completions).
         let Some(scope) = self.scope_for(&path).await else {
@@ -672,8 +671,8 @@ impl LanguageServer for Backend {
 
         let mut all_symbols: Vec<SymbolInformation> = Vec::new();
         for (doc_path, doc_text) in &docs {
-            // Cached parse (PLAN Phase E1) and cached single-file scope
-            // (PLAN Phase E2); skip documents that fail to parse rather
+            // Cached parse and cached single-file scope
+            //; skip documents that fail to parse rather
             // than aborting the whole search.
             let Some(file) = self.parsed_file(doc_path).await else {
                 continue;
@@ -729,7 +728,7 @@ impl LanguageServer for Backend {
         };
 
         // Find the identifier at the cursor position via an AST walk to
-        // learn the old name (cached parse: PLAN Phase E1). We rename
+        // learn the old name (cached). We rename
         // ALL occurrences of that name across all open documents,
         // mirroring how `references` works. Returns `None` (no rename)
         // for operators, numbers, keywords.
@@ -843,7 +842,7 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        // Parse the current document (cached: PLAN Phase E1). Document
+        // Parse the current document (cached). Document
         // highlight is scoped to the current file (per the LSP spec), so
         // we only parse once.
         let Some(file) = self.parsed_file(&path).await else {
@@ -881,7 +880,7 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        // Parse the document (cached: PLAN Phase E1). On any parse
+        // Parse the document (cached). On any parse
         // failure we return `None` (no folding ranges) rather than
         // erroring. Mirrors `document_symbol` / `inlay_hint`.
         let Some(file) = self.parsed_file(&path).await else {
@@ -954,7 +953,7 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        // Parse the document (cached: PLAN Phase E1). On any parse
+        // Parse the document (cached). On any parse
         // failure we return `None` (no selection ranges) rather than
         // erroring. Mirrors `document_symbol` / `folding_range`.
         let Some(file) = self.parsed_file(&path).await else {
@@ -985,7 +984,7 @@ impl Backend {
         state.docs.insert(path.clone(), text);
         state.versions.insert(path.clone(), version);
         // Invalidate the cached parse and scope; the next read
-        // repopulates them (PLAN Phase E1/E2).
+        // repopulates them.
         state.parsed.remove(&path);
         state.scopes.remove(&path);
     }
@@ -994,7 +993,7 @@ impl Backend {
     /// parse when its version matches the latest known version. The
     /// cache is read + repopulated under the state lock; parsing itself
     /// (which needs a non-`Send` `RParser`) happens after releasing the
-    /// lock, then the result is stored back (PLAN Phase E1).
+    /// lock, then the result is stored back.
     ///
     /// Returns `None` when the path is not an open document or parsing
     /// fails.
@@ -1030,7 +1029,7 @@ impl Backend {
     /// Return the top-level `Scope` for `path`, reusing the cached
     /// single-file `check_with_scope` result when its version matches.
     /// Used by hover/inlay/completion so they don't re-run the check on
-    /// every request (PLAN Phase E2). Returns `None` when the document
+    /// every request. Returns `None` when the document
     /// is not open or parsing fails.
     async fn scope_for(&self, path: &str) -> Option<ry_checker::Scope> {
         // Fast path: cached scope with matching version.
@@ -1085,7 +1084,7 @@ impl Backend {
         // cross-file calls resolve.
         let mut project = Project::new();
         let mut per_file_comments: HashMap<String, Vec<ry_core::ast::Comment>> = HashMap::new();
-        // Cached parses (PLAN Phase E1): `parsed_file` reuses the
+        // Cached parses: `parsed_file` reuses the
         // per-document `SourceFile` cached in `State` and only re-parses
         // documents whose version changed since the last request.
         for doc_path in docs.keys() {
@@ -1141,7 +1140,7 @@ impl Backend {
     /// ONLY if its generation is still the latest. A newer edit during
     /// the sleep window bumps the counter and the stale task aborts, so
     /// a burst of keystrokes triggers a single check rather than one per
-    /// keystroke (PLAN Phase E2).
+    /// keystroke.
     async fn schedule_diagnostics(&self, uri: Url) {
         let path = uri_to_path(&uri);
         // Bump the generation under the lock; capture the value the

@@ -22,29 +22,9 @@ these mistakes at runtime and hand you a statistically wrong answer
 instead of an error. ry’s job is to catch the mistake while it is still
 cheap.
 
-## Who this is for
-
-ry is built to support **education, practice, and research around
-principled Bayesian workflows** in R:
-
-  - **Education.** Every diagnostic explains what R would silently do at
-    runtime, so the checker doubles as a teacher of R’s semantics. A
-    docs site, worked Bayesian-workflow demos, and graded exercises are
-    in progress – see [ROADMAP.md](ROADMAP.md).
-  - **Practice.** ry understands the modern parallel idiom –
-    `purrr::in_parallel()` on `mirai` daemons – and type-checks parallel
-    code exactly like its sequential equivalent.
-  - **Research.** Diagnostics are available as structured JSON
-    (`--output-format json`) with per-rule counts (`--statistics`), so
-    ry can instrument code quality across a corpus or a classroom. How
-    ry validates its own claims against R is described in
-    [ARCHITECTURE.md](ARCHITECTURE.md).
-
-ry is **not** a formatter (pair it with `air` or `styler`) and not a
+ry is **not** a formatter (pair it with `air`) and not a
 replacement for `lintr`’s style rules. It focuses on type- and
-scope-driven diagnostics that need a whole-program view, and it prefers
-staying silent over crying wolf: every rule is validated against an R
-oracle and real CRAN code so that a warning from ry is worth reading.
+scope-driven diagnostics that need a whole-program view.
 
 ## Install
 
@@ -230,7 +210,3 @@ Start with [ARCHITECTURE.md](ARCHITECTURE.md) (crate map, the three-pass
 project check, where to add a rule) and
 [CONTRIBUTING.md](CONTRIBUTING.md) (build gate, fixture conventions, and
 the false-positive bar every new rule must clear).
-
-## License
-
-MIT OR Apache-2.0.

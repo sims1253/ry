@@ -1,0 +1,6 @@
+---
+source: crates/ry-checker/tests/real_world.rs
+assertion_line: 106
+expression: "check_sorted(\"na_propagation\", src)"
+---
+[]

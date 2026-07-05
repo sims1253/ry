@@ -48,22 +48,49 @@ impl RParser {
         let mut stmts = Vec::new();
         let mut cursor = root.walk();
         for child in root.named_children(&mut cursor) {
+            // A top-level `{ a <- 1; b <- 2 }` braced expression must
+            // splice ALL of its child statements into the surrounding
+            // statement list, not just the last one. The earlier
+            // `lower_braced_as_stmt` discarded earlier siblings.
+            if child.kind() == "braced_expression" {
+                let mut inner_cursor = child.walk();
+                for inner in child.named_children(&mut inner_cursor) {
+                    if let Some(stmt) = self.lower_stmt(inner, src) {
+                        stmts.push(stmt);
+                    }
+                }
+                continue;
+            }
             if let Some(stmt) = self.lower_stmt(child, src) {
                 stmts.push(stmt);
             }
         }
+        // tree-sitter always returns a tree, even for broken input; it
+        // marks unrecoverable regions with `ERROR` nodes and missing
+        // tokens with `MISSING` nodes. Collect these so the checker can
+        // surface them as RY000 instead of silently checking a recovered
+        // (and possibly nonsense) tree.
+        let parse_errors = collect_parse_errors(root);
+        let comments = collect_comments(root, src);
         Ok(SourceFile {
             path: path.to_string(),
             stmts,
+            parse_errors,
+            comments,
         })
     }
 
-    fn span(&self, n: Node, src: &str) -> Span {
+    fn span(&self, n: Node, _src: &str) -> Span {
         let start = n.start_byte();
         let end = n.end_byte();
-        let line = n.start_position().row;
-        let col = char_col(src, start);
-        Span::new(start, end, line, col)
+        let pos = n.start_position();
+        // tree-sitter reports both row and column for free; the previous
+        // implementation discarded `.column` and recomputed a *char*
+        // column by rescanning the whole file from byte 0 for every node
+        // (O(n^2) total). We now use the byte column tree-sitter gives us
+        // directly. `Span::col` is therefore byte-indexed within the line;
+        // diagnostics rendering that need a char column convert per-line.
+        Span::new(start, end, pos.row, pos.column)
     }
 
     fn lower_stmt(&self, n: Node, src: &str) -> Option<Stmt> {
@@ -105,7 +132,11 @@ impl RParser {
     fn try_lower_assign(&self, n: Node, src: &str) -> Option<Stmt> {
         let op_node = n.child_by_field_name("operator")?;
         let op_text = text(op_node, src)?;
-        if !matches!(op_text.as_str(), "<-" | "<<" | "=" | "->" | "->>") {
+        // Note: tree-sitter-r emits the super-assignment operator as the
+        // token `<<-`, NOT `<<`. Matching `<<` (as this code once did)
+        // silently fails for every super-assignment and lets it fall
+        // through to `lower_binary`, which mis-lowers it.
+        if !matches!(op_text.as_str(), "<-" | "<<-" | "=" | "->" | "->>") {
             return None;
         }
         let lhs = n.child_by_field_name("lhs")?;
@@ -114,6 +145,24 @@ impl RParser {
             (self.lower_expr(rhs, src)?, self.lower_expr(lhs, src)?)
         } else {
             (self.lower_expr(lhs, src)?, self.lower_expr(rhs, src)?)
+        };
+        // Super-assignment (`<<-`) must be recorded as such so the checker
+        // (and AST consumers) can distinguish it from plain assignment.
+        // The statement form `x <<- v` lowers to `Stmt::Assign` carrying
+        // the marker on the inner `Expr::BinOp` (mirroring how the rest of
+        // the AST represents assignment-as-expression).
+        let value = if op_text.as_str() == "<<-" {
+            // Re-wrap the RHS so the SuperAssign marker survives in a form
+            // downstream code already understands.
+            let span = self.span(n, src);
+            Expr::BinOp {
+                op: BinOpKind::SuperAssign,
+                lhs: Box::new(target.clone()),
+                rhs: Box::new(value),
+                span,
+            }
+        } else {
+            value
         };
         Some(Stmt::Assign {
             target,
@@ -200,10 +249,13 @@ impl RParser {
         }
     }
 
-    /// A braced expression used as a top-level statement. We splice the
-    /// *last* child as the statement, losing earlier siblings. This is a
-    /// known v1 limitation; at top level braces are rare and a proper
-    /// Block variant is a future task.
+    /// A braced expression used as a statement. Only the last child's value
+    /// is kept as the statement; earlier siblings are dropped. This is a
+    /// v1 limitation that only bites when a braced block appears in a
+    /// nested statement position (e.g. as a function-body branch). At
+    /// *top* level, `RParser::parse` splices all children directly into
+    /// the statement list (see that function), so `{ a <- 1; b <- 2 }`
+    /// at the top of a file preserves both statements.
     fn lower_braced_as_stmt(&self, n: Node, src: &str) -> Option<Stmt> {
         let mut cur = n.walk();
         let mut last: Option<Stmt> = None;
@@ -271,38 +323,55 @@ impl RParser {
             "integer" => {
                 let raw = text(n, src)?;
                 let stripped = raw.trim_end_matches('L').trim_end_matches('l');
-                stripped
-                    .parse::<i64>()
-                    .ok()
-                    .map(|v| Expr::Integer(v, self.span(n, src)))
+                let span = self.span(n, src);
+                // Integer literals that don't fit `i64` (e.g. `1e5L`,
+                // `0x10L` for non-hex, very large values) must NOT cause
+                // the whole statement to vanish. Earlier code returned
+                // `None` here, and `?`-propagation in `lower_binary` /
+                // `try_lower_assign` dropped the enclosing statement
+                // entirely. Fall back to a double, then to `Unknown`, but
+                // always produce *some* expression.
+                if let Ok(v) = stripped.parse::<i64>() {
+                    Some(Expr::Integer(v, span))
+                } else if let Ok(d) = stripped.parse::<f64>() {
+                    Some(Expr::Double(d, span))
+                } else {
+                    Some(Expr::Unknown(span))
+                }
             }
             "float" | "nan" | "inf" => {
                 let raw = text(n, src)?;
+                let span = self.span(n, src);
                 let parsed = match raw.as_str() {
                     "Inf" | "inf" => f64::INFINITY,
                     "-Inf" | "-inf" => f64::NEG_INFINITY,
                     "NaN" | "nan" => f64::NAN,
-                    s => s.parse::<f64>().ok()?,
+                    s => match s.parse::<f64>() {
+                        Ok(v) => v,
+                        // A float-looking token we couldn't parse (e.g.
+                        // exotic locale or a tree-sitter quirk): do NOT
+                        // return None -- that propagates up via `?` and
+                        // drops the enclosing statement entirely. Yield
+                        // Unknown so the statement survives.
+                        Err(_) => return Some(Expr::Unknown(span)),
+                    },
                 };
-                Some(Expr::Double(parsed, self.span(n, src)))
+                Some(Expr::Double(parsed, span))
             }
             "complex" => Some(Expr::Unknown(self.span(n, src))),
             "string" => {
                 let raw = text(n, src)?;
-                let unquoted = &raw[1..raw.len().saturating_sub(1)];
-                Some(Expr::String(unquoted.to_string(), self.span(n, src)))
+                Some(Expr::String(unquote_r_string(&raw), self.span(n, src)))
             }
             "na" => {
                 let raw = text(n, src)?;
                 let t = match raw.as_str() {
-                    "NA" => crate::types::RType::scalar(crate::types::Mode::Logical, true),
-                    "NA_integer_" => crate::types::RType::scalar(crate::types::Mode::Integer, true),
-                    "NA_real_" => crate::types::RType::scalar(crate::types::Mode::Double, true),
-                    "NA_complex_" => crate::types::RType::scalar(crate::types::Mode::Complex, true),
-                    "NA_character_" => {
-                        crate::types::RType::scalar(crate::types::Mode::Character, true)
-                    }
-                    _ => crate::types::RType::UNKNOWN,
+                    "NA" => crate::types::RType::scalar(crate::types::Mode::Logical),
+                    "NA_integer_" => crate::types::RType::scalar(crate::types::Mode::Integer),
+                    "NA_real_" => crate::types::RType::scalar(crate::types::Mode::Double),
+                    "NA_complex_" => crate::types::RType::scalar(crate::types::Mode::Complex),
+                    "NA_character_" => crate::types::RType::scalar(crate::types::Mode::Character),
+                    _ => crate::types::RType::unknown(),
                 };
                 Some(Expr::Na(t, self.span(n, src)))
             }
@@ -410,7 +479,9 @@ impl RParser {
         let op = match op_text.as_str() {
             "+" => BinOpKind::Add,
             "-" => BinOpKind::Sub,
-            "*" | "**" => BinOpKind::Mul,
+            // `**` is R's alternate spelling of `^` (power), not multiply.
+            "*" => BinOpKind::Mul,
+            "**" => BinOpKind::Pow,
             "/" => BinOpKind::Div,
             "^" => BinOpKind::Pow,
             "%%" => BinOpKind::Mod,
@@ -435,8 +506,10 @@ impl RParser {
             // inner assignment in `a <- b <- 1L`). These return the
             // assigned value in R, so `infer_binop` returns the RHS
             // type for them. `->` and `->>` are right-to-left, so we
-            // swap the operands.
-            "<-" | "=" | "<<" => BinOpKind::Assign,
+            // swap the operands. tree-sitter-r emits the
+            // super-assignment token as `<<-` (not `<<`).
+            "<-" | "=" => BinOpKind::Assign,
+            "<<-" => BinOpKind::SuperAssign,
             "->" | "->>" => {
                 // Right-assigned: `a -> b` is `b <- a`. Swap operands.
                 return Some(Expr::BinOp {
@@ -577,6 +650,290 @@ fn text(n: Node, src: &str) -> Option<String> {
     n.utf8_text(src.as_bytes()).ok().map(String::from)
 }
 
+/// Unquote an R string literal, handling escape sequences and raw
+/// strings.
+///
+/// R has four string forms:
+///   * plain: `"a\nb"` / `'a\nb'` -- backslash escapes are processed.
+///   * raw:   `r"(a\nb)"` / `R"[...]"` / `r"[DELI](...)DELI"` -- the
+///     content between the delimiters is taken literally (no escape
+///     processing); the `-(...)` / `-[...]` delimiters are stripped.
+///
+/// Previously this code stripped only the first and last byte, which
+/// silently dropped escapes (`"a\nb"` became the 4-char string
+/// `a\nb`, not `a`+newline+`b`) and mishandled raw strings. Correct
+/// escape processing matters because column-name matching
+/// (`df$"my col"`, `list("a b" = 1)`) and `# ry:` directive parsing
+/// depend on the literal value.
+fn unquote_r_string(raw: &str) -> String {
+    // Raw strings: r"(...)" , r"(...){...}", R"(...)", r"[...]", etc.
+    // The opening is r/R followed by an optional dash-delimiter and a
+    // ( or [. The matching close is ) or ] followed by the same
+    // delimiter (reversed) and a quote.
+    if let Some(rest) = raw.strip_prefix('r').or_else(|| raw.strip_prefix('R')) {
+        if let Some(unprocessed) = try_unwrap_raw_string(rest) {
+            return unprocessed;
+        }
+        // Not actually a raw string (e.g. an identifier-looking token);
+        // fall through to ordinary processing.
+    }
+    // Ordinary quoted string: process escapes.
+    let bytes = raw.as_bytes();
+    if bytes.len() < 2 {
+        return raw.to_string();
+    }
+    let inner = &raw[1..raw.len() - 1];
+    process_r_escapes(inner)
+}
+
+/// Strip the delimiters of a raw string whose body starts after the
+/// leading `r"`/`R"` (so `body` begins at the optional `-delim(` or
+/// `(`). Returns the literal content if it parses as a raw string,
+/// else None.
+fn try_unwrap_raw_string(body: &str) -> Option<String> {
+    // `body` is the token text after the leading `r`/`R`, so it begins
+    // with a quote (`"`). Strip it (and the trailing quote, which the
+    // close-sequence search handles).
+    let body = body.strip_prefix('"')?;
+    // Opening sequence: optional delimiter chars, then `(` or `[`.
+    // R allows `r"(...)"`, `r"-(...)-"`, `r"--(...)--"`, and the `[`
+    // bracket form likewise. We capture the delimiter and the bracket.
+    let bytes = body.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+    let (open_bracket, close_bracket) = match bytes[0] {
+        b'(' => (b'(', b')'),
+        b'[' => (b'[', b']'),
+        _ => {
+            // delimiter form: dashes then bracket
+            let mut i = 0;
+            while i < bytes.len() && bytes[i] == b'-' {
+                i += 1;
+            }
+            if i == 0 || i >= bytes.len() {
+                return None;
+            }
+            match bytes[i] {
+                b'(' => (b'(', b')'),
+                b'[' => (b'[', b']'),
+                _ => return None,
+            }
+        }
+    };
+    // Find the content start (after the opening bracket) and the
+    // matching close. For the simple (no-delimiter) form, the close is
+    // the last `)bracket"` sequence. We do a conservative search from
+    // the end for the closing `"<close>` .
+    let close_quote_seq: &[u8] = &[close_bracket, b'"'];
+    if body.len() < close_quote_seq.len() {
+        return None;
+    }
+    // The opening bracket is the FIRST bracket char in body.
+    let open_idx = body.find(open_bracket as char)?;
+    // The closing sequence is the LAST occurrence of `<close>"`.
+    let close_idx = body.rfind(std::str::from_utf8(close_quote_seq).ok()?)?;
+    if close_idx <= open_idx {
+        return None;
+    }
+    let content_start = open_idx + 1;
+    if content_start >= close_idx {
+        return Some(String::new());
+    }
+    Some(body[content_start..close_idx].to_string())
+}
+
+/// Process R string escape sequences. Handles the common cases:
+/// `\"`, `\\`, `\n`, `\r`, `\t`, `\b`, `\f`, `\v`, `\0`, `\'`, and
+/// `\uXXXX` / `\UXXXXXXXX` (4 or 8 hex digits). Unknown escapes are
+/// passed through verbatim (R warns but keeps the backslash), matching
+/// R's documented behavior.
+fn process_r_escapes(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b != b'\\' {
+            // Copy one UTF-8 char.
+            let ch_len = utf8_char_len(b);
+            if let Ok(chunk) = std::str::from_utf8(&bytes[i..i + ch_len]) {
+                out.push_str(chunk);
+            }
+            i += ch_len;
+            continue;
+        }
+        // Escape sequence.
+        if i + 1 >= bytes.len() {
+            out.push('\\');
+            break;
+        }
+        let next = bytes[i + 1];
+        let (replaced, consumed) = match next {
+            b'n' => (Some('\n'), 2),
+            b'r' => (Some('\r'), 2),
+            b't' => (Some('\t'), 2),
+            b'b' => (Some('\u{0008}'), 2),
+            b'f' => (Some('\u{000C}'), 2),
+            b'v' => (Some('\u{000B}'), 2),
+            b'0' => (Some('\0'), 2),
+            b'a' => (Some('\u{0007}'), 2),
+            b'"' => (Some('"'), 2),
+            b'\'' => (Some('\''), 2),
+            b'\\' => (Some('\\'), 2),
+            b'\n' => (None, 2), // physical line continuation: drop
+            b'u' => {
+                // \uXXXX (exactly 4 hex).
+                let hex = std::str::from_utf8(bytes.get(i + 2..i + 6).unwrap_or(&[])).unwrap_or("");
+                if let Ok(n) = u32::from_str_radix(hex, 16) {
+                    if let Some(c) = char::from_u32(n) {
+                        (Some(c), 6)
+                    } else {
+                        (None, 6)
+                    }
+                } else {
+                    (None, 2)
+                }
+            }
+            b'U' => {
+                // \UXXXXXXXX (exactly 8 hex).
+                let hex =
+                    std::str::from_utf8(bytes.get(i + 2..i + 10).unwrap_or(&[])).unwrap_or("");
+                if let Ok(n) = u32::from_str_radix(hex, 16) {
+                    if let Some(c) = char::from_u32(n) {
+                        (Some(c), 10)
+                    } else {
+                        (None, 10)
+                    }
+                } else {
+                    (None, 2)
+                }
+            }
+            b'x' => {
+                // \xXX (1-2 hex digits).
+                let mut j = i + 2;
+                let mut hex = String::new();
+                while j < bytes.len() && hex.len() < 2 && bytes[j].is_ascii_hexdigit() {
+                    hex.push(bytes[j] as char);
+                    j += 1;
+                }
+                if let Ok(n) = u32::from_str_radix(&hex, 16) {
+                    (Some(n as u8 as char), 2 + hex.len())
+                } else {
+                    (None, 2)
+                }
+            }
+            _ => (None, 2), // unknown escape: keep verbatim below
+        };
+        match replaced {
+            Some(c) => out.push(c),
+            None => {
+                // Unknown escape or line continuation: copy the backslash
+                // and the next byte verbatim (R warns but keeps them).
+                if next != b'\n' {
+                    out.push('\\');
+                    out.push(next as char);
+                }
+            }
+        }
+        i += consumed;
+    }
+    out
+}
+
+/// Length in bytes of the UTF-8 character starting with the given lead
+/// byte. Used to advance one code point at a time without pulling in a
+/// unicode crate.
+fn utf8_char_len(b: u8) -> usize {
+    if b < 0x80 {
+        1
+    } else if b >> 5 == 0b110 {
+        2
+    } else if b >> 4 == 0b1110 {
+        3
+    } else if b >> 3 == 0b11110 {
+        4
+    } else {
+        1 // invalid lead byte; advance one to make progress
+    }
+}
+
+/// Collect every `comment` node in the tree, returning `(line, body)`
+/// pairs in source order. The body is the text AFTER the leading `#`
+/// (untrimmed). These are the ONLY lexically-real comments -- a `#`
+/// that appears inside a string literal is part of the string, not a
+/// comment, so the suppression parser must consume this list rather
+/// than scanning source lines for `#`.
+fn collect_comments(root: tree_sitter::Node, src: &str) -> Vec<crate::ast::Comment> {
+    let mut out = Vec::new();
+    let mut stack: Vec<tree_sitter::Node> = vec![root];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "comment" {
+            let pos = node.start_position();
+            let line = pos.row;
+            let col = pos.column;
+            if let Ok(full) = node.utf8_text(src.as_bytes()) {
+                // Strip the leading `#` (R comments start with exactly
+                // one `#`; any further `#` are part of the body).
+                let body = full.strip_prefix('#').unwrap_or(full).to_string();
+                out.push(crate::ast::Comment { line, col, body });
+            }
+        }
+        let mut child_cursor = node.walk();
+        for child in node.children(&mut child_cursor) {
+            stack.push(child);
+        }
+    }
+    out.sort_by_key(|c| c.line);
+    out
+}
+
+/// Walk the parse tree and collect spans of `ERROR` and `MISSING` nodes.
+///
+/// tree-sitter produces a recovered tree for malformed input: regions it
+/// could not parse become `ERROR` nodes, and tokens it had to insert to
+/// repair the tree become `MISSING` nodes. `root.has_error()` is the cheap
+/// "is anything broken" check; this function walks the tree when that is
+/// true to extract the individual broken regions for per-node diagnostics.
+fn collect_parse_errors(root: tree_sitter::Node) -> Vec<Span> {
+    if !root.has_error() {
+        return Vec::new();
+    }
+    let mut out: Vec<Span> = Vec::new();
+    // Pre-order DFS over ALL nodes (named and anonymous). `ERROR` and
+    // `MISSING` are node kinds tree-sitter emits specially.
+    let mut stack: Vec<tree_sitter::Node> = vec![root];
+    while let Some(node) = stack.pop() {
+        let kind = node.kind();
+        if kind == "ERROR" || node.is_missing() {
+            let start = node.start_byte();
+            let end = node.end_byte().max(start);
+            let pos = node.start_position();
+            out.push(Span::new(start, end, pos.row, pos.column));
+            // Still descend: nested ERROR/MISSING nodes get their own spans
+            // so a single broken region reports each missing token once.
+        }
+        let mut child_cursor = node.walk();
+        for child in node.children(&mut child_cursor) {
+            stack.push(child);
+        }
+    }
+    // A parent ERROR frequently wraps a MISSING token at the SAME byte
+    // range (zero-width), so the raw walk reports the identical span
+    // twice -- e.g. a broken file printed `1:16` for both the ERROR and
+    // its missing child. Deduplicate on the (start, end) byte pair,
+    // preserving a stable (row, column) order for deterministic output.
+    out.sort_by(|a, b| {
+        a.start
+            .cmp(&b.start)
+            .then(a.end.cmp(&b.end))
+            .then(a.line.cmp(&b.line))
+            .then(a.col.cmp(&b.col))
+    });
+    out.dedup_by(|a, b| a.start == b.start && a.end == b.end);
+    out
+}
+
 /// Find the namespace operator token (`::` or `:::`) among a
 /// `namespace_operator` node's anonymous children. Returns `None` if
 /// neither token is present (malformed input).
@@ -598,17 +955,23 @@ fn namespace_op(n: Node, src: &str) -> Option<&'static str> {
     None
 }
 
-fn char_col(src: &str, byte_offset: usize) -> usize {
-    let mut col = 0;
-    for (b, ch) in src.char_indices() {
-        if b >= byte_offset {
+/// Convert a byte column within a single line to a character column.
+///
+/// Used by diagnostic rendering when a human-visible column is needed. The
+/// previous per-node column computation rescanned the entire file from byte
+/// 0 for every AST node (O(n^2) total, 47s on 20k lines); this only ever
+/// scans the one line the column lives on.
+///
+/// `line_start` is the byte offset of the start of the line containing the
+/// column, and `byte_col` is the byte offset of the target within that line.
+pub fn byte_col_to_char_col(line: &str, byte_col: usize) -> usize {
+    let mut col = 0usize;
+    for (b, ch) in line.char_indices() {
+        if b >= byte_col {
             break;
         }
-        if ch == '\n' {
-            col = 0;
-        } else {
-            col += 1;
-        }
+        let _ = ch;
+        col += 1;
     }
     col
 }
@@ -1030,6 +1393,82 @@ mod tests {
                 );
             }
             other => panic!("expected UnaryOp(Neg, BinOp(Pow, ..)), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn string_escape_sequences_are_processed() {
+        use super::unquote_r_string;
+        assert_eq!(unquote_r_string(r#""a\nb""#), "a\nb");
+        assert_eq!(unquote_r_string(r#""\t""#), "\t");
+        assert_eq!(unquote_r_string(r#""\\""#), "\\");
+        assert_eq!(unquote_r_string(r#""\"""#), "\"");
+        assert_eq!(unquote_r_string(r#""a\\b""#), "a\\b");
+        // Unknown escape: keep verbatim (R warns but retains the backslash).
+        assert_eq!(unquote_r_string(r#""\q""#), r#"\q"#);
+    }
+
+    #[test]
+    fn string_unicode_escapes() {
+        use super::unquote_r_string;
+        assert_eq!(unquote_r_string(r#""\u00e9""#), "é");
+        // Malformed \u (too few hex): keep verbatim, don't panic.
+        assert_eq!(unquote_r_string(r#""\uXY""#), r#"\uXY"#);
+    }
+
+    #[test]
+    fn string_single_quotes_work() {
+        use super::unquote_r_string;
+        assert_eq!(unquote_r_string("'abc'"), "abc");
+        assert_eq!(unquote_r_string(r"'a\nb'"), "a\nb");
+    }
+
+    #[test]
+    fn raw_strings_skip_escape_processing() {
+        use super::unquote_r_string;
+        // r"(...)" -- content is literal, no escape processing.
+        assert_eq!(unquote_r_string(r#"r"(a\nb)""#), r"a\nb");
+        // R"(...)" (capital) likewise.
+        assert_eq!(unquote_r_string(r#"R"(x)""#), "x");
+        // r"[...]" bracket form.
+        assert_eq!(unquote_r_string(r#"r"[literal]""#), "literal");
+    }
+
+    #[test]
+    fn string_with_embedded_quote_directive_is_not_a_suppression() {
+        // A string literal value like "# noqa" must not be confused with
+        // a suppression comment when the parser later reasons about it.
+        // The string arm produces an Expr::String with the literal value
+        // intact (escapes processed).
+        let src = "x <- \"# noqa\"\n";
+        let f = parse(src);
+        match f.stmts.first() {
+            Some(Stmt::Assign {
+                value: Expr::String(s, _),
+                ..
+            }) => assert_eq!(s, "# noqa"),
+            other => panic!("expected String assign, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_error_spans_are_deduplicated() {
+        // A broken region often surfaces as an ERROR node wrapping a
+        // MISSING token at the SAME byte range, which used to emit the
+        // identical `line:col` twice. The spans must be deduplicated on
+        // the (start, end) byte pair.
+        let f = parse("f <- function( { 1 }\n");
+        assert!(
+            !f.parse_errors.is_empty(),
+            "expected at least one parse error"
+        );
+        let mut seen = std::collections::HashSet::new();
+        for s in &f.parse_errors {
+            assert!(
+                seen.insert((s.start, s.end)),
+                "duplicate parse-error span: {:?}",
+                s
+            );
         }
     }
 }

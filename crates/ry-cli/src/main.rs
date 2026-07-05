@@ -6,6 +6,7 @@ use clap::parser::ValueSource;
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser as ClapParser, Subcommand};
 use miette::{IntoDiagnostic, Result};
 
+mod color;
 mod config;
 
 #[derive(Debug, ClapParser)]
@@ -50,7 +51,9 @@ enum Cmd {
         #[arg(long)]
         exit_zero: bool,
         /// Output format. One of: full, concise, json, github, gitlab, junit.
-        #[arg(long, value_name = "FORMAT", default_value = "concise")]
+        /// `full` is the default (matches ty); `concise` is available for a
+        /// one-line-per-diagnostic view.
+        #[arg(long, value_name = "FORMAT", default_value = "full")]
         output_format: String,
         /// Control when colored output is used.
         #[arg(long, value_name = "WHEN")]
@@ -59,6 +62,10 @@ enum Cmd {
         /// Uses polling (500ms interval). Press Ctrl+C to stop.
         #[arg(short = 'W', long)]
         watch: bool,
+        /// Print per-rule diagnostic counts after the run (ruff's
+        /// `--statistics`). Useful for corpus research and triage.
+        #[arg(long)]
+        statistics: bool,
     },
     /// Start the language server. Speaks the Language Server Protocol
     /// (LSP) over stdio, publishing type-check diagnostics for open R
@@ -71,7 +78,9 @@ enum Cmd {
         #[arg(long, value_name = "FORMAT", default_value = "text")]
         output_format: String,
     },
-    /// Explain a rule (or all rules).
+    /// Explain a rule (or all rules). `ry rule` is an alias (matches
+    /// ruff's `ruff rule`).
+    #[command(visible_alias = "rule")]
     ExplainRule {
         /// Rule code or name. Omit to list all rules.
         rule: Option<String>,
@@ -115,9 +124,10 @@ fn main() -> Result<ExitCode> {
             ignore: Vec::new(),
             error_on_warning: false,
             exit_zero: false,
-            output_format: "concise".to_string(),
+            output_format: "full".to_string(),
             color: None,
             watch: false,
+            statistics: false,
         },
     };
 
@@ -135,21 +145,36 @@ fn main() -> Result<ExitCode> {
             error_on_warning,
             exit_zero,
             output_format,
-            color: _,
+            color,
             watch,
-        } => run_check(
-            paths,
-            error,
-            warn,
-            ignore,
-            error_on_warning,
-            exit_zero,
-            &output_format,
-            cli.verbose,
-            cli.quiet,
-            check_matches,
-            watch,
-        ),
+            statistics,
+        } => {
+            // Validate --color up front so an unknown value is a clear
+            // error rather than a silently-ignored flag. The resolved
+            // choice has no observable effect today (no colorized output
+            // paths exist yet) but is parsed and honors NO_COLOR, so it
+            // is forward-compatible.
+            if let Some(raw) = &color {
+                if let Err(e) = color::ColorChoice::parse(raw) {
+                    eprintln!("ry: {e}");
+                    return Ok(ExitCode::FAILURE);
+                }
+            }
+            run_check(
+                paths,
+                error,
+                warn,
+                ignore,
+                error_on_warning,
+                exit_zero,
+                &output_format,
+                cli.verbose,
+                cli.quiet,
+                check_matches,
+                watch,
+                statistics,
+            )
+        }
         Cmd::Server => {
             // The LSP server reads JSON-RPC from stdin and writes
             // JSON-RPC to stdout. CRITICAL: any tracing or log output
@@ -277,6 +302,7 @@ fn run_check(
     cli_quiet: u8,
     check_matches: Option<&ArgMatches>,
     watch: bool,
+    statistics: bool,
 ) -> Result<ExitCode> {
     // Determine the search start directory for config discovery. If the
     // user passed a path, anchor discovery at the first path's parent
@@ -383,8 +409,8 @@ fn run_check(
     }
 
     // Run the initial check.
-    let result = run_check_once(&all_paths, &filter, format)?;
-    result.print_summary(format);
+    let result = run_check_once(&all_paths, &filter, format, &cfg.packages)?;
+    result.print_summary(format, statistics);
 
     if !watch {
         return Ok(result.exit_code(&cfg));
@@ -460,8 +486,8 @@ fn run_check(
             // Using ANSI escape sequences rather than `clear` command
             // for portability (no external process spawn).
             eprint!("\x1b[2J\x1b[H");
-            let result = run_check_once(&all_paths, &filter, format)?;
-            result.print_summary(format);
+            let result = run_check_once(&all_paths, &filter, format, &cfg.packages)?;
+            result.print_summary(format, statistics);
         }
     }
 }
@@ -476,7 +502,43 @@ struct CheckResult {
 }
 
 impl CheckResult {
-    fn print_summary(&self, format: ry_checker::format::OutputFormat) {
+    fn print_summary(&self, format: ry_checker::format::OutputFormat, statistics: bool) {
+        // Suppress the human summary line for machine-readable formats
+        // so it can't corrupt JSON/Github/Gitlab/Junit output (it goes
+        // to stderr, but consumers that merge stderr would see it). The
+        // plan calls for printing it only for the human formats.
+        let is_human = matches!(
+            format,
+            ry_checker::format::OutputFormat::Full | ry_checker::format::OutputFormat::Concise
+        );
+        if !is_human && !statistics {
+            return;
+        }
+        // --statistics: per-rule counts (ruff's --statistics). Printed
+        // to stderr (with the summary) so it never corrupts the stdout
+        // diagnostic stream. Sorted by count descending.
+        if statistics {
+            let mut counts: std::collections::BTreeMap<&str, (usize, ry_checker::Severity)> =
+                std::collections::BTreeMap::new();
+            for d in &self.diagnostics {
+                counts
+                    .entry(d.code)
+                    .and_modify(|(c, _)| *c += 1)
+                    .or_insert((1, d.severity));
+            }
+            let mut rows: Vec<_> = counts.into_iter().collect();
+            rows.sort_by_key(|(_, (n, _))| std::cmp::Reverse(*n));
+            eprintln!("ry: statistics ({} unique rule(s))", rows.len());
+            for (code, (n, sev)) in rows {
+                eprintln!("  {code:<6} {n:>4}  {sev}");
+            }
+            eprintln!(
+                "ry: checked {} file(s), {} diagnostic(s)",
+                self.file_count,
+                self.diagnostics.len()
+            );
+            return;
+        }
         let errors = self
             .diagnostics
             .iter()
@@ -487,7 +549,6 @@ impl CheckResult {
             .iter()
             .filter(|d| d.severity == ry_checker::Severity::Warning)
             .count();
-        let _ = format;
         eprintln!(
             "ry: checked {} file(s), {} error(s), {} warning(s)",
             self.file_count, errors, warnings
@@ -521,37 +582,70 @@ fn run_check_once(
     all_paths: &[PathBuf],
     filter: &ry_checker::SeverityFilter,
     format: ry_checker::format::OutputFormat,
+    packages: &[String],
 ) -> Result<CheckResult> {
     let mut all_diagnostics: Vec<ry_checker::Diagnostic> = Vec::new();
     let mut srcs: HashMap<String, String> = HashMap::new();
+    let mut comments: HashMap<String, Vec<ry_core::ast::Comment>> = HashMap::new();
     let mut parse_errors = 0usize;
     let mut file_count = 0usize;
 
     // Multi-file project mode: build a single `Project` so functions
     // defined in one file are visible when checking another.
     let mut project = ry_checker::Project::new();
+    // Seed the project's loaded-packages set from `ry.toml`'s `packages`
+    // key. `Project::check` will additionally union in any per-file
+    // `library`/`require`/`requireNamespace` loads.
+    project.set_loaded(packages.iter().cloned().collect());
 
-    for path in all_paths {
+    // Parallel file parsing. tree-sitter parsers are
+    // NOT `Send`, so each rayon thread keeps its own `RParser` in a
+    // `thread_local!` (the grammar is loaded once per thread; the
+    // thread pool is reused across this run). Parsed files come back in
+    // arbitrary thread order; we re-sort to input path order for stable
+    // diagnostic output. The single-parser optimization (reusing one
+    // parser across documents) is preserved within each thread.
+    thread_local! {
+        static PARSER: std::cell::RefCell<Option<ry_core::RParser>> =
+            const { std::cell::RefCell::new(None) };
+    }
+    let parse_one = |path: &std::path::Path| -> Result<(String, String, ry_core::SourceFile), ()> {
         let src = match std::fs::read_to_string(path) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("ry: {}: {}", path.display(), e);
-                parse_errors += 1;
-                continue;
+                return Err(());
             }
         };
         let path_str = path.to_string_lossy().to_string();
-        let mut parser = ry_core::RParser::new().map_err(|e| miette::miette!(e))?;
-        let file = match parser.parse(&path_str, &src) {
-            Ok(f) => f,
+        let file = PARSER.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            let parser = slot.get_or_insert_with(|| {
+                ry_core::RParser::new().expect("parser init (thread-local)")
+            });
+            parser.parse(&path_str, &src)
+        });
+        match file {
+            Ok(f) => Ok((path_str, src, f)),
             Err(e) => {
                 eprintln!("ry: {}: parse error: {}", path.display(), e);
-                parse_errors += 1;
-                continue;
+                Err(())
             }
-        };
-        project.add_file(path_str.clone(), file);
-        srcs.insert(path_str, src);
+        }
+    };
+    // Parallel collect, tracking input index for a stable re-sort.
+    use rayon::prelude::*;
+    let mut parsed: Vec<(usize, String, String, ry_core::SourceFile)> = all_paths
+        .par_iter()
+        .enumerate()
+        .filter_map(|(i, path)| parse_one(path).ok().map(|(p, s, f)| (i, p, s, f)))
+        .collect();
+    parse_errors += all_paths.len() - parsed.len();
+    parsed.sort_by_key(|(i, _, _, _)| *i);
+    for (_, path_str, src, file) in parsed {
+        project.add_file(path_str.clone(), file.clone());
+        srcs.insert(path_str.clone(), src);
+        comments.insert(path_str.clone(), file.comments);
         file_count += 1;
     }
 
@@ -559,10 +653,12 @@ fn run_check_once(
 
     // Apply inline suppression comments (`# ry: ignore`, `# noqa`,
     // `# ry: ignore-file`) before the severity filter so a suppressed
-    // error never even reaches the filter pipeline.
+    // error never even reaches the filter pipeline. Use the lexical
+    // (comment-based) filter so a `#` inside a string literal is not
+    // mistaken for a suppression directive.
     for (path, diags) in &mut per_file_diagnostics {
-        if let Some(src) = srcs.get(path) {
-            *diags = ry_checker::filter_suppressed(std::mem::take(diags), src);
+        if let Some(cs) = comments.get(path) {
+            *diags = ry_checker::filter_suppressed_with_comments(std::mem::take(diags), cs);
         }
     }
 
@@ -582,13 +678,11 @@ fn run_check_once(
 
     let rendered = ry_checker::format::render(&all_diagnostics, format, &srcs);
     if !rendered.is_empty() {
-        match format {
-            ry_checker::format::OutputFormat::Json
-            | ry_checker::format::OutputFormat::Github
-            | ry_checker::format::OutputFormat::Gitlab
-            | ry_checker::format::OutputFormat::Junit => print!("{}", rendered),
-            _ => eprint!("{}", rendered),
-        }
+        // Diagnostics go to STDOUT (matches ruff/ty): `ry check > log`
+        // captures the diagnostics, while the summary line and watch-
+        // mode chrome go to stderr. Machine formats (json/github/...)
+        // already used stdout; human formats (concise/full) now do too.
+        print!("{}", rendered);
     }
 
     Ok(CheckResult {

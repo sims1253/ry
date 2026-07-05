@@ -1,5 +1,6 @@
 [package]
 name = "ry-lsp"
+description = "Language Server Protocol implementation for ry, a static analyzer for R."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

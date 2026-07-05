@@ -1,0 +1,6 @@
+---
+source: crates/ry-checker/tests/real_world.rs
+assertion_line: 95
+expression: "check_sorted(\"s3_dispatch\", src)"
+---
+[]

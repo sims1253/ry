@@ -1,0 +1,90 @@
+{
+  "version": "0.0.1",
+  "functions": {
+    "filter": {
+      "params": [".data", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["data.frame"] }
+    },
+    "mutate": {
+      "params": [".data", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["data.frame"] }
+    },
+    "select": {
+      "params": [".data", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["data.frame"] }
+    },
+    "arrange": {
+      "params": [".data", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["data.frame"] }
+    },
+    "group_by": {
+      "params": [".data", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["grouped_df", "data.frame"] }
+    },
+    "summarise": {
+      "params": [".data", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["data.frame"] }
+    },
+    "summarize": {
+      "params": [".data", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["data.frame"] },
+      "aliases": ["summarise"]
+    },
+    "left_join": {
+      "params": ["x", "y", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["data.frame"] }
+    },
+    "inner_join": {
+      "params": ["x", "y", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["data.frame"] }
+    },
+    "right_join": {
+      "params": ["x", "y", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["data.frame"] }
+    },
+    "full_join": {
+      "params": ["x", "y", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["data.frame"] }
+    },
+    "bind_rows": {
+      "params": ["...", ".id"],
+      "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["data.frame"] }
+    },
+    "bind_cols": {
+      "params": ["..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["data.frame"] }
+    },
+    "pull": {
+      "params": [".data", "var"],
+      "return": { "mode": "opaque", "length": "unknown", "na": false }
+    },
+    "n": {
+      "params": [],
+      "return": { "mode": "integer", "length": "1", "na": false }
+    },
+    "rename": {
+      "params": [".data", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["data.frame"] }
+    },
+    "slice": {
+      "params": [".data", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["data.frame"] }
+    },
+    "distinct": {
+      "params": [".data", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["data.frame"] }
+    },
+    "ungroup": {
+      "params": ["x", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["data.frame"] }
+    },
+    "count": {
+      "params": ["x", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["data.frame"] }
+    },
+    "tibble": {
+      "params": ["..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["tbl_df", "tbl", "data.frame"] }
+    }
+  }
+}

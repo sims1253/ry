@@ -1,5 +1,6 @@
 [package]
 name = "ry-core"
+description = "Core types, parser, and inference primitives for ry, a static analyzer for R."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

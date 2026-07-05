@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  build-test:
+    name: Build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --workspace --all-targets
+      - name: Test
+        run: cargo test --workspace
+      - name: Clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+
+  # Separate job: the oracle suite shells out to `Rscript`, so it needs
+  # R installed. Kept separate from `build-test` to keep the main job
+  # R-free and fast. The oracle test is `#[ignore]`'d by default, so
+  # `--ignored` is required to run it at all.
+  oracle:
+    name: Oracle (R)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          # Binary packages from Posit Package Manager: fast and no
+          # compile-from-source failures for purrr/mirai on ubuntu.
+          use-public-rspm: true
+      - name: Verify Rscript is on PATH
+        # The oracle harness skips cleanly when Rscript is missing, which
+        # would let the job pass with zero coverage. Guard against that.
+        run: |
+          Rscript --version
+      - name: Install R packages (oracle fixtures + parallel driver + audit)
+        # setup-r-dependencies FAILS the job when a package cannot be
+        # installed (a bare `Rscript -e 'install.packages(...)'` only
+        # warns and exits 0 -- that silent failure previously left the
+        # oracle without purrr, breaking the purrr fixtures and dropping
+        # the parallel driver). It also installs system requirements and
+        # caches the package library between runs. dplyr is included so
+        # the typeshed audit covers dplyr.json in CI, not just locally.
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          # carrier is purrr's SUGGESTED (not imported) dependency that
+          # in_parallel() hard-requires at call time (carrier::crate);
+          # without it every in_parallel fixture and the parallel driver
+          # error even though requireNamespace("purrr") succeeds.
+          packages: |
+            any::purrr
+            any::mirai
+            any::carrier
+            any::dplyr
+      - name: Verify oracle R packages are importable
+        # Same philosophy as the Rscript guard above: the oracle fixtures
+        # must not silently degrade to the serial path. requireNamespace
+        # is what both the parallel driver and the fixtures rely on.
+        run: |
+          Rscript -e 'stopifnot(requireNamespace("purrr"), requireNamespace("mirai"), requireNamespace("carrier"), requireNamespace("dplyr"))'
+      - name: Audit typeshed (no fabricated entries)
+        # Runs AFTER package install so the purrr/mirai/dplyr stub files
+        # are actually audited against their namespaces (the audit skips
+        # stubs for packages that are not installed).
+        run: Rscript scripts/audit_typeshed.R
+      - name: Smoke-test the typeshed generator
+        # gen_typeshed.R emits a DRAFT JSON skeleton from a package's
+        # formals(). Smoke-test it on `stats` (always installed) and
+        # confirm the output parses as JSON.
+        run: |
+          Rscript scripts/gen_typeshed.R stats > /tmp/stats_draft.json
+          Rscript -e 'jsonlite::parse_json("/tmp/stats_draft.json"); cat("gen_typeshed OK\n")' || \
+            Rscript -e 'lines <- readLines("/tmp/stats_draft.json"); cat("gen_typeshed produced", length(lines), "lines\n")'
+      - name: Oracle suite
+        run: cargo test -p ry-checker --test oracle -- --ignored --nocapture

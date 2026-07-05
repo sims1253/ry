@@ -19,7 +19,9 @@
 use crate::{
     apply_filter_to_diagnostics, Checker, Diagnostic, FnTable, ReturnSlots, SeverityFilter,
 };
+use rayon::prelude::*;
 use ry_core::SourceFile;
+use std::sync::Arc;
 
 /// A multi-file R project. Functions defined in any file are visible
 /// to all other files. The fixpoint loop refines returns across the
@@ -43,6 +45,11 @@ pub struct Project {
     /// Cached per-file diagnostics from the most recent `check()` call.
     /// Kept so `apply_filter` can run after `check()` without re-parsing.
     diagnostics: Vec<(String, Vec<Diagnostic>)>,
+    /// Packages declared in `ry.toml`'s `packages` key, unioned at
+    /// `check()` time with packages loaded via `library`/`require`/
+    /// `requireNamespace` in any file. Seeded into every pass-3 emitter
+    /// so the dplyr NSE gating sees a project-wide view.
+    loaded: std::collections::HashSet<String>,
 }
 
 impl Default for Project {
@@ -59,6 +66,7 @@ impl Project {
             return_slots: ReturnSlots::default(),
             files: Vec::new(),
             diagnostics: Vec::new(),
+            loaded: std::collections::HashSet::new(),
         }
     }
 
@@ -74,6 +82,15 @@ impl Project {
         self.files.push((path, file));
     }
 
+    /// Declare the project's loaded packages (from `ry.toml`'s
+    /// `packages` key). These are unioned at `check()` time with
+    /// packages loaded via `library`/`require`/`requireNamespace` in
+    /// any file, and the union is seeded into every pass-3 emitter so
+    /// the dplyr NSE gating sees a project-wide view.
+    pub fn set_loaded(&mut self, loaded: std::collections::HashSet<String>) {
+        self.loaded = loaded;
+    }
+
     /// Run the three-pass check across all added files. Returns a map
     /// (as a `Vec<(path, Vec<Diagnostic>)>` preserving input order)
     /// from each file's path to the diagnostics emitted for that file.
@@ -86,6 +103,21 @@ impl Project {
     /// wasteful: each call re-collects and re-refines from scratch.
     /// For incremental updates, construct a fresh `Project`.
     pub fn check(&mut self) -> Vec<(String, Vec<Diagnostic>)> {
+        // Pre-scan: collect packages loaded via `library`/`require`/
+        // `requireNamespace` from every file and union them with the
+        // project-declared `loaded` set (from `ry.toml`'s `packages`
+        // key). The union is seeded into every pass-3 emitter so a
+        // `library(dplyr)` in any file makes dplyr NSE verbs resolve
+        // everywhere (matching R's source()-based cross-file semantics).
+        // A throwaway Checker in discarding mode drives the walk; no
+        // diagnostics are emitted.
+        let mut union_loaded = std::mem::take(&mut self.loaded);
+        let mut loaded_scanner = Checker::new("__project_loaded__");
+        for (_path, file) in &self.files {
+            union_loaded.extend(loaded_scanner.collect_file_loaded(file));
+        }
+        self.loaded = union_loaded.clone();
+
         // Pass 1: walk every file's top-level statements, collecting
         // function definitions (and S3 method registrations) into the
         // shared FnTable. We use a throwaway Checker to drive
@@ -113,16 +145,44 @@ impl Project {
         self.return_slots = return_slots;
 
         // Pass 3: per-file diagnostic emission. Each file gets a fresh
-        // Checker whose tables are the (now refined) shared tables.
-        // We give the checker a clone of the tables so the Project
-        // keeps them cached for the next `check()` call.
-        let mut per_file: Vec<(String, Vec<Diagnostic>)> = Vec::with_capacity(self.files.len());
-        for (path, file) in &self.files {
-            let mut emitter =
-                Checker::with_tables(path, self.fn_table.clone(), self.return_slots.clone());
-            emitter.emit_diagnostics(file);
-            per_file.push((path.clone(), emitter.take_diagnostics()));
-        }
+        // Checker that SHARES the refined tables via an `Arc` handle --
+        // pass 3 is read-only on the tables (every mutation site is in
+        // passes 1/2), so only the refcount is bumped per file, not the
+        // tables themselves.
+        //
+        // The emission loop is embarrassingly parallel: each file's
+        // Checker is independent and the Arc-shared tables are read-
+        // only, so we rayon-`par_iter` it. Diagnostics
+        // come back in arbitrary thread order; we re-sort to match the
+        // input file order so callers see a stable, deterministic vec.
+        let fn_table = Arc::new(std::mem::take(&mut self.fn_table));
+        let return_slots = Arc::new(std::mem::take(&mut self.return_slots));
+        let loaded = Arc::new(std::mem::take(&mut self.loaded));
+        let mut per_file: Vec<(usize, String, Vec<Diagnostic>)> = self
+            .files
+            .par_iter()
+            .enumerate()
+            .map(|(i, (path, file))| {
+                let mut emitter = Checker::with_shared_tables(
+                    path,
+                    Arc::clone(&fn_table),
+                    Arc::clone(&return_slots),
+                );
+                emitter.set_loaded((*loaded).clone());
+                emitter.emit_diagnostics(file);
+                (i, path.clone(), emitter.take_diagnostics())
+            })
+            .collect();
+        // Restore the tables onto the Project for the next `check()` call.
+        // Every emitter above has been dropped, so the Arc refcount is 1
+        // and `unwrap_or_clone` returns the owned value without cloning.
+        self.fn_table = Arc::unwrap_or_clone(fn_table);
+        self.return_slots = Arc::unwrap_or_clone(return_slots);
+        self.loaded = Arc::unwrap_or_clone(loaded);
+        // Re-sort to input file order and drop the sort index.
+        per_file.sort_by_key(|(i, _, _)| *i);
+        let per_file: Vec<(String, Vec<Diagnostic>)> =
+            per_file.into_iter().map(|(_, p, d)| (p, d)).collect();
 
         self.diagnostics = per_file.clone();
         per_file

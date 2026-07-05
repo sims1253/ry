@@ -9,4 +9,4 @@ pub mod types;
 pub use ast::*;
 pub use parser::{ParseError, RParser};
 pub use span::Span;
-pub use types::{Length, Mode, NaFlag, RType};
+pub use types::{Length, Mode, RType};

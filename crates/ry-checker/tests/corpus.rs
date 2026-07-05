@@ -19,6 +19,8 @@ enum Expectation {
     Codes(Vec<String>),
     /// No diagnostics at all.
     None,
+    /// At least one parse/syntax error (`RY000`) must be emitted.
+    ParseError,
 }
 
 #[derive(Debug)]
@@ -43,6 +45,11 @@ fn parse_marker(src: &str) -> Option<Expectation> {
     // `# no-diag` is a standalone marker; `# expect: ...` is colon-delimited.
     if body.eq_ignore_ascii_case("no-diag") || body.eq_ignore_ascii_case("no_diag") {
         return Some(Expectation::None);
+    }
+    if body.eq_ignore_ascii_case("expect-parse-error")
+        || body.eq_ignore_ascii_case("expect_parse_error")
+    {
+        return Some(Expectation::ParseError);
     }
     let (key, value) = body.split_once(':')?;
     let key = key.trim();
@@ -103,8 +110,10 @@ fn run(name: &str, src: &str) -> Vec<(String, Severity)> {
     c.check(&file);
     // Apply inline suppression (`# ry: ignore`, `# noqa`,
     // `# ry: ignore-file`) so corpus fixtures that test the suppression
-    // feature behave the same way the CLI / LSP do.
-    let diags = ry_checker::filter_suppressed(c.take_diagnostics(), src);
+    // feature behave the same way the CLI / LSP do. Use the lexical
+    // (comment-based) filter so a `#` inside a string literal is not
+    // mistaken for a suppression directive.
+    let diags = ry_checker::filter_suppressed_with_comments(c.take_diagnostics(), &file.comments);
     diags
         .into_iter()
         .map(|d| (d.code.to_string(), d.severity))
@@ -157,6 +166,7 @@ fn corpus_check_each_fixture() {
         }
         let ok = match &fx.expected {
             Expectation::None => got.is_empty(),
+            Expectation::ParseError => got_codes.contains_key("RY000"),
             Expectation::Codes(expected) => {
                 let mut want: BTreeMap<&str, usize> = BTreeMap::new();
                 for c in expected {
@@ -199,6 +209,7 @@ fn corpus_summary() {
         let codes: Vec<&str> = got.iter().map(|(c, _)| c.as_str()).collect();
         let expected_str = match &fx.expected {
             Expectation::None => "(none)".to_string(),
+            Expectation::ParseError => "(parse-error)".to_string(),
             Expectation::Codes(c) => c.join(","),
         };
         let result = if codes.is_empty() {

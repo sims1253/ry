@@ -15,6 +15,12 @@ pub struct Rule {
 /// All rules currently emitted by the checker. Keep codes lexicographic.
 pub const RULES: &[Rule] = &[
     Rule {
+        code: "RY000",
+        name: "syntax-error",
+        default_severity: Severity::Error,
+        summary: "Unparseable input. tree-sitter could not recover this region; subsequent diagnostics may be unreliable.",
+    },
+    Rule {
         code: "RY001",
         name: "invalid-condition",
         default_severity: Severity::Warning,
@@ -24,7 +30,7 @@ pub const RULES: &[Rule] = &[
         code: "RY002",
         name: "condition-length",
         default_severity: Severity::Warning,
-        summary: "`if` condition has length > 1; only the first element is used.",
+        summary: "`if` condition length is known to be greater than 1; only the first element is used.",
     },
     Rule {
         code: "RY010",
@@ -96,7 +102,13 @@ pub const RULES: &[Rule] = &[
         code: "RY070",
         name: "call-non-function",
         default_severity: Severity::Error,
-        summary: "A non-function value is being called as if it were a function. R will error at runtime with 'could not find function'.",
+        summary: "A non-function value (a variable bound to a non-function, or a literal like `42()`) is being called as a function. R will error at runtime ('attempt to apply non-function' / 'could not find function').",
+    },
+    Rule {
+        code: "RY080",
+        name: "map-return-type-mismatch",
+        default_severity: Severity::Warning,
+        summary: "A purrr typed-map (`map_dbl`, `map_int`, ...) callback returns a value whose mode is incompatible with the target vector type. R coerces at runtime, but the mismatch is almost always unintended.",
     },
 ];
 

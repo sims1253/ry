@@ -1,0 +1,21 @@
+---
+source: crates/ry-checker/tests/vendor_snapshot.rs
+expression: rendered
+---
+- "adverb-partial.R:101:23 RY010 variable `quo_get_expr` is not bound in this scope"
+- "compat-types-check.R:110:53 RY010 variable `na_chr` is not bound in this scope"
+- "compat-types-check.R:256:24 RY010 variable `na_dbl` is not bound in this scope"
+- "compat-types-check.R:257:24 RY010 variable `na_int` is not bound in this scope"
+- "deprec-rerun.R:46:18 RY010 variable `eval_tidy` is not bound in this scope"
+- "deprec-rerun.R:48:40 RY010 variable `eval_tidy` is not bound in this scope"
+- "deprec-splice.R:27:24 RY010 variable `is_bare_list` is not bound in this scope"
+- "list-modify.R:142:29 RY010 variable `is_bare_formula` is not bound in this scope"
+- "list-modify.R:143:34 RY010 variable `as_quosure` is not bound in this scope"
+- "list-modify.R:144:24 RY010 variable `is_quosure` is not bound in this scope"
+- "list-modify.R:144:36 RY010 variable `eval_tidy` is not bound in this scope"
+- "list-transpose.R:83:35 RY010 variable `vec_set_union` is not bound in this scope"
+- "map.R:224:23 RY010 variable `map_impl` is not bound in this scope"
+- "map2.R:108:23 RY010 variable `map2_impl` is not bound in this scope"
+- "modify-tree.R:71:5 RY010 variable `obj_is_list` is not bound in this scope"
+- "modify.R:207:22 RY010 variable `is_zap` is not bound in this scope"
+- "pmap.R:177:7 RY010 variable `pmap_impl` is not bound in this scope"

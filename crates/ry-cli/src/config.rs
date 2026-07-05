@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 
 /// Default output format when neither the config file nor the CLI
 /// specifies one. Matches the CLI's pre-config default.
-pub const DEFAULT_OUTPUT_FORMAT: &str = "concise";
+pub const DEFAULT_OUTPUT_FORMAT: &str = "full";
 
 /// The on-disk filename ry looks for.
 pub const CONFIG_FILENAME: &str = "ry.toml";
@@ -56,7 +56,7 @@ pub struct Config {
     pub ignore: Vec<String>,
     /// Exclude patterns (gitignore-style). Default: empty.
     pub exclude: Vec<String>,
-    /// Output format. Default: "concise".
+    /// Output format. Default: "full".
     #[serde(alias = "output-format", default = "default_output_format")]
     pub output_format: String,
     /// Verbosity count (cumulative with -v). Default: 0.
@@ -66,6 +66,11 @@ pub struct Config {
     /// Reserved for future use; accepted but currently ignored.
     #[serde(alias = "r-version")]
     pub r_version: Option<String>,
+    /// Packages treated as loaded for NSE gating, as if the script
+    /// began with `library(<pkg>)` for each entry. Lets users declare
+    /// their dependencies in `ry.toml` so dplyr-style NSE verbs resolve
+    /// without an inline `library(dplyr)` in every file. Default: empty.
+    pub packages: Vec<String>,
 }
 
 impl Default for Config {
@@ -103,6 +108,7 @@ impl Config {
             verbose: 0,
             quiet: 0,
             r_version: None,
+            packages: Vec::new(),
         }
     }
 
@@ -223,6 +229,8 @@ impl Config {
             verbose: self.verbose.saturating_add(cli_verbose),
             quiet: self.quiet.saturating_add(cli_quiet),
             r_version: self.r_version,
+            // Config-only (no CLI flag): passes through unchanged.
+            packages: self.packages,
         }
     }
 }
@@ -310,6 +318,7 @@ mod tests {
         assert_eq!(d.verbose, 0);
         assert_eq!(d.quiet, 0);
         assert!(d.r_version.is_none());
+        assert!(d.packages.is_empty(), "packages defaults to empty");
         // Default and derive(Default) must agree.
         assert_eq!(d, Config::default());
     }
@@ -335,6 +344,7 @@ output-format = "json"
 verbose = 1
 quiet = 2
 r-version = "4.3"
+packages = ["dplyr", "tidyverse"]
 "#;
         let cfg: Config = toml::from_str(toml).unwrap();
         assert!(cfg.error_on_warning);
@@ -347,6 +357,7 @@ r-version = "4.3"
         assert_eq!(cfg.verbose, 1);
         assert_eq!(cfg.quiet, 2);
         assert_eq!(cfg.r_version.as_deref(), Some("4.3"));
+        assert_eq!(cfg.packages, vec!["dplyr", "tidyverse"]);
     }
 
     #[test]

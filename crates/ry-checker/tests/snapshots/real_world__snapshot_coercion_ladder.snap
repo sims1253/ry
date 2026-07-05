@@ -1,0 +1,6 @@
+---
+source: crates/ry-checker/tests/real_world.rs
+assertion_line: 118
+expression: "check_sorted(\"coercion_ladder\", src)"
+---
+[]

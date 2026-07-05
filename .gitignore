@@ -3,3 +3,9 @@
 
 # Logo concepts are kept local, not tracked
 /assets/logo-concept-*
+
+# Local tool caches
+/.claude/
+
+# rmarkdown render byproduct (README.md is the tracked output)
+/README.html

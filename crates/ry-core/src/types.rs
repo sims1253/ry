@@ -7,6 +7,7 @@
 //! signature is not in the typeshed).
 
 use std::fmt;
+use std::sync::Arc;
 
 /// Atomic mode of an R vector, mirrors `typeof()` for vectors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -25,6 +26,13 @@ pub enum Mode {
     Function,
     /// Environment, S4, external pointer, etc.
     Opaque,
+    /// A union of two or more modes (control-flow merge of branches with
+    /// incompatible types, e.g. `if (p) 1L else "a"`). The member list
+    /// lives on `RType::members`, NOT on this variant (Mode is Copy and
+    /// used as a HashMap key, so it carries no payload). `Mode::Union`
+    /// is bypassed by the coercion ladder: `join` builds unions instead
+    /// of promoting via `coerce_rank`.
+    Union,
 }
 
 impl Mode {
@@ -43,6 +51,10 @@ impl Mode {
             Mode::List => 6,
             Mode::Function => 7,
             Mode::Opaque => 8,
+            // Unions deliberately bypass the coercion ladder; this rank is
+            // only a sentinel so the match stays exhaustive. `join` handles
+            // unions directly rather than via coerce_rank.
+            Mode::Union => 9,
         }
     }
 
@@ -54,11 +66,26 @@ impl Mode {
     pub fn arith_result(self, other: Mode) -> Option<Mode> {
         use Mode::*;
         match (self, other) {
-            (Null, x) | (x, Null) => Some(x),
+            // Opaque absorbs FIRST: opaque means "we don't know", so
+            // `opaque + "x"` stays quiet (the opaque could be numeric).
+            // Handling opaque before the rejections prevents a false RY040
+            // on depth-capped / unknown operands.
             (Opaque, _) | (_, Opaque) => Some(Opaque),
+            // Unions are distributed at the RType::arith layer; reaching
+            // here with a Union operand is a bug. Treat conservatively as
+            // opaque so a stray call doesn't panic.
+            (Union, _) | (_, Union) => Some(Opaque),
+            // Rejections: NULL paired with a non-arithmetic mode errors
+            // (R: `NULL + "a"` -> "non-numeric argument"). Before this
+            // reorder, the (Null, x) arm ran first and turned
+            // `NULL + "a"` into Some(Character).
             (Character, _) | (_, Character) => None,
             (List, _) | (_, List) => None,
             (Function, _) | (_, Function) => None,
+            // NULL paired with an arithmetic-valid mode yields that mode
+            // (at length zero -- handled at the RType layer, which knows
+            // about length; Mode has no length dimension).
+            (Null, x) | (x, Null) => Some(x),
             (Raw, Raw) => Some(Raw),
             _ => {
                 let r = self.coerce_rank().max(other.coerce_rank());
@@ -80,6 +107,7 @@ impl Mode {
         use Mode::*;
         match (self, other) {
             (Opaque, _) | (_, Opaque) => Some(Opaque),
+            (Union, _) | (_, Union) => Some(Opaque),
             (List, _) | (_, List) => None,
             (Function, _) | (_, Function) => None,
             _ => Some(Logical),
@@ -100,6 +128,7 @@ impl fmt::Display for Mode {
             Mode::Null => "NULL",
             Mode::Function => "function",
             Mode::Opaque => "opaque",
+            Mode::Union => "union",
         };
         f.write_str(s)
     }
@@ -125,36 +154,28 @@ impl Length {
         match (self, other) {
             (Zero, _) | (_, Zero) => Zero,
             (One, x) | (x, One) => x,
-            (Known(a), Known(b)) => {
-                if a % b == 0 || b % a == 0 {
-                    Known(a.max(b))
-                } else {
-                    // R would warn but produce max(a, b); model as Known.
-                    Known(a.max(b))
-                }
-            }
+            // R recycles to max(a, b) (warning if neither divides the
+            // other); we model both cases as Known(max). The previous
+            // code had two identical branches here for the divides/does-
+            // not-divide cases -- collapsed to one.
+            (Known(a), Known(b)) => Known(a.max(b)),
             (Known(_), Unknown) | (Unknown, Known(_)) | (Unknown, Unknown) => Unknown,
         }
     }
 }
 
-/// Whether a value may contain `NA`. R's NA has type-specific forms
-/// (`NA_real_`, `NA_integer_`, `NA_character_`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct NaFlag(pub bool);
-
-/// S3 class attribute. Up to 4 class names. Uses `&'static str` so the
-/// type stays `Copy` (and so does `RType`). Class names that aren't
-/// known at compile time (e.g. user-defined via `structure(class = my_var)`)
-/// are dropped to `ClassVector::unknown()`.
+/// S3 class attribute. Up to 4 class names. Class names are held as
+/// `Arc<str>` so a runtime-derived name (e.g. from `structure(class =
+/// my_var)`) does not require a global intern table; the `Arc` is cheap
+/// to clone and is released when the owning `RType` is dropped.
 ///
 /// The `known` flag distinguishes three states:
 ///   * `known == true`, `len == 0`: we know there is no class attribute.
 ///   * `known == true`, `len > 0`: we know the class vector.
 ///   * `known == false`: we couldn't determine the class (do not warn).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ClassVector {
-    pub names: [Option<&'static str>; 4],
+    pub names: [Option<Arc<str>>; 4],
     pub len: u8,
     pub known: bool,
 }
@@ -163,30 +184,30 @@ impl ClassVector {
     /// A value with no class attribute set. The class is *known* to be
     /// empty (e.g. a plain atomic literal); callers may rely on this to
     /// suppress RY050 since there's nothing to dispatch on.
-    pub const fn empty() -> Self {
+    pub fn empty() -> Self {
         ClassVector {
-            names: [None; 4],
+            names: [None, None, None, None],
             len: 0,
             known: true,
         }
     }
 
     /// A single-class value, e.g. `structure(x, class = "foo")`.
-    pub const fn single(name: &'static str) -> Self {
+    pub fn single(name: &str) -> Self {
         ClassVector {
-            names: [Some(name), None, None, None],
+            names: [Some(Arc::from(name)), None, None, None],
             len: 1,
             known: true,
         }
     }
 
     /// We couldn't determine the class at all (dynamic input). Used for
-    /// `RType::UNKNOWN` and any value whose class depends on unknown
+    /// `RType::unknown()` and any value whose class depends on unknown
     /// state. Distinguished from `empty()` so callers avoid emitting
     /// RY050 on values they can't reason about.
-    pub const fn unknown() -> Self {
+    pub fn unknown() -> Self {
         ClassVector {
-            names: [None; 4],
+            names: [None, None, None, None],
             len: 0,
             known: false,
         }
@@ -194,11 +215,11 @@ impl ClassVector {
 
     /// First class name, if any. R's S3 dispatch walks the class vector
     /// in order; for v1 we model only the first-element rule.
-    pub fn first(&self) -> Option<&'static str> {
+    pub fn first(&self) -> Option<Arc<str>> {
         if self.len == 0 {
             None
         } else {
-            self.names[0]
+            self.names[0].clone()
         }
     }
 
@@ -208,8 +229,8 @@ impl ClassVector {
             return false;
         }
         for i in 0..(self.len as usize).min(4) {
-            if let Some(n) = self.names[i] {
-                if n == name {
+            if let Some(n) = &self.names[i] {
+                if &**n == name {
                     return true;
                 }
             }
@@ -228,16 +249,16 @@ impl ClassVector {
         self.known && self.len > 0
     }
 
-    /// Build a class vector from a slice of static strings, truncating
+    /// Build a class vector from a slice of strings, truncating
     /// to the first 4 entries (R's S3 rarely uses more; the truncation
     /// is logged at debug level by the caller if needed).
-    pub fn from_static_slice(names: &[&'static str]) -> Self {
+    pub fn from_slice(names: &[&str]) -> Self {
         if names.is_empty() {
             return ClassVector::empty();
         }
         let mut out = ClassVector::empty();
         for (i, n) in names.iter().take(4).enumerate() {
-            out.names[i] = Some(*n);
+            out.names[i] = Some(Arc::from(*n));
         }
         out.len = names.len().min(4) as u8;
         out.known = true;
@@ -246,15 +267,15 @@ impl ClassVector {
 
     /// Set the class on an existing `RType`, returning a new `RType`.
     /// Used by the checker when it sees `structure(x, class = "foo")`.
-    pub fn with_class(mut self, names: &[&'static str]) -> Self {
-        self.names = [None; 4];
+    pub fn with_class(mut self, names: &[&str]) -> Self {
+        self.names = [None, None, None, None];
         if names.is_empty() {
             self.len = 0;
             self.known = true;
             return self;
         }
         for (i, n) in names.iter().take(4).enumerate() {
-            self.names[i] = Some(*n);
+            self.names[i] = Some(Arc::from(*n));
         }
         self.len = names.len().min(4) as u8;
         self.known = true;
@@ -262,59 +283,13 @@ impl ClassVector {
     }
 }
 
-/// Class literals we recognize at type-inference time. Class names that
-/// aren't in this table (e.g. user-defined `"myclass"`) are still
-/// interned via `intern_class_name` so we can keep `ClassVector: Copy`
-/// while supporting user-defined classes from `structure(...)`.
-pub const KNOWN_CLASSES: &[(&str, &str)] = &[
-    ("data.frame", "data.frame"),
-    ("lm", "lm"),
-    ("factor", "factor"),
-    ("ts", "ts"),
-    ("Date", "Date"),
-    ("POSIXct", "POSIXct"),
-    ("POSIXlt", "POSIXlt"),
-    ("table", "table"),
-    ("matrix", "matrix"),
-];
-
-/// Intern a runtime `&str` into `&'static str` so it can be stored in a
-/// `Copy` `ClassVector`. We cache by string content using a `OnceLock`
-/// HashMap; the underlying strings are leaked (acceptable for v1: the
-/// number of distinct class names in a program is small and bounded by
-/// the source's literal string constants).
-pub fn intern_class_name(s: &str) -> &'static str {
-    use std::sync::{Mutex, OnceLock};
-    static TABLE: OnceLock<Mutex<std::collections::HashMap<String, &'static str>>> =
-        OnceLock::new();
-    let lock = TABLE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
-    let mut guard = match lock.lock() {
-        Ok(g) => g,
-        Err(p) => p.into_inner(),
-    };
-    if let Some(existing) = guard.get(s) {
-        return existing;
-    }
-    // First check the well-known table so common class names don't
-    // accumulate duplicate leaks.
-    if let Some((_, canonical)) = KNOWN_CLASSES.iter().find(|(k, _)| *k == s) {
-        guard.insert(s.to_string(), canonical);
-        return canonical;
-    }
-    let leaked: &'static str = Box::leak(s.to_string().into_boxed_str());
-    guard.insert(s.to_string(), leaked);
-    leaked
-}
-
 /// Schema for a record-like value (data frame, list with known shape).
 /// Stores an ordered `(name, RType)` list so we can both look up by
 /// name (column access) and iterate in source order (display, audit).
 ///
-/// Interned via `intern_column_schema` so `RType` stays `Copy`: the
-/// schema lives for the lifetime of the program (acceptable for v1: the
-/// number of distinct schemas in a run is bounded by the source's
-/// literal `list(...)` / `data.frame(...)` constructors plus the
-/// typeshed's built-in datasets).
+/// Stored behind an `Arc` on `RType` (see `RType::columns`); the Arc is
+/// released when the owning `RType` is dropped, so column schemas no
+/// longer leak for the lifetime of the process.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ColumnSchema {
     pub columns: Vec<(String, RType)>,
@@ -327,7 +302,7 @@ impl ColumnSchema {
         self.columns
             .iter()
             .find(|(n, _)| n == name)
-            .map(|(_, t)| *t)
+            .map(|(_, t)| t.clone())
     }
 
     /// All column names in declared order. Used for diagnostic messages.
@@ -342,29 +317,20 @@ impl ColumnSchema {
     pub fn len(&self) -> usize {
         self.columns.len()
     }
-}
 
-/// Intern a runtime-built `ColumnSchema` into `&'static ColumnSchema`
-/// so it can be stored in a `Copy` `RType`. Cached by content using a
-/// `OnceLock`-protected `Vec`; identical schemas collapse to the same
-/// static reference. The schemas are leaked (see `ColumnSchema` docs for
-/// the rationale).
-pub fn intern_column_schema(schema: ColumnSchema) -> &'static ColumnSchema {
-    use std::sync::{Mutex, OnceLock};
-    static TABLE: OnceLock<Mutex<Vec<&'static ColumnSchema>>> = OnceLock::new();
-    let lock = TABLE.get_or_init(|| Mutex::new(Vec::new()));
-    let mut guard = match lock.lock() {
-        Ok(g) => g,
-        Err(p) => p.into_inner(),
-    };
-    for existing in guard.iter() {
-        if **existing == schema {
-            return existing;
+    /// If every column of this schema carries the SAME type, return that
+    /// common element type. Used to type `[[N]]` extraction (and list
+    /// `element()`) for homogeneous lists such as `list(1, 2, 3)` -- where
+    /// `lapply` / `for` should see the unwrapped `double<1>` rather than
+    /// `list<1>`. Heterogeneous or empty schemas return `None`.
+    pub fn homogeneous_element_type(&self) -> Option<RType> {
+        let first = self.columns.first().map(|(_, t)| t.clone())?;
+        if self.columns.iter().all(|(_, t)| t == &first) {
+            Some(first)
+        } else {
+            None
         }
     }
-    let leaked: &'static ColumnSchema = Box::leak(Box::new(schema));
-    guard.push(leaked);
-    leaked
 }
 
 /// Inferred signature for a function value (closures returned from
@@ -386,41 +352,16 @@ pub fn intern_column_schema(schema: ColumnSchema) -> &'static ColumnSchema {
 ///   * `params` carries positional inferred-or-default types and may be
 ///     shorter than the real arity (we only fill entries we can infer).
 ///
-/// Interned via `intern_function_signature` so `RType` stays `Copy`.
+/// Stored behind an `Arc` on `RType` (see `RType::fn_sig`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionSignature {
     /// Positional parameter types the checker could infer from
     /// defaults or call sites. May be shorter than the real arity;
     /// missing entries are treated as opaque by callers.
     pub params: Vec<RType>,
-    /// Joined return type of the function body. `RType::UNKNOWN` if the
+    /// Joined return type of the function body. `RType::unknown()` if the
     /// body gave us nothing to work with.
     pub return_type: Box<RType>,
-}
-
-/// Intern a runtime-built `FunctionSignature` into
-/// `&'static FunctionSignature` so it can be stored in a `Copy`
-/// `RType`. Same caching/leaking pattern as `intern_column_schema`:
-/// identical signatures collapse to the same static reference, and the
-/// storage is leaked for the program's lifetime (acceptable for v1:
-/// the number of distinct closure signatures in a run is bounded by
-/// the source's literal `function(...) ...` expressions).
-pub fn intern_function_signature(sig: FunctionSignature) -> &'static FunctionSignature {
-    use std::sync::{Mutex, OnceLock};
-    static TABLE: OnceLock<Mutex<Vec<&'static FunctionSignature>>> = OnceLock::new();
-    let lock = TABLE.get_or_init(|| Mutex::new(Vec::new()));
-    let mut guard = match lock.lock() {
-        Ok(g) => g,
-        Err(p) => p.into_inner(),
-    };
-    for existing in guard.iter() {
-        if **existing == sig {
-            return existing;
-        }
-    }
-    let leaked: &'static FunctionSignature = Box::leak(Box::new(sig));
-    guard.push(leaked);
-    leaked
 }
 
 /// A fully-described R type at the granularity v1 cares about. Includes
@@ -428,17 +369,23 @@ pub fn intern_function_signature(sig: FunctionSignature) -> &'static FunctionSig
 /// frame columns, named list shape); arithmetic / comparison strip the
 /// class and schema (matching R), and control-flow `join` keeps both
 /// only when both sides agree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `RType` is `Clone` (not `Copy`): the `columns` and `fn_sig` fields
+/// hold `Arc`-shared heap data, and the `class` names are `Arc<str>`.
+/// Cloning bumps refcounts and is cheap. The previous design held these
+/// as `&'static` references into globally-leaked intern tables; the Arcs
+/// are released when the owning value is dropped, so long-running LSP
+/// sessions no longer accumulate schemas and class names unboundedly.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RType {
     pub mode: Mode,
     pub length: Length,
-    pub na: NaFlag,
     pub class: ClassVector,
-    /// Optional record schema for data frames and named lists. Interned
-    /// via `intern_column_schema` so this field stays `Copy`. `None`
-    /// means "we don't know the shape" (the conservative default for
-    /// values whose construction we can't see).
-    pub columns: Option<&'static ColumnSchema>,
+    /// Optional record schema for data frames and named lists. Shared
+    /// via `Arc` so cloning an `RType` is cheap. `None` means "we don't
+    /// know the shape" (the conservative default for values whose
+    /// construction we can't see).
+    pub columns: Option<Arc<ColumnSchema>>,
     /// Optional inferred signature for `Mode::Function` values. Carries
     /// the joined return type (and any positional param types we could
     /// infer) for closures returned from function factories like
@@ -446,51 +393,68 @@ pub struct RType {
     ///
     /// `None` for opaque functions (built-ins without a typeshed entry,
     /// user functions whose body we couldn't walk, or closures deeper
-    /// than the 3-level nesting cap). Interned via
-    /// `intern_function_signature` so this field stays `Copy`.
+    /// than the 3-level nesting cap).
     ///
     /// For non-`Function` modes this is always `None`; arithmetic and
     /// comparison ops clear it (you cannot meaningfully add two
     /// closures).
-    pub fn_sig: Option<&'static FunctionSignature>,
+    pub fn_sig: Option<Arc<FunctionSignature>>,
+    /// Members of a union type (`mode == Mode::Union`). `None` for all
+    /// non-union types. Members are bare atomic shapes (class/columns/
+    /// fn_sig cleared); the union owns those dimensions. Built by `join`
+    /// when two incompatible branches merge (e.g. `if (p) 1L else "a"`),
+    /// capped at `MAX_UNION_MEMBERS` (beyond the cap, join collapses to
+    /// `RType::unknown()`).
+    pub members: Option<Arc<[RType]>>,
 }
 
-impl RType {
-    pub const UNKNOWN: RType = RType {
-        mode: Mode::Opaque,
-        length: Length::Unknown,
-        na: NaFlag(true),
-        class: ClassVector::unknown(),
-        columns: None,
-        fn_sig: None,
-    };
+/// Maximum number of distinct members in a union. Beyond this, `join`
+/// gives up and collapses to `RType::unknown()` (matching ty's approach
+/// to large literal unions). 4 is enough for the common control-flow
+/// merges without letting pathological joins explode.
+pub const MAX_UNION_MEMBERS: usize = 4;
 
-    pub const fn new(mode: Mode, length: Length, na: bool) -> Self {
+impl RType {
+    /// The opaque "unknown" type: opaque mode, unknown length, no class
+    /// or schema. Used whenever inference gives up.
+    ///
+    /// This is a function (not a `const`) because `RType`'s `Arc` fields
+    /// cannot be constructed in a const context. Callers that previously
+    /// wrote `RType::UNKNOWN` should call `RType::unknown()`.
+    pub fn unknown() -> RType {
+        RType {
+            mode: Mode::Opaque,
+            length: Length::Unknown,
+            class: ClassVector::unknown(),
+            columns: None,
+            fn_sig: None,
+            members: None,
+        }
+    }
+
+    pub fn new(mode: Mode, length: Length) -> Self {
         RType {
             mode,
             length,
-            na: NaFlag(na),
             class: ClassVector::empty(),
             columns: None,
             fn_sig: None,
+            members: None,
         }
     }
 
     /// A scalar literal of the given mode.
-    pub const fn scalar(mode: Mode, na: bool) -> Self {
-        Self::new(mode, Length::One, na)
+    pub fn scalar(mode: Mode) -> Self {
+        Self::new(mode, Length::One)
     }
 
-    /// Return a copy of `self` with the S3 class vector replaced. The
-    /// caller is responsible for providing interned static strings; use
-    /// `intern_class_name` for runtime-derived names.
-    pub const fn with_class(self, class: ClassVector) -> Self {
+    /// Return a copy of `self` with the S3 class vector replaced.
+    pub fn with_class(self, class: ClassVector) -> Self {
         RType { class, ..self }
     }
 
-    /// Return a copy of `self` with the column schema replaced. The
-    /// caller is responsible for interning via `intern_column_schema`.
-    pub const fn with_columns(self, schema: &'static ColumnSchema) -> Self {
+    /// Return a copy of `self` with the column schema replaced.
+    pub fn with_columns(self, schema: Arc<ColumnSchema>) -> Self {
         RType {
             columns: Some(schema),
             ..self
@@ -498,14 +462,60 @@ impl RType {
     }
 
     /// Return a copy of `self` with the function signature replaced.
-    /// The caller is responsible for interning via
-    /// `intern_function_signature`. Only meaningful when `mode` is
-    /// `Mode::Function`; on other modes the signature is silently
-    /// dropped (arithmetic / comparison clear it).
-    pub const fn with_fn_sig(self, sig: &'static FunctionSignature) -> Self {
+    /// Only meaningful when `mode` is `Mode::Function`; on other modes
+    /// the signature is silently dropped (arithmetic / comparison clear
+    /// it).
+    pub fn with_fn_sig(self, sig: Arc<FunctionSignature>) -> Self {
         RType {
             fn_sig: Some(sig),
             ..self
+        }
+    }
+
+    /// Return a copy of `self` with the union members replaced.
+    pub fn with_members(self, members: Arc<[RType]>) -> Self {
+        RType {
+            members: Some(members),
+            ..self
+        }
+    }
+
+    /// Checked constructor for a `Mode::Union` type. All union construction
+    /// must go through here so a malformed union (`mode == Union`,
+    /// `members == None`) can never be built by accident -- the audit in
+    /// An audit traced several false positives (e.g. the `if` condition
+    /// `union[]` RY001) to ad-hoc `RType::new(Mode::Union, ...)` /
+    /// `RType::new(bt.mode, ...)` sites that left `members` null.
+    ///
+    /// Panics (debug) / silently degrades (release) on an empty member list,
+    /// since a union of nothing has no sound rendering. A single-member input
+    /// collapses to that member (so "all *multi-member* union construction
+    /// goes through here"; a 1-member call is an identity).
+    pub fn union(members: Arc<[RType]>) -> Self {
+        debug_assert!(
+            !members.is_empty(),
+            "RType::union requires at least one member"
+        );
+        if members.is_empty() {
+            return RType::unknown();
+        }
+        if members.len() == 1 {
+            // A single-member "union" is just that member.
+            return (*members.first().unwrap()).clone();
+        }
+        // Length: common across members if they all agree, else Unknown.
+        let length = members
+            .iter()
+            .map(|m| m.length)
+            .reduce(|a, b| if a == b { a } else { Length::Unknown })
+            .unwrap_or(Length::Unknown);
+        RType {
+            mode: Mode::Union,
+            length,
+            class: ClassVector::empty(),
+            columns: None,
+            fn_sig: None,
+            members: Some(members),
         }
     }
 
@@ -515,14 +525,29 @@ impl RType {
     /// R's actual semantics (arithmetic on data frames is either a loop
     /// over columns producing a new frame or a runtime error depending
     /// on the operator; we conservatively report the bare atomic mode).
+    ///
+    /// Union semantics: distribute over members;
+    /// the op errors ONLY if every member-pair errors. A union of
+    /// integer and character `+ 1` yields integer (the character member
+    /// errors but the integer one is fine) -> stay quiet in v1.
     pub fn arith(self, rhs: RType) -> Option<RType> {
+        distribute(self, rhs, |a, b| a.arith_atomic(b))
+    }
+
+    /// Atomic (non-union) arithmetic; called per-member by `arith`'s
+    /// distributor.
+    fn arith_atomic(self, rhs: RType) -> Option<RType> {
         let mode = self.mode.arith_result(rhs.mode)?;
-        let length = self.length.binary(rhs.length);
-        let na = NaFlag(self.na.0 || rhs.na.0 || mode == Mode::Double);
+        // R returns a zero-length vector when one operand is NULL (e.g.
+        // `NULL + 1` -> `numeric(0)`); model the length as Zero in that
+        // case, overriding the normal recycling rule.
+        let length = match (self.mode, rhs.mode) {
+            (Mode::Null, _) | (_, Mode::Null) => Length::Zero,
+            _ => self.length.binary(rhs.length),
+        };
         Some(RType {
             mode,
             length,
-            na,
             // Arithmetic on S3 objects strips the class in R, and the
             // column schema is meaningless on the atomic result. The
             // function signature is likewise dropped: you cannot add
@@ -530,21 +555,26 @@ impl RType {
             class: ClassVector::empty(),
             columns: None,
             fn_sig: None,
+            members: None,
         })
     }
 
     /// Comparison operators return plain logical values (no class, no
-    /// schema).
+    /// schema). Like `arith`, distributes over union members.
     pub fn compare(self, rhs: RType) -> Option<RType> {
+        distribute(self, rhs, |a, b| a.compare_atomic(b))
+    }
+
+    fn compare_atomic(self, rhs: RType) -> Option<RType> {
         let mode = self.mode.compare_result(rhs.mode)?;
         let length = self.length.binary(rhs.length);
         Some(RType {
             mode,
             length,
-            na: NaFlag(true),
             class: ClassVector::empty(),
             columns: None,
             fn_sig: None,
+            members: None,
         })
     }
 
@@ -552,74 +582,49 @@ impl RType {
     /// (`if (cond)`, `while (cond)`). R requires a length-1 logical, but
     /// will accept any length-1 atomic and silently coerce.
     pub fn invalid_condition(&self) -> bool {
-        matches!(self.mode, Mode::List | Mode::Function | Mode::Opaque)
-            || matches!(self.length, Length::Zero)
+        match self.mode {
+            Mode::Union => {
+                // Invalid only if EVERY member is invalid (one valid
+                // branch means the runtime value could be a valid
+                // condition, so stay quiet).
+                //
+                // A malformed union (`members == None`, which only a bug
+                // can now produce) must NOT be treated as invalid -- that
+                // is exactly the RY001 `union[]` false positive the checked
+                // constructor exists to prevent. Treat it as opaque
+                // (never invalid).
+                match self.members.as_ref() {
+                    Some(ms) => ms.iter().all(|t| t.invalid_condition()),
+                    None => false,
+                }
+            }
+            Mode::List | Mode::Function => true,
+            _ => matches!(self.length, Length::Zero),
+        }
     }
 
     /// Join (least upper bound) of two types, used when control flow
-    /// merges: e.g. the result of `if (cond) x else y`. The mode follows
-    /// R's coercion ladder (the higher-ranked operand wins). The length
-    /// is Unknown if the two differ, otherwise the common value. NA
-    /// propagates (true if either side can be NA).
+    /// merges: e.g. the result of `if (cond) x else y`.
     ///
-    /// Opaque is absorbing: joining anything with unknown yields unknown,
-    /// which is the correct conservative choice.
+    /// R NEVER coerces at a control-flow merge. If
+    /// the two branches have the same type, that type wins. Otherwise
+    /// we build an honest **union** of the two (deduplicated, capped at
+    /// `MAX_UNION_MEMBERS`, collapsing to `RType::unknown()` beyond the
+    /// cap). This replaces the old coercion-ladder join, which silently
+    /// promoted `if (p) 1L else "a"` to `character`.
     ///
-    /// The S3 class vector and column schema are preserved only when
-    /// both sides agree exactly (including the `known` flag for class).
-    /// When either side lacks information, the joined value drops that
-    /// information rather than guessing.
+    /// Opaque is absorbing: joining anything with unknown yields unknown.
+    ///
+    /// The S3 class vector, column schema, and function signature are
+    /// preserved only when both sides agree exactly; otherwise dropped.
     pub fn join(self, other: RType) -> RType {
         if matches!(self.mode, Mode::Opaque) || matches!(other.mode, Mode::Opaque) {
-            return RType::UNKNOWN;
+            return RType::unknown();
         }
         if self == other {
             return self;
         }
-        let mode = if self.mode.coerce_rank() >= other.mode.coerce_rank() {
-            self.mode
-        } else {
-            other.mode
-        };
-        let length = if self.length == other.length {
-            self.length
-        } else {
-            Length::Unknown
-        };
-        let class = if !self.class.known || !other.class.known {
-            // One side has undetermined class; we can't say.
-            ClassVector::unknown()
-        } else if self.class == other.class {
-            self.class
-        } else {
-            // Both classes known but differ: result has no class.
-            ClassVector::empty()
-        };
-        // Column schemas are preserved only on exact agreement; anything
-        // else drops the schema so we don't fabricate columns the
-        // runtime value might not have.
-        let columns = if self.columns.is_some() && self.columns == other.columns {
-            self.columns
-        } else {
-            None
-        };
-        // Function signatures are preserved only on exact agreement;
-        // two branches returning closures with different signatures
-        // collapse to an opaque function (signature dropped) rather
-        // than silently picking one branch's signature.
-        let fn_sig = if self.fn_sig.is_some() && self.fn_sig == other.fn_sig {
-            self.fn_sig
-        } else {
-            None
-        };
-        RType {
-            mode,
-            length,
-            na: NaFlag(self.na.0 || other.na.0),
-            class,
-            columns,
-            fn_sig,
-        }
+        union_of(self, other)
     }
 
     /// Element type of an iterable used in `for (var in iter)`. For an
@@ -627,11 +632,40 @@ impl RType {
     /// list it is a length-1 list; for opaque input it stays opaque.
     /// The class and column schema are dropped: iterating over a classed
     /// vector yields the bare elements in R.
-    pub fn element(self) -> RType {
+    ///
+    /// For a `Mode::Union`, the element type is the union of each member's
+    /// element type. Distributing -- rather than passing
+    /// `Mode::Union` through the `_` arm and building a malformed union
+    /// with `members: None` -- is what stops `for (x in if(...) TRUE else
+    /// 1L) { if (x) ... }` from reporting `union[]` as the condition.
+    pub fn element(&self) -> RType {
         match self.mode {
-            Mode::Null => RType::new(Mode::Null, Length::Zero, false),
-            Mode::Opaque => RType::UNKNOWN,
-            _ => RType::new(self.mode, Length::One, self.na.0),
+            Mode::Null => RType::new(Mode::Null, Length::Zero),
+            Mode::Opaque => RType::unknown(),
+            Mode::List => {
+                // `[[`-style element extraction from a list yields the
+                // UNWRAPPED element, not `list<1>`. For a
+                // homogeneous list (`list(1, 2, 3)`) the unwrapped element
+                // type is the common column type; heterogeneous or
+                // schema-less lists degrade to unknown. Atomic vectors
+                // keep the length-1 same-mode behavior below.
+                match self.columns.as_ref() {
+                    Some(schema) => schema
+                        .homogeneous_element_type()
+                        .unwrap_or_else(RType::unknown),
+                    None => RType::unknown(),
+                }
+            }
+            Mode::Union => match self.members.as_ref() {
+                Some(ms) => {
+                    let elems: Vec<RType> = ms.iter().map(|m| m.element()).collect();
+                    let mut iter = elems.into_iter();
+                    let first = iter.next().unwrap_or_else(RType::unknown);
+                    iter.fold(first, |acc, t| acc.join(t))
+                }
+                None => RType::unknown(),
+            },
+            _ => RType::new(self.mode, Length::One),
         }
     }
 
@@ -663,35 +697,123 @@ impl RType {
             // integer (matching the overwhelmingly common case).
             Mode::Integer
         };
-        RType::new(mode, Length::Unknown, false)
+        RType::new(mode, Length::Unknown)
     }
+}
+
+/// Build a union of two (non-equal, non-opaque) types.
+///
+/// Flattens members of existing unions, deduplicates by `==`, caps at
+/// `MAX_UNION_MEMBERS` (collapsing to `RType::unknown()` beyond the cap).
+///
+/// Member payloads (class/columns/fn_sig) are deliberately KEPT on each
+/// member: distribute-based column access in a later phase needs the
+/// per-member shape. The union itself carries no class/columns/fn_sig.
+/// The length is the common member length if all members agree, else
+/// `Length::Unknown`.
+fn union_of(a: RType, b: RType) -> RType {
+    let mut members: Vec<RType> = Vec::new();
+    let push_dedup = |v: &mut Vec<RType>, t: RType| {
+        if !v.iter().any(|m| m == &t) {
+            v.push(t);
+        }
+    };
+    match a.mode {
+        Mode::Union => {
+            if let Some(ms) = &a.members {
+                for m in ms.iter() {
+                    push_dedup(&mut members, m.clone());
+                }
+            }
+        }
+        _ => push_dedup(&mut members, a),
+    }
+    match b.mode {
+        Mode::Union => {
+            if let Some(ms) = &b.members {
+                for m in ms.iter() {
+                    push_dedup(&mut members, m.clone());
+                }
+            }
+        }
+        _ => push_dedup(&mut members, b),
+    }
+    if members.len() > MAX_UNION_MEMBERS {
+        return RType::unknown();
+    }
+    if members.is_empty() {
+        // Two malformed unions with no members: degrade honestly.
+        return RType::unknown();
+    }
+    RType::union(Arc::from(members))
+}
+
+/// Distribute a binary type operation over union members. The op errors
+/// (returns None) ONLY if every member-pair errors; otherwise the
+/// successful results are joined (which may itself be a union).
+fn distribute<F>(lhs: RType, rhs: RType, mut op: F) -> Option<RType>
+where
+    F: FnMut(RType, RType) -> Option<RType>,
+{
+    let lhs_members: Vec<RType> = match &lhs.members {
+        Some(ms) if lhs.mode == Mode::Union => ms.iter().cloned().collect(),
+        _ => vec![lhs],
+    };
+    let rhs_members: Vec<RType> = match &rhs.members {
+        Some(ms) if rhs.mode == Mode::Union => ms.iter().cloned().collect(),
+        _ => vec![rhs],
+    };
+    let mut oks: Vec<RType> = Vec::new();
+    for l in &lhs_members {
+        for r in &rhs_members {
+            if let Some(out) = op(l.clone(), r.clone()) {
+                oks.push(out);
+            }
+        }
+    }
+    if oks.is_empty() {
+        return None;
+    }
+    let mut iter = oks.into_iter();
+    let first = iter.next().unwrap();
+    Some(iter.fold(first, |acc, t| acc.join(t)))
 }
 
 impl fmt::Display for RType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.mode == Mode::Union {
+            // A malformed union (members == None) should never exist now
+            // that all construction goes through `RType::union`, but
+            // render it as `opaque` rather than the misleading `union[]`
+            // (defense in depth).
+            return match self.members.as_ref() {
+                Some(ms) => {
+                    f.write_str("union[")?;
+                    let mut first = true;
+                    for m in ms.iter() {
+                        if !first {
+                            f.write_str(", ")?;
+                        }
+                        write!(f, "{}", m)?;
+                        first = false;
+                    }
+                    f.write_str("]")?;
+                    Ok(())
+                }
+                None => write!(f, "opaque"),
+            };
+        }
         let mode = self.mode;
         let len = match self.length {
             Length::Zero => "0",
             Length::One => "1",
             Length::Known(n) => {
-                let core = write!(
-                    f,
-                    "{}<len={}>{}`",
-                    mode,
-                    n,
-                    if self.na.0 { "?NA" } else { "" }
-                );
+                let core = write!(f, "{}<len={}>", mode, n);
                 return self.fmt_class(f, core);
             }
             Length::Unknown => "?",
         };
-        let core = write!(
-            f,
-            "{}<len={}>{}`",
-            mode,
-            len,
-            if self.na.0 { "?NA" } else { "" }
-        );
+        let core = write!(f, "{}<len={}>", mode, len);
         self.fmt_class(f, core)
     }
 }
@@ -706,7 +828,7 @@ impl RType {
             let mut first = true;
             f.write_str(":")?;
             for i in 0..(self.class.len as usize).min(4) {
-                if let Some(n) = self.class.names[i] {
+                if let Some(n) = &self.class.names[i] {
                     if !first {
                         f.write_str(",")?;
                     }
@@ -720,7 +842,7 @@ impl RType {
         // Column schema annotation. Abbreviated to the first 3 columns
         // plus `...` when the schema has more entries, to keep the
         // display readable for wide data frames.
-        if let Some(schema) = self.columns {
+        if let Some(schema) = &self.columns {
             f.write_str("{")?;
             let cols = &schema.columns;
             let limit = 3;
@@ -738,7 +860,7 @@ impl RType {
         // Function signature annotation for closures whose return type
         // we could infer. Shown as `-> <return_type>` so it visually
         // resembles R's own `function() {}` shape.
-        if let Some(sig) = self.fn_sig {
+        if let Some(sig) = &self.fn_sig {
             write!(f, " -> {}", sig.return_type)?;
         }
         Ok(())
@@ -750,9 +872,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn arith_null_plus_character_errors() {
+        // R: `NULL + "a"` errors with "non-numeric argument to binary
+        // operator". The Character rejection must run before the Null
+        // arm (a past coercion-order bug).
+        let n = RType::new(Mode::Null, Length::Zero);
+        let c = RType::scalar(Mode::Character);
+        assert!(
+            n.clone().arith(c.clone()).is_none(),
+            "NULL + \"a\" must error"
+        );
+        assert!(c.arith(n).is_none(), "\"a\" + NULL must error");
+    }
+
+    #[test]
+    fn arith_null_plus_int_is_zero_length() {
+        // R: `NULL + 1` returns numeric(0). The mode is Double (R coerces
+        // the NULL+int pair up) and the length is Zero.
+        let n = RType::new(Mode::Null, Length::Zero);
+        let i = RType::scalar(Mode::Integer);
+        let r = n.arith(i).unwrap();
+        assert_eq!(r.length, Length::Zero, "NULL + 1 must be length 0");
+    }
+
+    #[test]
     fn arith_integer_double_promotes() {
-        let i = RType::scalar(Mode::Integer, false);
-        let d = RType::scalar(Mode::Double, false);
+        let i = RType::scalar(Mode::Integer);
+        let d = RType::scalar(Mode::Double);
         let r = i.arith(d).unwrap();
         assert_eq!(r.mode, Mode::Double);
         assert_eq!(r.length, Length::One);
@@ -760,8 +906,8 @@ mod tests {
 
     #[test]
     fn arith_character_fails() {
-        let s = RType::scalar(Mode::Character, false);
-        let i = RType::scalar(Mode::Integer, false);
+        let s = RType::scalar(Mode::Character);
+        let i = RType::scalar(Mode::Integer);
         assert!(s.arith(i).is_none());
     }
 
@@ -774,49 +920,222 @@ mod tests {
 
     #[test]
     fn condition_rejects_lists() {
-        let l = RType::new(Mode::List, Length::One, false);
+        let l = RType::new(Mode::List, Length::One);
         assert!(l.invalid_condition());
     }
 
     #[test]
-    fn join_promotes_via_coercion_ladder() {
-        let i = RType::scalar(Mode::Integer, false);
-        let d = RType::scalar(Mode::Double, false);
-        assert_eq!(i.join(d).mode, Mode::Double);
-        assert_eq!(d.join(i).mode, Mode::Double);
+    fn join_of_incompatible_modes_is_a_union() {
+        // R never coerces at a control-flow merge. `if (p) 1L
+        // else 2.0` joins integer and double to an HONEST union, not to
+        // Double (the old coercion-ladder behavior).
+        let i = RType::scalar(Mode::Integer);
+        let d = RType::scalar(Mode::Double);
+        let joined = i.clone().join(d.clone());
+        assert_eq!(joined.mode, Mode::Union);
+        assert_eq!(joined.mode, d.join(i).mode, "join should be symmetric");
+        let members = joined.members.expect("union has members");
+        assert_eq!(members.len(), 2);
+        assert!(members.iter().any(|m| m.mode == Mode::Integer));
+        assert!(members.iter().any(|m| m.mode == Mode::Double));
+    }
+
+    #[test]
+    fn join_equal_modes_returns_self_not_union() {
+        // Same mode on both sides must NOT build a union.
+        let i = RType::scalar(Mode::Integer);
+        let joined = i.join(RType::scalar(Mode::Integer));
+        assert_eq!(joined.mode, Mode::Integer);
+        assert!(joined.members.is_none());
+    }
+
+    #[test]
+    fn arith_distributes_over_union_quiet_when_some_member_ok() {
+        // union[integer, character] + 1 -> integer ok, character errors.
+        // Some member succeeds -> stay quiet (no None), result integer.
+        let u = RType::scalar(Mode::Integer).join(RType::scalar(Mode::Character));
+        assert_eq!(u.mode, Mode::Union);
+        let r = u.arith(RType::scalar(Mode::Integer));
+        assert!(r.is_some(), "some member ok -> not an error");
+        assert_eq!(r.unwrap().mode, Mode::Integer);
+    }
+
+    #[test]
+    fn arith_errors_when_all_union_members_invalid() {
+        // union[list, function] + 1 -> both error -> None.
+        let u = RType::scalar(Mode::List).join(RType::scalar(Mode::Function));
+        let r = u.arith(RType::scalar(Mode::Integer));
+        assert!(r.is_none(), "all members invalid -> error");
     }
 
     #[test]
     fn join_with_opaque_is_unknown() {
-        let i = RType::scalar(Mode::Integer, false);
-        assert_eq!(i.join(RType::UNKNOWN), RType::UNKNOWN);
+        let i = RType::scalar(Mode::Integer);
+        assert_eq!(i.join(RType::unknown()), RType::unknown());
     }
 
     #[test]
     fn join_equal_returns_self() {
-        let i = RType::scalar(Mode::Integer, false);
-        assert_eq!(i.join(i), i);
+        let i = RType::scalar(Mode::Integer);
+        assert_eq!(i.clone().join(i.clone()), i);
     }
 
     #[test]
     fn join_different_lengths_unknown() {
-        let a = RType::new(Mode::Integer, Length::Known(3), false);
-        let b = RType::new(Mode::Integer, Length::Known(5), false);
+        let a = RType::new(Mode::Integer, Length::Known(3));
+        let b = RType::new(Mode::Integer, Length::Known(5));
         assert_eq!(a.join(b).length, Length::Unknown);
     }
 
     #[test]
     fn element_of_vector_is_scalar() {
-        let v = RType::new(Mode::Integer, Length::Known(10), false);
+        let v = RType::new(Mode::Integer, Length::Known(10));
         let e = v.element();
         assert_eq!(e.mode, Mode::Integer);
         assert_eq!(e.length, Length::One);
     }
 
     #[test]
+    fn element_of_union_distributes_over_members() {
+        // element() of a union is the join of each member's element type.
+        // Previously the `_` arm built a malformed union
+        // (`Mode::Union`, `members: None`).
+        let u = RType::scalar(Mode::Integer).join(RType::scalar(Mode::Logical));
+        assert_eq!(u.mode, Mode::Union);
+        let e = u.element();
+        // Integer | Logical element types are scalars of each mode; the
+        // join of integer-scalar and logical-scalar is a union.
+        assert_eq!(e.mode, Mode::Union, "got {e}");
+        let members = e
+            .members
+            .expect("distributed element union must carry members");
+        assert_eq!(members.len(), 2);
+        assert!(members.iter().any(|m| m.mode == Mode::Integer));
+        assert!(members.iter().any(|m| m.mode == Mode::Logical));
+    }
+
+    #[test]
+    fn element_of_union_with_one_member_is_that_member_element() {
+        // A union of two equal modes collapses to that mode; its element
+        // is then that mode's scalar (no malformed union).
+        let u = RType::scalar(Mode::Double).join(RType::scalar(Mode::Double));
+        assert_eq!(u.mode, Mode::Double);
+        assert_eq!(u.element().mode, Mode::Double);
+    }
+
+    #[test]
+    fn element_of_homogeneous_list_unwraps() {
+        // Iterating a list yields the UNWRAPPED element.
+        // list(1, 2, 3) has schema [[1]]=double, [[2]]=double, [[3]]=double;
+        // element() returns double<1>, NOT list<1>.
+        let schema = ColumnSchema {
+            columns: vec![
+                ("[[1]]".to_string(), RType::scalar(Mode::Double)),
+                ("[[2]]".to_string(), RType::scalar(Mode::Double)),
+            ],
+        };
+        let list = RType::new(Mode::List, Length::Known(2)).with_columns(Arc::new(schema));
+        let e = list.element();
+        assert_eq!(e.mode, Mode::Double);
+        assert_eq!(e.length, Length::One);
+    }
+
+    #[test]
+    fn element_of_heterogeneous_list_is_unknown() {
+        // list(1, "a") -> double | character: element is unknown, NOT
+        // list<1> (which would cause arithmetic false positives).
+        let schema = ColumnSchema {
+            columns: vec![
+                ("[[1]]".to_string(), RType::scalar(Mode::Double)),
+                ("[[2]]".to_string(), RType::scalar(Mode::Character)),
+            ],
+        };
+        let list = RType::new(Mode::List, Length::Known(2)).with_columns(Arc::new(schema));
+        let e = list.element();
+        assert_eq!(e, RType::unknown());
+    }
+
+    #[test]
+    fn element_of_schema_less_list_is_unknown() {
+        // A bare list with no column schema degrades to unknown.
+        let list = RType::new(Mode::List, Length::Unknown);
+        assert_eq!(list.element(), RType::unknown());
+    }
+
+    #[test]
+    fn homogeneous_element_type_returns_common_for_homogeneous_schema() {
+        let schema = ColumnSchema {
+            columns: vec![
+                ("[[1]]".to_string(), RType::scalar(Mode::Integer)),
+                ("[[2]]".to_string(), RType::scalar(Mode::Integer)),
+            ],
+        };
+        assert_eq!(
+            schema.homogeneous_element_type(),
+            Some(RType::scalar(Mode::Integer))
+        );
+    }
+
+    #[test]
+    fn homogeneous_element_type_none_for_heterogeneous_or_empty() {
+        let het = ColumnSchema {
+            columns: vec![
+                ("[[1]]".to_string(), RType::scalar(Mode::Integer)),
+                ("[[2]]".to_string(), RType::scalar(Mode::Double)),
+            ],
+        };
+        assert_eq!(het.homogeneous_element_type(), None);
+        assert_eq!(ColumnSchema::default().homogeneous_element_type(), None);
+    }
+
+    #[test]
+    fn checked_union_constructor_builds_real_union() {
+        let members: Arc<[RType]> =
+            Arc::from([RType::scalar(Mode::Integer), RType::scalar(Mode::Double)]);
+        let u = RType::union(members);
+        assert_eq!(u.mode, Mode::Union);
+        assert!(u.members.is_some(), "union must carry members");
+        assert_eq!(u.members.as_ref().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn checked_union_constructor_collapses_single_member() {
+        let members: Arc<[RType]> = Arc::from([RType::scalar(Mode::Integer)]);
+        let u = RType::union(members);
+        assert_eq!(u.mode, Mode::Integer, "single-member union collapses");
+    }
+
+    #[test]
+    #[should_panic(expected = "RType::union requires at least one member")]
+    fn checked_union_constructor_panics_on_empty() {
+        // All union construction goes through `RType::union`; an empty
+        // member list is a programmer error caught by the debug assert.
+        let members: Arc<[RType]> = Arc::from([]);
+        let _ = RType::union(members);
+    }
+
+    #[test]
+    fn malformed_union_is_never_an_invalid_condition() {
+        // Defense-in-depth: even a (bug-only) union with members == None
+        // must not be reported as an invalid condition (that was the
+        // RY001 `union[]` false positive fixed by the checked constructor).
+        let malformed = RType {
+            mode: Mode::Union,
+            length: Length::One,
+            class: ClassVector::empty(),
+            columns: None,
+            fn_sig: None,
+            members: None,
+        };
+        assert!(!malformed.invalid_condition());
+        // And it renders as `opaque`, not the misleading `union[]`.
+        assert_eq!(format!("{malformed}"), "opaque");
+    }
+
+    #[test]
     fn seq_int_int_is_integer() {
-        let a = RType::scalar(Mode::Integer, false);
-        let b = RType::scalar(Mode::Integer, false);
+        let a = RType::scalar(Mode::Integer);
+        let b = RType::scalar(Mode::Integer);
         assert_eq!(a.seq(b).mode, Mode::Integer);
     }
 
@@ -824,8 +1143,8 @@ mod tests {
     fn seq_double_double_is_integer() {
         // R's `:` returns integer for whole-number double endpoints.
         // `1:3` produces c(1L, 2L, 3L) even though 1 and 3 are doubles.
-        let a = RType::scalar(Mode::Double, false);
-        let b = RType::scalar(Mode::Double, false);
+        let a = RType::scalar(Mode::Double);
+        let b = RType::scalar(Mode::Double);
         assert_eq!(a.seq(b).mode, Mode::Integer);
     }
 
@@ -841,7 +1160,7 @@ mod tests {
     #[test]
     fn class_vector_single_exposes_first() {
         let cv = ClassVector::single("foo");
-        assert_eq!(cv.first(), Some("foo"));
+        assert_eq!(cv.first().as_deref(), Some("foo"));
         assert!(cv.has_known_class());
         assert!(cv.contains("foo"));
         assert!(!cv.contains("bar"));
@@ -860,18 +1179,18 @@ mod tests {
     }
 
     #[test]
-    fn class_vector_from_static_slice_truncates_to_four() {
-        let cv = ClassVector::from_static_slice(&["a", "b", "c", "d", "e"]);
+    fn class_vector_from_slice_truncates_to_four() {
+        let cv = ClassVector::from_slice(&["a", "b", "c", "d", "e"]);
         assert_eq!(cv.len, 4);
-        assert_eq!(cv.first(), Some("a"));
+        assert_eq!(cv.first().as_deref(), Some("a"));
         assert!(cv.contains("d"));
         assert!(!cv.contains("e"));
     }
 
     #[test]
     fn arith_strips_class() {
-        let lhs = RType::scalar(Mode::Double, false).with_class(ClassVector::single("lm"));
-        let rhs = RType::scalar(Mode::Double, false);
+        let lhs = RType::scalar(Mode::Double).with_class(ClassVector::single("lm"));
+        let rhs = RType::scalar(Mode::Double);
         let r = lhs.arith(rhs).unwrap();
         assert!(!r.class.is_unknown());
         assert!(!r.class.has_known_class());
@@ -880,8 +1199,8 @@ mod tests {
 
     #[test]
     fn compare_strips_class() {
-        let lhs = RType::scalar(Mode::Double, false).with_class(ClassVector::single("ts"));
-        let rhs = RType::scalar(Mode::Double, false);
+        let lhs = RType::scalar(Mode::Double).with_class(ClassVector::single("ts"));
+        let rhs = RType::scalar(Mode::Double);
         let r = lhs.compare(rhs).unwrap();
         assert_eq!(r.mode, Mode::Logical);
         assert!(!r.class.has_known_class());
@@ -890,16 +1209,16 @@ mod tests {
     #[test]
     fn join_preserves_class_when_both_sides_agree() {
         let class = ClassVector::single("lm");
-        let lhs = RType::scalar(Mode::List, false).with_class(class);
-        let rhs = RType::scalar(Mode::List, false).with_class(class);
+        let lhs = RType::scalar(Mode::List).with_class(class.clone());
+        let rhs = RType::scalar(Mode::List).with_class(class.clone());
         let joined = lhs.join(rhs);
         assert_eq!(joined.class, class);
     }
 
     #[test]
     fn join_drops_class_when_sides_differ() {
-        let lhs = RType::scalar(Mode::List, false).with_class(ClassVector::single("lm"));
-        let rhs = RType::scalar(Mode::List, false).with_class(ClassVector::single("ts"));
+        let lhs = RType::scalar(Mode::List).with_class(ClassVector::single("lm"));
+        let rhs = RType::scalar(Mode::List).with_class(ClassVector::single("ts"));
         let joined = lhs.join(rhs);
         assert!(!joined.class.has_known_class());
         assert_eq!(joined.class, ClassVector::empty());
@@ -907,23 +1226,23 @@ mod tests {
 
     #[test]
     fn join_class_unknown_when_one_side_unknown() {
-        let lhs = RType::scalar(Mode::List, false).with_class(ClassVector::single("lm"));
-        let rhs = RType::UNKNOWN; // unknown class
+        let lhs = RType::scalar(Mode::List).with_class(ClassVector::single("lm"));
+        let rhs = RType::unknown(); // unknown class
         let joined = lhs.join(rhs);
-        assert_eq!(joined, RType::UNKNOWN);
+        assert_eq!(joined, RType::unknown());
         assert!(joined.class.is_unknown());
     }
 
     #[test]
     fn rtype_display_includes_class_suffix() {
-        let t = RType::scalar(Mode::List, false).with_class(ClassVector::single("lm"));
+        let t = RType::scalar(Mode::List).with_class(ClassVector::single("lm"));
         let s = format!("{}", t);
         assert!(s.contains(":lm"), "expected `:lm` in display, got {}", s);
     }
 
     #[test]
     fn rtype_display_no_class_suffix_for_empty() {
-        let t = RType::scalar(Mode::Integer, false);
+        let t = RType::scalar(Mode::Integer);
         let s = format!("{}", t);
         assert!(
             !s.contains(':'),
@@ -933,29 +1252,11 @@ mod tests {
     }
 
     #[test]
-    fn intern_class_name_is_idempotent() {
-        let a = intern_class_name("data.frame");
-        let b = intern_class_name("data.frame");
-        assert_eq!(
-            a.as_ptr(),
-            b.as_ptr(),
-            "same content must intern to same static"
-        );
-        assert_eq!(a, "data.frame");
-    }
-
-    #[test]
-    fn intern_class_name_user_defined() {
-        let a = intern_class_name("zzz_user_class_123");
-        assert_eq!(a, "zzz_user_class_123");
-    }
-
-    #[test]
     fn column_schema_lookups_by_name() {
         let schema = ColumnSchema {
             columns: vec![
-                ("a".to_string(), RType::scalar(Mode::Integer, false)),
-                ("b".to_string(), RType::scalar(Mode::Character, false)),
+                ("a".to_string(), RType::scalar(Mode::Integer)),
+                ("b".to_string(), RType::scalar(Mode::Character)),
             ],
         };
         assert_eq!(schema.get("a").unwrap().mode, Mode::Integer);
@@ -966,43 +1267,14 @@ mod tests {
     }
 
     #[test]
-    fn intern_column_schema_collapses_identical() {
-        let s1 = intern_column_schema(ColumnSchema {
-            columns: vec![("x".to_string(), RType::scalar(Mode::Double, false))],
-        });
-        let s2 = intern_column_schema(ColumnSchema {
-            columns: vec![("x".to_string(), RType::scalar(Mode::Double, false))],
-        });
-        // Identical content must intern to the same static reference.
-        assert!(
-            std::ptr::eq(s1, s2),
-            "identical schemas should intern to the same static"
-        );
-    }
-
-    #[test]
-    fn intern_column_schema_keeps_distinct() {
-        let s1 = intern_column_schema(ColumnSchema {
-            columns: vec![("x".to_string(), RType::scalar(Mode::Double, false))],
-        });
-        let s2 = intern_column_schema(ColumnSchema {
-            columns: vec![("y".to_string(), RType::scalar(Mode::Double, false))],
-        });
-        assert!(
-            !std::ptr::eq(s1, s2),
-            "distinct schemas should get distinct statics"
-        );
-    }
-
-    #[test]
     fn rtype_with_columns_roundtrips() {
-        let schema = intern_column_schema(ColumnSchema {
+        let schema = Arc::new(ColumnSchema {
             columns: vec![(
                 "mpg".to_string(),
-                RType::new(Mode::Double, Length::Known(32), false),
+                RType::new(Mode::Double, Length::Known(32)),
             )],
         });
-        let t = RType::new(Mode::List, Length::Known(1), false).with_columns(schema);
+        let t = RType::new(Mode::List, Length::Known(1)).with_columns(schema.clone());
         assert_eq!(t.columns, Some(schema));
         // `with_columns` must not disturb other fields.
         assert_eq!(t.mode, Mode::List);
@@ -1011,11 +1283,11 @@ mod tests {
 
     #[test]
     fn arith_strips_columns() {
-        let schema = intern_column_schema(ColumnSchema {
-            columns: vec![("x".to_string(), RType::scalar(Mode::Double, false))],
+        let schema = Arc::new(ColumnSchema {
+            columns: vec![("x".to_string(), RType::scalar(Mode::Double))],
         });
-        let lhs = RType::scalar(Mode::Double, false).with_columns(schema);
-        let rhs = RType::scalar(Mode::Double, false);
+        let lhs = RType::scalar(Mode::Double).with_columns(schema);
+        let rhs = RType::scalar(Mode::Double);
         let r = lhs.arith(rhs).unwrap();
         assert_eq!(r.mode, Mode::Double);
         assert!(r.columns.is_none(), "arith must strip column schema");
@@ -1023,11 +1295,11 @@ mod tests {
 
     #[test]
     fn compare_strips_columns() {
-        let schema = intern_column_schema(ColumnSchema {
-            columns: vec![("x".to_string(), RType::scalar(Mode::Double, false))],
+        let schema = Arc::new(ColumnSchema {
+            columns: vec![("x".to_string(), RType::scalar(Mode::Double))],
         });
-        let lhs = RType::scalar(Mode::Double, false).with_columns(schema);
-        let rhs = RType::scalar(Mode::Double, false);
+        let lhs = RType::scalar(Mode::Double).with_columns(schema);
+        let rhs = RType::scalar(Mode::Double);
         let r = lhs.compare(rhs).unwrap();
         assert_eq!(r.mode, Mode::Logical);
         assert!(r.columns.is_none(), "compare must strip column schema");
@@ -1035,25 +1307,25 @@ mod tests {
 
     #[test]
     fn join_preserves_columns_when_both_sides_agree() {
-        let schema = intern_column_schema(ColumnSchema {
-            columns: vec![("x".to_string(), RType::scalar(Mode::Double, false))],
+        let schema = Arc::new(ColumnSchema {
+            columns: vec![("x".to_string(), RType::scalar(Mode::Double))],
         });
-        let lhs = RType::scalar(Mode::List, false).with_columns(schema);
-        let rhs = RType::scalar(Mode::List, false).with_columns(schema);
+        let lhs = RType::scalar(Mode::List).with_columns(schema.clone());
+        let rhs = RType::scalar(Mode::List).with_columns(schema.clone());
         let joined = lhs.join(rhs);
         assert_eq!(joined.columns, Some(schema));
     }
 
     #[test]
     fn join_drops_columns_when_sides_differ() {
-        let s1 = intern_column_schema(ColumnSchema {
-            columns: vec![("a".to_string(), RType::scalar(Mode::Double, false))],
+        let s1 = Arc::new(ColumnSchema {
+            columns: vec![("a".to_string(), RType::scalar(Mode::Double))],
         });
-        let s2 = intern_column_schema(ColumnSchema {
-            columns: vec![("b".to_string(), RType::scalar(Mode::Double, false))],
+        let s2 = Arc::new(ColumnSchema {
+            columns: vec![("b".to_string(), RType::scalar(Mode::Double))],
         });
-        let lhs = RType::scalar(Mode::List, false).with_columns(s1);
-        let rhs = RType::scalar(Mode::List, false).with_columns(s2);
+        let lhs = RType::scalar(Mode::List).with_columns(s1);
+        let rhs = RType::scalar(Mode::List).with_columns(s2);
         let joined = lhs.join(rhs);
         assert!(joined.columns.is_none(), "differing schemas must drop");
     }
@@ -1062,10 +1334,10 @@ mod tests {
     fn rtype_display_includes_columns_abbreviated() {
         // Build a 5-column schema; display should show 3 then `...`.
         let cols: Vec<(String, RType)> = (0..5)
-            .map(|i| (format!("c{}", i), RType::scalar(Mode::Double, false)))
+            .map(|i| (format!("c{}", i), RType::scalar(Mode::Double)))
             .collect();
-        let schema = intern_column_schema(ColumnSchema { columns: cols });
-        let t = RType::new(Mode::List, Length::Known(5), false).with_columns(schema);
+        let schema = Arc::new(ColumnSchema { columns: cols });
+        let t = RType::new(Mode::List, Length::Known(5)).with_columns(schema);
         let s = format!("{}", t);
         assert!(s.contains("c0:"), "missing c0: {}", s);
         assert!(s.contains("c1:"), "missing c1: {}", s);
@@ -1075,44 +1347,12 @@ mod tests {
     }
 
     #[test]
-    fn intern_function_signature_collapses_identical() {
-        let s1 = intern_function_signature(FunctionSignature {
-            params: vec![RType::scalar(Mode::Double, false)],
-            return_type: Box::new(RType::scalar(Mode::Integer, false)),
-        });
-        let s2 = intern_function_signature(FunctionSignature {
-            params: vec![RType::scalar(Mode::Double, false)],
-            return_type: Box::new(RType::scalar(Mode::Integer, false)),
-        });
-        assert!(
-            std::ptr::eq(s1, s2),
-            "identical signatures should intern to the same static"
-        );
-    }
-
-    #[test]
-    fn intern_function_signature_keeps_distinct() {
-        let s1 = intern_function_signature(FunctionSignature {
-            params: vec![],
-            return_type: Box::new(RType::scalar(Mode::Integer, false)),
-        });
-        let s2 = intern_function_signature(FunctionSignature {
-            params: vec![],
-            return_type: Box::new(RType::scalar(Mode::Double, false)),
-        });
-        assert!(
-            !std::ptr::eq(s1, s2),
-            "distinct signatures should get distinct statics"
-        );
-    }
-
-    #[test]
     fn rtype_with_fn_sig_roundtrips() {
-        let sig = intern_function_signature(FunctionSignature {
-            params: vec![RType::scalar(Mode::Double, false)],
-            return_type: Box::new(RType::scalar(Mode::Integer, false)),
+        let sig = Arc::new(FunctionSignature {
+            params: vec![RType::scalar(Mode::Double)],
+            return_type: Box::new(RType::scalar(Mode::Integer)),
         });
-        let t = RType::scalar(Mode::Function, false).with_fn_sig(sig);
+        let t = RType::scalar(Mode::Function).with_fn_sig(sig.clone());
         assert_eq!(t.fn_sig, Some(sig));
         assert_eq!(t.mode, Mode::Function);
     }
@@ -1121,11 +1361,9 @@ mod tests {
     fn rtype_default_fn_sig_is_none() {
         // All standard constructors must produce fn_sig = None so the
         // signature is opt-in only.
-        assert!(RType::UNKNOWN.fn_sig.is_none());
-        assert!(RType::scalar(Mode::Function, false).fn_sig.is_none());
-        assert!(RType::new(Mode::Integer, Length::One, false)
-            .fn_sig
-            .is_none());
+        assert!(RType::unknown().fn_sig.is_none());
+        assert!(RType::scalar(Mode::Function).fn_sig.is_none());
+        assert!(RType::new(Mode::Integer, Length::One).fn_sig.is_none());
     }
 
     #[test]
@@ -1134,51 +1372,51 @@ mod tests {
         // arith_result permits it (it doesn't for Function), the
         // signature must not survive. We exercise the strip via a
         // classed list whose schema we know survives only via join.
-        let sig = intern_function_signature(FunctionSignature {
+        let sig = Arc::new(FunctionSignature {
             params: vec![],
-            return_type: Box::new(RType::scalar(Mode::Integer, false)),
+            return_type: Box::new(RType::scalar(Mode::Integer)),
         });
-        let lhs = RType::scalar(Mode::Integer, false).with_fn_sig(sig);
-        let rhs = RType::scalar(Mode::Integer, false);
+        let lhs = RType::scalar(Mode::Integer).with_fn_sig(sig);
+        let rhs = RType::scalar(Mode::Integer);
         let r = lhs.arith(rhs).unwrap();
         assert!(r.fn_sig.is_none(), "arith must strip fn_sig");
     }
 
     #[test]
     fn join_preserves_fn_sig_when_both_sides_agree() {
-        let sig = intern_function_signature(FunctionSignature {
+        let sig = Arc::new(FunctionSignature {
             params: vec![],
-            return_type: Box::new(RType::scalar(Mode::Integer, false)),
+            return_type: Box::new(RType::scalar(Mode::Integer)),
         });
-        let lhs = RType::scalar(Mode::Function, false).with_fn_sig(sig);
-        let rhs = RType::scalar(Mode::Function, false).with_fn_sig(sig);
+        let lhs = RType::scalar(Mode::Function).with_fn_sig(sig.clone());
+        let rhs = RType::scalar(Mode::Function).with_fn_sig(sig.clone());
         let joined = lhs.join(rhs);
         assert_eq!(joined.fn_sig, Some(sig));
     }
 
     #[test]
     fn join_drops_fn_sig_when_sides_differ() {
-        let s1 = intern_function_signature(FunctionSignature {
+        let s1 = Arc::new(FunctionSignature {
             params: vec![],
-            return_type: Box::new(RType::scalar(Mode::Integer, false)),
+            return_type: Box::new(RType::scalar(Mode::Integer)),
         });
-        let s2 = intern_function_signature(FunctionSignature {
+        let s2 = Arc::new(FunctionSignature {
             params: vec![],
-            return_type: Box::new(RType::scalar(Mode::Double, false)),
+            return_type: Box::new(RType::scalar(Mode::Double)),
         });
-        let lhs = RType::scalar(Mode::Function, false).with_fn_sig(s1);
-        let rhs = RType::scalar(Mode::Function, false).with_fn_sig(s2);
+        let lhs = RType::scalar(Mode::Function).with_fn_sig(s1);
+        let rhs = RType::scalar(Mode::Function).with_fn_sig(s2);
         let joined = lhs.join(rhs);
         assert!(joined.fn_sig.is_none(), "differing sigs must drop");
     }
 
     #[test]
     fn rtype_display_includes_fn_sig() {
-        let sig = intern_function_signature(FunctionSignature {
+        let sig = Arc::new(FunctionSignature {
             params: vec![],
-            return_type: Box::new(RType::scalar(Mode::Integer, false)),
+            return_type: Box::new(RType::scalar(Mode::Integer)),
         });
-        let t = RType::scalar(Mode::Function, false).with_fn_sig(sig);
+        let t = RType::scalar(Mode::Function).with_fn_sig(sig);
         let s = format!("{}", t);
         assert!(s.contains("->"), "missing -> in display: {}", s);
         assert!(s.contains("integer"), "missing return type: {}", s);

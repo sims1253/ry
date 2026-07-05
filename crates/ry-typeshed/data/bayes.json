@@ -1,0 +1,141 @@
+{
+  "version": "0.0.1",
+  "functions": {
+    "brms.brm": {
+      "params": ["formula", "data", "..."],
+      "return": { "mode": "opaque", "length": "1", "na": false, "class": ["brmsfit"] }
+    },
+    "posterior.as_draws_df": {
+      "params": ["x", "..."],
+      "return": { "mode": "list", "length": "unknown", "na": false, "class": ["draws_df", "draws", "data.frame"] }
+    },
+    "posterior.as_draws_matrix": {
+      "params": ["x", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["draws_matrix", "draws"] }
+    },
+    "posterior.as_draws_array": {
+      "params": ["x", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["draws_array", "draws"] }
+    },
+    "posterior.as_draws_rvars": {
+      "params": ["x", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["draws_rvars", "draws"] }
+    },
+    "posterior.summarise_draws": {
+      "params": ["x", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["data.frame"] }
+    },
+    "posterior.summarize_draws": {
+      "params": ["x", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["data.frame"] }
+    },
+    "posterior.extract_variable": {
+      "params": ["x", "variable"],
+      "return": { "mode": "opaque", "length": "unknown", "na": false }
+    },
+    "posterior.extract_variable_matrix": {
+      "params": ["x", "variable"],
+      "return": { "mode": "opaque", "length": "unknown", "na": false }
+    },
+    "posterior.variables": {
+      "params": ["x"],
+      "return": { "mode": "character", "length": "unknown", "na": false }
+    },
+    "posterior.ndraws": {
+      "params": ["x"],
+      "return": { "mode": "integer", "length": "1", "na": false }
+    },
+    "posterior.nvariables": {
+      "params": ["x"],
+      "return": { "mode": "integer", "length": "1", "na": false }
+    },
+    "posterior.niterations": {
+      "params": ["x"],
+      "return": { "mode": "integer", "length": "1", "na": false }
+    },
+    "posterior.nchains": {
+      "params": ["x"],
+      "return": { "mode": "integer", "length": "1", "na": false }
+    },
+    "brms.posterior_predict": {
+      "params": ["object", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false }
+    },
+    "brms.posterior_epred": {
+      "params": ["object", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false }
+    },
+    "brms.posterior_linpred": {
+      "params": ["object", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false }
+    },
+    "brms.fitted.brmsfit": {
+      "params": ["object", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false }
+    },
+    "loo.loo": {
+      "params": ["x", "..."],
+      "return": { "mode": "opaque", "length": "1", "na": false, "class": ["loo"] }
+    },
+    "loo.loo.array": {
+      "params": ["x", "..."],
+      "return": { "mode": "opaque", "length": "1", "na": false, "class": ["loo"] }
+    },
+    "loo.waic": {
+      "params": ["x", "..."],
+      "return": { "mode": "opaque", "length": "1", "na": false, "class": ["psis_loo", "loo"] }
+    },
+    "loo.loo_compare": {
+      "params": ["...", "details"],
+      "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["compare.loo"] }
+    },
+    "loo.loo_model_weights": {
+      "params": ["...", "method"],
+      "return": { "mode": "double", "length": "unknown", "na": false }
+    },
+    "bayesplot.ppc_dens_overlay": {
+      "params": ["y", "yrep", "..."],
+      "return": { "mode": "opaque", "length": "1", "na": false, "class": ["gg", "ggplot"] }
+    },
+    "bayesplot.ppc_hist": {
+      "params": ["y", "yrep", "..."],
+      "return": { "mode": "opaque", "length": "1", "na": false, "class": ["gg", "ggplot"] }
+    },
+    "bayesplot.ppc_scatter": {
+      "params": ["y", "yrep", "..."],
+      "return": { "mode": "opaque", "length": "1", "na": false, "class": ["gg", "ggplot"] }
+    },
+    "bayesplot.ppc_stat": {
+      "params": ["y", "yrep", "..."],
+      "return": { "mode": "opaque", "length": "1", "na": false, "class": ["gg", "ggplot"] }
+    },
+    "bayesplot.mcmc_dens": {
+      "params": ["x", "..."],
+      "return": { "mode": "opaque", "length": "1", "na": false, "class": ["gg", "ggplot"] }
+    },
+    "bayesplot.mcmc_hist": {
+      "params": ["x", "..."],
+      "return": { "mode": "opaque", "length": "1", "na": false, "class": ["gg", "ggplot"] }
+    },
+    "bayesplot.mcmc_trace": {
+      "params": ["x", "..."],
+      "return": { "mode": "opaque", "length": "1", "na": false, "class": ["gg", "ggplot"] }
+    },
+    "bayesplot.mcmc_areas": {
+      "params": ["x", "..."],
+      "return": { "mode": "opaque", "length": "1", "na": false, "class": ["gg", "ggplot"] }
+    },
+    "cmdstanr.cmdstan_model": {
+      "params": ["stan_file", "..."],
+      "return": { "mode": "opaque", "length": "1", "na": false, "class": ["CmdStanModel"] }
+    },
+    "cmdstanr.compile": {
+      "params": ["stan_file", "..."],
+      "return": { "mode": "character", "length": "1", "na": false }
+    },
+    "cmdstanr.cmdstanr_example": {
+      "params": ["example", "..."],
+      "return": { "mode": "opaque", "length": "1", "na": false }
+    }
+  }
+}

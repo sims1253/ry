@@ -54,20 +54,20 @@ fn ry_toml_applies_severity_overrides() {
     let output = ry_check(tmp.path());
     assert!(
         !output.status.success(),
-        "expected non-zero exit code (RY002 promoted to error), got {:?}; stderr={}",
+        "expected non-zero exit code (RY002 promoted to error), got {:?}; stdout={}",
         output.status,
-        String::from_utf8_lossy(&output.stderr)
+        String::from_utf8_lossy(&output.stdout)
     );
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stderr.contains("RY002"),
+        stdout.contains("RY002"),
         "expected RY002 in output: {}",
-        stderr
+        stdout
     );
     assert!(
-        stderr.contains("error"),
+        stdout.contains("error"),
         "expected RY002 to be reported as an error, got: {}",
-        stderr
+        stdout
     );
 }
 
@@ -83,11 +83,11 @@ fn ry_toml_without_error_override_keeps_warning_non_fatal() {
     )
     .unwrap();
     let output = ry_check(tmp.path());
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stderr.contains("RY002"),
+        stdout.contains("RY002"),
         "expected RY002 warning even without config: {}",
-        stderr
+        stdout
     );
     assert!(
         output.status.success(),
@@ -237,16 +237,18 @@ fn ry_toml_cli_flag_overrides_config_output_format() {
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    // concise format goes to stderr and is NOT a JSON array.
+    // concise format goes to stdout and is NOT a
+    // JSON array.
+    let _ = stderr;
     assert!(
-        stdout.is_empty(),
-        "concise output must not appear on stdout (config json was overridden): {}",
+        stdout.contains("RY040"),
+        "expected RY040 on stdout in concise format: {}",
         stdout
     );
     assert!(
-        stderr.contains("RY040"),
-        "expected RY040 on stderr in concise format: {}",
-        stderr
+        !stdout.trim_start().starts_with('['),
+        "concise output must not be a JSON array (config json was overridden): {}",
+        stdout
     );
 }
 
@@ -282,9 +284,9 @@ fn ry_toml_cli_error_appends_to_config_errors() {
         "expected failure with appended error rules, got {:?}",
         output.status
     );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("RY002"), "missing RY002: {}", stderr);
-    assert!(stderr.contains("RY010"), "missing RY010: {}", stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("RY002"), "missing RY002: {}", stdout);
+    assert!(stdout.contains("RY010"), "missing RY010: {}", stdout);
 }
 
 #[test]
@@ -306,5 +308,101 @@ fn ry_toml_malformed_aborts_with_error() {
         stderr.contains("ry.toml") && stderr.to_lowercase().contains("pars"),
         "expected a parse error mentioning ry.toml, got: {}",
         stderr
+    );
+}
+
+#[test]
+fn color_flag_rejects_unknown_value() {
+    // --color is validated. An unknown value must be
+    // a hard error with a clear message, not a silently-ignored flag.
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(tmp.path().join("ok.R"), "x <- 1\n").unwrap();
+    let bin = env!("CARGO_BIN_EXE_ry");
+    let output = Command::new(bin)
+        .arg("check")
+        .arg("--color")
+        .arg("yes")
+        .arg(tmp.path())
+        .output()
+        .expect("failed to invoke ry binary");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "unknown --color value must exit non-zero, got {:?}",
+        output.status
+    );
+    assert!(
+        stderr.contains("--color") && stderr.contains("auto"),
+        "expected a --color validation error, got: {}",
+        stderr
+    );
+}
+
+#[test]
+fn color_flag_accepts_known_values() {
+    // auto/always/never all parse cleanly and run the check.
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(tmp.path().join("ok.R"), "x <- 1\n").unwrap();
+    let bin = env!("CARGO_BIN_EXE_ry");
+    for ok in ["auto", "always", "never"] {
+        let output = Command::new(bin)
+            .arg("check")
+            .arg("--color")
+            .arg(ok)
+            .arg(tmp.path())
+            .output()
+            .expect("failed to invoke ry binary");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !stderr.contains("unknown `--color`"),
+            "--color={ok} should be accepted, got stderr: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn ry_toml_packages_enables_dplyr_nse() {
+    // A `packages = ["dplyr"]` in ry.toml makes a bare
+    // `filter(df, mpg > 0)` resolve as dplyr's NSE verb, so the column
+    // reference `mpg` (a real mtcars column) does NOT fire RY010.
+    // Without `packages` (or an inline `library(dplyr)`), `filter`
+    // falls through to regular resolution and `mpg` would be reported
+    // as unbound.
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(tmp.path().join("ry.toml"), "packages = [\"dplyr\"]\n").unwrap();
+    fs::write(
+        tmp.path().join("use.R"),
+        // `df` is the mtcars data frame from the typeshed; the dplyr
+        // NSE handler augments scope with its column schema so `mpg`
+        // resolves. No RY010 should fire on `mpg`.
+        "df <- mtcars\nsmall <- filter(df, mpg > 0)\n",
+    )
+    .unwrap();
+
+    let output = ry_check(tmp.path());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("RY010"),
+        "with packages=[\"dplyr\"], filter() NSE should suppress RY010 on `mpg`, got: {stderr}"
+    );
+}
+
+#[test]
+fn ry_toml_without_packages_does_not_gate_dplyr_nse() {
+    // Counterpart: with NO `packages` key and NO inline `library(dplyr)`,
+    // a bare `filter(df, mpg > 0)` must fall through to regular
+    // resolution, so the unbound `mpg` fires RY010.
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(
+        tmp.path().join("use.R"),
+        "df <- mtcars\nsmall <- filter(df, mpg > 0)\n",
+    )
+    .unwrap();
+
+    let output = ry_check(tmp.path());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("RY010"),
+        "without packages or library(dplyr), filter() should fall through and emit RY010 on `mpg`, got: {stdout}"
     );
 }

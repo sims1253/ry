@@ -1,0 +1,201 @@
+{
+  "version": "0.0.1",
+  "functions": {
+    "map": {
+      "params": [".x", ".f", "..."],
+      "return": { "mode": "list", "length": "arg0", "na": false }
+    },
+    "map_if": {
+      "params": [".x", ".p", ".f", "..."],
+      "return": { "mode": "list", "length": "arg0", "na": false }
+    },
+    "map_lgl": {
+      "params": [".x", ".f", "..."],
+      "return": { "mode": "logical", "length": "arg0", "na": false }
+    },
+    "map_int": {
+      "params": [".x", ".f", "..."],
+      "return": { "mode": "integer", "length": "arg0", "na": false }
+    },
+    "map_dbl": {
+      "params": [".x", ".f", "..."],
+      "return": { "mode": "double", "length": "arg0", "na": false }
+    },
+    "map_chr": {
+      "params": [".x", ".f", "..."],
+      "return": { "mode": "character", "length": "arg0", "na": false }
+    },
+    "map_vec": {
+      "params": [".x", ".f", "..."],
+      "return": { "mode": "opaque", "length": "arg0", "na": false }
+    },
+    "map2": {
+      "params": [".x", ".y", ".f", "..."],
+      "return": { "mode": "list", "length": "unknown", "na": false }
+    },
+    "map2_lgl": {
+      "params": [".x", ".y", ".f", "..."],
+      "return": { "mode": "logical", "length": "unknown", "na": false }
+    },
+    "map2_int": {
+      "params": [".x", ".y", ".f", "..."],
+      "return": { "mode": "integer", "length": "unknown", "na": false }
+    },
+    "map2_dbl": {
+      "params": [".x", ".y", ".f", "..."],
+      "return": { "mode": "double", "length": "unknown", "na": false }
+    },
+    "map2_chr": {
+      "params": [".x", ".y", ".f", "..."],
+      "return": { "mode": "character", "length": "unknown", "na": false }
+    },
+    "pmap": {
+      "params": [".l", ".f", "..."],
+      "return": { "mode": "list", "length": "unknown", "na": false }
+    },
+    "pmap_lgl": {
+      "params": [".l", ".f", "..."],
+      "return": { "mode": "logical", "length": "unknown", "na": false }
+    },
+    "pmap_int": {
+      "params": [".l", ".f", "..."],
+      "return": { "mode": "integer", "length": "unknown", "na": false }
+    },
+    "pmap_dbl": {
+      "params": [".l", ".f", "..."],
+      "return": { "mode": "double", "length": "unknown", "na": false }
+    },
+    "pmap_chr": {
+      "params": [".l", ".f", "..."],
+      "return": { "mode": "character", "length": "unknown", "na": false }
+    },
+    "imap": {
+      "params": [".x", ".f", "..."],
+      "return": { "mode": "list", "length": "arg0", "na": false }
+    },
+    "walk": {
+      "params": [".x", ".f", "..."],
+      "return": { "mode": "opaque", "length": "arg0", "na": false }
+    },
+    "walk2": {
+      "params": [".x", ".y", ".f", "..."],
+      "return": { "mode": "opaque", "length": "arg0", "na": false }
+    },
+    "pwalk": {
+      "params": [".l", ".f", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false }
+    },
+    "keep": {
+      "params": [".x", ".p", "..."],
+      "return": { "mode": "arg0", "length": "unknown", "na": false }
+    },
+    "discard": {
+      "params": [".x", ".p", "..."],
+      "return": { "mode": "arg0", "length": "unknown", "na": false }
+    },
+    "compact": {
+      "params": [".x", ".p"],
+      "return": { "mode": "arg0", "length": "unknown", "na": false }
+    },
+    "reduce": {
+      "params": [".x", ".f", "..."],
+      "return": { "mode": "opaque", "length": "1", "na": false }
+    },
+    "accumulate": {
+      "params": [".x", ".f", "..."],
+      "return": { "mode": "opaque", "length": "arg0", "na": false }
+    },
+    "flatten": {
+      "params": [".x"],
+      "return": { "mode": "list", "length": "unknown", "na": false }
+    },
+    "flatten_lgl": {
+      "params": [".x"],
+      "return": { "mode": "logical", "length": "unknown", "na": false }
+    },
+    "flatten_int": {
+      "params": [".x"],
+      "return": { "mode": "integer", "length": "unknown", "na": false }
+    },
+    "flatten_dbl": {
+      "params": [".x"],
+      "return": { "mode": "double", "length": "unknown", "na": false }
+    },
+    "flatten_chr": {
+      "params": [".x"],
+      "return": { "mode": "character", "length": "unknown", "na": false }
+    },
+    "pluck": {
+      "params": [".x", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false }
+    },
+    "set_names": {
+      "params": ["x", "nm", "..."],
+      "return": { "mode": "arg0", "length": "arg0", "na": false }
+    },
+    "list_modify": {
+      "params": [".x", "..."],
+      "return": { "mode": "list", "length": "arg0", "na": false }
+    },
+    "in_parallel": {
+      "params": [".f"],
+      "return": { "mode": "arg0", "length": "arg0", "na": false }
+    },
+    "splice": {
+      "params": [".x"],
+      "return": { "mode": "opaque", "length": "unknown", "na": false }
+    },
+    "transpose": {
+      "params": [".l"],
+      "return": { "mode": "list", "length": "unknown", "na": false }
+    },
+    "every": {
+      "params": [".x", ".p", "..."],
+      "return": { "mode": "logical", "length": "1", "na": false }
+    },
+    "some": {
+      "params": [".x", ".p", "..."],
+      "return": { "mode": "logical", "length": "1", "na": false }
+    },
+    "none": {
+      "params": [".x", ".p", "..."],
+      "return": { "mode": "logical", "length": "1", "na": false }
+    },
+    "detect": {
+      "params": [".x", ".f", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false }
+    },
+    "detect_index": {
+      "params": [".x", ".f", "..."],
+      "return": { "mode": "integer", "length": "1", "na": false }
+    },
+    "head_while": {
+      "params": [".x", ".p"],
+      "return": { "mode": "arg0", "length": "unknown", "na": false }
+    },
+    "tail_while": {
+      "params": [".x", ".p"],
+      "return": { "mode": "arg0", "length": "unknown", "na": false }
+    },
+    "vec_sort": {
+      "params": ["x", "..."],
+      "return": { "mode": "arg0", "length": "arg0", "na": false }
+    },
+    "lift": {
+      "params": [".f"],
+      "return": { "mode": "function", "length": "1", "na": false }
+    },
+    "as_mapper": {
+      "params": [".f", "..."],
+      "return": { "mode": "function", "length": "1", "na": false }
+    },
+    "negate": {
+      "params": [".f"],
+      "return": { "mode": "function", "length": "1", "na": false }
+    },
+    "partial": {
+      "params": [".f", "..."],
+      "return": { "mode": "function", "length": "1", "na": false }
+    }
+  }
+}

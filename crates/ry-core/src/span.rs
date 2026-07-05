@@ -4,7 +4,11 @@
 pub struct Span {
     pub start: usize,
     pub end: usize,
-    /// Pre-resolved line (0-indexed) and column (0-indexed, in chars).
+    /// Pre-resolved line (0-indexed) and column. The column is the
+    /// **byte** offset of the span start within its line (i.e. tree-sitter's
+    /// `start_position().column`), NOT a character column. Renderers that
+    /// need a character column for display should convert per-line via
+    /// `ry_core::parser::byte_col_to_char_col`.
     pub line: usize,
     pub col: usize,
 }

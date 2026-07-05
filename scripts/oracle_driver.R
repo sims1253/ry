@@ -42,9 +42,13 @@ main <- function() {
     message(sprintf("oracle_driver: %s does not exist", fixture_dir))
     quit(status = 2)
   }
+  # carrier is purrr's SUGGESTED dependency that in_parallel() requires
+  # at call time (carrier::crate); without it the driver's own map()
+  # call below errors even though purrr itself loads fine.
   if (!requireNamespace("purrr", quietly = TRUE) ||
-      !requireNamespace("mirai", quietly = TRUE)) {
-    message("oracle_driver: purrr and/or mirai not installed; the harness should fall back to the serial path")
+      !requireNamespace("mirai", quietly = TRUE) ||
+      !requireNamespace("carrier", quietly = TRUE)) {
+    message("oracle_driver: purrr, mirai, and/or carrier not installed; the harness should fall back to the serial path")
     quit(status = 3)
   }
 

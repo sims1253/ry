@@ -71,17 +71,71 @@ fn which(prog: &str) -> Option<std::path::PathBuf> {
     None
 }
 
-/// Returns true if R errored on this file (nonzero exit or "Error" on stderr).
-fn r_errors(path: &std::path::Path) -> bool {
+/// Whether R errored on this file (nonzero exit or "Error" on stderr),
+/// plus a diagnostic snippet of R's stderr so a failure report says WHY
+/// R errored (an environment problem reads very differently from a
+/// semantic one, and the bare boolean forced guesswork on CI).
+fn r_errors(path: &std::path::Path) -> (bool, String) {
     let output = match Command::new("Rscript").arg("--vanilla").arg(path).output() {
         Ok(o) => o,
-        Err(_) => return true, // treat missing/failed invocation conservatively
+        Err(e) => return (true, format!("failed to invoke Rscript: {e}")),
     };
-    if !output.status.success() {
-        return true;
-    }
     let stderr = String::from_utf8_lossy(&output.stderr);
-    stderr.contains("Error")
+    let snippet = tail_snippet(&stderr);
+    let errored = !output.status.success() || stderr.contains("Error");
+    (errored, snippet)
+}
+
+/// Last few lines of a process stream, flattened for a one-line report.
+fn tail_snippet(s: &str) -> String {
+    let lines: Vec<&str> = s.lines().filter(|l| !l.trim().is_empty()).collect();
+    let start = lines.len().saturating_sub(4);
+    lines[start..].join(" | ")
+}
+
+/// R packages a fixture declares via `library(pkg)`, `require(pkg)`, or
+/// `requireNamespace("pkg")`. Scanned lexically (the fixtures are flat
+/// scripts); comment lines are ignored so a comment MENTIONING library()
+/// does not count.
+fn fixture_packages(src: &str) -> Vec<String> {
+    let mut pkgs: Vec<String> = Vec::new();
+    for line in src.lines() {
+        let code = line.split('#').next().unwrap_or("");
+        for prefix in ["library(", "require(", "requireNamespace("] {
+            let Some(pos) = code.find(prefix) else {
+                continue;
+            };
+            let rest = &code[pos + prefix.len()..];
+            let end = rest.find([')', ',']).unwrap_or(rest.len());
+            let name = rest[..end].trim().trim_matches(['"', '\'']).to_string();
+            if !name.is_empty() && !pkgs.contains(&name) {
+                pkgs.push(name);
+            }
+        }
+    }
+    pkgs
+}
+
+/// Whether an R package is installed, probed once per package via
+/// `requireNamespace` (cached across fixtures). A fixture that needs a
+/// missing package is SKIPPED with a note rather than failed: R erroring
+/// because the environment lacks a CRAN package is not a semantic
+/// disagreement between ry and R. CI installs every package the fixtures
+/// use (see .github/workflows/ci.yml), so skips cannot mask a regression
+/// there.
+fn r_package_available(pkg: &str, cache: &mut HashMap<String, bool>) -> bool {
+    if let Some(&hit) = cache.get(pkg) {
+        return hit;
+    }
+    let probe = format!("quit(status = if (requireNamespace(\"{pkg}\", quietly = TRUE)) 0 else 1)");
+    let available = Command::new("Rscript")
+        .arg("-e")
+        .arg(&probe)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    cache.insert(pkg.to_string(), available);
+    available
 }
 
 /// Run the parallel oracle driver once over the whole fixture directory
@@ -93,7 +147,7 @@ fn r_errors(path: &std::path::Path) -> bool {
 /// (`{"file":..,"errored":..,"message":..}`); errors are reported
 /// structurally so the old stderr-contains-"Error" heuristic is no
 /// longer needed (a latent locale-dependent bug in the serial path).
-fn r_errors_via_driver(fixture_dir: &std::path::Path) -> Option<HashMap<String, bool>> {
+fn r_errors_via_driver(fixture_dir: &std::path::Path) -> Option<HashMap<String, (bool, String)>> {
     let driver = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
@@ -104,9 +158,17 @@ fn r_errors_via_driver(fixture_dir: &std::path::Path) -> Option<HashMap<String, 
         .arg(fixture_dir)
         .output()
         .ok()?;
-    // The driver exits 3 to signal "purrr/mirai not installed"; treat
-    // that as "unavailable" (None) so the caller falls back to serial.
+    // The driver exits 3 to signal "required packages not installed";
+    // treat any failure as "unavailable" (None) so the caller falls back
+    // to serial -- but SAY WHY on stderr. Two CI rounds were spent
+    // guessing at a silent driver failure (a missing suggested package,
+    // carrier) that this line would have named immediately.
     if !output.status.success() {
+        eprintln!(
+            "oracle: driver exited {:?}: {}",
+            output.status.code(),
+            tail_snippet(&String::from_utf8_lossy(&output.stderr))
+        );
         return None;
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -117,12 +179,15 @@ fn r_errors_via_driver(fixture_dir: &std::path::Path) -> Option<HashMap<String, 
             continue;
         }
         // Minimal JSON parse: {"file":"<name>","errored":<bool>,...}.
-        // Pull out the file and errored fields without a JSON dep.
+        // Pull out the file, errored, and message fields without a JSON
+        // dep. The message travels into failure reports so a must-pass
+        // violation names R's actual error.
         if let (Some(file), Some(errored)) = (
             extract_json_field(line, "file"),
             extract_json_bool(line, "errored"),
         ) {
-            map.insert(file, errored);
+            let message = extract_json_field(line, "message").unwrap_or_default();
+            map.insert(file, (errored, message));
         }
     }
     Some(map)
@@ -222,6 +287,8 @@ fn oracle_check_each_fixture() {
     let mut total: usize = 0;
     let mut passed: usize = 0;
     let mut gaps: usize = 0;
+    let mut skipped: usize = 0;
+    let mut pkg_cache: HashMap<String, bool> = HashMap::new();
 
     for entry in entries {
         let path = entry.path();
@@ -240,6 +307,23 @@ fn oracle_check_each_fixture() {
             ));
             continue;
         };
+
+        // Skip (loudly) when the fixture needs a CRAN package this
+        // machine does not have: R erroring for an environmental reason
+        // is not a semantic ry-vs-R disagreement. CI installs everything
+        // the fixtures use, so skips cannot hide a regression there.
+        let missing: Vec<String> = fixture_packages(&src)
+            .into_iter()
+            .filter(|p| !r_package_available(p, &mut pkg_cache))
+            .collect();
+        if !missing.is_empty() {
+            skipped += 1;
+            eprintln!(
+                "oracle: SKIP {name} (missing R package(s): {})",
+                missing.join(", ")
+            );
+            continue;
+        }
         total += 1;
 
         let r_errored = match &driver_map {
@@ -313,7 +397,10 @@ fn oracle_check_each_fixture() {
         }
     }
 
-    eprintln!("oracle: {passed}/{total} fixtures satisfied the oracle ({gaps} known gap(s))");
+    eprintln!(
+        "oracle: {passed}/{total} fixtures satisfied the oracle \
+         ({gaps} known gap(s), {skipped} skipped for missing packages)"
+    );
     if !failures.is_empty() {
         panic!(
             "oracle: {}/{} fixtures failed:\n  - {}\n",
@@ -378,4 +465,21 @@ fn tag_of_known_gap_tolerates_leading_whitespace() {
         Some(Tag::KnownGap(reason)) => assert_eq!(reason, "spaced"),
         other => panic!("expected KnownGap, got {other:?}"),
     }
+}
+
+#[test]
+fn fixture_packages_scans_library_require_and_namespace_calls() {
+    let src = "# oracle: must-pass\n\
+               # a comment mentioning library(fake) does not count\n\
+               library(purrr)\n\
+               require(mirai)\n\
+               if (requireNamespace(\"dplyr\", quietly = TRUE)) print(1)\n\
+               library(purrr)  # duplicate, deduplicated\n\
+               x <- 1\n";
+    assert_eq!(fixture_packages(src), vec!["purrr", "mirai", "dplyr"]);
+}
+
+#[test]
+fn fixture_packages_empty_for_plain_fixtures() {
+    assert!(fixture_packages("# oracle: must-flag\nx <- \"a\" + 1\n").is_empty());
 }

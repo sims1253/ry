@@ -259,7 +259,7 @@ impl HigherOrderFunc {
             "map2" | "map2_lgl" | "map2_int" | "map2_dbl" | "map2_chr" | "pmap" | "pmap_lgl"
             | "pmap_int" | "pmap_dbl" | "pmap_chr" => Some(HigherOrderFunc::PurrrMap2),
             "keep" | "discard" | "compact" => Some(HigherOrderFunc::PurrrKeep),
-            "reduce" | "reduce_right" | "accumulate" => Some(HigherOrderFunc::PurrrReduce),
+            "reduce" | "accumulate" => Some(HigherOrderFunc::PurrrReduce),
             "walk" | "walk2" | "pwalk" => Some(HigherOrderFunc::PurrrWalk),
             "in_parallel" => Some(HigherOrderFunc::PurrrInParallel),
             _ => None,
@@ -1104,7 +1104,9 @@ impl Checker {
                         "RY001",
                         format!("`if` condition is `{}`, expected length-1 logical", ct),
                     );
-                } else if !matches!(ct.mode, Mode::Logical | Mode::Opaque | Mode::Union) {
+                } else if !matches!(ct.mode, Mode::Logical | Mode::Opaque | Mode::Union)
+                    && !is_numeric_truthiness_idiom(cond)
+                {
                     self.emit(
                         Severity::Warning,
                         span_of(cond),
@@ -1705,6 +1707,18 @@ impl Checker {
             // R's `:` behavior (integer for whole-number endpoints).
             return lt.seq(rt);
         }
+        // `%in%` matching. In R `x %in% table` returns a logical vector of
+        // length(x) -- one membership test per element of the LHS -- and the
+        // RHS (`table`) length is irrelevant. Routing it through the generic
+        // `compare` path wrongly took `binary(lt.len, rt.len)` (the max), so
+        // `x %in% c("a","b")` on a length-1 `x` came out length-2 and drove
+        // both RY002 (`if` condition length 2) and RY032 (`&&` on a length-2
+        // operand) false positives. `%in%` never errors on mismatched modes
+        // (it coerces to a common type), so the result is always plain
+        // logical with the LHS length (Unknown LHS length stays Unknown).
+        if matches!(op, BinOpKind::In) {
+            return RType::new(Mode::Logical, lt.length);
+        }
         let is_compare = matches!(
             op,
             BinOpKind::Lt
@@ -1713,7 +1727,6 @@ impl Checker {
                 | BinOpKind::Ge
                 | BinOpKind::Eq
                 | BinOpKind::Ne
-                | BinOpKind::In
         );
         let is_logic = matches!(
             op,
@@ -1932,7 +1945,9 @@ impl Checker {
                 "RY001",
                 format!("`if` condition is `{}`, expected length-1 logical", ct),
             );
-        } else if !matches!(ct.mode, Mode::Logical | Mode::Opaque) {
+        } else if !matches!(ct.mode, Mode::Logical | Mode::Opaque)
+            && !is_numeric_truthiness_idiom(cond)
+        {
             self.emit(
                 Severity::Warning,
                 span_of(cond),
@@ -4191,6 +4206,25 @@ fn span_of(e: &Expr) -> Span {
     }
 }
 
+/// Whether a condition expression is the idiomatic numeric-truthiness
+/// non-empty check: a direct call to `length`, `nrow`, or `ncol` via a bare
+/// identifier callee (any args). These return an integer length-1, which R
+/// silently coerces to logical in `if`/`while` -- but `if (length(x))` /
+/// `if (nrow(df))` are so idiomatic in real R code that the RY001 coercion
+/// warning is pure noise there. We suppress ONLY the coercion-warning arm
+/// for this shape; a genuinely wrong condition (e.g. `if (1L)`) still warns.
+///
+/// Negation (`if (!length(x))`) is deliberately out of scope: it is typed
+/// through the unary `!` operator, not this call shape.
+fn is_numeric_truthiness_idiom(cond: &Expr) -> bool {
+    if let Expr::Call { func, .. } = cond {
+        if let Expr::Ident { name, .. } = func.as_ref() {
+            return matches!(name.as_str(), "length" | "nrow" | "ncol");
+        }
+    }
+    false
+}
+
 /// Extract an integer value from a literal expression. Returns
 /// `Some(n)` for `Expr::Integer(n, _)` and for `Expr::Double(f, _)`
 /// when `f` is a finite whole number (e.g. `2.0`). Returns `None` for
@@ -5235,6 +5269,33 @@ mod tests {
         assert!(
             diags.iter().any(|d| d.code == "RY033"),
             "expected RY033 for character == numeric, got {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn in_operator_uses_lhs_length() {
+        // `x %in% table` returns a logical vector of length(x); the RHS
+        // length is irrelevant. A length-1 `x` matched against a length-2
+        // literal must stay length-1 logical -- not length-2 (which would
+        // drive RY002/RY032 false positives downstream).
+        let (_diags, scope) = check_with_scope("x <- \"a\"\nr <- x %in% c(\"a\", \"b\")\n");
+        let r = scope.get("r").expect("binding r");
+        assert_eq!(r.mode, Mode::Logical, "got {:?}", r);
+        assert_eq!(r.length, Length::One, "got {:?}", r);
+    }
+
+    #[test]
+    fn in_operator_condition_no_ry002_ry032() {
+        // The end-to-end shape from the purrr net: a length-1 `%in%` result
+        // used as an `if` condition and inside `&&` must not fire RY002 or
+        // RY032.
+        let diags = check(
+            "x <- \"a\"\nif (x %in% c(\"a\", \"b\")) print(1)\nif (is.character(x) && x %in% c(\"a\", \"b\")) print(2)\n",
+        );
+        assert!(
+            diags.iter().all(|d| d.code != "RY002" && d.code != "RY032"),
+            "expected no RY002/RY032 for length-1 %in%, got {:?}",
             diags
         );
     }

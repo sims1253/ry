@@ -13,14 +13,6 @@
       "params": ["..."],
       "return": { "mode": "opaque", "length": "1", "na": false, "class": ["mirai_map"] }
     },
-    "mirai_map2": {
-      "params": ["..."],
-      "return": { "mode": "opaque", "length": "1", "na": false, "class": ["mirai_map"] }
-    },
-    "mirai_pmap": {
-      "params": ["..."],
-      "return": { "mode": "opaque", "length": "1", "na": false, "class": ["mirai_map"] }
-    },
     "collect_mirai": {
       "params": [".x", "..."],
       "return": { "mode": "opaque", "length": "unknown", "na": false }
@@ -33,37 +25,25 @@
       "params": [".x", "..."],
       "return": { "mode": "null", "length": "0", "na": false }
     },
-    "next_mirai": {
-      "params": ["..."],
-      "return": { "mode": "opaque", "length": "1", "na": false }
-    },
     "unresolved": {
       "params": [".x"],
       "return": { "mode": "logical", "length": "1", "na": false }
     },
-    "unresolved_mirai": {
-      "params": [".x"],
-      "return": { "mode": "logical", "length": "1", "na": false }
+    "everywhere": {
+      "params": [".expr", "..."],
+      "return": { "mode": "null", "length": "0", "na": false }
+    },
+    "try_mirai": {
+      "params": [".x", "..."],
+      "return": { "mode": "opaque", "length": "unknown", "na": false }
     },
     "status": {
       "params": [".x"],
       "return": { "mode": "integer", "length": "1", "na": false }
     },
-    "with_status": {
-      "params": [".x", "..."],
-      "return": { "mode": "opaque", "length": "arg0", "na": false }
-    },
-    "as_mirai": {
-      "params": ["x"],
-      "return": { "mode": "opaque", "length": "1", "na": false, "class": ["mirai"] }
-    },
     "is_mirai": {
       "params": ["x"],
       "return": { "mode": "logical", "length": "1", "na": false }
-    },
-    "mirai_rate_load": {
-      "params": [],
-      "return": { "mode": "double", "length": "1", "na": false }
     }
   }
 }

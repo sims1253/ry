@@ -9,7 +9,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 # 1.82 is required for `Option::is_none_or` (used in ry-checker) and
 # other recent-stable APIs; the previous 1.76 floor would not build.

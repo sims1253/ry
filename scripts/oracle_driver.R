@@ -59,7 +59,16 @@ main <- function() {
   # cores). Daemons are torn down on exit. Only the side-effect-free
   # fixtures (below) actually use them; the rest fall back to a serial
   # subprocess.
-  n <- min(length(files), max(1L, parallelly::availableCores(omit = 1L)))
+  #
+  # Use base R's parallel::detectCores() rather than
+  # parallelly::availableCores(): `parallel` ships with R (no extra
+  # dependency, so no requireNamespace guard needed), whereas `parallelly`
+  # is not guaranteed installed -- an unguarded call to it killed the
+  # driver on machines without it, silently dropping the parallel path.
+  # detectCores() can return NA (unknown core count), so fall back to 2L.
+  cores <- parallel::detectCores()
+  if (is.na(cores)) cores <- 2L
+  n <- min(length(files), max(1L, cores - 1L))
   mirai::daemons(n)
   on.exit(mirai::daemons(0), add = TRUE)
 

@@ -101,10 +101,6 @@
       "params": [".x", ".f", "..."],
       "return": { "mode": "opaque", "length": "1", "na": false }
     },
-    "reduce_right": {
-      "params": [".x", ".f", "..."],
-      "return": { "mode": "opaque", "length": "1", "na": false }
-    },
     "accumulate": {
       "params": [".x", ".f", "..."],
       "return": { "mode": "opaque", "length": "arg0", "na": false }

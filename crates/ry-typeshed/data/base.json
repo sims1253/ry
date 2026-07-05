@@ -849,6 +849,14 @@
       "params": ["x"],
       "return": "arg0"
     },
+    "identity": {
+      "params": ["x"],
+      "return": "arg0"
+    },
+    "unclass": {
+      "params": ["x"],
+      "return": { "mode": "opaque", "length": "unknown", "na": true }
+    },
     "formals": {
       "params": ["fn"],
       "return": { "mode": "list", "length": "unknown", "na": false }

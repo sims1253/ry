@@ -29,10 +29,6 @@
       "params": ["x", "..."],
       "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["data.frame"] }
     },
-    "posterior.variable_exists": {
-      "params": ["x", "variable"],
-      "return": { "mode": "logical", "length": "1", "na": false }
-    },
     "posterior.extract_variable": {
       "params": ["x", "variable"],
       "return": { "mode": "opaque", "length": "unknown", "na": false }
@@ -41,19 +37,23 @@
       "params": ["x", "variable"],
       "return": { "mode": "opaque", "length": "unknown", "na": false }
     },
-    "posterior.draws_vars": {
+    "posterior.variables": {
       "params": ["x"],
       "return": { "mode": "character", "length": "unknown", "na": false }
     },
-    "posterior.draws_dim": {
-      "params": ["x"],
-      "return": { "mode": "integer", "length": "unknown", "na": false }
-    },
-    "posterior.draws_niterations": {
+    "posterior.ndraws": {
       "params": ["x"],
       "return": { "mode": "integer", "length": "1", "na": false }
     },
-    "posterior.draws_nchains": {
+    "posterior.nvariables": {
+      "params": ["x"],
+      "return": { "mode": "integer", "length": "1", "na": false }
+    },
+    "posterior.niterations": {
+      "params": ["x"],
+      "return": { "mode": "integer", "length": "1", "na": false }
+    },
+    "posterior.nchains": {
       "params": ["x"],
       "return": { "mode": "integer", "length": "1", "na": false }
     },
@@ -78,10 +78,6 @@
       "return": { "mode": "opaque", "length": "1", "na": false, "class": ["loo"] }
     },
     "loo.loo.array": {
-      "params": ["x", "..."],
-      "return": { "mode": "opaque", "length": "1", "na": false, "class": ["loo"] }
-    },
-    "loo.loo.list": {
       "params": ["x", "..."],
       "return": { "mode": "opaque", "length": "1", "na": false, "class": ["loo"] }
     },

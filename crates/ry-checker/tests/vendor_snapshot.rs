@@ -168,33 +168,48 @@ fn purrr_vendor_snapshot() {
     // vendor net, added in PLAN Phase 1 (round 3) to keep the regression
     // net honest now that glue is clean. purrr is the flagship tidyverse
     // functional-programming package and the target of Phase 2.3's
-    // higher-order modeling, so most of these are EXPECTED to disappear
-    // once package awareness (Phase 2.1/2.2) and purrr modeling (Phase
-    // 2.3) land. None are true positives.
+    // higher-order modeling, so the remaining names are EXPECTED to
+    // disappear once package awareness (Phase 2.1/2.2) and purrr modeling
+    // (Phase 2.3) land. None are true positives.
     //
-    // RY010 (dominant): cross-package function names not yet modeled --
-    //   rlang (quo_get_expr, eval_tidy, is_bare_list, is_quosure,
-    //   as_quosure, is_bare_formula, obj_is_list), vctrs (vec_set_union),
-    //   and purrr's own C-backed impls (map_impl, map2_impl, pmap_impl).
+    // On its first round this net caught two real defects, now BOTH FIXED:
+    //
+    //   * The `%in%` length-modeling bug. `x %in% table` returns a logical
+    //     vector of length(x); the RHS (`table`) length is irrelevant. ry
+    //     had typed the result with the RHS length, so `x %in% c("a","b")`
+    //     on a length-1 `x` came out length-2 and drove an RY002
+    //     (condition length 2, compat-types-check.R:267) and an RY032
+    //     (`&&` on a length-2 operand, superseded-simplify.R:120). Fixed
+    //     in `infer_binop`: `%in%` is now Mode::Logical with the LHS
+    //     length. Both diagnostics are gone.
+    //   * Two base-R typeshed gaps: `identity` and `unclass` were missing,
+    //     firing RY010 ("not bound"). Both are now in base.json, so those
+    //     two RY010s are gone.
+    //
+    // Also fixed here: the RY001 `if (length(x))` numeric-truthiness idiom
+    //   (was 2x). `length`/`nrow`/`ncol` return an integer length-1 that R
+    //   silently coerces to logical in `if`; the coercion warning is pure
+    //   noise on this idiom (e.g. compat-obj-type.R:305). RY001's coercion
+    //   arm is now suppressed for a direct call to `length`/`nrow`/`ncol`.
+    //
+    // The ENTIRE remaining snapshot is RY010: cross-package function and
+    // constant names not yet modeled. There are NO true positives and no
+    // RY001/RY002/RY032 left.
+    //
+    //   * rlang functions: quo_get_expr, eval_tidy, is_bare_list,
+    //     is_bare_formula, as_quosure, is_quosure, obj_is_list, is_zap.
+    //   * rlang-compat constants na_chr / na_dbl / na_int, referenced in
+    //     compat-types-check.R -- these are defined in a non-vendored rlang
+    //     compat file, so they read as unbound here.
+    //   * vctrs functions: vec_set_union.
+    //   * purrr's own C-backed entry points: map_impl, map2_impl,
+    //     pmap_impl.
+    //
     //   These resolve once the package typeshed (Phase 2.2) covers rlang
     //   and vctrs and purrr's internal helpers are registered.
     //
-    // RY001 (2x): the `if (length(x))` idiom. `length()` returns an
-    //   integer length-1; R silently coerces integer->logical in `if`.
-    //   The rule warns about that coercion, which is harmless and
-    //   idiomatic here. Known limitation: RY001 could special-case the
-    //   `if (length(.))` / `if (nrow(.))` numeric-truthiness idiom.
-    //
-    // RY002 + RY032 (2x, same root cause): `%in%` is typed with the RHS
-    //   length instead of the LHS length. `x %in% c("a","b")` where x is
-    //   length 1 returns a length-1 logical, but ry models it as length
-    //   2 (the RHS). That wrong length then drives RY002 (condition len
-    //   2) and RY032 (`&&` on a len-2 operand). Modeling bug in `%in%`;
-    //   a separate fix from Phase 1's scope, surfaced by this net.
-    //
-    // Summary: 0 true positives. The net is doing its job -- it caught a
-    //   real `%in%` length-modeling bug and a stack of cross-package
-    //   names that Phase 2 must cover.
+    // Summary: 0 true positives; every remaining diagnostic is a
+    //   cross-package RY010 that Phase 2 must cover.
     // -----------------------------------------------------------------
 
     let rendered = check_vendor("testdata/vendor/purrr/R");

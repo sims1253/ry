@@ -6,3 +6,6 @@
 
 # Local tool caches
 /.claude/
+
+# rmarkdown render byproduct (README.md is the tracked output)
+/README.html

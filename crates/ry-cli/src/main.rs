@@ -560,29 +560,52 @@ fn run_check_once(
     // key. `Project::check` will additionally union in any per-file
     // `library`/`require`/`requireNamespace` loads.
     project.set_loaded(packages.iter().cloned().collect());
-    // One `RParser` for the whole run: tree-sitter's parser is designed
-    // to be reused across documents (the grammar is loaded once), so
-    // constructing it per file is pure waste (PLAN Phase D2).
-    let mut parser = ry_core::RParser::new().map_err(|e| miette::miette!(e))?;
 
-    for path in all_paths {
+    // Parallel file parsing (PLAN Phase 3.2). tree-sitter parsers are
+    // NOT `Send`, so each rayon thread keeps its own `RParser` in a
+    // `thread_local!` (the grammar is loaded once per thread; the
+    // thread pool is reused across this run). Parsed files come back in
+    // arbitrary thread order; we re-sort to input path order for stable
+    // diagnostic output. The single-parser optimization (reusing one
+    // parser across documents) is preserved within each thread.
+    thread_local! {
+        static PARSER: std::cell::RefCell<Option<ry_core::RParser>> =
+            const { std::cell::RefCell::new(None) };
+    }
+    let parse_one = |path: &std::path::Path| -> Result<(String, String, ry_core::SourceFile), ()> {
         let src = match std::fs::read_to_string(path) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("ry: {}: {}", path.display(), e);
-                parse_errors += 1;
-                continue;
+                return Err(());
             }
         };
         let path_str = path.to_string_lossy().to_string();
-        let file = match parser.parse(&path_str, &src) {
-            Ok(f) => f,
+        let file = PARSER.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            let parser = slot.get_or_insert_with(|| {
+                ry_core::RParser::new().expect("parser init (thread-local)")
+            });
+            parser.parse(&path_str, &src)
+        });
+        match file {
+            Ok(f) => Ok((path_str, src, f)),
             Err(e) => {
                 eprintln!("ry: {}: parse error: {}", path.display(), e);
-                parse_errors += 1;
-                continue;
+                Err(())
             }
-        };
+        }
+    };
+    // Parallel collect, tracking input index for a stable re-sort.
+    use rayon::prelude::*;
+    let mut parsed: Vec<(usize, String, String, ry_core::SourceFile)> = all_paths
+        .par_iter()
+        .enumerate()
+        .filter_map(|(i, path)| parse_one(path).ok().map(|(p, s, f)| (i, p, s, f)))
+        .collect();
+    parse_errors += all_paths.len() - parsed.len();
+    parsed.sort_by_key(|(i, _, _, _)| *i);
+    for (_, path_str, src, file) in parsed {
         project.add_file(path_str.clone(), file.clone());
         srcs.insert(path_str.clone(), src);
         comments.insert(path_str.clone(), file.comments);

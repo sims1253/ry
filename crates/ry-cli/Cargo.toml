@@ -31,6 +31,9 @@ tracing-subscriber = { workspace = true }
 # synchronous `fn main()`. We do NOT pull in the full `tokio` feature
 # set here (the ry-lsp crate does that itself).
 tokio = { version = "1", features = ["rt-multi-thread", "io-std"] }
+# Parallel file parsing (PLAN Phase 3.2). tree-sitter parsers are not
+# `Send`, so the parse loop uses a rayon thread-local parser pool.
+rayon = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

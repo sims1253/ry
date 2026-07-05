@@ -5,6 +5,13 @@
 //! checks it, and asserts wall time under 2 seconds (release-mode budget).
 //! Today the parser is O(n^2) (`char_col` rescans from byte 0 per node,
 //! PLAN finding 2); this test fails until Phase 1.1 lands.
+//!
+//! PLAN Phase 3.2 note: `Project::check` pass 3 is now rayon-parallel
+//! (per-file emitters share the Arc tables read-only), and the CLI's
+//! parse loop runs through a rayon thread-local parser pool. The 2s
+//! budgets below are unchanged -- parallelism is a bonus for
+//! multi-file/multi-core runs, not a license to regress single-file
+//! latency.
 
 use std::io::Write;
 use std::time::Instant;

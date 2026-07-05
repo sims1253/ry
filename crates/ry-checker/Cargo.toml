@@ -12,6 +12,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+rayon = { workspace = true }
 
 [dev-dependencies]
 insta = { version = "1.48.0", features = ["yaml"] }

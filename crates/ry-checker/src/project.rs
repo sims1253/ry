@@ -19,6 +19,7 @@
 use crate::{
     apply_filter_to_diagnostics, Checker, Diagnostic, FnTable, ReturnSlots, SeverityFilter,
 };
+use rayon::prelude::*;
 use ry_core::SourceFile;
 use std::sync::Arc;
 
@@ -148,21 +149,40 @@ impl Project {
         // pass 3 is read-only on the tables (every mutation site is in
         // passes 1/2), so only the refcount is bumped per file, not the
         // tables themselves (PLAN Phase D1).
-        let mut per_file: Vec<(String, Vec<Diagnostic>)> = Vec::with_capacity(self.files.len());
+        //
+        // The emission loop is embarrassingly parallel: each file's
+        // Checker is independent and the Arc-shared tables are read-
+        // only, so we rayon-`par_iter` it (PLAN Phase 3.2). Diagnostics
+        // come back in arbitrary thread order; we re-sort to match the
+        // input file order so callers see a stable, deterministic vec.
         let fn_table = Arc::new(std::mem::take(&mut self.fn_table));
         let return_slots = Arc::new(std::mem::take(&mut self.return_slots));
-        for (path, file) in &self.files {
-            let mut emitter =
-                Checker::with_shared_tables(path, Arc::clone(&fn_table), Arc::clone(&return_slots));
-            emitter.set_loaded(self.loaded.clone());
-            emitter.emit_diagnostics(file);
-            per_file.push((path.clone(), emitter.take_diagnostics()));
-        }
+        let loaded = Arc::new(std::mem::take(&mut self.loaded));
+        let mut per_file: Vec<(usize, String, Vec<Diagnostic>)> = self
+            .files
+            .par_iter()
+            .enumerate()
+            .map(|(i, (path, file))| {
+                let mut emitter = Checker::with_shared_tables(
+                    path,
+                    Arc::clone(&fn_table),
+                    Arc::clone(&return_slots),
+                );
+                emitter.set_loaded((*loaded).clone());
+                emitter.emit_diagnostics(file);
+                (i, path.clone(), emitter.take_diagnostics())
+            })
+            .collect();
         // Restore the tables onto the Project for the next `check()` call.
         // Every emitter above has been dropped, so the Arc refcount is 1
         // and `unwrap_or_clone` returns the owned value without cloning.
         self.fn_table = Arc::unwrap_or_clone(fn_table);
         self.return_slots = Arc::unwrap_or_clone(return_slots);
+        self.loaded = Arc::unwrap_or_clone(loaded);
+        // Re-sort to input file order and drop the sort index.
+        per_file.sort_by_key(|(i, _, _)| *i);
+        let per_file: Vec<(String, Vec<Diagnostic>)> =
+            per_file.into_iter().map(|(_, p, d)| (p, d)).collect();
 
         self.diagnostics = per_file.clone();
         per_file

@@ -51,7 +51,9 @@ enum Cmd {
         #[arg(long)]
         exit_zero: bool,
         /// Output format. One of: full, concise, json, github, gitlab, junit.
-        #[arg(long, value_name = "FORMAT", default_value = "concise")]
+        /// `full` is the default (matches ty); `concise` is available for a
+        /// one-line-per-diagnostic view.
+        #[arg(long, value_name = "FORMAT", default_value = "full")]
         output_format: String,
         /// Control when colored output is used.
         #[arg(long, value_name = "WHEN")]
@@ -60,6 +62,10 @@ enum Cmd {
         /// Uses polling (500ms interval). Press Ctrl+C to stop.
         #[arg(short = 'W', long)]
         watch: bool,
+        /// Print per-rule diagnostic counts after the run (ruff's
+        /// `--statistics`). Useful for corpus research and triage.
+        #[arg(long)]
+        statistics: bool,
     },
     /// Start the language server. Speaks the Language Server Protocol
     /// (LSP) over stdio, publishing type-check diagnostics for open R
@@ -72,7 +78,9 @@ enum Cmd {
         #[arg(long, value_name = "FORMAT", default_value = "text")]
         output_format: String,
     },
-    /// Explain a rule (or all rules).
+    /// Explain a rule (or all rules). `ry rule` is an alias (matches
+    /// ruff's `ruff rule`).
+    #[command(visible_alias = "rule")]
     ExplainRule {
         /// Rule code or name. Omit to list all rules.
         rule: Option<String>,
@@ -116,9 +124,10 @@ fn main() -> Result<ExitCode> {
             ignore: Vec::new(),
             error_on_warning: false,
             exit_zero: false,
-            output_format: "concise".to_string(),
+            output_format: "full".to_string(),
             color: None,
             watch: false,
+            statistics: false,
         },
     };
 
@@ -138,6 +147,7 @@ fn main() -> Result<ExitCode> {
             output_format,
             color,
             watch,
+            statistics,
         } => {
             // Validate --color up front so an unknown value is a clear
             // error rather than a silently-ignored flag. The resolved
@@ -162,6 +172,7 @@ fn main() -> Result<ExitCode> {
                 cli.quiet,
                 check_matches,
                 watch,
+                statistics,
             )
         }
         Cmd::Server => {
@@ -291,6 +302,7 @@ fn run_check(
     cli_quiet: u8,
     check_matches: Option<&ArgMatches>,
     watch: bool,
+    statistics: bool,
 ) -> Result<ExitCode> {
     // Determine the search start directory for config discovery. If the
     // user passed a path, anchor discovery at the first path's parent
@@ -398,7 +410,7 @@ fn run_check(
 
     // Run the initial check.
     let result = run_check_once(&all_paths, &filter, format, &cfg.packages)?;
-    result.print_summary(format);
+    result.print_summary(format, statistics);
 
     if !watch {
         return Ok(result.exit_code(&cfg));
@@ -475,7 +487,7 @@ fn run_check(
             // for portability (no external process spawn).
             eprint!("\x1b[2J\x1b[H");
             let result = run_check_once(&all_paths, &filter, format, &cfg.packages)?;
-            result.print_summary(format);
+            result.print_summary(format, statistics);
         }
     }
 }
@@ -490,16 +502,42 @@ struct CheckResult {
 }
 
 impl CheckResult {
-    fn print_summary(&self, format: ry_checker::format::OutputFormat) {
+    fn print_summary(&self, format: ry_checker::format::OutputFormat, statistics: bool) {
         // Suppress the human summary line for machine-readable formats
         // so it can't corrupt JSON/Github/Gitlab/Junit output (it goes
         // to stderr, but consumers that merge stderr would see it). The
         // plan calls for printing it only for the human formats (PLAN
         // Phase D3).
-        if !matches!(
+        let is_human = matches!(
             format,
             ry_checker::format::OutputFormat::Full | ry_checker::format::OutputFormat::Concise
-        ) {
+        );
+        if !is_human && !statistics {
+            return;
+        }
+        // --statistics: per-rule counts (ruff's --statistics). Printed
+        // to stderr (with the summary) so it never corrupts the stdout
+        // diagnostic stream. Sorted by count descending.
+        if statistics {
+            let mut counts: std::collections::BTreeMap<&str, (usize, ry_checker::Severity)> =
+                std::collections::BTreeMap::new();
+            for d in &self.diagnostics {
+                counts
+                    .entry(d.code)
+                    .and_modify(|(c, _)| *c += 1)
+                    .or_insert((1, d.severity));
+            }
+            let mut rows: Vec<_> = counts.into_iter().collect();
+            rows.sort_by_key(|(_, (n, _))| std::cmp::Reverse(*n));
+            eprintln!("ry: statistics ({} unique rule(s))", rows.len());
+            for (code, (n, sev)) in rows {
+                eprintln!("  {code:<6} {n:>4}  {sev}");
+            }
+            eprintln!(
+                "ry: checked {} file(s), {} diagnostic(s)",
+                self.file_count,
+                self.diagnostics.len()
+            );
             return;
         }
         let errors = self
@@ -641,13 +679,11 @@ fn run_check_once(
 
     let rendered = ry_checker::format::render(&all_diagnostics, format, &srcs);
     if !rendered.is_empty() {
-        match format {
-            ry_checker::format::OutputFormat::Json
-            | ry_checker::format::OutputFormat::Github
-            | ry_checker::format::OutputFormat::Gitlab
-            | ry_checker::format::OutputFormat::Junit => print!("{}", rendered),
-            _ => eprint!("{}", rendered),
-        }
+        // Diagnostics go to STDOUT (matches ruff/ty): `ry check > log`
+        // captures the diagnostics, while the summary line and watch-
+        // mode chrome go to stderr. Machine formats (json/github/...)
+        // already used stdout; human formats (concise/full) now do too.
+        print!("{}", rendered);
     }
 
     Ok(CheckResult {

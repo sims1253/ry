@@ -118,7 +118,10 @@ fn r_errors_via_driver(fixture_dir: &std::path::Path) -> Option<HashMap<String, 
         }
         // Minimal JSON parse: {"file":"<name>","errored":<bool>,...}.
         // Pull out the file and errored fields without a JSON dep.
-        if let (Some(file), Some(errored)) = (extract_json_field(line, "file"), extract_json_bool(line, "errored")) {
+        if let (Some(file), Some(errored)) = (
+            extract_json_field(line, "file"),
+            extract_json_bool(line, "errored"),
+        ) {
             map.insert(file, errored);
         }
     }

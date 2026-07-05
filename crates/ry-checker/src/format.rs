@@ -84,11 +84,16 @@ pub fn render(
                     .get(&d.path)
                     .and_then(|src| line_containing(src, d.span.start))
                 {
-                    // The source line, then a caret line pointing at the
-                    // span's character column. Indent the caret to the
-                    // (1-based) char column computed above.
+                    // The source line, then a caret line underlining the
+                    // WHOLE span (`^~~~~`), not just a single `^`. Indent
+                    // to the (1-based) char column; the underline width is
+                    // the span's char width on this line (clamped to at
+                    // least 1 and to the remainder of the line; multi-line
+                    // spans underline to the line's end).
                     let _ = writeln!(out, "  {}", src_line);
-                    let _ = writeln!(out, "  {}^", " ".repeat(col.saturating_sub(1)));
+                    let underline_width = span_char_width(d, src_line);
+                    let tilde = "~".repeat(underline_width.saturating_sub(1));
+                    let _ = writeln!(out, "  {}^{}", " ".repeat(col.saturating_sub(1)), tilde);
                 }
             }
             out
@@ -219,6 +224,28 @@ fn line_col(d: &Diagnostic, srcs: &std::collections::HashMap<String, String>) ->
         .unwrap_or_else(|| d.span.line + 1);
     let col = char_col_for(d, srcs);
     (line, col)
+}
+
+/// The char width of a diagnostic's span on its source line (at least
+/// 1). Used to underline the whole span (`^~~~~`) rather than a single
+/// caret. `d.span.end - d.span.start` is the byte width; we clamp to the
+/// remainder of the line (multi-line spans underline to the line's end)
+/// and convert bytes to chars via the line text.
+fn span_char_width(d: &Diagnostic, src_line: &str) -> usize {
+    // `d.span.col` is the byte column of the span start within the line.
+    // The span's byte width is `end - start`; clamp to the line's end
+    // (multi-line spans underline to the line's end) and convert to a
+    // char count via the line slice. At least 1 so a zero-width span
+    // still shows a single `^`.
+    let start_byte = d.span.col.min(src_line.len());
+    let raw_end = d.span.end.saturating_sub(d.span.start);
+    let end_byte = (start_byte + raw_end).min(src_line.len());
+    let width = if end_byte > start_byte {
+        src_line[start_byte..end_byte].chars().count()
+    } else {
+        0
+    };
+    width.max(1)
 }
 
 /// Render a human-visible (1-based) character column for a diagnostic.

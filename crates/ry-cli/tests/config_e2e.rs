@@ -54,20 +54,20 @@ fn ry_toml_applies_severity_overrides() {
     let output = ry_check(tmp.path());
     assert!(
         !output.status.success(),
-        "expected non-zero exit code (RY002 promoted to error), got {:?}; stderr={}",
+        "expected non-zero exit code (RY002 promoted to error), got {:?}; stdout={}",
         output.status,
-        String::from_utf8_lossy(&output.stderr)
+        String::from_utf8_lossy(&output.stdout)
     );
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stderr.contains("RY002"),
+        stdout.contains("RY002"),
         "expected RY002 in output: {}",
-        stderr
+        stdout
     );
     assert!(
-        stderr.contains("error"),
+        stdout.contains("error"),
         "expected RY002 to be reported as an error, got: {}",
-        stderr
+        stdout
     );
 }
 
@@ -83,11 +83,11 @@ fn ry_toml_without_error_override_keeps_warning_non_fatal() {
     )
     .unwrap();
     let output = ry_check(tmp.path());
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stderr.contains("RY002"),
+        stdout.contains("RY002"),
         "expected RY002 warning even without config: {}",
-        stderr
+        stdout
     );
     assert!(
         output.status.success(),
@@ -237,16 +237,18 @@ fn ry_toml_cli_flag_overrides_config_output_format() {
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    // concise format goes to stderr and is NOT a JSON array.
+    // concise format now goes to stdout (Phase 4 item 3) and is NOT a
+    // JSON array.
+    let _ = stderr;
     assert!(
-        stdout.is_empty(),
-        "concise output must not appear on stdout (config json was overridden): {}",
+        stdout.contains("RY040"),
+        "expected RY040 on stdout in concise format: {}",
         stdout
     );
     assert!(
-        stderr.contains("RY040"),
-        "expected RY040 on stderr in concise format: {}",
-        stderr
+        !stdout.trim_start().starts_with('['),
+        "concise output must not be a JSON array (config json was overridden): {}",
+        stdout
     );
 }
 
@@ -282,9 +284,9 @@ fn ry_toml_cli_error_appends_to_config_errors() {
         "expected failure with appended error rules, got {:?}",
         output.status
     );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("RY002"), "missing RY002: {}", stderr);
-    assert!(stderr.contains("RY010"), "missing RY010: {}", stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("RY002"), "missing RY002: {}", stdout);
+    assert!(stdout.contains("RY010"), "missing RY010: {}", stdout);
 }
 
 #[test]
@@ -398,9 +400,9 @@ fn ry_toml_without_packages_does_not_gate_dplyr_nse() {
     .unwrap();
 
     let output = ry_check(tmp.path());
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stderr.contains("RY010"),
-        "without packages or library(dplyr), filter() should fall through and emit RY010 on `mpg`, got: {stderr}"
+        stdout.contains("RY010"),
+        "without packages or library(dplyr), filter() should fall through and emit RY010 on `mpg`, got: {stdout}"
     );
 }

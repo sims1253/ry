@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 
 /// Default output format when neither the config file nor the CLI
 /// specifies one. Matches the CLI's pre-config default.
-pub const DEFAULT_OUTPUT_FORMAT: &str = "concise";
+pub const DEFAULT_OUTPUT_FORMAT: &str = "full";
 
 /// The on-disk filename ry looks for.
 pub const CONFIG_FILENAME: &str = "ry.toml";
@@ -56,7 +56,7 @@ pub struct Config {
     pub ignore: Vec<String>,
     /// Exclude patterns (gitignore-style). Default: empty.
     pub exclude: Vec<String>,
-    /// Output format. Default: "concise".
+    /// Output format. Default: "full".
     #[serde(alias = "output-format", default = "default_output_format")]
     pub output_format: String,
     /// Verbosity count (cumulative with -v). Default: 0.

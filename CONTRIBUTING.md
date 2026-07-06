@@ -1,7 +1,5 @@
 # Contributing
 
-Start with `ARCHITECTURE.md` for the lay of the land.
-
 ## Build and test gate
 
 Every change must pass, in this order:
@@ -65,6 +63,5 @@ exports for hand-refinement.
 - Conventional-commit subjects, as in the log
   (`fix(scope): ...`, `feat(area): ...`, `test: ...`).
 - No emojis anywhere in code, comments, docs, or commit messages.
-- `README.md` is generated from `README.Rmd`
-  (`Rscript -e 'rmarkdown::render("README.Rmd")'` with the release
-  binary on PATH) -- edit the `.Rmd`, commit both.
+- Edit `README.md` directly. Keep examples self-contained or backed by
+  fixtures/tests so they do not depend on a separate examples tree.

@@ -4,6 +4,7 @@ description = "The ry static analyzer: statement/expression checking and diagnos
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+authors.workspace = true
 
 [dependencies]
 ry-core = { path = "../ry-core" }

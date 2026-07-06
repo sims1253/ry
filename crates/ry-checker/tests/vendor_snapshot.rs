@@ -159,7 +159,7 @@ fn purrr_vendor_snapshot() {
     //     pmap_impl.
     //
     // These resolve once the package typeshed covers rlang and vctrs
-    // and purrr's internal helpers are registered (see ROADMAP.md).
+    // and purrr's internal helpers are registered.
     // -----------------------------------------------------------------
 
     let rendered = check_vendor("testdata/vendor/purrr/R");

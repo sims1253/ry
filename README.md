@@ -1,10 +1,3 @@
-
-<!-- README.md is generated from README.Rmd. Edit README.Rmd, then
-     render with the release binary on PATH:
-       PATH="$PWD/target/release:$PATH" Rscript -e 'rmarkdown::render("README.Rmd")'
-     Chunks that invoke `ry` run only when the binary is available, so
-     the output below is real, not hand-written. -->
-
 # ry
 
 [![CI](https://github.com/sims1253/ry/actions/workflows/ci.yml/badge.svg)](https://github.com/sims1253/ry/actions/workflows/ci.yml)
@@ -37,27 +30,33 @@ cargo build --release
 # binary at target/release/ry
 ```
 
-Prebuilt binaries and an R-side installer are on the
-[roadmap](ROADMAP.md).
+Prebuilt binaries are attached to GitHub releases.
 
 ## Quickstart
 
 Point `ry check` at files, directories, or a project root (`.R` and `.r`
-files are collected recursively; Quarto/R Markdown chunk checking is on
-the roadmap):
+files are collected recursively):
 
 ``` bash
-ry check examples/smoke.R
-#> examples/smoke.R:10:6: error: [RY040] cannot apply arithmetic op to `character` and `integer`
+cat > demo.R <<'EOF'
+nums <- 1:3
+y <- "a" + 1L
+if ("x") print(nums)
+if (c(TRUE, FALSE)) print(1)
+z <- undefined_thing
+EOF
+
+ry check demo.R
+#> demo.R:2:6: error: [RY040] cannot apply arithmetic op to `character` and `integer`
 #>   y <- "a" + 1L
 #>        ^~~~~~~~
-#> examples/smoke.R:16:5: warning: [RY001] `if` condition is `character` (not logical); will be silently coerced
+#> demo.R:3:5: warning: [RY001] `if` condition is `character` (not logical); will be silently coerced
 #>   if ("x") print(nums)
 #>       ^~~
-#> examples/smoke.R:19:5: warning: [RY002] `if` condition has length 2, will only use first element
+#> demo.R:4:5: warning: [RY002] `if` condition has length 2, will only use first element
 #>   if (c(TRUE, FALSE)) print(1)
 #>       ^~~~~~~~~~~~~~
-#> examples/smoke.R:27:6: warning: [RY010] variable `undefined_thing` is not bound in this scope
+#> demo.R:5:6: warning: [RY010] variable `undefined_thing` is not bound in this scope
 #>   z <- undefined_thing
 #>        ^~~~~~~~~~~~~~~
 #> ry: checked 1 file(s), 1 error(s), 3 warning(s)
@@ -161,10 +160,8 @@ Actions step:
 
 ## Rules
 
-The table below is generated from the checker’s own rule registry at
-render time, so it cannot drift from the binary. Defaults can be
-overridden per-project; `ry rule RY040` prints the explanation for one
-rule.
+Defaults can be overridden per-project; `ry rule RY040` prints the
+explanation for one rule.
 
 | code  | name                     | severity | summary                                                                                                                                                                                                   |
 | :---- | :----------------------- | :------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -201,12 +198,10 @@ rule.
     (`scripts/audit_typeshed.R`).
 
 Known gaps: no S4 / R6 / environment modeling, no NAMESPACE resolution
-(cross-package names outside the shipped stubs resolve to opaque), no NA
-tracking yet. See [ROADMAP.md](ROADMAP.md).
+(cross-package names outside the shipped stubs resolve to opaque), and
+no NA tracking yet.
 
-## Contributing and architecture
+## Contributing
 
-Start with [ARCHITECTURE.md](ARCHITECTURE.md) (crate map, the three-pass
-project check, where to add a rule) and
-[CONTRIBUTING.md](CONTRIBUTING.md) (build gate, fixture conventions, and
-the false-positive bar every new rule must clear).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the build gate, fixture
+conventions, and the false-positive bar every new rule must clear.

@@ -118,6 +118,11 @@ fn find_def_spans_in_expr(expr: &Expr, name: &str, out: &mut Vec<Span>) {
                 find_def_spans_in_stmt(s, name, out);
             }
         }
+        Expr::Block { body, .. } => {
+            for s in body {
+                find_def_spans_in_stmt(s, name, out);
+            }
+        }
         Expr::If { then, else_, .. } => {
             find_def_spans_in_expr(then, name, out);
             if let Some(e) = else_ {
@@ -286,6 +291,11 @@ fn find_ref_spans_in_expr(expr: &Expr, name: &str, out: &mut Vec<Span>, include_
                 find_ref_spans_in_stmt(s, name, out, include_declaration);
             }
         }
+        Expr::Block { body, .. } => {
+            for s in body {
+                find_ref_spans_in_stmt(s, name, out, include_declaration);
+            }
+        }
         Expr::If {
             cond, then, else_, ..
         } => {
@@ -425,6 +435,11 @@ fn collect_highlight_entries_from_expr(
             }
         }
         Expr::Function { body, .. } => {
+            for s in body {
+                collect_highlight_entries_from_stmt(s, name, out);
+            }
+        }
+        Expr::Block { body, .. } => {
             for s in body {
                 collect_highlight_entries_from_stmt(s, name, out);
             }

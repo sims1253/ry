@@ -12,6 +12,7 @@ pub const DPLYR_JSON: &str = include_str!("../data/dplyr.json");
 pub const PURRR_JSON: &str = include_str!("../data/purrr.json");
 pub const MIRAI_JSON: &str = include_str!("../data/mirai.json");
 pub const BAYES_JSON: &str = include_str!("../data/bayes.json");
+pub const SURVIVAL_JSON: &str = include_str!("../data/survival.json");
 
 /// The set of packages whose type signatures ship embedded in ry.
 /// `base` is always attached (returned by `load_base_cached`); the
@@ -19,7 +20,7 @@ pub const BAYES_JSON: &str = include_str!("../data/bayes.json");
 /// `pkg::`-qualified call is resolved. `bayes` is a multi-package
 /// typeshed whose JSON keys are `pkg.function` (brms, posterior, loo,
 /// bayesplot, cmdstanr); see [`load_package`].
-pub const KNOWN_PACKAGES: &[&str] = &["base", "dplyr", "purrr", "mirai", "bayes"];
+pub const KNOWN_PACKAGES: &[&str] = &["base", "dplyr", "purrr", "mirai", "bayes", "survival"];
 
 #[derive(Debug, Error)]
 pub enum TypeshedError {
@@ -271,6 +272,7 @@ fn parse_package(json: &str, prefix: Option<&str>) -> Result<Typeshed, TypeshedE
 /// - `dplyr` -> `data/dplyr.json` (bare function names).
 /// - `purrr` -> `data/purrr.json` (bare function names).
 /// - `mirai` -> `data/mirai.json` (bare function names).
+/// - `survival` -> `data/survival.json` (bare function names).
 /// - `brms`, `posterior`, `loo`, `bayesplot`, `cmdstanr` ->
 ///   `data/bayes.json` (a single multi-package file whose keys are
 ///   `pkg.function`; the prefix is stripped for the requested package).
@@ -282,6 +284,7 @@ pub fn load_package(name: &str) -> Option<&'static Typeshed> {
     static DPLYR: std::sync::OnceLock<Typeshed> = std::sync::OnceLock::new();
     static PURRR: std::sync::OnceLock<Typeshed> = std::sync::OnceLock::new();
     static MIRAI: std::sync::OnceLock<Typeshed> = std::sync::OnceLock::new();
+    static SURVIVAL: std::sync::OnceLock<Typeshed> = std::sync::OnceLock::new();
     static BRMS: std::sync::OnceLock<Typeshed> = std::sync::OnceLock::new();
     static POSTERIOR: std::sync::OnceLock<Typeshed> = std::sync::OnceLock::new();
     static LOO: std::sync::OnceLock<Typeshed> = std::sync::OnceLock::new();
@@ -296,6 +299,7 @@ pub fn load_package(name: &str) -> Option<&'static Typeshed> {
         "dplyr" => (&DPLYR, DPLYR_JSON, None),
         "purrr" => (&PURRR, PURRR_JSON, None),
         "mirai" => (&MIRAI, MIRAI_JSON, None),
+        "survival" => (&SURVIVAL, SURVIVAL_JSON, None),
         "brms" => (&BRMS, BAYES_JSON, Some("brms")),
         "posterior" => (&POSTERIOR, BAYES_JSON, Some("posterior")),
         "loo" => (&LOO, BAYES_JSON, Some("loo")),
@@ -317,7 +321,15 @@ pub fn load_package(name: &str) -> Option<&'static Typeshed> {
 pub fn is_known_package(name: &str) -> bool {
     matches!(
         name,
-        "dplyr" | "purrr" | "mirai" | "brms" | "posterior" | "loo" | "bayesplot" | "cmdstanr"
+        "dplyr"
+            | "purrr"
+            | "mirai"
+            | "survival"
+            | "brms"
+            | "posterior"
+            | "loo"
+            | "bayesplot"
+            | "cmdstanr"
     )
 }
 
@@ -349,6 +361,16 @@ mod tests {
     }
 
     #[test]
+    fn load_package_survival_has_survfit() {
+        let t = load_package("survival").expect("survival is a known package");
+        assert!(t.functions.contains_key("Surv"));
+        assert!(t.functions.contains_key("survfit"));
+        assert!(t
+            .s3_methods
+            .contains_key(&("quantile".to_string(), "survfit".to_string())));
+    }
+
+    #[test]
     fn load_package_bayes_strips_prefix() {
         // bayes.json is a multi-package file keyed `pkg.function`; each
         // package view should expose bare function names.
@@ -372,6 +394,7 @@ mod tests {
     #[test]
     fn is_known_package_recognises_known() {
         assert!(is_known_package("dplyr"));
+        assert!(is_known_package("survival"));
         assert!(is_known_package("brms"));
         assert!(is_known_package("posterior"));
         assert!(!is_known_package("tidyverse"));

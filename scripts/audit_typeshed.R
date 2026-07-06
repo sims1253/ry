@@ -157,6 +157,7 @@ audit_package_file <- function(file, pkg) {
 failures <- c(failures, audit_package_file("dplyr.json", "dplyr"))
 failures <- c(failures, audit_package_file("purrr.json", "purrr"))
 failures <- c(failures, audit_package_file("mirai.json", "mirai"))
+failures <- c(failures, audit_package_file("survival.json", "survival"))
 
 # ---------------------------------------------------------------------
 # bayes.json -- keys are `<pkg>.<function>`; the first dot-segment is the

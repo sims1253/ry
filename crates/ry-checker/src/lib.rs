@@ -72,6 +72,7 @@ const S3_GENERICS: &[&str] = &[
     "anova",
     "str",
     "terms",
+    "quantile",
 ];
 
 /// Names that look like `<generic>.<class>` but are NOT S3 methods.
@@ -91,6 +92,93 @@ const S3_DENYLIST: &[&str] = &[
     "write.csv",
     "data.frame",
 ];
+
+const PACKAGE_SIGNATURE_ORDER: &[&str] = &[
+    "dplyr",
+    "purrr",
+    "mirai",
+    "survival",
+    "brms",
+    "posterior",
+    "loo",
+    "bayesplot",
+    "cmdstanr",
+];
+
+/// Names that are intentionally available without a local binding in
+/// ordinary R code. Treating these as opaque ambient values keeps RY010
+/// focused on user variables rather than R runtime state or tidy-eval
+/// pronouns.
+const AMBIENT_GLOBALS: &[&str] = &[
+    ".data",
+    ".env",
+    ".GlobalEnv",
+    ".Random.seed",
+    ".Machine",
+    ".Platform",
+    ".Options",
+    ".Device",
+    ".Devices",
+    ".Last.value",
+];
+
+fn ambient_global_type(name: &str) -> Option<RType> {
+    AMBIENT_GLOBALS.contains(&name).then(RType::unknown)
+}
+
+fn string_literals(expr: &Expr) -> Vec<String> {
+    match expr {
+        Expr::String(value, _) => vec![value.clone()],
+        Expr::Call { func, args, .. } => {
+            let Some(name) = ident_name(func) else {
+                return Vec::new();
+            };
+            let bare = name.rsplit_once("::").map(|(_, n)| n).unwrap_or(name);
+            if bare != "c" {
+                return Vec::new();
+            }
+            args.iter()
+                .flat_map(|arg| string_literals(&arg.value))
+                .collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn ident_name(expr: &Expr) -> Option<&str> {
+    match expr {
+        Expr::Ident { name, .. } => Some(name),
+        _ => None,
+    }
+}
+
+fn assigned_column_name(kind: IndexKind, args: &[Arg]) -> Option<&str> {
+    match kind {
+        IndexKind::Dollar => args.first().and_then(|arg| arg.name.as_deref()),
+        IndexKind::Double => match args.first().map(|arg| &arg.value) {
+            Some(Expr::String(name, _)) => Some(name.as_str()),
+            _ => None,
+        },
+        IndexKind::Single => None,
+    }
+}
+
+fn type_with_assigned_column(mut base: RType, name: &str, value: RType) -> RType {
+    let mut schema = base
+        .columns
+        .as_ref()
+        .map(|schema| (**schema).clone())
+        .unwrap_or_default();
+    if let Some((_, existing)) = schema.columns.iter_mut().find(|(col, _)| col == name) {
+        *existing = value;
+    } else {
+        schema.columns.push((name.to_string(), value));
+    }
+    if matches!(base.mode, Mode::Null) {
+        base.mode = Mode::List;
+    }
+    base.with_columns(Arc::new(schema))
+}
 
 /// Returns `Some((generic, class))` if `name` matches the S3 method
 /// naming convention `<generic>.<class>` and `<generic>` is in the
@@ -271,6 +359,7 @@ impl HigherOrderFunc {
 #[derive(Debug, Clone, Default)]
 pub struct Scope {
     pub bindings: HashMap<String, RType>,
+    pub data_mask_unknown: bool,
 }
 
 impl Scope {
@@ -280,6 +369,11 @@ impl Scope {
 
     pub fn insert(&mut self, name: impl Into<String>, t: RType) {
         self.bindings.insert(name.into(), t);
+    }
+
+    pub fn with_unknown_data_mask(mut self) -> Self {
+        self.data_mask_unknown = true;
+        self
     }
 }
 
@@ -644,17 +738,8 @@ impl Checker {
             // And under loaded packages, stripped name (a qualified call
             // to a package we have signatures for but where the function
             // lives under a different name is unlikely, but be thorough).
-            for pk in [
-                "dplyr",
-                "purrr",
-                "mirai",
-                "brms",
-                "posterior",
-                "loo",
-                "bayesplot",
-                "cmdstanr",
-            ] {
-                if !self.loaded.contains(pk) {
+            for pk in PACKAGE_SIGNATURE_ORDER {
+                if !self.loaded.contains(*pk) {
                     continue;
                 }
                 if let Some(t) = load_package(pk) {
@@ -676,17 +761,8 @@ impl Checker {
         // disjoint across these packages, so masking rarely bites).
         // `loaded` is a HashSet (unordered) so we walk a deterministic
         // known-packages list and check membership.
-        for pkg in [
-            "dplyr",
-            "purrr",
-            "mirai",
-            "brms",
-            "posterior",
-            "loo",
-            "bayesplot",
-            "cmdstanr",
-        ] {
-            if !self.loaded.contains(pkg) {
+        for pkg in PACKAGE_SIGNATURE_ORDER {
+            if !self.loaded.contains(*pkg) {
                 continue;
             }
             if let Some(t) = load_package(pkg) {
@@ -717,17 +793,8 @@ impl Checker {
             return true;
         }
         // Loaded packages (fixed priority order; see resolve_typeshed_sig).
-        for pkg in [
-            "dplyr",
-            "purrr",
-            "mirai",
-            "brms",
-            "posterior",
-            "loo",
-            "bayesplot",
-            "cmdstanr",
-        ] {
-            if !self.loaded.contains(pkg) {
+        for pkg in PACKAGE_SIGNATURE_ORDER {
+            if !self.loaded.contains(*pkg) {
                 continue;
             }
             if let Some(t) = load_package(pkg) {
@@ -787,6 +854,7 @@ impl Checker {
     }
 
     fn collect_fns_stmt(&mut self, s: &Stmt) {
+        self.collect_declared_globals_stmt(s);
         match s {
             Stmt::Assign { target, value, .. } => {
                 // Record every identifier-bound top-level assignment in
@@ -871,6 +939,109 @@ impl Checker {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn collect_declared_globals_stmt(&mut self, s: &Stmt) {
+        match s {
+            Stmt::Assign { target, value, .. } => {
+                self.collect_declared_globals_expr(target);
+                self.collect_declared_globals_expr(value);
+            }
+            Stmt::Expr(e) => self.collect_declared_globals_expr(e),
+            Stmt::If {
+                cond, then, else_, ..
+            } => {
+                self.collect_declared_globals_expr(cond);
+                for s in then {
+                    self.collect_declared_globals_stmt(s);
+                }
+                if let Some(else_) = else_ {
+                    for s in else_ {
+                        self.collect_declared_globals_stmt(s);
+                    }
+                }
+            }
+            Stmt::For { iter, body, .. }
+            | Stmt::While {
+                cond: iter, body, ..
+            } => {
+                self.collect_declared_globals_expr(iter);
+                for s in body {
+                    self.collect_declared_globals_stmt(s);
+                }
+            }
+            Stmt::FunctionDef { body, .. } => {
+                for s in body {
+                    self.collect_declared_globals_stmt(s);
+                }
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(value) = value {
+                    self.collect_declared_globals_expr(value);
+                }
+            }
+        }
+    }
+
+    fn collect_declared_globals_expr(&mut self, e: &Expr) {
+        match e {
+            Expr::Call { func, args, .. } => {
+                if let Expr::Ident { name, .. } = func.as_ref() {
+                    let bare = name.rsplit_once("::").map(|(_, n)| n).unwrap_or(name);
+                    if bare == "globalVariables" {
+                        if let Some(first) = args.first() {
+                            for declared in string_literals(&first.value) {
+                                Arc::make_mut(&mut self.fn_table)
+                                    .known_vars
+                                    .insert(declared);
+                            }
+                        }
+                    }
+                }
+                self.collect_declared_globals_expr(func);
+                for arg in args {
+                    self.collect_declared_globals_expr(&arg.value);
+                }
+            }
+            Expr::BinOp { lhs, rhs, .. } => {
+                self.collect_declared_globals_expr(lhs);
+                self.collect_declared_globals_expr(rhs);
+            }
+            Expr::UnaryOp { expr, .. } => self.collect_declared_globals_expr(expr),
+            Expr::Index { base, args, .. } => {
+                self.collect_declared_globals_expr(base);
+                for arg in args {
+                    self.collect_declared_globals_expr(&arg.value);
+                }
+            }
+            Expr::Function { body, .. } => {
+                for s in body {
+                    self.collect_declared_globals_stmt(s);
+                }
+            }
+            Expr::Block { body, .. } => {
+                for s in body {
+                    self.collect_declared_globals_stmt(s);
+                }
+            }
+            Expr::If {
+                cond, then, else_, ..
+            } => {
+                self.collect_declared_globals_expr(cond);
+                self.collect_declared_globals_expr(then);
+                if let Some(else_) = else_ {
+                    self.collect_declared_globals_expr(else_);
+                }
+            }
+            Expr::Logical(_, _)
+            | Expr::Integer(_, _)
+            | Expr::Double(_, _)
+            | Expr::String(_, _)
+            | Expr::Null(_)
+            | Expr::Na(_, _)
+            | Expr::Ident { .. }
+            | Expr::Unknown(_) => {}
         }
     }
 
@@ -1130,10 +1301,11 @@ impl Checker {
                     }
                 }
                 let narrowing = extract_type_narrowing(cond);
-                let (then_scope, else_scope, narrowed) = apply_narrowing(scope, &narrowing);
+                let has_else = else_.is_some();
+                let (then_scope, else_scope, narrowed) =
+                    apply_narrowing(scope, &narrowing, has_else);
                 let mut then_scope = then_scope;
                 let mut else_scope = else_scope;
-                let has_else = else_.is_some();
                 for s in then {
                     self.walk_stmt(s, &mut then_scope, returns.as_deref_mut());
                 }
@@ -1238,7 +1410,11 @@ impl Checker {
             // reassignment to the same type is a no-op anyway; a real
             // reassignment to a narrowed name is rare and the cost is a
             // missed diagnostic (false negative), never a false positive.
-            if narrowed.contains(name) {
+            if narrowed.contains(name)
+                && scope
+                    .get(name)
+                    .is_some_and(|existing| should_skip_narrowed_merge(existing, t))
+            {
                 continue;
             }
             match scope.get(name) {
@@ -1252,7 +1428,11 @@ impl Checker {
             for (name, t) in &else_scope.bindings {
                 // See the then-branch loop: a pure narrowing refinement
                 // is branch-local.
-                if narrowed.contains(name) {
+                if narrowed.contains(name)
+                    && scope
+                        .get(name)
+                        .is_some_and(|existing| should_skip_narrowed_merge(existing, t))
+                {
                     continue;
                 }
                 match scope.get(name) {
@@ -1464,9 +1644,120 @@ impl Checker {
             Expr::Ident { name, .. } => {
                 scope.insert(name.clone(), vt);
             }
+            Expr::Index {
+                base,
+                kind,
+                args,
+                span,
+            } => {
+                if self.assign_index_target(base, *kind, args, vt, *span, scope) {
+                    return;
+                }
+                // Other indexed assignments `x[i] <- v` etc. are too
+                // dynamic for v1; still infer the target so diagnostics on
+                // the base expression fire.
+                self.infer(target, scope);
+            }
             _ => {
                 // Indexed assignment `x[i] <- v` etc. is too dynamic for v1.
                 self.infer(target, scope);
+            }
+        }
+    }
+
+    fn assign_index_target(
+        &mut self,
+        base: &Expr,
+        kind: IndexKind,
+        args: &[Arg],
+        vt: RType,
+        span: Span,
+        scope: &mut Scope,
+    ) -> bool {
+        let Expr::Ident {
+            name: base_name, ..
+        } = base
+        else {
+            return false;
+        };
+        let Some(col) = assigned_column_name(kind, args) else {
+            return false;
+        };
+        let Some(base_t) = scope.get(base_name).cloned() else {
+            let _ = self.infer(base, scope);
+            return true;
+        };
+        if matches!(
+            base_t.mode,
+            Mode::Integer
+                | Mode::Double
+                | Mode::Character
+                | Mode::Logical
+                | Mode::Complex
+                | Mode::Raw
+        ) && base_t.columns.is_none()
+        {
+            self.emit(
+                Severity::Error,
+                span,
+                "RY061",
+                format!(
+                    "$ operator is invalid for atomic vectors of mode `{}`",
+                    base_t.mode
+                ),
+            );
+            return true;
+        }
+        scope.insert(
+            base_name.clone(),
+            type_with_assigned_column(base_t, col, vt),
+        );
+        true
+    }
+
+    fn infer_block_expr(&mut self, body: &[Stmt], scope: &mut Scope) -> RType {
+        let Some((last, prefix)) = body.split_last() else {
+            return RType::new(Mode::Null, Length::Zero);
+        };
+        for s in prefix {
+            self.walk_stmt(s, scope, None);
+        }
+        self.infer_stmt_value(last, scope)
+    }
+
+    fn infer_stmt_value(&mut self, stmt: &Stmt, scope: &mut Scope) -> RType {
+        match stmt {
+            Stmt::Assign { target, value, .. } => {
+                let vt = self.infer(value, scope);
+                self.assign_target(target, vt.clone(), scope);
+                vt
+            }
+            Stmt::Expr(e) => self.infer(e, scope),
+            Stmt::Return { value, .. } => value
+                .as_ref()
+                .map(|v| self.infer(v, scope))
+                .unwrap_or_else(|| RType::new(Mode::Null, Length::Zero)),
+            Stmt::If {
+                cond,
+                then,
+                else_,
+                span,
+            } => {
+                let then_expr = Expr::Block {
+                    body: then.clone(),
+                    span: *span,
+                };
+                let else_expr = else_.as_ref().map(|body| {
+                    Box::new(Expr::Block {
+                        body: body.clone(),
+                        span: *span,
+                    })
+                });
+                self.infer_if_expr(cond, &then_expr, &else_expr, *span, scope)
+            }
+            Stmt::For { .. } | Stmt::While { .. } | Stmt::FunctionDef { .. } => {
+                self.walk_stmt(stmt, scope, None);
+                RType::unknown()
             }
         }
     }
@@ -1483,6 +1774,9 @@ impl Checker {
             Expr::Ident { name, span } => match scope.get(name) {
                 Some(t) => t.clone(),
                 None => {
+                    if let Some(t) = ambient_global_type(name) {
+                        return t;
+                    }
                     // Built-in dataset? (mtcars, iris, ...) Resolve before
                     // flagging the identifier as unbound.
                     if let Some(jt) = self.typeshed.datasets.get(name) {
@@ -1549,6 +1843,9 @@ impl Checker {
                     if name.starts_with('`') || name.contains('%') || is_operator_symbol(name) {
                         return RType::unknown();
                     }
+                    if scope.data_mask_unknown {
+                        return RType::unknown();
+                    }
                     self.emit(
                         Severity::Warning,
                         *span,
@@ -1606,6 +1903,9 @@ impl Checker {
                             return RType::new(Mode::Integer, Length::Known(len));
                         }
                     }
+                }
+                if matches!(op, BinOpKind::AndAnd | BinOpKind::OrOr) {
+                    return self.infer_short_circuit_binop(*op, lhs, rhs, scope, *span);
                 }
                 let lt = self.infer(lhs, scope);
                 let rt = self.infer(rhs, scope);
@@ -1685,6 +1985,7 @@ impl Checker {
                 // resolves the same way as one inside a return slot.
                 self.function_value_from_literal(params, body, scope, 0)
             }
+            Expr::Block { body, .. } => self.infer_block_expr(body, scope),
             Expr::If {
                 cond,
                 then,
@@ -1735,6 +2036,7 @@ impl Checker {
             // consumes lt/rt by value.
             let lt_mode = lt.mode;
             let rt_mode = rt.mode;
+            let compares_factor = lt.class.contains("factor") || rt.class.contains("factor");
             if let Some(t) = lt.compare(rt) {
                 // RY033: warn about comparing a character value with a
                 // non-character one. R coerces by comparing byte values,
@@ -1742,6 +2044,9 @@ impl Checker {
                 if matches!(lt_mode, Mode::Character) != matches!(rt_mode, Mode::Character)
                     && !matches!(lt_mode, Mode::Opaque)
                     && !matches!(rt_mode, Mode::Opaque)
+                    && !matches!(lt_mode, Mode::Union)
+                    && !matches!(rt_mode, Mode::Union)
+                    && !compares_factor
                 {
                     self.emit(
                         Severity::Warning,
@@ -1825,6 +2130,31 @@ impl Checker {
             ),
         );
         RType::unknown()
+    }
+
+    fn infer_short_circuit_binop(
+        &mut self,
+        op: BinOpKind,
+        lhs: &Expr,
+        rhs: &Expr,
+        scope: &mut Scope,
+        span: Span,
+    ) -> RType {
+        let lt = self.infer(lhs, scope);
+        let narrowing = extract_type_narrowing(lhs);
+        let (then_scope, else_scope, _) = apply_narrowing(scope, &narrowing, true);
+        let rt = match op {
+            BinOpKind::AndAnd => {
+                let mut rhs_scope = then_scope;
+                self.infer(rhs, &mut rhs_scope)
+            }
+            BinOpKind::OrOr => {
+                let mut rhs_scope = else_scope;
+                self.infer(rhs, &mut rhs_scope)
+            }
+            _ => self.infer(rhs, scope),
+        };
+        self.infer_binop(op, lt, rt, span)
     }
 
     /// Desugar `lhs %>% rhs` (and `lhs |> rhs`, `lhs %<>% rhs`) into a
@@ -1982,7 +2312,8 @@ impl Checker {
         // expression-position assignment is rare and merging here would
         // require plumbing owned branch scopes back to the caller.
         let narrowing = extract_type_narrowing(cond);
-        let (then_scope, else_scope, _narrowed) = apply_narrowing(scope, &narrowing);
+        let (then_scope, else_scope, _narrowed) =
+            apply_narrowing(scope, &narrowing, else_.is_some());
         let then_t = self.infer(then, &mut then_scope.clone());
         let else_t = match else_ {
             Some(e) => self.infer(e, &mut else_scope.clone()),
@@ -2234,10 +2565,23 @@ impl Checker {
             return t;
         }
 
+        if let Some(t) = self.infer_tidyr_pivot_call(&name, &lookup_name, args, scope) {
+            return t;
+        }
+
         // Infer arg types.
         let mut arg_types: Vec<RType> = Vec::with_capacity(args.len());
         for a in args {
             arg_types.push(self.infer(&a.value, scope));
+        }
+        if is_dplyr_join_call(&name, &lookup_name, &self.loaded) {
+            return self.infer_dplyr_join(&arg_types);
+        }
+        if let Some(target) = assertion_call_target(&lookup_name) {
+            if let Some(Expr::Ident { name: var, .. }) = args.first().map(|a| &a.value) {
+                scope.insert(var.clone(), target);
+            }
+            return RType::new(Mode::Null, Length::Zero);
         }
 
         // Indirect call through a closure value: if the name is bound
@@ -2249,53 +2593,54 @@ impl Checker {
         // shadows any same-named top-level function (matching R's
         // lexical scoping).
         //
-        // For namespace-qualified calls we look up the stripped name:
-        // `pkg::f()` resolves against a local `f` binding the same way
-        // `f()` does (the namespace just selects the binding, and we
-        // don't model per-package environments).
-        if let Some(t) = scope.get(&lookup_name) {
-            if matches!(t.mode, Mode::Function) {
-                if let Some(sig) = &t.fn_sig {
-                    return (*sig.return_type).clone();
-                }
-                // Bound function value without an inferred signature:
-                // opaque. We do NOT fall through to the FnTable path,
-                // because a scope-local binding shadows top-level
-                // definitions and we have no way to refine the local
-                // one. Returning opaque here is the conservative
-                // choice (no false positives, possible false negatives).
-                return RType::unknown();
-            } else if !matches!(t.mode, Mode::Opaque) {
-                // R's function/value namespace separation: when a name is
-                // CALLED, R searches the environment chain for a *function*
-                // named `name` and skips non-function bindings. So a local
-                // non-function binding (e.g. `lengths <- lengths(x)`) does
-                // NOT shadow a same-named function in the typeshed or
-                // FnTable at a call site. If such a function exists, fall
-                // through to the resolution below instead of firing RY070.
-                // Only when no function of that name exists anywhere does
-                // calling the non-function value warrant RY070.
-                let has_function_elsewhere = self.has_function_anywhere(&name);
-                if !has_function_elsewhere {
-                    // RY070: a non-function value is being called as if it
-                    // were a function. R errors at runtime with
-                    // "could not find function". Args have already been
-                    // inferred above, so we just emit and return opaque
-                    // (re-inferring would double-emit arg diagnostics).
-                    self.emit(
-                        Severity::Error,
-                        span,
-                        "RY070",
-                        format!("`{}` is `{}`, not a function; cannot call it", name, t.mode),
-                    );
+        // Namespace-qualified calls bypass local lexical bindings:
+        // `pkg::f()` selects `f` from `pkg`, so a local argument named
+        // `f` must not make the qualified call look like a non-function.
+        if !name.contains("::") {
+            if let Some(t) = scope.get(&lookup_name) {
+                if matches!(t.mode, Mode::Function) {
+                    if let Some(sig) = &t.fn_sig {
+                        return (*sig.return_type).clone();
+                    }
+                    // Bound function value without an inferred signature:
+                    // opaque. We do NOT fall through to the FnTable path,
+                    // because a scope-local binding shadows top-level
+                    // definitions and we have no way to refine the local
+                    // one. Returning opaque here is the conservative
+                    // choice (no false positives, possible false negatives).
                     return RType::unknown();
+                } else if !matches!(t.mode, Mode::Opaque) {
+                    // R's function/value namespace separation: when a name is
+                    // CALLED, R searches the environment chain for a *function*
+                    // named `name` and skips non-function bindings. So a local
+                    // non-function binding (e.g. `lengths <- lengths(x)`) does
+                    // NOT shadow a same-named function in the typeshed or
+                    // FnTable at a call site. If such a function exists, fall
+                    // through to the resolution below instead of firing RY070.
+                    // Only when no function of that name exists anywhere does
+                    // calling the non-function value warrant RY070.
+                    let has_function_elsewhere = self.has_function_anywhere(&name);
+                    if !has_function_elsewhere {
+                        // RY070: a non-function value is being called as if it
+                        // were a function. R errors at runtime with
+                        // "could not find function". Args have already been
+                        // inferred above, so we just emit and return opaque
+                        // (re-inferring would double-emit arg diagnostics).
+                        self.emit(
+                            Severity::Error,
+                            span,
+                            "RY070",
+                            format!("`{}` is `{}`, not a function; cannot call it", name, t.mode),
+                        );
+                        return RType::unknown();
+                    }
+                    // A function exists elsewhere; fall through to resolve it
+                    // (the local non-function binding is ignored at the call
+                    // site, matching R).
                 }
-                // A function exists elsewhere; fall through to resolve it
-                // (the local non-function binding is ignored at the call
-                // site, matching R).
+                // Opaque: fall through; the name might still resolve via
+                // the FnTable or typeshed below.
             }
-            // Opaque: fall through; the name might still resolve via
-            // the FnTable or typeshed below.
         }
 
         // Built-in: `c(...)` concatenates and produces the common mode.
@@ -2368,13 +2713,16 @@ impl Checker {
             return self.return_slots.get(f.return_slot);
         }
 
-        // Literal-arg length inference for `rep`, `seq`, `seq.int`.
+        // Literal-arg inference for `vector`, `rep`, `seq`, `seq.int`.
         // These have typeshed entries that conservatively return
         // `Length::Unknown`; when the relevant arguments are literals
         // we can pin the result length exactly. We place this AFTER the
         // FnTable lookup so a user-defined `rep`/`seq` still wins, and
         // BEFORE the typeshed so the precise length is preferred over
         // the conservative `x_times` / `unknown` spec.
+        if name == "vector" {
+            return self.infer_vector(args);
+        }
         if name == "rep" {
             return self.infer_rep(args, &arg_types, span);
         }
@@ -2530,18 +2878,20 @@ impl Checker {
             return None;
         }
 
-        let augmented = match df_type.columns {
-            Some(ref schema) => self.scope_with_columns(scope, schema),
-            None => scope.clone(),
-        };
+        if matches!(verb, NseVerb::With) && df_type.columns.is_none() {
+            return Some(RType::unknown());
+        }
+
+        let augmented = self.dplyr_data_mask_scope(scope, &df_type);
         let result = match verb {
             NseVerb::Subset => self.infer_nse_subset(args, df_type, &augmented),
             NseVerb::With => self.infer_nse_with(args, df_type, &augmented),
             NseVerb::Within => self.infer_nse_within(args, df_type, &augmented),
             NseVerb::Transform => self.infer_nse_transform(args, df_type, &augmented),
-            NseVerb::Filter | NseVerb::Arrange | NseVerb::GroupBy | NseVerb::Select => {
+            NseVerb::Filter | NseVerb::Arrange | NseVerb::GroupBy => {
                 self.infer_nse_dplyr_simple(args, df_type, &augmented)
             }
+            NseVerb::Select => self.infer_nse_dplyr_select(args, df_type, &augmented),
             NseVerb::Mutate => self.infer_nse_dplyr_mutate(args, df_type, &augmented),
             NseVerb::Summarise => self.infer_nse_dplyr_summarise(args, df_type, &augmented),
         };
@@ -2645,6 +2995,17 @@ impl Checker {
         df_type
     }
 
+    fn infer_nse_dplyr_select(&mut self, args: &[Arg], df_type: RType, augmented: &Scope) -> RType {
+        let mut local = augmented.clone();
+        for (i, a) in args.iter().enumerate() {
+            if i == 0 {
+                continue;
+            }
+            let _ = self.infer_tidyselect_expr(&a.value, &mut local);
+        }
+        df_type
+    }
+
     /// `dplyr::mutate(.data, new_col = expr, ...)`: adds or modifies
     /// columns. Each expression is inferred against the augmented scope
     /// so existing column references (e.g. `mpg * 0.425`) resolve. The
@@ -2653,13 +3014,20 @@ impl Checker {
     /// the conservative approach used for `transform`.
     fn infer_nse_dplyr_mutate(&mut self, args: &[Arg], df_type: RType, augmented: &Scope) -> RType {
         let mut local = augmented.clone();
+        let mut result = df_type;
         for (i, a) in args.iter().enumerate() {
             if i == 0 {
                 continue;
             }
-            let _ = self.infer(&a.value, &mut local);
+            let t = self.infer(&a.value, &mut local);
+            if let Some(name) = a.name.as_deref() {
+                if !is_dplyr_control_arg(name) {
+                    local.insert(name.to_string(), t.clone());
+                    result = type_with_assigned_column(result, name, t);
+                }
+            }
         }
-        df_type
+        result
     }
 
     /// `dplyr::summarise(.data, ...)`: collapses rows into a single
@@ -2678,13 +3046,113 @@ impl Checker {
     ) -> RType {
         let _ = df_type;
         let mut local = augmented.clone();
+        let mut result =
+            RType::new(Mode::List, Length::One).with_class(ClassVector::single("data.frame"));
         for (i, a) in args.iter().enumerate() {
             if i == 0 {
                 continue;
             }
-            let _ = self.infer(&a.value, &mut local);
+            let t = self.infer(&a.value, &mut local);
+            if let Some(name) = a.name.as_deref() {
+                if !is_dplyr_control_arg(name) {
+                    local.insert(name.to_string(), t.clone());
+                    result = type_with_assigned_column(result, name, t);
+                }
+            }
         }
-        RType::new(Mode::List, Length::One).with_class(ClassVector::single("data.frame"))
+        result
+    }
+
+    fn infer_tidyr_pivot_call(
+        &mut self,
+        name: &str,
+        lookup_name: &str,
+        args: &[Arg],
+        scope: &mut Scope,
+    ) -> Option<RType> {
+        if !matches!(lookup_name, "pivot_longer" | "pivot_wider") {
+            return None;
+        }
+        if !name.starts_with("tidyr::")
+            && !self.loaded.contains("tidyr")
+            && !self.loaded.contains("tidyverse")
+        {
+            return None;
+        }
+
+        let df_arg = args.first()?;
+        let df_type = self.infer(&df_arg.value, scope);
+        let augmented = self.dplyr_data_mask_scope(scope, &df_type);
+        let mut local = augmented;
+        for (i, a) in args.iter().enumerate() {
+            if i == 0 {
+                continue;
+            }
+            if a.name
+                .as_deref()
+                .is_some_and(|name| is_tidyr_tidyselect_arg(lookup_name, name))
+            {
+                let _ = self.infer_tidyselect_expr(&a.value, &mut local);
+            } else {
+                let _ = self.infer(&a.value, &mut local);
+            }
+        }
+
+        Some(RType::new(Mode::List, Length::Unknown).with_class(ClassVector::single("data.frame")))
+    }
+
+    fn infer_dplyr_join(&self, arg_types: &[RType]) -> RType {
+        let x_type = arg_types.first().cloned().unwrap_or_else(RType::unknown);
+        let y_type = arg_types.get(1).cloned().unwrap_or_else(RType::unknown);
+        let mut result =
+            RType::new(Mode::List, Length::Unknown).with_class(ClassVector::single("data.frame"));
+
+        let mut columns = Vec::new();
+        let mut complete = true;
+        if let Some(schema) = &x_type.columns {
+            columns.extend(schema.columns.iter().cloned());
+            complete &= schema.complete;
+        } else {
+            complete = false;
+        }
+        if let Some(schema) = &y_type.columns {
+            for (name, ty) in &schema.columns {
+                if !columns.iter().any(|(existing, _)| existing == name) {
+                    columns.push((name.clone(), ty.clone()));
+                }
+            }
+            complete &= schema.complete;
+        } else {
+            complete = false;
+        }
+
+        if !columns.is_empty() {
+            result = result.with_columns(Arc::new(ColumnSchema { columns, complete }));
+        }
+        result
+    }
+
+    fn infer_tidyselect_expr(&mut self, expr: &Expr, scope: &mut Scope) -> RType {
+        match expr {
+            Expr::String(_, _) => RType::scalar(Mode::Character),
+            Expr::Ident { name, .. } => scope.get(name).cloned().unwrap_or_else(RType::unknown),
+            Expr::UnaryOp {
+                op: UnaryOpKind::Neg,
+                expr,
+                ..
+            } if is_simple_tidyselect_atom(expr) => RType::unknown(),
+            Expr::Call { func, args, .. }
+                if ident_name(func).is_some_and(|name| {
+                    name.rsplit_once("::").map(|(_, n)| n).unwrap_or(name) == "c"
+                }) =>
+            {
+                for a in args {
+                    let _ = self.infer_tidyselect_expr(&a.value, scope);
+                }
+                RType::unknown()
+            }
+            _ => self.infer(expr, scope),
+        }
     }
 
     /// Build an augmented scope by cloning `base_scope` and inserting a
@@ -2700,6 +3168,22 @@ impl Checker {
             s.insert(name.clone(), t.clone());
         }
         s
+    }
+
+    fn dplyr_data_mask_scope(&self, base_scope: &Scope, df_type: &RType) -> Scope {
+        let mut scope = match &df_type.columns {
+            Some(schema) => self.scope_with_columns(base_scope, schema),
+            None => base_scope.clone(),
+        };
+        let schema_is_complete = df_type
+            .columns
+            .as_ref()
+            .map(|schema| schema.complete)
+            .unwrap_or(false);
+        if df_type.class.contains("data.frame") && !schema_is_complete {
+            scope = scope.with_unknown_data_mask();
+        }
+        scope
     }
 
     /// Handle R's higher-order built-ins (`lapply`, `sapply`, `vapply`,
@@ -2887,6 +3371,7 @@ impl Checker {
                         columns: (0..n)
                             .map(|i| (format!("[[{}]]", i + 1), element_type.clone()))
                             .collect(),
+                        complete: matches!(x_type.length, Length::Known(_)),
                     };
                     result = result.with_columns(Arc::new(schema));
                 }
@@ -2909,6 +3394,7 @@ impl Checker {
         if !matches!(element_type.mode, Mode::Opaque) {
             let schema = ColumnSchema {
                 columns: std::iter::once(("[[1]]".to_string(), element_type)).collect(),
+                complete: false,
             };
             result = result.with_columns(Arc::new(schema));
         }
@@ -2990,6 +3476,7 @@ impl Checker {
                 columns: (0..n)
                     .map(|i| (format!("[[{}]]", i + 1), element_type.clone()))
                     .collect(),
+                complete: matches!(length, Length::Known(_)),
             };
             result = result.with_columns(Arc::new(schema));
         }
@@ -3016,10 +3503,10 @@ impl Checker {
                 RType::new(t.mode, x_type.length)
             }
             // Could not infer the callback, or it returns non-scalar /
-            // list values: conservatively report a list (the
-            // unsimplified form). This avoids false positives while
-            // still giving a useful mode upper bound.
-            _ => RType::new(Mode::List, x_type.length),
+            // list values. `sapply()` may simplify at runtime, so
+            // opaque is safer than reporting a definite list and then
+            // firing arithmetic false positives downstream.
+            _ => RType::unknown(),
         }
     }
 
@@ -3428,6 +3915,17 @@ impl Checker {
         {
             return Some(self.apply_sig(generic, &sig, arg_types, &[], span));
         }
+        for pkg in PACKAGE_SIGNATURE_ORDER {
+            if let Some(sig) = load_package(pkg)
+                .and_then(|t| {
+                    t.s3_methods
+                        .get(&(generic.to_string(), first_class.to_string()))
+                })
+                .cloned()
+            {
+                return Some(self.apply_sig(generic, &sig, arg_types, &[], span));
+            }
+        }
         // 3. No specific method. Only emit RY050 if we're confident the
         // generic uses S3 dispatch, which we approximate by the
         // existence of a `default` method anywhere in the program or
@@ -3608,6 +4106,50 @@ impl Checker {
     /// positional ones; if `times`/`each` is supplied but isn't a
     /// literal, the length is Unknown (we can't know the runtime
     /// value, unlike the "not supplied" case which defaults to 1).
+    fn infer_vector(&self, args: &[Arg]) -> RType {
+        let mode_expr = args
+            .iter()
+            .find(|a| a.name.as_deref() == Some("mode"))
+            .or_else(|| args.iter().find(|a| a.name.is_none()))
+            .map(|a| &a.value);
+        let mode = match mode_expr {
+            Some(Expr::String(mode, _)) => match mode.as_str() {
+                "logical" => Mode::Logical,
+                "integer" => Mode::Integer,
+                "numeric" | "double" => Mode::Double,
+                "complex" => Mode::Complex,
+                "character" => Mode::Character,
+                "raw" => Mode::Raw,
+                "list" | "expression" => Mode::List,
+                _ => Mode::Opaque,
+            },
+            None => Mode::Logical,
+            _ => Mode::Opaque,
+        };
+
+        let length_expr = args
+            .iter()
+            .find(|a| a.name.as_deref() == Some("length"))
+            .or_else(|| {
+                let mut positional = args.iter().filter(|a| a.name.is_none());
+                let _ = positional.next();
+                positional.next()
+            })
+            .map(|a| &a.value);
+        let length = length_expr
+            .and_then(extract_literal_int)
+            .map(|n| {
+                if n <= 0 {
+                    Length::Zero
+                } else {
+                    Length::Known(n as usize)
+                }
+            })
+            .unwrap_or(Length::Unknown);
+
+        RType::new(mode, length)
+    }
+
     fn infer_rep(&self, args: &[Arg], arg_types: &[RType], _span: Span) -> RType {
         // Helper: find the index in `args` of a named or positional
         // argument. Named args win over positional. The `pos` index
@@ -3916,7 +4458,23 @@ impl Checker {
                     _ => Length::Unknown,
                 };
                 let _ = name;
-                RType::new(mode, length)
+                let mut result = RType::new(mode, length);
+                if !c.class.is_empty() {
+                    let refs: Vec<&str> = c.class.iter().map(String::as_str).collect();
+                    result = result.with_class(ClassVector::from_slice(&refs));
+                }
+                if !c.columns.is_empty() {
+                    let cols: Vec<(String, RType)> = c
+                        .columns
+                        .iter()
+                        .map(|(name, child)| (name.clone(), json_rtype_to_rtype_shallow(child)))
+                        .collect();
+                    result = result.with_columns(Arc::new(ColumnSchema {
+                        columns: cols,
+                        complete: true,
+                    }));
+                }
+                result
             }
         }
     }
@@ -3990,12 +4548,13 @@ impl Checker {
                         // In R, `list(a=1)$missing` returns NULL (no
                         // error); only data frames make a missing `$`
                         // name a hard error worth flagging. Mirror the `[[`-with-string guard below.
-                        if bt.class.contains("data.frame") {
+                        if bt.class.contains("data.frame") && schema.complete {
                             self.emit_undefined_column(name, schema, span);
                             // Fall through to the conservative default so
                             // downstream code still has *a* type to work
                             // with after the diagnostic.
-                        } else {
+                        } else if matches!(bt.mode, Mode::List) && bt.class == ClassVector::empty()
+                        {
                             // Plain list `$` miss yields NULL in R.
                             return RType::new(Mode::Null, Length::Zero);
                         }
@@ -4030,7 +4589,7 @@ impl Checker {
                         // Only emit RY060 for data frames, not plain lists.
                         // Lists created by lapply etc. have internal
                         // [[N]] schemas; string access is dynamic.
-                        if bt.class.contains("data.frame") {
+                        if bt.class.contains("data.frame") && schema.complete {
                             self.emit_undefined_column(name, schema, span);
                         }
                     }
@@ -4073,7 +4632,17 @@ impl Checker {
                 if let Some(a) = args.first() {
                     self.infer(&a.value, scope);
                 }
-                if matches!(bt.mode, Mode::Union) {
+                if let Some(schema) = &bt.columns {
+                    if let Some(common) = schema.homogeneous_element_type() {
+                        if !bt.class.contains("data.frame") || schema.complete {
+                            return common;
+                        }
+                    }
+                }
+                if matches!(
+                    bt.mode,
+                    Mode::List | Mode::Opaque | Mode::Function | Mode::Union
+                ) {
                     RType::unknown()
                 } else {
                     RType::new(bt.mode, Length::One)
@@ -4082,10 +4651,29 @@ impl Checker {
             IndexKind::Single => {
                 // Single-bracket subsetting semantics are complex
                 // (column slice vs row slice depends on commas and
-                // drops). For v1 we infer each arg for diagnostics and
-                // return the base type (matches existing behavior).
+                // drops). For atomic vectors with one scalar index,
+                // however, the result is a scalar of the same mode.
+                let scalar_atomic_index = args.len() == 1
+                    && args.first().is_some_and(|a| {
+                        matches!(a.value, Expr::Integer(_, _) | Expr::Double(_, _))
+                    })
+                    && matches!(
+                        bt.mode,
+                        Mode::Integer
+                            | Mode::Double
+                            | Mode::Character
+                            | Mode::Logical
+                            | Mode::Complex
+                            | Mode::Raw
+                    );
                 for a in args {
                     self.infer(&a.value, scope);
+                }
+                if scalar_atomic_index {
+                    return RType {
+                        length: Length::One,
+                        ..bt
+                    };
                 }
                 bt
             }
@@ -4198,6 +4786,7 @@ fn span_of(e: &Expr) -> Span {
         Expr::UnaryOp { span, .. } => *span,
         Expr::Index { span, .. } => *span,
         Expr::Function { span, .. } => *span,
+        Expr::Block { span, .. } => *span,
         Expr::If { span, .. } => *span,
         Expr::Unknown(s) => *s,
     }
@@ -4258,6 +4847,7 @@ fn is_pipe_placeholder(e: &Expr) -> bool {
 ///   * base: quote, substitute, bquote (already in typeshed but also
 ///     used as NSE)
 fn is_nse_symbol_fn(name: &str) -> bool {
+    let name = name.rsplit_once("::").map(|(_, n)| n).unwrap_or(name);
     matches!(
         name,
         // ggplot2 NSE
@@ -4269,10 +4859,36 @@ fn is_nse_symbol_fn(name: &str) -> bool {
         // dplyr/tidyselect NSE
         | "tidyselect" | "all_vars" | "peek_vars"
         // Common NSE helpers
-        | "delayedAssign" | "makeActiveBinding"
+        | "quote" | "substitute" | "bquote" | "delayedAssign" | "makeActiveBinding"
         // data.table NSE
         | "setkey" | "setkeyv" | "setindex" | "setindexv"
     )
+}
+
+fn is_dplyr_control_arg(name: &str) -> bool {
+    matches!(
+        name,
+        ".by" | ".groups" | ".keep" | ".before" | ".after" | ".drop"
+    )
+}
+
+fn is_dplyr_join_call(name: &str, lookup_name: &str, loaded: &HashSet<String>) -> bool {
+    matches!(
+        lookup_name,
+        "left_join" | "inner_join" | "right_join" | "full_join"
+    ) && (name.starts_with("dplyr::") || loaded.contains("dplyr") || loaded.contains("tidyverse"))
+}
+
+fn is_tidyr_tidyselect_arg(call: &str, arg: &str) -> bool {
+    match call {
+        "pivot_longer" => matches!(arg, "cols"),
+        "pivot_wider" => matches!(arg, "id_cols" | "names_from" | "values_from"),
+        _ => false,
+    }
+}
+
+fn is_simple_tidyselect_atom(expr: &Expr) -> bool {
+    matches!(expr, Expr::String(_, _) | Expr::Ident { .. })
 }
 
 /// R's foreign-function-interface primitives. Their first argument is a
@@ -4387,7 +5003,7 @@ enum Narrowing {
 /// Recognizes:
 ///   * `is.numeric(x)` / `is.double(x)` / `is.integer(x)` /
 ///     `is.character(x)` / `is.logical(x)` / `is.complex(x)` /
-///     `is.list(x)` / `is.null(x)`
+///     `is.list(x)` / `is.function(x)` / `is.null(x)`
 ///   * `!is.null(x)` (negated form: `then` branch gets non-null)
 ///
 /// For the negated form `!is.null(x)`, we swap: the `then` branch gets
@@ -4462,8 +5078,20 @@ fn predicate_target(name: &str) -> Option<RType> {
         "is.logical" => Some(RType::scalar(Mode::Logical)),
         "is.complex" => Some(RType::scalar(Mode::Complex)),
         "is.list" => Some(RType::scalar(Mode::List)),
+        "is.function" => Some(RType::scalar(Mode::Function)),
         "is.null" => Some(RType::new(Mode::Null, Length::Zero)),
         "is.raw" => Some(RType::scalar(Mode::Raw)),
+        _ => None,
+    }
+}
+
+fn assertion_call_target(name: &str) -> Option<RType> {
+    match name {
+        "assert_character_scalar" => Some(RType::scalar(Mode::Character)),
+        "assert_numeric_scalar" => Some(RType::scalar(Mode::Double)),
+        "assert_logical_scalar" => Some(RType::scalar(Mode::Logical)),
+        "assert_integer_scalar" => Some(RType::scalar(Mode::Integer)),
+        "assert_function" => Some(RType::scalar(Mode::Function)),
         _ => None,
     }
 }
@@ -4503,6 +5131,13 @@ fn narrow_away_from_null(t: &RType) -> Option<RType> {
     }
 }
 
+fn should_skip_narrowed_merge(existing: &RType, branch: &RType) -> bool {
+    if existing.mode == Mode::Null && !matches!(branch.mode, Mode::Null | Mode::Opaque) {
+        return false;
+    }
+    true
+}
+
 /// Apply a narrowing to produce separate scopes for the `then` and
 /// `else_` branches. Returns `(then_scope, else_scope)` where each is
 /// a clone of `base` with the appropriate binding updated.
@@ -4516,7 +5151,11 @@ fn narrow_away_from_null(t: &RType) -> Option<RType> {
 /// scope narrows `var` to `mode`. This handles `!is.null(x)`: the
 /// `then` branch knows `x` is non-null, the `else` branch knows `x`
 /// is null.
-fn apply_narrowing(base: &Scope, narrowing: &Narrowing) -> (Scope, Scope, HashSet<String>) {
+fn apply_narrowing(
+    base: &Scope,
+    narrowing: &Narrowing,
+    has_else: bool,
+) -> (Scope, Scope, HashSet<String>) {
     let (mut then_scope, mut else_scope) = (base.clone(), base.clone());
     // Names refined by narrowing (in either branch). These must NOT be
     // merged back into the parent by `merge_branch_bindings`: a refinement
@@ -4536,6 +5175,11 @@ fn apply_narrowing(base: &Scope, narrowing: &Narrowing) -> (Scope, Scope, HashSe
             if let Some(existing) = then_scope.get(var).cloned() {
                 let should_install = match existing.mode {
                     Mode::Opaque => true,
+                    // A NULL default in a function signature means "the
+                    // caller may provide something else"; a positive type
+                    // predicate proves the branch is in that non-default
+                    // shape.
+                    Mode::Null => target.mode != Mode::Null,
                     Mode::Union => {
                         // Existing union: only narrow if it contains the
                         // predicate's mode (the predicate confirms one
@@ -4566,7 +5210,7 @@ fn apply_narrowing(base: &Scope, narrowing: &Narrowing) -> (Scope, Scope, HashSe
                         }
                     }
                 };
-                if should_install && existing.mode != Mode::Opaque {
+                if should_install && !matches!(existing.mode, Mode::Opaque | Mode::Null) {
                     // The existing union/known already reflects this; no
                     // change needed.
                 } else if should_install {
@@ -4582,7 +5226,7 @@ fn apply_narrowing(base: &Scope, narrowing: &Narrowing) -> (Scope, Scope, HashSe
                 }
             }
             // For is.null, the else branch knows var is NOT null.
-            if target.mode == Mode::Null {
+            if target.mode == Mode::Null && has_else {
                 if let Some(existing) = else_scope.get(var).cloned() {
                     if let Some(n) = narrow_away_from_null(&existing) {
                         else_scope.insert(var.clone(), n);
@@ -4835,7 +5479,10 @@ fn build_named_schema(arg_types: &[RType], args: &[Arg]) -> Option<ColumnSchema>
         };
         columns.push((name, ty));
     }
-    Some(ColumnSchema { columns })
+    Some(ColumnSchema {
+        columns,
+        complete: true,
+    })
 }
 
 /// Convert a typeshed `JsonRType` to the checker's `RType`. Mirrors the
@@ -4889,7 +5536,10 @@ fn json_rtype_to_rtype(jt: &JsonRType) -> RType {
         .iter()
         .map(|(name, child)| (name.clone(), json_rtype_to_rtype_shallow(child)))
         .collect();
-    let schema = Arc::new(ColumnSchema { columns: cols });
+    let schema = Arc::new(ColumnSchema {
+        columns: cols,
+        complete: true,
+    });
     base.with_columns(schema)
 }
 
@@ -5936,8 +6586,8 @@ mod tests {
     fn nse_dplyr_summarise_returns_data_frame() {
         // `summarise(df, m = mean(mpg))` collapses to a single-row data
         // frame. The column reference `mpg` resolves via the augmented
-        // scope. The result is a fresh data frame type whose schema we
-        // do not know (the columns are aggregations, not the inputs).
+        // scope. The result is a fresh data frame type with the named
+        // summary outputs, not the input column schema.
         let diags = check("library(dplyr)\ndf <- mtcars\ns <- summarise(df, m = mean(mpg))\n");
         assert!(
             diags.iter().all(|d| d.code != "RY010"),
@@ -5952,8 +6602,14 @@ mod tests {
             "summarise() must return a data.frame class, got class {:?}",
             s.class
         );
+        let columns = s.columns.as_ref().expect("summarise output schema");
         assert!(
-            s.columns.is_none(),
+            columns.get("m").is_some(),
+            "missing summary column: {:?}",
+            s
+        );
+        assert!(
+            columns.get("mpg").is_none(),
             "summarise() must not expose the input column schema, got {:?}",
             s
         );

@@ -8,3 +8,6 @@ b <- sd(x) + 1.0
 c <- var(x) + 1.0
 d <- IQR(x) + 1.0
 e <- mad(x) + 1.0
+f <- qlnorm(0.5) + 1.0
+g <- na.pass(x)
+h <- list(quantile_fun = qlnorm)

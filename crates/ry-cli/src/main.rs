@@ -669,12 +669,7 @@ fn run_check_once(
         all_diagnostics.extend(diags);
     }
 
-    all_diagnostics.sort_by(|a, b| {
-        a.path
-            .cmp(&b.path)
-            .then(a.span.line.cmp(&b.span.line))
-            .then(a.span.col.cmp(&b.span.col))
-    });
+    sort_and_deduplicate_diagnostics(&mut all_diagnostics);
 
     let rendered = ry_checker::format::render(&all_diagnostics, format, &srcs);
     if !rendered.is_empty() {
@@ -690,6 +685,27 @@ fn run_check_once(
         file_count,
         parse_errors,
     })
+}
+
+fn sort_and_deduplicate_diagnostics(diagnostics: &mut Vec<ry_checker::Diagnostic>) {
+    diagnostics.sort_by(|a, b| {
+        a.path
+            .cmp(&b.path)
+            .then(a.span.line.cmp(&b.span.line))
+            .then(a.span.col.cmp(&b.span.col))
+            .then(a.span.start.cmp(&b.span.start))
+            .then(a.span.end.cmp(&b.span.end))
+            .then(a.code.cmp(b.code))
+            .then(a.severity.as_str().cmp(b.severity.as_str()))
+            .then(a.message.cmp(&b.message))
+    });
+    diagnostics.dedup_by(|a, b| {
+        a.path == b.path
+            && a.span == b.span
+            && a.code == b.code
+            && a.severity == b.severity
+            && a.message == b.message
+    });
 }
 
 fn print_version(format: &str) {
@@ -803,5 +819,47 @@ fn collect_r_files(path: &std::path::Path, out: &mut Vec<PathBuf>) {
         ) {
             out.push(p);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sort_and_deduplicate_diagnostics;
+    use ry_checker::{Diagnostic, Severity};
+    use ry_core::Span;
+
+    fn diag(path: &str, line: usize, col: usize, code: &'static str) -> Diagnostic {
+        Diagnostic::new(
+            Severity::Warning,
+            Span::new(line * 10 + col, line * 10 + col + 1, line, col),
+            path,
+            code,
+            "same message",
+        )
+    }
+
+    #[test]
+    fn diagnostics_are_sorted_and_exact_duplicates_removed() {
+        let mut diagnostics = vec![
+            diag("b.R", 1, 0, "RY010"),
+            diag("a.R", 2, 0, "RY010"),
+            diag("a.R", 2, 0, "RY010"),
+            diag("a.R", 1, 0, "RY010"),
+        ];
+
+        sort_and_deduplicate_diagnostics(&mut diagnostics);
+
+        let positions: Vec<_> = diagnostics
+            .iter()
+            .map(|d| (d.path.as_str(), d.span.line, d.span.col, d.code))
+            .collect();
+        assert_eq!(
+            positions,
+            vec![
+                ("a.R", 1, 0, "RY010"),
+                ("a.R", 2, 0, "RY010"),
+                ("b.R", 1, 0, "RY010"),
+            ]
+        );
     }
 }

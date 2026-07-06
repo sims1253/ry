@@ -623,7 +623,7 @@
     },
     "as.data.frame": {
       "params": ["x"],
-      "return": { "mode": "list", "length": "unknown", "na": true }
+      "return": { "mode": "list", "length": "unknown", "na": true, "class": ["data.frame"] }
     },
     "as.list": {
       "params": ["x"],
@@ -651,6 +651,10 @@
     },
     "na.omit": {
       "params": ["x"],
+      "return": "arg0"
+    },
+    "na.pass": {
+      "params": ["object"],
       "return": "arg0"
     },
     "complete.cases": {
@@ -1134,9 +1138,13 @@
     "rexp": { "params": ["n", "rate"], "return": { "mode": "double", "length": "arg0", "na": false } },
     "rbinom": { "params": ["n", "size", "prob"], "return": { "mode": "double", "length": "arg0", "na": false } },
     "rpois": { "params": ["n", "lambda"], "return": { "mode": "double", "length": "arg0", "na": false } },
+    "rlnorm": { "params": ["n", "meanlog", "sdlog"], "return": { "mode": "double", "length": "arg0", "na": false } },
     "dnorm": { "params": ["x", "mean", "sd"], "return": { "mode": "double", "length": "arg0", "na": false } },
     "pnorm": { "params": ["q", "mean", "sd"], "return": { "mode": "double", "length": "arg0", "na": false } },
     "qnorm": { "params": ["p", "mean", "sd"], "return": { "mode": "double", "length": "arg0", "na": false } },
+    "dlnorm": { "params": ["x", "meanlog", "sdlog"], "return": { "mode": "double", "length": "arg0", "na": false } },
+    "plnorm": { "params": ["q", "meanlog", "sdlog"], "return": { "mode": "double", "length": "arg0", "na": false } },
+    "qlnorm": { "params": ["p", "meanlog", "sdlog"], "return": { "mode": "double", "length": "arg0", "na": false } },
     "dunif": { "params": ["x", "min", "max"], "return": { "mode": "double", "length": "arg0", "na": false } },
     "punif": { "params": ["q", "min", "max"], "return": { "mode": "double", "length": "arg0", "na": false } },
     "qunif": { "params": ["p", "min", "max"], "return": { "mode": "double", "length": "arg0", "na": false } },
@@ -1262,6 +1270,18 @@
       "class": "default",
       "params": ["object", "..."],
       "return": { "mode": "opaque", "length": "unknown", "na": true }
+    },
+    {
+      "generic": "summary",
+      "class": "lm",
+      "params": ["object", "..."],
+      "return": { "mode": "list", "length": "11", "na": false }
+    },
+    {
+      "generic": "summary",
+      "class": "glm",
+      "params": ["object", "..."],
+      "return": { "mode": "list", "length": "11", "na": false }
     },
     {
       "generic": "print",

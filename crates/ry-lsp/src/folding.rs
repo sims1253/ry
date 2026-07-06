@@ -77,6 +77,12 @@ fn collect_folding_from_expr(expr: &Expr, text: &str, ranges: &mut Vec<FoldingRa
                 collect_folding_from_stmt(s, text, ranges);
             }
         }
+        Expr::Block { body, span } => {
+            push_range_if_multiline(*span, text, ranges);
+            for s in body {
+                collect_folding_from_stmt(s, text, ranges);
+            }
+        }
         Expr::If {
             cond,
             then,
@@ -168,6 +174,7 @@ pub(super) fn span_of_expr(expr: &Expr) -> Option<Span> {
         | Expr::UnaryOp { span: s, .. }
         | Expr::Index { span: s, .. }
         | Expr::Function { span: s, .. }
+        | Expr::Block { span: s, .. }
         | Expr::If { span: s, .. }
         | Expr::Unknown(s) => Some(*s),
     }

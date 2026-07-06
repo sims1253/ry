@@ -138,6 +138,10 @@ pub enum Expr {
         body: Vec<Stmt>,
         span: Span,
     },
+    /// Braced expression used as a value, e.g. `test_that("x", { ... })`
+    /// or `x <- { a <- 1; a + 1 }`. Statements execute sequentially in
+    /// the current scope and the block's value is the final statement.
+    Block { body: Vec<Stmt>, span: Span },
     /// Conditional expression: `if (cond) expr1 else expr2`. Used in
     /// expression position (e.g. `x <- if (cond) 1L else 2L`). The
     /// result type is the join of the two branches. `else_` is `None`

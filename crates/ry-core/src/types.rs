@@ -293,6 +293,7 @@ impl ClassVector {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ColumnSchema {
     pub columns: Vec<(String, RType)>,
+    pub complete: bool,
 }
 
 impl ColumnSchema {
@@ -1033,6 +1034,7 @@ mod tests {
                 ("[[1]]".to_string(), RType::scalar(Mode::Double)),
                 ("[[2]]".to_string(), RType::scalar(Mode::Double)),
             ],
+            complete: true,
         };
         let list = RType::new(Mode::List, Length::Known(2)).with_columns(Arc::new(schema));
         let e = list.element();
@@ -1049,6 +1051,7 @@ mod tests {
                 ("[[1]]".to_string(), RType::scalar(Mode::Double)),
                 ("[[2]]".to_string(), RType::scalar(Mode::Character)),
             ],
+            complete: true,
         };
         let list = RType::new(Mode::List, Length::Known(2)).with_columns(Arc::new(schema));
         let e = list.element();
@@ -1069,6 +1072,7 @@ mod tests {
                 ("[[1]]".to_string(), RType::scalar(Mode::Integer)),
                 ("[[2]]".to_string(), RType::scalar(Mode::Integer)),
             ],
+            complete: true,
         };
         assert_eq!(
             schema.homogeneous_element_type(),
@@ -1083,6 +1087,7 @@ mod tests {
                 ("[[1]]".to_string(), RType::scalar(Mode::Integer)),
                 ("[[2]]".to_string(), RType::scalar(Mode::Double)),
             ],
+            complete: true,
         };
         assert_eq!(het.homogeneous_element_type(), None);
         assert_eq!(ColumnSchema::default().homogeneous_element_type(), None);
@@ -1258,6 +1263,7 @@ mod tests {
                 ("a".to_string(), RType::scalar(Mode::Integer)),
                 ("b".to_string(), RType::scalar(Mode::Character)),
             ],
+            complete: true,
         };
         assert_eq!(schema.get("a").unwrap().mode, Mode::Integer);
         assert_eq!(schema.get("b").unwrap().mode, Mode::Character);
@@ -1273,6 +1279,7 @@ mod tests {
                 "mpg".to_string(),
                 RType::new(Mode::Double, Length::Known(32)),
             )],
+            complete: true,
         });
         let t = RType::new(Mode::List, Length::Known(1)).with_columns(schema.clone());
         assert_eq!(t.columns, Some(schema));
@@ -1285,6 +1292,7 @@ mod tests {
     fn arith_strips_columns() {
         let schema = Arc::new(ColumnSchema {
             columns: vec![("x".to_string(), RType::scalar(Mode::Double))],
+            complete: true,
         });
         let lhs = RType::scalar(Mode::Double).with_columns(schema);
         let rhs = RType::scalar(Mode::Double);
@@ -1297,6 +1305,7 @@ mod tests {
     fn compare_strips_columns() {
         let schema = Arc::new(ColumnSchema {
             columns: vec![("x".to_string(), RType::scalar(Mode::Double))],
+            complete: true,
         });
         let lhs = RType::scalar(Mode::Double).with_columns(schema);
         let rhs = RType::scalar(Mode::Double);
@@ -1309,6 +1318,7 @@ mod tests {
     fn join_preserves_columns_when_both_sides_agree() {
         let schema = Arc::new(ColumnSchema {
             columns: vec![("x".to_string(), RType::scalar(Mode::Double))],
+            complete: true,
         });
         let lhs = RType::scalar(Mode::List).with_columns(schema.clone());
         let rhs = RType::scalar(Mode::List).with_columns(schema.clone());
@@ -1320,9 +1330,11 @@ mod tests {
     fn join_drops_columns_when_sides_differ() {
         let s1 = Arc::new(ColumnSchema {
             columns: vec![("a".to_string(), RType::scalar(Mode::Double))],
+            complete: true,
         });
         let s2 = Arc::new(ColumnSchema {
             columns: vec![("b".to_string(), RType::scalar(Mode::Double))],
+            complete: true,
         });
         let lhs = RType::scalar(Mode::List).with_columns(s1);
         let rhs = RType::scalar(Mode::List).with_columns(s2);
@@ -1336,7 +1348,10 @@ mod tests {
         let cols: Vec<(String, RType)> = (0..5)
             .map(|i| (format!("c{}", i), RType::scalar(Mode::Double)))
             .collect();
-        let schema = Arc::new(ColumnSchema { columns: cols });
+        let schema = Arc::new(ColumnSchema {
+            columns: cols,
+            complete: true,
+        });
         let t = RType::new(Mode::List, Length::Known(5)).with_columns(schema);
         let s = format!("{}", t);
         assert!(s.contains("c0:"), "missing c0: {}", s);

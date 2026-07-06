@@ -391,13 +391,11 @@ impl RParser {
                 None
             }
             "braced_expression" => {
-                // Lower the last expression in the block as the block's value.
-                let mut cur = n.walk();
-                let mut last: Option<Expr> = None;
-                for ch in n.named_children(&mut cur) {
-                    last = self.lower_expr(ch, src);
-                }
-                last
+                let body = self.lower_block(n, src);
+                Some(Expr::Block {
+                    body,
+                    span: self.span(n, src),
+                })
             }
             "if_statement" => self.lower_if_expr(n, src),
             _ => {

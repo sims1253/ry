@@ -1172,8 +1172,6 @@
     "qexp": { "params": ["p", "rate"], "return": { "mode": "double", "length": "arg0", "na": false } },
     "lm": { "params": ["formula", "data"], "return": { "mode": "list", "length": "12", "na": false, "class": ["lm"] } },
     "glm": { "params": ["formula", "data"], "return": { "mode": "list", "length": "30", "na": false, "class": ["glm", "lm"] } },
-    "Surv": { "params": ["time", "event", "..."], "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["Surv"] } },
-    "survfit": { "params": ["formula", "data", "..."], "return": { "mode": "list", "length": "unknown", "na": false, "class": ["survfit"] } },
     "aov": { "params": ["formula", "data"], "return": { "mode": "list", "length": "8", "na": false, "class": ["aov"] } },
     "predict": { "params": ["object"], "return": { "mode": "double", "length": "unknown", "na": true } },
     "coef": { "params": ["object"], "return": { "mode": "double", "length": "unknown", "na": false } },
@@ -1284,27 +1282,6 @@
       "class": "glm",
       "params": ["object", "..."],
       "return": { "mode": "list", "length": "11", "na": false }
-    },
-    {
-      "generic": "quantile",
-      "class": "survfit",
-      "params": ["x", "..."],
-      "return": {
-        "mode": "list",
-        "length": "unknown",
-        "na": true,
-        "columns": {
-          "quantile": { "mode": "double", "length": "unknown", "na": true },
-          "lower": { "mode": "double", "length": "unknown", "na": true },
-          "upper": { "mode": "double", "length": "unknown", "na": true }
-        }
-      }
-    },
-    {
-      "generic": "summary",
-      "class": "survfit",
-      "params": ["object", "..."],
-      "return": { "mode": "list", "length": "unknown", "na": true }
     },
     {
       "generic": "print",

@@ -93,6 +93,18 @@ const S3_DENYLIST: &[&str] = &[
     "data.frame",
 ];
 
+const PACKAGE_SIGNATURE_ORDER: &[&str] = &[
+    "dplyr",
+    "purrr",
+    "mirai",
+    "survival",
+    "brms",
+    "posterior",
+    "loo",
+    "bayesplot",
+    "cmdstanr",
+];
+
 /// Names that are intentionally available without a local binding in
 /// ordinary R code. Treating these as opaque ambient values keeps RY010
 /// focused on user variables rather than R runtime state or tidy-eval
@@ -726,17 +738,8 @@ impl Checker {
             // And under loaded packages, stripped name (a qualified call
             // to a package we have signatures for but where the function
             // lives under a different name is unlikely, but be thorough).
-            for pk in [
-                "dplyr",
-                "purrr",
-                "mirai",
-                "brms",
-                "posterior",
-                "loo",
-                "bayesplot",
-                "cmdstanr",
-            ] {
-                if !self.loaded.contains(pk) {
+            for pk in PACKAGE_SIGNATURE_ORDER {
+                if !self.loaded.contains(*pk) {
                     continue;
                 }
                 if let Some(t) = load_package(pk) {
@@ -758,17 +761,8 @@ impl Checker {
         // disjoint across these packages, so masking rarely bites).
         // `loaded` is a HashSet (unordered) so we walk a deterministic
         // known-packages list and check membership.
-        for pkg in [
-            "dplyr",
-            "purrr",
-            "mirai",
-            "brms",
-            "posterior",
-            "loo",
-            "bayesplot",
-            "cmdstanr",
-        ] {
-            if !self.loaded.contains(pkg) {
+        for pkg in PACKAGE_SIGNATURE_ORDER {
+            if !self.loaded.contains(*pkg) {
                 continue;
             }
             if let Some(t) = load_package(pkg) {
@@ -799,17 +793,8 @@ impl Checker {
             return true;
         }
         // Loaded packages (fixed priority order; see resolve_typeshed_sig).
-        for pkg in [
-            "dplyr",
-            "purrr",
-            "mirai",
-            "brms",
-            "posterior",
-            "loo",
-            "bayesplot",
-            "cmdstanr",
-        ] {
-            if !self.loaded.contains(pkg) {
+        for pkg in PACKAGE_SIGNATURE_ORDER {
+            if !self.loaded.contains(*pkg) {
                 continue;
             }
             if let Some(t) = load_package(pkg) {
@@ -3929,6 +3914,17 @@ impl Checker {
             .cloned()
         {
             return Some(self.apply_sig(generic, &sig, arg_types, &[], span));
+        }
+        for pkg in PACKAGE_SIGNATURE_ORDER {
+            if let Some(sig) = load_package(pkg)
+                .and_then(|t| {
+                    t.s3_methods
+                        .get(&(generic.to_string(), first_class.to_string()))
+                })
+                .cloned()
+            {
+                return Some(self.apply_sig(generic, &sig, arg_types, &[], span));
+            }
         }
         // 3. No specific method. Only emit RY050 if we're confident the
         // generic uses S3 dispatch, which we approximate by the

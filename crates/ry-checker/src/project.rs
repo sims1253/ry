@@ -17,7 +17,7 @@
 //! tests rely on this).
 
 use crate::{
-    apply_filter_to_diagnostics, Checker, Diagnostic, FnTable, ReturnSlots, SeverityFilter,
+    Checker, Diagnostic, FnTable, ReturnSlots, SeverityFilter, apply_filter_to_diagnostics,
 };
 use rayon::prelude::*;
 use ry_core::SourceFile;

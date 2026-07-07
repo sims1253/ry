@@ -365,9 +365,10 @@ mod tests {
         let t = load_package("survival").expect("survival is a known package");
         assert!(t.functions.contains_key("Surv"));
         assert!(t.functions.contains_key("survfit"));
-        assert!(t
-            .s3_methods
-            .contains_key(&("quantile".to_string(), "survfit".to_string())));
+        assert!(
+            t.s3_methods
+                .contains_key(&("quantile".to_string(), "survfit".to_string()))
+        );
     }
 
     #[test]

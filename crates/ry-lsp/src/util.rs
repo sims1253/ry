@@ -43,11 +43,7 @@ pub(crate) fn byte_offset_to_position(text: &str, byte_offset: usize) -> Positio
 /// the Basic Multilingual Plane, 2 for astral-plane characters (which
 /// become a surrogate pair).
 pub(crate) fn utf16_len(ch: char) -> usize {
-    if (ch as u32) >= 0x10000 {
-        2
-    } else {
-        1
-    }
+    if (ch as u32) >= 0x10000 { 2 } else { 1 }
 }
 
 /// Map an LSP `Position` (line, UTF-16 character column) to a byte

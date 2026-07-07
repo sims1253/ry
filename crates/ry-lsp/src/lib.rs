@@ -1,3 +1,5 @@
+#![allow(clippy::collapsible_if)]
+
 //! ry language server. Publishes diagnostics for R files.
 //!
 //! This crate is a v1 LSP server built on top of `tower-lsp`. It supports:

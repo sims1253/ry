@@ -182,21 +182,6 @@ explanation for one rule.
 | RY070 | call-non-function        | error    | A non-function value (a variable bound to a non-function, or a literal like `42()`) is being called as a function. R will error at runtime (‘attempt to apply non-function’ / ‘could not find function’). |
 | RY080 | map-return-type-mismatch | warning  | A purrr typed-map (`map_dbl`, `map_int`, …) callback returns a value whose mode is incompatible with the target vector type. R coerces at runtime, but the mismatch is almost always unintended.          |
 
-## How ry stays honest
-
-  - **The R oracle.** Every behavioral claim is checked against R
-    itself: the fixture corpus is executed by an R driver – in parallel,
-    via `purrr::in_parallel()` on mirai daemons, the same idiom the
-    checker models – and ry must agree with R’s verdict. Runs in CI;
-    `cargo test -p ry-checker --test oracle -- --ignored` locally.
-  - **Vendored CRAN code.** ry runs over vendored real-world packages
-    (currently glue and purrr) and snapshots every diagnostic; each
-    snapshot line is triaged, and a rule that dominates a snapshot is
-    treated as broken. The glue snapshot is empty.
-  - **A typeshed that cannot invent functions.** Every name in the
-    embedded type stubs is verified against R in CI
-    (`scripts/audit_typeshed.R`).
-
 Known gaps: no S4 / R6 / environment modeling, no NAMESPACE resolution
 (cross-package names outside the shipped stubs resolve to opaque), and
 no NA tracking yet.

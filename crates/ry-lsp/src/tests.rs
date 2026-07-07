@@ -1,4 +1,4 @@
-use crate::backend::{path_to_uri, uri_to_path, State};
+use crate::backend::{State, path_to_uri, uri_to_path};
 use crate::diagnostics::{
     diag_code_from_lsp, diagnostic_to_lsp, diagnostic_to_lsp_with_source, make_ignore_action,
     make_ignore_file_action,

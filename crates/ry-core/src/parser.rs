@@ -442,24 +442,24 @@ impl RParser {
 
     fn lower_arg(&self, n: Node, src: &str) -> Arg {
         let span = self.span(n, src);
-        if let Some(name_node) = n.child_by_field_name("name") {
-            if let Some(value_node) = n.child_by_field_name("value") {
-                let name = text(name_node, src);
-                let value = self
-                    .lower_expr(value_node, src)
-                    .unwrap_or(Expr::Unknown(span));
-                return Arg { name, value, span };
-            }
+        if let Some(name_node) = n.child_by_field_name("name")
+            && let Some(value_node) = n.child_by_field_name("value")
+        {
+            let name = text(name_node, src);
+            let value = self
+                .lower_expr(value_node, src)
+                .unwrap_or(Expr::Unknown(span));
+            return Arg { name, value, span };
         }
         // Positional: there's still a `value` field in tree-sitter-r.
-        if let Some(value_node) = n.child_by_field_name("value") {
-            if let Some(v) = self.lower_expr(value_node, src) {
-                return Arg {
-                    name: None,
-                    value: v,
-                    span,
-                };
-            }
+        if let Some(value_node) = n.child_by_field_name("value")
+            && let Some(v) = self.lower_expr(value_node, src)
+        {
+            return Arg {
+                name: None,
+                value: v,
+                span,
+            };
         }
         Arg {
             name: None,
@@ -668,12 +668,10 @@ fn unquote_r_string(raw: &str) -> String {
     // The opening is r/R followed by an optional dash-delimiter and a
     // ( or [. The matching close is ) or ] followed by the same
     // delimiter (reversed) and a quote.
-    if let Some(rest) = raw.strip_prefix('r').or_else(|| raw.strip_prefix('R')) {
-        if let Some(unprocessed) = try_unwrap_raw_string(rest) {
-            return unprocessed;
-        }
-        // Not actually a raw string (e.g. an identifier-looking token);
-        // fall through to ordinary processing.
+    if let Some(rest) = raw.strip_prefix('r').or_else(|| raw.strip_prefix('R'))
+        && let Some(unprocessed) = try_unwrap_raw_string(rest)
+    {
+        return unprocessed;
     }
     // Ordinary quoted string: process escapes.
     let bytes = raw.as_bytes();

@@ -2,8 +2,8 @@
 //!
 //! Each test pins a past parser bug so it cannot return.
 
-use ry_core::ast::{BinOpKind, Expr, Stmt};
 use ry_core::RParser;
+use ry_core::ast::{BinOpKind, Expr, Stmt};
 
 fn parse(src: &str) -> ry_core::ast::SourceFile {
     let mut p = RParser::new().expect("parser init");

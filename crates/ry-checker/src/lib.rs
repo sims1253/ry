@@ -8,6 +8,8 @@
 //! function definitions; subsequent passes refine each function's
 //! inferred return type until stable (or the depth cap is hit).
 
+#![allow(clippy::collapsible_if)]
+
 pub mod diagnostics;
 pub mod format;
 pub mod project;
@@ -21,16 +23,17 @@ pub use project::Project;
 // crate root for back-compat (callers and tests reference
 // `ry_checker::{Severity, Diagnostic, ...}` directly).
 pub use diagnostics::{
-    apply_filter_to_diagnostics, filter_suppressed, filter_suppressed_with_comments,
-    has_file_suppression, has_file_suppression_from_comments, is_suppressed, parse_suppressions,
-    parse_suppressions_from_comments, Diagnostic, Severity, SeverityFilter, Suppression,
+    Diagnostic, Severity, SeverityFilter, Suppression, apply_filter_to_diagnostics,
+    filter_suppressed, filter_suppressed_with_comments, has_file_suppression,
+    has_file_suppression_from_comments, is_suppressed, parse_suppressions,
+    parse_suppressions_from_comments,
 };
 
+use ry_core::Span;
 use ry_core::ast::*;
 use ry_core::types::{ClassVector, ColumnSchema, FunctionSignature, Length, Mode, RType};
-use ry_core::Span;
 use ry_typeshed::{
-    is_known_package, load_base_cached, load_package, FunctionSig, JsonRType, ReturnSpec, Typeshed,
+    FunctionSig, JsonRType, ReturnSpec, Typeshed, is_known_package, load_base_cached, load_package,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -4201,14 +4204,14 @@ impl Checker {
                 return RType {
                     length: Length::Unknown,
                     ..x_type
-                }
+                };
             }
             Some(Some(n)) => n as usize,
             Some(None) => {
                 return RType {
                     length: Length::Unknown,
                     ..x_type
-                }
+                };
             }
         };
         let each_n: usize = match each {
@@ -4217,14 +4220,14 @@ impl Checker {
                 return RType {
                     length: Length::Unknown,
                     ..x_type
-                }
+                };
             }
             Some(Some(n)) => n as usize,
             Some(None) => {
                 return RType {
                     length: Length::Unknown,
                     ..x_type
-                }
+                };
             }
         };
         // Compute the total length, normalizing so we never emit
@@ -5384,11 +5387,7 @@ fn match_args_to_params(sig_params: &[String], args: &[Arg], arg_types: &[RType]
 /// the coerce-rank ladder doesn't apply soundly, so degrade to opaque
 /// rather than emitting a malformed union.
 fn collapse_c_mode(mode: Mode, saw_union: bool) -> Mode {
-    if saw_union {
-        Mode::Opaque
-    } else {
-        mode
-    }
+    if saw_union { Mode::Opaque } else { mode }
 }
 
 /// If `e` is a literal expression (`42`, `"x"`, `TRUE`, `NULL`, `NA`),

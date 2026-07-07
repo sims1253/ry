@@ -14,8 +14,8 @@
 use std::collections::HashMap;
 
 use ry_checker::Project;
-use ry_core::parser::byte_col_to_char_col;
 use ry_core::RParser;
+use ry_core::parser::byte_col_to_char_col;
 
 /// The vendored package's `R/` directory, rooted at the crate's
 /// testdata dir.

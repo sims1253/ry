@@ -229,10 +229,10 @@ impl ClassVector {
             return false;
         }
         for i in 0..(self.len as usize).min(4) {
-            if let Some(n) = &self.names[i] {
-                if &**n == name {
-                    return true;
-                }
+            if let Some(n) = &self.names[i]
+                && &**n == name
+            {
+                return true;
             }
         }
         false

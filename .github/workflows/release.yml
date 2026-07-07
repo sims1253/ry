@@ -29,9 +29,45 @@ jobs:
       - name: rustfmt
         run: cargo fmt --all -- --check
 
+  metadata:
+    name: Release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+      name: ${{ steps.meta.outputs.name }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+      make_latest: ${{ steps.meta.outputs.make_latest }}
+    steps:
+      - id: meta
+        name: Resolve release metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="$GITHUB_REF_NAME"
+          version="${tag#v}"
+
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: $tag" >&2
+            exit 1
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "name=ry $tag" >> "$GITHUB_OUTPUT"
+
+          if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "make_latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "make_latest=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
     name: Build ${{ matrix.target }}
-    needs: verify
+    needs: [verify, metadata]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -89,7 +125,7 @@ jobs:
 
   publish:
     name: Publish GitHub release
-    needs: build
+    needs: [metadata, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
@@ -97,17 +133,14 @@ jobs:
           pattern: release-*
           path: dist
           merge-multiple: true
-      - name: Create or update release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
-          else
-            gh release create "$GITHUB_REF_NAME" dist/* \
-              --verify-tag \
-              --generate-notes \
-              --title "$GITHUB_REF_NAME"
-          fi
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.metadata.outputs.tag }}
+          name: ${{ needs.metadata.outputs.name }}
+          generate_release_notes: true
+          prerelease: ${{ needs.metadata.outputs.prerelease }}
+          make_latest: ${{ needs.metadata.outputs.make_latest }}
+          files: |
+            dist/*
+          fail_on_unmatched_files: true

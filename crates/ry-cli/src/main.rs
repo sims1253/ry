@@ -8,14 +8,13 @@ use clap::parser::ValueSource;
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser as ClapParser, Subcommand};
 use miette::{IntoDiagnostic, Result};
 
-mod color;
 mod config;
 
 #[derive(Debug, ClapParser)]
 #[command(
     name = "ry",
     version,
-    about = "An extremely fast type checker for R",
+    about = "A fast static checker for R",
     long_about = "ry is a static type checker for R, inspired by astral-sh/ty."
 )]
 struct Cli {
@@ -57,9 +56,6 @@ enum Cmd {
         /// one-line-per-diagnostic view.
         #[arg(long, value_name = "FORMAT", default_value = "full")]
         output_format: String,
-        /// Control when colored output is used.
-        #[arg(long, value_name = "WHEN")]
-        color: Option<String>,
         /// Watch for file changes and re-check automatically.
         /// Uses polling (500ms interval). Press Ctrl+C to stop.
         #[arg(short = 'W', long)]
@@ -127,7 +123,6 @@ fn main() -> Result<ExitCode> {
             error_on_warning: false,
             exit_zero: false,
             output_format: "full".to_string(),
-            color: None,
             watch: false,
             statistics: false,
         },
@@ -147,36 +142,22 @@ fn main() -> Result<ExitCode> {
             error_on_warning,
             exit_zero,
             output_format,
-            color,
             watch,
             statistics,
-        } => {
-            // Validate --color up front so an unknown value is a clear
-            // error rather than a silently-ignored flag. The resolved
-            // choice has no observable effect today (no colorized output
-            // paths exist yet) but is parsed and honors NO_COLOR, so it
-            // is forward-compatible.
-            if let Some(raw) = &color {
-                if let Err(e) = color::ColorChoice::parse(raw) {
-                    eprintln!("ry: {e}");
-                    return Ok(ExitCode::FAILURE);
-                }
-            }
-            run_check(
-                paths,
-                error,
-                warn,
-                ignore,
-                error_on_warning,
-                exit_zero,
-                &output_format,
-                cli.verbose,
-                cli.quiet,
-                check_matches,
-                watch,
-                statistics,
-            )
-        }
+        } => run_check(
+            paths,
+            error,
+            warn,
+            ignore,
+            error_on_warning,
+            exit_zero,
+            &output_format,
+            cli.verbose,
+            cli.quiet,
+            check_matches,
+            watch,
+            statistics,
+        ),
         Cmd::Server => {
             // The LSP server reads JSON-RPC from stdin and writes
             // JSON-RPC to stdout. CRITICAL: any tracing or log output
@@ -386,6 +367,7 @@ fn run_check(
     for root in &search_roots {
         collect_r_files(root, &mut all_paths);
     }
+    sort_and_deduplicate_paths(&mut all_paths);
 
     // Apply exclude patterns. Patterns match against the path relative
     // to the directory containing the originating `ry.toml`; if no
@@ -407,7 +389,7 @@ fn run_check(
 
     if all_paths.is_empty() {
         eprintln!("ry: no .R / .r files found in {:?}", search_roots);
-        return Ok(ExitCode::FAILURE);
+        return Ok(ExitCode::SUCCESS);
     }
 
     // Run the initial check.
@@ -416,6 +398,13 @@ fn run_check(
 
     if !watch {
         return Ok(result.exit_code(&cfg));
+    }
+    if !matches!(
+        format,
+        ry_checker::format::OutputFormat::Full | ry_checker::format::OutputFormat::Concise
+    ) {
+        eprintln!("ry: --watch requires the full or concise output format");
+        return Ok(ExitCode::FAILURE);
     }
 
     // Watch mode: poll for changes and re-check.
@@ -441,6 +430,7 @@ fn run_check(
         for root in &search_roots {
             collect_r_files(root, &mut current_paths);
         }
+        sort_and_deduplicate_paths(&mut current_paths);
         if let Some(root) = config_root.as_ref() {
             if !excludes.is_empty() {
                 current_paths.retain(|p| {
@@ -453,8 +443,6 @@ fn run_check(
         // Check for any file modification or file set change.
         let mut changed = current_paths.len() != all_paths.len();
         if !changed {
-            current_paths.sort();
-            all_paths.sort();
             if current_paths != all_paths {
                 changed = true;
             }
@@ -822,6 +810,11 @@ fn collect_r_files(path: &std::path::Path, out: &mut Vec<PathBuf>) {
             out.push(p);
         }
     }
+}
+
+fn sort_and_deduplicate_paths(paths: &mut Vec<PathBuf>) {
+    paths.sort();
+    paths.dedup();
 }
 
 #[cfg(test)]

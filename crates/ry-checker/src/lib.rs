@@ -33,7 +33,8 @@ use ry_core::Span;
 use ry_core::ast::*;
 use ry_core::types::{ClassVector, ColumnSchema, FunctionSignature, Length, Mode, RType};
 use ry_typeshed::{
-    FunctionSig, JsonRType, ReturnSpec, Typeshed, is_known_package, load_base_cached, load_package,
+    FunctionSig, JsonRType, ReturnSlot, ReturnSpec, Typeshed, is_known_package, known_packages,
+    load_base_cached, load_package,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -96,18 +97,6 @@ const S3_DENYLIST: &[&str] = &[
     "data.frame",
 ];
 
-const PACKAGE_SIGNATURE_ORDER: &[&str] = &[
-    "dplyr",
-    "purrr",
-    "mirai",
-    "survival",
-    "brms",
-    "posterior",
-    "loo",
-    "bayesplot",
-    "cmdstanr",
-];
-
 /// Names that are intentionally available without a local binding in
 /// ordinary R code. Treating these as opaque ambient values keeps RY010
 /// focused on user variables rather than R runtime state or tidy-eval
@@ -152,6 +141,24 @@ fn ident_name(expr: &Expr) -> Option<&str> {
     match expr {
         Expr::Ident { name, .. } => Some(name),
         _ => None,
+    }
+}
+
+fn is_na_literal(expr: &Expr) -> bool {
+    matches!(expr, Expr::Na(_, _))
+}
+
+fn non_divisible_recycling(lhs: Length, rhs: Length) -> Option<(usize, usize)> {
+    let known = |length| match length {
+        Length::One => Some(1),
+        Length::Known(n) => Some(n),
+        Length::Zero | Length::Unknown => None,
+    };
+    let (a, b) = (known(lhs)?, known(rhs)?);
+    if a > 1 && b > 1 && a.max(b) % a.min(b) != 0 {
+        Some((a, b))
+    } else {
+        None
     }
 }
 
@@ -741,8 +748,8 @@ impl Checker {
             // And under loaded packages, stripped name (a qualified call
             // to a package we have signatures for but where the function
             // lives under a different name is unlikely, but be thorough).
-            for pk in PACKAGE_SIGNATURE_ORDER {
-                if !self.loaded.contains(*pk) {
+            for pk in known_packages() {
+                if !self.loaded.contains(pk) {
                     continue;
                 }
                 if let Some(t) = load_package(pk) {
@@ -764,8 +771,8 @@ impl Checker {
         // disjoint across these packages, so masking rarely bites).
         // `loaded` is a HashSet (unordered) so we walk a deterministic
         // known-packages list and check membership.
-        for pkg in PACKAGE_SIGNATURE_ORDER {
-            if !self.loaded.contains(*pkg) {
+        for pkg in known_packages() {
+            if !self.loaded.contains(pkg) {
                 continue;
             }
             if let Some(t) = load_package(pkg) {
@@ -796,8 +803,8 @@ impl Checker {
             return true;
         }
         // Loaded packages (fixed priority order; see resolve_typeshed_sig).
-        for pkg in PACKAGE_SIGNATURE_ORDER {
-            if !self.loaded.contains(*pkg) {
+        for pkg in known_packages() {
+            if !self.loaded.contains(pkg) {
                 continue;
             }
             if let Some(t) = load_package(pkg) {
@@ -1910,6 +1917,16 @@ impl Checker {
                 if matches!(op, BinOpKind::AndAnd | BinOpKind::OrOr) {
                     return self.infer_short_circuit_binop(*op, lhs, rhs, scope, *span);
                 }
+                if matches!(op, BinOpKind::Eq | BinOpKind::Ne)
+                    && (is_na_literal(lhs) || is_na_literal(rhs))
+                {
+                    self.emit(
+                        Severity::Warning,
+                        *span,
+                        "RY034",
+                        "comparison with `NA` always produces `NA`; use `is.na()` instead",
+                    );
+                }
                 let lt = self.infer(lhs, scope);
                 let rt = self.infer(rhs, scope);
                 self.infer_binop(*op, lt, rt, *span)
@@ -1947,15 +1964,24 @@ impl Checker {
                 let t = self.infer(expr, scope);
                 match op {
                     UnaryOpKind::Neg => {
-                        if matches!(t.mode, Mode::Character | Mode::List | Mode::Function) {
+                        if matches!(
+                            t.mode,
+                            Mode::Character | Mode::Raw | Mode::List | Mode::Function
+                        ) {
                             self.emit(
                                 Severity::Error,
                                 *span,
                                 "RY020",
                                 format!("cannot apply unary `-` to `{}`", t.mode),
                             );
+                            RType::unknown()
+                        } else {
+                            let mode = match t.mode {
+                                Mode::Logical | Mode::Null => Mode::Integer,
+                                other => other,
+                            };
+                            RType::new(mode, t.length)
                         }
-                        t
                     }
                     UnaryOpKind::Not => {
                         if matches!(t.mode, Mode::Character | Mode::List | Mode::Function) {
@@ -2120,7 +2146,27 @@ impl Checker {
         // Arithmetic.
         let lt_mode = lt.mode;
         let rt_mode = rt.mode;
+        let recycles = non_divisible_recycling(lt.length, rt.length);
+        let has_factor = lt.class.contains("factor") || rt.class.contains("factor");
         if let Some(t) = lt.arith(rt) {
+            if let Some((lhs_len, rhs_len)) = recycles {
+                self.emit(
+                    Severity::Warning,
+                    span,
+                    "RY041",
+                    format!(
+                        "vector lengths {lhs_len} and {rhs_len} do not divide evenly; R will recycle with a warning"
+                    ),
+                );
+            }
+            if has_factor {
+                self.emit(
+                    Severity::Warning,
+                    span,
+                    "RY042",
+                    "arithmetic on a factor produces `NA`; operate on its levels or convert it explicitly",
+                );
+            }
             return t;
         }
         self.emit(
@@ -2553,6 +2599,21 @@ impl Checker {
             }
             return RType::new(Mode::Integer, Length::Unknown)
                 .with_class(ClassVector::single("factor"));
+        }
+
+        // The default two-argument form assigns into the current
+        // environment. A literal name makes that binding fully static.
+        if name == "assign" && args.len() == 2 {
+            let name = match &args[0].value {
+                Expr::String(name, _) => Some(name.clone()),
+                _ => None,
+            };
+            let _ = self.infer(&args[0].value, scope);
+            let value = self.infer(&args[1].value, scope);
+            if let Some(name) = name {
+                scope.insert(name, value.clone());
+            }
+            return value;
         }
 
         // NSE verbs (`subset`, `with`, `within`, `transform`) evaluate
@@ -3918,7 +3979,7 @@ impl Checker {
         {
             return Some(self.apply_sig(generic, &sig, arg_types, &[], span));
         }
-        for pkg in PACKAGE_SIGNATURE_ORDER {
+        for pkg in known_packages() {
             if let Some(sig) = load_package(pkg)
                 .and_then(|t| {
                     t.s3_methods
@@ -3972,11 +4033,7 @@ impl Checker {
                 saw_union = true;
                 continue;
             }
-            mode = if mode.coerce_rank() >= t.mode.coerce_rank() {
-                mode
-            } else {
-                t.mode
-            };
+            mode = mode.combine_result(t.mode);
             total_len = total_len.saturating_add(match t.length {
                 Length::Zero => 0,
                 Length::One => 1,
@@ -4382,14 +4439,9 @@ impl Checker {
         };
         let first = matched.first().cloned().unwrap_or(RType::unknown());
         match &sig.return_ {
-            ReturnSpec::Slot(s) => match s.as_str() {
-                "arg0" => first,
-                "concat_of_args" => self.infer_c(args, arg_types, span),
-                s if s.starts_with("arg") => {
-                    let idx: usize = s[3..].parse().unwrap_or(0);
-                    arg_types.get(idx).cloned().unwrap_or(RType::unknown())
-                }
-                _ => RType::unknown(),
+            ReturnSpec::Slot(slot) => match slot {
+                ReturnSlot::Arg0 => first,
+                ReturnSlot::ConcatOfArgs => self.infer_c(args, arg_types, span),
             },
             ReturnSpec::Concrete(c) => {
                 let mode = match c.mode.as_str() {

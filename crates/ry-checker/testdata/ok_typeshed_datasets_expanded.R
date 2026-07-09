@@ -10,4 +10,10 @@ q_mag <- quakes$mag
 c_speed <- cars$speed
 f_erupt <- faithful$eruptions
 w_height <- women$height
-total <- aq_wind + cw_weight + t_girth + q_mag + c_speed + f_erupt + w_height
+aq_scaled <- aq_wind + 1
+cw_scaled <- cw_weight + 1
+t_scaled <- t_girth + 1
+q_scaled <- q_mag + 1
+c_scaled <- c_speed + 1
+f_scaled <- f_erupt + 1
+w_scaled <- w_height + 1

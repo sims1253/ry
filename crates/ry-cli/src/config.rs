@@ -87,7 +87,7 @@ impl Default for Config {
 /// because `#[serde(default = "...")]` requires a path, not a closure.
 /// Without this, the struct-level `#[serde(default)]` would fill a
 /// missing `output-format` with the `String` default (empty string)
-/// rather than `"concise"`.
+/// rather than `"full"`.
 fn default_output_format() -> String {
     DEFAULT_OUTPUT_FORMAT.to_string()
 }

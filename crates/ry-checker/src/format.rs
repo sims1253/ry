@@ -1,8 +1,6 @@
 //! Diagnostic output formatters. Matches ty's `--output-format` choices.
 //!
-//! - `full`: multi-line with source context (deferred; we currently emit
-//!   a single line per diagnostic, like `concise`, since the source
-//!   snippet plumbing isn't wired yet).
+//! - `full`: multi-line with source context and span underlining.
 //! - `concise`: `path:line:col: severity: [CODE] message`, one per line.
 //! - `json`: a single JSON array of diagnostic objects.
 //! - `github`: GitHub Actions workflow-command annotations.
@@ -47,7 +45,7 @@ struct JsonDiagnostic<'a> {
 }
 
 /// Render the diagnostics to a string. `srcs` maps `path` -> source text
-/// so we can compute line numbers and (eventually) source snippets.
+/// so we can compute line numbers and source snippets.
 pub fn render(
     diags: &[Diagnostic],
     format: OutputFormat,

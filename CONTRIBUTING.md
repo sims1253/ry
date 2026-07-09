@@ -27,8 +27,10 @@ mirai) when those packages are available and falls back to one
 - Other corpus fixtures declare the expected rule; see
   `crates/ry-checker/tests/corpus.rs` for the expectation syntax.
 - `testdata/oracle/*.R` -- first line is `# oracle: must-pass`,
-  `# oracle: must-flag`, or `# oracle: known-gap <one-line reason>`.
-  R executes these files; keep them side-effect-free.
+  `# oracle: must-flag`, `# oracle: must-warn RYxxx`, or
+  `# oracle: known-gap <one-line reason>`. A `must-warn` fixture uses
+  R-side assertions to establish the behavior and requires that ry emit
+  the named warning. R executes these files; keep them side-effect-free.
 - Vendored packages live in `testdata/vendor/<pkg>/` with their
   LICENSE. Snapshots are updated with
   `INSTA_UPDATE=always cargo test -p ry-checker --test vendor_snapshot`

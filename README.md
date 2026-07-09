@@ -21,7 +21,7 @@ scope-driven diagnostics that need a whole-program view.
 
 ## Install
 
-ry is a Cargo workspace; build from source (Rust 1.82 or newer):
+ry is a Cargo workspace; build from source (Rust 1.86 or newer):
 
 ``` sh
 git clone https://github.com/sims1253/ry
@@ -84,8 +84,8 @@ per-package type stubs, so the same name means the right thing in
 context: `filter()` is `stats::filter` until dplyr is loaded, and
 `dplyr::filter(df, x > 0)` resolves the column `x` against `df`’s schema
 either way. Stubs currently ship for base R (plus stats and utils),
-dplyr, purrr, mirai, and a minimal Bayesian stack (brms, posterior, loo,
-bayesplot, cmdstanr). Packages attached outside the checked sources can
+dplyr, purrr, mirai, survival, and a minimal Bayesian stack (brms,
+posterior, loo, bayesplot, cmdstanr). Packages attached outside the checked sources can
 be declared in `ry.toml`.
 
 Parallel purrr code checks like sequential code, and the typed map
@@ -126,6 +126,8 @@ exclude = ["renv", "tests/snaps/**"]
 ```
 
 CLI flags override the config only when passed explicitly.
+When multiple paths are checked, the first path anchors config discovery;
+that one configuration applies to the complete invocation.
 
 ## Inline suppression
 
@@ -175,7 +177,10 @@ explanation for one rule.
 | RY031 | invalid-logical-op       | error    | `&` / `&#124;` / `&&` / `&#124;&#124;` applied to non-coercible types.                                                                                                                                    |
 | RY032 | scalar-logical-length    | warning  | `&&` and `&#124;&#124;` only use the first element of their operands; using them with vectors of length \> 1 is almost always a bug. Use `&`/`&#124;` for vectorized operations.                          |
 | RY033 | comparison-mode-mismatch | warning  | Comparing a character value with a numeric value is valid R but almost always unintended. R compares byte values, not semantic equality.                                                                  |
+| RY034 | compare-na               | warning  | Comparing with `NA` using `==` or `!=` always produces `NA`. Use `is.na()` instead.                                                                                                                       |
 | RY040 | invalid-arithmetic       | error    | Arithmetic operator between incompatible types.                                                                                                                                                           |
+| RY041 | non-divisible-recycling  | warning  | Vector lengths do not divide evenly, so R recycles values with a warning and may produce unintended results.                                                                                             |
+| RY042 | factor-arithmetic        | warning  | Arithmetic on factors produces missing values. Operate on levels or convert explicitly.                                                                                                                  |
 | RY050 | missing-s3-method        | warning  | S3 generic called on a value with no defined method for its class.                                                                                                                                        |
 | RY060 | undefined-column         | error    | Column access on a value whose schema does not contain that column.                                                                                                                                       |
 | RY061 | dollar-on-atomic         | error    | The $ operator is invalid for atomic vectors (integer, double, character, logical). It only works on list-like types (lists, data frames, environments).                                                  |

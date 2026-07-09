@@ -36,25 +36,21 @@ pub enum Mode {
 }
 
 impl Mode {
-    /// Coercion rank per R's implicit ladder. Higher wins.
-    /// `NULL < logical < integer < double < complex < character`
-    /// (`raw` does not coerce implicitly; `list` is its own world.)
-    pub fn coerce_rank(self) -> i32 {
-        match self {
-            Mode::Null => -1,
-            Mode::Logical => 0,
-            Mode::Integer => 1,
-            Mode::Double => 2,
-            Mode::Complex => 3,
-            Mode::Character => 4,
-            Mode::Raw => 5,
-            Mode::List => 6,
-            Mode::Function => 7,
-            Mode::Opaque => 8,
-            // Unions deliberately bypass the coercion ladder; this rank is
-            // only a sentinel so the match stays exhaustive. `join` handles
-            // unions directly rather than via coerce_rank.
-            Mode::Union => 9,
+    /// Resulting mode when values are combined by `c(...)`.
+    /// This is distinct from arithmetic coercion: raw values promote to
+    /// the other atomic mode, while functions are boxed into a list.
+    pub fn combine_result(self, other: Mode) -> Mode {
+        use Mode::*;
+        match (self, other) {
+            (Opaque | Union, _) | (_, Opaque | Union) => Opaque,
+            (List | Function, _) | (_, List | Function) => List,
+            (Character, _) | (_, Character) => Character,
+            (Complex, _) | (_, Complex) => Complex,
+            (Double, _) | (_, Double) => Double,
+            (Integer, _) | (_, Integer) => Integer,
+            (Logical, _) | (_, Logical) => Logical,
+            (Raw, Raw | Null) | (Null, Raw) => Raw,
+            (Null, Null) => Null,
         }
     }
 
@@ -66,37 +62,27 @@ impl Mode {
     pub fn arith_result(self, other: Mode) -> Option<Mode> {
         use Mode::*;
         match (self, other) {
-            // Opaque absorbs FIRST: opaque means "we don't know", so
-            // `opaque + "x"` stays quiet (the opaque could be numeric).
-            // Handling opaque before the rejections prevents a false RY040
-            // on depth-capped / unknown operands.
+            // A known raw operand is never arithmetic-valid, regardless of
+            // the other operand's type.
+            (Raw, _) | (_, Raw) => None,
+            // Opaque means "we don't know", so `opaque + "x"` stays quiet
+            // (the opaque could be numeric).
             (Opaque, _) | (_, Opaque) => Some(Opaque),
             // Unions are distributed at the RType::arith layer; reaching
             // here with a Union operand is a bug. Treat conservatively as
             // opaque so a stray call doesn't panic.
             (Union, _) | (_, Union) => Some(Opaque),
-            // Rejections: NULL paired with a non-arithmetic mode errors
-            // (R: `NULL + "a"` -> "non-numeric argument"). Before this
-            // reorder, the (Null, x) arm ran first and turned
-            // `NULL + "a"` into Some(Character).
+            // These modes are not arithmetic operands in R.
             (Character, _) | (_, Character) => None,
             (List, _) | (_, List) => None,
             (Function, _) | (_, Function) => None,
-            // NULL paired with an arithmetic-valid mode yields that mode
-            // (at length zero -- handled at the RType layer, which knows
-            // about length; Mode has no length dimension).
-            (Null, x) | (x, Null) => Some(x),
-            (Raw, Raw) => Some(Raw),
-            _ => {
-                let r = self.coerce_rank().max(other.coerce_rank());
-                Some(match r {
-                    0 => Logical,
-                    1 => Integer,
-                    2 => Double,
-                    3 => Complex,
-                    _ => Double,
-                })
-            }
+            // Arithmetic promotes logical values to integer. NULL affects
+            // length but participates as the lowest numeric mode; NULL +
+            // NULL is integer(0) in R.
+            (Complex, _) | (_, Complex) => Some(Complex),
+            (Double, _) | (_, Double) => Some(Double),
+            (Integer, _) | (_, Integer) => Some(Integer),
+            (Logical, Logical | Null) | (Null, Logical) | (Null, Null) => Some(Integer),
         }
     }
 
@@ -154,10 +140,8 @@ impl Length {
         match (self, other) {
             (Zero, _) | (_, Zero) => Zero,
             (One, x) | (x, One) => x,
-            // R recycles to max(a, b) (warning if neither divides the
-            // other); we model both cases as Known(max). The previous
-            // code had two identical branches here for the divides/does-
-            // not-divide cases -- collapsed to one.
+            // R recycles to max(a, b). The checker separately reports the
+            // warning case where neither length divides the other.
             (Known(a), Known(b)) => Known(a.max(b)),
             (Known(_), Unknown) | (Unknown, Known(_)) | (Unknown, Unknown) => Unknown,
         }
@@ -483,10 +467,8 @@ impl RType {
 
     /// Checked constructor for a `Mode::Union` type. All union construction
     /// must go through here so a malformed union (`mode == Union`,
-    /// `members == None`) can never be built by accident -- the audit in
-    /// An audit traced several false positives (e.g. the `if` condition
-    /// `union[]` RY001) to ad-hoc `RType::new(Mode::Union, ...)` /
-    /// `RType::new(bt.mode, ...)` sites that left `members` null.
+    /// `members == None`) cannot be built. Downstream inference relies on
+    /// every union carrying its members when distributing operations.
     ///
     /// Panics (debug) / silently degrades (release) on an empty member list,
     /// since a union of nothing has no sound rendering. A single-member input
@@ -903,6 +885,29 @@ mod tests {
         let r = i.arith(d).unwrap();
         assert_eq!(r.mode, Mode::Double);
         assert_eq!(r.length, Length::One);
+    }
+
+    #[test]
+    fn logical_arithmetic_produces_integer() {
+        let logical = RType::scalar(Mode::Logical);
+        let result = logical.clone().arith(logical).unwrap();
+        assert_eq!(result.mode, Mode::Integer);
+    }
+
+    #[test]
+    fn raw_arithmetic_is_invalid() {
+        let raw = RType::scalar(Mode::Raw);
+        let integer = RType::scalar(Mode::Integer);
+        assert!(raw.clone().arith(raw).is_none());
+        assert!(RType::unknown().arith(integer.clone()).is_some());
+        assert!(RType::scalar(Mode::Raw).arith(integer).is_none());
+    }
+
+    #[test]
+    fn value_combination_uses_rs_coercion_order() {
+        assert_eq!(Mode::Raw.combine_result(Mode::Integer), Mode::Integer);
+        assert_eq!(Mode::Function.combine_result(Mode::Integer), Mode::List);
+        assert_eq!(Mode::Null.combine_result(Mode::Raw), Mode::Raw);
     }
 
     #[test]

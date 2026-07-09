@@ -3,6 +3,7 @@ name = "ry-checker"
 description = "The ry static analyzer: statement/expression checking and diagnostics for R."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
@@ -16,4 +17,4 @@ serde_json = { workspace = true }
 rayon = { workspace = true }
 
 [dev-dependencies]
-insta = { version = "1.48.0", features = ["yaml"] }
+insta = { workspace = true }

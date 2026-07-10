@@ -12,6 +12,7 @@
 
 pub mod diagnostics;
 pub mod format;
+pub mod packages;
 pub mod project;
 pub mod rules;
 
@@ -33,7 +34,8 @@ use ry_core::Span;
 use ry_core::ast::*;
 use ry_core::types::{ClassVector, ColumnSchema, FunctionSignature, Length, Mode, RType};
 use ry_typeshed::{
-    FunctionSig, JsonRType, ReturnSpec, Typeshed, is_known_package, load_base_cached, load_package,
+    FunctionSig, JsonRType, ReturnSlot, ReturnSpec, Typeshed, is_known_package, known_packages,
+    load_base_cached, load_package,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -96,18 +98,6 @@ const S3_DENYLIST: &[&str] = &[
     "data.frame",
 ];
 
-const PACKAGE_SIGNATURE_ORDER: &[&str] = &[
-    "dplyr",
-    "purrr",
-    "mirai",
-    "survival",
-    "brms",
-    "posterior",
-    "loo",
-    "bayesplot",
-    "cmdstanr",
-];
-
 /// Names that are intentionally available without a local binding in
 /// ordinary R code. Treating these as opaque ambient values keeps RY010
 /// focused on user variables rather than R runtime state or tidy-eval
@@ -152,6 +142,24 @@ fn ident_name(expr: &Expr) -> Option<&str> {
     match expr {
         Expr::Ident { name, .. } => Some(name),
         _ => None,
+    }
+}
+
+fn is_na_literal(expr: &Expr) -> bool {
+    matches!(expr, Expr::Na(_, _))
+}
+
+fn non_divisible_recycling(lhs: Length, rhs: Length) -> Option<(usize, usize)> {
+    let known = |length| match length {
+        Length::One => Some(1),
+        Length::Known(n) => Some(n),
+        Length::Zero | Length::Unknown => None,
+    };
+    let (a, b) = (known(lhs)?, known(rhs)?);
+    if a > 1 && b > 1 && a.max(b) % a.min(b) != 0 {
+        Some((a, b))
+    } else {
+        None
     }
 }
 
@@ -489,8 +497,8 @@ pub struct Checker {
     pub(crate) return_slots: Arc<ReturnSlots>,
     /// Stack of function names currently being inferred (cycle detection).
     pub(crate) inferring: Vec<String>,
-    /// Packages loaded via `library(pkg)` / `require(pkg)` /
-    /// `requireNamespace("pkg")`, plus any declared in `ry.toml`'s
+    /// Packages attached via `library(pkg)` / `require(pkg)`, plus any
+    /// declared in `ry.toml`'s
     /// `packages` key (threaded in via `set_loaded`). The dplyr NSE
     /// verbs are gated on `dplyr` (or `tidyverse`) being present here,
     /// so a bare `filter(df, ...)` only gets dplyr NSE treatment when
@@ -498,6 +506,11 @@ pub struct Checker {
     /// resolution. A plain owned set per emitter (rather than Arc-shared
     /// like the tables) is fine: it is small and rarely mutated.
     pub(crate) loaded: HashSet<String>,
+    /// Opaque names proven to exist by metadata for the current source file.
+    /// Kept separate from the project-wide FnTable so imports from one R
+    /// package cannot suppress RY010 in an unrelated package checked in the
+    /// same invocation.
+    external_bindings: HashSet<String>,
 }
 
 impl Checker {
@@ -512,6 +525,7 @@ impl Checker {
             return_slots: Arc::new(ReturnSlots::default()),
             inferring: Vec::new(),
             loaded: HashSet::new(),
+            external_bindings: HashSet::new(),
         }
     }
 
@@ -579,6 +593,7 @@ impl Checker {
             return_slots: Arc::new(return_slots),
             inferring: Vec::new(),
             loaded: HashSet::new(),
+            external_bindings: HashSet::new(),
         }
     }
 
@@ -602,6 +617,7 @@ impl Checker {
             return_slots,
             inferring: Vec::new(),
             loaded: HashSet::new(),
+            external_bindings: HashSet::new(),
         }
     }
 
@@ -626,14 +642,14 @@ impl Checker {
         self.collect_fns(&file.stmts);
     }
 
-    /// Collect packages loaded by `library`/`require`/`requireNamespace`
+    /// Collect packages attached by `library`/`require`
     /// anywhere in this file, WITHOUT emitting diagnostics. Returns the
     /// set of package names so `Project::check` can union them across
     /// files (a `library(dplyr)` in any file makes dplyr NSE verbs work
     /// in every file, matching the plan's cross-file union intent).
     ///
     /// Implementation: walk the file in discarding mode so `infer_call`'s
-    /// library/require/requireNamespace recording populates `self.loaded`
+    /// library/require recording populates `self.loaded`
     /// via the same code path used during real checking; we then take
     /// the set. Discarding mode guarantees no diagnostics are emitted
     /// even though we run the full inference walker.
@@ -700,11 +716,16 @@ impl Checker {
 
     /// Seed the loaded-packages set. Called by `Project` (with the
     /// union of `ry.toml` `packages` and every file's `library`/
-    /// `require`/`requireNamespace` calls) before pass-3 emission, and
+    /// `require` calls) before pass-3 emission, and
     /// by the CLI for single-file `Checker` paths. The dplyr NSE verbs
     /// consult this set to decide whether to apply dplyr semantics.
     pub fn set_loaded(&mut self, loaded: HashSet<String>) {
         self.loaded = loaded;
+    }
+
+    /// Seed opaque bindings established by metadata for this source file.
+    pub fn set_external_bindings(&mut self, bindings: HashSet<String>) {
+        self.external_bindings = bindings;
     }
 
     /// Resolve a function signature by name, consulting (in order):
@@ -741,8 +762,8 @@ impl Checker {
             // And under loaded packages, stripped name (a qualified call
             // to a package we have signatures for but where the function
             // lives under a different name is unlikely, but be thorough).
-            for pk in PACKAGE_SIGNATURE_ORDER {
-                if !self.loaded.contains(*pk) {
+            for pk in known_packages() {
+                if !self.loaded.contains(pk) {
                     continue;
                 }
                 if let Some(t) = load_package(pk) {
@@ -764,8 +785,8 @@ impl Checker {
         // disjoint across these packages, so masking rarely bites).
         // `loaded` is a HashSet (unordered) so we walk a deterministic
         // known-packages list and check membership.
-        for pkg in PACKAGE_SIGNATURE_ORDER {
-            if !self.loaded.contains(*pkg) {
+        for pkg in known_packages() {
+            if !self.loaded.contains(pkg) {
                 continue;
             }
             if let Some(t) = load_package(pkg) {
@@ -796,8 +817,8 @@ impl Checker {
             return true;
         }
         // Loaded packages (fixed priority order; see resolve_typeshed_sig).
-        for pkg in PACKAGE_SIGNATURE_ORDER {
-            if !self.loaded.contains(*pkg) {
+        for pkg in known_packages() {
+            if !self.loaded.contains(pkg) {
                 continue;
             }
             if let Some(t) = load_package(pkg) {
@@ -1780,6 +1801,9 @@ impl Checker {
                     if let Some(t) = ambient_global_type(name) {
                         return t;
                     }
+                    if self.external_bindings.contains(name) {
+                        return RType::unknown();
+                    }
                     // Built-in dataset? (mtcars, iris, ...) Resolve before
                     // flagging the identifier as unbound.
                     if let Some(jt) = self.typeshed.datasets.get(name) {
@@ -1910,6 +1934,16 @@ impl Checker {
                 if matches!(op, BinOpKind::AndAnd | BinOpKind::OrOr) {
                     return self.infer_short_circuit_binop(*op, lhs, rhs, scope, *span);
                 }
+                if matches!(op, BinOpKind::Eq | BinOpKind::Ne)
+                    && (is_na_literal(lhs) || is_na_literal(rhs))
+                {
+                    self.emit(
+                        Severity::Warning,
+                        *span,
+                        "RY034",
+                        "comparison with `NA` always produces `NA`; use `is.na()` instead",
+                    );
+                }
                 let lt = self.infer(lhs, scope);
                 let rt = self.infer(rhs, scope);
                 self.infer_binop(*op, lt, rt, *span)
@@ -1947,15 +1981,24 @@ impl Checker {
                 let t = self.infer(expr, scope);
                 match op {
                     UnaryOpKind::Neg => {
-                        if matches!(t.mode, Mode::Character | Mode::List | Mode::Function) {
+                        if matches!(
+                            t.mode,
+                            Mode::Character | Mode::Raw | Mode::List | Mode::Function
+                        ) {
                             self.emit(
                                 Severity::Error,
                                 *span,
                                 "RY020",
                                 format!("cannot apply unary `-` to `{}`", t.mode),
                             );
+                            RType::unknown()
+                        } else {
+                            let mode = match t.mode {
+                                Mode::Logical | Mode::Null => Mode::Integer,
+                                other => other,
+                            };
+                            RType::new(mode, t.length)
                         }
-                        t
                     }
                     UnaryOpKind::Not => {
                         if matches!(t.mode, Mode::Character | Mode::List | Mode::Function) {
@@ -2120,7 +2163,27 @@ impl Checker {
         // Arithmetic.
         let lt_mode = lt.mode;
         let rt_mode = rt.mode;
+        let recycles = non_divisible_recycling(lt.length, rt.length);
+        let has_factor = lt.class.contains("factor") || rt.class.contains("factor");
         if let Some(t) = lt.arith(rt) {
+            if let Some((lhs_len, rhs_len)) = recycles {
+                self.emit(
+                    Severity::Warning,
+                    span,
+                    "RY041",
+                    format!(
+                        "vector lengths {lhs_len} and {rhs_len} do not divide evenly; R will recycle with a warning"
+                    ),
+                );
+            }
+            if has_factor {
+                self.emit(
+                    Severity::Warning,
+                    span,
+                    "RY042",
+                    "arithmetic on a factor produces `NA`; operate on its levels or convert it explicitly",
+                );
+            }
             return t;
         }
         self.emit(
@@ -2472,19 +2535,10 @@ impl Checker {
             return RType::new(Mode::Null, Length::Zero);
         }
 
-        // `requireNamespace("pkg")` takes a STRING literal (unlike
-        // library/require, which take a bare symbol). Record the package
-        // name into `self.loaded` for the same gating reason, then fall
-        // through: requireNamespace resolves via the typeshed to a
-        // length-1 logical, so normal arg inference is harmless (the
-        // string literal has no unbound refs to fire RY010).
-        if name == "requireNamespace" {
-            if let Some(first) = args.first() {
-                if let Expr::String(pkg, _) = &first.value {
-                    self.loaded.insert(pkg.clone());
-                }
-            }
-        }
+        // `requireNamespace("pkg")` makes qualified `pkg::name` lookups
+        // available, but unlike library/require it does NOT attach the
+        // package or introduce unqualified bindings. Let it fall through
+        // to the base typeshed without adding it to `self.loaded`.
 
         // Foreign-function-interface primitives (`.Call`, `.C`,
         // `.Fortran`, `.External`, `.External2`, `.Internal`). Their
@@ -2553,6 +2607,21 @@ impl Checker {
             }
             return RType::new(Mode::Integer, Length::Unknown)
                 .with_class(ClassVector::single("factor"));
+        }
+
+        // The default two-argument form assigns into the current
+        // environment. A literal name makes that binding fully static.
+        if name == "assign" && args.len() == 2 {
+            let name = match &args[0].value {
+                Expr::String(name, _) => Some(name.clone()),
+                _ => None,
+            };
+            let _ = self.infer(&args[0].value, scope);
+            let value = self.infer(&args[1].value, scope);
+            if let Some(name) = name {
+                scope.insert(name, value.clone());
+            }
+            return value;
         }
 
         // NSE verbs (`subset`, `with`, `within`, `transform`) evaluate
@@ -3918,7 +3987,7 @@ impl Checker {
         {
             return Some(self.apply_sig(generic, &sig, arg_types, &[], span));
         }
-        for pkg in PACKAGE_SIGNATURE_ORDER {
+        for pkg in known_packages() {
             if let Some(sig) = load_package(pkg)
                 .and_then(|t| {
                     t.s3_methods
@@ -3972,11 +4041,7 @@ impl Checker {
                 saw_union = true;
                 continue;
             }
-            mode = if mode.coerce_rank() >= t.mode.coerce_rank() {
-                mode
-            } else {
-                t.mode
-            };
+            mode = mode.combine_result(t.mode);
             total_len = total_len.saturating_add(match t.length {
                 Length::Zero => 0,
                 Length::One => 1,
@@ -4382,14 +4447,9 @@ impl Checker {
         };
         let first = matched.first().cloned().unwrap_or(RType::unknown());
         match &sig.return_ {
-            ReturnSpec::Slot(s) => match s.as_str() {
-                "arg0" => first,
-                "concat_of_args" => self.infer_c(args, arg_types, span),
-                s if s.starts_with("arg") => {
-                    let idx: usize = s[3..].parse().unwrap_or(0);
-                    arg_types.get(idx).cloned().unwrap_or(RType::unknown())
-                }
-                _ => RType::unknown(),
+            ReturnSpec::Slot(slot) => match slot {
+                ReturnSlot::Arg0 => first,
+                ReturnSlot::ConcatOfArgs => self.infer_c(args, arg_types, span),
             },
             ReturnSpec::Concrete(c) => {
                 let mode = match c.mode.as_str() {
@@ -6725,13 +6785,14 @@ mod tests {
     }
 
     #[test]
-    fn nse_dplyr_filter_requirenamespace_records_loaded() {
-        // `requireNamespace("dplyr")` also records into the loaded set.
+    fn nse_dplyr_filter_requirenamespace_does_not_attach_dplyr() {
+        // `requireNamespace("dplyr")` permits qualified access but does not
+        // attach dplyr, so an unqualified filter call keeps base semantics.
         let diags =
             check("requireNamespace(\"dplyr\")\ndf <- mtcars\nsmall <- filter(df, mpg > 20)\n");
         assert!(
-            diags.iter().all(|d| d.code != "RY010"),
-            "requireNamespace(\"dplyr\") + filter() should suppress RY010 on column refs, got {:?}",
+            diags.iter().any(|d| d.code == "RY010"),
+            "requireNamespace(\"dplyr\") must not attach unqualified dplyr names, got {:?}",
             diags
         );
     }

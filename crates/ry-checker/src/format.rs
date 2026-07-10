@@ -1,8 +1,6 @@
 //! Diagnostic output formatters. Matches ty's `--output-format` choices.
 //!
-//! - `full`: multi-line with source context (deferred; we currently emit
-//!   a single line per diagnostic, like `concise`, since the source
-//!   snippet plumbing isn't wired yet).
+//! - `full`: multi-line with source context and span underlining.
 //! - `concise`: `path:line:col: severity: [CODE] message`, one per line.
 //! - `json`: a single JSON array of diagnostic objects.
 //! - `github`: GitHub Actions workflow-command annotations.
@@ -47,11 +45,22 @@ struct JsonDiagnostic<'a> {
 }
 
 /// Render the diagnostics to a string. `srcs` maps `path` -> source text
-/// so we can compute line numbers and (eventually) source snippets.
+/// so we can compute line numbers and source snippets.
 pub fn render(
     diags: &[Diagnostic],
     format: OutputFormat,
     srcs: &std::collections::HashMap<String, String>,
+) -> String {
+    render_with_color(diags, format, srcs, false)
+}
+
+/// Render diagnostics with optional ANSI styling for human-readable formats.
+/// Machine-readable formats ignore `color` so their schemas remain stable.
+pub fn render_with_color(
+    diags: &[Diagnostic],
+    format: OutputFormat,
+    srcs: &std::collections::HashMap<String, String>,
+    color: bool,
 ) -> String {
     match format {
         OutputFormat::Concise => {
@@ -61,8 +70,13 @@ pub fn render(
                 use std::fmt::Write as _;
                 let _ = writeln!(
                     out,
-                    "{}:{}:{}: {}: [{}] {}",
-                    d.path, line, col, d.severity, d.code, d.message
+                    "{}:{}:{}: {}: {} {}",
+                    d.path,
+                    line,
+                    col,
+                    styled_severity(d.severity, color),
+                    styled_code(d.code, color),
+                    d.message
                 );
             }
             out
@@ -77,8 +91,13 @@ pub fn render(
                 use std::fmt::Write as _;
                 let _ = writeln!(
                     out,
-                    "{}:{}:{}: {}: [{}] {}",
-                    d.path, line, col, d.severity, d.code, d.message
+                    "{}:{}:{}: {}: {} {}",
+                    d.path,
+                    line,
+                    col,
+                    styled_severity(d.severity, color),
+                    styled_code(d.code, color),
+                    d.message
                 );
                 if let Some(src_line) = srcs
                     .get(&d.path)
@@ -93,7 +112,13 @@ pub fn render(
                     let _ = writeln!(out, "  {}", src_line);
                     let underline_width = span_char_width(d, src_line);
                     let tilde = "~".repeat(underline_width.saturating_sub(1));
-                    let _ = writeln!(out, "  {}^{}", " ".repeat(col.saturating_sub(1)), tilde);
+                    let underline = format!("^{}", tilde);
+                    let _ = writeln!(
+                        out,
+                        "  {}{}",
+                        " ".repeat(col.saturating_sub(1)),
+                        styled_underline(&underline, d.severity, color)
+                    );
                 }
             }
             out
@@ -213,6 +238,39 @@ pub fn render(
             out.push_str("  </testsuite>\n</testsuites>\n");
             out
         }
+    }
+}
+
+fn styled_severity(severity: Severity, color: bool) -> String {
+    let label = severity.as_str();
+    if !color {
+        return label.to_string();
+    }
+    let ansi = severity_ansi(severity);
+    format!("\x1b[{ansi}m{label}\x1b[0m")
+}
+
+fn styled_code(code: &str, color: bool) -> String {
+    if color {
+        format!("\x1b[36;1m[{code}]\x1b[0m")
+    } else {
+        format!("[{code}]")
+    }
+}
+
+fn styled_underline(underline: &str, severity: Severity, color: bool) -> String {
+    if !color {
+        return underline.to_string();
+    }
+    let ansi = severity_ansi(severity);
+    format!("\x1b[{ansi}m{underline}\x1b[0m")
+}
+
+fn severity_ansi(severity: Severity) -> &'static str {
+    match severity {
+        Severity::Error => "31;1",
+        Severity::Warning => "33;1",
+        Severity::Info => "34;1",
     }
 }
 

@@ -10,6 +10,15 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.88
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace --all-targets
+
   build-test:
     name: Build & test
     runs-on: ubuntu-latest
@@ -23,6 +32,8 @@ jobs:
         run: cargo build --workspace --all-targets
       - name: Test
         run: cargo test --workspace
+      - name: Performance regression tests
+        run: cargo test -p ry-checker --test perf --release -- --ignored
       - name: Clippy (deny warnings)
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: rustfmt

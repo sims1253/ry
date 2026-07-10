@@ -21,6 +21,7 @@ use crate::{
 };
 use rayon::prelude::*;
 use ry_core::SourceFile;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// A multi-file R project. Functions defined in any file are visible
@@ -46,10 +47,16 @@ pub struct Project {
     /// Kept so `apply_filter` can run after `check()` without re-parsing.
     diagnostics: Vec<(String, Vec<Diagnostic>)>,
     /// Packages declared in `ry.toml`'s `packages` key, unioned at
-    /// `check()` time with packages loaded via `library`/`require`/
-    /// `requireNamespace` in any file. Seeded into every pass-3 emitter
+    /// `check()` time with packages attached via `library`/`require` in
+    /// any file. Seeded into every pass-3 emitter
     /// so the dplyr NSE gating sees a project-wide view.
     loaded: std::collections::HashSet<String>,
+    /// Names supplied by project metadata rather than R assignments.
+    /// R package `NAMESPACE` imports are the primary source: an
+    /// `importFrom(shiny, tags)` directive proves that `tags` is bound in
+    /// every package source file even when ry has no type stub for Shiny.
+    /// Such bindings deliberately resolve to opaque values.
+    external_bindings: HashMap<String, HashSet<String>>,
 }
 
 impl Default for Project {
@@ -67,6 +74,7 @@ impl Project {
             files: Vec::new(),
             diagnostics: Vec::new(),
             loaded: std::collections::HashSet::new(),
+            external_bindings: HashMap::new(),
         }
     }
 
@@ -84,11 +92,18 @@ impl Project {
 
     /// Declare the project's loaded packages (from `ry.toml`'s
     /// `packages` key). These are unioned at `check()` time with
-    /// packages loaded via `library`/`require`/`requireNamespace` in
+    /// packages attached via `library`/`require` in
     /// any file, and the union is seeded into every pass-3 emitter so
     /// the dplyr NSE gating sees a project-wide view.
     pub fn set_loaded(&mut self, loaded: std::collections::HashSet<String>) {
         self.loaded = loaded;
+    }
+
+    /// Declare per-file names provided by project metadata, such as
+    /// `NAMESPACE`'s `importFrom()` directives. Per-file scoping prevents an
+    /// import in one checked package from leaking into an unrelated package.
+    pub fn set_external_bindings(&mut self, bindings: HashMap<String, HashSet<String>>) {
+        self.external_bindings = bindings;
     }
 
     /// Run the three-pass check across all added files. Returns a map
@@ -103,8 +118,8 @@ impl Project {
     /// wasteful: each call re-collects and re-refines from scratch.
     /// For incremental updates, construct a fresh `Project`.
     pub fn check(&mut self) -> Vec<(String, Vec<Diagnostic>)> {
-        // Pre-scan: collect packages loaded via `library`/`require`/
-        // `requireNamespace` from every file and union them with the
+        // Pre-scan: collect packages attached via `library`/`require`
+        // from every file and union them with the
         // project-declared `loaded` set (from `ry.toml`'s `packages`
         // key). The union is seeded into every pass-3 emitter so a
         // `library(dplyr)` in any file makes dplyr NSE verbs resolve
@@ -130,7 +145,6 @@ impl Project {
         let (fn_table, return_slots) = collector.into_tables();
         self.fn_table = fn_table;
         self.return_slots = return_slots;
-
         // Pass 2: refine every function's inferred return type until
         // the shared table stabilizes. A single Checker drives the
         // fixpoint loop; its table is then handed back to the Project.
@@ -158,6 +172,7 @@ impl Project {
         let fn_table = Arc::new(std::mem::take(&mut self.fn_table));
         let return_slots = Arc::new(std::mem::take(&mut self.return_slots));
         let loaded = Arc::new(std::mem::take(&mut self.loaded));
+        let external_bindings = Arc::new(std::mem::take(&mut self.external_bindings));
         let mut per_file: Vec<(usize, String, Vec<Diagnostic>)> = self
             .files
             .par_iter()
@@ -169,6 +184,9 @@ impl Project {
                     Arc::clone(&return_slots),
                 );
                 emitter.set_loaded((*loaded).clone());
+                emitter.set_external_bindings(
+                    external_bindings.get(path).cloned().unwrap_or_default(),
+                );
                 emitter.emit_diagnostics(file);
                 (i, path.clone(), emitter.take_diagnostics())
             })
@@ -179,6 +197,7 @@ impl Project {
         self.fn_table = Arc::unwrap_or_clone(fn_table);
         self.return_slots = Arc::unwrap_or_clone(return_slots);
         self.loaded = Arc::unwrap_or_clone(loaded);
+        self.external_bindings = Arc::unwrap_or_clone(external_bindings);
         // Re-sort to input file order and drop the sort index.
         per_file.sort_by_key(|(i, _, _)| *i);
         let per_file: Vec<(String, Vec<Diagnostic>)> =

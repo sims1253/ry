@@ -11,7 +11,7 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.96.1"
+rust-version = "1.88"
 license = "MIT"
 repository = "https://github.com/sims1253/ry"
 authors = ["Maximilian Scholz"]
@@ -25,11 +25,17 @@ thiserror = "2"
 miette = { version = "7", features = ["fancy"] }
 # cli
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4.6.7"
 # misc
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio = "1"
+toml = "1.1.2"
+glob = "0.3"
+tempfile = "3"
+insta = { version = "1.48.0", features = ["yaml"] }
 # parallelism (Project::check pass 3 + CLI parsing)
 rayon = "1"
 

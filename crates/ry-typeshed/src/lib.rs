@@ -14,26 +14,72 @@ pub const MIRAI_JSON: &str = include_str!("../data/mirai.json");
 pub const BAYES_JSON: &str = include_str!("../data/bayes.json");
 pub const SURVIVAL_JSON: &str = include_str!("../data/survival.json");
 
-/// The set of packages whose type signatures ship embedded in ry.
-/// `base` is always attached (returned by `load_base_cached`); the
-/// others are attached on demand when `library(pkg)` is recorded or a
-/// `pkg::`-qualified call is resolved. `bayes` is a multi-package
-/// typeshed whose JSON keys are `pkg.function` (brms, posterior, loo,
-/// bayesplot, cmdstanr); see [`load_package`].
-pub const KNOWN_PACKAGES: &[&str] = &["base", "dplyr", "purrr", "mirai", "bayes", "survival"];
+#[derive(Clone, Copy)]
+struct PackageSpec {
+    name: &'static str,
+    json: &'static str,
+    prefix: Option<&'static str>,
+}
+
+/// Single source of truth for embedded non-base packages, in signature
+/// resolution order. Bayesian packages share a JSON document but remain
+/// distinct namespaces through their prefixes.
+const PACKAGE_SPECS: &[PackageSpec] = &[
+    PackageSpec {
+        name: "dplyr",
+        json: DPLYR_JSON,
+        prefix: None,
+    },
+    PackageSpec {
+        name: "purrr",
+        json: PURRR_JSON,
+        prefix: None,
+    },
+    PackageSpec {
+        name: "mirai",
+        json: MIRAI_JSON,
+        prefix: None,
+    },
+    PackageSpec {
+        name: "survival",
+        json: SURVIVAL_JSON,
+        prefix: None,
+    },
+    PackageSpec {
+        name: "brms",
+        json: BAYES_JSON,
+        prefix: Some("brms"),
+    },
+    PackageSpec {
+        name: "posterior",
+        json: BAYES_JSON,
+        prefix: Some("posterior"),
+    },
+    PackageSpec {
+        name: "loo",
+        json: BAYES_JSON,
+        prefix: Some("loo"),
+    },
+    PackageSpec {
+        name: "bayesplot",
+        json: BAYES_JSON,
+        prefix: Some("bayesplot"),
+    },
+    PackageSpec {
+        name: "cmdstanr",
+        json: BAYES_JSON,
+        prefix: Some("cmdstanr"),
+    },
+];
+
+pub fn known_packages() -> impl Iterator<Item = &'static str> {
+    PACKAGE_SPECS.iter().map(|spec| spec.name)
+}
 
 #[derive(Debug, Error)]
 pub enum TypeshedError {
     #[error("typeshed parse error: {0}")]
     Json(#[from] serde_json::Error),
-}
-
-/// Abstract slot for a return type that depends on the call's arguments.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReturnTypeSlot {
-    /// Literally as written in the JSON: a free-form token that the
-    /// checker knows how to interpret ("arg0", "longest_arg", etc.).
-    Slot(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -55,10 +101,18 @@ pub struct JsonRType {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub enum ReturnSlot {
+    #[serde(rename = "arg0")]
+    Arg0,
+    #[serde(rename = "concat_of_args")]
+    ConcatOfArgs,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum ReturnSpec {
-    /// Free-form slot, e.g. "arg0" or "concat_of_args".
-    Slot(String),
+    /// A validated return slot whose type depends on call arguments.
+    Slot(ReturnSlot),
     /// A concrete type spec.
     Concrete(JsonRType),
 }
@@ -134,7 +188,6 @@ pub fn load_base() -> Result<Typeshed, TypeshedError> {
     // `return` to `return_` inside BTreeMap values without a custom impl.
     #[derive(serde::Deserialize)]
     struct RawFile {
-        #[allow(dead_code)]
         version: String,
         functions: std::collections::BTreeMap<String, _fwd::_FunctionSig>,
         #[serde(default)]
@@ -167,7 +220,7 @@ pub fn load_base() -> Result<Typeshed, TypeshedError> {
         );
     }
     Ok(Typeshed {
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: raw.version,
         functions,
         datasets: raw.datasets,
         s3_methods,
@@ -216,7 +269,6 @@ pub fn load_base_cached() -> Result<&'static Typeshed, TypeshedError> {
 fn parse_package(json: &str, prefix: Option<&str>) -> Result<Typeshed, TypeshedError> {
     #[derive(serde::Deserialize)]
     struct RawFile {
-        #[allow(dead_code)]
         version: String,
         functions: std::collections::BTreeMap<String, _fwd::_FunctionSig>,
         #[serde(default)]
@@ -225,19 +277,20 @@ fn parse_package(json: &str, prefix: Option<&str>) -> Result<Typeshed, TypeshedE
         s3_methods: Vec<RawS3Method>,
     }
     let raw: RawFile = serde_json::from_str(json)?;
-    let strip = |k: &str| -> String {
-        match prefix {
-            Some(p) => k
-                .strip_prefix(&format!("{p}."))
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| k.to_string()),
-            None => k.to_string(),
-        }
-    };
     let mut functions = std::collections::BTreeMap::new();
     for (k, v) in raw.functions {
+        let key = match prefix {
+            Some(prefix) => {
+                let qualified = format!("{prefix}.");
+                let Some(name) = k.strip_prefix(&qualified) else {
+                    continue;
+                };
+                name.to_string()
+            }
+            None => k,
+        };
         functions.insert(
-            strip(&k),
+            key,
             FunctionSig {
                 params: v.params,
                 return_: v.return_,
@@ -258,7 +311,7 @@ fn parse_package(json: &str, prefix: Option<&str>) -> Result<Typeshed, TypeshedE
         );
     }
     Ok(Typeshed {
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: raw.version,
         functions,
         datasets: raw.datasets,
         s3_methods,
@@ -281,37 +334,20 @@ fn parse_package(json: &str, prefix: Option<&str>) -> Result<Typeshed, TypeshedE
 /// are compile-time-embedded and never change), so repeated lookups are
 /// cheap.
 pub fn load_package(name: &str) -> Option<&'static Typeshed> {
-    static DPLYR: std::sync::OnceLock<Typeshed> = std::sync::OnceLock::new();
-    static PURRR: std::sync::OnceLock<Typeshed> = std::sync::OnceLock::new();
-    static MIRAI: std::sync::OnceLock<Typeshed> = std::sync::OnceLock::new();
-    static SURVIVAL: std::sync::OnceLock<Typeshed> = std::sync::OnceLock::new();
-    static BRMS: std::sync::OnceLock<Typeshed> = std::sync::OnceLock::new();
-    static POSTERIOR: std::sync::OnceLock<Typeshed> = std::sync::OnceLock::new();
-    static LOO: std::sync::OnceLock<Typeshed> = std::sync::OnceLock::new();
-    static BAYESPLOT: std::sync::OnceLock<Typeshed> = std::sync::OnceLock::new();
-    static CMDSTANR: std::sync::OnceLock<Typeshed> = std::sync::OnceLock::new();
-
-    let (cache, json, prefix): (
-        &'static std::sync::OnceLock<Typeshed>,
-        &'static str,
-        Option<&'static str>,
-    ) = match name {
-        "dplyr" => (&DPLYR, DPLYR_JSON, None),
-        "purrr" => (&PURRR, PURRR_JSON, None),
-        "mirai" => (&MIRAI, MIRAI_JSON, None),
-        "survival" => (&SURVIVAL, SURVIVAL_JSON, None),
-        "brms" => (&BRMS, BAYES_JSON, Some("brms")),
-        "posterior" => (&POSTERIOR, BAYES_JSON, Some("posterior")),
-        "loo" => (&LOO, BAYES_JSON, Some("loo")),
-        "bayesplot" => (&BAYESPLOT, BAYES_JSON, Some("bayesplot")),
-        "cmdstanr" => (&CMDSTANR, BAYES_JSON, Some("cmdstanr")),
-        _ => return None,
-    };
-    Some(
-        cache.get_or_init(|| {
-            parse_package(json, prefix).expect("embedded package typeshed must parse")
-        }),
-    )
+    let _ = PACKAGE_SPECS.iter().find(|spec| spec.name == name)?;
+    static PACKAGES: std::sync::OnceLock<std::collections::BTreeMap<&'static str, Typeshed>> =
+        std::sync::OnceLock::new();
+    let packages = PACKAGES.get_or_init(|| {
+        PACKAGE_SPECS
+            .iter()
+            .map(|spec| {
+                let typeshed = parse_package(spec.json, spec.prefix)
+                    .expect("embedded package typeshed must parse");
+                (spec.name, typeshed)
+            })
+            .collect()
+    });
+    packages.get(name)
 }
 
 /// Whether a package name is known to ry's embedded typeshed. Used by
@@ -319,18 +355,7 @@ pub fn load_package(name: &str) -> Option<&'static Typeshed> {
 /// signatures (unknown packages are still recorded as loaded for NSE
 /// gating, e.g. `tidyverse`, but contribute no function signatures).
 pub fn is_known_package(name: &str) -> bool {
-    matches!(
-        name,
-        "dplyr"
-            | "purrr"
-            | "mirai"
-            | "survival"
-            | "brms"
-            | "posterior"
-            | "loo"
-            | "bayesplot"
-            | "cmdstanr"
-    )
+    PACKAGE_SPECS.iter().any(|spec| spec.name == name)
 }
 
 #[cfg(test)]
@@ -385,6 +410,26 @@ mod tests {
         assert!(!posterior.functions.contains_key("posterior.as_draws_df"));
         // The brms-only view must NOT see posterior's entries.
         assert!(!brms.functions.contains_key("as_draws_df"));
+        assert!(!brms.functions.contains_key("posterior.as_draws_df"));
+    }
+
+    #[test]
+    fn typeshed_preserves_embedded_schema_version() {
+        let t = load_base().expect("loads");
+        assert_eq!(t.version, "0.0.1");
+    }
+
+    #[test]
+    fn every_known_package_loads() {
+        for name in known_packages() {
+            assert!(load_package(name).is_some(), "{name} must load");
+        }
+    }
+
+    #[test]
+    fn unknown_return_slot_is_rejected() {
+        let json = r#"{"params":[],"return":"arg_0"}"#;
+        assert!(serde_json::from_str::<_fwd::_FunctionSig>(json).is_err());
     }
 
     #[test]

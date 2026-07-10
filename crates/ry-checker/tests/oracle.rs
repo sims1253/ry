@@ -9,6 +9,8 @@
 //! and asserts:
 //!   - `# oracle: must-flag` + R errored   => at least one Error diag.
 //!   - `# oracle: must-pass` + R succeeded => no Error diag.
+//!   - `# oracle: must-warn RYxxx`         => R-side assertions pass and
+//!     ry emits that warning.
 //!   - `# oracle: known-gap <reason>`      => runs; the delta is printed
 //!     but does NOT fail. It DOES fail if the gap unexpectedly closes
 //!     (ry and R now agree) -- a stale tag.
@@ -26,6 +28,7 @@ use ry_core::RParser;
 enum Tag {
     MustFlag,
     MustPass,
+    MustWarn(String),
     /// A genuine current gap. The one-line reason documents why ry and R
     /// disagree today; the harness prints the delta but does not fail on
     /// it. A stale tag (the gap has closed) DOES fail.
@@ -43,6 +46,11 @@ fn tag_of(src: &str) -> Option<Tag> {
     } else if trimmed.eq_ignore_ascii_case("oracle: must-pass") {
         Some(Tag::MustPass)
     } else {
+        let warn_prefix = "oracle: must-warn";
+        if trimmed.to_ascii_lowercase().starts_with(warn_prefix) {
+            let code = trimmed[warn_prefix.len()..].trim().to_ascii_uppercase();
+            return (!code.is_empty()).then_some(Tag::MustWarn(code));
+        }
         // `# oracle: known-gap <reason>` -- the rest of the line after
         // the tag prefix is the free-text reason. Match the prefix
         // case-insensitively but keep the reason's original casing.
@@ -238,7 +246,7 @@ fn extract_json_bool(line: &str, field: &str) -> Option<bool> {
     }
 }
 
-fn checker_errors(name: &str, src: &str) -> Vec<String> {
+fn checker_diagnostics(name: &str, src: &str) -> Vec<(String, Severity)> {
     let mut parser = RParser::new().expect("parser init");
     let file = parser
         .parse(name, src)
@@ -248,8 +256,7 @@ fn checker_errors(name: &str, src: &str) -> Vec<String> {
     let diags = c.take_diagnostics();
     diags
         .into_iter()
-        .filter(|d| d.severity == Severity::Error)
-        .map(|d| d.code.to_string())
+        .map(|d| (d.code.to_string(), d.severity))
         .collect()
 }
 
@@ -303,7 +310,7 @@ fn oracle_check_each_fixture() {
         let src = fs::read_to_string(&path).expect("read fixture");
         let Some(tag) = tag_of(&src) else {
             failures.push(format!(
-                "{name}: missing `# oracle: must-flag` / `must-pass` / `known-gap` marker"
+                "{name}: missing `# oracle: must-flag` / `must-pass` / `must-warn` / `known-gap` marker"
             ));
             continue;
         };
@@ -333,10 +340,15 @@ fn oracle_check_each_fixture() {
                 .unwrap_or((true, "fixture missing from driver output".to_string())),
             None => r_errors(&path),
         };
-        let errs = checker_errors(&name, &src);
+        let diagnostics = checker_diagnostics(&name, &src);
+        let errs: Vec<&str> = diagnostics
+            .iter()
+            .filter(|(_, severity)| *severity == Severity::Error)
+            .map(|(code, _)| code.as_str())
+            .collect();
         let mut err_counts: BTreeMap<&str, usize> = BTreeMap::new();
         for c in &errs {
-            *err_counts.entry(c.as_str()).or_insert(0) += 1;
+            *err_counts.entry(c).or_insert(0) += 1;
         }
 
         if let Tag::KnownGap(reason) = &tag {
@@ -374,6 +386,9 @@ fn oracle_check_each_fixture() {
         let ok = match (&tag, r_errored) {
             (Tag::MustFlag, true) => !errs.is_empty(),
             (Tag::MustPass, false) => errs.is_empty(),
+            (Tag::MustWarn(code), false) => diagnostics
+                .iter()
+                .any(|(actual, severity)| actual == code && *severity == Severity::Warning),
             (Tag::MustFlag, false) => {
                 failures.push(format!(
                     "{name}: tagged must-flag but R did not error; cannot assert"
@@ -387,6 +402,12 @@ fn oracle_check_each_fixture() {
                 // reproduction.
                 failures.push(format!(
                     "{name}: tagged must-pass but R errored; cannot assert (R said: {r_message})"
+                ));
+                continue;
+            }
+            (Tag::MustWarn(code), true) => {
+                failures.push(format!(
+                    "{name}: tagged must-warn {code} but its R-side assertions failed (R said: {r_message})"
                 ));
                 continue;
             }
@@ -422,6 +443,7 @@ fn tag_label(tag: &Tag) -> &'static str {
     match tag {
         Tag::MustFlag => "must-flag",
         Tag::MustPass => "must-pass",
+        Tag::MustWarn(_) => "must-warn",
         Tag::KnownGap(_) => "known-gap",
     }
 }
@@ -439,6 +461,10 @@ fn tag_of_parses_all_markers() {
     assert!(matches!(
         tag_of("# oracle: must-flag\n"),
         Some(Tag::MustFlag)
+    ));
+    assert!(matches!(
+        tag_of("# oracle: must-warn ry041\n"),
+        Some(Tag::MustWarn(code)) if code == "RY041"
     ));
     // Unrecognized first line -> None (the harness treats this as a
     // missing-marker failure).

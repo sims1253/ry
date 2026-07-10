@@ -3,6 +3,7 @@ name = "ry-lsp"
 description = "Language Server Protocol implementation for ry, a static analyzer for R."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
@@ -11,7 +12,7 @@ ry-core = { path = "../ry-core" }
 ry-checker = { path = "../ry-checker" }
 ry-typeshed = { path = "../ry-typeshed" }
 tower-lsp = "0.20"
-tokio = { version = "1", features = ["full"] }
+tokio = { workspace = true, features = ["rt", "io-std", "sync", "time"] }
 tracing = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

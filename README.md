@@ -21,7 +21,7 @@ scope-driven diagnostics that need a whole-program view.
 
 ## Install
 
-ry is a Cargo workspace; build from source (Rust 1.82 or newer):
+ry is a Cargo workspace; build from source (Rust 1.88 or newer):
 
 ``` sh
 git clone https://github.com/sims1253/ry
@@ -76,6 +76,9 @@ ry check /tmp/ry-readme/analysis.R
 
 Exit codes are CI-friendly: non-zero when any error-level diagnostic
 fires (`--exit-zero` overrides; `--error-on-warning` promotes warnings).
+Human-readable diagnostics use ANSI color on terminals; select the policy
+explicitly with `--color auto|always|never`. Automatic color respects
+`NO_COLOR`, and machine-readable formats never contain ANSI escapes.
 
 ## Package awareness
 
@@ -83,9 +86,16 @@ ry tracks `library()` / `require()` calls and resolves functions against
 per-package type stubs, so the same name means the right thing in
 context: `filter()` is `stats::filter` until dplyr is loaded, and
 `dplyr::filter(df, x > 0)` resolves the column `x` against `df`’s schema
-either way. Stubs currently ship for base R (plus stats and utils),
-dplyr, purrr, mirai, and a minimal Bayesian stack (brms, posterior, loo,
-bayesplot, cmdstanr). Packages attached outside the checked sources can
+either way. For packages being checked, `importFrom(pkg, name)` directives
+in `NAMESPACE` introduce opaque bindings even when ry has no stub for the
+dependency. Whole-package imports and `library()` / `require()` calls also
+use installed packages' static `NAMESPACE` exports without executing R or
+loading package code. `requireNamespace()` deliberately does not introduce
+unqualified names.
+
+Stubs currently ship for base R (plus stats and utils),
+dplyr, purrr, mirai, survival, and a minimal Bayesian stack (brms,
+posterior, loo, bayesplot, cmdstanr). Packages attached outside the checked sources can
 be declared in `ry.toml`.
 
 Parallel purrr code checks like sequential code, and the typed map
@@ -126,6 +136,8 @@ exclude = ["renv", "tests/snaps/**"]
 ```
 
 CLI flags override the config only when passed explicitly.
+When multiple paths are checked, the first path anchors config discovery;
+that one configuration applies to the complete invocation.
 
 ## Inline suppression
 
@@ -175,16 +187,20 @@ explanation for one rule.
 | RY031 | invalid-logical-op       | error    | `&` / `&#124;` / `&&` / `&#124;&#124;` applied to non-coercible types.                                                                                                                                    |
 | RY032 | scalar-logical-length    | warning  | `&&` and `&#124;&#124;` only use the first element of their operands; using them with vectors of length \> 1 is almost always a bug. Use `&`/`&#124;` for vectorized operations.                          |
 | RY033 | comparison-mode-mismatch | warning  | Comparing a character value with a numeric value is valid R but almost always unintended. R compares byte values, not semantic equality.                                                                  |
+| RY034 | compare-na               | warning  | Comparing with `NA` using `==` or `!=` always produces `NA`. Use `is.na()` instead.                                                                                                                       |
 | RY040 | invalid-arithmetic       | error    | Arithmetic operator between incompatible types.                                                                                                                                                           |
+| RY041 | non-divisible-recycling  | warning  | Vector lengths do not divide evenly, so R recycles values with a warning and may produce unintended results.                                                                                             |
+| RY042 | factor-arithmetic        | warning  | Arithmetic on factors produces missing values. Operate on levels or convert explicitly.                                                                                                                  |
 | RY050 | missing-s3-method        | warning  | S3 generic called on a value with no defined method for its class.                                                                                                                                        |
 | RY060 | undefined-column         | error    | Column access on a value whose schema does not contain that column.                                                                                                                                       |
 | RY061 | dollar-on-atomic         | error    | The $ operator is invalid for atomic vectors (integer, double, character, logical). It only works on list-like types (lists, data frames, environments).                                                  |
 | RY070 | call-non-function        | error    | A non-function value (a variable bound to a non-function, or a literal like `42()`) is being called as a function. R will error at runtime (‘attempt to apply non-function’ / ‘could not find function’). |
 | RY080 | map-return-type-mismatch | warning  | A purrr typed-map (`map_dbl`, `map_int`, …) callback returns a value whose mode is incompatible with the target vector type. R coerces at runtime, but the mismatch is almost always unintended.          |
 
-Known gaps: no S4 / R6 / environment modeling, no NAMESPACE resolution
-(cross-package names outside the shipped stubs resolve to opaque), and
-no NA tracking yet.
+Known gaps: no S4 / R6 / environment modeling, no expansion of dynamic
+`exportPattern()` directives, and no NA tracking yet. Cross-package names
+without stubs resolve to opaque values when static package metadata proves
+that they exist.
 
 ## Contributing
 

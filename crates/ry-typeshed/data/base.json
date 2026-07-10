@@ -65,6 +65,10 @@
       "params": ["x"],
       "return": { "mode": "logical", "length": "arg0", "na": true }
     },
+    "as.raw": {
+      "params": ["x"],
+      "return": { "mode": "raw", "length": "arg0", "na": false }
+    },
     "sum": {
       "params": ["..."],
       "return": { "mode": "double_or_int", "length": "1", "na": true }

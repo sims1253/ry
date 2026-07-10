@@ -75,10 +75,28 @@ pub const RULES: &[Rule] = &[
         summary: "Comparing a character value with a numeric value is valid R but almost always unintended. R compares byte values, not semantic equality.",
     },
     Rule {
+        code: "RY034",
+        name: "compare-na",
+        default_severity: Severity::Warning,
+        summary: "Comparing with `NA` using `==` or `!=` always produces `NA`. Use `is.na()` instead.",
+    },
+    Rule {
         code: "RY040",
         name: "invalid-arithmetic",
         default_severity: Severity::Error,
         summary: "Arithmetic operator between incompatible types.",
+    },
+    Rule {
+        code: "RY041",
+        name: "non-divisible-recycling",
+        default_severity: Severity::Warning,
+        summary: "Vector lengths do not divide evenly, so R recycles values with a warning and may produce unintended results.",
+    },
+    Rule {
+        code: "RY042",
+        name: "factor-arithmetic",
+        default_severity: Severity::Warning,
+        summary: "Arithmetic on factors produces missing values. Operate on levels or convert explicitly.",
     },
     Rule {
         code: "RY050",

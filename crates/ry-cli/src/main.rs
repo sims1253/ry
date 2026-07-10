@@ -1,14 +1,54 @@
 #![allow(clippy::collapsible_if)]
 
 use std::collections::HashMap;
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::parser::ValueSource;
-use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser as ClapParser, Subcommand};
+use clap::{
+    ArgMatches, CommandFactory, FromArgMatches, Parser as ClapParser, Subcommand, ValueEnum,
+};
 use miette::{IntoDiagnostic, Result};
 
 mod config;
+mod package_metadata;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum ColorChoice {
+    Auto,
+    Always,
+    Never,
+}
+
+impl ColorChoice {
+    fn enabled(self, format: ry_checker::format::OutputFormat) -> bool {
+        self.enabled_for(
+            format,
+            std::io::stdout().is_terminal(),
+            std::env::var_os("NO_COLOR").is_some(),
+        )
+    }
+
+    fn enabled_for(
+        self,
+        format: ry_checker::format::OutputFormat,
+        stdout_is_terminal: bool,
+        no_color: bool,
+    ) -> bool {
+        if !matches!(
+            format,
+            ry_checker::format::OutputFormat::Full | ry_checker::format::OutputFormat::Concise
+        ) {
+            return false;
+        }
+        match self {
+            Self::Always => true,
+            Self::Never => false,
+            Self::Auto => !no_color && stdout_is_terminal,
+        }
+    }
+}
 
 #[derive(Debug, ClapParser)]
 #[command(
@@ -56,6 +96,9 @@ enum Cmd {
         /// one-line-per-diagnostic view.
         #[arg(long, value_name = "FORMAT", default_value = "full")]
         output_format: String,
+        /// Control ANSI color in human-readable output.
+        #[arg(long, value_enum, default_value_t = ColorChoice::Auto)]
+        color: ColorChoice,
         /// Watch for file changes and re-check automatically.
         /// Uses polling (500ms interval). Press Ctrl+C to stop.
         #[arg(short = 'W', long)]
@@ -123,6 +166,7 @@ fn main() -> Result<ExitCode> {
             error_on_warning: false,
             exit_zero: false,
             output_format: "full".to_string(),
+            color: ColorChoice::Auto,
             watch: false,
             statistics: false,
         },
@@ -142,6 +186,7 @@ fn main() -> Result<ExitCode> {
             error_on_warning,
             exit_zero,
             output_format,
+            color,
             watch,
             statistics,
         } => run_check(
@@ -152,6 +197,7 @@ fn main() -> Result<ExitCode> {
             error_on_warning,
             exit_zero,
             &output_format,
+            color,
             cli.verbose,
             cli.quiet,
             check_matches,
@@ -281,6 +327,7 @@ fn run_check(
     error_on_warning: bool,
     exit_zero: bool,
     output_format: &str,
+    color: ColorChoice,
     cli_verbose: u8,
     cli_quiet: u8,
     check_matches: Option<&ArgMatches>,
@@ -354,6 +401,7 @@ fn run_check(
             cfg.output_format
         )
     })?;
+    let color = color.enabled(format);
     let filter = build_filter(&cfg.error, &cfg.warn, &cfg.ignore);
     let excludes = config::Excludes::from_config(&cfg);
 
@@ -393,7 +441,7 @@ fn run_check(
     }
 
     // Run the initial check.
-    let result = run_check_once(&all_paths, &filter, format, &cfg.packages)?;
+    let result = run_check_once(&all_paths, &filter, format, &cfg.packages, color)?;
     result.print_summary(format, statistics);
 
     if !watch {
@@ -476,7 +524,7 @@ fn run_check(
             // Using ANSI escape sequences rather than `clear` command
             // for portability (no external process spawn).
             eprint!("\x1b[2J\x1b[H");
-            let result = run_check_once(&all_paths, &filter, format, &cfg.packages)?;
+            let result = run_check_once(&all_paths, &filter, format, &cfg.packages, color)?;
             result.print_summary(format, statistics);
         }
     }
@@ -573,6 +621,7 @@ fn run_check_once(
     filter: &ry_checker::SeverityFilter,
     format: ry_checker::format::OutputFormat,
     packages: &[String],
+    color: bool,
 ) -> Result<CheckResult> {
     let mut all_diagnostics: Vec<ry_checker::Diagnostic> = Vec::new();
     let mut srcs: HashMap<String, String> = HashMap::new();
@@ -583,10 +632,6 @@ fn run_check_once(
     // Multi-file project mode: build a single `Project` so functions
     // defined in one file are visible when checking another.
     let mut project = ry_checker::Project::new();
-    // Seed the project's loaded-packages set from `ry.toml`'s `packages`
-    // key. `Project::check` will additionally union in any per-file
-    // `library`/`require`/`requireNamespace` loads.
-    project.set_loaded(packages.iter().cloned().collect());
 
     // Parallel file parsing. tree-sitter parsers are
     // NOT `Send`, so each rayon thread keeps its own `RParser` in a
@@ -632,12 +677,20 @@ fn run_check_once(
         .collect();
     parse_errors += all_paths.len() - parsed.len();
     parsed.sort_by_key(|(i, _, _, _)| *i);
+    let package_scope = package_metadata::resolve(
+        all_paths,
+        packages,
+        parsed.iter().map(|(_, _, _, file)| file),
+    );
     for (_, path_str, src, file) in parsed {
         project.add_file(path_str.clone(), file.clone());
         srcs.insert(path_str.clone(), src);
         comments.insert(path_str.clone(), file.comments);
         file_count += 1;
     }
+
+    project.set_loaded(package_scope.attached);
+    project.set_external_bindings(package_scope.bindings);
 
     let mut per_file_diagnostics = project.check();
 
@@ -661,7 +714,7 @@ fn run_check_once(
 
     sort_and_deduplicate_diagnostics(&mut all_diagnostics);
 
-    let rendered = ry_checker::format::render(&all_diagnostics, format, &srcs);
+    let rendered = ry_checker::format::render_with_color(&all_diagnostics, format, &srcs, color);
     if !rendered.is_empty() {
         // Diagnostics go to STDOUT (matches ruff/ty): `ry check > log`
         // captures the diagnostics, while the summary line and watch-
@@ -819,7 +872,8 @@ fn sort_and_deduplicate_paths(paths: &mut Vec<PathBuf>) {
 
 #[cfg(test)]
 mod tests {
-    use super::sort_and_deduplicate_diagnostics;
+    use super::{ColorChoice, sort_and_deduplicate_diagnostics};
+    use ry_checker::format::OutputFormat;
     use ry_checker::{Diagnostic, Severity};
     use ry_core::Span;
 
@@ -856,5 +910,22 @@ mod tests {
                 ("b.R", 1, 0, "RY010"),
             ]
         );
+    }
+
+    #[test]
+    fn color_policy_covers_terminal_no_color_and_machine_formats() {
+        assert!(ColorChoice::Auto.enabled_for(OutputFormat::Full, true, false));
+        assert!(!ColorChoice::Auto.enabled_for(OutputFormat::Full, true, true));
+        assert!(!ColorChoice::Auto.enabled_for(OutputFormat::Concise, false, false));
+        assert!(!ColorChoice::Never.enabled_for(OutputFormat::Full, true, false));
+
+        for format in [
+            OutputFormat::Json,
+            OutputFormat::Github,
+            OutputFormat::Gitlab,
+            OutputFormat::Junit,
+        ] {
+            assert!(!ColorChoice::Always.enabled_for(format, true, false));
+        }
     }
 }

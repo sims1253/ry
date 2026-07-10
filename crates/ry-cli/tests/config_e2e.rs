@@ -30,6 +30,36 @@ fn ry_check_in(cwd: &std::path::Path, arg: &std::path::Path) -> std::process::Ou
         .expect("failed to invoke ry binary")
 }
 
+fn ry_check_with_r_lib(arg: &std::path::Path, r_lib: &std::path::Path) -> std::process::Output {
+    let bin = env!("CARGO_BIN_EXE_ry");
+    Command::new(bin)
+        .arg("check")
+        .arg(arg)
+        .env("R_LIBS", r_lib)
+        .output()
+        .expect("failed to invoke ry binary")
+}
+
+fn install_fixture_package(r_lib: &std::path::Path) {
+    install_fixture_package_with_export(r_lib, "exported_value");
+}
+
+fn install_fixture_package_with_export(r_lib: &std::path::Path, export: &str) {
+    let package = r_lib.join("fixturepkg");
+    fs::create_dir_all(&package).unwrap();
+    fs::write(package.join("NAMESPACE"), format!("export({export})\n")).unwrap();
+}
+
+fn install_fixture_r_home(r_home: &std::path::Path, version: &str) {
+    fs::create_dir_all(r_home.join("library/base")).unwrap();
+    fs::write(r_home.join("library/base/NAMESPACE"), "export(baseenv)\n").unwrap();
+    fs::write(
+        r_home.join("library/base/DESCRIPTION"),
+        format!("Package: base\nVersion: {version}\n"),
+    )
+    .unwrap();
+}
+
 #[test]
 fn ry_toml_applies_severity_overrides() {
     // RY002 (`if` on length-2 logical) defaults to a warning, so a
@@ -312,7 +342,7 @@ fn ry_toml_malformed_aborts_with_error() {
 }
 
 #[test]
-fn no_op_color_flag_is_not_advertised() {
+fn color_flag_is_advertised() {
     let bin = env!("CARGO_BIN_EXE_ry");
     let output = Command::new(bin)
         .arg("check")
@@ -320,7 +350,317 @@ fn no_op_color_flag_is_not_advertised() {
         .output()
         .expect("failed to invoke ry binary");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(!stdout.contains("--color"), "{stdout}");
+    assert!(stdout.contains("--color"), "{stdout}");
+}
+
+#[test]
+fn color_always_styles_human_diagnostics() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(tmp.path().join("bad.R"), "x <- genuinely_missing\n").unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_ry");
+    for format in ["concise", "full"] {
+        let output = Command::new(bin)
+            .arg("check")
+            .arg(tmp.path())
+            .arg("--output-format")
+            .arg(format)
+            .arg("--color")
+            .arg("always")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("\x1b["), "expected ANSI styling: {stdout}");
+        assert!(
+            stdout.contains("RY010"),
+            "diagnostic content changed: {stdout}"
+        );
+    }
+}
+
+#[test]
+fn color_never_keeps_human_diagnostics_plain() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(tmp.path().join("bad.R"), "x <- genuinely_missing\n").unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_ry");
+    let output = Command::new(bin)
+        .arg("check")
+        .arg(tmp.path())
+        .arg("--color")
+        .arg("never")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("\x1b["), "ANSI must be disabled: {stdout}");
+}
+
+#[test]
+fn color_always_leaves_json_machine_readable() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(tmp.path().join("bad.R"), "x <- genuinely_missing\n").unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_ry");
+    let output = Command::new(bin)
+        .arg("check")
+        .arg(tmp.path())
+        .arg("--output-format")
+        .arg("json")
+        .arg("--color")
+        .arg("always")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("\x1b["), "ANSI leaked into JSON: {stdout}");
+    serde_json::from_str::<serde_json::Value>(&stdout).expect("color must not corrupt JSON");
+}
+
+#[test]
+fn package_namespace_import_from_binds_imported_value() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join("R")).unwrap();
+    fs::write(
+        tmp.path().join("DESCRIPTION"),
+        "Package: namespacefixture\nVersion: 0.0.0.9000\n",
+    )
+    .unwrap();
+    fs::write(tmp.path().join("NAMESPACE"), "importFrom(shiny,tags)\n").unwrap();
+    fs::write(
+        tmp.path().join("R/use.R"),
+        "page <- tags\noops <- genuinely_missing\n",
+    )
+    .unwrap();
+
+    let output = ry_check(tmp.path());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("variable `genuinely_missing` is not bound"),
+        "control diagnostic must still fire: {stdout}"
+    );
+    assert!(
+        !stdout.contains("variable `tags` is not bound"),
+        "importFrom(shiny, tags) must bind tags as an opaque value: {stdout}"
+    );
+}
+
+#[test]
+fn package_namespace_bindings_do_not_leak_across_checked_roots() {
+    let tmp = tempfile::tempdir().unwrap();
+    for package in ["with_import", "without_import"] {
+        let root = tmp.path().join(package);
+        fs::create_dir_all(root.join("R")).unwrap();
+        fs::write(
+            root.join("DESCRIPTION"),
+            format!("Package: {package}\nVersion: 0.0.0.9000\n"),
+        )
+        .unwrap();
+        fs::write(root.join("R/use.R"), "page <- tags\n").unwrap();
+    }
+    fs::write(
+        tmp.path().join("with_import/NAMESPACE"),
+        "importFrom(shiny,tags)\n",
+    )
+    .unwrap();
+    fs::write(tmp.path().join("without_import/NAMESPACE"), "").unwrap();
+
+    let output = ry_check(tmp.path());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        stdout
+            .matches("variable `tags` is not bound in this scope")
+            .count(),
+        1,
+        "only the package without importFrom may report tags: {stdout}"
+    );
+    assert!(
+        stdout.contains("without_import"),
+        "diagnostic must belong to the unimported package: {stdout}"
+    );
+}
+
+#[test]
+fn script_library_call_binds_exports_from_installed_namespace() {
+    let tmp = tempfile::tempdir().unwrap();
+    let r_lib = tmp.path().join("library");
+    install_fixture_package(&r_lib);
+    fs::write(
+        tmp.path().join("script.R"),
+        "library(fixturepkg)\nx <- exported_value\ny <- genuinely_missing\n",
+    )
+    .unwrap();
+
+    let output = ry_check_with_r_lib(&tmp.path().join("script.R"), &r_lib);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("variable `genuinely_missing` is not bound"),
+        "control diagnostic must still fire: {stdout}"
+    );
+    assert!(
+        !stdout.contains("variable `exported_value` is not bound"),
+        "library(fixturepkg) must bind statically exported values: {stdout}"
+    );
+}
+
+#[test]
+fn script_require_call_binds_exports_from_installed_namespace() {
+    let tmp = tempfile::tempdir().unwrap();
+    let r_lib = tmp.path().join("library");
+    install_fixture_package(&r_lib);
+    fs::write(
+        tmp.path().join("script.R"),
+        "require(fixturepkg)\nx <- exported_value\n",
+    )
+    .unwrap();
+
+    let output = ry_check_with_r_lib(&tmp.path().join("script.R"), &r_lib);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("RY010"),
+        "require(fixturepkg) must bind statically exported values: {stdout}"
+    );
+}
+
+#[test]
+fn installed_namespace_lookup_preserves_r_library_precedence() {
+    let tmp = tempfile::tempdir().unwrap();
+    let first = tmp.path().join("first-library");
+    let second = tmp.path().join("second-library");
+    install_fixture_package_with_export(&first, "first_export");
+    install_fixture_package_with_export(&second, "shadowed_export");
+    fs::write(
+        tmp.path().join("script.R"),
+        "library(fixturepkg)\nx <- first_export\ny <- shadowed_export\n",
+    )
+    .unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_ry");
+    let r_libs = std::env::join_paths([first, second]).unwrap();
+    let output = Command::new(bin)
+        .arg("check")
+        .arg(tmp.path().join("script.R"))
+        .env("R_LIBS", r_libs)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("variable `first_export` is not bound"),
+        "the first R library must win: {stdout}"
+    );
+    assert!(
+        stdout.contains("variable `shadowed_export` is not bound"),
+        "exports from a shadowed package version must not leak: {stdout}"
+    );
+}
+
+#[test]
+fn placeholder_library_path_prefers_current_r_version() {
+    let tmp = tempfile::tempdir().unwrap();
+    let versioned = tmp.path().join("versioned-library");
+    install_fixture_package_with_export(&versioned.join("8.8"), "old_export");
+    install_fixture_package_with_export(&versioned.join("R-9.9.1"), "current_export");
+
+    let r_home = tmp.path().join("r-home");
+    install_fixture_r_home(&r_home, "9.9.1");
+    fs::write(
+        tmp.path().join("script.R"),
+        "library(fixturepkg)\nx <- current_export\ny <- old_export\n",
+    )
+    .unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_ry");
+    let output = Command::new(bin)
+        .arg("check")
+        .arg(tmp.path().join("script.R"))
+        .env("R_LIBS", versioned.join("%v"))
+        .env("R_HOME", r_home)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("variable `current_export` is not bound"),
+        "the current R version must win placeholder expansion: {stdout}"
+    );
+    assert!(
+        stdout.contains("variable `old_export` is not bound"),
+        "exports from another R version must not leak: {stdout}"
+    );
+}
+
+#[test]
+fn project_renv_library_precedes_global_libraries() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project = tmp.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let renv_library = project.join("renv/library/R-9.9/x86_64-pc-linux-gnu");
+    install_fixture_package_with_export(&renv_library, "renv_export");
+    let global_library = tmp.path().join("global-library");
+    install_fixture_package_with_export(&global_library, "global_export");
+    let r_home = tmp.path().join("r-home");
+    install_fixture_r_home(&r_home, "9.9.1");
+    fs::write(
+        project.join("script.R"),
+        "library(fixturepkg)\nx <- renv_export\ny <- global_export\n",
+    )
+    .unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_ry");
+    let output = Command::new(bin)
+        .arg("check")
+        .arg(project.join("script.R"))
+        .env("R_LIBS", global_library)
+        .env("R_HOME", r_home)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("variable `renv_export` is not bound"),
+        "the project renv library must win: {stdout}"
+    );
+    assert!(
+        stdout.contains("variable `global_export` is not bound"),
+        "exports from the shadowed global package must not leak: {stdout}"
+    );
+}
+
+#[test]
+fn require_namespace_does_not_bind_installed_exports() {
+    let tmp = tempfile::tempdir().unwrap();
+    let r_lib = tmp.path().join("library");
+    install_fixture_package(&r_lib);
+    fs::write(
+        tmp.path().join("script.R"),
+        "requireNamespace(\"fixturepkg\")\nx <- exported_value\n",
+    )
+    .unwrap();
+
+    let output = ry_check_with_r_lib(&tmp.path().join("script.R"), &r_lib);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("variable `exported_value` is not bound"),
+        "requireNamespace must not attach package exports: {stdout}"
+    );
+}
+
+#[test]
+fn package_namespace_whole_import_binds_installed_exports() {
+    let tmp = tempfile::tempdir().unwrap();
+    let r_lib = tmp.path().join("library");
+    install_fixture_package(&r_lib);
+    fs::create_dir_all(tmp.path().join("package/R")).unwrap();
+    fs::write(
+        tmp.path().join("package/DESCRIPTION"),
+        "Package: namespacefixture\nVersion: 0.0.0.9000\n",
+    )
+    .unwrap();
+    fs::write(tmp.path().join("package/NAMESPACE"), "import(fixturepkg)\n").unwrap();
+    fs::write(tmp.path().join("package/R/use.R"), "x <- exported_value\n").unwrap();
+
+    let output = ry_check_with_r_lib(&tmp.path().join("package"), &r_lib);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("RY010"),
+        "import(fixturepkg) must bind dependency exports: {stdout}"
+    );
 }
 
 #[test]

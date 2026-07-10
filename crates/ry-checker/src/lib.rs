@@ -12,6 +12,7 @@
 
 pub mod diagnostics;
 pub mod format;
+pub mod packages;
 pub mod project;
 pub mod rules;
 
@@ -496,8 +497,8 @@ pub struct Checker {
     pub(crate) return_slots: Arc<ReturnSlots>,
     /// Stack of function names currently being inferred (cycle detection).
     pub(crate) inferring: Vec<String>,
-    /// Packages loaded via `library(pkg)` / `require(pkg)` /
-    /// `requireNamespace("pkg")`, plus any declared in `ry.toml`'s
+    /// Packages attached via `library(pkg)` / `require(pkg)`, plus any
+    /// declared in `ry.toml`'s
     /// `packages` key (threaded in via `set_loaded`). The dplyr NSE
     /// verbs are gated on `dplyr` (or `tidyverse`) being present here,
     /// so a bare `filter(df, ...)` only gets dplyr NSE treatment when
@@ -505,6 +506,11 @@ pub struct Checker {
     /// resolution. A plain owned set per emitter (rather than Arc-shared
     /// like the tables) is fine: it is small and rarely mutated.
     pub(crate) loaded: HashSet<String>,
+    /// Opaque names proven to exist by metadata for the current source file.
+    /// Kept separate from the project-wide FnTable so imports from one R
+    /// package cannot suppress RY010 in an unrelated package checked in the
+    /// same invocation.
+    external_bindings: HashSet<String>,
 }
 
 impl Checker {
@@ -519,6 +525,7 @@ impl Checker {
             return_slots: Arc::new(ReturnSlots::default()),
             inferring: Vec::new(),
             loaded: HashSet::new(),
+            external_bindings: HashSet::new(),
         }
     }
 
@@ -586,6 +593,7 @@ impl Checker {
             return_slots: Arc::new(return_slots),
             inferring: Vec::new(),
             loaded: HashSet::new(),
+            external_bindings: HashSet::new(),
         }
     }
 
@@ -609,6 +617,7 @@ impl Checker {
             return_slots,
             inferring: Vec::new(),
             loaded: HashSet::new(),
+            external_bindings: HashSet::new(),
         }
     }
 
@@ -633,14 +642,14 @@ impl Checker {
         self.collect_fns(&file.stmts);
     }
 
-    /// Collect packages loaded by `library`/`require`/`requireNamespace`
+    /// Collect packages attached by `library`/`require`
     /// anywhere in this file, WITHOUT emitting diagnostics. Returns the
     /// set of package names so `Project::check` can union them across
     /// files (a `library(dplyr)` in any file makes dplyr NSE verbs work
     /// in every file, matching the plan's cross-file union intent).
     ///
     /// Implementation: walk the file in discarding mode so `infer_call`'s
-    /// library/require/requireNamespace recording populates `self.loaded`
+    /// library/require recording populates `self.loaded`
     /// via the same code path used during real checking; we then take
     /// the set. Discarding mode guarantees no diagnostics are emitted
     /// even though we run the full inference walker.
@@ -707,11 +716,16 @@ impl Checker {
 
     /// Seed the loaded-packages set. Called by `Project` (with the
     /// union of `ry.toml` `packages` and every file's `library`/
-    /// `require`/`requireNamespace` calls) before pass-3 emission, and
+    /// `require` calls) before pass-3 emission, and
     /// by the CLI for single-file `Checker` paths. The dplyr NSE verbs
     /// consult this set to decide whether to apply dplyr semantics.
     pub fn set_loaded(&mut self, loaded: HashSet<String>) {
         self.loaded = loaded;
+    }
+
+    /// Seed opaque bindings established by metadata for this source file.
+    pub fn set_external_bindings(&mut self, bindings: HashSet<String>) {
+        self.external_bindings = bindings;
     }
 
     /// Resolve a function signature by name, consulting (in order):
@@ -1787,6 +1801,9 @@ impl Checker {
                     if let Some(t) = ambient_global_type(name) {
                         return t;
                     }
+                    if self.external_bindings.contains(name) {
+                        return RType::unknown();
+                    }
                     // Built-in dataset? (mtcars, iris, ...) Resolve before
                     // flagging the identifier as unbound.
                     if let Some(jt) = self.typeshed.datasets.get(name) {
@@ -2518,19 +2535,10 @@ impl Checker {
             return RType::new(Mode::Null, Length::Zero);
         }
 
-        // `requireNamespace("pkg")` takes a STRING literal (unlike
-        // library/require, which take a bare symbol). Record the package
-        // name into `self.loaded` for the same gating reason, then fall
-        // through: requireNamespace resolves via the typeshed to a
-        // length-1 logical, so normal arg inference is harmless (the
-        // string literal has no unbound refs to fire RY010).
-        if name == "requireNamespace" {
-            if let Some(first) = args.first() {
-                if let Expr::String(pkg, _) = &first.value {
-                    self.loaded.insert(pkg.clone());
-                }
-            }
-        }
+        // `requireNamespace("pkg")` makes qualified `pkg::name` lookups
+        // available, but unlike library/require it does NOT attach the
+        // package or introduce unqualified bindings. Let it fall through
+        // to the base typeshed without adding it to `self.loaded`.
 
         // Foreign-function-interface primitives (`.Call`, `.C`,
         // `.Fortran`, `.External`, `.External2`, `.Internal`). Their
@@ -6777,13 +6785,14 @@ mod tests {
     }
 
     #[test]
-    fn nse_dplyr_filter_requirenamespace_records_loaded() {
-        // `requireNamespace("dplyr")` also records into the loaded set.
+    fn nse_dplyr_filter_requirenamespace_does_not_attach_dplyr() {
+        // `requireNamespace("dplyr")` permits qualified access but does not
+        // attach dplyr, so an unqualified filter call keeps base semantics.
         let diags =
             check("requireNamespace(\"dplyr\")\ndf <- mtcars\nsmall <- filter(df, mpg > 20)\n");
         assert!(
-            diags.iter().all(|d| d.code != "RY010"),
-            "requireNamespace(\"dplyr\") + filter() should suppress RY010 on column refs, got {:?}",
+            diags.iter().any(|d| d.code == "RY010"),
+            "requireNamespace(\"dplyr\") must not attach unqualified dplyr names, got {:?}",
             diags
         );
     }

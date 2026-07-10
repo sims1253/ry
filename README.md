@@ -76,6 +76,9 @@ ry check /tmp/ry-readme/analysis.R
 
 Exit codes are CI-friendly: non-zero when any error-level diagnostic
 fires (`--exit-zero` overrides; `--error-on-warning` promotes warnings).
+Human-readable diagnostics use ANSI color on terminals; select the policy
+explicitly with `--color auto|always|never`. Automatic color respects
+`NO_COLOR`, and machine-readable formats never contain ANSI escapes.
 
 ## Package awareness
 
@@ -83,7 +86,14 @@ ry tracks `library()` / `require()` calls and resolves functions against
 per-package type stubs, so the same name means the right thing in
 context: `filter()` is `stats::filter` until dplyr is loaded, and
 `dplyr::filter(df, x > 0)` resolves the column `x` against `df`’s schema
-either way. Stubs currently ship for base R (plus stats and utils),
+either way. For packages being checked, `importFrom(pkg, name)` directives
+in `NAMESPACE` introduce opaque bindings even when ry has no stub for the
+dependency. Whole-package imports and `library()` / `require()` calls also
+use installed packages' static `NAMESPACE` exports without executing R or
+loading package code. `requireNamespace()` deliberately does not introduce
+unqualified names.
+
+Stubs currently ship for base R (plus stats and utils),
 dplyr, purrr, mirai, survival, and a minimal Bayesian stack (brms,
 posterior, loo, bayesplot, cmdstanr). Packages attached outside the checked sources can
 be declared in `ry.toml`.
@@ -187,9 +197,10 @@ explanation for one rule.
 | RY070 | call-non-function        | error    | A non-function value (a variable bound to a non-function, or a literal like `42()`) is being called as a function. R will error at runtime (‘attempt to apply non-function’ / ‘could not find function’). |
 | RY080 | map-return-type-mismatch | warning  | A purrr typed-map (`map_dbl`, `map_int`, …) callback returns a value whose mode is incompatible with the target vector type. R coerces at runtime, but the mismatch is almost always unintended.          |
 
-Known gaps: no S4 / R6 / environment modeling, no NAMESPACE resolution
-(cross-package names outside the shipped stubs resolve to opaque), and
-no NA tracking yet.
+Known gaps: no S4 / R6 / environment modeling, no expansion of dynamic
+`exportPattern()` directives, and no NA tracking yet. Cross-package names
+without stubs resolve to opaque values when static package metadata proves
+that they exist.
 
 ## Contributing
 

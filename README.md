@@ -21,7 +21,7 @@ scope-driven diagnostics that need a whole-program view.
 
 ## Install
 
-ry is a Cargo workspace; build from source (Rust 1.86 or newer):
+ry is a Cargo workspace; build from source (Rust 1.88 or newer):
 
 ``` sh
 git clone https://github.com/sims1253/ry

@@ -31,6 +31,7 @@ cargo build --release
 ```
 
 Prebuilt binaries are attached to GitHub releases.
+See [CHANGELOG.md](CHANGELOG.md) for release highlights and upgrade notes.
 
 ## Quickstart
 

@@ -886,7 +886,7 @@ dependencies = [
 
 [[package]]
 name = "ry-checker"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "insta",
  "rayon",
@@ -900,7 +900,7 @@ dependencies = [
 
 [[package]]
 name = "ry-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "clap_complete",
@@ -923,7 +923,7 @@ dependencies = [
 
 [[package]]
 name = "ry-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "thiserror",
  "tracing",
@@ -933,7 +933,7 @@ dependencies = [
 
 [[package]]
 name = "ry-lsp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ry-checker",
  "ry-core",
@@ -947,7 +947,7 @@ dependencies = [
 
 [[package]]
 name = "ry-typeshed"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",

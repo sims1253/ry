@@ -34,8 +34,8 @@ use ry_core::Span;
 use ry_core::ast::*;
 use ry_core::types::{ClassVector, ColumnSchema, FunctionSignature, Length, Mode, RType};
 use ry_typeshed::{
-    FunctionSig, JsonRType, ReturnSlot, ReturnSpec, Typeshed, is_known_package, known_packages,
-    load_base_cached, load_package,
+    EvalMode, FunctionSig, JsonRType, ReturnSlot, ReturnSpec, Typeshed, is_known_package,
+    known_packages, load_base_cached, load_package,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -61,6 +61,10 @@ use std::sync::Arc;
 /// generics whose `<g>.<rest>` form is overwhelmingly a real method
 /// (print.foo, summary.lm, ...).
 const S3_GENERICS: &[&str] = &[
+    "Ops",
+    "Math",
+    "Summary",
+    "matrixOps",
     "print",
     "summary",
     "plot",
@@ -145,6 +149,13 @@ fn ident_name(expr: &Expr) -> Option<&str> {
     }
 }
 
+fn binding_name(expr: &Expr) -> Option<&str> {
+    match expr {
+        Expr::Ident { name, .. } | Expr::String(name, _) => Some(name),
+        _ => None,
+    }
+}
+
 fn is_na_literal(expr: &Expr) -> bool {
     matches!(expr, Expr::Na(_, _))
 }
@@ -216,6 +227,20 @@ fn split_s3_method_name(name: &str) -> Option<(&'static str, String)> {
         }
     }
     best
+}
+
+/// Split operator-specific S3 methods such as `+.widget`. These cannot use
+/// the dotted-generic helper because the generic itself is punctuation.
+fn split_s3_operator_method_name(name: &str) -> Option<(&'static str, String)> {
+    const OPERATORS: &[&str] = &[
+        "+", "-", "*", "/", "^", "%%", "%/%", "==", "!=", "<", "<=", ">", ">=",
+    ];
+    OPERATORS.iter().find_map(|operator| {
+        name.strip_prefix(operator)
+            .and_then(|rest| rest.strip_prefix('.'))
+            .filter(|class| !class.is_empty())
+            .map(|class| (*operator, class.to_string()))
+    })
 }
 
 /// R's Non-Standard Evaluation verbs. Each evaluates its expression
@@ -447,6 +472,21 @@ pub(crate) struct FnTable {
     /// set, we know it's defined in another file (or later in this
     /// same file) and return opaque instead of flagging it as unbound.
     pub(crate) known_vars: std::collections::HashSet<String>,
+    /// Syntactic call sites used only for conservative internal-helper
+    /// default selection. Each argument records its optional exact name.
+    pub(crate) call_sites: HashMap<String, Vec<Vec<Option<String>>>>,
+    /// Calls that forward an enclosing formal directly into another
+    /// function. Used to propagate evidence that a caller's default can reach
+    /// a callee parameter without treating every callee default as exhaustive.
+    forwarded_calls: Vec<ForwardedCall>,
+}
+
+#[derive(Debug, Clone)]
+struct ForwardedCall {
+    caller: String,
+    callee: String,
+    caller_params: Vec<Param>,
+    arguments: Vec<(Option<String>, Option<String>)>,
 }
 
 /// Maximum fixpoint depth before we give up and freeze as Opaque.
@@ -511,6 +551,13 @@ pub struct Checker {
     /// package cannot suppress RY010 in an unrelated package checked in the
     /// same invocation.
     external_bindings: HashSet<String>,
+    imported_from: HashMap<String, String>,
+    external_s3_methods: HashSet<(String, String)>,
+    load_bindings: HashMap<usize, HashSet<String>>,
+    /// Names assigned anywhere in enclosing function bodies. They are added
+    /// only when checking a nested closure, matching R's deferred lexical
+    /// capture without making a direct read-before-assignment valid.
+    deferred_captures: Vec<HashSet<String>>,
 }
 
 impl Checker {
@@ -526,6 +573,10 @@ impl Checker {
             inferring: Vec::new(),
             loaded: HashSet::new(),
             external_bindings: HashSet::new(),
+            imported_from: HashMap::new(),
+            external_s3_methods: HashSet::new(),
+            load_bindings: HashMap::new(),
+            deferred_captures: Vec::new(),
         }
     }
 
@@ -594,6 +645,10 @@ impl Checker {
             inferring: Vec::new(),
             loaded: HashSet::new(),
             external_bindings: HashSet::new(),
+            imported_from: HashMap::new(),
+            external_s3_methods: HashSet::new(),
+            load_bindings: HashMap::new(),
+            deferred_captures: Vec::new(),
         }
     }
 
@@ -618,6 +673,10 @@ impl Checker {
             inferring: Vec::new(),
             loaded: HashSet::new(),
             external_bindings: HashSet::new(),
+            imported_from: HashMap::new(),
+            external_s3_methods: HashSet::new(),
+            load_bindings: HashMap::new(),
+            deferred_captures: Vec::new(),
         }
     }
 
@@ -728,6 +787,18 @@ impl Checker {
         self.external_bindings = bindings;
     }
 
+    pub fn set_imported_from(&mut self, imports: HashMap<String, String>) {
+        self.imported_from = imports;
+    }
+
+    pub fn set_external_s3_methods(&mut self, methods: HashSet<(String, String)>) {
+        self.external_s3_methods = methods;
+    }
+
+    pub fn set_load_bindings(&mut self, bindings: HashMap<usize, HashSet<String>>) {
+        self.load_bindings = bindings;
+    }
+
     /// Resolve a function signature by name, consulting (in order):
     ///   1. a `pkg::fun` / `pkg:::fun` qualified name -- looked up in
     ///      `load_package(pkg)` directly, bypassing base and loaded
@@ -776,6 +847,15 @@ impl Checker {
         }
         // Unqualified: base typeshed, then loaded packages (fixed
         // priority order; see the comment on masking below).
+        // An importFrom binding carries exact provenance without attaching
+        // unrelated exports from that package.
+        if let Some(package) = self.imported_from.get(name) {
+            if let Some(signature) =
+                load_package(package).and_then(|typeshed| typeshed.functions.get(name).cloned())
+            {
+                return Some(signature);
+            }
+        }
         if let Some(sig) = self.typeshed.functions.get(name) {
             return Some(sig.clone());
         }
@@ -814,6 +894,12 @@ impl Checker {
             }
         }
         if self.typeshed.functions.contains_key(name) {
+            return true;
+        }
+        // NAMESPACE imports and S3 registrations are opaque value bindings,
+        // but in call position they are also proof that a function candidate
+        // exists outside the local value namespace.
+        if self.external_bindings.contains(name) {
             return true;
         }
         // Loaded packages (fixed priority order; see resolve_typeshed_sig).
@@ -887,13 +973,13 @@ impl Checker {
                 // (`my_const <- 42`, `GeomRect <- ggproto(...)`) need
                 // to be resolvable from other files (and from later in
                 // this same file) without triggering RY010.
-                if let Expr::Ident { name, .. } = target {
+                if let Some(name) = binding_name(target) {
                     Arc::make_mut(&mut self.fn_table)
                         .known_vars
-                        .insert(name.clone());
+                        .insert(name.to_string());
                 }
-                if let (Expr::Ident { name, .. }, Expr::Function { params, body, .. }) =
-                    (target, value)
+                if let (Some(name), Expr::Function { params, body, .. }) =
+                    (binding_name(target), value)
                 {
                     // An S3 method named like `print.foo` is recorded both
                     // as a regular function (so the name resolves to its
@@ -902,24 +988,30 @@ impl Checker {
                     // finds it). We record the body once and share the
                     // return slot between both entries.
                     //
-                    // First-param heuristic: S3 methods conventionally
-                    // take their dispatch object as the first parameter,
-                    // named `x`. Require that (or an empty param list,
-                    // which can't dispatch anyway) before registering as
-                    // an S3 method, so a function that merely happens to
-                    // have a dotted name isn't misregistered. The
-                    // function is still recorded as a plain function
-                    // either way.
-                    let looks_like_s3 = split_s3_method_name(name)
-                        .filter(|_| params.first().map(|p| p.name == "x").unwrap_or(false));
+                    // Group generics are unambiguous and may dispatch through
+                    // `...` alone (notably `Summary.foo <- function(...)`).
+                    // Other dotted names retain the first-parameter heuristic
+                    // so ordinary helpers are not misregistered as methods.
+                    let semantic_name = semantic_argument_name(name);
+                    let looks_like_s3 = split_s3_method_name(&semantic_name)
+                        .or_else(|| split_s3_operator_method_name(&semantic_name))
+                        .filter(|(generic, _)| {
+                            matches!(*generic, "Ops" | "Math" | "Summary" | "matrixOps")
+                                || params.first().is_some_and(|p| {
+                                    p.name == "x"
+                                        || (is_operator_generic(generic)
+                                            && matches!(p.name.as_str(), "e1" | "e2"))
+                                })
+                        });
                     if let Some((generic, class)) = looks_like_s3 {
-                        let slot = self.record_fn(name.clone(), params, body.clone());
+                        let slot = self.record_fn(name.to_string(), params, body.clone());
                         Arc::make_mut(&mut self.fn_table)
                             .s3_methods
                             .insert((generic.to_string(), class), slot);
                     } else {
-                        let _ = self.record_fn(name.clone(), params, body.clone());
+                        let _ = self.record_fn(name.to_string(), params, body.clone());
                     }
+                    self.collect_forwarded_calls(name, params, body);
                     // Recurse into the function body so nested
                     // `inner <- function(...) ...` definitions are
                     // recorded with a mangled name. The mangled name is
@@ -1013,6 +1105,11 @@ impl Checker {
             Expr::Call { func, args, .. } => {
                 if let Expr::Ident { name, .. } = func.as_ref() {
                     let bare = name.rsplit_once("::").map(|(_, n)| n).unwrap_or(name);
+                    Arc::make_mut(&mut self.fn_table)
+                        .call_sites
+                        .entry(bare.to_string())
+                        .or_default()
+                        .push(args.iter().map(|argument| argument.name.clone()).collect());
                     if bare == "globalVariables" {
                         if let Some(first) = args.first() {
                             for declared in string_literals(&first.value) {
@@ -1067,6 +1164,14 @@ impl Checker {
             | Expr::Ident { .. }
             | Expr::Unknown(_) => {}
         }
+    }
+
+    fn collect_forwarded_calls(&mut self, caller: &str, params: &[Param], body: &[Stmt]) {
+        let mut calls = Vec::new();
+        collect_forwarded_calls_in_stmts(caller, params, body, &mut calls);
+        Arc::make_mut(&mut self.fn_table)
+            .forwarded_calls
+            .extend(calls);
     }
 
     /// Walk a function body looking for `inner <- function(...) ...`
@@ -1192,6 +1297,7 @@ impl Checker {
         // The function's own name is in scope as a function value, so
         // recursive calls resolve to a user-fn lookup.
         scope.insert(name.to_string(), RType::scalar(Mode::Function));
+        insert_s3_dispatch_context(name, &mut scope);
 
         let mut returns: Vec<RType> = Vec::new();
         // Walk the body via the unified walker in discarding mode, with
@@ -1246,7 +1352,9 @@ impl Checker {
         match s {
             Stmt::Assign { target, value, .. } => {
                 let vt = self.infer(value, scope);
-                self.assign_target(target, vt, scope);
+                if !self.assign_class_attribute(target, value, scope) {
+                    self.assign_target(target, vt, scope);
+                }
                 // Named function bodies (`f <- function(...) body`) must
                 // be walked for diagnostics. The function-value inference
                 // path (`Expr::Function` -> `function_value_from_literal`)
@@ -1255,16 +1363,38 @@ impl Checker {
                 // unchecked.
                 if let Expr::Function { params, body, .. } = value {
                     let mut fn_scope = scope.clone();
+                    if let Some(captures) = self.deferred_captures.last() {
+                        for capture in captures {
+                            if fn_scope.get(capture).is_none() {
+                                fn_scope.insert(capture.clone(), RType::unknown());
+                            }
+                        }
+                    }
+                    if let Expr::Ident { name, .. } = target {
+                        insert_s3_dispatch_context(name, &mut fn_scope);
+                    }
+                    for parameter in params {
+                        fn_scope.insert(parameter.name.clone(), RType::unknown());
+                    }
                     for p in params {
                         let t = match &p.default {
-                            Some(e) => self.infer(e, &mut fn_scope),
+                            Some(e) => {
+                                let _ = self.infer(e, &mut fn_scope);
+                                binding_name(target)
+                                    .map(|function| {
+                                        self.diagnostic_parameter_type(function, p, params, e)
+                                    })
+                                    .unwrap_or_else(RType::unknown)
+                            }
                             None => RType::unknown(),
                         };
                         fn_scope.insert(p.name.clone(), t);
                     }
+                    self.deferred_captures.push(assigned_names_in_body(body));
                     for s in body {
                         self.walk_stmt(s, &mut fn_scope, None);
                     }
+                    self.deferred_captures.pop();
                 }
             }
             Stmt::Expr(e) => {
@@ -1298,7 +1428,7 @@ impl Checker {
                         format!("`if` condition is `{}`, expected length-1 logical", ct),
                     );
                 } else if !matches!(ct.mode, Mode::Logical | Mode::Opaque | Mode::Union)
-                    && !is_numeric_truthiness_idiom(cond)
+                    && !is_numeric_truthiness_idiom(cond, scope)
                 {
                     self.emit(
                         Severity::Warning,
@@ -1317,7 +1447,7 @@ impl Checker {
                                 span_of(cond),
                                 "RY002",
                                 format!(
-                                    "`if` condition has length {}, will only use first element",
+                                    "`if` condition has length {}; R requires a length-1 condition",
                                     n
                                 ),
                             );
@@ -1353,6 +1483,15 @@ impl Checker {
                 for s in body {
                     self.walk_stmt(s, &mut inner, returns.as_deref_mut());
                 }
+                // R loop bodies execute in the enclosing environment. Carry
+                // schema mutations and assignments forward; retaining the
+                // iterator binding also matches R when at least one iteration
+                // occurs. Static analysis cannot prove the zero-iteration
+                // case, so opaque downstream behavior is preferable to
+                // claiming a field definitely does not exist.
+                for (binding, ty) in inner.bindings {
+                    scope.insert(binding, ty);
+                }
             }
             Stmt::While { cond, body, .. } => {
                 let ct = self.infer(cond, scope);
@@ -1376,16 +1515,35 @@ impl Checker {
                     scope.insert(n.clone(), vt);
                 }
                 let mut fn_scope = scope.clone();
+                if let Some(captures) = self.deferred_captures.last() {
+                    for capture in captures {
+                        if fn_scope.get(capture).is_none() {
+                            fn_scope.insert(capture.clone(), RType::unknown());
+                        }
+                    }
+                }
+                for parameter in params {
+                    fn_scope.insert(parameter.name.clone(), RType::unknown());
+                }
                 for p in params {
                     let t = match &p.default {
-                        Some(e) => self.infer(e, &mut fn_scope),
+                        Some(e) => {
+                            let _ = self.infer(e, &mut fn_scope);
+                            name.as_deref()
+                                .map(|function| {
+                                    self.diagnostic_parameter_type(function, p, params, e)
+                                })
+                                .unwrap_or_else(RType::unknown)
+                        }
                         None => RType::unknown(),
                     };
                     fn_scope.insert(p.name.clone(), t);
                 }
+                self.deferred_captures.push(assigned_names_in_body(body));
                 for s in body {
                     self.walk_stmt(s, &mut fn_scope, None);
                 }
+                self.deferred_captures.pop();
             }
             Stmt::Return { value, .. } => {
                 if let Some(v) = value {
@@ -1663,6 +1821,85 @@ impl Checker {
         self.walk_stmt(s, scope, None);
     }
 
+    fn diagnostic_parameter_type(
+        &self,
+        function: &str,
+        parameter: &Param,
+        parameters: &[Param],
+        default: &Expr,
+    ) -> RType {
+        // A default is selected only when the argument is omitted. An observed
+        // omitted call proves that execution path even when other calls supply
+        // the argument; without such evidence, the parameter stays opaque.
+        let Some(index) = parameters
+            .iter()
+            .position(|candidate| candidate.name == parameter.name)
+        else {
+            return RType::unknown();
+        };
+        let Some(call_sites) = self.fn_table.call_sites.get(function) else {
+            return RType::unknown();
+        };
+        if call_sites.is_empty() {
+            return RType::unknown();
+        }
+        let omitted_somewhere = call_sites.iter().any(|arguments| {
+            let exact = arguments
+                .iter()
+                .flatten()
+                .any(|name| name == &parameter.name);
+            let positional = arguments.iter().filter(|name| name.is_none()).count() > index;
+            !exact && !positional
+        });
+        if omitted_somewhere {
+            infer_literal_default(default)
+        } else if let Some(forwarded) =
+            self.forwarded_default_type(function, &parameter.name, index)
+        {
+            forwarded
+        } else {
+            RType::unknown()
+        }
+    }
+
+    fn forwarded_default_type(
+        &self,
+        function: &str,
+        parameter: &str,
+        index: usize,
+    ) -> Option<RType> {
+        self.fn_table.forwarded_calls.iter().find_map(|call| {
+            if call.callee != function {
+                return None;
+            }
+            let argument = call
+                .arguments
+                .iter()
+                .find(|(name, _)| name.as_deref() == Some(parameter))
+                .or_else(|| {
+                    call.arguments
+                        .iter()
+                        .filter(|(name, _)| name.is_none())
+                        .nth(index)
+                })?;
+            let source = argument.1.as_deref()?;
+            let (source_index, source_parameter) = call
+                .caller_params
+                .iter()
+                .enumerate()
+                .find(|(_, candidate)| candidate.name == source)?;
+            let source_default = source_parameter.default.as_ref()?;
+            let caller_sites = self.fn_table.call_sites.get(&call.caller)?;
+            let omitted = caller_sites.iter().any(|arguments| {
+                let exact = arguments.iter().flatten().any(|name| name == source);
+                let positional =
+                    arguments.iter().filter(|name| name.is_none()).count() > source_index;
+                !exact && !positional
+            });
+            omitted.then(|| infer_literal_default(source_default))
+        })
+    }
+
     fn assign_target(&mut self, target: &Expr, vt: RType, scope: &mut Scope) {
         match target {
             Expr::Ident { name, .. } => {
@@ -1674,6 +1911,9 @@ impl Checker {
                 args,
                 span,
             } => {
+                if self.assign_nested_record_path(target, vt.clone(), scope) {
+                    return;
+                }
                 if self.assign_index_target(base, *kind, args, vt, *span, scope) {
                     return;
                 }
@@ -1689,6 +1929,85 @@ impl Checker {
         }
     }
 
+    fn assign_class_attribute(&mut self, target: &Expr, value: &Expr, scope: &mut Scope) -> bool {
+        let Expr::Call { func, args, .. } = target else {
+            return false;
+        };
+        if !matches!(func.as_ref(), Expr::Ident { name, .. } if name == "class") {
+            return false;
+        }
+        let Some(Expr::Ident { name, .. }) = args.first().map(|arg| &arg.value) else {
+            return false;
+        };
+        let Some(base) = scope.get(name).cloned() else {
+            return false;
+        };
+        let class = match parse_class_literal(value) {
+            ClassLiteral::Single(class) => ClassVector::single(&class),
+            ClassLiteral::Multi(classes) => {
+                let classes: Vec<&str> = classes.iter().map(String::as_str).collect();
+                ClassVector::from_slice(&classes)
+            }
+            ClassLiteral::Unknown => ClassVector::unknown(),
+        };
+        scope.insert(name.clone(), base.with_class(class));
+        true
+    }
+
+    fn assign_nested_record_path(&self, target: &Expr, value: RType, scope: &mut Scope) -> bool {
+        fn path(expr: &Expr, fields: &mut Vec<String>) -> Option<String> {
+            match expr {
+                Expr::Ident { name, .. } => Some(name.clone()),
+                Expr::Index {
+                    base, kind, args, ..
+                } => {
+                    let root = path(base, fields)?;
+                    if matches!(kind, IndexKind::Dollar | IndexKind::Double) {
+                        if let Some(field) = assigned_column_name(*kind, args) {
+                            fields.push(field.to_string());
+                        }
+                    }
+                    Some(root)
+                }
+                _ => None,
+            }
+        }
+        fn write(base: RType, fields: &[String], value: RType) -> RType {
+            let Some((field, rest)) = fields.split_first() else {
+                return value;
+            };
+            if rest.is_empty() {
+                return type_with_assigned_column(base, field, value);
+            }
+            let child = base
+                .columns
+                .as_ref()
+                .and_then(|schema| schema.get(field))
+                .filter(|ty| matches!(ty.mode, Mode::List | Mode::Opaque))
+                .unwrap_or_else(|| {
+                    RType::new(Mode::List, Length::Unknown).with_columns(Arc::new(ColumnSchema {
+                        columns: Vec::new(),
+                        complete: false,
+                    }))
+                });
+            let child = write(child, rest, value);
+            type_with_assigned_column(base, field, child)
+        }
+
+        let mut fields = Vec::new();
+        let Some(root) = path(target, &mut fields) else {
+            return false;
+        };
+        if fields.len() < 2 {
+            return false;
+        }
+        let Some(root_type) = scope.get(&root).cloned() else {
+            return false;
+        };
+        scope.insert(root, write(root_type, &fields, value));
+        true
+    }
+
     fn assign_index_target(
         &mut self,
         base: &Expr,
@@ -1698,18 +2017,90 @@ impl Checker {
         span: Span,
         scope: &mut Scope,
     ) -> bool {
+        if let Expr::Index {
+            base: root,
+            kind: field_kind,
+            args: field_args,
+            ..
+        } = base
+        {
+            let Expr::Ident {
+                name: root_name, ..
+            } = root.as_ref()
+            else {
+                return false;
+            };
+            let Some(field) = assigned_column_name(*field_kind, field_args) else {
+                return false;
+            };
+            let Some(root_type) = scope.get(root_name).cloned() else {
+                return false;
+            };
+            if root_type.class.contains("data.frame") {
+                if let Some(schema) = &root_type.columns {
+                    if schema.complete
+                        && schema.get(field).is_none()
+                        && schema.names().iter().any(|name| name.starts_with(field))
+                    {
+                        self.emit_undefined_column(field, schema, span);
+                    }
+                }
+            }
+            let field_type = root_type
+                .columns
+                .as_ref()
+                .and_then(|schema| schema.get(field))
+                .unwrap_or(vt);
+            scope.insert(
+                root_name.clone(),
+                type_with_assigned_column(root_type, field, field_type),
+            );
+            return true;
+        }
         let Expr::Ident {
             name: base_name, ..
         } = base
         else {
             return false;
         };
-        let Some(col) = assigned_column_name(kind, args) else {
-            return false;
-        };
         let Some(base_t) = scope.get(base_name).cloned() else {
             let _ = self.infer(base, scope);
             return true;
+        };
+        if matches!(kind, IndexKind::Single) {
+            let names = args
+                .first()
+                .map(|arg| string_literals(&arg.value))
+                .unwrap_or_default();
+            if !names.is_empty() {
+                let mut updated = base_t;
+                for name in names {
+                    updated = type_with_assigned_column(updated, &name, vt.clone());
+                }
+                scope.insert(base_name.clone(), updated);
+                return true;
+            }
+        }
+        let Some(col) = assigned_column_name(kind, args) else {
+            // A dynamic `$`/`[[` write proves that the record may contain
+            // additional fields. Preserve known fields but mark the schema
+            // incomplete so a later unknown-field read degrades to opaque
+            // instead of emitting RY060.
+            if matches!(
+                kind,
+                IndexKind::Dollar | IndexKind::Double | IndexKind::Single
+            ) && matches!(base_t.mode, Mode::List | Mode::Null)
+            {
+                let mut schema = base_t
+                    .columns
+                    .as_ref()
+                    .map(|schema| (**schema).clone())
+                    .unwrap_or_default();
+                schema.complete = false;
+                scope.insert(base_name.clone(), base_t.with_columns(Arc::new(schema)));
+                return true;
+            }
+            return false;
         };
         if matches!(
             base_t.mode,
@@ -1908,8 +2299,8 @@ impl Checker {
                 // value (invisibly).
                 if matches!(*op, BinOpKind::Assign | BinOpKind::SuperAssign) {
                     let rt = self.infer(rhs, scope);
-                    if let Expr::Ident { name, .. } = lhs.as_ref() {
-                        scope.insert(name.clone(), rt.clone());
+                    if !self.assign_class_attribute(lhs, rhs, scope) {
+                        self.assign_target(lhs, rt.clone(), scope);
                     }
                     return rt;
                 }
@@ -1979,6 +2370,9 @@ impl Checker {
                     }
                 }
                 let t = self.infer(expr, scope);
+                if let Some(dispatched) = self.try_s3_unary_dispatch(*op, &t) {
+                    return dispatched;
+                }
                 match op {
                     UnaryOpKind::Neg => {
                         if matches!(
@@ -2064,6 +2458,14 @@ impl Checker {
         if matches!(op, BinOpKind::In) {
             return RType::new(Mode::Logical, lt.length);
         }
+        // Primitive operators dispatch through an operator-specific method
+        // (`+.foo`) and then the `Ops.foo` group generic before applying the
+        // storage-mode rules below. A dynamically classed value is likewise
+        // not proof that the primitive is invalid: its runtime class may
+        // provide a method from another package.
+        if let Some(dispatched) = self.try_s3_binop_dispatch(op, &lt, &rt) {
+            return dispatched;
+        }
         let is_compare = matches!(
             op,
             BinOpKind::Lt
@@ -2083,13 +2485,22 @@ impl Checker {
             let lt_mode = lt.mode;
             let rt_mode = rt.mode;
             let compares_factor = lt.class.contains("factor") || rt.class.contains("factor");
-            if let Some(t) = lt.compare(rt) {
+            // R compares atomic list leaves element-wise for both equality
+            // and ordering (`list(1, 2) > 1`). Unknown list element shapes
+            // stay opaque; only proven-invalid leaves may produce RY030.
+            let comparable_lt = equality_list_leaf_type(op, &lt).unwrap_or_else(|| lt.clone());
+            let comparable_rt = equality_list_leaf_type(op, &rt).unwrap_or_else(|| rt.clone());
+            if let Some(t) = comparable_lt.compare(comparable_rt) {
                 // RY033: warn about comparing a character value with a
                 // non-character one. R coerces by comparing byte values,
                 // which is rarely the programmer's intent.
                 if matches!(lt_mode, Mode::Character) != matches!(rt_mode, Mode::Character)
                     && !matches!(lt_mode, Mode::Opaque)
                     && !matches!(rt_mode, Mode::Opaque)
+                    && !matches!(lt_mode, Mode::Null)
+                    && !matches!(rt_mode, Mode::Null)
+                    && !matches!(lt_mode, Mode::List | Mode::Function)
+                    && !matches!(rt_mode, Mode::List | Mode::Function)
                     && !matches!(lt_mode, Mode::Union)
                     && !matches!(rt_mode, Mode::Union)
                     && !compares_factor
@@ -2196,6 +2607,76 @@ impl Checker {
             ),
         );
         RType::unknown()
+    }
+
+    fn try_s3_binop_dispatch(&self, op: BinOpKind, lhs: &RType, rhs: &RType) -> Option<RType> {
+        let symbol = op_symbol(op);
+        if symbol == "?"
+            || matches!(
+                op,
+                BinOpKind::In | BinOpKind::Colon | BinOpKind::PipeForward
+            )
+        {
+            return None;
+        }
+        for operand in [lhs, rhs] {
+            if operand.class.is_unknown() && !matches!(operand.mode, Mode::Opaque | Mode::Union) {
+                return Some(RType::unknown());
+            }
+            let Some(class) = operand.class.first() else {
+                continue;
+            };
+            for generic in [symbol, "Ops"] {
+                if self
+                    .external_s3_methods
+                    .contains(&(generic.to_string(), class.to_string()))
+                {
+                    return Some(RType::unknown());
+                }
+                if let Some(slot) = self
+                    .fn_table
+                    .s3_methods
+                    .get(&(generic.to_string(), class.to_string()))
+                {
+                    let _ = slot;
+                    // Operator methods commonly restore or transform class
+                    // attributes through another S3 helper (`c.foo`,
+                    // `new_foo`) that the local return inference cannot
+                    // represent. Treat the result as opaque rather than
+                    // stripping the class and producing a false error on a
+                    // chained operator expression.
+                    return Some(RType::unknown());
+                }
+            }
+        }
+        None
+    }
+
+    fn try_s3_unary_dispatch(&self, op: UnaryOpKind, operand: &RType) -> Option<RType> {
+        if operand.class.is_unknown() && !matches!(operand.mode, Mode::Opaque | Mode::Union) {
+            return Some(RType::unknown());
+        }
+        let class = operand.class.first()?;
+        let symbol = match op {
+            UnaryOpKind::Neg => "-",
+            UnaryOpKind::Not => "!",
+        };
+        for generic in [symbol, "Ops"] {
+            if self
+                .external_s3_methods
+                .contains(&(generic.to_string(), class.to_string()))
+            {
+                return Some(RType::unknown());
+            }
+            if let Some(slot) = self
+                .fn_table
+                .s3_methods
+                .get(&(generic.to_string(), class.to_string()))
+            {
+                return Some(self.return_slots.get(*slot));
+            }
+        }
+        None
     }
 
     fn infer_short_circuit_binop(
@@ -2340,7 +2821,7 @@ impl Checker {
                 format!("`if` condition is `{}`, expected length-1 logical", ct),
             );
         } else if !matches!(ct.mode, Mode::Logical | Mode::Opaque)
-            && !is_numeric_truthiness_idiom(cond)
+            && !is_numeric_truthiness_idiom(cond, scope)
         {
             self.emit(
                 Severity::Warning,
@@ -2359,7 +2840,7 @@ impl Checker {
                         span_of(cond),
                         "RY002",
                         format!(
-                            "`if` condition has length {}, will only use first element",
+                            "`if` condition has length {}; R requires a length-1 condition",
                             n
                         ),
                     );
@@ -2535,6 +3016,48 @@ impl Checker {
             return RType::new(Mode::Null, Length::Zero);
         }
 
+        // Formula construction and expression-vector constructors quote
+        // their language arguments. Names inside them are resolved later in
+        // a model/data environment, not at construction time.
+        if matches!(lookup_name.as_str(), "~" | "expression" | "vars") {
+            return RType::unknown();
+        }
+
+        // `data(name)` loads one or more datasets into the current
+        // environment. Bare names and string literals are data identifiers,
+        // not reads of existing variables, and become bindings for following
+        // statements. Package/control arguments are not introduced.
+        if name == "data" {
+            for argument in args {
+                if argument.name.is_some() {
+                    let _ = self.infer(&argument.value, scope);
+                    continue;
+                }
+                let dataset = match &argument.value {
+                    Expr::Ident { name, .. } | Expr::String(name, _) => Some(name.clone()),
+                    _ => None,
+                };
+                if let Some(dataset) = dataset {
+                    scope.insert(dataset, RType::unknown());
+                } else {
+                    let _ = self.infer(&argument.value, scope);
+                }
+            }
+            return RType::new(Mode::Character, Length::Unknown);
+        }
+
+        if name == "load" {
+            for argument in args {
+                let _ = self.infer(&argument.value, scope);
+            }
+            if let Some(bindings) = self.load_bindings.get(&span.start).cloned() {
+                for binding in bindings {
+                    scope.insert(binding, RType::unknown());
+                }
+            }
+            return RType::new(Mode::Character, Length::Unknown);
+        }
+
         // `requireNamespace("pkg")` makes qualified `pkg::name` lookups
         // available, but unlike library/require it does NOT attach the
         // package or introduce unqualified bindings. Let it fall through
@@ -2641,12 +3164,54 @@ impl Checker {
             return t;
         }
 
-        // Infer arg types.
+        // Infer argument types, honoring declarative per-parameter
+        // evaluation modes from the typeshed. Package APIs can opt into
+        // quoted symbols, data masks, or tidy-select without adding their
+        // names to the checker engine.
+        let resolved_sig = self.resolve_typeshed_sig(&name);
         let mut arg_types: Vec<RType> = Vec::with_capacity(args.len());
-        for a in args {
-            arg_types.push(self.infer(&a.value, scope));
+        for (index, a) in args.iter().enumerate() {
+            if lookup_name == "do.call"
+                && index == 0
+                && matches!(a.value, Expr::Ident { .. } | Expr::String(..))
+            {
+                arg_types.push(RType::scalar(Mode::Function));
+            } else if let Some(mode) = resolved_sig
+                .as_ref()
+                .and_then(|sig| argument_eval_mode(sig, args, index))
+            {
+                let inferred = match mode {
+                    EvalMode::Normal => self.infer(&a.value, scope),
+                    EvalMode::QuotedSymbol => {
+                        if matches!(a.value, Expr::Ident { .. }) {
+                            RType::unknown()
+                        } else {
+                            self.infer(&a.value, scope)
+                        }
+                    }
+                    EvalMode::QuotedExpression => RType::unknown(),
+                    EvalMode::DataMask => {
+                        let data = arg_types.first().cloned().unwrap_or_else(RType::unknown);
+                        let mut local = self.dplyr_data_mask_scope(scope, &data);
+                        self.infer(&a.value, &mut local)
+                    }
+                    EvalMode::TidySelect => {
+                        let data = arg_types.first().cloned().unwrap_or_else(RType::unknown);
+                        let mut local = self.dplyr_data_mask_scope(scope, &data);
+                        self.infer_tidyselect_expr(&a.value, &mut local)
+                    }
+                };
+                arg_types.push(inferred);
+            } else {
+                arg_types.push(self.infer(&a.value, scope));
+            }
         }
-        if is_dplyr_join_call(&name, &lookup_name, &self.loaded) {
+        if is_dplyr_join_call(
+            &name,
+            &lookup_name,
+            &self.loaded,
+            self.imported_from.get(&lookup_name).map(String::as_str),
+        ) {
             return self.infer_dplyr_join(&arg_types);
         }
         if let Some(target) = assertion_call_target(&lookup_name) {
@@ -2749,6 +3314,12 @@ impl Checker {
             if let Some(rt) = self.try_s3_dispatch(&lookup_name, &arg_types, span) {
                 return rt;
             }
+            if arg_types
+                .first()
+                .is_some_and(|argument| argument.class.is_unknown())
+            {
+                return RType::unknown();
+            }
         }
 
         // Higher-order built-ins (`lapply`, `sapply`, `vapply`, `Map`,
@@ -2807,7 +3378,7 @@ impl Checker {
         // falls back from base to loaded packages (reverse load order).
         // We pass the full `name` (with any `pkg::` prefix) so the
         // resolver can dispatch on qualification.
-        if let Some(sig) = self.resolve_typeshed_sig(&name) {
+        if let Some(sig) = resolved_sig {
             return self.apply_sig(&lookup_name, &sig, &arg_types, args, span);
         }
 
@@ -2926,6 +3497,7 @@ impl Checker {
             && !name.starts_with("dplyr::")
             && !self.loaded.contains("dplyr")
             && !self.loaded.contains("tidyverse")
+            && self.imported_from.get(&lookup_name).map(String::as_str) != Some("dplyr")
         {
             return None;
         }
@@ -3040,13 +3612,19 @@ impl Checker {
     /// for `within`).
     fn infer_nse_transform(&mut self, args: &[Arg], df_type: RType, augmented: &Scope) -> RType {
         let mut local = augmented.clone();
+        let mut result = df_type;
         for (i, a) in args.iter().enumerate() {
             if i == 0 {
                 continue;
             }
-            let _ = self.infer(&a.value, &mut local);
+            let t = self.infer(&a.value, &mut local);
+            if let Some(name) = a.name.as_deref() {
+                let name = semantic_argument_name(name);
+                local.insert(name.clone(), t.clone());
+                result = type_with_assigned_column(result, &name, t);
+            }
         }
-        df_type
+        result
     }
 
     /// Shared handler for dplyr verbs that preserve the input data
@@ -3147,6 +3725,7 @@ impl Checker {
         }
         if !name.starts_with("tidyr::")
             && !self.loaded.contains("tidyr")
+            && self.imported_from.get(lookup_name).map(String::as_str) != Some("tidyr")
             && !self.loaded.contains("tidyverse")
         {
             return None;
@@ -3212,7 +3791,10 @@ impl Checker {
                 op: UnaryOpKind::Neg,
                 expr,
                 ..
-            } if is_simple_tidyselect_atom(expr) => RType::unknown(),
+            } => {
+                let _ = self.infer_tidyselect_expr(expr, scope);
+                RType::unknown()
+            }
             Expr::Call { func, args, .. }
                 if ident_name(func).is_some_and(|name| {
                     name.rsplit_once("::").map(|(_, n)| n).unwrap_or(name) == "c"
@@ -3252,7 +3834,10 @@ impl Checker {
             .as_ref()
             .map(|schema| schema.complete)
             .unwrap_or(false);
-        if df_type.class.contains("data.frame") && !schema_is_complete {
+        if !schema_is_complete
+            && (df_type.class.contains("data.frame")
+                || matches!(df_type.mode, Mode::List | Mode::Opaque))
+        {
             scope = scope.with_unknown_data_mask();
         }
         scope
@@ -3635,9 +4220,28 @@ impl Checker {
     /// the top-level shape: result is a list with L's length.
     fn ho_rapply(&mut self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
         let l_type = arg_types.first().cloned().unwrap_or(RType::unknown());
-        // Walk the callback for type information.
-        if let Some(cb) = Self::extract_callback(args, &["f", "FUN"], 1) {
-            let _ = self.callback_return_type(cb, &[RType::unknown()], scope);
+        let callback_return = Self::extract_callback(args, &["f", "FUN"], 1)
+            .and_then(|cb| self.callback_return_type(cb, &[RType::unknown()], scope));
+        let how = args
+            .iter()
+            .find(|arg| arg.name.as_deref() == Some("how"))
+            .map(|arg| &arg.value);
+        let unlists =
+            how.is_none() || matches!(how, Some(Expr::String(value, _)) if value == "unlist");
+        if unlists {
+            if let Some(ret) = callback_return {
+                if matches!(
+                    ret.mode,
+                    Mode::Logical
+                        | Mode::Integer
+                        | Mode::Double
+                        | Mode::Complex
+                        | Mode::Character
+                        | Mode::Raw
+                ) {
+                    return RType::new(ret.mode, Length::Unknown);
+                }
+            }
         }
         RType::new(Mode::List, l_type.length)
     }
@@ -3966,6 +4570,12 @@ impl Checker {
         if &*first_class == "default" {
             return None;
         }
+        if self
+            .external_s3_methods
+            .contains(&(generic.to_string(), first_class.to_string()))
+        {
+            return Some(RType::unknown());
+        }
         // 1. User-defined method for the first class wins.
         if let Some(slot) = self
             .fn_table
@@ -4141,7 +4751,7 @@ impl Checker {
 
         // Reuse the named-schema builder, then patch the coerced types
         // in (the builder uses the original arg_types verbatim).
-        let mut schema = build_named_schema(&coerced_types, &filtered_args);
+        let mut schema = build_data_frame_schema(&coerced_types, &filtered_args);
         if let Some(s) = schema.as_mut() {
             // Sanity: lengths should already match coerced_types.
             debug_assert_eq!(s.columns.len(), coerced_types.len());
@@ -4712,6 +5322,25 @@ impl Checker {
                 }
             }
             IndexKind::Single => {
+                if matches!(bt.mode, Mode::List) && args.len() >= 2 {
+                    if let Some(column) = args.iter().find_map(|arg| match &arg.value {
+                        Expr::String(column, _) => Some(column),
+                        _ => None,
+                    }) {
+                        for argument in args {
+                            self.infer(&argument.value, scope);
+                        }
+                        if let Some(schema) = &bt.columns {
+                            if let Some(column_type) = schema.get(column) {
+                                return column_type;
+                            }
+                            if !schema.complete {
+                                return RType::unknown();
+                            }
+                        }
+                        return RType::unknown();
+                    }
+                }
                 // Single-bracket subsetting semantics are complex
                 // (column slice vs row slice depends on commas and
                 // drops). For atomic vectors with one scalar index,
@@ -4865,10 +5494,33 @@ fn span_of(e: &Expr) -> Span {
 ///
 /// Negation (`if (!length(x))`) is deliberately out of scope: it is typed
 /// through the unary `!` operator, not this call shape.
-fn is_numeric_truthiness_idiom(cond: &Expr) -> bool {
-    if let Expr::Call { func, .. } = cond {
+fn is_numeric_truthiness_idiom(cond: &Expr, scope: &Scope) -> bool {
+    if let Expr::Call { func, args, .. } = cond {
         if let Expr::Ident { name, .. } = func.as_ref() {
-            return matches!(name.as_str(), "length" | "nrow" | "ncol");
+            if matches!(name.as_str(), "length" | "nrow" | "ncol" | "NROW" | "NCOL") {
+                return true;
+            }
+            if name == "sum" {
+                return args.first().is_some_and(|argument| match &argument.value {
+                    Expr::Ident { name, .. } => scope
+                        .get(name)
+                        .is_some_and(|ty| matches!(ty.mode, Mode::Logical)),
+                    Expr::BinOp { op, .. } => matches!(
+                        op,
+                        BinOpKind::Lt
+                            | BinOpKind::Le
+                            | BinOpKind::Gt
+                            | BinOpKind::Ge
+                            | BinOpKind::Eq
+                            | BinOpKind::Ne
+                            | BinOpKind::In
+                    ),
+                    Expr::Call { func, .. } => {
+                        ident_name(func).is_some_and(|predicate| predicate.starts_with("is."))
+                    }
+                    _ => false,
+                });
+            }
         }
     }
     false
@@ -4935,11 +5587,19 @@ fn is_dplyr_control_arg(name: &str) -> bool {
     )
 }
 
-fn is_dplyr_join_call(name: &str, lookup_name: &str, loaded: &HashSet<String>) -> bool {
+fn is_dplyr_join_call(
+    name: &str,
+    lookup_name: &str,
+    loaded: &HashSet<String>,
+    imported_from: Option<&str>,
+) -> bool {
     matches!(
         lookup_name,
         "left_join" | "inner_join" | "right_join" | "full_join"
-    ) && (name.starts_with("dplyr::") || loaded.contains("dplyr") || loaded.contains("tidyverse"))
+    ) && (name.starts_with("dplyr::")
+        || loaded.contains("dplyr")
+        || loaded.contains("tidyverse")
+        || imported_from == Some("dplyr"))
 }
 
 fn is_tidyr_tidyselect_arg(call: &str, arg: &str) -> bool {
@@ -4950,8 +5610,137 @@ fn is_tidyr_tidyselect_arg(call: &str, arg: &str) -> bool {
     }
 }
 
-fn is_simple_tidyselect_atom(expr: &Expr) -> bool {
-    matches!(expr, Expr::String(_, _) | Expr::Ident { .. })
+fn is_operator_generic(name: &str) -> bool {
+    matches!(
+        name,
+        "+" | "-" | "*" | "/" | "^" | "%%" | "%/%" | "==" | "!=" | "<" | "<=" | ">" | ">="
+    )
+}
+
+fn insert_s3_dispatch_context(method_name: &str, scope: &mut Scope) {
+    let method_name = semantic_argument_name(method_name);
+    let group_method = split_s3_method_name(&method_name)
+        .is_some_and(|(generic, _)| matches!(generic, "Ops" | "Math" | "Summary" | "matrixOps"));
+    if group_method {
+        scope.insert(".Generic", RType::scalar(Mode::Character));
+        scope.insert(".Method", RType::new(Mode::Character, Length::Unknown));
+        scope.insert(".Class", RType::new(Mode::Character, Length::Unknown));
+        scope.insert(".Group", RType::scalar(Mode::Character));
+    }
+}
+
+fn assigned_names_in_body(body: &[Stmt]) -> HashSet<String> {
+    fn visit(statement: &Stmt, names: &mut HashSet<String>) {
+        match statement {
+            Stmt::Assign { target, value, .. } => {
+                if let Expr::Ident { name, .. } = target {
+                    names.insert(name.clone());
+                }
+                // A nested closure has its own locals; do not leak them into
+                // the enclosing closure's capture candidates.
+                if !matches!(value, Expr::Function { .. }) {
+                    visit_expr(value, names);
+                }
+            }
+            Stmt::If { then, else_, .. } => {
+                for statement in then {
+                    visit(statement, names);
+                }
+                if let Some(else_) = else_ {
+                    for statement in else_ {
+                        visit(statement, names);
+                    }
+                }
+            }
+            Stmt::For { name, body, .. } => {
+                names.insert(name.clone());
+                for statement in body {
+                    visit(statement, names);
+                }
+            }
+            Stmt::While { body, .. } => {
+                for statement in body {
+                    visit(statement, names);
+                }
+            }
+            Stmt::FunctionDef { name, .. } => {
+                if let Some(name) = name {
+                    names.insert(name.clone());
+                }
+            }
+            Stmt::Expr(expr) => visit_expr(expr, names),
+            Stmt::Return { value, .. } => {
+                if let Some(value) = value {
+                    visit_expr(value, names);
+                }
+            }
+        }
+    }
+    fn visit_expr(expr: &Expr, names: &mut HashSet<String>) {
+        match expr {
+            Expr::BinOp {
+                op: BinOpKind::Assign | BinOpKind::SuperAssign,
+                lhs,
+                rhs,
+                ..
+            } => {
+                if let Expr::Ident { name, .. } = lhs.as_ref() {
+                    names.insert(name.clone());
+                }
+                visit_expr(rhs, names);
+            }
+            Expr::Block { body, .. } => {
+                for statement in body {
+                    visit(statement, names);
+                }
+            }
+            Expr::If { then, else_, .. } => {
+                visit_expr(then, names);
+                if let Some(else_) = else_ {
+                    visit_expr(else_, names);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut names = HashSet::new();
+    for statement in body {
+        visit(statement, &mut names);
+    }
+    names
+}
+
+fn equality_list_leaf_type(op: BinOpKind, value: &RType) -> Option<RType> {
+    let _ = op;
+    if !matches!(value.mode, Mode::List) {
+        return None;
+    }
+    let Some(schema) = value.columns.as_ref() else {
+        return Some(RType::new(Mode::Opaque, value.length));
+    };
+    if !schema.complete {
+        return Some(RType::new(Mode::Opaque, value.length));
+    }
+    let all_atomic = schema.columns.iter().all(|(_, leaf)| {
+        matches!(
+            leaf.mode,
+            Mode::Logical
+                | Mode::Integer
+                | Mode::Double
+                | Mode::Complex
+                | Mode::Character
+                | Mode::Raw
+                | Mode::Null
+        )
+    });
+    if !all_atomic {
+        None
+    } else if let Some(leaf) = schema.homogeneous_element_type() {
+        Some(RType::new(leaf.mode, value.length))
+    } else {
+        Some(RType::new(Mode::Opaque, value.length))
+    }
 }
 
 /// R's foreign-function-interface primitives. Their first argument is a
@@ -5079,7 +5868,7 @@ fn extract_type_narrowing(cond: &Expr) -> Narrowing {
             let Expr::Ident { name, .. } = func.as_ref() else {
                 return Narrowing::None;
             };
-            let Some(target) = predicate_target(name) else {
+            let Some(target) = predicate_target(name).or_else(|| s3_predicate_target(name)) else {
                 return Narrowing::None;
             };
             let Some(var) = args.first().and_then(|a| match &a.value {
@@ -5146,6 +5935,14 @@ fn predicate_target(name: &str) -> Option<RType> {
         "is.raw" => Some(RType::scalar(Mode::Raw)),
         _ => None,
     }
+}
+
+fn s3_predicate_target(name: &str) -> Option<RType> {
+    let class = name.strip_prefix("is.")?;
+    if class.is_empty() {
+        return None;
+    }
+    Some(RType::unknown().with_class(ClassVector::single(class)))
 }
 
 fn assertion_call_target(name: &str) -> Option<RType> {
@@ -5236,44 +6033,49 @@ fn apply_narrowing(
             // NOT rewrite it to Double (the old coerce_rank comparison
             // did exactly that).
             if let Some(existing) = then_scope.get(var).cloned() {
-                let should_install = match existing.mode {
-                    Mode::Opaque => true,
-                    // A NULL default in a function signature means "the
-                    // caller may provide something else"; a positive type
-                    // predicate proves the branch is in that non-default
-                    // shape.
-                    Mode::Null => target.mode != Mode::Null,
-                    Mode::Union => {
-                        // Existing union: only narrow if it contains the
-                        // predicate's mode (the predicate confirms one
-                        // member); otherwise leave untouched.
-                        target.mode == Mode::Union
-                            || existing
-                                .members
-                                .as_ref()
-                                .map(|ms| {
-                                    ms.iter().any(|m| {
-                                        target.mode == Mode::Union || m.mode == target.mode
+                let class_narrowing = target.class.has_known_class();
+                let should_install = class_narrowing
+                    || match existing.mode {
+                        Mode::Opaque => true,
+                        // A NULL default in a function signature means "the
+                        // caller may provide something else"; a positive type
+                        // predicate proves the branch is in that non-default
+                        // shape.
+                        Mode::Null => target.mode != Mode::Null,
+                        Mode::Union => {
+                            // Existing union: only narrow if it contains the
+                            // predicate's mode (the predicate confirms one
+                            // member); otherwise leave untouched.
+                            target.mode == Mode::Union
+                                || existing
+                                    .members
+                                    .as_ref()
+                                    .map(|ms| {
+                                        ms.iter().any(|m| {
+                                            target.mode == Mode::Union || m.mode == target.mode
+                                        })
                                     })
-                                })
-                                .unwrap_or(false)
-                    }
-                    other => {
-                        // Known atomic: narrow only if it already
-                        // matches the predicate (idempotent). Incompatible
-                        // known modes are left untouched.
-                        if target.mode == Mode::Union {
-                            target
-                                .members
-                                .as_ref()
-                                .map(|ms| ms.iter().any(|m| m.mode == other))
-                                .unwrap_or(false)
-                        } else {
-                            other == target.mode
+                                    .unwrap_or(false)
                         }
-                    }
-                };
-                if should_install && !matches!(existing.mode, Mode::Opaque | Mode::Null) {
+                        other => {
+                            // Known atomic: narrow only if it already
+                            // matches the predicate (idempotent). Incompatible
+                            // known modes are left untouched.
+                            if target.mode == Mode::Union {
+                                target
+                                    .members
+                                    .as_ref()
+                                    .map(|ms| ms.iter().any(|m| m.mode == other))
+                                    .unwrap_or(false)
+                            } else {
+                                other == target.mode
+                            }
+                        }
+                    };
+                if should_install
+                    && !class_narrowing
+                    && !matches!(existing.mode, Mode::Opaque | Mode::Null)
+                {
                     // The existing union/known already reflects this; no
                     // change needed.
                 } else if should_install {
@@ -5397,6 +6199,111 @@ fn parse_class_literal(e: &Expr) -> ClassLiteral {
 /// Partial matching (R's prefix-based arg matching) is intentionally
 /// not implemented; it's rarely used in modern R code and adds
 /// significant complexity.
+fn collect_forwarded_calls_in_stmts(
+    caller: &str,
+    params: &[Param],
+    stmts: &[Stmt],
+    calls: &mut Vec<ForwardedCall>,
+) {
+    for statement in stmts {
+        match statement {
+            Stmt::Assign { target, value, .. } => {
+                collect_forwarded_calls_in_expr(caller, params, target, calls);
+                collect_forwarded_calls_in_expr(caller, params, value, calls);
+            }
+            Stmt::Expr(expr) => collect_forwarded_calls_in_expr(caller, params, expr, calls),
+            Stmt::If {
+                cond, then, else_, ..
+            } => {
+                collect_forwarded_calls_in_expr(caller, params, cond, calls);
+                collect_forwarded_calls_in_stmts(caller, params, then, calls);
+                if let Some(else_) = else_ {
+                    collect_forwarded_calls_in_stmts(caller, params, else_, calls);
+                }
+            }
+            Stmt::For { iter, body, .. }
+            | Stmt::While {
+                cond: iter, body, ..
+            } => {
+                collect_forwarded_calls_in_expr(caller, params, iter, calls);
+                collect_forwarded_calls_in_stmts(caller, params, body, calls);
+            }
+            Stmt::FunctionDef { .. } => {}
+            Stmt::Return { value, .. } => {
+                if let Some(value) = value {
+                    collect_forwarded_calls_in_expr(caller, params, value, calls);
+                }
+            }
+        }
+    }
+}
+
+fn collect_forwarded_calls_in_expr(
+    caller: &str,
+    params: &[Param],
+    expr: &Expr,
+    calls: &mut Vec<ForwardedCall>,
+) {
+    match expr {
+        Expr::Call { func, args, .. } => {
+            if let Expr::Ident { name, .. } = func.as_ref() {
+                let callee = name.rsplit_once("::").map(|(_, name)| name).unwrap_or(name);
+                calls.push(ForwardedCall {
+                    caller: caller.to_string(),
+                    callee: callee.to_string(),
+                    caller_params: params.to_vec(),
+                    arguments: args
+                        .iter()
+                        .map(|argument| {
+                            let forwarded = match &argument.value {
+                                Expr::Ident { name, .. } => Some(name.clone()),
+                                _ => None,
+                            };
+                            (argument.name.clone(), forwarded)
+                        })
+                        .collect(),
+                });
+            }
+            collect_forwarded_calls_in_expr(caller, params, func, calls);
+            for argument in args {
+                collect_forwarded_calls_in_expr(caller, params, &argument.value, calls);
+            }
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            collect_forwarded_calls_in_expr(caller, params, lhs, calls);
+            collect_forwarded_calls_in_expr(caller, params, rhs, calls);
+        }
+        Expr::UnaryOp { expr, .. } => collect_forwarded_calls_in_expr(caller, params, expr, calls),
+        Expr::Index { base, args, .. } => {
+            collect_forwarded_calls_in_expr(caller, params, base, calls);
+            for argument in args {
+                collect_forwarded_calls_in_expr(caller, params, &argument.value, calls);
+            }
+        }
+        Expr::Block { body, .. } => collect_forwarded_calls_in_stmts(caller, params, body, calls),
+        Expr::If {
+            cond, then, else_, ..
+        } => {
+            collect_forwarded_calls_in_expr(caller, params, cond, calls);
+            collect_forwarded_calls_in_expr(caller, params, then, calls);
+            if let Some(else_) = else_ {
+                collect_forwarded_calls_in_expr(caller, params, else_, calls);
+            }
+        }
+        // A nested function has its own formals; it is collected separately
+        // when it has a binding, so do not attribute its calls to this caller.
+        Expr::Function { .. }
+        | Expr::Logical(_, _)
+        | Expr::Integer(_, _)
+        | Expr::Double(_, _)
+        | Expr::String(_, _)
+        | Expr::Null(_)
+        | Expr::Na(_, _)
+        | Expr::Ident { .. }
+        | Expr::Unknown(_) => {}
+    }
+}
+
 fn match_args_to_params(sig_params: &[String], args: &[Arg], arg_types: &[RType]) -> Vec<RType> {
     let has_dots = sig_params.iter().any(|p| p == "...");
     let n_named_params = if has_dots {
@@ -5441,6 +6348,23 @@ fn match_args_to_params(sig_params: &[String], args: &[Arg], arg_types: &[RType]
         // or are dropped; we can't assign them to a named slot.
     }
     matched
+}
+
+fn argument_eval_mode(sig: &FunctionSig, args: &[Arg], index: usize) -> Option<EvalMode> {
+    let argument = args.get(index)?;
+    let parameter = if let Some(name) = argument.name.as_deref() {
+        if sig.eval.contains_key(name) || sig.params.iter().any(|parameter| parameter == name) {
+            name
+        } else {
+            "..."
+        }
+    } else {
+        sig.params.get(index).map(String::as_str).unwrap_or("...")
+    };
+    sig.eval
+        .get(parameter)
+        .copied()
+        .or_else(|| sig.eval.get("...").copied())
 }
 
 /// Resolve the resulting mode for `c(...)`. If any argument was a union,
@@ -5524,7 +6448,7 @@ fn build_named_schema(arg_types: &[RType], args: &[Arg]) -> Option<ColumnSchema>
     for (i, a) in args.iter().enumerate() {
         let ty = arg_types.get(i).cloned().unwrap_or(RType::unknown());
         let name = match a.name.as_deref() {
-            Some(n) if !n.is_empty() => n.to_string(),
+            Some(n) if !n.is_empty() => semantic_argument_name(n),
             _ => {
                 // R auto-generates `[[1]]`, `[[2]], ... for unnamed list
                 // elements. We count only unnamed slots (named args do
@@ -5542,6 +6466,37 @@ fn build_named_schema(arg_types: &[RType], args: &[Arg]) -> Option<ColumnSchema>
         columns,
         complete: true,
     })
+}
+
+/// `data.frame()` derives names for simple positional expressions from the
+/// expression itself (`data.frame(y, K)` has columns `y` and `K`). Lists do
+/// not: their unnamed elements retain positional placeholders. Keep the two
+/// constructor rules separate so improving data-frame fidelity cannot change
+/// list indexing semantics.
+fn build_data_frame_schema(arg_types: &[RType], args: &[Arg]) -> Option<ColumnSchema> {
+    let mut schema = build_named_schema(arg_types, args)?;
+    for ((name, _), arg) in schema.columns.iter_mut().zip(args) {
+        if arg.name.is_none() {
+            if let Expr::Ident { name: symbol, .. } = &arg.value {
+                *name = symbol.clone();
+            }
+        }
+    }
+    Some(schema)
+}
+
+fn semantic_argument_name(name: &str) -> String {
+    if name.len() >= 2 {
+        let bytes = name.as_bytes();
+        let quoted = matches!(
+            (bytes[0], bytes[name.len() - 1]),
+            (b'"', b'"') | (b'\'', b'\'') | (b'`', b'`')
+        );
+        if quoted {
+            return name[1..name.len() - 1].to_string();
+        }
+    }
+    name.to_string()
 }
 
 /// Convert a typeshed `JsonRType` to the checker's `RType`. Mirrors the
@@ -5647,6 +6602,49 @@ mod tests {
         let mut c = Checker::new("test.R");
         c.check(&f);
         c.take_diagnostics()
+    }
+
+    #[test]
+    fn typeshed_parameter_modes_drive_data_mask_evaluation() {
+        let mut parser = RParser::new().unwrap();
+        let file = parser
+            .parse(
+                "test.R",
+                "x <- as_draws_df(source)\ny <- mutate_variables(x, tau2 = tau^2)\n",
+            )
+            .unwrap();
+        let mut checker = Checker::new("test.R");
+        checker.set_loaded(HashSet::from(["posterior".to_string()]));
+        checker.check(&file);
+        assert!(
+            checker.diagnostics.iter().all(|diagnostic| {
+                diagnostic.code != "RY010" || !diagnostic.message.contains("tau")
+            }),
+            "data-mask metadata should make tau an opaque masked binding: {:?}",
+            checker.diagnostics
+        );
+    }
+
+    #[test]
+    fn import_from_applies_metadata_only_to_the_imported_binding() {
+        let mut parser = RParser::new().unwrap();
+        let file = parser
+            .parse(
+                "test.R",
+                "df <- data.frame(x = 1L)\nselect(df, x)\nmutate(df, created = missing_name)\n",
+            )
+            .unwrap();
+        let mut checker = Checker::new("test.R");
+        checker.set_external_bindings(HashSet::from(["select".to_string()]));
+        checker.set_imported_from(HashMap::from([("select".to_string(), "dplyr".to_string())]));
+        checker.check(&file);
+
+        assert!(checker.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "RY010" && diagnostic.message.contains("missing_name")
+        }));
+        assert!(checker.diagnostics.iter().all(|diagnostic| {
+            diagnostic.code != "RY010" || !diagnostic.message.contains("`x`")
+        }));
     }
 
     /// Test-only variant of `check` that also returns the final

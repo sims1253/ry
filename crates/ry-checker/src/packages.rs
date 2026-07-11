@@ -6,17 +6,28 @@
 
 use ry_core::SourceFile;
 use ry_core::ast::{Expr, Stmt};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Bindings and whole-package imports declared by an R package NAMESPACE.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct NamespaceMetadata {
     /// Names introduced by `importFrom(package, name, ...)`.
     pub imported_bindings: HashSet<String>,
+    /// Exact package provenance for `importFrom(package, name, ...)` names.
+    /// This lets metadata be applied to that binding without attaching every
+    /// other export from the package.
+    pub imported_from: HashMap<String, String>,
     /// Packages introduced by `import(package, ...)`.
     pub imported_packages: HashSet<String>,
     /// Names made public by `export(name, ...)`.
     pub exports: HashSet<String>,
+    /// Generic names mentioned by `S3method(generic, class)`. A generic is
+    /// looked up in function position even when a data binding with the same
+    /// name exists locally, so these are function candidates as well as
+    /// namespace metadata.
+    pub s3_generics: HashSet<String>,
+    /// Explicit `(generic, class)` registrations from `S3method()`.
+    pub s3_methods: HashSet<(String, String)>,
 }
 
 /// Extract the directives relevant to static binding resolution.
@@ -31,11 +42,16 @@ pub fn namespace_metadata(file: &SourceFile) -> NamespaceMetadata {
         };
         match name.as_str() {
             "importFrom" => {
-                metadata.imported_bindings.extend(
-                    args.iter()
+                if let Some(package) = args.first().and_then(|arg| static_name(&arg.value)) {
+                    for binding in args
+                        .iter()
                         .skip(1)
-                        .filter_map(|arg| static_name(&arg.value)),
-                );
+                        .filter_map(|arg| static_name(&arg.value))
+                    {
+                        metadata.imported_bindings.insert(binding.clone());
+                        metadata.imported_from.insert(binding, package.clone());
+                    }
+                }
             }
             "import" => {
                 metadata
@@ -46,6 +62,17 @@ pub fn namespace_metadata(file: &SourceFile) -> NamespaceMetadata {
                 metadata
                     .exports
                     .extend(args.iter().filter_map(|arg| static_name(&arg.value)));
+            }
+            "S3method" => {
+                if let Some(generic) = args.first().and_then(|arg| static_name(&arg.value)) {
+                    metadata.s3_generics.insert(generic);
+                }
+                if let (Some(generic), Some(class)) = (
+                    args.first().and_then(|arg| static_name(&arg.value)),
+                    args.get(1).and_then(|arg| static_name(&arg.value)),
+                ) {
+                    metadata.s3_methods.insert((generic, class));
+                }
             }
             _ => {}
         }
@@ -161,5 +188,29 @@ fn visit_expr_for_attachments(expr: &Expr, packages: &mut HashSet<String>) {
         | Expr::Na(..)
         | Expr::Ident { .. }
         | Expr::Unknown(..) => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn import_from_preserves_binding_provenance_without_attaching_package() {
+        let mut parser = ry_core::RParser::new().unwrap();
+        let file = parser
+            .parse("NAMESPACE", "importFrom(dplyr, select, mutate)")
+            .unwrap();
+        let metadata = namespace_metadata(&file);
+
+        assert!(metadata.imported_packages.is_empty());
+        assert_eq!(
+            metadata.imported_from.get("select").map(String::as_str),
+            Some("dplyr")
+        );
+        assert_eq!(
+            metadata.imported_from.get("mutate").map(String::as_str),
+            Some("dplyr")
+        );
     }
 }

@@ -1,3 +1,3 @@
-# expect: RY030
-# Comparison between a list and a numeric is invalid.
+# no-diag
+# R compares atomic list leaves element-wise.
 y <- list(1) > 2

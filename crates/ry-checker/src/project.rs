@@ -57,6 +57,9 @@ pub struct Project {
     /// every package source file even when ry has no type stub for Shiny.
     /// Such bindings deliberately resolve to opaque values.
     external_bindings: HashMap<String, HashSet<String>>,
+    imported_from: HashMap<String, HashMap<String, String>>,
+    external_s3_methods: HashMap<String, HashSet<(String, String)>>,
+    load_bindings: HashMap<String, HashMap<usize, HashSet<String>>>,
 }
 
 impl Default for Project {
@@ -75,6 +78,9 @@ impl Project {
             diagnostics: Vec::new(),
             loaded: std::collections::HashSet::new(),
             external_bindings: HashMap::new(),
+            imported_from: HashMap::new(),
+            external_s3_methods: HashMap::new(),
+            load_bindings: HashMap::new(),
         }
     }
 
@@ -104,6 +110,21 @@ impl Project {
     /// import in one checked package from leaking into an unrelated package.
     pub fn set_external_bindings(&mut self, bindings: HashMap<String, HashSet<String>>) {
         self.external_bindings = bindings;
+    }
+
+    pub fn set_imported_from(&mut self, imports: HashMap<String, HashMap<String, String>>) {
+        self.imported_from = imports;
+    }
+
+    pub fn set_external_s3_methods(&mut self, methods: HashMap<String, HashSet<(String, String)>>) {
+        self.external_s3_methods = methods;
+    }
+
+    pub fn set_load_bindings(
+        &mut self,
+        bindings: HashMap<String, HashMap<usize, HashSet<String>>>,
+    ) {
+        self.load_bindings = bindings;
     }
 
     /// Run the three-pass check across all added files. Returns a map
@@ -173,6 +194,9 @@ impl Project {
         let return_slots = Arc::new(std::mem::take(&mut self.return_slots));
         let loaded = Arc::new(std::mem::take(&mut self.loaded));
         let external_bindings = Arc::new(std::mem::take(&mut self.external_bindings));
+        let imported_from = Arc::new(std::mem::take(&mut self.imported_from));
+        let external_s3_methods = Arc::new(std::mem::take(&mut self.external_s3_methods));
+        let load_bindings = Arc::new(std::mem::take(&mut self.load_bindings));
         let mut per_file: Vec<(usize, String, Vec<Diagnostic>)> = self
             .files
             .par_iter()
@@ -187,6 +211,11 @@ impl Project {
                 emitter.set_external_bindings(
                     external_bindings.get(path).cloned().unwrap_or_default(),
                 );
+                emitter.set_imported_from(imported_from.get(path).cloned().unwrap_or_default());
+                emitter.set_external_s3_methods(
+                    external_s3_methods.get(path).cloned().unwrap_or_default(),
+                );
+                emitter.set_load_bindings(load_bindings.get(path).cloned().unwrap_or_default());
                 emitter.emit_diagnostics(file);
                 (i, path.clone(), emitter.take_diagnostics())
             })
@@ -198,6 +227,9 @@ impl Project {
         self.return_slots = Arc::unwrap_or_clone(return_slots);
         self.loaded = Arc::unwrap_or_clone(loaded);
         self.external_bindings = Arc::unwrap_or_clone(external_bindings);
+        self.imported_from = Arc::unwrap_or_clone(imported_from);
+        self.external_s3_methods = Arc::unwrap_or_clone(external_s3_methods);
+        self.load_bindings = Arc::unwrap_or_clone(load_bindings);
         // Re-sort to input file order and drop the sort index.
         per_file.sort_by_key(|(i, _, _)| *i);
         let per_file: Vec<(String, Vec<Diagnostic>)> =

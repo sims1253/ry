@@ -71,6 +71,10 @@ pub struct Config {
     /// their dependencies in `ry.toml` so dplyr-style NSE verbs resolve
     /// without an inline `library(dplyr)` in every file. Default: empty.
     pub packages: Vec<String>,
+    /// Names supplied dynamically by the host application or by an
+    /// unresolvable `load()`. These become opaque project bindings without
+    /// suppressing diagnostics for other names.
+    pub globals: Vec<String>,
 }
 
 impl Default for Config {
@@ -109,6 +113,7 @@ impl Config {
             quiet: 0,
             r_version: None,
             packages: Vec::new(),
+            globals: Vec::new(),
         }
     }
 
@@ -231,6 +236,7 @@ impl Config {
             r_version: self.r_version,
             // Config-only (no CLI flag): passes through unchanged.
             packages: self.packages,
+            globals: self.globals,
         }
     }
 }
@@ -319,6 +325,7 @@ mod tests {
         assert_eq!(d.quiet, 0);
         assert!(d.r_version.is_none());
         assert!(d.packages.is_empty(), "packages defaults to empty");
+        assert!(d.globals.is_empty(), "globals defaults to empty");
         // Default and derive(Default) must agree.
         assert_eq!(d, Config::default());
     }
@@ -345,6 +352,7 @@ verbose = 1
 quiet = 2
 r-version = "4.3"
 packages = ["dplyr", "tidyverse"]
+globals = ["runtime_data", "generated_lookup"]
 "#;
         let cfg: Config = toml::from_str(toml).unwrap();
         assert!(cfg.error_on_warning);
@@ -358,6 +366,7 @@ packages = ["dplyr", "tidyverse"]
         assert_eq!(cfg.quiet, 2);
         assert_eq!(cfg.r_version.as_deref(), Some("4.3"));
         assert_eq!(cfg.packages, vec!["dplyr", "tidyverse"]);
+        assert_eq!(cfg.globals, vec!["runtime_data", "generated_lookup"]);
     }
 
     #[test]

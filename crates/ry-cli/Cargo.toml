@@ -36,6 +36,10 @@ tokio = { workspace = true, features = ["rt-multi-thread", "io-std"] }
 # Parallel file parsing. tree-sitter parsers are not
 # `Send`, so the parse loop uses a rayon thread-local parser pool.
 rayon = { workspace = true }
+rds2rust = { workspace = true }
+bzip2 = { workspace = true }
+flate2 = { workspace = true }
+xz2 = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -93,6 +93,125 @@ fn cross_file_s3_method_dispatches() {
 }
 
 #[test]
+fn cross_file_s3_ops_method_precedes_storage_mode_error() {
+    let mut project = Project::new();
+    project.add_file(
+        "methods.R".to_string(),
+        parse(
+            "methods.R",
+            "Ops.rvar <- function(e1, e2) structure(list(), class = \"rvar\")\n",
+        ),
+    );
+    project.add_file(
+        "usage.R".to_string(),
+        parse(
+            "usage.R",
+            "x <- structure(list(1), class = \"rvar\")\ny <- x + x\nz <- x == 1\n",
+        ),
+    );
+    let all: Vec<_> = project
+        .check()
+        .into_iter()
+        .flat_map(|(_, diagnostics)| diagnostics)
+        .collect();
+    assert!(
+        all.iter()
+            .all(|diagnostic| !matches!(diagnostic.code, "RY030" | "RY040")),
+        "Ops.rvar should dispatch before primitive list errors: {all:?}"
+    );
+}
+
+#[test]
+fn external_binding_is_a_function_position_candidate() {
+    use std::collections::{HashMap, HashSet};
+
+    let mut project = Project::new();
+    project.add_file(
+        "usage.R".to_string(),
+        parse("usage.R", "ndraws <- NULL\nn <- ndraws(x)\n"),
+    );
+    project.set_external_bindings(HashMap::from([(
+        "usage.R".to_string(),
+        HashSet::from(["ndraws".to_string()]),
+    )]));
+    let all: Vec<_> = project
+        .check()
+        .into_iter()
+        .flat_map(|(_, diagnostics)| diagnostics)
+        .collect();
+    assert!(
+        all.iter().all(|diagnostic| diagnostic.code != "RY070"),
+        "imported ndraws should remain callable despite a local data binding: {all:?}"
+    );
+}
+
+#[test]
+fn namespace_s3_registration_is_an_operator_candidate() {
+    use std::collections::{HashMap, HashSet};
+
+    let mut project = Project::new();
+    project.add_file(
+        "usage.R".to_string(),
+        parse(
+            "usage.R",
+            "x <- structure(list(1), class = \"external_class\")\ny <- x + x\n",
+        ),
+    );
+    project.set_external_s3_methods(HashMap::from([(
+        "usage.R".to_string(),
+        HashSet::from([("Ops".to_string(), "external_class".to_string())]),
+    )]));
+    let all: Vec<_> = project
+        .check()
+        .into_iter()
+        .flat_map(|(_, diagnostics)| diagnostics)
+        .collect();
+    assert!(
+        all.iter().all(|diagnostic| diagnostic.code != "RY040"),
+        "registered Ops method should be consulted before storage mode: {all:?}"
+    );
+}
+
+#[test]
+fn load_bindings_activate_at_the_load_statement() {
+    use std::collections::{HashMap, HashSet};
+
+    let file = parse(
+        "usage.R",
+        "before_load\nload(\"objects.rda\")\nafter_load\n",
+    );
+    let load_start = file
+        .stmts
+        .iter()
+        .find_map(|statement| match statement {
+            ry_core::ast::Stmt::Expr(ry_core::ast::Expr::Call { span, .. }) => Some(span.start),
+            _ => None,
+        })
+        .unwrap();
+    let mut project = Project::new();
+    project.add_file("usage.R".to_string(), file);
+    project.set_load_bindings(HashMap::from([(
+        "usage.R".to_string(),
+        HashMap::from([(load_start, HashSet::from(["after_load".to_string()]))]),
+    )]));
+    let all: Vec<_> = project
+        .check()
+        .into_iter()
+        .flat_map(|(_, diagnostics)| diagnostics)
+        .collect();
+    assert!(
+        all.iter()
+            .any(|diagnostic| diagnostic.message.contains("before_load")),
+        "a read before load must remain unbound: {all:?}"
+    );
+    assert!(
+        all.iter()
+            .all(|diagnostic| !diagnostic.message.contains("after_load")),
+        "a loaded binding should resolve after load: {all:?}"
+    );
+}
+
+#[test]
 fn redefinition_in_different_files_shadows() {
     // If utils.R defines f and other.R also defines f, the later
     // definition wins (matching R's source() semantics). The order

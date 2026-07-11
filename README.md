@@ -88,14 +88,14 @@ per-package type stubs, so the same name means the right thing in
 context: `filter()` is `stats::filter` until dplyr is loaded, and
 `dplyr::filter(df, x > 0)` resolves the column `x` against `df`’s schema
 either way. For packages being checked, `importFrom(pkg, name)` directives
-in `NAMESPACE` introduce opaque bindings even when ry has no stub for the
-dependency. Whole-package imports and `library()` / `require()` calls also
+in `NAMESPACE` preserve exact binding provenance, falling back to opaque when
+ry has no stub for the dependency. Whole-package imports and `library()` / `require()` calls also
 use installed packages' static `NAMESPACE` exports without executing R or
 loading package code. `requireNamespace()` deliberately does not introduce
 unqualified names.
 
 Stubs currently ship for base R (plus stats and utils),
-dplyr, purrr, mirai, survival, and a minimal Bayesian stack (brms,
+dplyr, purrr, mirai, survival, testthat, and a minimal Bayesian stack (brms,
 posterior, loo, bayesplot, cmdstanr). Packages attached outside the checked sources can
 be declared in `ry.toml`.
 
@@ -128,6 +128,10 @@ ignore = ["RY033"]
 # Packages attached outside the checked sources.
 packages = ["dplyr"]
 
+# Names created dynamically by the host application or an unresolvable
+# load(). Only these names are treated as opaque globals.
+globals = ["runtime_data", "generated_lookup"]
+
 error-on-warning = false
 exit-zero        = false
 output-format    = "full"     # full | concise | json | github | gitlab | junit
@@ -150,6 +154,11 @@ x <- bad  # noqa: RY010                # flake8/ruff-compatible alias
 # ry: ignore                           # standalone: suppresses the next line
 # ry: ignore-file                      # file-level, anywhere in the file
 ```
+
+Prefer a rule-specific inline suppression or `globals` entry for dynamic
+workspaces. ry intentionally does not suppress diagnostics merely because an
+expression appears inside `expect_error()`: the setup expression is ordinary R
+code and can contain a real defect before the expected error is reached.
 
 ## Editors
 

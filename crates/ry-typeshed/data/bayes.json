@@ -1,13 +1,33 @@
 {
   "version": "0.0.1",
   "functions": {
+    "brms.prior": {
+      "params": ["prior", "..."],
+      "eval": { "prior": "quoted_expression", "...": "quoted_expression", "check": "normal" },
+      "return": { "mode": "list", "length": "unknown", "na": false, "class": ["brmsprior", "data.frame"] }
+    },
     "brms.brm": {
       "params": ["formula", "data", "..."],
       "return": { "mode": "opaque", "length": "1", "na": false, "class": ["brmsfit"] }
     },
     "posterior.as_draws_df": {
-      "params": ["x", "..."],
+      "params": [".x", "..."],
       "return": { "mode": "list", "length": "unknown", "na": false, "class": ["draws_df", "draws", "data.frame"] }
+    },
+    "posterior.mutate_variables": {
+      "params": [".x", "..."],
+      "eval": { "...": "data_mask" },
+      "return": "arg0"
+    },
+    "posterior.rename_variables": {
+      "params": [".x", "..."],
+      "eval": { "...": "quoted_symbol" },
+      "return": "arg0"
+    },
+    "posterior.for_each_draw": {
+      "params": ["x", "expr"],
+      "eval": { "expr": "data_mask" },
+      "return": "arg0"
     },
     "posterior.as_draws_matrix": {
       "params": ["x", "..."],

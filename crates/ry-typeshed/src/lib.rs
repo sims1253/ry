@@ -7,8 +7,19 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvalMode {
+    Normal,
+    QuotedSymbol,
+    QuotedExpression,
+    DataMask,
+    TidySelect,
+}
+
 pub const BASE_JSON: &str = include_str!("../data/base.json");
 pub const DPLYR_JSON: &str = include_str!("../data/dplyr.json");
+pub const TESTTHAT_JSON: &str = include_str!("../data/testthat.json");
 pub const PURRR_JSON: &str = include_str!("../data/purrr.json");
 pub const MIRAI_JSON: &str = include_str!("../data/mirai.json");
 pub const BAYES_JSON: &str = include_str!("../data/bayes.json");
@@ -43,6 +54,11 @@ const PACKAGE_SPECS: &[PackageSpec] = &[
     PackageSpec {
         name: "survival",
         json: SURVIVAL_JSON,
+        prefix: None,
+    },
+    PackageSpec {
+        name: "testthat",
+        json: TESTTHAT_JSON,
         prefix: None,
     },
     PackageSpec {
@@ -123,6 +139,13 @@ pub struct FunctionSig {
     pub return_: ReturnSpec,
     #[serde(default)]
     pub aliases: Vec<String>,
+    #[serde(default)]
+    pub eval: std::collections::BTreeMap<String, EvalMode>,
+    /// Zero-based literal argument used as a path relative to the current
+    /// source file. Consumers may fold the call only when that argument is a
+    /// string literal and the target exists.
+    #[serde(default)]
+    pub source_relative_path_arg: Option<usize>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -170,6 +193,10 @@ mod _fwd {
         pub return_: super::ReturnSpec,
         #[serde(default)]
         pub aliases: Vec<String>,
+        #[serde(default)]
+        pub eval: std::collections::BTreeMap<String, super::EvalMode>,
+        #[serde(default)]
+        pub source_relative_path_arg: Option<usize>,
     }
 }
 
@@ -204,6 +231,8 @@ pub fn load_base() -> Result<Typeshed, TypeshedError> {
                 params: v.params,
                 return_: v.return_,
                 aliases: v.aliases,
+                eval: v.eval,
+                source_relative_path_arg: v.source_relative_path_arg,
             },
         );
     }
@@ -216,6 +245,8 @@ pub fn load_base() -> Result<Typeshed, TypeshedError> {
                 params: m.sig.params,
                 return_: m.sig.return_,
                 aliases: m.sig.aliases,
+                eval: m.sig.eval,
+                source_relative_path_arg: m.sig.source_relative_path_arg,
             },
         );
     }
@@ -295,6 +326,8 @@ fn parse_package(json: &str, prefix: Option<&str>) -> Result<Typeshed, TypeshedE
                 params: v.params,
                 return_: v.return_,
                 aliases: v.aliases,
+                eval: v.eval,
+                source_relative_path_arg: v.source_relative_path_arg,
             },
         );
     }
@@ -307,6 +340,8 @@ fn parse_package(json: &str, prefix: Option<&str>) -> Result<Typeshed, TypeshedE
                 params: m.sig.params,
                 return_: m.sig.return_,
                 aliases: m.sig.aliases,
+                eval: m.sig.eval,
+                source_relative_path_arg: m.sig.source_relative_path_arg,
             },
         );
     }
@@ -326,6 +361,7 @@ fn parse_package(json: &str, prefix: Option<&str>) -> Result<Typeshed, TypeshedE
 /// - `purrr` -> `data/purrr.json` (bare function names).
 /// - `mirai` -> `data/mirai.json` (bare function names).
 /// - `survival` -> `data/survival.json` (bare function names).
+/// - `testthat` -> `data/testthat.json` (bare function names).
 /// - `brms`, `posterior`, `loo`, `bayesplot`, `cmdstanr` ->
 ///   `data/bayes.json` (a single multi-package file whose keys are
 ///   `pkg.function`; the prefix is stripped for the requested package).
@@ -397,6 +433,15 @@ mod tests {
     }
 
     #[test]
+    fn path_constructor_semantics_are_declarative() {
+        let testthat = load_package("testthat").expect("testthat is known");
+        assert_eq!(
+            testthat.functions["test_path"].source_relative_path_arg,
+            Some(0)
+        );
+    }
+
+    #[test]
     fn load_package_bayes_strips_prefix() {
         // bayes.json is a multi-package file keyed `pkg.function`; each
         // package view should expose bare function names.
@@ -411,6 +456,10 @@ mod tests {
         // The brms-only view must NOT see posterior's entries.
         assert!(!brms.functions.contains_key("as_draws_df"));
         assert!(!brms.functions.contains_key("posterior.as_draws_df"));
+        assert_eq!(
+            posterior.functions["mutate_variables"].eval.get("..."),
+            Some(&EvalMode::DataMask)
+        );
     }
 
     #[test]

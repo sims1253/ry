@@ -639,8 +639,19 @@
     },
     "as.factor": {
       "params": ["x"],
-      "return": { "mode": "integer", "length": "arg0", "na": false }
+      "return": { "mode": "integer", "length": "arg0", "na": false, "class": ["factor"] }
     },
+    "attr": { "params": ["x", "which"], "return": { "mode": "opaque", "length": "unknown", "na": true } },
+    "structure": { "params": [".Data", "..."], "return": "arg0" },
+    "summary": { "params": ["object", "..."], "return": { "mode": "opaque", "length": "unknown", "na": true } },
+    "mapply": { "params": ["FUN", "..."], "return": { "mode": "opaque", "length": "unknown", "na": true } },
+    "apply": { "params": ["X", "MARGIN", "FUN", "..."], "return": { "mode": "opaque", "length": "unknown", "na": true } },
+    "as.array": { "params": ["x", "..."], "return": { "mode": "opaque", "length": "unknown", "na": true } },
+    "match.fun": { "params": ["FUN"], "return": { "mode": "function", "length": "1", "na": false } },
+    "pretty": { "params": ["x", "..."], "return": { "mode": "double", "length": "unknown", "na": false } },
+    "drop": { "params": ["x"], "return": "arg0" },
+    "nobs": { "params": ["object", "..."], "return": { "mode": "integer", "length": "1", "na": false } },
+    "data": { "params": ["..."], "return": { "mode": "character", "length": "unknown", "na": false } },
     "rbind": {
       "params": ["..."],
       "return": { "mode": "opaque", "length": "unknown", "na": true }
@@ -963,7 +974,7 @@
     },
     "gl": {
       "params": ["n", "k"],
-      "return": { "mode": "integer", "length": "unknown", "na": false }
+      "return": { "mode": "integer", "length": "unknown", "na": false, "class": ["factor"] }
     },
     "interaction": {
       "params": ["..."],
@@ -1270,6 +1281,24 @@
       "return": "arg0"
     },
     {
+      "generic": "print",
+      "class": "formula",
+      "params": ["x", "..."],
+      "return": "arg0"
+    },
+    {
+      "generic": "print",
+      "class": "matrix",
+      "params": ["x", "..."],
+      "return": "arg0"
+    },
+    {
+      "generic": "print",
+      "class": "array",
+      "params": ["x", "..."],
+      "return": "arg0"
+    },
+    {
       "generic": "summary",
       "class": "default",
       "params": ["object", "..."],
@@ -1307,6 +1336,8 @@
     }
   ],
   "datasets": {
+    "state.name": { "mode": "character", "length": "50", "na": false },
+    ".BaseNamespaceEnv": { "mode": "opaque", "length": "unknown", "na": false },
     "mtcars":        { "mode": "list", "length": "11", "na": false, "class": ["data.frame"], "note": "data.frame", "columns": {
       "mpg":  { "mode": "double",   "length": "32", "na": false },
       "cyl":  { "mode": "double",   "length": "32", "na": false },

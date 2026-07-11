@@ -80,6 +80,7 @@
     },
     "count": {
       "params": ["x", "..."],
+      "eval": { "...": "data_mask" },
       "return": { "mode": "opaque", "length": "unknown", "na": false, "class": ["data.frame"] }
     },
     "tibble": {

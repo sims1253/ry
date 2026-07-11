@@ -441,7 +441,14 @@ fn run_check(
     }
 
     // Run the initial check.
-    let result = run_check_once(&all_paths, &filter, format, &cfg.packages, color)?;
+    let result = run_check_once(
+        &all_paths,
+        &filter,
+        format,
+        &cfg.packages,
+        &cfg.globals,
+        color,
+    )?;
     result.print_summary(format, statistics);
 
     if !watch {
@@ -524,7 +531,14 @@ fn run_check(
             // Using ANSI escape sequences rather than `clear` command
             // for portability (no external process spawn).
             eprint!("\x1b[2J\x1b[H");
-            let result = run_check_once(&all_paths, &filter, format, &cfg.packages, color)?;
+            let result = run_check_once(
+                &all_paths,
+                &filter,
+                format,
+                &cfg.packages,
+                &cfg.globals,
+                color,
+            )?;
             result.print_summary(format, statistics);
         }
     }
@@ -621,6 +635,7 @@ fn run_check_once(
     filter: &ry_checker::SeverityFilter,
     format: ry_checker::format::OutputFormat,
     packages: &[String],
+    globals: &[String],
     color: bool,
 ) -> Result<CheckResult> {
     let mut all_diagnostics: Vec<ry_checker::Diagnostic> = Vec::new();
@@ -680,6 +695,7 @@ fn run_check_once(
     let package_scope = package_metadata::resolve(
         all_paths,
         packages,
+        globals,
         parsed.iter().map(|(_, _, _, file)| file),
     );
     for (_, path_str, src, file) in parsed {
@@ -691,6 +707,9 @@ fn run_check_once(
 
     project.set_loaded(package_scope.attached);
     project.set_external_bindings(package_scope.bindings);
+    project.set_imported_from(package_scope.imported_from);
+    project.set_external_s3_methods(package_scope.s3_methods);
+    project.set_load_bindings(package_scope.load_bindings);
 
     let mut per_file_diagnostics = project.check();
 

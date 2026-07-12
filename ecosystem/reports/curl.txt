@@ -1,0 +1,5 @@
+R/handle.R:229:6 RY001
+R/multi_download.R:173:5 RY070
+R/options.R:59:27 RY010
+R/options.R:60:19 RY010
+R/options.R:60:52 RY010

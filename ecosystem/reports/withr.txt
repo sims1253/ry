@@ -1,0 +1,12 @@
+R/local_.R:21:49 RY010
+R/locale.R:69:10 RY010
+R/locale.R:72:23 RY010
+R/sink.R:15:15 RY010
+R/sink.R:23:17 RY010
+R/sink.R:30:29 RY010
+R/sink.R:31:20 RY010
+R/sink.R:31:30 RY001
+R/torture.R:10:26 RY010
+R/torture.R:13:28 RY010
+R/with_.R:76:49 RY010
+R/wrap.R:5:47 RY010

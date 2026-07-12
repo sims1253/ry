@@ -1,0 +1,29 @@
+name: Ecosystem regression
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ecosystem:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ecosystem/.cache
+            target
+          key: ecosystem-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'ecosystem/packages.txt') }}
+          restore-keys: |
+            ecosystem-${{ runner.os }}-
+      - name: Build release binary
+        run: cargo build --release --locked -p ry-cli --bin ry
+      - name: Check ecosystem snapshots
+        run: ecosystem/run.sh --check

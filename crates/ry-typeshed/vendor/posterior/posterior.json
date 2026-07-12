@@ -1,0 +1,198 @@
+{
+  "schema_version": "1",
+  "package": "posterior",
+  "version": "0.0.1",
+  "functions": {
+    "as_draws_array": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "draws_array",
+          "draws"
+        ]
+      }
+    },
+    "as_draws_df": {
+      "params": [
+        ".x",
+        "..."
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "draws_df",
+          "draws",
+          "data.frame"
+        ]
+      }
+    },
+    "as_draws_matrix": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "draws_matrix",
+          "draws"
+        ]
+      }
+    },
+    "as_draws_rvars": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "draws_rvars",
+          "draws"
+        ]
+      }
+    },
+    "extract_variable": {
+      "params": [
+        "x",
+        "variable"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "extract_variable_matrix": {
+      "params": [
+        "x",
+        "variable"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "for_each_draw": {
+      "params": [
+        "x",
+        "expr"
+      ],
+      "eval": {
+        "expr": "data_mask"
+      },
+      "return": "arg0"
+    },
+    "mutate_variables": {
+      "params": [
+        ".x",
+        "..."
+      ],
+      "eval": {
+        "...": "data_mask"
+      },
+      "return": "arg0"
+    },
+    "nchains": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "1",
+        "na": false
+      }
+    },
+    "ndraws": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "1",
+        "na": false
+      }
+    },
+    "niterations": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "1",
+        "na": false
+      }
+    },
+    "nvariables": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "1",
+        "na": false
+      }
+    },
+    "rename_variables": {
+      "params": [
+        ".x",
+        "..."
+      ],
+      "eval": {
+        "...": "quoted_symbol"
+      },
+      "return": "arg0"
+    },
+    "summarise_draws": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "summarize_draws": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "variables": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "character",
+        "length": "unknown",
+        "na": false
+      }
+    }
+  }
+}

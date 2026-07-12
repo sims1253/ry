@@ -75,6 +75,9 @@ pub struct Config {
     /// unresolvable `load()`. These become opaque project bindings without
     /// suppressing diagnostics for other names.
     pub globals: Vec<String>,
+    /// Runtime typeshed directories. Relative entries are anchored at the
+    /// directory containing this configuration file.
+    pub typeshed: Vec<PathBuf>,
 }
 
 impl Default for Config {
@@ -114,6 +117,7 @@ impl Config {
             r_version: None,
             packages: Vec::new(),
             globals: Vec::new(),
+            typeshed: Vec::new(),
         }
     }
 
@@ -139,10 +143,16 @@ impl Config {
             path: path.to_path_buf(),
             source,
         })?;
-        let cfg: Self = toml::from_str(&text).map_err(|source| ConfigError::Parse {
+        let mut cfg: Self = toml::from_str(&text).map_err(|source| ConfigError::Parse {
             path: path.to_path_buf(),
             source,
         })?;
+        let root = path.parent().unwrap_or(Path::new("."));
+        for dir in &mut cfg.typeshed {
+            if dir.is_relative() {
+                *dir = root.join(&*dir);
+            }
+        }
         Ok(cfg)
     }
 
@@ -206,6 +216,7 @@ impl Config {
         cli_errors: Vec<String>,
         cli_warns: Vec<String>,
         cli_ignores: Vec<String>,
+        cli_typeshed: Vec<PathBuf>,
         cli_error_on_warning: Option<bool>,
         cli_exit_zero: Option<bool>,
         cli_output_format: Option<String>,
@@ -218,6 +229,8 @@ impl Config {
         warns.extend(cli_warns);
         let mut ignores = self.ignore;
         ignores.extend(cli_ignores);
+        let mut typeshed = self.typeshed;
+        typeshed.extend(cli_typeshed);
 
         let output_format = cli_output_format.unwrap_or(self.output_format);
 
@@ -237,6 +250,7 @@ impl Config {
             // Config-only (no CLI flag): passes through unchanged.
             packages: self.packages,
             globals: self.globals,
+            typeshed,
         }
     }
 }
@@ -353,6 +367,7 @@ quiet = 2
 r-version = "4.3"
 packages = ["dplyr", "tidyverse"]
 globals = ["runtime_data", "generated_lookup"]
+typeshed = ["stubs"]
 "#;
         let cfg: Config = toml::from_str(toml).unwrap();
         assert!(cfg.error_on_warning);
@@ -367,6 +382,7 @@ globals = ["runtime_data", "generated_lookup"]
         assert_eq!(cfg.r_version.as_deref(), Some("4.3"));
         assert_eq!(cfg.packages, vec!["dplyr", "tidyverse"]);
         assert_eq!(cfg.globals, vec!["runtime_data", "generated_lookup"]);
+        assert_eq!(cfg.typeshed, vec![PathBuf::from("stubs")]);
     }
 
     #[test]
@@ -398,6 +414,7 @@ globals = ["runtime_data", "generated_lookup"]
             vec!["RY040".to_string()],
             vec![],
             vec!["RY050".to_string()],
+            Vec::new(),
             None,
             None,
             None,
@@ -418,6 +435,7 @@ globals = ["runtime_data", "generated_lookup"]
             ..Config::defaults()
         };
         let merged = cfg.merge_cli(
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -444,7 +462,17 @@ globals = ["runtime_data", "generated_lookup"]
             quiet: 1,
             ..Config::defaults()
         };
-        let merged = cfg.merge_cli(Vec::new(), Vec::new(), Vec::new(), None, None, None, 0, 0);
+        let merged = cfg.merge_cli(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+            0,
+            0,
+        );
         assert!(merged.error_on_warning);
         assert!(merged.exit_zero);
         assert_eq!(merged.output_format, "json");
@@ -459,7 +487,17 @@ globals = ["runtime_data", "generated_lookup"]
             quiet: 1,
             ..Config::defaults()
         };
-        let merged = cfg.merge_cli(Vec::new(), Vec::new(), Vec::new(), None, None, None, 2, 3);
+        let merged = cfg.merge_cli(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+            2,
+            3,
+        );
         assert_eq!(merged.verbose, 3);
         assert_eq!(merged.quiet, 4);
     }
@@ -470,7 +508,17 @@ globals = ["runtime_data", "generated_lookup"]
             verbose: 250,
             ..Config::defaults()
         };
-        let merged = cfg.merge_cli(Vec::new(), Vec::new(), Vec::new(), None, None, None, 10, 0);
+        let merged = cfg.merge_cli(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+            10,
+            0,
+        );
         assert_eq!(merged.verbose, 255);
     }
 
@@ -490,6 +538,19 @@ globals = ["runtime_data", "generated_lookup"]
         .unwrap();
         let cfg = Config::load_from_dir(tmp.path()).unwrap().unwrap();
         assert!(cfg.error_on_warning);
+    }
+
+    #[test]
+    fn typeshed_paths_are_resolved_from_config_directory() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(
+            tmp.path().join(CONFIG_FILENAME),
+            "typeshed = [\"relative-stubs\", \"/absolute-stubs\"]\n",
+        )
+        .unwrap();
+        let cfg = Config::load_from_dir(tmp.path()).unwrap().unwrap();
+        assert_eq!(cfg.typeshed[0], tmp.path().join("relative-stubs"));
+        assert_eq!(cfg.typeshed[1], PathBuf::from("/absolute-stubs"));
     }
 
     #[test]

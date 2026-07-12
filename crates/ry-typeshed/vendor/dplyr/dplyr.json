@@ -1,0 +1,332 @@
+{
+  "schema_version": "1",
+  "package": "dplyr",
+  "version": "0.0.1",
+  "functions": {
+    "arrange": {
+      "params": [
+        ".data",
+        "..."
+      ],
+      "eval": {
+        "...": "data_mask"
+      },
+      "schema_effect": "preserve",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "bind_cols": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "bind_rows": {
+      "params": [
+        "...",
+        ".id"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "count": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "eval": {
+        "...": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "distinct": {
+      "params": [
+        ".data",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "filter": {
+      "params": [
+        ".data",
+        "..."
+      ],
+      "eval": {
+        "...": "data_mask"
+      },
+      "schema_effect": "preserve",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "full_join": {
+      "params": [
+        "x",
+        "y",
+        "..."
+      ],
+      "schema_effect": "join",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "group_by": {
+      "params": [
+        ".data",
+        "..."
+      ],
+      "eval": {
+        "...": "data_mask"
+      },
+      "schema_effect": "preserve",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "grouped_df",
+          "data.frame"
+        ]
+      }
+    },
+    "inner_join": {
+      "params": [
+        "x",
+        "y",
+        "..."
+      ],
+      "schema_effect": "join",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "left_join": {
+      "params": [
+        "x",
+        "y",
+        "..."
+      ],
+      "schema_effect": "join",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "mutate": {
+      "params": [
+        ".data",
+        "..."
+      ],
+      "eval": {
+        "...": "data_mask"
+      },
+      "schema_effect": "add_named_args",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "n": {
+      "params": [],
+      "return": {
+        "mode": "integer",
+        "length": "1",
+        "na": false
+      }
+    },
+    "pull": {
+      "params": [
+        ".data",
+        "var"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "rename": {
+      "params": [
+        ".data",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "right_join": {
+      "params": [
+        "x",
+        "y",
+        "..."
+      ],
+      "schema_effect": "join",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "select": {
+      "params": [
+        ".data",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "schema_effect": "select",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "slice": {
+      "params": [
+        ".data",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "summarise": {
+      "params": [
+        ".data",
+        "..."
+      ],
+      "eval": {
+        "...": "data_mask"
+      },
+      "schema_effect": "aggregate",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "summarize": {
+      "params": [
+        ".data",
+        "..."
+      ],
+      "eval": {
+        "...": "data_mask"
+      },
+      "schema_effect": "aggregate",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "tibble": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "tbl_df",
+          "tbl",
+          "data.frame"
+        ]
+      }
+    },
+    "ungroup": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    }
+  }
+}

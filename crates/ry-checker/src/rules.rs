@@ -128,6 +128,24 @@ pub const RULES: &[Rule] = &[
         default_severity: Severity::Warning,
         summary: "A purrr typed-map (`map_dbl`, `map_int`, ...) callback returns a value whose mode is incompatible with the target vector type. R coerces at runtime, but the mismatch is almost always unintended.",
     },
+    Rule {
+        code: "RY090",
+        name: "unknown-argument",
+        default_severity: Severity::Warning,
+        summary: "A named call argument does not match any formal parameter after R's exact and partial argument matching.",
+    },
+    Rule {
+        code: "RY091",
+        name: "missing-required-argument",
+        default_severity: Severity::Warning,
+        summary: "A required formal parameter is not bound by name or position.",
+    },
+    Rule {
+        code: "RY092",
+        name: "argument-type-mismatch",
+        default_severity: Severity::Error,
+        summary: "A call argument has a known mode incompatible with the parameter type declared by the resolved signature.",
+    },
 ];
 
 pub fn find(code: &str) -> Option<&'static Rule> {

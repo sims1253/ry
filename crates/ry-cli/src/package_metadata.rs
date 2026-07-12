@@ -44,6 +44,7 @@ pub(crate) fn resolve<'a>(
     all_paths: &[PathBuf],
     configured_packages: &[String],
     configured_globals: &[String],
+    user_stubs: &std::collections::BTreeMap<String, ry_typeshed::Typeshed>,
     files: impl IntoIterator<Item = &'a SourceFile>,
 ) -> PackageScope {
     let files: Vec<&SourceFile> = files.into_iter().collect();
@@ -107,7 +108,13 @@ pub(crate) fn resolve<'a>(
             );
             load_bindings.insert(
                 file.path.clone(),
-                loaded_serialized_bindings(file, &root, &project_attached, &mut serialized_cache),
+                loaded_serialized_bindings(
+                    file,
+                    &root,
+                    &project_attached,
+                    user_stubs,
+                    &mut serialized_cache,
+                ),
             );
         }
         file_attached.extend(ry_checker::packages::attached_packages(file));
@@ -294,6 +301,7 @@ fn loaded_serialized_bindings(
     file: &SourceFile,
     package_root: &Path,
     attached_packages: &HashSet<String>,
+    user_stubs: &std::collections::BTreeMap<String, ry_typeshed::Typeshed>,
     cache: &mut HashMap<PathBuf, HashSet<String>>,
 ) -> HashMap<usize, HashSet<String>> {
     fn resolve_path(
@@ -301,6 +309,7 @@ fn loaded_serialized_bindings(
         file: &SourceFile,
         package_root: &Path,
         attached_packages: &HashSet<String>,
+        user_stubs: &std::collections::BTreeMap<String, ry_typeshed::Typeshed>,
     ) -> Option<PathBuf> {
         let (path, source_relative_only) = match expr {
             Expr::String(path, _) => (path, false),
@@ -309,11 +318,16 @@ fn loaded_serialized_bindings(
                     return None;
                 };
                 let signature = if let Some((package, function)) = name.rsplit_once("::") {
-                    ry_typeshed::load_package(package.trim_end_matches(':'))
+                    let package = package.trim_end_matches(':');
+                    user_stubs
+                        .get(package)
+                        .or_else(|| ry_typeshed::load_package(package))
                         .and_then(|typeshed| typeshed.functions.get(function))
                 } else {
                     attached_packages.iter().find_map(|package| {
-                        ry_typeshed::load_package(package)
+                        user_stubs
+                            .get(package)
+                            .or_else(|| ry_typeshed::load_package(package))
                             .and_then(|typeshed| typeshed.functions.get(name))
                             .filter(|signature| signature.source_relative_path_arg.is_some())
                     })
@@ -352,7 +366,13 @@ fn loaded_serialized_bindings(
             continue;
         }
         if let Some(path) = args.first().and_then(|argument| {
-            resolve_path(&argument.value, file, package_root, attached_packages)
+            resolve_path(
+                &argument.value,
+                file,
+                package_root,
+                attached_packages,
+                user_stubs,
+            )
         }) {
             let loaded = cache
                 .entry(path.clone())
@@ -618,6 +638,50 @@ mod tests {
         assert_eq!(
             serialized_bindings(&path),
             HashSet::from(["alpha".to_string(), "beta".to_string()])
+        );
+    }
+
+    #[test]
+    fn user_stub_override_drives_source_relative_load_resolution() {
+        let dir = tempfile::tempdir().unwrap();
+        let source_path = dir.path().join("script.R");
+        let data_path = dir.path().join("objects.rda");
+        std::fs::write(&data_path, "invalid fixture is enough for path resolution").unwrap();
+        std::fs::write(
+            dir.path().join("custom.json"),
+            r#"{
+                "schema_version": "1",
+                "package": "custom",
+                "version": "test",
+                "functions": {
+                    "fixture": {
+                        "params": ["path"],
+                        "return": {"mode": "character", "length": "1"},
+                        "source_relative_path_arg": 0
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+        let user_stubs = ry_typeshed::load_stub_dir(dir.path()).unwrap();
+        let mut parser = ry_core::RParser::new().unwrap();
+        let file = parser
+            .parse(
+                &source_path.to_string_lossy(),
+                "load(custom::fixture(\"objects.rda\"))\n",
+            )
+            .unwrap();
+        let bindings = loaded_serialized_bindings(
+            &file,
+            dir.path(),
+            &HashSet::new(),
+            &user_stubs,
+            &mut HashMap::new(),
+        );
+        assert_eq!(
+            bindings.len(),
+            1,
+            "custom signature should resolve the path"
         );
     }
 }

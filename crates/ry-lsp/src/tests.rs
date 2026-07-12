@@ -1,4 +1,4 @@
-use crate::backend::{State, path_to_uri, uri_to_path};
+use crate::backend::{ProjectCache, State, path_to_uri, uri_to_path};
 use crate::diagnostics::{
     diag_code_from_lsp, diagnostic_to_lsp, diagnostic_to_lsp_with_source, make_ignore_action,
     make_ignore_file_action,
@@ -1984,7 +1984,7 @@ fn edit_one_file_in_workspace_reparses_only_that_file() {
         // Initial parse on open: every doc is parsed once.
         let mut parser = RParser::new().unwrap();
         let file = parser.parse(&path, state.doc_text(&path).unwrap()).unwrap();
-        assert!(state.record_parse(&path, 1, file));
+        assert!(state.record_parse(&path, 1, std::sync::Arc::new(file)));
     }
     let initial = state.parse_count();
     assert_eq!(initial, 30, "30 files => 30 initial parses, got {initial}");
@@ -2038,7 +2038,7 @@ fn edit_one_file_in_workspace_reparses_only_that_file() {
         .parse(&edited, state.doc_text(&edited).unwrap())
         .unwrap();
     assert!(
-        state.record_parse(&edited, 2, file),
+        state.record_parse(&edited, 2, std::sync::Arc::new(file)),
         "re-parse of the edited doc should be stored"
     );
     assert_eq!(
@@ -2046,5 +2046,73 @@ fn edit_one_file_in_workspace_reparses_only_that_file() {
         31,
         "exactly one new parse for the edited file; counter is {}",
         state.parse_count()
+    );
+}
+
+#[test]
+fn editing_utils_updates_cross_file_analysis_diagnostics() {
+    let mut parser = RParser::new().unwrap();
+    let utils_path = "/ws/utils.R";
+    let analysis_path = "/ws/analysis.R";
+    let analysis = parser
+        .parse(analysis_path, "result <- make_value() + 1L\n")
+        .unwrap();
+    let utils_character = parser
+        .parse(utils_path, "make_value <- function() { \"hello\" }\n")
+        .unwrap();
+    let user_stubs = std::sync::Arc::new(std::collections::BTreeMap::new());
+    let mut project = ProjectCache::default();
+
+    let before = project.check(
+        vec![
+            (
+                utils_path.to_string(),
+                1,
+                std::sync::Arc::new(utils_character),
+            ),
+            (
+                analysis_path.to_string(),
+                1,
+                std::sync::Arc::new(analysis.clone()),
+            ),
+        ],
+        std::sync::Arc::clone(&user_stubs),
+    );
+    let before_analysis = before
+        .iter()
+        .find(|(path, _)| path == analysis_path)
+        .unwrap();
+    assert!(
+        before_analysis
+            .1
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY040"),
+        "character-returning utils function should invalidate analysis.R: {before_analysis:?}"
+    );
+
+    let utils_integer = parser
+        .parse(utils_path, "make_value <- function() { 1L }\n")
+        .unwrap();
+    let after = project.check(
+        vec![
+            (
+                utils_path.to_string(),
+                2,
+                std::sync::Arc::new(utils_integer),
+            ),
+            (analysis_path.to_string(), 1, std::sync::Arc::new(analysis)),
+        ],
+        user_stubs,
+    );
+    let after_analysis = after
+        .iter()
+        .find(|(path, _)| path == analysis_path)
+        .unwrap();
+    assert!(
+        after_analysis
+            .1
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY040"),
+        "editing utils.R must republish corrected analysis.R diagnostics: {after_analysis:?}"
     );
 }

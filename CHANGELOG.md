@@ -4,6 +4,21 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Typed and required parameter metadata in typeshed signatures, including
+  numeric mode unions and strict validation through `ry typeshed validate`.
+- R-compatible exact, partial, and positional call-argument matching with
+  `RY090` for unknown named arguments, `RY091` for missing required arguments,
+  and `RY092` for provable argument type mismatches.
+
+- Runtime custom typeshed loading through the `typeshed` key in `ry.toml` and
+  repeatable `--typeshed` flags. Flat and nested stub layouts are supported,
+  later directories replace earlier packages, and editor diagnostics use the
+  same workspace configuration.
+- The embedded typeshed is now a vendored snapshot of the standalone
+  `r-typeshed` repository, with schema-version validation and source metadata.
+
 ## [0.3.0] - 2026-07-11
 
 This release focuses on diagnostic precision, driven by audits of five

@@ -21,7 +21,20 @@ scope-driven diagnostics that need a whole-program view.
 
 ## Install
 
-ry is a Cargo workspace; build from source (Rust 1.88 or newer):
+On Linux and macOS, install the latest release with:
+
+``` sh
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/sims1253/ry/releases/latest/download/ry-cli-installer.sh | sh
+```
+
+On Windows PowerShell:
+
+``` powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/sims1253/ry/releases/latest/download/ry-cli-installer.ps1 | iex"
+```
+
+Or build from source with Rust 1.88 or newer:
 
 ``` sh
 git clone https://github.com/sims1253/ry
@@ -30,7 +43,7 @@ cargo build --release
 # binary at target/release/ry
 ```
 
-Prebuilt binaries are attached to GitHub releases.
+Per-platform archives are also attached to GitHub releases.
 See [CHANGELOG.md](CHANGELOG.md) for release highlights and upgrade notes.
 
 ## Quickstart
@@ -132,6 +145,9 @@ packages = ["dplyr"]
 # load(). Only these names are treated as opaque globals.
 globals = ["runtime_data", "generated_lookup"]
 
+# Additional package stubs. Paths are relative to this ry.toml.
+typeshed = ["stubs", "../shared-r-stubs"]
+
 error-on-warning = false
 exit-zero        = false
 output-format    = "full"     # full | concise | json | github | gitlab | junit
@@ -143,6 +159,24 @@ exclude = ["renv", "tests/snaps/**"]
 CLI flags override the config only when passed explicitly.
 When multiple paths are checked, the first path anchors config discovery;
 that one configuration applies to the complete invocation.
+
+## Custom typesheds
+
+Custom stub directories let a project add package signatures or replace ry's
+vendored signatures without recompiling. Both `stubs/foo.json` and
+`stubs/foo/foo.json` layouts are accepted. The optional `package` header names
+the package; legacy files fall back to the JSON file stem.
+
+Directories are layered in declaration order and `--typeshed <DIR>` may be
+repeated to append CLI directories. Later directories win, so CLI stubs replace
+same-named config stubs. A custom package replaces the embedded package as a
+whole; function-by-function merging is intentionally not performed. A
+`base.json` stub likewise replaces the embedded base typeshed for that run.
+Malformed files produce a warning naming the file while valid siblings remain
+active.
+
+Run `ry explain typeshed` to see the vendored snapshot, embedded packages, and
+the custom directories active from the current workspace's `ry.toml`.
 
 ## Inline suppression
 
@@ -182,7 +216,7 @@ Actions step:
 
 ## Rules
 
-Defaults can be overridden per-project; `ry rule RY040` prints the
+Defaults can be overridden per-project; `ry explain rule RY040` prints the
 explanation for one rule.
 
 | code  | name                     | severity | summary                                                                                                                                                                                                   |
@@ -206,6 +240,9 @@ explanation for one rule.
 | RY061 | dollar-on-atomic         | error    | The $ operator is invalid for atomic vectors (integer, double, character, logical). It only works on list-like types (lists, data frames, environments).                                                  |
 | RY070 | call-non-function        | error    | A non-function value (a variable bound to a non-function, or a literal like `42()`) is being called as a function. R will error at runtime (‘attempt to apply non-function’ / ‘could not find function’). |
 | RY080 | map-return-type-mismatch | warning  | A purrr typed-map (`map_dbl`, `map_int`, …) callback returns a value whose mode is incompatible with the target vector type. R coerces at runtime, but the mismatch is almost always unintended.          |
+| RY090 | unknown-argument         | warning  | A named call argument does not match any formal parameter after R’s exact and partial argument matching.                                                                                                  |
+| RY091 | missing-required-argument | warning | A required formal parameter is not bound by name or position.                                                                                                                                             |
+| RY092 | argument-type-mismatch   | error    | A call argument has a known mode incompatible with the parameter type declared by the resolved signature.                                                                                                 |
 
 Known gaps: no S4 / R6 / environment modeling, no expansion of dynamic
 `exportPattern()` directives, and no NA tracking yet. Cross-package names

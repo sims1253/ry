@@ -1,0 +1,18 @@
+{
+  "schema_version": "1",
+  "package": "testthat",
+  "version": "0.0.1",
+  "functions": {
+    "test_path": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "character",
+        "length": "1",
+        "na": false
+      },
+      "source_relative_path_arg": 0
+    }
+  }
+}

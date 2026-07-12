@@ -1,0 +1,47 @@
+{
+  "schema_version": "1",
+  "package": "tidyr",
+  "version": "0.0.1",
+  "functions": {
+    "pivot_longer": {
+      "params": [
+        "data",
+        "cols",
+        "..."
+      ],
+      "eval": {
+        "cols": "tidy_select"
+      },
+      "schema_effect": "pivot",
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "pivot_wider": {
+      "params": [
+        "data",
+        "id_cols",
+        "names_from",
+        "values_from",
+        "..."
+      ],
+      "eval": {
+        "id_cols": "tidy_select",
+        "names_from": "tidy_select",
+        "values_from": "tidy_select"
+      },
+      "schema_effect": "pivot",
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "class": [
+          "data.frame"
+        ]
+      }
+    }
+  }
+}

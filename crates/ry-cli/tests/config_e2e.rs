@@ -9,6 +9,22 @@
 use std::fs;
 use std::process::Command;
 
+fn stub(package: &str, function: &str, mode: &str) -> String {
+    format!(
+        r#"{{
+            "schema_version": "1",
+            "package": "{package}",
+            "version": "test",
+            "functions": {{
+                "{function}": {{
+                    "params": [],
+                    "return": {{"mode": "{mode}", "length": "1"}}
+                }}
+            }}
+        }}"#
+    )
+}
+
 /// Helper: run `ry check <arg>` and return the raw output.
 fn ry_check(arg: &std::path::Path) -> std::process::Output {
     let bin = env!("CARGO_BIN_EXE_ry");
@@ -17,6 +33,87 @@ fn ry_check(arg: &std::path::Path) -> std::process::Output {
         .arg(arg)
         .output()
         .expect("failed to invoke ry binary")
+}
+
+#[test]
+fn ry_toml_typeshed_path_is_relative_to_config() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::create_dir(tmp.path().join("stubs")).unwrap();
+    fs::write(
+        tmp.path().join("stubs/foo.json"),
+        stub("foo", "bar", "integer"),
+    )
+    .unwrap();
+    fs::write(tmp.path().join("ry.toml"), "typeshed = [\"stubs\"]\n").unwrap();
+    fs::write(tmp.path().join("use.R"), "library(foo)\nx <- bar() + 1L\n").unwrap();
+
+    let output = ry_check_in(tmp.path(), std::path::Path::new("use.R"));
+    assert!(
+        String::from_utf8_lossy(&output.stdout).is_empty(),
+        "config-relative user stub should resolve bar(): {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+#[test]
+fn cli_typeshed_directory_overrides_config_directory() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::create_dir(tmp.path().join("config-stubs")).unwrap();
+    fs::create_dir(tmp.path().join("cli-stubs")).unwrap();
+    fs::write(
+        tmp.path().join("config-stubs/foo.json"),
+        stub("foo", "bar", "character"),
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("cli-stubs/foo.json"),
+        stub("foo", "bar", "integer"),
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("ry.toml"),
+        "typeshed = [\"config-stubs\"]\n",
+    )
+    .unwrap();
+    fs::write(tmp.path().join("use.R"), "library(foo)\nx <- bar() + 1L\n").unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_ry");
+    let output = Command::new(bin)
+        .current_dir(tmp.path())
+        .args(["check", "--typeshed", "cli-stubs", "use.R"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&output.stdout).is_empty(),
+        "CLI directory must win over config package: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+#[test]
+fn malformed_user_stub_warns_and_valid_sibling_still_loads() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::create_dir(tmp.path().join("stubs")).unwrap();
+    fs::write(tmp.path().join("stubs/bad.json"), "not json").unwrap();
+    fs::write(
+        tmp.path().join("stubs/foo.json"),
+        stub("foo", "bar", "integer"),
+    )
+    .unwrap();
+    fs::write(tmp.path().join("ry.toml"), "typeshed = [\"stubs\"]\n").unwrap();
+    fs::write(tmp.path().join("use.R"), "library(foo)\nx <- bar() + 1L\n").unwrap();
+
+    let output = ry_check(tmp.path());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("bad.json"),
+        "warning must name bad file: {stderr}"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).is_empty(),
+        "valid sibling stub must still be active: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
 }
 
 /// Helper: run `ry check <arg>` from a specific working directory.
@@ -707,5 +804,23 @@ fn ry_toml_without_packages_does_not_gate_dplyr_nse() {
     assert!(
         stdout.contains("RY010"),
         "without packages or library(dplyr), filter() should fall through and emit RY010 on `mpg`, got: {stdout}"
+    );
+}
+
+#[test]
+fn full_output_reports_argument_type_mismatch_with_types() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(tmp.path().join("mismatch.R"), "mean(\"text\")\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .current_dir(tmp.path())
+        .args(["check", "--output-format", "full", "mismatch.R"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!output.status.success(), "{stdout}");
+    assert!(stdout.contains("[RY092]"), "{stdout}");
+    assert!(
+        stdout.contains("argument `x` to `mean` is `character`, expected numeric"),
+        "{stdout}"
     );
 }

@@ -17,4 +17,10 @@ serde_json = { workspace = true }
 rayon = { workspace = true }
 
 [dev-dependencies]
+criterion = "0.7"
 insta = { workspace = true }
+tempfile = { workspace = true }
+
+[[bench]]
+name = "performance"
+harness = false

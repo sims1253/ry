@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use clap::parser::ValueSource;
 use clap::{
@@ -85,6 +86,10 @@ enum Cmd {
         /// Disable the rule entirely. Same syntax as --error.
         #[arg(long)]
         ignore: Vec<String>,
+        /// Load package stubs from this directory. Repeatable; later
+        /// directories replace same-named packages from earlier ones.
+        #[arg(long, value_name = "DIR")]
+        typeshed: Vec<PathBuf>,
         /// Use exit code 1 if there are any warning-level diagnostics.
         #[arg(long)]
         error_on_warning: bool,
@@ -129,12 +134,47 @@ enum Cmd {
         #[arg(long, value_name = "FORMAT", default_value = "text")]
         output_format: String,
     },
+    /// Explain analyzer data and configuration.
+    Explain {
+        #[command(subcommand)]
+        command: ExplainCmd,
+    },
+    /// Work with R package typeshed files.
+    Typeshed {
+        #[command(subcommand)]
+        command: TypeshedCmd,
+    },
     /// Show the embedded typeshed (debug).
+    #[command(hide = true)]
     ExplainTypeshed,
     /// Generate shell completions.
     GenerateShellCompletion {
         /// Target shell.
         shell: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ExplainCmd {
+    /// Explain a rule (or all rules).
+    Rule {
+        /// Rule code or name. Omit to list all rules.
+        rule: Option<String>,
+        /// Output format: text or json.
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        output_format: String,
+    },
+    /// Show vendored and active runtime typeshed packages.
+    Typeshed,
+}
+
+#[derive(Debug, Subcommand)]
+enum TypeshedCmd {
+    /// Validate stub files with ry's normative typeshed parser.
+    Validate {
+        /// Directories containing flat or per-package stub files.
+        #[arg(value_name = "DIR", required = true)]
+        dirs: Vec<PathBuf>,
     },
 }
 
@@ -163,6 +203,7 @@ fn main() -> Result<ExitCode> {
             error: Vec::new(),
             warn: Vec::new(),
             ignore: Vec::new(),
+            typeshed: Vec::new(),
             error_on_warning: false,
             exit_zero: false,
             output_format: "full".to_string(),
@@ -183,6 +224,7 @@ fn main() -> Result<ExitCode> {
             error,
             warn,
             ignore,
+            typeshed,
             error_on_warning,
             exit_zero,
             output_format,
@@ -194,6 +236,7 @@ fn main() -> Result<ExitCode> {
             error,
             warn,
             ignore,
+            typeshed,
             error_on_warning,
             exit_zero,
             &output_format,
@@ -238,6 +281,16 @@ fn main() -> Result<ExitCode> {
             rule,
             output_format,
         } => run_explain_rule(rule, &output_format),
+        Cmd::Explain { command } => match command {
+            ExplainCmd::Rule {
+                rule,
+                output_format,
+            } => run_explain_rule(rule, &output_format),
+            ExplainCmd::Typeshed => run_explain_typeshed(),
+        },
+        Cmd::Typeshed {
+            command: TypeshedCmd::Validate { dirs },
+        } => run_typeshed_validate(&dirs, cli.quiet > 0),
         Cmd::ExplainTypeshed => run_explain_typeshed(),
         Cmd::GenerateShellCompletion { shell } => run_shell_completion(&shell),
     }
@@ -324,6 +377,7 @@ fn run_check(
     error: Vec<String>,
     warn: Vec<String>,
     ignore: Vec<String>,
+    typeshed: Vec<PathBuf>,
     error_on_warning: bool,
     exit_zero: bool,
     output_format: &str,
@@ -381,6 +435,7 @@ fn run_check(
         error,
         warn,
         ignore,
+        typeshed,
         cli_error_on_warning,
         cli_exit_zero,
         cli_output_format,
@@ -404,6 +459,7 @@ fn run_check(
     let color = color.enabled(format);
     let filter = build_filter(&cfg.error, &cfg.warn, &cfg.ignore);
     let excludes = config::Excludes::from_config(&cfg);
+    let user_stubs = load_user_stubs(&cfg.typeshed);
 
     // Collect the initial file set.
     let mut all_paths = Vec::new();
@@ -447,6 +503,7 @@ fn run_check(
         format,
         &cfg.packages,
         &cfg.globals,
+        Arc::clone(&user_stubs),
         color,
     )?;
     result.print_summary(format, statistics);
@@ -537,6 +594,7 @@ fn run_check(
                 format,
                 &cfg.packages,
                 &cfg.globals,
+                Arc::clone(&user_stubs),
                 color,
             )?;
             result.print_summary(format, statistics);
@@ -636,6 +694,7 @@ fn run_check_once(
     format: ry_checker::format::OutputFormat,
     packages: &[String],
     globals: &[String],
+    user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
     color: bool,
 ) -> Result<CheckResult> {
     let mut all_diagnostics: Vec<ry_checker::Diagnostic> = Vec::new();
@@ -696,6 +755,7 @@ fn run_check_once(
         all_paths,
         packages,
         globals,
+        &user_stubs,
         parsed.iter().map(|(_, _, _, file)| file),
     );
     for (_, path_str, src, file) in parsed {
@@ -706,6 +766,7 @@ fn run_check_once(
     }
 
     project.set_loaded(package_scope.attached);
+    project.set_user_stubs(user_stubs);
     project.set_external_bindings(package_scope.bindings);
     project.set_imported_from(package_scope.imported_from);
     project.set_external_s3_methods(package_scope.s3_methods);
@@ -747,6 +808,24 @@ fn run_check_once(
         file_count,
         parse_errors,
     })
+}
+
+fn load_user_stubs(
+    dirs: &[PathBuf],
+) -> Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>> {
+    let mut merged = std::collections::BTreeMap::new();
+    for dir in dirs {
+        match ry_typeshed::load_stub_dir_with_warnings(dir) {
+            Ok((stubs, warnings)) => {
+                for warning in warnings {
+                    eprintln!("ry: warning: {warning}");
+                }
+                merged.extend(stubs);
+            }
+            Err(error) => eprintln!("ry: warning: {error}"),
+        }
+    }
+    Arc::new(merged)
 }
 
 fn sort_and_deduplicate_diagnostics(diagnostics: &mut Vec<ry_checker::Diagnostic>) {
@@ -831,13 +910,68 @@ fn run_explain_rule(rule: Option<String>, output_format: &str) -> Result<ExitCod
 }
 
 fn run_explain_typeshed() -> Result<ExitCode> {
-    let t = ry_typeshed::load_base().into_diagnostic()?;
-    println!("version: {}", t.version);
-    println!("functions: {}", t.functions.len());
-    for (k, v) in &t.functions {
-        println!("  {}({})", k, v.params.join(", "));
+    println!("vendored snapshot:");
+    for line in ry_typeshed::SOURCE.trim().lines() {
+        println!("  {line}");
+    }
+    println!("embedded packages:");
+    println!("  base");
+    for package in ry_typeshed::known_packages() {
+        println!("  {package}");
+    }
+
+    let cwd = std::env::current_dir().into_diagnostic()?;
+    let dirs = match config::Config::discover(&cwd) {
+        Ok(Some((_path, config))) => config.typeshed,
+        Ok(None) => Vec::new(),
+        Err(error) => {
+            eprintln!("ry: {error}");
+            return Ok(ExitCode::FAILURE);
+        }
+    };
+    println!("user stub directories:");
+    if dirs.is_empty() {
+        println!("  (none)");
+    }
+    for dir in dirs {
+        println!("  {}", dir.display());
+        match ry_typeshed::load_stub_dir_with_warnings(&dir) {
+            Ok((stubs, warnings)) => {
+                for package in stubs.keys() {
+                    println!("    {package}");
+                }
+                for warning in warnings {
+                    eprintln!("ry: warning: {warning}");
+                }
+            }
+            Err(error) => eprintln!("ry: warning: {error}"),
+        }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn run_typeshed_validate(dirs: &[PathBuf], quiet: bool) -> Result<ExitCode> {
+    let report = ry_typeshed::validate_stub_dirs(dirs);
+    let errors = report.error_count();
+    let warnings = report.warning_count();
+    if !quiet {
+        for problem in &report.problems {
+            let level = match problem.level {
+                ry_typeshed::ValidationLevel::Error => "error",
+                ry_typeshed::ValidationLevel::Warning => "warning",
+            };
+            eprintln!("{}: {level}: {}", problem.path.display(), problem.message);
+        }
+    }
+    println!(
+        "Validated {} stub files: {errors} errors, {warnings} warnings.",
+        report.files
+    );
+    Ok(if errors == 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
 }
 
 fn run_shell_completion(shell: &str) -> Result<ExitCode> {

@@ -63,6 +63,46 @@ fn cross_file_function_return_type_propagates() {
 }
 
 #[test]
+fn incremental_edit_rechecks_cross_file_dependents() {
+    let mut project = Project::new();
+    project.add_file(
+        "utils.R".to_string(),
+        parse("utils.R", "make_value <- function() { \"hello\" }\n"),
+    );
+    project.add_file(
+        "analysis.R".to_string(),
+        parse("analysis.R", "result <- make_value() + 1L\n"),
+    );
+
+    let before = project.check_incremental();
+    let before_analysis = before
+        .iter()
+        .find(|(path, _)| path == "analysis.R")
+        .unwrap();
+    assert!(
+        before_analysis
+            .1
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY040"),
+        "character return should make analysis.R invalid: {before_analysis:?}"
+    );
+
+    project.update_file(
+        "utils.R".to_string(),
+        parse("utils.R", "make_value <- function() { 1L }\n"),
+    );
+    let after = project.check_incremental();
+    let after_analysis = after.iter().find(|(path, _)| path == "analysis.R").unwrap();
+    assert!(
+        after_analysis
+            .1
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY040"),
+        "integer return should update analysis.R diagnostics: {after_analysis:?}"
+    );
+}
+
+#[test]
 fn cross_file_s3_method_dispatches() {
     // methods.R defines print.foo; usage.R creates a "foo"-classed
     // value and calls print on it. The S3 method table is shared

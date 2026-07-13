@@ -933,8 +933,10 @@ fn withr_tempfile_keeps_checking_other_code_names() {
 
 #[test]
 fn dbplyr_translation_helpers_capture_sql_expressions() {
-    let diags =
-        check("library(dbplyr)\nexpect_translation(con, x + y, \"x + y\")\nmissing_after\n");
+    // `translate_sql` is the exported quoting entry point; the test-local
+    // `expect_translation` helpers were removed from the stub because they
+    // are not part of dbplyr's namespace (the audit enforces that).
+    let diags = check("library(dbplyr)\ntranslate_sql(x + y)\nmissing_after\n");
     assert!(
         diags.iter().all(|diagnostic| {
             diagnostic.code != "RY010"

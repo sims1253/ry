@@ -559,17 +559,6 @@
         "na": false
       }
     },
-    "vec_sort": {
-      "params": [
-        "x",
-        "..."
-      ],
-      "return": {
-        "mode": "arg0",
-        "length": "arg0",
-        "na": false
-      }
-    },
     "walk": {
       "params": [
         ".x",

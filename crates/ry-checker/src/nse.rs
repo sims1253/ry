@@ -1,6 +1,10 @@
 use super::*;
 use crate::infer::*;
 
+pub(crate) const DATA_MASK_ACTIVE: &str = "\0ry_data_mask";
+pub(crate) const DATA_MASK_ENV_PREFIX: &str = "\0ry_data_mask_env:";
+pub(crate) const DATA_MASK_COLUMN_PREFIX: &str = "\0ry_data_mask_column:";
+
 impl Checker {
     /// Apply schema semantics declared by the resolved package signature.
     /// Resolution itself preserves package attachment, qualification,
@@ -16,6 +20,8 @@ impl Checker {
         let effect = sig.schema_effect?;
         let first = args.first()?;
         let data_type = self.infer(&first.value, scope);
+        let user_dispatch = self.resolve_user_s3_inherited_sig(name).is_some()
+            || self.resolves_user_s3_dispatch(name, &data_type);
         let mut arg_types = Vec::with_capacity(args.len());
         arg_types.push(data_type.clone());
         if matches!(effect, SchemaEffect::Join) {
@@ -28,14 +34,19 @@ impl Checker {
         }
 
         let mut local = self.dplyr_data_mask_scope(scope, &data_type);
-
+        if user_dispatch {
+            local = local.with_unknown_data_mask();
+        }
         let mut named_results = Vec::new();
         let mut tidy_args = Vec::new();
         for (index, argument) in args.iter().enumerate().skip(1) {
             let mode = argument_eval_mode(&sig, args, index).unwrap_or(EvalMode::Normal);
             let inferred = match mode {
                 EvalMode::Normal => self.infer(&argument.value, scope),
-                EvalMode::DataMask => self.infer(&argument.value, &mut local),
+                EvalMode::DataMask => {
+                    local.insert(".", RType::unknown());
+                    self.infer(&argument.value, &mut local)
+                }
                 EvalMode::TidySelect => {
                     tidy_args.push(&argument.value);
                     self.infer_tidyselect_expr(&argument.value, &mut local)
@@ -53,6 +64,10 @@ impl Checker {
                 let column = semantic_argument_name(raw_name);
                 if !is_dplyr_control_arg(&column) {
                     local.insert(column.clone(), inferred.clone());
+                    local.insert(
+                        format!("{DATA_MASK_COLUMN_PREFIX}{column}"),
+                        RType::unknown(),
+                    );
                     named_results.push((column, inferred.clone()));
                 }
             }
@@ -192,24 +207,39 @@ impl Checker {
         let mut scope = base_scope.clone();
         for (name, ty) in &schema.columns {
             scope.insert(name.clone(), ty.clone());
+            scope.insert(format!("{DATA_MASK_COLUMN_PREFIX}{name}"), RType::unknown());
         }
         scope
     }
 
     pub(crate) fn dplyr_data_mask_scope(&self, base_scope: &Scope, df_type: &RType) -> Scope {
+        // Keep a private snapshot of the lexical environment before columns
+        // are overlaid. `.env$x` and `{{ x }}` must bypass data-mask column
+        // shadowing and resolve here instead.
+        let lexical_bindings: Vec<_> = base_scope
+            .bindings
+            .iter()
+            .map(|(name, ty)| (name.clone(), ty.clone()))
+            .collect();
         let mut scope = match &df_type.columns {
             Some(schema) => self.scope_with_columns(base_scope, schema),
             None => base_scope.clone(),
         };
+        scope.insert(DATA_MASK_ACTIVE, RType::unknown());
+        scope.insert(".data", df_type.clone());
+        scope.insert(".env", RType::unknown());
+        for (name, ty) in lexical_bindings {
+            scope.insert(format!("{DATA_MASK_ENV_PREFIX}{name}"), ty);
+        }
         let schema_is_complete = df_type
             .columns
             .as_ref()
-            .map(|schema| schema.complete)
+            .map(|schema| {
+                schema.complete
+                    && (df_type.class.contains("data.frame") || matches!(df_type.mode, Mode::List))
+            })
             .unwrap_or(false);
-        if !schema_is_complete
-            && (df_type.class.contains("data.frame")
-                || matches!(df_type.mode, Mode::List | Mode::Opaque))
-        {
+        if !schema_is_complete {
             scope = scope.with_unknown_data_mask();
         }
         scope

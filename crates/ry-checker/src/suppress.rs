@@ -123,6 +123,41 @@ impl Checker {
         None
     }
 
+    /// Inherit declarative NSE metadata when a source package defines an S3
+    /// method without a static NAMESPACE import or registration. Packages such
+    /// as dtplyr install several methods dynamically during `.onLoad()`, but a
+    /// `<generic>.<class>` definition is still enough to connect the method to
+    /// a unique shipped generic signature.
+    pub(crate) fn resolve_user_s3_inherited_sig(&self, generic: &str) -> Option<FunctionSig> {
+        let method_prefix = format!("{generic}.");
+        let has_method = self
+            .fn_table
+            .fns
+            .keys()
+            .any(|name| name.starts_with(&method_prefix))
+            || self
+                .fn_table
+                .s3_methods
+                .keys()
+                .any(|(registered_generic, _)| registered_generic == generic)
+            || self
+                .external_s3_methods
+                .iter()
+                .any(|(registered_generic, _)| registered_generic == generic);
+        if !has_method {
+            return None;
+        }
+
+        self.available_package_names()
+            .into_iter()
+            .find_map(|package| {
+                self.package_typeshed(package)
+                    .and_then(|typeshed| typeshed.functions.get(generic))
+                    .filter(|signature| !signature.eval.is_empty())
+                    .cloned()
+            })
+    }
+
     // Whether any package (base, loaded, or explicitly qualified)
     // provides a function named `name`. Used by the RY070 path to
     // implement R's function/value namespace separation (a non-function
@@ -139,6 +174,15 @@ impl Checker {
             }
         }
         if self.typeshed.functions.contains_key(name) {
+            return true;
+        }
+        if self
+            .typeshed
+            .globals
+            .ambient_functions
+            .iter()
+            .any(|function| function == name)
+        {
             return true;
         }
         // NAMESPACE imports and S3 registrations are opaque value bindings,
@@ -159,6 +203,41 @@ impl Checker {
             }
         }
         self.fn_table.fns.contains_key(name)
+    }
+
+    pub(crate) fn resolves_user_s3_dispatch(&self, generic: &str, first: &RType) -> bool {
+        self.user_s3_dispatch_return(generic, first).is_some()
+    }
+
+    pub(crate) fn user_s3_dispatch_return(&self, generic: &str, first: &RType) -> Option<RType> {
+        if let Some(class) = first.class.first() {
+            return self
+                .fn_table
+                .fns
+                .get(&format!("{generic}.{class}"))
+                .map(|function| self.return_slots.get(function.return_slot))
+                .or_else(|| {
+                    self.fn_table
+                        .s3_methods
+                        .get(&(generic.to_string(), class.to_string()))
+                        .map(|slot| self.return_slots.get(*slot))
+                });
+        }
+        let mut candidates = self
+            .external_s3_methods
+            .iter()
+            .filter(|(registered_generic, _)| registered_generic == generic)
+            .filter_map(|(_, class)| {
+                self.fn_table
+                    .fns
+                    .get(&format!("{generic}.{class}"))
+                    .map(|function| function.return_slot)
+            });
+        let slot = candidates.next()?;
+        if candidates.any(|candidate| candidate != slot) {
+            return None;
+        }
+        Some(self.return_slots.get(slot))
     }
 
     // Apply a `SeverityFilter` to the diagnostics collected so far,

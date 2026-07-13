@@ -10,6 +10,54 @@ fn check(src: &str) -> Vec<Diagnostic> {
 }
 
 #[test]
+fn confidence_defaults_follow_rule_precision_and_info_severity() {
+    assert_eq!(Confidence::default_for("RY095"), Confidence::High);
+    assert_eq!(Confidence::default_for("RY096"), Confidence::High);
+    assert_eq!(Confidence::default_for("RY010"), Confidence::Medium);
+    assert_eq!(Confidence::default_for("RY097"), Confidence::Low);
+    let info = Diagnostic::new(
+        Severity::Info,
+        Span::new(0, 1, 0, 0),
+        "test.R",
+        "RY010",
+        "info",
+    );
+    assert_eq!(info.confidence, Confidence::Low);
+}
+
+#[test]
+fn ambient_function_used_as_value_resolves_silently() {
+    // Higher-order and value uses of ambient base functions are legitimate
+    // R idioms and must not fire RY010 (`lapply(exprs, all.vars)` was a
+    // documented FP cluster). The typo class is caught downstream when the
+    // function type flows into comparisons (see the RY030 test below).
+    for src in [
+        "lapply(letters, enc2utf8)\n",
+        "x <- col\n",
+        "if (identical(oldClass, \"zoo\")) x <- 1L\n",
+    ] {
+        let diagnostics = check(src);
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "RY010"),
+            "ambient function value use must not fire RY010: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn ambient_function_in_comparison_still_diagnosed() {
+    let diagnostics = check("if (oldClass > 3) x <- 1L\n");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY030" || diagnostic.code == "RY033"),
+        "function value in comparison must stay diagnosed: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn runtime_stub_defines_package_function_for_checker() {
     let mut parser = RParser::new().unwrap();
     let file = parser
@@ -165,6 +213,261 @@ fn typeshed_parameter_modes_drive_data_mask_evaluation() {
 }
 
 #[test]
+fn embedded_package_eval_metadata_drives_data_mask_evaluation() {
+    let diagnostics = check("library(rlist)\nr <- list.map(some_list(), . + score)\n");
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "loaded rlist metadata should mask both `.` and `score`: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn user_s3_method_inherits_generic_eval_metadata() {
+    let diagnostics = check(
+        "library(dplyr)\ncount.mystep <- function(.data, ...) 1\nobj <- structure(list(internal = 1L), class = \"mystep\")\ncount(obj, some_col)\n",
+    );
+    assert!(
+        diagnostics.iter().all(|diagnostic| {
+            diagnostic.code != "RY010" || !diagnostic.message.contains("some_col")
+        }),
+        "the user method must inherit dplyr count's data mask: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn dynamically_registered_s3_method_inherits_generic_eval_metadata() {
+    let diagnostics = check(
+        "complete.custom <- function(data, ...) data\nobj <- structure(list(), class = \"custom\")\ncomplete(obj, missing_column)\n",
+    );
+    assert!(
+        diagnostics.iter().all(|diagnostic| {
+            diagnostic.code != "RY010" || !diagnostic.message.contains("missing_column")
+        }),
+        "the method should inherit tidyr complete's data mask: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn s3_method_inherits_schema_generic_eval_metadata() {
+    let diagnostics = check(
+        "library(dplyr)\ngroup_by.custom <- function(.data, ...) .data\nobj <- structure(data.frame(known = 1L), class = c(\"custom\", \"data.frame\"))\ngroup_by(obj, missing_column)\n",
+    );
+    assert!(
+        diagnostics.iter().all(|diagnostic| {
+            diagnostic.code != "RY010" || !diagnostic.message.contains("missing_column")
+        }),
+        "the method should inherit group_by's data mask: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn data_mask_metadata_without_a_data_frame_is_still_opaque() {
+    let diagnostics =
+        check("library(patrick)\nwith_parameters_test_that(\"case\", n2 + n3, n2 = 1L, n3 = 2L)\n");
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "patrick's masked code should not require a data-frame first argument: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn data_mask_binds_dot_inside_do_with_native_pipe() {
+    let diagnostics = check("library(dplyr)\ndf <- data.frame(x = 1L)\ndf |> do(head(., 1))\n");
+    assert!(
+        diagnostics.iter().all(|diagnostic| {
+            diagnostic.code != "RY010" || !diagnostic.message.contains("`.`")
+        }),
+        "the current-group dot should be bound in do(): {diagnostics:?}"
+    );
+}
+
+#[test]
+fn user_function_defused_parameters_are_opaque_at_call_sites() {
+    let diagnostics = check(
+        "capture <- function(expr, other) {\n  expr <- rlang::enquo(expr)\n  other\n}\ncapture(.input + missing, other = 1L)\ncapture(other = 1L, expr = named_missing)\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "positionally and named defused arguments should be opaque: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn lexical_types_are_opaque_under_unknown_data_masks_only() {
+    let masked = check("library(dplyr)\ndf <- get(\"df\")\ny <- \"a\"\nmutate(df, x = x / y)\n");
+    assert!(
+        masked.iter().all(|diagnostic| diagnostic.code != "RY040"),
+        "a lexical type must not drive arithmetic diagnostics under an unknown mask: {masked:?}"
+    );
+
+    let outside = check("y <- \"a\"\ny / 1L\n");
+    assert!(
+        outside.iter().any(|diagnostic| diagnostic.code == "RY040"),
+        "the same lexical type must still be checked outside a mask: {outside:?}"
+    );
+}
+
+#[test]
+fn exclusively_defused_dots_are_opaque_at_call_sites() {
+    let source = "f <- function(...) enquos(...)\ny <- \"a\"\nf(not_a_binding == 1, y / 1L)\n";
+    let mut parser = RParser::new().unwrap();
+    let file = parser.parse("test.R", source).unwrap();
+    let mut checker = Checker::new("test.R");
+    checker.collect_fns(&file.stmts);
+    assert!(checker.fn_table.fns["f"].params[0].defused);
+
+    let diagnostics = check(source);
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010" && diagnostic.code != "RY040"),
+        "arguments absorbed by defused dots should be opaque: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn normally_used_dots_remain_eager_at_call_sites() {
+    let diagnostics = check("g <- function(...) sum(...)\ng(not_a_binding)\n");
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == "RY010" && diagnostic.message.contains("not_a_binding")
+    }));
+
+    let mixed =
+        check("h <- function(...) { captured <- enquos(...); list(...) }\nh(still_not_bound)\n");
+    assert!(mixed.iter().any(|diagnostic| {
+        diagnostic.code == "RY010" && diagnostic.message.contains("still_not_bound")
+    }));
+}
+
+#[test]
+fn embraced_parameters_are_defused_at_call_sites() {
+    let source = "library(dplyr)\nwrapper <- function(df, var) select(df, {{ var }})\nwrapper(data.frame(a = 1L), a)\n";
+    let mut parser = RParser::new().unwrap();
+    let file = parser.parse("test.R", source).unwrap();
+    let mut checker = Checker::new("test.R");
+    checker.collect_fns(&file.stmts);
+    assert!(checker.fn_table.fns["wrapper"].params[1].defused);
+
+    let diagnostics = check(source);
+    assert!(
+        diagnostics.iter().all(|diagnostic| {
+            diagnostic.code != "RY010" || !diagnostic.message.contains("`a`")
+        }),
+        "an embraced parameter should forward its call-site expression: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn normal_use_before_defusing_keeps_parameter_eager() {
+    let diagnostics = check(
+        "capture <- function(expr) {\n  print(expr)\n  expr <- enquo(expr)\n}\ncapture(still_missing)\n",
+    );
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == "RY010" && diagnostic.message.contains("still_missing")
+    }));
+}
+
+#[test]
+fn normal_first_use_in_any_branch_keeps_parameter_eager() {
+    let diagnostics = check(
+        "capture <- function(expr, flag) {\n  if (flag) enquo(expr) else print(expr)\n}\ncapture(still_missing, TRUE)\n",
+    );
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == "RY010" && diagnostic.message.contains("still_missing")
+    }));
+}
+
+#[test]
+fn foreach_user_infix_binds_named_iteration_variables() {
+    let diagnostics = check(
+        "foreach(iter = seq_along(xs), parm = values, .errorhandling = \"stop\") %op% {\n  iter + parm + genuinely_missing\n}\nforeach(outer = xs) %:% foreach(inner = ys) %dopar% { outer + inner }\n",
+    );
+    assert!(
+        diagnostics.iter().all(|diagnostic| {
+            diagnostic.code != "RY010"
+                || (!diagnostic.message.contains("iter")
+                    && !diagnostic.message.contains("parm")
+                    && !diagnostic.message.contains("outer")
+                    && !diagnostic.message.contains("inner"))
+        }),
+        "foreach iteration bindings should be scoped over the RHS: {diagnostics:?}"
+    );
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == "RY010" && diagnostic.message.contains("genuinely_missing")
+    }));
+}
+
+#[test]
+fn attach_makes_later_search_path_bindings_uncertain() {
+    let diagnostics = check(
+        "before_attach\nattach(dataset)\nafter_attach\nf <- function() { nested_after_attach }\ng <- function() {\n  attach(local_data)\n  local_after_attach\n  inner <- function() nested_local_after_attach\n}\n",
+    );
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == "RY010" && diagnostic.message.contains("before_attach")
+    }));
+    for name in [
+        "after_attach",
+        "nested_after_attach",
+        "local_after_attach",
+        "nested_local_after_attach",
+    ] {
+        assert!(
+            diagnostics.iter().all(|diagnostic| {
+                diagnostic.code != "RY010" || !diagnostic.message.contains(name)
+            }),
+            "{name} should be uncertain after attach(): {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn source_cpp_makes_later_scope_bindings_uncertain() {
+    let diagnostics = check(
+        "before_source\nRcpp::sourceCpp(\"generated.cpp\")\nafter_source\nf <- function() nested_after_source\n",
+    );
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == "RY010" && diagnostic.message.contains("before_source")
+    }));
+    for name in ["after_source", "nested_after_source"] {
+        assert!(
+            diagnostics.iter().all(|diagnostic| {
+                diagnostic.code != "RY010" || !diagnostic.message.contains(name)
+            }),
+            "{name} should be uncertain after sourceCpp(): {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn local_callable_does_not_inherit_stub_scope_effect() {
+    let diagnostics = check(
+        "factory <- function() function(x) x\nattach <- factory()\nattach(dataset)\nstill_missing\n",
+    );
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == "RY010" && diagnostic.message.contains("still_missing")
+    }));
+}
+
+#[test]
+fn shiny_test_server_injects_reactive_bindings() {
+    let diagnostics = check(
+        "library(shiny)\ntestServer(NULL, {\n  session$setInputs(x = 1L)\n  input$x\n  output$value\n})\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "testServer expr should receive session/input/output: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn import_from_applies_metadata_only_to_the_imported_binding() {
     let mut parser = RParser::new().unwrap();
     let file = parser
@@ -186,6 +489,68 @@ fn import_from_applies_metadata_only_to_the_imported_binding() {
             diagnostic.code != "RY010" || !diagnostic.message.contains("`x`")
         })
     );
+}
+
+#[test]
+fn user_infix_infers_both_operands_and_returns_unknown() {
+    let (diagnostics, scope) =
+        check_with_scope("result <- missing_left %custom% missing_right\nafter <- result + 1L\n");
+    for name in ["missing_left", "missing_right"] {
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == "RY010" && diagnostic.message.contains(name)
+            })
+        );
+    }
+    assert_eq!(scope.get("result").map(|ty| &ty.mode), Some(&Mode::Opaque));
+}
+
+#[test]
+fn zeallot_destructuring_binds_nested_pattern_symbols() {
+    let mut parser = RParser::new().unwrap();
+    let file = parser
+        .parse(
+            "test.R",
+            "c(first, c(second, third)) %<-% make_value()\nout <- first + second + third\n",
+        )
+        .unwrap();
+    let mut checker = Checker::new("test.R");
+    checker.set_loaded(HashSet::from(["zeallot".to_string()]));
+    let (diagnostics, scope) = checker.check_with_scope(&file);
+    assert!(
+        diagnostics.iter().all(|diagnostic| {
+            diagnostic.code != "RY010"
+                || !["first", "second", "third"]
+                    .iter()
+                    .any(|name| diagnostic.message.contains(name))
+        }),
+        "destructured symbols should be bound: {diagnostics:?}"
+    );
+    for name in ["first", "second", "third"] {
+        assert!(scope.get(name).is_some(), "{name} should be in scope");
+    }
+}
+
+#[test]
+fn future_import_enables_mirrored_destructuring() {
+    let mut parser = RParser::new().unwrap();
+    let file = parser
+        .parse("test.R", "make_value() %->% c(left, right)\nleft + right\n")
+        .unwrap();
+    let mut checker = Checker::new("test.R");
+    checker.set_imported_from(HashMap::from([("%->%".to_string(), "future".to_string())]));
+    let (diagnostics, scope) = checker.check_with_scope(&file);
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert!(scope.get("left").is_some());
+    assert!(scope.get("right").is_some());
+}
+
+#[test]
+fn destructuring_is_not_special_without_package_context() {
+    let diagnostics = check("c(unbound) %<-% make_value()\n");
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == "RY010" && diagnostic.message.contains("unbound")
+    }));
 }
 
 /// Test-only variant of `check` that also returns the final
@@ -214,6 +579,532 @@ fn check_with_scope(src: &str) -> (Vec<Diagnostic>, Scope) {
         c.check_stmt(s, &mut scope);
     }
     (c.take_diagnostics(), scope)
+}
+
+#[test]
+fn embrace_resolves_bound_formal_outside_data_mask() {
+    let diags = check("f <- function(x) {{ x }}\n");
+    assert!(
+        diags.is_empty(),
+        "bound embrace should be silent: {diags:?}"
+    );
+}
+
+#[test]
+fn embrace_resolves_formal_in_function_scope_not_data_mask() {
+    let diags = check(
+        "library(dplyr)\nf <- function(df, value) mutate(df, out = {{ value }})\nf(data.frame(value = 1L), 2L)\n",
+    );
+    assert!(
+        diags.is_empty(),
+        "embrace should bypass mask columns: {diags:?}"
+    );
+}
+
+#[test]
+fn embrace_unbound_symbol_emits_ry010() {
+    let diags = check("f <- function(x) {{ typo }}\n");
+    assert!(
+        diags
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY010" && diagnostic.message.contains("typo")),
+        "unbound embrace should emit RY010: {diags:?}"
+    );
+}
+
+#[test]
+fn data_pronoun_resolves_known_column() {
+    let diags = check("library(dplyr)\nmutate(data.frame(known = 1L), out = .data$known)\n");
+    assert!(
+        diags.is_empty(),
+        "known `.data` column should resolve: {diags:?}"
+    );
+}
+
+#[test]
+fn data_pronoun_double_bracket_resolves_known_column() {
+    let diags = check("library(dplyr)\nmutate(data.frame(known = 1L), out = .data[[\"known\"]])\n");
+    assert!(
+        diags.is_empty(),
+        "known `.data` column should resolve: {diags:?}"
+    );
+}
+
+#[test]
+fn data_pronoun_missing_known_column_emits_ry060() {
+    let diags = check("library(dplyr)\nmutate(data.frame(known = 1L), out = .data$missing)\n");
+    assert!(
+        diags.iter().any(|diagnostic| diagnostic.code == "RY060"),
+        "missing `.data` column should emit RY060: {diags:?}"
+    );
+}
+
+#[test]
+fn data_pronoun_on_opaque_mask_is_silent() {
+    let diags = check("library(dplyr)\nf <- function(df) mutate(df, out = .data$anything)\n");
+    assert!(
+        diags.is_empty(),
+        "opaque `.data` access should be silent: {diags:?}"
+    );
+}
+
+#[test]
+fn env_pronoun_resolves_enclosing_binding() {
+    let diags = check(
+        "library(dplyr)\nf <- function(df, bound) mutate(df, out = .env$bound)\nf(data.frame(bound = 1L), 2L)\n",
+    );
+    assert!(
+        diags.is_empty(),
+        "`.env` should use lexical scope: {diags:?}"
+    );
+}
+
+#[test]
+fn env_pronoun_double_bracket_resolves_enclosing_binding() {
+    let diags =
+        check("library(dplyr)\nf <- function(df, bound) mutate(df, out = .env[[\"bound\"]])\n");
+    assert!(
+        diags.is_empty(),
+        "`.env` should use lexical scope: {diags:?}"
+    );
+}
+
+#[test]
+fn env_pronoun_unbound_binding_emits_ry010() {
+    let diags = check("library(dplyr)\nf <- function(df) mutate(df, out = .env$unbound)\n");
+    assert!(
+        diags.iter().any(|diagnostic| {
+            diagnostic.code == "RY010" && diagnostic.message.contains("unbound")
+        }),
+        "unbound `.env` access should emit RY010: {diags:?}"
+    );
+}
+
+#[test]
+fn bare_data_pronoun_inside_mask_is_silent() {
+    let diags = check("library(dplyr)\nmutate(data.frame(x = 1L), out = .data)\n");
+    assert!(
+        diags.is_empty(),
+        "bare `.data` should be silent in a mask: {diags:?}"
+    );
+}
+
+#[test]
+fn scalar_string_subset_of_atomic_vector_has_length_one() {
+    let (diags, scope) = check_with_scope("x <- c(first = 1L, second = 2L)\ny <- x[\"first\"]\n");
+    assert!(diags.is_empty(), "{diags:?}");
+    let y = scope.get("y").expect("y should be bound");
+    assert_eq!(y.mode, Mode::Integer);
+    assert_eq!(y.length, Length::One);
+}
+
+#[test]
+fn vector_string_subset_preserves_non_scalar_length() {
+    let (diags, scope) =
+        check_with_scope("x <- c(first = 1L, second = 2L)\ny <- x[c(\"first\", \"second\")]\n");
+    assert!(diags.is_empty(), "{diags:?}");
+    let y = scope.get("y").expect("y should be bound");
+    assert_eq!(y.mode, Mode::Integer);
+    assert_ne!(y.length, Length::One);
+}
+
+#[test]
+fn package_loading_calls_have_distinct_return_types() {
+    let (diags, scope) = check_with_scope(
+        "attached <- library(stats)\navailable <- require(stats)\nnamespaced <- requireNamespace(\"stats\")\n",
+    );
+    assert!(diags.is_empty(), "{diags:?}");
+
+    let attached = scope.get("attached").expect("attached should be bound");
+    assert_eq!(attached.mode, Mode::Null);
+    assert_eq!(attached.length, Length::Zero);
+
+    let available = scope.get("available").expect("available should be bound");
+    assert_eq!(available.mode, Mode::Logical);
+    assert_eq!(available.length, Length::One);
+
+    let namespaced = scope.get("namespaced").expect("namespaced should be bound");
+    assert_eq!(namespaced.mode, Mode::Logical);
+    assert_eq!(namespaced.length, Length::One);
+}
+
+#[test]
+fn user_function_argument_rules_wait_for_callable_provenance() {
+    let mut parser = RParser::new().unwrap();
+    let file = parser
+        .parse(
+            "project.R",
+            "f <- function(required) required\nf()\nc <- function(x) x\nc(unrelated = 1L)\n",
+        )
+        .unwrap();
+    let mut project = Project::new();
+    project.add_file("project.R".to_string(), file);
+    let diags: Vec<_> = project
+        .check()
+        .into_iter()
+        .flat_map(|(_, diagnostics)| diagnostics)
+        .collect();
+    assert!(
+        diags
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY090" && diagnostic.code != "RY091"),
+        "project-wide function names are not sufficient to validate a call: {diags:?}"
+    );
+}
+
+#[test]
+fn typeshed_required_arguments_are_still_checked() {
+    let diags = check("as.character()\n");
+    assert!(
+        diags.iter().any(|diagnostic| diagnostic.code == "RY091"),
+        "explicit typeshed required metadata should remain authoritative: {diags:?}"
+    );
+}
+
+#[test]
+fn classed_and_null_generic_arguments_do_not_report_type_mismatches() {
+    let diags =
+        check("x <- structure(list(value = 1L), class = \"custom\")\nround(x)\nlog(NULL)\n");
+    assert!(
+        diags.iter().all(|diagnostic| diagnostic.code != "RY092"),
+        "classed values may dispatch and numeric generics accept NULL: {diags:?}"
+    );
+}
+
+#[test]
+fn plain_character_numeric_generic_argument_still_reports_mismatch() {
+    let diags = check("log(\"not numeric\")\n");
+    assert!(
+        diags.iter().any(|diagnostic| diagnostic.code == "RY092"),
+        "a plain character value cannot use numeric generic dispatch: {diags:?}"
+    );
+}
+
+#[test]
+fn quoted_dsl_metadata_suppresses_only_captured_symbols() {
+    let diags = check(
+        "library(dplyr)\nspec <- join_by(left_id == right_id)\nmissing_after\nlibrary(igraph)\ng <- graph_from_literal(A - B, B - C)\n",
+    );
+    assert!(
+        diags.iter().all(|diagnostic| {
+            diagnostic.code != "RY010"
+                || (!diagnostic.message.contains("left_id")
+                    && !diagnostic.message.contains("right_id")
+                    && !diagnostic.message.contains("`A`")
+                    && !diagnostic.message.contains("`B`")
+                    && !diagnostic.message.contains("`C`"))
+        }),
+        "quoted DSL symbols must not be resolved lexically: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|diagnostic| {
+            diagnostic.code == "RY010" && diagnostic.message.contains("missing_after")
+        }),
+        "ordinary lexical reads must remain checked: {diags:?}"
+    );
+}
+
+#[test]
+fn expanded_dplyr_metadata_resolves_masks_and_selectors() {
+    let diags = check(
+        "library(dplyr)\ndf <- data.frame(a = 1L, b = 2L)\ndistinct(df, a)\npull(df, b)\nrelocate(df, b, .before = a)\nslice_min(df, order_by = b)\nmutate(df, picked = pick(a, b))\n",
+    );
+    assert!(
+        diags.iter().all(|diagnostic| diagnostic.code != "RY010"),
+        "dplyr masks and selectors should resolve known columns: {diags:?}"
+    );
+}
+
+#[test]
+fn expanded_tidyr_metadata_resolves_captured_columns() {
+    let diags = check(
+        "library(tidyr)\ndf <- data.frame(a = 1L, b = 2L)\ngather(df, key, value, a, b)\nchop(df, a)\ncomplete(df, a)\nnest(df, nested = c(a, b))\nunnest(df, nested)\nunite(df, combined, a, b)\n",
+    );
+    assert!(
+        diags.iter().all(|diagnostic| diagnostic.code != "RY010"),
+        "tidyr captured column arguments should not be resolved lexically: {diags:?}"
+    );
+}
+
+#[test]
+fn recipes_metadata_resolves_selectors_and_masked_expressions() {
+    let diags = check(
+        "library(recipes)\nr <- data.frame(a = 1L, b = 2L, outcome = 3L)\nstep_center(r, a, b)\nstep_pls(r, a, outcome = outcome)\nstep_mutate(r, total = a + b)\nimp_vars(quoted_predictor)\nmissing_after\n",
+    );
+    assert!(
+        diags.iter().all(|diagnostic| {
+            diagnostic.code != "RY010"
+                || (!diagnostic.message.contains("`a`")
+                    && !diagnostic.message.contains("`b`")
+                    && !diagnostic.message.contains("`outcome`")
+                    && !diagnostic.message.contains("quoted_predictor"))
+        }),
+        "recipes selectors and expressions are captured, not lexical reads: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|diagnostic| {
+            diagnostic.code == "RY010" && diagnostic.message.contains("missing_after")
+        }),
+        "ordinary reads outside recipes calls must remain checked: {diags:?}"
+    );
+}
+
+#[test]
+fn standard_r_inventory_resolves_default_package_symbols() {
+    let diags = check(
+        "family <- binomial\ndataset <- WWWusage\nhandler <- conditionMessage\nconverter <- as.name\nmaximum <- which.max\n",
+    );
+    assert!(
+        diags.is_empty(),
+        "standard inventory symbols (functions and datasets) resolve silently: {diags:?}"
+    );
+}
+
+#[test]
+fn standard_inventory_does_not_override_precise_types() {
+    let (diags, scope) = check_with_scope("callback <- sqrt\ndf <- mtcars\nbad <- df$missing\n");
+    let callback = scope.get("callback").expect("callback should be bound");
+    assert_eq!(callback.mode, Mode::Function);
+    assert!(
+        diags.iter().any(|diagnostic| diagnostic.code == "RY060"),
+        "typed dataset schemas must win over existence-only inventory: {diags:?}"
+    );
+}
+
+#[test]
+fn standard_inventory_does_not_hide_unknown_names() {
+    let diags = check("definitely_not_a_standard_r_symbol\n");
+    assert!(
+        diags.iter().any(|diagnostic| diagnostic.code == "RY010"),
+        "unknown neighboring names must still be diagnosed: {diags:?}"
+    );
+}
+
+#[test]
+fn call_position_skips_local_values_for_standard_functions() {
+    let diags = check(
+        "dimnames <- list(rows = \"r\")\nx <- matrix(1L, 1L, 1L)\ny <- dimnames(x)\ndimnames(x) <- dimnames\nserialize <- TRUE\nserialize(1L, NULL)\n",
+    );
+    assert!(
+        diags.iter().all(|diagnostic| diagnostic.code != "RY070"),
+        "R call lookup skips same-named non-function bindings: {diags:?}"
+    );
+}
+
+#[test]
+fn standard_non_function_values_do_not_suppress_call_errors() {
+    let diags = check("WWWusage <- 1L\nWWWusage()\n");
+    assert!(
+        diags.iter().any(|diagnostic| diagnostic.code == "RY070"),
+        "standard datasets are values, not call-position candidates: {diags:?}"
+    );
+}
+
+#[test]
+fn withr_tempfile_injects_literal_names_into_code_scope() {
+    let diags = check("withr::with_tempfile(c(\"first\", \"second\"), code = { first; second })\n");
+    assert!(
+        diags.iter().all(|diagnostic| diagnostic.code != "RY010"),
+        "with_tempfile string names should be bound inside code: {diags:?}"
+    );
+}
+
+#[test]
+fn withr_tempfile_bindings_do_not_leak() {
+    let diags = check("withr::with_tempfile(\"path\", code = path)\npath\n");
+    assert!(
+        diags.iter().any(|diagnostic| {
+            diagnostic.code == "RY010" && diagnostic.message.contains("`path`")
+        }),
+        "with_tempfile bindings are local to the code expression: {diags:?}"
+    );
+}
+
+#[test]
+fn withr_tempfile_keeps_checking_other_code_names() {
+    let diags = check("withr::with_tempfile(\"path\", code = { path; missing_inside })\n");
+    assert!(
+        diags.iter().any(|diagnostic| {
+            diagnostic.code == "RY010" && diagnostic.message.contains("missing_inside")
+        }),
+        "only explicitly injected names should be suppressed: {diags:?}"
+    );
+}
+
+#[test]
+fn dbplyr_translation_helpers_capture_sql_expressions() {
+    let diags =
+        check("library(dbplyr)\nexpect_translation(con, x + y, \"x + y\")\nmissing_after\n");
+    assert!(
+        diags.iter().all(|diagnostic| {
+            diagnostic.code != "RY010"
+                || (!diagnostic.message.contains("`x`") && !diagnostic.message.contains("`y`"))
+        }),
+        "translation expressions are captured rather than evaluated lexically: {diags:?}"
+    );
+    assert!(diags.iter().any(|diagnostic| {
+        diagnostic.code == "RY010" && diagnostic.message.contains("missing_after")
+    }));
+}
+
+#[test]
+fn lazy_defaults_can_reference_body_local_bindings() {
+    let diags = check("f <- function(value = generated) {\n  generated <- 1L\n  value\n}\nf()\n");
+    assert!(
+        diags.iter().all(|diagnostic| {
+            diagnostic.code != "RY010" || !diagnostic.message.contains("generated")
+        }),
+        "R defaults are promises evaluated in the function environment: {diags:?}"
+    );
+}
+
+#[test]
+fn lazy_default_forced_before_body_local_assignment_is_diagnosed() {
+    let diags = check(include_str!(
+        "../testdata/ry098_default_forced_before_assignment.R"
+    ));
+    let matches: Vec<_> = diags
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "RY098")
+        .collect();
+    assert_eq!(
+        matches.len(),
+        1,
+        "only the early return should fire: {diags:?}"
+    );
+    assert_eq!(matches[0].span.line, 2);
+}
+
+#[test]
+fn lazy_default_reachability_precision_cases_stay_silent() {
+    let diags = check(include_str!("../testdata/ok_lazy_default_reachability.R"));
+    assert!(
+        diags.iter().all(|diagnostic| diagnostic.code != "RY098"),
+        "conservative negative cases must remain silent: {diags:?}"
+    );
+}
+
+#[test]
+fn comparison_directly_inside_length_is_diagnosed() {
+    let diags = check("if (length(x == y)) print(\"bad\")\nok <- length(x) == y\n");
+    assert_eq!(
+        diags
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "RY093")
+            .count(),
+        1,
+        "only the comparison nested directly under length should fire: {diags:?}"
+    );
+}
+
+#[test]
+fn comparison_inside_selected_scalar_calls_is_diagnosed() {
+    let diags = check("length(x > 0)\nnchar(x == y)\nabs(x != y)\nsum(x > 0)\nlength(x) > 0\n");
+    assert_eq!(
+        diags
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "RY093")
+            .count(),
+        3,
+        "length, nchar, and abs should fire, but sum and an outer comparison should not: {diags:?}"
+    );
+}
+
+#[test]
+fn comparison_inside_call_is_diagnosed_through_short_circuit_operators() {
+    let diags = check(
+        "q <- TRUE\nx <- 1L\ny <- 2L\nz <- TRUE\nif (length(x == y) || q) x\nstopifnot(length(x == y) && z)\n",
+    );
+    assert_eq!(
+        diags
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "RY093")
+            .count(),
+        2,
+        "both short-circuit operands must retain call diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn negation_comparison_precedence_is_diagnosed_for_non_logical_literals() {
+    let diags = check("x <- TRUE\na <- 1L\nb <- 2L\n!all(x) == 1L\n!x\n(!x) == TRUE\n!(a == b)\n");
+    assert_eq!(
+        diags
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "RY095")
+            .count(),
+        1,
+        "only negation compared to a numeric or string literal should fire: {diags:?}"
+    );
+}
+
+#[test]
+fn hasarg_requires_a_formal_of_the_lexically_enclosing_function() {
+    let diags = check(
+        "good <- function(value) hasArg(value)\nbad <- function(actual, ...) hasArg(missing)\nstring_bad <- function(actual) hasArg(\"missing\")\nhasArg(top_level)\n",
+    );
+    assert_eq!(
+        diags
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "RY096")
+            .count(),
+        2,
+        "non-formals inside functions should fire, while formals and top-level calls stay silent: {diags:?}"
+    );
+    assert!(
+        diags.iter().all(|diagnostic| diagnostic.code != "RY010"),
+        "hasArg captures names and must not create unbound-name diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn printf_family_literal_arity_is_checked() {
+    let diags = check(
+        "gettextf(\"select %s then %s\", \"first\")\nsprintf(\"value=%s %%\", \"ok\")\nsprintf(dynamic_format, value)\n",
+    );
+    assert_eq!(
+        diags
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "RY094")
+            .count(),
+        1,
+        "only a proven literal format shortage should fire: {diags:?}"
+    );
+}
+
+#[test]
+fn nse_function_alias_quotes_cli_time_ago_expressions() {
+    let diags = check(include_str!("../testdata/ok_nse_function_alias.R"));
+    assert!(
+        diags.is_empty(),
+        "an alias of expression() must preserve quoted-call semantics: {diags:?}"
+    );
+}
+
+#[test]
+fn quote_and_printf_semantics_follow_function_aliases() {
+    let diags = check("q <- quote\nq(undefined_sym)\ns <- sprintf\ns(\"%d %d\", 1)\n");
+    assert!(
+        diags.iter().all(|diagnostic| diagnostic.code != "RY010"),
+        "quote() through an alias must not resolve its captured symbol: {diags:?}"
+    );
+    assert_eq!(
+        diags
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "RY094")
+            .count(),
+        1,
+        "sprintf() format validation must run through an alias: {diags:?}"
+    );
+}
+
+#[test]
+fn function_alias_semantics_are_cleared_by_reassignment() {
+    let diags = check("q <- quote\nq <- function(x) x\nq(undefined_sym)\n");
+    assert!(
+        diags.iter().any(|diagnostic| diagnostic.code == "RY010"),
+        "overwriting an alias with a local function must clear quote semantics: {diags:?}"
+    );
 }
 
 // ---- inline suppression comment tests ----
@@ -334,6 +1225,7 @@ fn is_suppressed_matches_line_and_code() {
         path: "x.R".into(),
         code: "RY010",
         message: "test".into(),
+        confidence: Confidence::Medium,
     };
     let diag_wrong_line = Diagnostic {
         span: Span {
@@ -368,6 +1260,7 @@ fn is_suppressed_empty_rules_matches_any_code() {
         path: "x.R".into(),
         code: "RY999",
         message: "test".into(),
+        confidence: Confidence::Medium,
     };
     assert!(is_suppressed(&diag, &supps));
 }
@@ -1615,6 +2508,83 @@ fn vapply_uses_fun_value_template() {
 }
 
 #[test]
+fn vapply_fun_value_ignores_character_dots() {
+    let (diags, scope) = check_with_scope(
+        "x <- c(1, 2)\nf <- function(x, extra) x\nout <- vapply(x, f, FUN.VALUE = character(1), USE.NAMES = FALSE, extra = \"chr\")\n",
+    );
+    assert!(diags.is_empty(), "unexpected vapply diagnostics: {diags:?}");
+    assert_eq!(scope.get("out").map(|ty| &ty.mode), Some(&Mode::Character));
+}
+
+#[test]
+fn inherits_narrows_positive_and_negated_else_branches() {
+    let diags = check(
+        "print.foo <- function(x) 1L\nf <- function(x) { if (inherits(x, \"foo\")) print(x); if (!inherits(x, \"foo\")) 0L else print(x) }\n",
+    );
+    assert!(
+        diags.iter().all(|diagnostic| diagnostic.code != "RY050"),
+        "inherits narrowing should enable S3 dispatch: {diags:?}"
+    );
+}
+
+#[test]
+fn dynlib_prefix_resolves_only_with_nonempty_remainder() {
+    let mut parser = RParser::new().unwrap();
+    let file = parser.parse("test.R", "value <- pkg_call\n").unwrap();
+    let mut checker = Checker::new("test.R");
+    checker.set_external_bindings(HashSet::from(["\0useDynLib:pkg_".to_string()]));
+    checker.check(&file);
+    assert!(checker.take_diagnostics().is_empty());
+
+    let mut parser = RParser::new().unwrap();
+    let file = parser.parse("test.R", "value <- pkg_\n").unwrap();
+    let mut checker = Checker::new("test.R");
+    checker.set_external_bindings(HashSet::from(["\0useDynLib:pkg_".to_string()]));
+    checker.check(&file);
+    assert!(checker.take_diagnostics().iter().any(|d| d.code == "RY010"));
+}
+
+#[test]
+fn r6_and_s7_class_body_pronouns_are_bound() {
+    let diags = check(include_str!("../testdata/ok_r6_class_body_bindings.R"));
+    assert!(
+        diags.is_empty(),
+        "class-body fixture should be clean: {diags:?}"
+    );
+}
+
+#[test]
+fn local_standalone_errors_idiom_is_clean() {
+    let diags = check(include_str!("../testdata/ok_local_standalone_errors.R"));
+    assert!(
+        diags.is_empty(),
+        "local() fixture should be clean: {diags:?}"
+    );
+}
+
+#[test]
+fn namespace_assign_introduces_a_binding() {
+    let diags = check(
+        "assign(\"style\", function(x) x, envir = asNamespace(\"crayon\"))\nvalue <- style(\"x\")\n",
+    );
+    assert!(
+        diags.is_empty(),
+        "namespace assign should bind style: {diags:?}"
+    );
+}
+
+#[test]
+fn replacement_calls_keep_targets_bound_without_argument_diagnostics() {
+    let diags = check(
+        "x <- matrix(1:4, 2)\ndimnames(x) <- list(c(\"a\", \"b\"), c(\"c\", \"d\"))\nnames(x) <- c(\"a\", \"b\")\nattr(x, \"tag\") <- TRUE\nlevels(x) <- c(\"a\", \"b\")\nf <- function() NULL\nenvironment(f) <- globalenv()\ny <- x\nf()\n",
+    );
+    assert!(
+        diags.is_empty(),
+        "replacement calls should be opaque-safe: {diags:?}"
+    );
+}
+
+#[test]
 fn purrr_map_walks_callback_and_infers_list() {
     // purrr::map(.x, .f) is modeled like lapply -- the
     // callback body is walked (RY010 fires on the unbound `bug`)
@@ -1738,15 +2708,10 @@ fn filter_preserves_data_type() {
 
 #[test]
 fn typeshed_fn_as_value_not_unbound() {
-    // Passing a typeshed function name as a bare identifier (e.g.
-    // to sapply) must NOT trigger RY010. The name resolves to an
-    // opaque function value.
+    // Passing a precisely modeled function as a callback remains valid;
+    // the shadowed-symbol boost targets ambient-only resolution.
     let diags = check("v <- sapply(c(1.0, 2.0), sqrt)\n");
-    assert!(
-        diags.iter().all(|d| d.code != "RY010"),
-        "typeshed fn name used as value should not be RY010, got {:?}",
-        diags
-    );
+    assert!(diags.iter().all(|d| d.code != "RY010"), "got {diags:?}");
 }
 
 #[test]
@@ -1803,6 +2768,18 @@ fn type_narrowing_is_numeric_then_branch() {
         diags.iter().all(|d| d.code != "RY040"),
         "numeric-narrowed opaque should not fire RY040 in then branch, got {:?}",
         diags
+    );
+}
+
+#[test]
+fn expression_if_applies_function_narrowing_to_then_branch() {
+    let diagnostics =
+        check("f <- if (TRUE) function(x) x else 1L\nx <- if (is.function(f)) f(1) else f\n");
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY070"),
+        "expression-position if must narrow f before inferring the call: {diagnostics:?}"
     );
 }
 
@@ -2280,6 +3257,99 @@ fn rep_zero_times_yields_length_zero() {
 fn parse_file(path: &str, src: &str) -> SourceFile {
     let mut p = RParser::new().unwrap();
     p.parse(path, src).unwrap()
+}
+
+#[test]
+fn s4_terra_named_vector_dispatch_fixture_is_clean() {
+    let diagnostics = check(include_str!("../testdata/ok_s4_terra_named_vector.R"));
+    assert!(
+        diagnostics.is_empty(),
+        "S4 dispatch should preserve the method's named-vector result: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn s4_signature_form_dispatches() {
+    let diagnostics = check(
+        "setClass(\"C\", slots = c(value = \"numeric\"))\nsetMethod(\"labels\", signature(\"C\"), function(object) c(label = \"ok\"))\nx <- new(\"C\")\ny <- labels(x)\ny[[\"label\"]]\n",
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "signature dispatch failed: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn s4_named_signature_form_dispatches() {
+    let diagnostics = check(
+        "setClass(\"SpatExtent\", slots = c(value = \"numeric\"))\nsetMethod(\"as.vector\", signature(x = \"SpatExtent\"), function(x) c(xmin = 1))\nx <- new(\"SpatExtent\")\nv <- as.vector(x)\nv[[\"xmin\"]]\n",
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "named signature dispatch failed: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn s4_declared_and_undeclared_slot_access_and_assignment_are_silent() {
+    let diagnostics = check(
+        "setClass(\"C\", representation(value = \"numeric\"))\nx <- new(\"C\")\na <- x@value\nb <- x@undeclared\nx@value <- 1\nx@undeclared <- 2\n",
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "S4 slots should be conservative: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn named_vector_columns_survive_transpose_data_frame_constructors() {
+    let diagnostics = check(
+        "v <- c(alpha = 1, beta = 2)\na <- data.frame(t(v))\nb <- as.data.frame(t(v))\na$alpha\nb$beta\n",
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "named columns were lost: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn unknown_vector_names_do_not_fabricate_data_frame_schema() {
+    let diagnostics =
+        check("make_row <- function(v) data.frame(t(v))\nrow <- make_row(c(1, 2))\nrow$anything\n");
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY060"),
+        "unknown names must produce an opaque data-frame schema: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn s4_generics_and_methods_resolve_cross_file() {
+    let mut project = Project::new();
+    project.add_file(
+        "generic.R".to_string(),
+        parse_file(
+            "generic.R",
+            "setGeneric(\"render\", function(x) standardGeneric(\"render\"))\n",
+        ),
+    );
+    project.add_file(
+        "method.R".to_string(),
+        parse_file(
+            "method.R",
+            "setClass(\"Document\", representation(id = \"numeric\"))\nsetMethod(\"render\", \"Document\", function(x) c(title = \"ok\"))\nd <- new(\"Document\")\nout <- render(d)\nout[[\"title\"]]\n",
+        ),
+    );
+    let diagnostics: Vec<_> = project
+        .check()
+        .into_iter()
+        .flat_map(|(_, diagnostics)| diagnostics)
+        .collect();
+    assert!(
+        diagnostics.is_empty(),
+        "cross-file S4 failed: {diagnostics:?}"
+    );
 }
 
 #[test]

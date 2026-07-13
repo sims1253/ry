@@ -9,6 +9,17 @@ impl Checker {
         span: Span,
         scope: &mut Scope,
     ) -> RType {
+        if matches!(kind, IndexKind::Dollar) {
+            if let Some(class) = bt.class.first()
+                && let Some(slots) = self.fn_table.s4_classes.get(class.as_ref())
+            {
+                let slot = args.first().and_then(|argument| argument.name.as_deref());
+                return slot
+                    .and_then(|slot| slots.get(slot))
+                    .map(|class| RType::unknown().with_class(ClassVector::single(class)))
+                    .unwrap_or_else(RType::unknown);
+            }
+        }
         match kind {
             IndexKind::Dollar => {
                 // RY061: `$` on an atomic vector is a runtime error in R
@@ -181,7 +192,10 @@ impl Checker {
                 // however, the result is a scalar of the same mode.
                 let scalar_atomic_index = args.len() == 1
                     && args.first().is_some_and(|a| {
-                        matches!(a.value, Expr::Integer(_, _) | Expr::Double(_, _))
+                        matches!(
+                            a.value,
+                            Expr::Integer(_, _) | Expr::Double(_, _) | Expr::String(_, _)
+                        )
                     })
                     && matches!(
                         bt.mode,

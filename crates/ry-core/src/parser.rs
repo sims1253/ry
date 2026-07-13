@@ -136,11 +136,14 @@ impl RParser {
         // token `<<-`, NOT `<<`. Matching `<<` (as this code once did)
         // silently fails for every super-assignment and lets it fall
         // through to `lower_binary`, which mis-lowers it.
-        if !matches!(op_text.as_str(), "<-" | "<<-" | "=" | "->" | "->>") {
+        if !matches!(op_text.as_str(), "<-" | "<<-" | "=" | "->" | "->>" | ":=") {
             return None;
         }
         let lhs = n.child_by_field_name("lhs")?;
         let rhs = n.child_by_field_name("rhs")?;
+        if op_text == ":=" && lhs.kind() != "identifier" {
+            return None;
+        }
         let (target, value) = if matches!(op_text.as_str(), "->" | "->>") {
             (self.lower_expr(rhs, src)?, self.lower_expr(lhs, src)?)
         } else {
@@ -316,7 +319,7 @@ impl RParser {
             "true" => Some(Expr::Logical(true, self.span(n, src))),
             "false" => Some(Expr::Logical(false, self.span(n, src))),
             "null" => Some(Expr::Null(self.span(n, src))),
-            "identifier" => Some(Expr::Ident {
+            "identifier" | "dots" => Some(Expr::Ident {
                 name: text(n, src)?,
                 span: self.span(n, src),
             }),
@@ -392,10 +395,17 @@ impl RParser {
             }
             "braced_expression" => {
                 let body = self.lower_block(n, src);
-                Some(Expr::Block {
-                    body,
-                    span: self.span(n, src),
-                })
+                let span = self.span(n, src);
+                if text(n, src).is_some_and(|source| {
+                    let source = source.trim();
+                    source.starts_with("{{") && source.ends_with("}}")
+                }) {
+                    return Some(Expr::Block {
+                        body: vec![Stmt::Expr(Expr::Block { body, span })],
+                        span,
+                    });
+                }
+                Some(Expr::Block { body, span })
             }
             "if_statement" => self.lower_if_expr(n, src),
             _ => {
@@ -518,8 +528,26 @@ impl RParser {
                 });
             }
             _ => {
-                tracing::trace!(op = op_text.as_str(), "unknown binary op");
-                return Some(Expr::Unknown(span));
+                tracing::trace!(op = op_text.as_str(), "user-defined infix op");
+                return Some(Expr::Call {
+                    func: Box::new(Expr::Ident {
+                        name: op_text,
+                        span: self.span(op_node, src),
+                    }),
+                    args: vec![
+                        Arg {
+                            name: None,
+                            span,
+                            value: lhs,
+                        },
+                        Arg {
+                            name: None,
+                            span,
+                            value: rhs,
+                        },
+                    ],
+                    span,
+                });
             }
         };
         Some(Expr::BinOp {
@@ -1148,13 +1176,16 @@ mod tests {
     }
 
     #[test]
-    fn unknown_special_falls_through() {
-        // `%like%` is an arbitrary user-defined infix; it lowers to
-        // Unknown (we don't model its semantics).
+    fn user_infix_preserves_operands_as_call() {
+        // `%like%` is an arbitrary user-defined infix. Preserve its
+        // operands in a call-shaped node even though its semantics are opaque.
         let f = parse("y %like% \"foo\"\n");
         match f.stmts.first() {
-            Some(Stmt::Expr(Expr::Unknown(_))) => {}
-            other => panic!("expected Unknown for `%like%`, got {:?}", other),
+            Some(Stmt::Expr(Expr::Call { func, args, .. }))
+                if matches!(func.as_ref(), Expr::Ident { name, .. } if name == "%like%")
+                    && matches!(&args[0].value, Expr::Ident { name, .. } if name == "y")
+                    && matches!(&args[1].value, Expr::String(value, _) if value == "foo") => {}
+            other => panic!("expected preserved `%like%` call, got {:?}", other),
         }
     }
 

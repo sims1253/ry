@@ -1,5 +1,5 @@
 R/conditions.R:301:14 RY010
-R/conditions.R:408:13 RY010
-R/doc-methods.R:27:33 RY010
-R/group-trim.R:40:44 RY010
+R/data-mask.R:89:7 RY091
+R/data-mask.R:94:7 RY091
+R/data-mask.R:99:7 RY091
 R/mutate.R:510:9 RY010

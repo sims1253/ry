@@ -35,6 +35,12 @@ pub enum SchemaEffect {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum ScopeEffect {
+    UnknownBindings,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CallbackArg {
     ElementOfArg0,
     ElementOfArg1,
@@ -181,9 +187,20 @@ pub struct HigherOrderSpec {
 pub const SOURCE: &str = include_str!("../vendor/SOURCE");
 pub const BASE_JSON: &str = include_str!("../vendor/base/base.json");
 pub const DPLYR_JSON: &str = include_str!("../vendor/dplyr/dplyr.json");
+pub const DBPLYR_JSON: &str = include_str!("../vendor/dbplyr/dbplyr.json");
 pub const TIDYR_JSON: &str = include_str!("../vendor/tidyr/tidyr.json");
+pub const TIDYSELECT_JSON: &str = include_str!("../vendor/tidyselect/tidyselect.json");
 pub const TESTTHAT_JSON: &str = include_str!("../vendor/testthat/testthat.json");
+pub const TINYTEST_JSON: &str = include_str!("../vendor/tinytest/tinytest.json");
+pub const RCPP_JSON: &str = include_str!("../vendor/rcpp/Rcpp.json");
 pub const PURRR_JSON: &str = include_str!("../vendor/purrr/purrr.json");
+pub const IGRAPH_JSON: &str = include_str!("../vendor/igraph/igraph.json");
+pub const RECIPES_JSON: &str = include_str!("../vendor/recipes/recipes.json");
+pub const BENCH_JSON: &str = include_str!("../vendor/bench/bench.json");
+pub const BOX_JSON: &str = include_str!("../vendor/box/box.json");
+pub const PATRICK_JSON: &str = include_str!("../vendor/patrick/patrick.json");
+pub const REX_JSON: &str = include_str!("../vendor/rex/rex.json");
+pub const RLIST_JSON: &str = include_str!("../vendor/rlist/rlist.json");
 pub const MIRAI_JSON: &str = include_str!("../vendor/mirai/mirai.json");
 pub const SURVIVAL_JSON: &str = include_str!("../vendor/survival/survival.json");
 pub const BRMS_JSON: &str = include_str!("../vendor/brms/brms.json");
@@ -191,6 +208,13 @@ pub const POSTERIOR_JSON: &str = include_str!("../vendor/posterior/posterior.jso
 pub const LOO_JSON: &str = include_str!("../vendor/loo/loo.json");
 pub const BAYESPLOT_JSON: &str = include_str!("../vendor/bayesplot/bayesplot.json");
 pub const CMDSTANR_JSON: &str = include_str!("../vendor/cmdstanr/cmdstanr.json");
+pub const ZEALLOT_JSON: &str = include_str!("../vendor/zeallot/zeallot.json");
+pub const FUTURE_JSON: &str = include_str!("../vendor/future/future.json");
+pub const FOREACH_JSON: &str = include_str!("../vendor/foreach/foreach.json");
+pub const SHINY_JSON: &str = include_str!("../vendor/shiny/shiny.json");
+pub const WITHR_JSON: &str = include_str!("../vendor/withr/withr.json");
+pub const R6_JSON: &str = include_str!("../vendor/R6/R6.json");
+pub const S7_JSON: &str = include_str!("../vendor/s7/S7.json");
 /// Legacy Bayesian stub document. New code should load a named package via
 /// [`load_package`]; the standalone typeshed no longer publishes a combined
 /// multi-package document.
@@ -211,12 +235,48 @@ const PACKAGE_SPECS: &[PackageSpec] = &[
         json: DPLYR_JSON,
     },
     PackageSpec {
+        name: "dbplyr",
+        json: DBPLYR_JSON,
+    },
+    PackageSpec {
         name: "tidyr",
         json: TIDYR_JSON,
     },
     PackageSpec {
+        name: "tidyselect",
+        json: TIDYSELECT_JSON,
+    },
+    PackageSpec {
         name: "purrr",
         json: PURRR_JSON,
+    },
+    PackageSpec {
+        name: "igraph",
+        json: IGRAPH_JSON,
+    },
+    PackageSpec {
+        name: "recipes",
+        json: RECIPES_JSON,
+    },
+    PackageSpec {
+        name: "bench",
+        json: BENCH_JSON,
+    },
+    PackageSpec {
+        name: "box",
+        json: BOX_JSON,
+    },
+    PackageSpec {
+        name: "patrick",
+        json: PATRICK_JSON,
+    },
+    PackageSpec {
+        name: "rex",
+        json: REX_JSON,
+    },
+    PackageSpec {
+        name: "rlist",
+        json: RLIST_JSON,
     },
     PackageSpec {
         name: "mirai",
@@ -229,6 +289,14 @@ const PACKAGE_SPECS: &[PackageSpec] = &[
     PackageSpec {
         name: "testthat",
         json: TESTTHAT_JSON,
+    },
+    PackageSpec {
+        name: "tinytest",
+        json: TINYTEST_JSON,
+    },
+    PackageSpec {
+        name: "Rcpp",
+        json: RCPP_JSON,
     },
     PackageSpec {
         name: "brms",
@@ -249,6 +317,34 @@ const PACKAGE_SPECS: &[PackageSpec] = &[
     PackageSpec {
         name: "cmdstanr",
         json: CMDSTANR_JSON,
+    },
+    PackageSpec {
+        name: "zeallot",
+        json: ZEALLOT_JSON,
+    },
+    PackageSpec {
+        name: "future",
+        json: FUTURE_JSON,
+    },
+    PackageSpec {
+        name: "foreach",
+        json: FOREACH_JSON,
+    },
+    PackageSpec {
+        name: "shiny",
+        json: SHINY_JSON,
+    },
+    PackageSpec {
+        name: "withr",
+        json: WITHR_JSON,
+    },
+    PackageSpec {
+        name: "R6",
+        json: R6_JSON,
+    },
+    PackageSpec {
+        name: "S7",
+        json: S7_JSON,
     },
 ];
 
@@ -384,12 +480,26 @@ pub struct FunctionSig {
     #[serde(default)]
     pub schema_effect: Option<SchemaEffect>,
     #[serde(default)]
+    pub scope_effect: Option<ScopeEffect>,
+    #[serde(default)]
     pub higher_order: Option<HigherOrderSpec>,
+    #[serde(default)]
+    pub injects: Vec<InjectSpec>,
     /// Zero-based literal argument used as a path relative to the current
     /// source file. Consumers may fold the call only when that argument is a
     /// string literal and the target exists.
     #[serde(default)]
     pub source_relative_path_arg: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InjectSpec {
+    pub into: Vec<String>,
+    #[serde(default)]
+    pub strings_from: Vec<String>,
+    #[serde(default)]
+    pub names: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -404,6 +514,8 @@ pub struct FunctionSigWithKey {
 pub struct Globals {
     #[serde(default)]
     pub ambient: Vec<String>,
+    #[serde(default)]
+    pub ambient_functions: Vec<String>,
     #[serde(default)]
     pub s3_generics: Vec<String>,
     #[serde(default)]
@@ -468,7 +580,11 @@ mod _fwd {
         #[serde(default)]
         pub schema_effect: Option<super::SchemaEffect>,
         #[serde(default)]
+        pub scope_effect: Option<super::ScopeEffect>,
+        #[serde(default)]
         pub higher_order: Option<super::HigherOrderSpec>,
+        #[serde(default)]
+        pub injects: Vec<super::InjectSpec>,
         #[serde(default)]
         pub source_relative_path_arg: Option<usize>,
     }
@@ -491,7 +607,11 @@ struct RawS3Method {
     #[serde(default)]
     schema_effect: Option<SchemaEffect>,
     #[serde(default)]
+    scope_effect: Option<ScopeEffect>,
+    #[serde(default)]
     higher_order: Option<HigherOrderSpec>,
+    #[serde(default)]
+    injects: Vec<InjectSpec>,
     #[serde(default)]
     source_relative_path_arg: Option<usize>,
 }
@@ -581,7 +701,9 @@ fn parse_typeshed_with_order(
                 aliases: v.aliases,
                 eval: v.eval,
                 schema_effect: v.schema_effect,
+                scope_effect: v.scope_effect,
                 higher_order: v.higher_order,
+                injects: v.injects,
                 source_relative_path_arg: v.source_relative_path_arg,
             },
         );
@@ -597,7 +719,9 @@ fn parse_typeshed_with_order(
                 aliases: m.aliases,
                 eval: m.eval,
                 schema_effect: m.schema_effect,
+                scope_effect: m.scope_effect,
                 higher_order: m.higher_order,
+                injects: m.injects,
                 source_relative_path_arg: m.source_relative_path_arg,
             },
         );
@@ -1084,6 +1208,19 @@ mod tests {
     }
 
     #[test]
+    fn scope_effect_is_loaded_from_function_stub() {
+        let typeshed = parse_typeshed(
+            r#"{"schema_version":"1","package":"effects","version":"test","functions":{"inject":{"params":[],"return":{"mode":"opaque","length":"unknown"},"scope_effect":"unknown_bindings"}}}"#,
+            Path::new("effects.json"),
+        )
+        .expect("scope effect stub loads");
+        assert_eq!(
+            typeshed.functions["inject"].scope_effect,
+            Some(ScopeEffect::UnknownBindings)
+        );
+    }
+
+    #[test]
     fn load_package_bayes_files_have_bare_names() {
         let brms_stub = load_package("brms").expect("brms is known");
         assert!(brms_stub.functions.contains_key("brm"));
@@ -1209,6 +1346,16 @@ mod tests {
         assert_eq!(signature.params[1].type_.as_ref().unwrap().mode, "logical");
         assert!(signature.params[1].required);
         assert_eq!(signature.params[1].default, Some(false));
+    }
+
+    #[test]
+    fn function_injects_are_parsed() {
+        let json = r#"{"params":["new","code"],"injects":[{"into":["code"],"strings_from":["new"],"names":["self"]}],"return":{"mode":"opaque","length":"unknown"}}"#;
+        let signature: _fwd::_FunctionSig = serde_json::from_str(json).unwrap();
+        assert_eq!(signature.injects.len(), 1);
+        assert_eq!(signature.injects[0].into, ["code"]);
+        assert_eq!(signature.injects[0].strings_from, ["new"]);
+        assert_eq!(signature.injects[0].names, ["self"]);
     }
 
     #[test]

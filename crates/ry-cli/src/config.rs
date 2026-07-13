@@ -78,6 +78,8 @@ pub struct Config {
     /// Runtime typeshed directories. Relative entries are anchored at the
     /// directory containing this configuration file.
     pub typeshed: Vec<PathBuf>,
+    /// Baseline file. Relative paths are anchored at the config directory.
+    pub baseline: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -118,6 +120,7 @@ impl Config {
             packages: Vec::new(),
             globals: Vec::new(),
             typeshed: Vec::new(),
+            baseline: None,
         }
     }
 
@@ -151,6 +154,11 @@ impl Config {
         for dir in &mut cfg.typeshed {
             if dir.is_relative() {
                 *dir = root.join(&*dir);
+            }
+        }
+        if let Some(baseline) = &mut cfg.baseline {
+            if baseline.is_relative() {
+                *baseline = root.join(&*baseline);
             }
         }
         Ok(cfg)
@@ -217,6 +225,7 @@ impl Config {
         cli_warns: Vec<String>,
         cli_ignores: Vec<String>,
         cli_typeshed: Vec<PathBuf>,
+        cli_baseline: Option<PathBuf>,
         cli_error_on_warning: Option<bool>,
         cli_exit_zero: Option<bool>,
         cli_output_format: Option<String>,
@@ -233,6 +242,7 @@ impl Config {
         typeshed.extend(cli_typeshed);
 
         let output_format = cli_output_format.unwrap_or(self.output_format);
+        let baseline = cli_baseline.or(self.baseline);
 
         Self {
             error_on_warning: cli_error_on_warning.unwrap_or(self.error_on_warning),
@@ -251,6 +261,7 @@ impl Config {
             packages: self.packages,
             globals: self.globals,
             typeshed,
+            baseline,
         }
     }
 }
@@ -340,6 +351,7 @@ mod tests {
         assert!(d.r_version.is_none());
         assert!(d.packages.is_empty(), "packages defaults to empty");
         assert!(d.globals.is_empty(), "globals defaults to empty");
+        assert!(d.baseline.is_none());
         // Default and derive(Default) must agree.
         assert_eq!(d, Config::default());
     }
@@ -368,6 +380,7 @@ r-version = "4.3"
 packages = ["dplyr", "tidyverse"]
 globals = ["runtime_data", "generated_lookup"]
 typeshed = ["stubs"]
+baseline = "diagnostics.json"
 "#;
         let cfg: Config = toml::from_str(toml).unwrap();
         assert!(cfg.error_on_warning);
@@ -383,6 +396,7 @@ typeshed = ["stubs"]
         assert_eq!(cfg.packages, vec!["dplyr", "tidyverse"]);
         assert_eq!(cfg.globals, vec!["runtime_data", "generated_lookup"]);
         assert_eq!(cfg.typeshed, vec![PathBuf::from("stubs")]);
+        assert_eq!(cfg.baseline, Some(PathBuf::from("diagnostics.json")));
     }
 
     #[test]
@@ -418,6 +432,7 @@ typeshed = ["stubs"]
             None,
             None,
             None,
+            None,
             0,
             0,
         );
@@ -439,6 +454,7 @@ typeshed = ["stubs"]
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            None,
             Some(true),
             Some(true),
             Some("json".to_string()),
@@ -470,6 +486,7 @@ typeshed = ["stubs"]
             None,
             None,
             None,
+            None,
             0,
             0,
         );
@@ -495,6 +512,7 @@ typeshed = ["stubs"]
             None,
             None,
             None,
+            None,
             2,
             3,
         );
@@ -513,6 +531,7 @@ typeshed = ["stubs"]
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            None,
             None,
             None,
             None,

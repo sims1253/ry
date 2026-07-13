@@ -18,8 +18,14 @@ impl Checker {
         match s {
             Stmt::Assign { target, value, .. } => {
                 let vt = self.infer(value, scope);
-                if !self.assign_class_attribute(target, value, scope) {
+                let function_alias = self.function_alias_target(value, scope);
+                if !self.assign_class_attribute(target, value, scope)
+                    && !self.assign_replacement_target(target, scope)
+                {
                     self.assign_target(target, vt, scope);
+                    if let (Expr::Ident { name, .. }, Some(alias)) = (target, function_alias) {
+                        scope.set_function_alias(name.clone(), alias);
+                    }
                 }
                 // Named function bodies (`f <- function(...) body`) must
                 // be walked for diagnostics. The function-value inference
@@ -42,10 +48,16 @@ impl Checker {
                     for parameter in params {
                         fn_scope.insert(parameter.name.clone(), RType::unknown());
                     }
+                    let assigned = assigned_names_in_body(body);
+                    self.check_lazy_default_reachability(params, body, &assigned);
+                    let mut default_scope = fn_scope.clone();
+                    for name in &assigned {
+                        default_scope.insert(name.clone(), RType::unknown());
+                    }
                     for p in params {
                         let t = match &p.default {
                             Some(e) => {
-                                let _ = self.infer(e, &mut fn_scope);
+                                let _ = self.infer(e, &mut default_scope);
                                 binding_name(target)
                                     .map(|function| {
                                         self.diagnostic_parameter_type(function, p, params, e)
@@ -56,14 +68,32 @@ impl Checker {
                         };
                         fn_scope.insert(p.name.clone(), t);
                     }
-                    self.deferred_captures.push(assigned_names_in_body(body));
+                    self.deferred_captures.push(assigned);
+                    self.push_enclosing_formals(params);
                     for s in body {
                         self.walk_stmt(s, &mut fn_scope, None);
                     }
+                    self.enclosing_formals.pop();
                     self.deferred_captures.pop();
                 }
             }
             Stmt::Expr(e) => {
+                if let Expr::Call { func, args, .. } = e
+                    && self.destructuring_operator_in_scope()
+                    && args.len() == 2
+                {
+                    let op = ident_name(func);
+                    let pattern = match op {
+                        Some("%<-%") => Some((&args[0].value, &args[1].value)),
+                        Some("%->%") => Some((&args[1].value, &args[0].value)),
+                        _ => None,
+                    };
+                    if let Some((pattern, value)) = pattern {
+                        self.infer(value, scope);
+                        bind_destructure_pattern(pattern, scope);
+                        return;
+                    }
+                }
                 // Detect `return(...)` / `invisible(...)` calls and collect
                 // the argument type (the function's return type).
                 if let Expr::Call { func, args, .. } = e {
@@ -191,10 +221,16 @@ impl Checker {
                 for parameter in params {
                     fn_scope.insert(parameter.name.clone(), RType::unknown());
                 }
+                let assigned = assigned_names_in_body(body);
+                self.check_lazy_default_reachability(params, body, &assigned);
+                let mut default_scope = fn_scope.clone();
+                for name in &assigned {
+                    default_scope.insert(name.clone(), RType::unknown());
+                }
                 for p in params {
                     let t = match &p.default {
                         Some(e) => {
-                            let _ = self.infer(e, &mut fn_scope);
+                            let _ = self.infer(e, &mut default_scope);
                             name.as_deref()
                                 .map(|function| {
                                     self.diagnostic_parameter_type(function, p, params, e)
@@ -205,10 +241,12 @@ impl Checker {
                     };
                     fn_scope.insert(p.name.clone(), t);
                 }
-                self.deferred_captures.push(assigned_names_in_body(body));
+                self.deferred_captures.push(assigned);
+                self.push_enclosing_formals(params);
                 for s in body {
                     self.walk_stmt(s, &mut fn_scope, None);
                 }
+                self.enclosing_formals.pop();
                 self.deferred_captures.pop();
             }
             Stmt::Return { value, .. } => {
@@ -625,6 +663,29 @@ impl Checker {
         true
     }
 
+    /// Replacement calls such as `dimnames(x) <- value` mutate `x`; the
+    /// accessor expression is not an ordinary read/call that should be
+    /// argument-checked. Keep the binding but conservatively forget its shape.
+    pub(crate) fn assign_replacement_target(&mut self, target: &Expr, scope: &mut Scope) -> bool {
+        let Expr::Call { func, args, .. } = target else {
+            return false;
+        };
+        let Expr::Ident { name: accessor, .. } = func.as_ref() else {
+            return false;
+        };
+        if !matches!(
+            accessor.as_str(),
+            "names" | "dimnames" | "colnames" | "rownames" | "attr" | "levels" | "environment"
+        ) {
+            return false;
+        }
+        let Some(Expr::Ident { name, .. }) = args.first().map(|arg| &arg.value) else {
+            return false;
+        };
+        scope.insert(name.clone(), RType::unknown());
+        true
+    }
+
     pub(crate) fn assign_nested_record_path(
         &self,
         target: &Expr,
@@ -820,7 +881,11 @@ impl Checker {
         match stmt {
             Stmt::Assign { target, value, .. } => {
                 let vt = self.infer(value, scope);
-                self.assign_target(target, vt.clone(), scope);
+                if !self.assign_class_attribute(target, value, scope)
+                    && !self.assign_replacement_target(target, scope)
+                {
+                    self.assign_target(target, vt.clone(), scope);
+                }
                 vt
             }
             Stmt::Expr(e) => self.infer(e, scope),
@@ -863,18 +928,31 @@ impl Checker {
             Expr::Null(_) => RType::new(Mode::Null, Length::Zero),
             Expr::Na(t, _) => t.clone(),
             Expr::Ident { name, span } => match scope.get(name) {
-                Some(t) => t.clone(),
+                Some(t) => {
+                    let is_lexical_binding_under_unknown_mask = scope.data_mask_unknown
+                        && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some()
+                        && scope
+                            .get(&format!("{}{name}", crate::nse::DATA_MASK_ENV_PREFIX))
+                            .is_some()
+                        && scope
+                            .get(&format!("{}{name}", crate::nse::DATA_MASK_COLUMN_PREFIX))
+                            .is_none();
+                    if is_lexical_binding_under_unknown_mask {
+                        RType::unknown()
+                    } else {
+                        t.clone()
+                    }
+                }
                 None => {
-                    if self
-                        .typeshed
-                        .globals
-                        .ambient
-                        .iter()
-                        .any(|global| global == name)
-                    {
+                    if self.external_bindings.contains(name) {
                         return RType::unknown();
                     }
-                    if self.external_bindings.contains(name) {
+                    if self.external_bindings.iter().any(|binding| {
+                        binding.strip_prefix("\0useDynLib:").is_some_and(|prefix| {
+                            name.strip_prefix(prefix)
+                                .is_some_and(|rest| !rest.is_empty())
+                        })
+                    }) {
                         return RType::unknown();
                     }
                     // Built-in dataset? (mtcars, iris, ...) Resolve before
@@ -919,6 +997,34 @@ impl Checker {
                     if self.fn_table.known_vars.contains(name) {
                         return RType::unknown();
                     }
+                    if self
+                        .typeshed
+                        .globals
+                        .ambient_functions
+                        .iter()
+                        .any(|function| function == name)
+                    {
+                        // Value-position uses of ambient functions are
+                        // overwhelmingly legitimate higher-order idioms
+                        // (`lapply(x, enc2utf8)`, `do.call(rbind, z)`), so
+                        // resolve silently as a function value. The typo
+                        // class (`col`, `oldClass` misused as data) is still
+                        // caught downstream when the function type flows
+                        // into comparisons or arithmetic (RY030/RY033).
+                        return RType::scalar(Mode::Function);
+                    }
+                    // Existence-only standard and ambient globals are a
+                    // fallback after typed datasets, functions, and project
+                    // bindings so inventory overlap cannot erase precision.
+                    if self
+                        .typeshed
+                        .globals
+                        .ambient
+                        .iter()
+                        .any(|global| global == name)
+                    {
+                        return RType::unknown();
+                    }
                     // Namespace-qualified reference (`pkg::name`),
                     // including the bare reexport pattern
                     // (`rlang::set_names` or `magrittr::`%>%`` in
@@ -944,7 +1050,7 @@ impl Checker {
                     if name.starts_with('`') || name.contains('%') || is_operator_symbol(name) {
                         return RType::unknown();
                     }
-                    if scope.data_mask_unknown {
+                    if scope.data_mask_unknown || scope.search_path_unknown {
                         return RType::unknown();
                     }
                     self.emit(
@@ -982,7 +1088,9 @@ impl Checker {
                 // value (invisibly).
                 if matches!(*op, BinOpKind::Assign | BinOpKind::SuperAssign) {
                     let rt = self.infer(rhs, scope);
-                    if !self.assign_class_attribute(lhs, rhs, scope) {
+                    if !self.assign_class_attribute(lhs, rhs, scope)
+                        && !self.assign_replacement_target(lhs, scope)
+                    {
                         self.assign_target(lhs, rt.clone(), scope);
                     }
                     return rt;
@@ -1005,6 +1113,26 @@ impl Checker {
                         }
                     }
                 }
+                if matches!(op, BinOpKind::Eq | BinOpKind::Ne)
+                    && matches!(
+                        lhs.as_ref(),
+                        Expr::UnaryOp {
+                            op: UnaryOpKind::Not,
+                            ..
+                        }
+                    )
+                    && matches!(
+                        rhs.as_ref(),
+                        Expr::Integer(_, _) | Expr::Double(_, _) | Expr::String(_, _)
+                    )
+                {
+                    self.emit(
+                        Severity::Warning,
+                        *span,
+                        "RY095",
+                        "`!x == y` parses as `(!x) == y`; use `!(x == y)` or `x != y`",
+                    );
+                }
                 if matches!(op, BinOpKind::AndAnd | BinOpKind::OrOr) {
                     return self.infer_short_circuit_binop(*op, lhs, rhs, scope, *span);
                 }
@@ -1023,6 +1151,31 @@ impl Checker {
                 self.infer_binop(*op, lt, rt, *span)
             }
             Expr::UnaryOp { op, expr, span } => {
+                // tree-sitter-r groups an unparenthesized `!x == y` as a
+                // unary node around the comparison. Its operand starts
+                // immediately after `!`; for the intentional `!(x == y)` a
+                // parenthesis lies between the two spans. Accept this parser
+                // shape in addition to the BinOp shape checked above.
+                if matches!(op, UnaryOpKind::Not)
+                    && let Expr::BinOp {
+                        op: BinOpKind::Eq | BinOpKind::Ne,
+                        rhs,
+                        span: comparison_span,
+                        ..
+                    } = expr.as_ref()
+                    && comparison_span.start == span.start.saturating_add(1)
+                    && matches!(
+                        rhs.as_ref(),
+                        Expr::Integer(_, _) | Expr::Double(_, _) | Expr::String(_, _)
+                    )
+                {
+                    self.emit(
+                        Severity::Warning,
+                        *span,
+                        "RY095",
+                        "`!x == y` parses as `(!x) == y`; use `!(x == y)` or `x != y`",
+                    );
+                }
                 // Detect tidyeval `!!` (unquote) and `!!!` (splice)
                 // operators BEFORE inferring the inner expression.
                 // tree-sitter parses these as nested unary `!`:
@@ -1097,6 +1250,32 @@ impl Checker {
                 args,
                 span,
             } => {
+                let receiver_name = ident_name(base);
+                if receiver_name == Some(".env")
+                    && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some()
+                {
+                    let name = match kind {
+                        IndexKind::Dollar => args.first().and_then(|arg| arg.name.as_deref()),
+                        IndexKind::Double => args.first().and_then(|arg| match &arg.value {
+                            Expr::String(name, _) => Some(name.as_str()),
+                            _ => None,
+                        }),
+                        IndexKind::Single => None,
+                    };
+                    if let Some(name) = name {
+                        let key = format!("{}{name}", crate::nse::DATA_MASK_ENV_PREFIX);
+                        if let Some(ty) = scope.get(&key) {
+                            return ty.clone();
+                        }
+                        self.emit(
+                            Severity::Warning,
+                            *span,
+                            "RY010",
+                            format!("variable `{name}` is not bound in this scope"),
+                        );
+                        return RType::unknown();
+                    }
+                }
                 let bt = self.infer(base, scope);
                 self.infer_index(bt, *kind, args, *span, scope)
             }
@@ -1108,7 +1287,27 @@ impl Checker {
                 // resolves the same way as one inside a return slot.
                 self.function_value_from_literal(params, body, scope, 0)
             }
-            Expr::Block { body, .. } => self.infer_block_expr(body, scope),
+            Expr::Block { body, .. } => {
+                if let Some((name, span)) = embraced_symbol(body) {
+                    let key = format!("{}{name}", crate::nse::DATA_MASK_ENV_PREFIX);
+                    let binding = if scope.get(crate::nse::DATA_MASK_ACTIVE).is_some() {
+                        scope.get(&key)
+                    } else {
+                        scope.get(name)
+                    };
+                    if binding.is_none() {
+                        self.emit(
+                            Severity::Warning,
+                            span,
+                            "RY010",
+                            format!("variable `{name}` is not bound in this scope"),
+                        );
+                    }
+                    RType::unknown()
+                } else {
+                    self.infer_block_expr(body, scope)
+                }
+            }
             Expr::If {
                 cond,
                 then,
@@ -1118,4 +1317,87 @@ impl Checker {
             Expr::Unknown(_) => RType::unknown(),
         }
     }
+
+    fn push_enclosing_formals(&mut self, params: &[Param]) {
+        self.enclosing_formals.push(EnclosingFormals {
+            names: params
+                .iter()
+                .filter(|parameter| parameter.name != "...")
+                .map(|parameter| parameter.name.clone())
+                .collect(),
+            has_dots: params.iter().any(|parameter| parameter.name == "..."),
+        });
+    }
+}
+
+impl Checker {
+    const MAX_FUNCTION_ALIAS_DEPTH: usize = 8;
+
+    fn function_alias_target(&self, value: &Expr, scope: &Scope) -> Option<String> {
+        let Expr::Ident { name, .. } = value else {
+            return None;
+        };
+
+        let mut target = name.as_str();
+        for _ in 0..Self::MAX_FUNCTION_ALIAS_DEPTH {
+            let Some(next) = scope.function_alias(target) else {
+                break;
+            };
+            target = next;
+        }
+
+        self.is_aliasable_function(target)
+            .then(|| target.to_string())
+    }
+
+    fn is_aliasable_function(&self, name: &str) -> bool {
+        matches!(name, "~" | "expression" | "vars")
+            || is_nse_symbol_fn(name)
+            || self.resolve_typeshed_sig(name).is_some()
+            || self
+                .typeshed
+                .globals
+                .ambient_functions
+                .iter()
+                .any(|function| function == name)
+    }
+
+    fn destructuring_operator_in_scope(&self) -> bool {
+        self.loaded
+            .iter()
+            .chain(self.imported_from.values())
+            .any(|package| {
+                self.package_typeshed(package).is_some_and(|typeshed| {
+                    typeshed.functions.contains_key("%<-%")
+                        || typeshed.functions.contains_key("%->%")
+                })
+            })
+    }
+}
+
+fn bind_destructure_pattern(pattern: &Expr, scope: &mut Scope) {
+    match pattern {
+        Expr::Ident { name, .. } => scope.insert(name.clone(), RType::unknown()),
+        Expr::Call { func, args, .. } if matches!(func.as_ref(), Expr::Ident { name, .. } if name == "c") => {
+            for argument in args {
+                bind_destructure_pattern(&argument.value, scope);
+            }
+        }
+        Expr::Call { func, args, .. } if matches!(func.as_ref(), Expr::Ident { name, .. } if name == "%<-%") => {
+            for argument in args {
+                bind_destructure_pattern(&argument.value, scope);
+            }
+        }
+        _ => {}
+    }
+}
+
+pub(crate) fn embraced_symbol(body: &[Stmt]) -> Option<(&str, Span)> {
+    let [Stmt::Expr(Expr::Block { body: inner, .. })] = body else {
+        return None;
+    };
+    let [Stmt::Expr(Expr::Ident { name, span })] = inner.as_slice() else {
+        return None;
+    };
+    Some((name, *span))
 }

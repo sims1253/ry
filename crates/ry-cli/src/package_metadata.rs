@@ -59,6 +59,7 @@ pub(crate) fn resolve<'a>(
     let mut imported_from = HashMap::new();
     let mut s3_methods = HashMap::new();
     let mut load_bindings = HashMap::new();
+    let mut description_cache: HashMap<PathBuf, DescriptionPackages> = HashMap::new();
     let project_attached: HashSet<String> = configured_packages
         .iter()
         .cloned()
@@ -87,6 +88,12 @@ pub(crate) fn resolve<'a>(
             file_bindings.extend(metadata.imported_bindings.iter().cloned());
             file_imported_from.extend(metadata.imported_from.clone());
             file_bindings.extend(metadata.s3_generics.iter().cloned());
+            file_bindings.extend(
+                metadata
+                    .native_routine_prefixes
+                    .iter()
+                    .map(|prefix| format!("\0useDynLib:{prefix}")),
+            );
             file_s3_methods.extend(metadata.s3_methods.iter().cloned());
             file_attached.extend(metadata.imported_packages.iter().cloned());
             if source_package_lazy_data(&root) {
@@ -116,6 +123,32 @@ pub(crate) fn resolve<'a>(
                     &mut serialized_cache,
                 ),
             );
+
+            let relative = Path::new(&file.path).strip_prefix(&root).ok();
+            let description = description_cache
+                .entry(root.clone())
+                .or_insert_with(|| read_description_packages(&root));
+            let testthat = relative.is_some_and(|path| path.starts_with("tests/testthat"));
+            let tinytest = relative.is_some_and(|path| path.starts_with("inst/tinytest"));
+            let interactive = relative.is_some_and(|path| {
+                path.starts_with("data-raw")
+                    || path.starts_with("demo")
+                    || path.starts_with("vignettes")
+            });
+            if testthat {
+                file_attached.insert("testthat".to_string());
+                file_attached.extend(description.depends.iter().cloned());
+                file_attached.extend(description.suggests.iter().cloned());
+                let helpers = testthat_helper_context(&root);
+                file_bindings.extend(helpers.bindings);
+                file_attached.extend(helpers.attached);
+            } else if tinytest {
+                file_attached.insert("tinytest".to_string());
+                file_attached.extend(description.depends.iter().cloned());
+                file_attached.extend(description.suggests.iter().cloned());
+            } else if interactive {
+                file_attached.extend(description.depends.iter().cloned());
+            }
         }
         file_attached.extend(ry_checker::packages::attached_packages(file));
         for package in &file_attached {
@@ -130,6 +163,13 @@ pub(crate) fn resolve<'a>(
                 installed_package_exports(package, &library_roots, preferred_version.as_deref())
             });
             file_bindings.extend(exports.iter().cloned());
+            if let Some(typeshed) = user_stubs
+                .get(package)
+                .or_else(|| ry_typeshed::load_package(package))
+            {
+                file_bindings.extend(typeshed.functions.keys().cloned());
+                file_bindings.extend(typeshed.globals.ambient_functions.iter().cloned());
+            }
         }
         attached.extend(file_attached);
         bindings.insert(file.path.clone(), file_bindings);
@@ -143,6 +183,99 @@ pub(crate) fn resolve<'a>(
         s3_methods,
         load_bindings,
     }
+}
+
+#[derive(Default)]
+struct DescriptionPackages {
+    depends: HashSet<String>,
+    suggests: HashSet<String>,
+}
+
+fn read_description_packages(root: &Path) -> DescriptionPackages {
+    let Ok(text) = std::fs::read_to_string(root.join("DESCRIPTION")) else {
+        return DescriptionPackages::default();
+    };
+    let mut fields: HashMap<String, String> = HashMap::new();
+    let mut current = None::<String>;
+    for line in text.lines() {
+        if line.starts_with([' ', '\t']) {
+            if let Some(name) = &current {
+                fields
+                    .entry(name.clone())
+                    .or_default()
+                    .push_str(line.trim());
+            }
+        } else if let Some((name, value)) = line.split_once(':') {
+            current = Some(name.to_string());
+            fields.insert(name.to_string(), value.trim().to_string());
+        }
+    }
+    let packages = |field: &str| {
+        fields
+            .get(field)
+            .into_iter()
+            .flat_map(|value| value.split(','))
+            .filter_map(|entry| entry.split_whitespace().next())
+            .filter(|name| !name.is_empty() && *name != "R")
+            .map(str::to_string)
+            .collect()
+    };
+    DescriptionPackages {
+        depends: packages("Depends"),
+        suggests: packages("Suggests"),
+    }
+}
+
+#[derive(Default)]
+struct TestthatHelperContext {
+    bindings: HashSet<String>,
+    attached: HashSet<String>,
+}
+
+fn testthat_helper_context(root: &Path) -> TestthatHelperContext {
+    let directory = root.join("tests/testthat");
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return TestthatHelperContext::default();
+    };
+    let mut context = TestthatHelperContext::default();
+    let Ok(mut parser) = ry_core::RParser::new() else {
+        return context;
+    };
+    for path in entries.flatten().map(|entry| entry.path()) {
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !(name.starts_with("helper") || name.starts_with("setup"))
+            || !matches!(
+                path.extension().and_then(|ext| ext.to_str()),
+                Some("R") | Some("r")
+            )
+        {
+            continue;
+        }
+        let Ok(source) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(file) = parser.parse(&path.to_string_lossy(), &source) else {
+            continue;
+        };
+        context
+            .attached
+            .extend(ry_checker::packages::attached_packages(&file));
+        context
+            .bindings
+            .extend(file.stmts.iter().filter_map(|statement| match statement {
+                Stmt::Assign {
+                    target: Expr::Ident { name, .. },
+                    ..
+                } => Some(name.clone()),
+                Stmt::FunctionDef {
+                    name: Some(name), ..
+                } => Some(name.clone()),
+                _ => None,
+            }));
+    }
+    context
 }
 
 fn source_package_name(root: &Path) -> Option<String> {
@@ -284,7 +417,10 @@ fn serialized_bindings_uncached(path: &Path) -> HashSet<String> {
     } else {
         bytes
     };
-    let payload = bytes.strip_prefix(b"RDX2\n").unwrap_or(&bytes);
+    let payload = bytes
+        .strip_prefix(b"RDX2\n")
+        .or_else(|| bytes.strip_prefix(b"RDX3\n"))
+        .unwrap_or(&bytes);
     let Ok(parsed) = rds2rust::read_rds_lazy(payload) else {
         return HashSet::new();
     };
@@ -404,7 +540,7 @@ fn r_package_root(path: &Path) -> Option<PathBuf> {
     let start = if path.is_dir() { path } else { path.parent()? };
     start
         .ancestors()
-        .find(|dir| dir.join("DESCRIPTION").is_file() && dir.join("NAMESPACE").is_file())
+        .find(|dir| dir.join("DESCRIPTION").is_file())
         .map(Path::to_path_buf)
 }
 
@@ -608,7 +744,7 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn inventories_bzip2_rdata_pairlist_tags() {
+    fn inventories_rdx2_and_rdx3_pairlist_tags() {
         let object = rds2rust::RObject::Pairlist(vec![
             rds2rust::PairlistElement {
                 tag: Some(Arc::from("alpha")),
@@ -626,19 +762,23 @@ mod tests {
         flate2::read::GzDecoder::new(gzip.as_slice())
             .read_to_end(&mut serialization)
             .unwrap();
-        let mut rdata = b"RDX2\n".to_vec();
-        rdata.extend(serialization);
-        let mut encoder = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::best());
-        encoder.write_all(&rdata).unwrap();
-        let compressed = encoder.finish().unwrap();
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("objects.rda");
-        std::fs::write(&path, compressed).unwrap();
+        for header in [b"RDX2\n".as_slice(), b"RDX3\n".as_slice()] {
+            let mut rdata = header.to_vec();
+            rdata.extend_from_slice(&serialization);
+            let mut encoder = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::best());
+            encoder.write_all(&rdata).unwrap();
+            let compressed = encoder.finish().unwrap();
+            let path = dir
+                .path()
+                .join(format!("objects-{}.rda", header[3] as char));
+            std::fs::write(&path, compressed).unwrap();
 
-        assert_eq!(
-            serialized_bindings(&path),
-            HashSet::from(["alpha".to_string(), "beta".to_string()])
-        );
+            assert_eq!(
+                serialized_bindings(&path),
+                HashSet::from(["alpha".to_string(), "beta".to_string()])
+            );
+        }
     }
 
     #[test]

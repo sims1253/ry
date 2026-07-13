@@ -61,26 +61,134 @@ impl Checker {
         // with the stripped name. `rsplit_once("::")` handles both
         // `::` and `:::` forms: for `pkg:::fn` it splits at the last
         // `::`, yielding `("pkg:", "fn")`.
-        let lookup_name = name
+        let semantic_name = scope.function_alias(&name).unwrap_or(&name).to_string();
+        let lookup_name = semantic_name
             .rsplit_once("::")
             .map(|(_, n)| n.to_string())
-            .unwrap_or_else(|| name.clone());
+            .unwrap_or_else(|| semantic_name.clone());
+
+        // `foreach(iter = xs, ...) %op% { ... }` evaluates the RHS with
+        // each named iteration argument bound. Operator aliases are common,
+        // so recognize the foreach-shaped LHS rather than a fixed `%do%` or
+        // `%dopar%` spelling. `%:%` chains contribute bindings from every
+        // constituent foreach call.
+        if is_user_infix_name(&semantic_name)
+            && args.len() == 2
+            && let Some(bindings) = foreach_iteration_bindings(&args[0].value)
+        {
+            let _ = self.infer(&args[0].value, scope);
+            let mut local = scope.clone();
+            for binding in bindings {
+                local.insert(binding, RType::unknown());
+            }
+            return self.infer(&args[1].value, &mut local);
+        }
+
+        if let Some(result) =
+            self.infer_injected_call(&semantic_name, &lookup_name, args, scope, span)
+        {
+            return result;
+        }
+
+        if lookup_name == "assign"
+            && args.iter().any(|arg| {
+                arg.name.as_deref() == Some("envir")
+                    && matches!(
+                        &arg.value,
+                        Expr::Call { func, .. }
+                            if matches!(func.as_ref(), Expr::Ident { name, .. } if name == "asNamespace")
+                    )
+            })
+            && let Some(binding) = args.first().and_then(|arg| match &arg.value {
+                Expr::String(name, _) => Some(name.clone()),
+                _ => None,
+            })
+        {
+            for argument in args.iter().skip(1) {
+                self.infer(&argument.value, scope);
+            }
+            scope.insert(binding, RType::unknown());
+            return RType::unknown();
+        }
+
+        // `sum(x > 0)` is the idiomatic R way to count matches, so `sum`
+        // is deliberately excluded from this mis-parenthesization family.
+        if matches!(lookup_name.as_str(), "length" | "nchar" | "abs")
+            && let Some(Expr::BinOp { op, span, .. }) = args.first().map(|arg| &arg.value)
+            && matches!(
+                op,
+                BinOpKind::Lt
+                    | BinOpKind::Le
+                    | BinOpKind::Gt
+                    | BinOpKind::Ge
+                    | BinOpKind::Eq
+                    | BinOpKind::Ne
+            )
+        {
+            self.emit(
+                Severity::Warning,
+                *span,
+                "RY093",
+                format!(
+                    "comparison is inside `{lookup_name}()`; compare `{lookup_name}(x)` instead"
+                ),
+            );
+        }
+
+        // `hasArg` captures its argument name rather than evaluating it.
+        // Model that quoting here so a non-formal does not also produce RY010.
+        if lookup_name == "hasArg" {
+            if let Some(name) = args.first().and_then(|argument| match &argument.value {
+                Expr::Ident { name, .. } | Expr::String(name, _) => Some(name),
+                _ => None,
+            }) && let Some(formals) = self.enclosing_formals.last()
+                && !formals.names.contains(name)
+            {
+                let message = if formals.has_dots {
+                    format!(
+                        "`hasArg({name})` names a non-formal; a matching argument in `...` does not bind `{name}` in the function body"
+                    )
+                } else {
+                    format!("`hasArg({name})` names a parameter that is not a formal")
+                };
+                self.emit(Severity::Warning, span, "RY096", message);
+            }
+            return RType::scalar(Mode::Logical);
+        }
+
+        if matches!(lookup_name.as_str(), "sprintf" | "gettextf")
+            && let Some(Expr::String(format, format_span)) = args.first().map(|arg| &arg.value)
+            && let Some(required) = printf_argument_count(format)
+            && args.len().saturating_sub(1) < required
+        {
+            self.emit(
+                Severity::Warning,
+                *format_span,
+                "RY094",
+                format!(
+                    "format string requires {required} value argument(s), but {} provided",
+                    args.len().saturating_sub(1)
+                ),
+            );
+        }
 
         // NSE-opaque functions whose arguments are not regular values:
         // `library(foo)` and `require(foo)` take a package name as a bare
         // symbol, not an expression. Inferring their args would trigger
-        // spurious RY010 on every `library(magrittr)` etc. Return NULL
-        // (these functions return invisible(NULL) at runtime). We ALSO
-        // record the package name into `self.loaded` so the dplyr NSE
-        // gating (see `infer_nse_call`) can treat dplyr/tidyverse as in
-        // scope after a `library(dplyr)` / `library(tidyverse)`.
-        if name == "library" || name == "require" {
+        // spurious RY010 on every `library(magrittr)` etc. We ALSO record
+        // the package name into `self.loaded` so the dplyr NSE gating can
+        // treat dplyr/tidyverse as in scope after either call.
+        if semantic_name == "library" || semantic_name == "require" {
             if let Some(first) = args.first() {
                 if let Expr::Ident { name: pkg, .. } = &first.value {
                     Arc::make_mut(&mut self.loaded).insert(pkg.clone());
                 }
             }
-            return RType::new(Mode::Null, Length::Zero);
+            return if semantic_name == "require" {
+                RType::new(Mode::Logical, Length::One)
+            } else {
+                RType::new(Mode::Null, Length::Zero)
+            };
         }
 
         // Formula construction and expression-vector constructors quote
@@ -94,7 +202,7 @@ impl Checker {
         // environment. Bare names and string literals are data identifiers,
         // not reads of existing variables, and become bindings for following
         // statements. Package/control arguments are not introduced.
-        if name == "data" {
+        if semantic_name == "data" {
             for argument in args {
                 if argument.name.is_some() {
                     let _ = self.infer(&argument.value, scope);
@@ -113,7 +221,7 @@ impl Checker {
             return RType::new(Mode::Character, Length::Unknown);
         }
 
-        if name == "load" {
+        if semantic_name == "load" {
             for argument in args {
                 let _ = self.infer(&argument.value, scope);
             }
@@ -138,7 +246,7 @@ impl Checker {
         // normally would fire a spurious RY010. Skip RY010 on a
         // bare-symbol first arg, infer the remaining args normally, and
         // return opaque (the return type depends on the native routine).
-        if is_ffi_primitive(&name) {
+        if is_ffi_primitive(&semantic_name) {
             for (i, a) in args.iter().enumerate() {
                 if i == 0 {
                     // The entry-point symbol: a bare identifier or
@@ -158,7 +266,7 @@ impl Checker {
         // used in metaprogramming and NSE contexts where the argument
         // is a name, not a value. We return opaque without evaluating
         // the args as expressions, suppressing spurious RY010.
-        if is_nse_symbol_fn(&name) {
+        if is_nse_symbol_fn(&lookup_name) {
             return RType::unknown();
         }
 
@@ -166,7 +274,7 @@ impl Checker {
         // The result type is the join of all alternatives. Both numeric
         // switch (`switch(1, "a", "b")`) and named switch
         // (`switch(x, a = 1, b = 2)`) are supported.
-        if name == "switch" {
+        if semantic_name == "switch" {
             return self.infer_switch_call(args, scope, span);
         }
 
@@ -174,7 +282,7 @@ impl Checker {
         // The result type is the join of the main expression and all
         // handler return types. Handlers are named arguments whose
         // values are functions (error = function(e) ...).
-        if name == "tryCatch" {
+        if semantic_name == "tryCatch" {
             return self.infer_trycatch_call(args, scope, span);
         }
 
@@ -184,13 +292,13 @@ impl Checker {
         //   * `class = c("a", "b", ...)` attaches a class vector.
         // Non-literal or unparseable forms fall through to opaque
         // inference with `ClassVector::unknown()` so RY050 stays quiet.
-        if name == "structure" {
+        if semantic_name == "structure" {
             return self.infer_structure_call(args, scope, span);
         }
         // `factor(x)` returns an integer vector with class "factor".
         // (And often also "ordered" if `ordered = TRUE`, but we keep v1
         // to the base case.)
-        if name == "factor" {
+        if semantic_name == "factor" {
             // Infer args so unbound-variable diagnostics still fire.
             for a in args {
                 let _ = self.infer(&a.value, scope);
@@ -198,10 +306,24 @@ impl Checker {
             return RType::new(Mode::Integer, Length::Unknown)
                 .with_class(ClassVector::single("factor"));
         }
+        if lookup_name == "new" {
+            for argument in args.iter().skip(1) {
+                let _ = self.infer(&argument.value, scope);
+            }
+            return args
+                .first()
+                .and_then(|argument| match &argument.value {
+                    Expr::String(class, _) => {
+                        Some(RType::unknown().with_class(ClassVector::single(class)))
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(RType::unknown);
+        }
 
         // The default two-argument form assigns into the current
         // environment. A literal name makes that binding fully static.
-        if name == "assign" && args.len() == 2 {
+        if semantic_name == "assign" && args.len() == 2 {
             let name = match &args[0].value {
                 Expr::String(name, _) => Some(name.clone()),
                 _ => None,
@@ -223,7 +345,7 @@ impl Checker {
         // Returns `Some(t)` when the call was handled; the caller uses
         // the returned type verbatim. Returns `None` to fall through to
         // the regular arg-inference path.
-        if let Some(t) = self.infer_schema_call(&name, args, scope, span) {
+        if let Some(t) = self.infer_schema_call(&semantic_name, args, scope, span) {
             return t;
         }
 
@@ -231,13 +353,39 @@ impl Checker {
         // evaluation modes from the typeshed. Package APIs can opt into
         // quoted symbols, data masks, or tidy-select without adding their
         // names to the checker engine.
-        let resolved_sig = self.resolve_typeshed_sig(&name);
+        let inherited_sig = self.resolve_user_s3_inherited_sig(&lookup_name);
+        let inherited_s3_metadata = inherited_sig.is_some();
+        let resolved_sig = self.resolve_typeshed_sig(&semantic_name).or(inherited_sig);
+        let user_function = self.fn_table.fns.get(&lookup_name).cloned();
+        let user_argument_matches = user_function.as_ref().map(|function| {
+            let names: Vec<&str> = function
+                .params
+                .iter()
+                .map(|parameter| parameter.name.as_str())
+                .collect();
+            match_arguments(&names, args)
+        });
         let mut arg_types: Vec<RType> = Vec::with_capacity(args.len());
         for (index, a) in args.iter().enumerate() {
-            if let Some(mode) = resolved_sig
+            let declared_mode = resolved_sig
                 .as_ref()
-                .and_then(|sig| argument_eval_mode(sig, args, index))
-            {
+                .and_then(|signature| argument_eval_mode(signature, args, index));
+            let user_dispatch = inherited_s3_metadata
+                || user_function.is_some()
+                || arg_types
+                    .first()
+                    .is_some_and(|first| self.resolves_user_s3_dispatch(&lookup_name, first));
+            let is_defused = user_argument_matches
+                .as_ref()
+                .and_then(|matches| matches.param_for_arg[index].or(matches.dots))
+                .and_then(|parameter| user_function.as_ref()?.params.get(parameter))
+                .is_some_and(|parameter| parameter.defused);
+            if is_defused && declared_mode.is_none_or(|mode| matches!(mode, EvalMode::Normal)) {
+                let mut local = self.dplyr_data_mask_scope(scope, &RType::unknown());
+                arg_types.push(self.infer(&a.value, &mut local));
+                continue;
+            }
+            if let Some(mode) = declared_mode {
                 let inferred = match mode {
                     EvalMode::Normal => self.infer(&a.value, scope),
                     EvalMode::QuotedSymbol => {
@@ -251,11 +399,18 @@ impl Checker {
                     EvalMode::DataMask => {
                         let data = arg_types.first().cloned().unwrap_or_else(RType::unknown);
                         let mut local = self.dplyr_data_mask_scope(scope, &data);
+                        local.insert(".", RType::unknown());
+                        if user_dispatch {
+                            local = local.with_unknown_data_mask();
+                        }
                         self.infer(&a.value, &mut local)
                     }
                     EvalMode::TidySelect => {
                         let data = arg_types.first().cloned().unwrap_or_else(RType::unknown);
                         let mut local = self.dplyr_data_mask_scope(scope, &data);
+                        if user_dispatch {
+                            local = local.with_unknown_data_mask();
+                        }
                         self.infer_tidyselect_expr(&a.value, &mut local)
                     }
                 };
@@ -266,10 +421,30 @@ impl Checker {
         }
         // Validate ordinary R argument matching only for signatures whose
         // origin is known. A user definition shadows a same-named stub.
-        if let Some(user_function) = self.fn_table.fns.get(&lookup_name).cloned() {
-            self.check_user_call_arguments(&lookup_name, &user_function, args, span);
-        } else if let Some(signature) = resolved_sig.as_ref() {
+        if self.validate_user_call_arguments {
+            if let Some(user_function) = user_function.as_ref() {
+                self.check_user_call_arguments(&lookup_name, user_function, args, span);
+            } else if let Some(signature) = resolved_sig.as_ref() {
+                self.check_typeshed_call_arguments(&lookup_name, signature, args, &arg_types, span);
+            }
+        } else if !self.fn_table.fns.contains_key(&lookup_name)
+            && let Some(signature) = resolved_sig.as_ref()
+        {
             self.check_typeshed_call_arguments(&lookup_name, signature, args, &arg_types, span);
+        }
+        let locally_shadows_stub = !name.contains("::")
+            && scope.get(&name).is_some()
+            && scope.function_alias(&name).is_none();
+        if !locally_shadows_stub
+            && (name.contains("::") || user_function.is_none())
+            && resolved_sig.as_ref().is_some_and(|signature| {
+                matches!(signature.scope_effect, Some(ScopeEffect::UnknownBindings))
+            })
+        {
+            // The resolved function can add names that static analysis cannot
+            // enumerate (for example base::attach() or Rcpp::sourceCpp()).
+            // The marker is inherited by scopes cloned after this call.
+            scope.mark_search_path_unknown();
         }
         if let Some(target) = assertion_call_target(&lookup_name) {
             if let Some(Expr::Ident { name: var, .. }) = args.first().map(|a| &a.value) {
@@ -338,10 +513,16 @@ impl Checker {
         }
 
         // Built-in: `c(...)` concatenates and produces the common mode.
-        if name == "c" {
-            return self.infer_c(args, &arg_types, span);
+        if lookup_name == "c" {
+            let result = self.infer_c(args, &arg_types, span);
+            if let Some(schema) = build_named_schema(&arg_types, args)
+                .filter(|_| args.iter().any(|argument| argument.name.is_some()))
+            {
+                return result.with_columns(Arc::new(schema));
+            }
+            return result;
         }
-        if name == "list" {
+        if lookup_name == "list" {
             return self.infer_list(&arg_types, args, span);
         }
         // `data.frame(...)`: a record constructor. Same column-schema
@@ -349,8 +530,40 @@ impl Checker {
         // "data.frame" and column lengths are coerced to a common
         // length (R recycles; for v1 we take the max of the known
         // lengths).
-        if name == "data.frame" {
+        if lookup_name == "data.frame" {
+            if args.len() == 1
+                && args[0].name.is_none()
+                && let Some(schema) = arg_types[0].columns.clone()
+            {
+                return RType::new(Mode::List, Length::Known(schema.columns.len()))
+                    .with_class(ClassVector::single("data.frame"))
+                    .with_columns(schema);
+            }
             return self.infer_data_frame(&arg_types, args, span);
+        }
+
+        if matches!(lookup_name.as_str(), "t") {
+            return arg_types.first().cloned().unwrap_or_else(RType::unknown);
+        }
+
+        if matches!(lookup_name.as_str(), "as.data.frame")
+            && let Some(input) = arg_types.first()
+            && let Some(schema) = input.columns.clone()
+        {
+            return RType::new(Mode::List, Length::Known(schema.columns.len()))
+                .with_class(ClassVector::single("data.frame"))
+                .with_columns(schema);
+        }
+
+        if let Some(rt) = self.try_s4_dispatch(&lookup_name, &arg_types) {
+            return rt;
+        }
+
+        if let Some(rt) = arg_types
+            .first()
+            .and_then(|first| self.user_s3_dispatch_return(&lookup_name, first))
+        {
+            return rt;
         }
 
         // S3 dispatch: when a known generic is called with a classed
@@ -404,9 +617,10 @@ impl Checker {
             .as_ref()
             .is_some_and(|signature| signature.higher_order.is_some())
         {
-            self.walk_callback_for_diagnostics(&name, args, &arg_types, scope);
+            self.walk_callback_for_diagnostics(&lookup_name, args, &arg_types, scope);
         }
-        if let Some(rt) = self.infer_higher_order_call(&name, args, &arg_types, scope, span) {
+        if let Some(rt) = self.infer_higher_order_call(&lookup_name, args, &arg_types, scope, span)
+        {
             return rt;
         }
 
@@ -428,13 +642,13 @@ impl Checker {
         // FnTable lookup so a user-defined `rep`/`seq` still wins, and
         // BEFORE the typeshed so the precise length is preferred over
         // the conservative `x_times` / `unknown` spec.
-        if name == "vector" {
+        if lookup_name == "vector" {
             return self.infer_vector(args);
         }
-        if name == "rep" {
+        if lookup_name == "rep" {
             return self.infer_rep(args, &arg_types, span);
         }
-        if name == "seq" || name == "seq.int" {
+        if lookup_name == "seq" || lookup_name == "seq.int" {
             return self.infer_seq(args, &arg_types, span);
         }
 
@@ -451,6 +665,15 @@ impl Checker {
         RType::unknown()
     }
 
+    pub(crate) fn try_s4_dispatch(&self, generic: &str, arg_types: &[RType]) -> Option<RType> {
+        let class = arg_types.first()?.class.first()?;
+        let slot = self
+            .fn_table
+            .s4_methods
+            .get(&(generic.to_string(), class.to_string()))?;
+        Some(self.return_slots.get(*slot))
+    }
+
     // Infer the type of `structure(x, class = "...")`. We model only
     // the literal class forms; everything else returns the first
     // argument's type with `ClassVector::unknown()` (so we neither lie
@@ -462,6 +685,103 @@ impl Checker {
     // `[("a", integer<1>)]` and whose class is `["foo"]`. This lets
     // `$a` resolve correctly on user-defined classes built on top of
     // a list-shaped payload.
+    fn infer_injected_call(
+        &mut self,
+        name: &str,
+        lookup_name: &str,
+        args: &[Arg],
+        scope: &mut Scope,
+        span: Span,
+    ) -> Option<RType> {
+        let signature = self.resolve_typeshed_sig(name).or_else(|| {
+            self.available_package_names()
+                .into_iter()
+                .find_map(|package| {
+                    self.package_typeshed(package)
+                        .and_then(|typeshed| typeshed.functions.get(lookup_name))
+                        .filter(|signature| !signature.injects.is_empty())
+                        .cloned()
+                })
+        })?;
+        if signature.injects.is_empty() {
+            return None;
+        }
+        let params: Vec<&str> = signature.param_names().collect();
+        let matches = match_arguments(&params, args);
+        let mut arg_types = Vec::with_capacity(args.len());
+        for (index, argument) in args.iter().enumerate() {
+            let parameter = matches.param_for_arg[index].and_then(|index| params.get(index));
+            let specs: Vec<_> = signature
+                .injects
+                .iter()
+                .filter(|spec| {
+                    parameter
+                        .is_some_and(|parameter| spec.into.iter().any(|into| into == parameter))
+                })
+                .collect();
+            if specs.is_empty() {
+                arg_types.push(self.infer(&argument.value, scope));
+                continue;
+            }
+            let mut child = scope.clone();
+            let injects_fixed_names = specs.iter().any(|spec| !spec.names.is_empty());
+            for spec in specs {
+                for source in &spec.strings_from {
+                    for (source_index, source_argument) in args.iter().enumerate() {
+                        let source_parameter =
+                            matches.param_for_arg[source_index].and_then(|index| params.get(index));
+                        if source_parameter.is_some_and(|parameter| *parameter == source) {
+                            for binding in injected_string_bindings(&source_argument.value) {
+                                child.insert(binding, RType::unknown());
+                            }
+                        }
+                    }
+                }
+                for binding in &spec.names {
+                    child.insert(binding.clone(), RType::unknown());
+                }
+            }
+            arg_types.push(if injects_fixed_names {
+                self.infer_injected_expr(&argument.value, &mut child)
+            } else {
+                self.infer(&argument.value, &mut child)
+            });
+        }
+        self.check_typeshed_call_arguments(lookup_name, &signature, args, &arg_types, span);
+        Some(self.apply_sig(lookup_name, &signature, &arg_types, args, span))
+    }
+
+    fn infer_injected_expr(&mut self, expr: &Expr, scope: &mut Scope) -> RType {
+        match expr {
+            Expr::Function { params, body, .. } => {
+                let mut inner = scope.clone();
+                for parameter in params {
+                    inner.insert(parameter.name.clone(), RType::unknown());
+                }
+                for name in assigned_names_in_body(body) {
+                    inner.insert(name, RType::unknown());
+                }
+                for statement in body {
+                    self.walk_stmt(statement, &mut inner, None);
+                }
+                RType::scalar(Mode::Function)
+            }
+            Expr::Call { args, .. } => {
+                for argument in args {
+                    self.infer_injected_expr(&argument.value, scope);
+                }
+                RType::unknown()
+            }
+            Expr::Block { body, .. } => {
+                for statement in body {
+                    self.walk_stmt(statement, scope, None);
+                }
+                RType::unknown()
+            }
+            _ => self.infer(expr, scope),
+        }
+    }
+
     pub(crate) fn infer_structure_call(
         &mut self,
         args: &[Arg],
@@ -526,4 +846,69 @@ impl Checker {
     //
     // The augmented scope is local to this call: column bindings must
     // NOT leak back into the enclosing scope (we operate on a clone).
+}
+
+fn is_user_infix_name(name: &str) -> bool {
+    name.len() > 2 && name.starts_with('%') && name.ends_with('%')
+}
+
+fn foreach_iteration_bindings(expression: &Expr) -> Option<Vec<String>> {
+    let Expr::Call { func, args, .. } = expression else {
+        return None;
+    };
+    match ident_name(func)? {
+        "foreach" => Some(
+            args.iter()
+                .filter_map(|argument| argument.name.as_ref())
+                .filter(|name| !name.starts_with('.'))
+                .cloned()
+                .collect(),
+        ),
+        "%:%" if args.len() == 2 => {
+            let mut bindings = foreach_iteration_bindings(&args[0].value)?;
+            bindings.extend(foreach_iteration_bindings(&args[1].value)?);
+            Some(bindings)
+        }
+        _ => None,
+    }
+}
+
+fn injected_string_bindings(expression: &Expr) -> Vec<String> {
+    match expression {
+        Expr::String(name, _) => vec![name.clone()],
+        Expr::Call { func, args, .. } if matches!(func.as_ref(), Expr::Ident { name, .. } if name == "c") => {
+            args.iter()
+                .flat_map(|argument| injected_string_bindings(&argument.value))
+                .collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn printf_argument_count(format: &str) -> Option<usize> {
+    let bytes = format.as_bytes();
+    let mut index = 0;
+    let mut count = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            index += 1;
+            continue;
+        }
+        index += 1;
+        if bytes.get(index) == Some(&b'%') {
+            index += 1;
+            continue;
+        }
+        while let Some(byte) = bytes.get(index).copied() {
+            if byte == b'*' || byte == b'$' {
+                return None;
+            }
+            index += 1;
+            if byte.is_ascii_alphabetic() {
+                count += 1;
+                break;
+            }
+        }
+    }
+    Some(count)
 }

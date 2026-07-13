@@ -2,7 +2,13 @@
 
 All notable changes to ry are documented in this file.
 
-## [Unreleased]
+## [0.4.0] - 2026-07-13
+
+Precision release driven by the top-300 CRAN audit: the corpus total fell
+from ~23,300 diagnostics to ~6,500 (-72%) while every confirmed real bug
+in the audit's regression list still surfaces, and the new rule family
+found previously unknown bugs (scales `!length(x) == 1` guards among
+them).
 
 ### Added
 
@@ -18,6 +24,87 @@ All notable changes to ry are documented in this file.
   same workspace configuration.
 - The embedded typeshed is now a vendored snapshot of the standalone
   `r-typeshed` repository, with schema-version validation and source metadata.
+- New mis-parenthesization rule family: `RY093` (comparison inside
+  `length()`/`nchar()`/`abs()`, also detected inside `&&`/`||` operands),
+  `RY095` (`!x == y` negation-comparison precedence), and `RY096`
+  (`hasArg()` naming a non-formal of the enclosing function).
+- `RY094`: printf-family (`sprintf`/`gettextf`) literal format strings are
+  checked against the supplied argument count.
+- `RY097`: files whose top-level statements are mostly unparseable (Ratfor
+  sources, broken fixtures) collapse into a single info diagnostic instead
+  of hundreds of spurious errors.
+- `RY098`: a parameter default referencing a body-local is flagged when an
+  execution path can force the default before the local is assigned;
+  the idiomatic late-bound default stays silent.
+- Confidence tiers: every diagnostic carries `high`/`medium`/`low`
+  confidence, output is ranked by tier, diagnostics under `tests/`,
+  `data-raw/`, `demo/`, `vignettes/`, and `inst/` are demoted one tier, and
+  `--min-confidence` filters both output and exit code. A symbol used in
+  value position that only resolves to a function from another namespace is
+  reported at high confidence with the resolution target in the message.
+- Baseline workflow for incremental adoption: `ry check --write-baseline`
+  snapshots current diagnostics (line-number-free matching) and
+  `--baseline` / the `baseline` config key subtracts them from later runs.
+- Package-aware scan contexts: `tests/testthat/` files see the package's
+  own namespace, `testthat`, DESCRIPTION `Depends`/`Suggests`, and
+  `helper-*.R`/`setup-*.R` bindings; `data-raw/`, `demo/`, and `vignettes/`
+  attach `Depends`; `.Rbuildignore` patterns (Perl regexes) are respected
+  without ever excluding `R/` or `tests/`.
+- NSE completion: rlang `{{ }}` embrace is recognized as a mask escape
+  (typos inside it still flagged), and the `.data$col` / `.data[["col"]]` /
+  `.env$var` pronouns resolve against the mask schema or lexical scope.
+- Minimum-viable S4 modeling: in-package `setClass`/`setGeneric`/
+  `setMethod` are collected across files and dispatched on receiver class,
+  `@` slot access is modeled, and vector names survive `t()` and
+  `data.frame()` construction.
+- Scope and flow fixes: `inherits(x, "cls")` guards narrow types,
+  `useDynLib(.fixes=)` prefixes resolve native-routine symbols, R6/S7
+  method bodies see `self`/`private`/`super`, top-level
+  `assign(..., envir = asNamespace(...))` binds, and replacement-function
+  assignments (`dimnames<-` and friends) keep the target bound.
+- User-defined infix operators (`%op%`) preserve their operands in the AST;
+  zeallot/future `%<-%`/`%->%` destructuring introduces its pattern
+  bindings when a package defining the operator is in scope.
+- Data-driven semantics via new `injects` stub metadata: `withr::with_*`
+  path injection and R6/S7 method-environment bindings now come from the
+  typeshed instead of hardcoded checker logic.
+- Derived NSE for user-defined functions: a parameter whose first use is a
+  defusing call (`enquo`, `enexpr`, `ensym`, `quo`, `substitute`,
+  `match.call`, ...) marks call-site arguments as unevaluated, so
+  arrow-style test helpers (`compare_dplyr_binding(.input %>% ...)`) stop
+  producing unbound-variable noise.
+- testthat helper/setup files now propagate their `library()`/`require()`
+  attachments (not just bindings) to test files, and the helper filename
+  match covers all `helper*`/`setup*` prefixes.
+- The data-mask gate is fully data-driven: any loaded package whose stub
+  declares `eval` metadata gets NSE treatment (rlist, patrick, bench, ...),
+  and user-defined S3 methods inherit the eval metadata of a stubbed
+  generic with the same name (dtplyr/dbplyr verb methods).
+- `foreach(i = ..., p = ...) %do%/%dopar%/%op% { ... }` binds the loop
+  variables in the body regardless of the operator alias used.
+- `attach(x)` marks the scope's search path as unanalyzable, silencing
+  unbound-variable diagnostics for legacy attach-style scripts.
+- Type narrowing applies to expression-position `if` (e.g.
+  `x <- if (is.function(f)) f(1) else f`).
+- Tidyverse NSE metadata is now GENERATED from installed-package Rd docs
+  (`gen_nse_metadata.R` in r-typeshed reads the `<data-masking>` /
+  `<tidy-select>` argument markers), giving full dplyr/tidyr coverage and
+  a new tidyselect stub; dynamically registered S3 methods inherit their
+  generic's NSE metadata.
+- `.` binds inside data-masked arguments (dplyr `do()`, pipe idioms), for
+  both `%>%` and the native `|>` pipe.
+- Defused-parameter derivation covers `{{ }}` embrace usage and exclusive
+  `enquos(...)`-style `...` defusal in user functions.
+- Inside a data-masked argument with an unknown schema, lexically resolved
+  symbols infer as opaque — mask columns may shadow them, so their lexical
+  types no longer drive arithmetic/comparison diagnostics.
+- Rcpp modeled as a first-class package: `sourceCpp()` carries the new
+  `scope_effect: unknown_bindings` stub metadata (compiled exports are
+  unknowable), `cppFunction()` returns a function, and `base::attach` now
+  uses the same data-driven mechanism instead of a hardcoded recognizer.
+- tinytest scan context: files under `inst/tinytest/` see the package's
+  own namespace, `tinytest`, and DESCRIPTION Depends/Suggests, mirroring
+  the testthat context.
 
 ## [0.3.0] - 2026-07-11
 

@@ -11,6 +11,7 @@ use clap::{
     ArgMatches, CommandFactory, FromArgMatches, Parser as ClapParser, Subcommand, ValueEnum,
 };
 use miette::{IntoDiagnostic, Result};
+use serde::{Deserialize, Serialize};
 
 mod config;
 mod package_metadata;
@@ -20,6 +21,23 @@ enum ColorChoice {
     Auto,
     Always,
     Never,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum ConfidenceChoice {
+    Low,
+    Medium,
+    High,
+}
+
+impl From<ConfidenceChoice> for ry_checker::Confidence {
+    fn from(value: ConfidenceChoice) -> Self {
+        match value {
+            ConfidenceChoice::Low => Self::Low,
+            ConfidenceChoice::Medium => Self::Medium,
+            ConfidenceChoice::High => Self::High,
+        }
+    }
 }
 
 impl ColorChoice {
@@ -112,6 +130,15 @@ enum Cmd {
         /// `--statistics`). Useful for corpus research and triage.
         #[arg(long)]
         statistics: bool,
+        /// Write the current diagnostics as a line-number-free JSON baseline.
+        #[arg(long, value_name = "PATH", conflicts_with = "baseline")]
+        write_baseline: Option<PathBuf>,
+        /// Suppress diagnostics matching entries in this baseline file.
+        #[arg(long, value_name = "PATH")]
+        baseline: Option<PathBuf>,
+        /// Only show diagnostics at or above this confidence tier.
+        #[arg(long, value_enum, default_value_t = ConfidenceChoice::Low)]
+        min_confidence: ConfidenceChoice,
     },
     /// Start the language server. Speaks the Language Server Protocol
     /// (LSP) over stdio, publishing type-check diagnostics for open R
@@ -210,6 +237,9 @@ fn main() -> Result<ExitCode> {
             color: ColorChoice::Auto,
             watch: false,
             statistics: false,
+            write_baseline: None,
+            baseline: None,
+            min_confidence: ConfidenceChoice::Low,
         },
     };
 
@@ -231,6 +261,9 @@ fn main() -> Result<ExitCode> {
             color,
             watch,
             statistics,
+            write_baseline,
+            baseline,
+            min_confidence,
         } => run_check(
             paths,
             error,
@@ -246,6 +279,9 @@ fn main() -> Result<ExitCode> {
             check_matches,
             watch,
             statistics,
+            write_baseline,
+            baseline,
+            min_confidence,
         ),
         Cmd::Server => {
             // The LSP server reads JSON-RPC from stdin and writes
@@ -341,6 +377,185 @@ fn flag_set(matches: Option<&ArgMatches>, id: &str) -> bool {
     matches.and_then(|m| m.value_source(id)) == Some(ValueSource::CommandLine)
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct Baseline {
+    version: u32,
+    entries: Vec<BaselineEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+struct BaselineEntry {
+    path: String,
+    code: String,
+    message: String,
+    count: usize,
+}
+
+fn load_baseline(path: &std::path::Path) -> Result<Baseline> {
+    let contents = std::fs::read_to_string(path)
+        .map_err(|error| miette::miette!("could not read baseline {}: {error}", path.display()))?;
+    let baseline: Baseline = serde_json::from_str(&contents)
+        .map_err(|error| miette::miette!("could not parse baseline {}: {error}", path.display()))?;
+    if baseline.version != 1 {
+        return Err(miette::miette!(
+            "unsupported baseline version {} in {}; expected 1",
+            baseline.version,
+            path.display()
+        ));
+    }
+    Ok(baseline)
+}
+
+fn diagnostic_path(path: &str, repo_root: Option<&std::path::Path>) -> String {
+    let path = std::path::Path::new(path);
+    let root = repo_root
+        .map(std::path::Path::to_path_buf)
+        .or_else(|| std::env::current_dir().ok());
+    root.as_deref()
+        .and_then(|root| path.strip_prefix(root).ok())
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/")
+}
+
+fn write_baseline_file(
+    path: &std::path::Path,
+    diagnostics: &[ry_checker::Diagnostic],
+    repo_root: Option<&std::path::Path>,
+) -> Result<()> {
+    let mut counts = std::collections::BTreeMap::new();
+    for diagnostic in diagnostics {
+        *counts
+            .entry((
+                diagnostic_path(&diagnostic.path, repo_root),
+                diagnostic.code.to_string(),
+                diagnostic.message.clone(),
+            ))
+            .or_insert(0usize) += 1;
+    }
+    let entries = counts
+        .into_iter()
+        .map(|((path, code, message), count)| BaselineEntry {
+            path,
+            code,
+            message,
+            count,
+        })
+        .collect();
+    let baseline = Baseline {
+        version: 1,
+        entries,
+    };
+    let contents = serde_json::to_string_pretty(&baseline).into_diagnostic()?;
+    std::fs::write(path, format!("{contents}\n"))
+        .map_err(|error| miette::miette!("could not write baseline {}: {error}", path.display()))
+}
+
+fn subtract_baseline(
+    diagnostics: &mut Vec<ry_checker::Diagnostic>,
+    baseline: &Baseline,
+    repo_root: Option<&std::path::Path>,
+) {
+    let mut remaining: HashMap<(String, String, String), usize> = baseline
+        .entries
+        .iter()
+        .map(|entry| {
+            (
+                (
+                    entry.path.clone(),
+                    entry.code.clone(),
+                    entry.message.clone(),
+                ),
+                entry.count,
+            )
+        })
+        .collect();
+    diagnostics.retain(|diagnostic| {
+        let path = diagnostic_path(&diagnostic.path, repo_root);
+        let key = (
+            path,
+            diagnostic.code.to_string(),
+            diagnostic.message.clone(),
+        );
+        match remaining.get_mut(&key) {
+            Some(count) if *count > 0 => {
+                *count -= 1;
+                false
+            }
+            _ => true,
+        }
+    });
+}
+
+fn demote_non_source_paths(
+    diagnostics: &mut [ry_checker::Diagnostic],
+    repo_root: Option<&std::path::Path>,
+) {
+    const DEMOTED: [&str; 5] = ["tests", "data-raw", "demo", "vignettes", "inst"];
+    for diagnostic in diagnostics {
+        let path = std::path::Path::new(&diagnostic.path);
+        let absolute = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            repo_root
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .join(path)
+        };
+        let mut package_root = absolute.parent();
+        while let Some(root) = package_root {
+            if root.join("DESCRIPTION").is_file() {
+                if let Ok(relative) = absolute.strip_prefix(root) {
+                    if relative.components().any(|component| {
+                        component
+                            .as_os_str()
+                            .to_str()
+                            .is_some_and(|name| DEMOTED.contains(&name))
+                    }) {
+                        diagnostic.confidence = diagnostic.confidence.demote();
+                    }
+                }
+                break;
+            }
+            package_root = root.parent();
+        }
+    }
+}
+
+fn render_diagnostics(
+    diagnostics: &[ry_checker::Diagnostic],
+    format: ry_checker::format::OutputFormat,
+    srcs: &HashMap<String, String>,
+    color: bool,
+) -> String {
+    if matches!(format, ry_checker::format::OutputFormat::Json) {
+        let rendered = ry_checker::format::render_with_color(diagnostics, format, srcs, color);
+        let Ok(mut values) = serde_json::from_str::<Vec<serde_json::Value>>(&rendered) else {
+            return rendered;
+        };
+        for (value, diagnostic) in values.iter_mut().zip(diagnostics) {
+            value["confidence"] = serde_json::json!(diagnostic.confidence.as_str());
+        }
+        return serde_json::to_string_pretty(&values).unwrap_or(rendered);
+    }
+    if matches!(
+        format,
+        ry_checker::format::OutputFormat::Full | ry_checker::format::OutputFormat::Concise
+    ) {
+        let mut tagged = diagnostics.to_vec();
+        for diagnostic in &mut tagged {
+            if diagnostic.confidence != ry_checker::Confidence::Medium {
+                diagnostic.message = format!(
+                    "[{}] {}",
+                    diagnostic.confidence.as_str(),
+                    diagnostic.message
+                );
+            }
+        }
+        return ry_checker::format::render_with_color(&tagged, format, srcs, color);
+    }
+    ry_checker::format::render_with_color(diagnostics, format, srcs, color)
+}
+
 /// Compute the path of `file` relative to `root`, as a forward-slash
 /// string suitable for matching against `ry.toml` `exclude` patterns.
 ///
@@ -387,6 +602,9 @@ fn run_check(
     check_matches: Option<&ArgMatches>,
     watch: bool,
     statistics: bool,
+    write_baseline: Option<PathBuf>,
+    baseline: Option<PathBuf>,
+    min_confidence: ConfidenceChoice,
 ) -> Result<ExitCode> {
     // Determine the search start directory for config discovery. If the
     // user passed a path, anchor discovery at the first path's parent
@@ -430,18 +648,32 @@ fn run_check(
     let cli_error_on_warning = flag_set(m, "error_on_warning").then_some(error_on_warning);
     let cli_exit_zero = flag_set(m, "exit_zero").then_some(exit_zero);
     let cli_output_format = flag_set(m, "output_format").then_some(output_format.to_string());
+    let baseline_from_cli = flag_set(m, "baseline");
 
     let cfg = base_cfg.merge_cli(
         error,
         warn,
         ignore,
         typeshed,
+        baseline,
         cli_error_on_warning,
         cli_exit_zero,
         cli_output_format,
         cli_verbose,
         cli_quiet,
     );
+
+    let baseline = match cfg.baseline.as_deref() {
+        Some(path) => match load_baseline(path) {
+            Ok(value) => Some(value),
+            Err(error) if baseline_from_cli => return Err(error),
+            Err(error) => {
+                eprintln!("ry: warning: {error}");
+                None
+            }
+        },
+        None => None,
+    };
 
     // Re-init tracing with the merged verbosity so a `verbose = 2` in
     // ry.toml takes effect even when the user runs a bare `ry check`.
@@ -505,7 +737,13 @@ fn run_check(
         &cfg.globals,
         Arc::clone(&user_stubs),
         color,
+        baseline.as_ref(),
+        config_root.as_deref(),
+        min_confidence.into(),
     )?;
+    if let Some(path) = write_baseline.as_deref() {
+        write_baseline_file(path, &result.diagnostics, config_root.as_deref())?;
+    }
     result.print_summary(format, statistics);
 
     if !watch {
@@ -596,6 +834,9 @@ fn run_check(
                 &cfg.globals,
                 Arc::clone(&user_stubs),
                 color,
+                baseline.as_ref(),
+                config_root.as_deref(),
+                min_confidence.into(),
             )?;
             result.print_summary(format, statistics);
         }
@@ -688,6 +929,7 @@ impl CheckResult {
 /// Core check logic: parse all files, run the project checker, apply
 /// the severity filter, print diagnostics, and return a summary. Used
 /// by both one-shot `ry check` and `ry check --watch` iterations.
+#[allow(clippy::too_many_arguments)]
 fn run_check_once(
     all_paths: &[PathBuf],
     filter: &ry_checker::SeverityFilter,
@@ -696,12 +938,16 @@ fn run_check_once(
     globals: &[String],
     user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
     color: bool,
+    baseline: Option<&Baseline>,
+    repo_root: Option<&std::path::Path>,
+    min_confidence: ry_checker::Confidence,
 ) -> Result<CheckResult> {
     let mut all_diagnostics: Vec<ry_checker::Diagnostic> = Vec::new();
     let mut srcs: HashMap<String, String> = HashMap::new();
     let mut comments: HashMap<String, Vec<ry_core::ast::Comment>> = HashMap::new();
     let mut parse_errors = 0usize;
     let mut file_count = 0usize;
+    let mut not_r_diagnostics = Vec::new();
 
     // Multi-file project mode: build a single `Project` so functions
     // defined in one file are visible when checking another.
@@ -751,6 +997,22 @@ fn run_check_once(
         .collect();
     parse_errors += all_paths.len() - parsed.len();
     parsed.sort_by_key(|(i, _, _, _)| *i);
+    parsed.retain(|(_, path, src, file)| {
+        file_count += 1;
+        srcs.insert(path.clone(), src.clone());
+        if file.parse_errors.len() > file.stmts.len() {
+            not_r_diagnostics.push(ry_checker::Diagnostic::new(
+                ry_checker::Severity::Info,
+                ry_core::Span::new(0, 1, 0, 0),
+                path,
+                "RY097",
+                "File does not appear to be R source; diagnostics suppressed.",
+            ));
+            false
+        } else {
+            true
+        }
+    });
     let package_scope = package_metadata::resolve(
         all_paths,
         packages,
@@ -762,7 +1024,6 @@ fn run_check_once(
         project.add_file(path_str.clone(), file.clone());
         srcs.insert(path_str.clone(), src);
         comments.insert(path_str.clone(), file.comments);
-        file_count += 1;
     }
 
     project.set_loaded(package_scope.attached);
@@ -788,13 +1049,21 @@ fn run_check_once(
     for (_path, diags) in &mut per_file_diagnostics {
         ry_checker::apply_filter_to_diagnostics(diags, filter);
     }
+    ry_checker::apply_filter_to_diagnostics(&mut not_r_diagnostics, filter);
+    all_diagnostics.append(&mut not_r_diagnostics);
     for (_path, diags) in per_file_diagnostics {
         all_diagnostics.extend(diags);
     }
 
+    demote_non_source_paths(&mut all_diagnostics, repo_root);
+    if let Some(baseline) = baseline {
+        subtract_baseline(&mut all_diagnostics, baseline, repo_root);
+    }
+    all_diagnostics.retain(|diagnostic| diagnostic.confidence >= min_confidence);
+
     sort_and_deduplicate_diagnostics(&mut all_diagnostics);
 
-    let rendered = ry_checker::format::render_with_color(&all_diagnostics, format, &srcs, color);
+    let rendered = render_diagnostics(&all_diagnostics, format, &srcs, color);
     if !rendered.is_empty() {
         // Diagnostics go to STDOUT (matches ruff/ty): `ry check > log`
         // captures the diagnostics, while the summary line and watch-
@@ -830,21 +1099,25 @@ fn load_user_stubs(
 
 fn sort_and_deduplicate_diagnostics(diagnostics: &mut Vec<ry_checker::Diagnostic>) {
     diagnostics.sort_by(|a, b| {
-        a.path
-            .cmp(&b.path)
-            .then(a.span.line.cmp(&b.span.line))
-            .then(a.span.col.cmp(&b.span.col))
-            .then(a.span.start.cmp(&b.span.start))
-            .then(a.span.end.cmp(&b.span.end))
-            .then(a.code.cmp(b.code))
-            .then(a.severity.as_str().cmp(b.severity.as_str()))
-            .then(a.message.cmp(&b.message))
+        b.confidence.cmp(&a.confidence).then(
+            a.path
+                .cmp(&b.path)
+                .then(a.span.line.cmp(&b.span.line))
+                .then(a.span.col.cmp(&b.span.col))
+                .then(a.span.start.cmp(&b.span.start))
+                .then(a.span.end.cmp(&b.span.end))
+                .then(a.code.cmp(b.code))
+                .then(a.confidence.cmp(&b.confidence))
+                .then(a.severity.as_str().cmp(b.severity.as_str()))
+                .then(a.message.cmp(&b.message)),
+        )
     });
     diagnostics.dedup_by(|a, b| {
         a.path == b.path
             && a.span == b.span
             && a.code == b.code
             && a.severity == b.severity
+            && a.confidence == b.confidence
             && a.message == b.message
     });
 }
@@ -996,19 +1269,52 @@ fn collect_r_files(path: &std::path::Path, out: &mut Vec<PathBuf>) {
         out.push(path.to_path_buf());
         return;
     }
+    let package_root = path
+        .ancestors()
+        .find(|ancestor| ancestor.join("DESCRIPTION").is_file())
+        .map(std::path::Path::to_path_buf);
+    let buildignore = package_root
+        .as_deref()
+        .map(read_rbuildignore)
+        .unwrap_or_default();
+    collect_r_files_recursive(path, out, package_root, &buildignore);
+}
+
+fn collect_r_files_recursive(
+    path: &std::path::Path,
+    out: &mut Vec<PathBuf>,
+    package_root: Option<PathBuf>,
+    buildignore: &[glob::Pattern],
+) {
     let Ok(entries) = std::fs::read_dir(path) else {
         return;
     };
     for entry in entries.flatten() {
         let p = entry.path();
+        if package_root
+            .as_deref()
+            .is_some_and(|root| is_rbuildignored(root, &p, buildignore))
+        {
+            continue;
+        }
         if p.is_dir() {
-            // Skip hidden / VCS / target dirs.
             if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
                 if name.starts_with('.') || name == "target" || name == "node_modules" {
                     continue;
                 }
             }
-            collect_r_files(&p, out);
+            if package_root
+                .as_deref()
+                .is_some_and(|root| is_excluded_package_directory(root, &p))
+            {
+                continue;
+            }
+            let (nested_package_root, nested_buildignore) = if p.join("DESCRIPTION").is_file() {
+                (Some(p.clone()), read_rbuildignore(&p))
+            } else {
+                (package_root.clone(), buildignore.to_vec())
+            };
+            collect_r_files_recursive(&p, out, nested_package_root, &nested_buildignore);
         } else if matches!(
             p.extension().and_then(|e| e.to_str()),
             Some("R") | Some("r")
@@ -1018,6 +1324,83 @@ fn collect_r_files(path: &std::path::Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+fn read_rbuildignore(root: &std::path::Path) -> Vec<glob::Pattern> {
+    let Ok(contents) = std::fs::read_to_string(root.join(".Rbuildignore")) else {
+        return Vec::new();
+    };
+    contents
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter_map(rbuildignore_pattern)
+        .collect()
+}
+
+/// Translate the conservative regex subset used by conventional
+/// `.Rbuildignore` files to the already-depended-on glob matcher. Unsupported
+/// PCRE constructs are ignored, as required for patterns our engine cannot
+/// compile.
+fn rbuildignore_pattern(regex: &str) -> Option<glob::Pattern> {
+    if regex.contains(['(', ')', '|', '{', '}', '+']) {
+        return None;
+    }
+    let anchored_start = regex.starts_with('^');
+    let anchored_end = regex.ends_with('$') && !regex.ends_with("\\$");
+    let body = regex
+        .strip_prefix('^')
+        .unwrap_or(regex)
+        .strip_suffix('$')
+        .unwrap_or_else(|| regex.strip_prefix('^').unwrap_or(regex));
+    let mut glob = String::new();
+    if !anchored_start {
+        glob.push('*');
+    }
+    let mut chars = body.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => glob.push(chars.next()?),
+            '.' if chars.peek() == Some(&'*') => {
+                chars.next();
+                glob.push('*');
+            }
+            '.' => glob.push('?'),
+            '*' | '?' | '[' | ']' => glob.push(ch),
+            ch => glob.push(ch),
+        }
+    }
+    if !anchored_end {
+        glob.push('*');
+    }
+    glob::Pattern::new(&glob).ok()
+}
+
+fn is_rbuildignored(
+    root: &std::path::Path,
+    path: &std::path::Path,
+    patterns: &[glob::Pattern],
+) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+    if relative.starts_with("R") || relative.starts_with("tests") {
+        return false;
+    }
+    let relative = relative.to_string_lossy().replace('\\', "/");
+    patterns.iter().any(|pattern| pattern.matches(&relative))
+}
+
+fn is_excluded_package_directory(package_root: &std::path::Path, path: &std::path::Path) -> bool {
+    let Ok(relative) = path.strip_prefix(package_root) else {
+        return false;
+    };
+    let components: Vec<_> = relative
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .collect();
+    matches!(components.as_slice(), ["revdep"] | ["src"])
+        || matches!(components.as_slice(), ["tests", "testthat", "_snaps"])
+}
+
 fn sort_and_deduplicate_paths(paths: &mut Vec<PathBuf>) {
     paths.sort();
     paths.dedup();
@@ -1025,7 +1408,11 @@ fn sort_and_deduplicate_paths(paths: &mut Vec<PathBuf>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{ColorChoice, sort_and_deduplicate_diagnostics};
+    use super::{
+        Baseline, BaselineEntry, ColorChoice, collect_r_files, demote_non_source_paths,
+        load_baseline, run_check_once, sort_and_deduplicate_diagnostics, subtract_baseline,
+        write_baseline_file,
+    };
     use ry_checker::format::OutputFormat;
     use ry_checker::{Diagnostic, Severity};
     use ry_core::Span;
@@ -1066,6 +1453,59 @@ mod tests {
     }
 
     #[test]
+    fn baseline_round_trip_suppresses_existing_but_not_new_diagnostics() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("baseline.json");
+        let existing = diag("a.R", 1, 0, "RY010");
+        write_baseline_file(&path, std::slice::from_ref(&existing), Some(temp.path())).unwrap();
+        let baseline = load_baseline(&path).unwrap();
+        let mut diagnostics = vec![existing, diag("a.R", 2, 0, "RY030")];
+        subtract_baseline(&mut diagnostics, &baseline, Some(temp.path()));
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, "RY030");
+    }
+
+    #[test]
+    fn baseline_counts_absorb_only_the_recorded_occurrences() {
+        let baseline = Baseline {
+            version: 1,
+            entries: vec![BaselineEntry {
+                path: "a.R".to_string(),
+                code: "RY010".to_string(),
+                message: "same message".to_string(),
+                count: 2,
+            }],
+        };
+        let mut diagnostics = vec![
+            diag("a.R", 1, 0, "RY010"),
+            diag("a.R", 2, 0, "RY010"),
+            diag("a.R", 3, 0, "RY010"),
+        ];
+        subtract_baseline(&mut diagnostics, &baseline, None);
+        assert_eq!(diagnostics.len(), 1);
+    }
+
+    #[test]
+    fn high_minimum_hides_medium_confidence() {
+        let mut diagnostics = vec![diag("a.R", 1, 0, "RY010"), diag("a.R", 2, 0, "RY030")];
+        diagnostics.retain(|diagnostic| diagnostic.confidence >= ry_checker::Confidence::High);
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, "RY030");
+    }
+
+    #[test]
+    fn package_tests_path_demotes_confidence_one_tier() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("DESCRIPTION"), "Package: example\n").unwrap();
+        std::fs::create_dir(temp.path().join("tests")).unwrap();
+        let path = temp.path().join("tests/test.R");
+        let mut diagnostic = diag(path.to_str().unwrap(), 1, 0, "RY030");
+        assert_eq!(diagnostic.confidence, ry_checker::Confidence::High);
+        demote_non_source_paths(std::slice::from_mut(&mut diagnostic), Some(temp.path()));
+        assert_eq!(diagnostic.confidence, ry_checker::Confidence::Medium);
+    }
+
+    #[test]
     fn color_policy_covers_terminal_no_color_and_machine_formats() {
         assert!(ColorChoice::Auto.enabled_for(OutputFormat::Full, true, false));
         assert!(!ColorChoice::Auto.enabled_for(OutputFormat::Full, true, true));
@@ -1080,5 +1520,212 @@ mod tests {
         ] {
             assert!(!ColorChoice::Always.enabled_for(format, true, false));
         }
+    }
+
+    #[test]
+    fn package_scan_excludes_non_package_r_sources() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
+        for directory in [
+            "R",
+            "tests/testthat",
+            "tests/testthat/_snaps",
+            "revdep/other/R",
+            "src/ratfor",
+        ] {
+            std::fs::create_dir_all(root.join(directory)).unwrap();
+        }
+        for file in [
+            "R/package.R",
+            "tests/testthat/test-package.R",
+            "tests/testthat/_snaps/output.R",
+            "revdep/other/R/other.R",
+            "src/ratfor/program.r",
+        ] {
+            std::fs::write(root.join(file), "").unwrap();
+        }
+
+        let mut paths = Vec::new();
+        collect_r_files(root, &mut paths);
+        paths.sort();
+
+        assert_eq!(
+            paths,
+            vec![
+                root.join("R/package.R"),
+                root.join("tests/testthat/test-package.R")
+            ]
+        );
+    }
+
+    #[test]
+    fn explicitly_selected_file_is_not_package_excluded() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
+        std::fs::create_dir(root.join("src")).unwrap();
+        let file = root.join("src/ratfor.r");
+        std::fs::write(&file, "").unwrap();
+
+        let mut paths = Vec::new();
+        collect_r_files(&file, &mut paths);
+
+        assert_eq!(paths, vec![file]);
+    }
+
+    #[test]
+    fn package_scan_honors_rbuildignore_except_r_and_tests() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
+        std::fs::write(root.join(".Rbuildignore"), "^ignored\\.R$\n^R/\n^tests/\n").unwrap();
+        std::fs::create_dir_all(root.join("R")).unwrap();
+        std::fs::create_dir_all(root.join("tests/testthat")).unwrap();
+        for file in [
+            "ignored.R",
+            "kept.R",
+            "R/package.R",
+            "tests/testthat/test-package.R",
+        ] {
+            std::fs::write(root.join(file), "").unwrap();
+        }
+
+        let mut paths = Vec::new();
+        collect_r_files(root, &mut paths);
+        paths.sort();
+        assert_eq!(
+            paths,
+            vec![
+                root.join("R/package.R"),
+                root.join("kept.R"),
+                root.join("tests/testthat/test-package.R"),
+            ]
+        );
+    }
+
+    #[test]
+    fn package_scan_models_testthat_helpers_dependencies_and_interactive_depends() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::write(
+            root.join("DESCRIPTION"),
+            "Package: example\nDepends: survival\nSuggests: mirai\n",
+        )
+        .unwrap();
+        for directory in ["R", "tests/testthat", "data-raw"] {
+            std::fs::create_dir_all(root.join(directory)).unwrap();
+        }
+        std::fs::write(
+            root.join("R/package.R"),
+            "internal <- function() 1L\ncount.example <- function(x, ...) x\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("tests/testthat/helpers-values.R"),
+            "library(purrr)\nlibrary(dplyr)\nhelper_value <- 1L\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("tests/testthat/test-package.R"),
+            "internal()\nhelper_value\nmap\ndaemons\ndata <- unknown_source()\ndata %>% count(column)\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("data-raw/build.R"), "Surv\n").unwrap();
+
+        let mut paths = Vec::new();
+        collect_r_files(root, &mut paths);
+        paths.sort();
+        let result = run_check_once(
+            &paths,
+            &ry_checker::SeverityFilter::default(),
+            OutputFormat::Json,
+            &[],
+            &[],
+            std::sync::Arc::new(std::collections::BTreeMap::new()),
+            false,
+            None,
+            Some(root),
+            ry_checker::Confidence::Low,
+        )
+        .unwrap();
+        let unresolved: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "RY010")
+            .collect();
+        assert!(
+            unresolved.is_empty(),
+            "unexpected unbound names: {unresolved:?}"
+        );
+    }
+
+    #[test]
+    fn package_scan_models_tinytest_package_namespace_and_dependencies() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::write(
+            root.join("DESCRIPTION"),
+            "Package: example\nDepends: survival\nSuggests: mirai\n",
+        )
+        .unwrap();
+        for directory in ["R", "inst/tinytest"] {
+            std::fs::create_dir_all(root.join(directory)).unwrap();
+        }
+        std::fs::write(root.join("R/package.R"), "internal <- function() 1L\n").unwrap();
+        std::fs::write(
+            root.join("inst/tinytest/test-package.R"),
+            "expect_equal(internal(), 1L)\nSurv\ndaemons\n",
+        )
+        .unwrap();
+
+        let mut paths = Vec::new();
+        collect_r_files(root, &mut paths);
+        paths.sort();
+        let result = run_check_once(
+            &paths,
+            &ry_checker::SeverityFilter::default(),
+            OutputFormat::Json,
+            &[],
+            &[],
+            std::sync::Arc::new(std::collections::BTreeMap::new()),
+            false,
+            None,
+            Some(root),
+            ry_checker::Confidence::Low,
+        )
+        .unwrap();
+        let unresolved: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "RY010")
+            .collect();
+        assert!(
+            unresolved.is_empty(),
+            "unexpected unbound names: {unresolved:?}"
+        );
+    }
+
+    #[test]
+    fn majority_invalid_file_yields_only_ry097() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("ratfor.r");
+        std::fs::write(&file, "if )\nfor )\nwhile )\nfunction )\n").unwrap();
+        let result = run_check_once(
+            &[file],
+            &ry_checker::SeverityFilter::default(),
+            OutputFormat::Json,
+            &[],
+            &[],
+            std::sync::Arc::new(std::collections::BTreeMap::new()),
+            false,
+            None,
+            Some(temp.path()),
+            ry_checker::Confidence::Low,
+        )
+        .unwrap();
+        assert_eq!(result.diagnostics.len(), 1);
+        assert_eq!(result.diagnostics[0].code, "RY097");
+        assert_eq!(result.diagnostics[0].severity, Severity::Info);
     }
 }

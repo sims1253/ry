@@ -1,0 +1,40 @@
+{
+  "schema_version": "1",
+  "package": "igraph",
+  "version": "0.0.1",
+  "functions": {
+    "from_literal": {
+      "params": [
+        "..."
+      ],
+      "eval": {
+        "...": "quoted_expression"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "igraph"
+        ]
+      }
+    },
+    "graph_from_literal": {
+      "params": [
+        "...",
+        "simplify"
+      ],
+      "eval": {
+        "...": "quoted_expression"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "igraph"
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "schema_version": "1",
+  "package": "S7",
+  "version": "0.0.1",
+  "functions": {
+    "new_class": {
+      "params": ["name", "parent", "package", "properties", "abstract", "constructor", "validator"],
+      "injects": [{"into": ["name", "properties", "constructor", "validator"], "names": ["self", "private", "super"]}],
+      "return": {"mode": "opaque", "length": "unknown"}
+    }
+  }
+}

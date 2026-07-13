@@ -1,0 +1,12 @@
+{
+  "schema_version": "1",
+  "package": "R6",
+  "version": "0.0.1",
+  "functions": {
+    "R6Class": {
+      "params": ["classname", "public", "private", "active", "inherit", "lock_objects", "class", "portable", "lock_class", "cloneable", "parent_env"],
+      "injects": [{"into": ["public", "private", "active"], "names": ["self", "private", "super"]}],
+      "return": {"mode": "opaque", "length": "unknown"}
+    }
+  }
+}

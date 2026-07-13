@@ -42,6 +42,34 @@ fn super_assignment_is_recognized() {
     );
 }
 
+#[test]
+fn statement_level_walrus_bind_is_recognized() {
+    let file = parse("Person := new_class()\nPerson\n");
+    assert!(
+        matches!(
+            file.stmts.first(),
+            Some(Stmt::Assign {
+                target: Expr::Ident { name, .. },
+                ..
+            }) if name == "Person"
+        ),
+        "bare statement-level := must introduce its identifier: {:?}",
+        file.stmts
+    );
+}
+
+#[test]
+fn nested_walrus_expression_is_not_plain_assignment() {
+    let file = parse("mutate(df, !!name := value)\n");
+    assert!(
+        file.stmts
+            .iter()
+            .all(|statement| !matches!(statement, Stmt::Assign { .. })),
+        "tidy-eval := inside a call must not become a top-level assignment: {:?}",
+        file.stmts
+    );
+}
+
 /// Regression: `**` was once mapped to `Mul`. In R
 /// `**` is `^` (power), so it must lower to `BinOpKind::Pow`.
 #[test]
@@ -88,6 +116,22 @@ fn top_level_braced_block_preserves_all_statements() {
     assert_eq!(
         count, 2,
         "top-level {{ a <- 1; b <- 2 }} must preserve both assignments; got {:?}",
+        file.stmts
+    );
+}
+
+#[test]
+fn user_infix_preserves_operator_and_operands() {
+    let file = parse("left %custom% right\n");
+    assert!(
+        matches!(
+            file.stmts.first(),
+            Some(Stmt::Expr(Expr::Call { func, args, .. }))
+                if matches!(func.as_ref(), Expr::Ident { name, .. } if name == "%custom%")
+                    && matches!(&args[0].value, Expr::Ident { name, .. } if name == "left")
+                    && matches!(&args[1].value, Expr::Ident { name, .. } if name == "right")
+        ),
+        "user infix operands must survive lowering: {:?}",
         file.stmts
     );
 }

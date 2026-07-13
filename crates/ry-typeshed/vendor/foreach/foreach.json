@@ -1,0 +1,56 @@
+{
+  "schema_version": "1",
+  "package": "foreach",
+  "version": "0.0.1",
+  "functions": {
+    "%:%": {
+      "params": [
+        "obj",
+        "obj2"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "%do%": {
+      "params": [
+        "obj",
+        "expr"
+      ],
+      "eval": {
+        "expr": "quoted_expression"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "%dopar%": {
+      "params": [
+        "obj",
+        "expr"
+      ],
+      "eval": {
+        "expr": "quoted_expression"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "foreach": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    }
+  }
+}

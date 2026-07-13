@@ -1,0 +1,22 @@
+{
+  "schema_version": "1",
+  "package": "dbplyr",
+  "version": "0.0.1",
+  "functions": {
+    "expect_translation": {
+      "params": ["con", "expr", "expected", "..."],
+      "eval": {"expr": "quoted_expression"},
+      "return": {"mode": "opaque", "length": "unknown"}
+    },
+    "expect_translation_snapshot": {
+      "params": ["con", "expr", "...", "error"],
+      "eval": {"expr": "quoted_expression", "...": "quoted_expression"},
+      "return": {"mode": "opaque", "length": "unknown"}
+    },
+    "translate_sql": {
+      "params": ["...", "con", "vars_group", "vars_order", "vars_frame", "window"],
+      "eval": {"...": "quoted_expression"},
+      "return": {"mode": "opaque", "length": "unknown"}
+    }
+  }
+}

@@ -168,6 +168,23 @@ impl Checker {
                             }
                         }
                     }
+                    if bare == "assign"
+                        && args.iter().any(|arg| {
+                            arg.name.as_deref() == Some("envir")
+                                && matches!(
+                                    &arg.value,
+                                    Expr::Call { func, .. }
+                                        if matches!(func.as_ref(), Expr::Ident { name, .. } if name == "asNamespace")
+                                )
+                        })
+                        && let Some(first) = args.first()
+                        && let Some(binding) = string_literal(&first.value)
+                    {
+                        Arc::make_mut(&mut self.fn_table)
+                            .known_vars
+                            .insert(binding.to_string());
+                    }
+                    self.collect_s4_call(bare, args);
                 }
                 self.collect_declared_globals_expr(func);
                 for arg in args {
@@ -212,6 +229,61 @@ impl Checker {
             | Expr::Na(_, _)
             | Expr::Ident { .. }
             | Expr::Unknown(_) => {}
+        }
+    }
+
+    fn collect_s4_call(&mut self, name: &str, args: &[Arg]) {
+        match name {
+            "setClass" => {
+                let Some(class) = args.first().and_then(|arg| string_literal(&arg.value)) else {
+                    return;
+                };
+                let slots_expr = args
+                    .iter()
+                    .find(|arg| arg.name.as_deref() == Some("slots"))
+                    .or_else(|| args.get(1))
+                    .map(|arg| &arg.value);
+                let slots = slots_expr.map(s4_slots).unwrap_or_default();
+                Arc::make_mut(&mut self.fn_table)
+                    .s4_classes
+                    .insert(class.to_string(), slots);
+            }
+            "setGeneric" => {
+                if let Some(generic) = args.first().and_then(|arg| string_literal(&arg.value)) {
+                    Arc::make_mut(&mut self.fn_table)
+                        .known_vars
+                        .insert(generic.to_string());
+                }
+            }
+            "setMethod" => {
+                let Some(generic) = args.first().and_then(|arg| string_literal(&arg.value)) else {
+                    return;
+                };
+                let Some(class) = args.get(1).and_then(|arg| s4_signature_class(&arg.value)) else {
+                    return;
+                };
+                let Some(Expr::Function { params, body, .. }) = args
+                    .iter()
+                    .skip(2)
+                    .find(|arg| matches!(arg.value, Expr::Function { .. }))
+                    .map(|arg| &arg.value)
+                else {
+                    return;
+                };
+                let method_name = format!("__s4__{generic}__{class}");
+                let slot = self.record_fn(method_name.clone(), params, body.clone());
+                if let Some(first) = Arc::make_mut(&mut self.fn_table)
+                    .fns
+                    .get_mut(&method_name)
+                    .and_then(|function| function.params.first_mut())
+                {
+                    first.type_ = RType::unknown().with_class(ClassVector::single(&class));
+                }
+                Arc::make_mut(&mut self.fn_table)
+                    .s4_methods
+                    .insert((generic.to_string(), class), slot);
+            }
+            _ => {}
         }
     }
 
@@ -309,6 +381,7 @@ impl Checker {
                     name: p.name.clone(),
                     type_: t,
                     required,
+                    defused: parameter_is_defused(&body, &p.name),
                 }
             })
             .collect();
@@ -410,10 +483,321 @@ impl Checker {
     //   * Indexed assignment (`x[i] <- v`) does not update the scope.
 }
 
-/// R permits a no-default formal to remain missing when the body never forces
-/// it. Passing a formal onward is also not proof of forcing because the callee
-/// may inspect `missing()` or ignore it. Required-argument diagnostics for user
-/// functions therefore use this deliberately conservative must-force scan.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FirstParameterUse {
+    Defused,
+    Normal,
+}
+
+fn parameter_is_defused(body: &[Stmt], parameter: &str) -> bool {
+    if parameter == "..." {
+        let mut uses = ParameterUses::default();
+        for statement in body {
+            collect_parameter_uses_in_stmt(statement, parameter, &mut uses);
+        }
+        return uses.defused && !uses.normal;
+    }
+    body.iter()
+        .find_map(|statement| first_parameter_use_in_stmt(statement, parameter))
+        == Some(FirstParameterUse::Defused)
+}
+
+#[derive(Default)]
+struct ParameterUses {
+    defused: bool,
+    normal: bool,
+}
+
+fn collect_parameter_uses_in_stmt(statement: &Stmt, parameter: &str, uses: &mut ParameterUses) {
+    match statement {
+        Stmt::Assign { target, value, .. } => {
+            collect_parameter_uses_in_expr(value, parameter, uses);
+            if !matches!(target, Expr::Ident { .. }) {
+                collect_parameter_uses_in_expr(target, parameter, uses);
+            }
+        }
+        Stmt::Expr(expression) => collect_parameter_uses_in_expr(expression, parameter, uses),
+        Stmt::If {
+            cond, then, else_, ..
+        } => {
+            collect_parameter_uses_in_expr(cond, parameter, uses);
+            for statement in then {
+                collect_parameter_uses_in_stmt(statement, parameter, uses);
+            }
+            for statement in else_.iter().flatten() {
+                collect_parameter_uses_in_stmt(statement, parameter, uses);
+            }
+        }
+        Stmt::For {
+            name, iter, body, ..
+        } => {
+            collect_parameter_uses_in_expr(iter, parameter, uses);
+            if name == parameter {
+                uses.normal = true;
+            }
+            for statement in body {
+                collect_parameter_uses_in_stmt(statement, parameter, uses);
+            }
+        }
+        Stmt::While { cond, body, .. } => {
+            collect_parameter_uses_in_expr(cond, parameter, uses);
+            for statement in body {
+                collect_parameter_uses_in_stmt(statement, parameter, uses);
+            }
+        }
+        Stmt::FunctionDef { params, body, .. } => {
+            if !params.iter().any(|formal| formal.name == parameter) {
+                for statement in body {
+                    collect_parameter_uses_in_stmt(statement, parameter, uses);
+                }
+            }
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(expression) = value {
+                collect_parameter_uses_in_expr(expression, parameter, uses);
+            }
+        }
+    }
+}
+
+fn collect_parameter_uses_in_expr(expression: &Expr, parameter: &str, uses: &mut ParameterUses) {
+    match expression {
+        Expr::Ident { name, .. } => {
+            if name == parameter {
+                uses.normal = true;
+            }
+        }
+        Expr::Call { func, args, .. } => {
+            let defuses_direct_argument = ident_name(func).is_some_and(|name| {
+                matches!(
+                    name.rsplit_once("::").map(|(_, bare)| bare).unwrap_or(name),
+                    "enquos"
+                        | "enexprs"
+                        | "ensyms"
+                        | "quos"
+                        | "exprs"
+                        | "match.call"
+                        | "substitute"
+                )
+            });
+            collect_parameter_uses_in_expr(func, parameter, uses);
+            for argument in args {
+                if matches!(&argument.value, Expr::Ident { name, .. } if name == parameter) {
+                    if defuses_direct_argument {
+                        uses.defused = true;
+                    } else {
+                        uses.normal = true;
+                    }
+                } else {
+                    collect_parameter_uses_in_expr(&argument.value, parameter, uses);
+                }
+            }
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            collect_parameter_uses_in_expr(lhs, parameter, uses);
+            collect_parameter_uses_in_expr(rhs, parameter, uses);
+        }
+        Expr::UnaryOp { expr, .. } => collect_parameter_uses_in_expr(expr, parameter, uses),
+        Expr::Index { base, args, .. } => {
+            collect_parameter_uses_in_expr(base, parameter, uses);
+            for argument in args {
+                collect_parameter_uses_in_expr(&argument.value, parameter, uses);
+            }
+        }
+        Expr::Function { params, body, .. } => {
+            if !params.iter().any(|formal| formal.name == parameter) {
+                for statement in body {
+                    collect_parameter_uses_in_stmt(statement, parameter, uses);
+                }
+            }
+        }
+        Expr::Block { body, .. } => {
+            for statement in body {
+                collect_parameter_uses_in_stmt(statement, parameter, uses);
+            }
+        }
+        Expr::If {
+            cond, then, else_, ..
+        } => {
+            collect_parameter_uses_in_expr(cond, parameter, uses);
+            collect_parameter_uses_in_expr(then, parameter, uses);
+            if let Some(expression) = else_ {
+                collect_parameter_uses_in_expr(expression, parameter, uses);
+            }
+        }
+        Expr::Logical(_, _)
+        | Expr::Integer(_, _)
+        | Expr::Double(_, _)
+        | Expr::String(_, _)
+        | Expr::Null(_)
+        | Expr::Na(_, _)
+        | Expr::Unknown(_) => {}
+    }
+}
+
+fn first_parameter_use_in_stmt(statement: &Stmt, parameter: &str) -> Option<FirstParameterUse> {
+    match statement {
+        Stmt::Assign { target, value, .. } => first_parameter_use_in_expr(value, parameter)
+            .or_else(|| match target {
+                Expr::Ident { .. } => None,
+                target => first_parameter_use_in_expr(target, parameter),
+            }),
+        Stmt::Expr(expression) => first_parameter_use_in_expr(expression, parameter),
+        Stmt::If {
+            cond, then, else_, ..
+        } => first_parameter_use_in_expr(cond, parameter).or_else(|| {
+            conservative_branch_use([
+                then.iter()
+                    .find_map(|statement| first_parameter_use_in_stmt(statement, parameter)),
+                else_.as_ref().and_then(|statements| {
+                    statements
+                        .iter()
+                        .find_map(|statement| first_parameter_use_in_stmt(statement, parameter))
+                }),
+            ])
+        }),
+        Stmt::For {
+            name, iter, body, ..
+        } => first_parameter_use_in_expr(iter, parameter).or_else(|| {
+            if name == parameter {
+                Some(FirstParameterUse::Normal)
+            } else {
+                body.iter()
+                    .find_map(|statement| first_parameter_use_in_stmt(statement, parameter))
+            }
+        }),
+        Stmt::While { cond, body, .. } => {
+            first_parameter_use_in_expr(cond, parameter).or_else(|| {
+                body.iter()
+                    .find_map(|statement| first_parameter_use_in_stmt(statement, parameter))
+            })
+        }
+        Stmt::FunctionDef { .. } => None,
+        Stmt::Return { value, .. } => value
+            .as_ref()
+            .and_then(|expression| first_parameter_use_in_expr(expression, parameter)),
+    }
+}
+
+fn first_parameter_use_in_expr(expression: &Expr, parameter: &str) -> Option<FirstParameterUse> {
+    match expression {
+        Expr::Ident { name, .. } => (name == parameter).then_some(FirstParameterUse::Normal),
+        Expr::Call { func, args, .. } => {
+            let defuses_direct_argument = ident_name(func).is_some_and(|name| {
+                matches!(
+                    name.rsplit_once("::").map(|(_, bare)| bare).unwrap_or(name),
+                    "enquo"
+                        | "enquos"
+                        | "enexpr"
+                        | "enexprs"
+                        | "ensym"
+                        | "ensyms"
+                        | "quo"
+                        | "substitute"
+                        | "match.call"
+                        | "bquote"
+                )
+            });
+            if defuses_direct_argument
+                && args.iter().any(|argument| {
+                    matches!(&argument.value, Expr::Ident { name, .. } if name == parameter)
+                })
+            {
+                return Some(FirstParameterUse::Defused);
+            }
+            first_parameter_use_in_expr(func, parameter).or_else(|| {
+                args.iter()
+                    .find_map(|argument| first_parameter_use_in_expr(&argument.value, parameter))
+            })
+        }
+        Expr::BinOp { lhs, rhs, .. } => first_parameter_use_in_expr(lhs, parameter)
+            .or_else(|| first_parameter_use_in_expr(rhs, parameter)),
+        Expr::UnaryOp { expr, .. } => first_parameter_use_in_expr(expr, parameter),
+        Expr::Index { base, args, .. } => {
+            first_parameter_use_in_expr(base, parameter).or_else(|| {
+                args.iter()
+                    .find_map(|argument| first_parameter_use_in_expr(&argument.value, parameter))
+            })
+        }
+        Expr::Function { .. } => None,
+        Expr::Block { body, .. } => {
+            if embraced_symbol(body).is_some_and(|(name, _)| name == parameter) {
+                Some(FirstParameterUse::Defused)
+            } else {
+                body.iter()
+                    .find_map(|statement| first_parameter_use_in_stmt(statement, parameter))
+            }
+        }
+        Expr::If {
+            cond, then, else_, ..
+        } => first_parameter_use_in_expr(cond, parameter).or_else(|| {
+            conservative_branch_use([
+                first_parameter_use_in_expr(then, parameter),
+                else_
+                    .as_ref()
+                    .and_then(|expression| first_parameter_use_in_expr(expression, parameter)),
+            ])
+        }),
+        Expr::Logical(_, _)
+        | Expr::Integer(_, _)
+        | Expr::Double(_, _)
+        | Expr::String(_, _)
+        | Expr::Null(_)
+        | Expr::Na(_, _)
+        | Expr::Unknown(_) => None,
+    }
+}
+
+fn conservative_branch_use(
+    uses: impl IntoIterator<Item = Option<FirstParameterUse>>,
+) -> Option<FirstParameterUse> {
+    let mut first = None;
+    for use_ in uses.into_iter().flatten() {
+        if use_ == FirstParameterUse::Normal {
+            return Some(FirstParameterUse::Normal);
+        }
+        first = Some(FirstParameterUse::Defused);
+    }
+    first
+}
+
+fn string_literal(expr: &Expr) -> Option<&str> {
+    match expr {
+        Expr::String(value, _) => Some(value),
+        _ => None,
+    }
+}
+
+fn s4_signature_class(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::String(class, _) => Some(class.clone()),
+        Expr::Call { func, args, .. } if matches!(func.as_ref(), Expr::Ident { name, .. } if name == "signature") => {
+            args.first()
+                .and_then(|argument| string_literal(&argument.value))
+                .map(str::to_string)
+        }
+        _ => None,
+    }
+}
+
+fn s4_slots(expr: &Expr) -> HashMap<String, String> {
+    let Expr::Call { func, args, .. } = expr else {
+        return HashMap::new();
+    };
+    if !matches!(func.as_ref(), Expr::Ident { name, .. } if name == "representation" || name == "c")
+    {
+        return HashMap::new();
+    }
+    args.iter()
+        .filter_map(|argument| {
+            Some((
+                semantic_argument_name(argument.name.as_deref()?).to_string(),
+                string_literal(&argument.value)?.to_string(),
+            ))
+        })
+        .collect()
+}
+
 fn block_must_force_name(statements: &[Stmt], name: &str) -> bool {
     for statement in statements {
         let (forces, always_falls_through) = statement_force_flow(statement, name);
@@ -427,7 +811,6 @@ fn block_must_force_name(statements: &[Stmt], name: &str) -> bool {
     false
 }
 
-/// Return `(must_force_name, always_falls_through)` for one statement.
 fn statement_force_flow(statement: &Stmt, name: &str) -> (bool, bool) {
     match statement {
         Stmt::Assign { value, .. } | Stmt::Expr(value) => {
@@ -458,8 +841,6 @@ fn statement_force_flow(statement: &Stmt, name: &str) -> (bool, bool) {
             expression_must_force(iter, name),
             block_always_falls_through(body),
         ),
-        // A while loop may not terminate, so later statements are not
-        // guaranteed to execute even when its body contains no return.
         Stmt::While { cond, .. } => (expression_must_force(cond, name), false),
         Stmt::Return { value, .. } => (
             value
@@ -467,8 +848,6 @@ fn statement_force_flow(statement: &Stmt, name: &str) -> (bool, bool) {
                 .is_some_and(|value| expression_must_force(value, name)),
             false,
         ),
-        // A nested closure may capture the formal without forcing it during
-        // the outer call.
         Stmt::FunctionDef { .. } => (false, true),
     }
 }
@@ -506,8 +885,6 @@ fn expression_must_force(expression: &Expr, name: &str) -> bool {
                     .iter()
                     .any(|argument| expression_must_force(&argument.value, name))
         }
-        // R promises remain lazy across ordinary calls, so forwarding is not
-        // sufficient evidence that this function requires the argument.
         Expr::Call { func, .. } => expression_must_force(func, name),
         Expr::Block { body, .. } => block_must_force_name(body, name),
         Expr::If {

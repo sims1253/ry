@@ -29,7 +29,7 @@ pub use project::Project;
 // crate root for back-compat (callers and tests reference
 // `ry_checker::{Severity, Diagnostic, ...}` directly).
 pub use diagnostics::{
-    Diagnostic, Severity, SeverityFilter, Suppression, apply_filter_to_diagnostics,
+    Confidence, Diagnostic, Severity, SeverityFilter, Suppression, apply_filter_to_diagnostics,
     filter_suppressed, filter_suppressed_with_comments, has_file_suppression,
     has_file_suppression_from_comments, is_suppressed, parse_suppressions,
     parse_suppressions_from_comments,
@@ -40,8 +40,8 @@ use ry_core::ast::*;
 use ry_core::types::{ClassVector, ColumnSchema, FunctionSignature, Length, Mode, RType};
 use ry_typeshed::{
     CallbackArg, EvalMode, FunctionSig, Globals, HigherOrderResultKind, HigherOrderSpec,
-    JsonLength, JsonMode, JsonRType, ParamSpec, ReturnSlot, ReturnSpec, SchemaEffect, Typeshed,
-    is_known_package, known_packages, load_base_cached, load_package,
+    JsonLength, JsonMode, JsonRType, ParamSpec, ReturnSlot, ReturnSpec, SchemaEffect, ScopeEffect,
+    Typeshed, is_known_package, known_packages, load_base_cached, load_package,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -174,7 +174,11 @@ fn split_s3_operator_method_name(name: &str) -> Option<(&'static str, String)> {
 #[derive(Debug, Clone, Default)]
 pub struct Scope {
     pub bindings: HashMap<String, RType>,
+    /// Bare-identifier function aliases, keyed by the local binding name.
+    /// The value is the ultimate semantic callee name used by call inference.
+    pub function_aliases: HashMap<String, String>,
     pub data_mask_unknown: bool,
+    pub search_path_unknown: bool,
 }
 
 impl Scope {
@@ -183,12 +187,26 @@ impl Scope {
     }
 
     pub fn insert(&mut self, name: impl Into<String>, t: RType) {
-        self.bindings.insert(name.into(), t);
+        let name = name.into();
+        self.function_aliases.remove(&name);
+        self.bindings.insert(name, t);
+    }
+
+    pub(crate) fn set_function_alias(&mut self, name: impl Into<String>, target: String) {
+        self.function_aliases.insert(name.into(), target);
+    }
+
+    pub(crate) fn function_alias(&self, name: &str) -> Option<&str> {
+        self.function_aliases.get(name).map(String::as_str)
     }
 
     pub fn with_unknown_data_mask(mut self) -> Self {
         self.data_mask_unknown = true;
         self
+    }
+
+    pub fn mark_search_path_unknown(&mut self) {
+        self.search_path_unknown = true;
     }
 }
 
@@ -214,8 +232,8 @@ pub(crate) struct UserFn {
 pub(crate) struct UserParam {
     pub(crate) name: String,
     pub(crate) type_: RType,
-    /// True only when the no-default formal is directly forced by the body.
     pub(crate) required: bool,
+    pub(crate) defused: bool,
 }
 
 /// Side-table of inferred return types, indexed by `UserFn::return_slot`.
@@ -252,6 +270,8 @@ pub(crate) struct FnTable {
     // `return_slots` storage as `fns`; lookups during dispatch consult
     // this map for an S3 method before falling back to the generic.
     pub(crate) s3_methods: HashMap<(String, String), usize>,
+    pub(crate) s4_methods: HashMap<(String, String), usize>,
+    pub(crate) s4_classes: HashMap<String, HashMap<String, String>>,
     // Names of all top-level variable assignments across all files in
     // the project. Used to suppress RY010 for cross-file references:
     // when an identifier is not in the current scope but IS in this
@@ -281,10 +301,15 @@ impl FnTable {
         for slot in collected.s3_methods.values_mut() {
             *slot += slot_offset;
         }
+        for slot in collected.s4_methods.values_mut() {
+            *slot += slot_offset;
+        }
         return_slots.0.extend(collected_slots.0);
 
         self.fns.extend(collected.fns);
         self.s3_methods.extend(collected.s3_methods);
+        self.s4_methods.extend(collected.s4_methods);
+        self.s4_classes.extend(collected.s4_classes);
         self.known_vars.extend(collected.known_vars);
         for (name, sites) in collected.call_sites {
             self.call_sites.entry(name).or_default().extend(sites);
@@ -327,6 +352,12 @@ pub(crate) const MAX_FIXPOINT_DEPTH: usize = 8;
 ///     callback. They resolve to opaque (matching the typeshed entry).
 pub(crate) const MAX_CLOSURE_DEPTH: usize = 3;
 
+#[derive(Clone)]
+pub(crate) struct EnclosingFormals {
+    pub(crate) names: HashSet<String>,
+    pub(crate) has_dots: bool,
+}
+
 pub struct Checker {
     typeshed: Arc<Typeshed>,
     user_stubs: Arc<BTreeMap<String, Typeshed>>,
@@ -338,6 +369,7 @@ pub struct Checker {
     // walk: pass 2 runs the identical `infer` with `discarding = true`,
     // pass 3 with `false`.
     discarding: bool,
+    validate_user_call_arguments: bool,
     // User-defined functions collected in pass 1. Stored behind an `Arc`
     // so the multi-file `Project` can share the refined tables across
     // per-file pass-3 emitters without deep-cloning them.
@@ -371,6 +403,10 @@ pub struct Checker {
     // only when checking a nested closure, matching R's deferred lexical
     // capture without making a direct read-before-assignment valid.
     deferred_captures: Vec<HashSet<String>>,
+    // Lexical function context used by call-site rules such as RY096.
+    // A stack is required because nested functions replace, rather than
+    // inherit, the set of formals relevant to `hasArg()`.
+    enclosing_formals: Vec<EnclosingFormals>,
 }
 
 impl Checker {
@@ -382,6 +418,7 @@ impl Checker {
             diagnostics: Vec::new(),
             path: path.to_string(),
             discarding: false,
+            validate_user_call_arguments: true,
             fn_table: Arc::new(FnTable::default()),
             return_slots: Arc::new(ReturnSlots::default()),
             inferring: Vec::new(),
@@ -391,6 +428,7 @@ impl Checker {
             external_s3_methods: HashSet::new(),
             load_bindings: HashMap::new(),
             deferred_captures: Vec::new(),
+            enclosing_formals: Vec::new(),
         }
     }
 
@@ -455,6 +493,7 @@ impl Checker {
             diagnostics: Vec::new(),
             path: path.to_string(),
             discarding: false,
+            validate_user_call_arguments: true,
             fn_table: Arc::new(fn_table),
             return_slots: Arc::new(return_slots),
             inferring: Vec::new(),
@@ -464,6 +503,7 @@ impl Checker {
             external_s3_methods: HashSet::new(),
             load_bindings: HashMap::new(),
             deferred_captures: Vec::new(),
+            enclosing_formals: Vec::new(),
         }
     }
 
@@ -484,6 +524,7 @@ impl Checker {
             diagnostics: Vec::new(),
             path: path.to_string(),
             discarding: false,
+            validate_user_call_arguments: true,
             fn_table,
             return_slots,
             inferring: Vec::new(),
@@ -493,6 +534,7 @@ impl Checker {
             external_s3_methods: HashSet::new(),
             load_bindings: HashMap::new(),
             deferred_captures: Vec::new(),
+            enclosing_formals: Vec::new(),
         }
     }
 
@@ -507,6 +549,10 @@ impl Checker {
             Arc::unwrap_or_clone(self.fn_table),
             Arc::unwrap_or_clone(self.return_slots),
         )
+    }
+
+    pub(crate) fn disable_user_call_argument_validation(&mut self) {
+        self.validate_user_call_arguments = false;
     }
 
     // Pass 1: collect function definitions from this file into the

@@ -11,6 +11,8 @@ use std::collections::{HashMap, HashSet};
 /// Bindings and whole-package imports declared by an R package NAMESPACE.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct NamespaceMetadata {
+    /// Native routine prefixes introduced by `useDynLib(..., .fixes = "prefix")`.
+    pub native_routine_prefixes: HashSet<String>,
     /// Names introduced by `importFrom(package, name, ...)`.
     pub imported_bindings: HashSet<String>,
     /// Exact package provenance for `importFrom(package, name, ...)` names.
@@ -41,6 +43,14 @@ pub fn namespace_metadata(file: &SourceFile) -> NamespaceMetadata {
             continue;
         };
         match name.as_str() {
+            "useDynLib" => {
+                metadata.native_routine_prefixes.extend(
+                    args.iter()
+                        .filter(|arg| arg.name.as_deref() == Some(".fixes"))
+                        .filter_map(|arg| static_name(&arg.value))
+                        .filter(|prefix| !prefix.is_empty()),
+                );
+            }
             "importFrom" => {
                 if let Some(package) = args.first().and_then(|arg| static_name(&arg.value)) {
                     for binding in args
@@ -211,6 +221,22 @@ mod tests {
         assert_eq!(
             metadata.imported_from.get("mutate").map(String::as_str),
             Some("dplyr")
+        );
+    }
+
+    #[test]
+    fn use_dyn_lib_records_nonempty_fixes_prefixes() {
+        let mut parser = ry_core::RParser::new().unwrap();
+        let file = parser
+            .parse(
+                "NAMESPACE",
+                "useDynLib(pkg, .fixes = \"pkg_\")\nuseDynLib(other)\nuseDynLib(empty, .fixes = \"\")",
+            )
+            .unwrap();
+
+        assert_eq!(
+            namespace_metadata(&file).native_routine_prefixes,
+            HashSet::from(["pkg_".to_string()])
         );
     }
 }

@@ -146,6 +146,42 @@ pub const RULES: &[Rule] = &[
         default_severity: Severity::Error,
         summary: "A call argument has a known mode incompatible with the parameter type declared by the resolved signature.",
     },
+    Rule {
+        code: "RY093",
+        name: "comparison-inside-length",
+        default_severity: Severity::Warning,
+        summary: "A comparison directly inside `length()` is usually a parenthesization mistake.",
+    },
+    Rule {
+        code: "RY094",
+        name: "printf-argument-count",
+        default_severity: Severity::Warning,
+        summary: "A literal printf-family format string has more conversions than supplied value arguments.",
+    },
+    Rule {
+        code: "RY095",
+        name: "negation-comparison-precedence",
+        default_severity: Severity::Warning,
+        summary: "`!x == y` parses as `(!x) == y`; use `!(x == y)` or `x != y`.",
+    },
+    Rule {
+        code: "RY096",
+        name: "hasarg-non-formal",
+        default_severity: Severity::Warning,
+        summary: "`hasArg()` names a parameter that is not a formal of the enclosing function.",
+    },
+    Rule {
+        code: "RY097",
+        name: "not-r-source",
+        default_severity: Severity::Info,
+        summary: "File does not appear to be R source; diagnostics suppressed.",
+    },
+    Rule {
+        code: "RY098",
+        name: "default-forced-before-assignment",
+        default_severity: Severity::Warning,
+        summary: "A parameter default references a body-local that may not be assigned yet on some execution path.",
+    },
 ];
 
 pub fn find(code: &str) -> Option<&'static Rule> {

@@ -1,0 +1,8 @@
+{
+  "schema_version": "1",
+  "package": "box",
+  "version": "0.0.1",
+  "functions": {
+    "use": {"params": ["..."], "eval": {"...": "quoted_expression"}, "return": {"mode": "opaque", "length": "unknown", "na": false}}
+  }
+}

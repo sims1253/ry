@@ -316,6 +316,7 @@ impl Project {
                     Arc::clone(&fn_table),
                     Arc::clone(&return_slots),
                 );
+                emitter.disable_user_call_argument_validation();
                 emitter.set_shared_loaded(Arc::clone(&loaded));
                 emitter.set_user_stubs(Arc::clone(&user_stubs));
                 emitter.set_external_bindings(
@@ -396,6 +397,31 @@ mod tests {
             all.iter().any(|d| d.code == "RY040"),
             "expected RY040 from char fn + int, got {:?}",
             all
+        );
+    }
+
+    #[test]
+    fn loaded_package_eval_metadata_applies_to_project_functions() {
+        let mut project = Project::new();
+        project.add_file(
+            "function.R".to_string(),
+            parse("function.R", "list.map <- function(.data, expr) expr\n"),
+        );
+        project.add_file(
+            "call.R".to_string(),
+            parse("call.R", "r <- list.map(some_list(), . + score)\n"),
+        );
+        project.set_loaded(std::collections::HashSet::from(["rlist".to_string()]));
+        let diagnostics: Vec<_> = project
+            .check()
+            .into_iter()
+            .flat_map(|(_, diagnostics)| diagnostics)
+            .collect();
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "RY010"),
+            "project calls should honor loaded stub eval metadata: {diagnostics:?}"
         );
     }
 }

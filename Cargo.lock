@@ -1145,7 +1145,7 @@ checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
 name = "ry-checker"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "criterion",
  "insta",
@@ -1161,7 +1161,7 @@ dependencies = [
 
 [[package]]
 name = "ry-cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bzip2",
  "clap",
@@ -1188,7 +1188,7 @@ dependencies = [
 
 [[package]]
 name = "ry-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "thiserror",
  "tracing",
@@ -1198,7 +1198,7 @@ dependencies = [
 
 [[package]]
 name = "ry-lsp"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "ry-checker",
  "ry-core",
@@ -1213,7 +1213,7 @@ dependencies = [
 
 [[package]]
 name = "ry-typeshed"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",

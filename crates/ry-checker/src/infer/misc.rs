@@ -126,6 +126,8 @@ pub(crate) enum Narrowing {
     /// `var` is narrowed away from `mode` in the negative (else) branch.
     /// Only meaningful for `is.null` (negation = non-null).
     Negative { var: String, mode: Mode },
+    /// A negated class predicate: the class is known only in the else branch.
+    NegativeClass { var: String, target: RType },
 }
 
 /// Extract a type narrowing from an `if` condition expression.
@@ -145,7 +147,17 @@ pub(crate) fn extract_type_narrowing(cond: &Expr) -> Narrowing {
             let Expr::Ident { name, .. } = func.as_ref() else {
                 return Narrowing::None;
             };
-            let Some(target) = predicate_target(name).or_else(|| s3_predicate_target(name)) else {
+            let target = if name == "inherits" {
+                args.get(1).and_then(|arg| match &arg.value {
+                    Expr::String(class, _) if !class.is_empty() => {
+                        Some(RType::unknown().with_class(ClassVector::single(class)))
+                    }
+                    _ => None,
+                })
+            } else {
+                predicate_target(name).or_else(|| s3_predicate_target(name))
+            };
+            let Some(target) = target else {
                 return Narrowing::None;
             };
             let Some(var) = args.first().and_then(|a| match &a.value {
@@ -180,7 +192,18 @@ pub(crate) fn extract_type_narrowing(cond: &Expr) -> Narrowing {
             }) else {
                 return Narrowing::None;
             };
-            // Only `!is.null(x)` is modeled as a negation.
+            if name == "inherits" {
+                let Some(target) = args.get(1).and_then(|arg| match &arg.value {
+                    Expr::String(class, _) if !class.is_empty() => {
+                        Some(RType::unknown().with_class(ClassVector::single(class)))
+                    }
+                    _ => None,
+                }) else {
+                    return Narrowing::None;
+                };
+                return Narrowing::NegativeClass { var, target };
+            }
+            // Only `!is.null(x)` and `!inherits(x, "class")` are modeled.
             if name != "is.null" {
                 return Narrowing::None;
             }
@@ -350,12 +373,9 @@ pub(crate) fn apply_narrowing(
                         }
                     };
                 if should_install
-                    && !class_narrowing
-                    && !matches!(existing.mode, Mode::Opaque | Mode::Null)
+                    && (class_narrowing
+                        || matches!(existing.mode, Mode::Opaque | Mode::Null | Mode::Union))
                 {
-                    // The existing union/known already reflects this; no
-                    // change needed.
-                } else if should_install {
                     then_scope.insert(
                         var.clone(),
                         RType {
@@ -409,6 +429,19 @@ pub(crate) fn apply_narrowing(
                     else_scope.insert(var.clone(), t);
                     narrowed.insert(var.clone());
                 }
+            }
+        }
+        Narrowing::NegativeClass { var, target } => {
+            if has_else && let Some(existing) = else_scope.get(var).cloned() {
+                else_scope.insert(
+                    var.clone(),
+                    RType {
+                        mode: target.mode,
+                        length: existing.length,
+                        ..target.clone()
+                    },
+                );
+                narrowed.insert(var.clone());
             }
         }
     }
@@ -581,6 +614,219 @@ pub(crate) fn collect_forwarded_calls_in_expr(
     }
 }
 
+impl Checker {
+    /// Diagnose the narrow, provable lazy-default ordering bug where a
+    /// parameter is used by an earlier top-level statement than the direct
+    /// body assignment needed by its default expression.
+    pub(crate) fn check_lazy_default_reachability(
+        &mut self,
+        params: &[Param],
+        body: &[Stmt],
+        assigned: &HashSet<String>,
+    ) {
+        let formals: HashSet<&str> = params.iter().map(|param| param.name.as_str()).collect();
+
+        for param in params {
+            let Some(default) = &param.default else {
+                continue;
+            };
+            let mut references = HashSet::new();
+            collect_executed_identifiers(default, &mut references);
+
+            for local in references
+                .iter()
+                .filter(|name| assigned.contains(name.as_str()) && !formals.contains(name.as_str()))
+            {
+                let Some(assign_index) = body.iter().position(|statement| {
+                    matches!(statement, Stmt::Assign { target: Expr::Ident { name, .. }, .. } if name == local)
+                }) else {
+                    // Conditional and otherwise nested assignments are not a
+                    // sufficiently precise guarantee for this rule.
+                    continue;
+                };
+
+                let forced = body[..assign_index].iter().find_map(|statement| {
+                    first_executed_identifier_in_stmt(statement, &param.name)
+                });
+                if let Some(span) = forced {
+                    self.emit(
+                        Severity::Warning,
+                        span,
+                        "RY098",
+                        format!(
+                            "parameter `{}` may force its default before body-local `{local}` is assigned",
+                            param.name
+                        ),
+                    );
+                    break;
+                }
+            }
+        }
+    }
+}
+
+fn first_executed_identifier_in_stmt(statement: &Stmt, wanted: &str) -> Option<Span> {
+    match statement {
+        Stmt::Assign { value, .. } => first_executed_identifier(value, wanted),
+        Stmt::Expr(expr) => first_executed_identifier(expr, wanted),
+        Stmt::If {
+            cond, then, else_, ..
+        } => first_executed_identifier(cond, wanted)
+            .or_else(|| {
+                then.iter()
+                    .find_map(|statement| first_executed_identifier_in_stmt(statement, wanted))
+            })
+            .or_else(|| {
+                else_.as_ref().and_then(|statements| {
+                    statements
+                        .iter()
+                        .find_map(|statement| first_executed_identifier_in_stmt(statement, wanted))
+                })
+            }),
+        Stmt::For { iter, body, .. } => first_executed_identifier(iter, wanted).or_else(|| {
+            body.iter()
+                .find_map(|statement| first_executed_identifier_in_stmt(statement, wanted))
+        }),
+        Stmt::While { cond, body, .. } => first_executed_identifier(cond, wanted).or_else(|| {
+            body.iter()
+                .find_map(|statement| first_executed_identifier_in_stmt(statement, wanted))
+        }),
+        Stmt::Return { value, .. } => value
+            .as_ref()
+            .and_then(|value| first_executed_identifier(value, wanted)),
+        // Defining a closure does not evaluate its body or force captures.
+        Stmt::FunctionDef { .. } => None,
+    }
+}
+
+fn first_executed_identifier(expr: &Expr, wanted: &str) -> Option<Span> {
+    match expr {
+        Expr::Ident { name, span } => (name == wanted).then_some(*span),
+        Expr::Call { func, args, .. } => first_executed_identifier(func, wanted).or_else(|| {
+            args.iter()
+                .find_map(|argument| first_executed_identifier(&argument.value, wanted))
+        }),
+        Expr::BinOp { lhs, rhs, op, .. } => {
+            if matches!(op, BinOpKind::Assign | BinOpKind::SuperAssign) {
+                first_executed_identifier(rhs, wanted)
+            } else {
+                first_executed_identifier(lhs, wanted)
+                    .or_else(|| first_executed_identifier(rhs, wanted))
+            }
+        }
+        Expr::UnaryOp { expr, .. } => first_executed_identifier(expr, wanted),
+        Expr::Index { base, args, .. } => first_executed_identifier(base, wanted).or_else(|| {
+            args.iter()
+                .find_map(|argument| first_executed_identifier(&argument.value, wanted))
+        }),
+        Expr::Block { body, .. } => body
+            .iter()
+            .find_map(|statement| first_executed_identifier_in_stmt(statement, wanted)),
+        Expr::If {
+            cond, then, else_, ..
+        } => first_executed_identifier(cond, wanted)
+            .or_else(|| first_executed_identifier(then, wanted))
+            .or_else(|| {
+                else_
+                    .as_ref()
+                    .and_then(|else_| first_executed_identifier(else_, wanted))
+            }),
+        Expr::Function { .. }
+        | Expr::Logical(_, _)
+        | Expr::Integer(_, _)
+        | Expr::Double(_, _)
+        | Expr::String(_, _)
+        | Expr::Null(_)
+        | Expr::Na(_, _)
+        | Expr::Unknown(_) => None,
+    }
+}
+
+fn collect_executed_identifiers(expr: &Expr, names: &mut HashSet<String>) {
+    match expr {
+        Expr::Ident { name, .. } => {
+            names.insert(name.clone());
+        }
+        Expr::Call { func, args, .. } => {
+            collect_executed_identifiers(func, names);
+            for argument in args {
+                collect_executed_identifiers(&argument.value, names);
+            }
+        }
+        Expr::BinOp { lhs, rhs, op, .. } => {
+            if !matches!(op, BinOpKind::Assign | BinOpKind::SuperAssign) {
+                collect_executed_identifiers(lhs, names);
+            }
+            collect_executed_identifiers(rhs, names);
+        }
+        Expr::UnaryOp { expr, .. } => collect_executed_identifiers(expr, names),
+        Expr::Index { base, args, .. } => {
+            collect_executed_identifiers(base, names);
+            for argument in args {
+                collect_executed_identifiers(&argument.value, names);
+            }
+        }
+        Expr::Block { body, .. } => {
+            for statement in body {
+                collect_identifiers_in_stmt(statement, names);
+            }
+        }
+        Expr::If {
+            cond, then, else_, ..
+        } => {
+            collect_executed_identifiers(cond, names);
+            collect_executed_identifiers(then, names);
+            if let Some(else_) = else_ {
+                collect_executed_identifiers(else_, names);
+            }
+        }
+        Expr::Function { .. }
+        | Expr::Logical(_, _)
+        | Expr::Integer(_, _)
+        | Expr::Double(_, _)
+        | Expr::String(_, _)
+        | Expr::Null(_)
+        | Expr::Na(_, _)
+        | Expr::Unknown(_) => {}
+    }
+}
+
+fn collect_identifiers_in_stmt(statement: &Stmt, names: &mut HashSet<String>) {
+    match statement {
+        Stmt::Assign { value, .. } | Stmt::Expr(value) => {
+            collect_executed_identifiers(value, names);
+        }
+        Stmt::If {
+            cond, then, else_, ..
+        } => {
+            collect_executed_identifiers(cond, names);
+            for statement in then {
+                collect_identifiers_in_stmt(statement, names);
+            }
+            if let Some(else_) = else_ {
+                for statement in else_ {
+                    collect_identifiers_in_stmt(statement, names);
+                }
+            }
+        }
+        Stmt::For { iter, body, .. }
+        | Stmt::While {
+            cond: iter, body, ..
+        } => {
+            collect_executed_identifiers(iter, names);
+            for statement in body {
+                collect_identifiers_in_stmt(statement, names);
+            }
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(value) = value {
+                collect_executed_identifiers(value, names);
+            }
+        }
+        Stmt::FunctionDef { .. } => {}
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ArgumentMatch {
     /// Formal parameter index for each actual argument. `None` means the
@@ -735,6 +981,9 @@ impl Checker {
             let Some(actual) = arg_types.get(argument_index) else {
                 continue;
             };
+            if generic_argument_may_dispatch(function_name, actual) {
+                continue;
+            }
             if types_provably_incompatible(actual, &expected) {
                 self.emit(
                     Severity::Error,
@@ -866,6 +1115,11 @@ fn types_provably_incompatible(actual: &RType, expected: &RType) -> bool {
             .iter()
             .any(|expected_mode| compatible_mode_pair(*actual_mode, *expected_mode))
     })
+}
+
+fn generic_argument_may_dispatch(function_name: &str, actual: &RType) -> bool {
+    matches!(function_name, "round" | "mean" | "log" | "sqrt" | "exp")
+        && (actual.class.has_known_class() || actual.mode == Mode::Null)
 }
 
 fn known_modes(rtype: &RType) -> Option<Vec<Mode>> {
@@ -1038,9 +1292,14 @@ pub(crate) fn build_data_frame_schema(arg_types: &[RType], args: &[Arg]) -> Opti
     let mut schema = build_named_schema(arg_types, args)?;
     for ((name, _), arg) in schema.columns.iter_mut().zip(args) {
         if arg.name.is_none() {
-            if let Expr::Ident { name: symbol, .. } = &arg.value {
-                *name = symbol.clone();
-            }
+            let Expr::Ident { name: symbol, .. } = &arg.value else {
+                // Unlike list placeholders, `[[i]]` is not a reliable
+                // data-frame column name. If an expression's resulting names
+                // are unknown, keep the whole schema opaque so a fabricated
+                // name can never justify RY060.
+                return None;
+            };
+            *name = symbol.clone();
         }
     }
     Some(schema)

@@ -67,7 +67,7 @@ ry check demo.R
 #> demo.R:3:5: warning: [RY001] `if` condition is `character` (not logical); will be silently coerced
 #>   if ("x") print(nums)
 #>       ^~~
-#> demo.R:4:5: warning: [RY002] `if` condition has length 2, will only use first element
+#> demo.R:4:5: warning: [RY002] `if` condition has length 2; R requires a length-1 condition
 #>   if (c(TRUE, FALSE)) print(1)
 #>       ^~~~~~~~~~~~~~
 #> demo.R:5:6: warning: [RY010] variable `undefined_thing` is not bound in this scope
@@ -107,10 +107,23 @@ use installed packages' static `NAMESPACE` exports without executing R or
 loading package code. `requireNamespace()` deliberately does not introduce
 unqualified names.
 
-Stubs currently ship for base R (plus stats and utils),
-dplyr, purrr, mirai, survival, testthat, and a minimal Bayesian stack (brms,
-posterior, loo, bayesplot, cmdstanr). Packages attached outside the checked sources can
-be declared in `ry.toml`.
+Stubs are maintained in the standalone
+[r-typeshed](https://github.com/sims1253/r-typeshed) repository and
+vendored into the binary. They currently cover base R (with a
+mechanically generated symbol inventory for the default packages),
+the tidyverse core (dplyr, tidyr, tidyselect, dbplyr, purrr), the
+Bayesian stack (brms, posterior, loo, bayesplot, cmdstanr), and
+testthat, tinytest, withr, R6, S7, Rcpp, foreach, shiny, survival,
+recipes, mirai, and others. Packages attached outside the checked
+sources can be declared in `ry.toml`.
+
+When checking a package source tree, files are checked in their
+evaluation context: `tests/testthat/` and `inst/tinytest/` files see
+the package’s own namespace, the test framework, DESCRIPTION
+`Depends` / `Suggests`, and bindings plus `library()` calls from
+`helper*` / `setup*` files; `data-raw/`, `demo/`, and `vignettes/`
+attach `Depends`. `revdep/`, `src/`, snapshot data, and
+`.Rbuildignore` matches (never `R/` or `tests/`) are skipped.
 
 Parallel purrr code checks like sequential code, and the typed map
 family is checked against its callback:
@@ -126,6 +139,39 @@ ry check /tmp/ry-readme/parallel.R
 `in_parallel()` is type-transparent to ry: a `map_dbl` whose callback
 returns character is a diagnostic before the run, not a surprise halfway
 through your simulation study.
+
+## Data masking and NSE
+
+Stubs declare which parameters are data-masked, tidy-selected, or
+quoted (for tidyverse packages this metadata is generated from the
+`<data-masking>` / `<tidy-select>` markers in their documentation).
+Columns inside a masked argument resolve against the data frame's
+schema instead of the lexical scope:
+
+``` bash
+ry check nse.R
+#> nse.R:4:23: warning: [RY010] variable `mgp` is not bound in this scope
+#>   summarise(d, m = mean(mgp))
+#>                         ^~~
+#> ry: checked 1 file(s), 0 error(s), 1 warning(s)
+```
+
+where `nse.R` is
+
+``` r
+library(dplyr)
+d <- data.frame(mpg = c(21, 22.8), cyl = c(6, 4))
+summarise(d, m = mean(mpg))                                # resolves
+summarise(d, m = mean(mgp))                                # typo, caught
+my_mean <- function(df, var) summarise(df, m = mean({{ var }}))  # silent
+```
+
+rlang’s `{{ }}` embrace, the `.data` / `.env` pronouns, `!!` / `!!!`,
+and functions that defuse their own arguments (a parameter whose first
+use is `enquo()` / `substitute()` / …) are recognized, so wrapper
+functions do not produce false unbound-variable reports. When the
+masked data’s schema is unknown, column candidates stay silent rather
+than guessed at.
 
 ## Configuration (`ry.toml`)
 
@@ -147,6 +193,9 @@ globals = ["runtime_data", "generated_lookup"]
 
 # Additional package stubs. Paths are relative to this ry.toml.
 typeshed = ["stubs", "../shared-r-stubs"]
+
+# Accepted findings from `ry check --write-baseline`; new findings still fail.
+baseline = "ry-baseline.json"
 
 error-on-warning = false
 exit-zero        = false
@@ -193,6 +242,27 @@ Prefer a rule-specific inline suppression or `globals` entry for dynamic
 workspaces. ry intentionally does not suppress diagnostics merely because an
 expression appears inside `expect_error()`: the setup expression is ordinary R
 code and can contain a real defect before the expected error is reached.
+
+## Confidence tiers and baselines
+
+Every diagnostic carries a confidence tier. Structurally exact rules
+(RY093–RY096, RY030, RY033, …) are `high`; RY010 is `medium`;
+diagnostics from `tests/`, `data-raw/`, `demo/`, `vignettes/`, and
+`inst/` are demoted one tier. Output is sorted by tier, non-medium
+tiers are tagged in the message, and `--min-confidence high|medium|low`
+filters both output and exit code.
+
+To adopt ry on an existing codebase, snapshot the current findings and
+fail only on new ones:
+
+``` bash
+ry check --write-baseline ry-baseline.json .
+ry check --baseline ry-baseline.json .    # or `baseline` in ry.toml
+```
+
+Baseline entries match on path, rule, and message – not line numbers –
+so unrelated edits do not invalidate them. Fixed findings can be
+removed by regenerating the baseline.
 
 ## Editors
 
@@ -243,11 +313,19 @@ explanation for one rule.
 | RY090 | unknown-argument         | warning  | A named call argument does not match any formal parameter after R’s exact and partial argument matching.                                                                                                  |
 | RY091 | missing-required-argument | warning | A required formal parameter is not bound by name or position.                                                                                                                                             |
 | RY092 | argument-type-mismatch   | error    | A call argument has a known mode incompatible with the parameter type declared by the resolved signature.                                                                                                 |
+| RY093 | comparison-inside-length | warning  | A comparison directly inside `length()` (also `nchar()`, `abs()`) is usually a parenthesization mistake.                                                                                                  |
+| RY094 | printf-argument-count    | warning  | A literal printf-family format string has more conversions than supplied value arguments.                                                                                                                 |
+| RY095 | negation-comparison-precedence | warning | `!x == y` parses as `(!x) == y`; use `!(x == y)` or `x != y`.                                                                                                                                        |
+| RY096 | hasarg-non-formal        | warning  | `hasArg()` names a parameter that is not a formal of the enclosing function.                                                                                                                              |
+| RY097 | not-r-source             | info     | File does not appear to be R source (e.g. Ratfor); its diagnostics are suppressed.                                                                                                                        |
+| RY098 | default-forced-before-assignment | warning | A parameter default references a body-local that may not be assigned yet on some execution path.                                                                                                    |
 
-Known gaps: no S4 / R6 / environment modeling, no expansion of dynamic
-`exportPattern()` directives, and no NA tracking yet. Cross-package names
-without stubs resolve to opaque values when static package metadata proves
-that they exist.
+Known gaps: S4 modeling covers in-package `setClass` / `setGeneric` /
+`setMethod` and `@` slot access but not full method resolution order;
+R6 modeling covers `self` / `private` / `super` in method bodies, not
+field types. No expansion of dynamic `exportPattern()` directives and no
+NA tracking yet. Cross-package names without stubs resolve to opaque
+values when static package metadata proves that they exist.
 
 ## Contributing
 

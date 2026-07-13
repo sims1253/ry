@@ -9,7 +9,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
@@ -47,3 +47,7 @@ xz2 = "0.1"
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+# Profile cargo-dist builds release artifacts with.
+[profile.dist]
+inherits = "release"

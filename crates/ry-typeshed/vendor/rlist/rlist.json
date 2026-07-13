@@ -1,0 +1,440 @@
+{
+  "schema_version": "1",
+  "package": "rlist",
+  "version": "0.0.1",
+  "functions": {
+    "list.all": {
+      "params": [
+        ".data",
+        "cond",
+        "na.rm"
+      ],
+      "eval": {
+        "cond": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.any": {
+      "params": [
+        ".data",
+        "cond",
+        "na.rm"
+      ],
+      "eval": {
+        "cond": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.cases": {
+      "params": [
+        ".data",
+        "expr",
+        "simplify",
+        "sorted"
+      ],
+      "eval": {
+        "expr": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.class": {
+      "params": [
+        ".data",
+        "...",
+        "sorted"
+      ],
+      "eval": {
+        "...": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.common": {
+      "params": [
+        ".data",
+        "expr"
+      ],
+      "eval": {
+        "expr": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.count": {
+      "params": [
+        ".data",
+        "cond"
+      ],
+      "eval": {
+        "cond": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.exclude": {
+      "params": [
+        ".data",
+        "cond"
+      ],
+      "eval": {
+        "cond": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.filter": {
+      "params": [
+        ".data",
+        "..."
+      ],
+      "eval": {
+        "...": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.find": {
+      "params": [
+        ".data",
+        "cond",
+        "n"
+      ],
+      "eval": {
+        "cond": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.findi": {
+      "params": [
+        ".data",
+        "cond",
+        "n"
+      ],
+      "eval": {
+        "cond": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.first": {
+      "params": [
+        ".data",
+        "cond"
+      ],
+      "eval": {
+        "cond": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.group": {
+      "params": [
+        ".data",
+        "...",
+        "sorted"
+      ],
+      "eval": {
+        "...": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.is": {
+      "params": [
+        ".data",
+        "cond",
+        "use.names"
+      ],
+      "eval": {
+        "cond": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.iter": {
+      "params": [
+        ".data",
+        "expr"
+      ],
+      "eval": {
+        "expr": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.join": {
+      "params": [
+        "x",
+        "y",
+        "xkey",
+        "ykey",
+        "...",
+        "keep.order"
+      ],
+      "eval": {
+        "xkey": "data_mask",
+        "ykey": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.last": {
+      "params": [
+        ".data",
+        "cond"
+      ],
+      "eval": {
+        "cond": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.map": {
+      "params": [
+        ".data",
+        "expr"
+      ],
+      "eval": {
+        "expr": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.mapv": {
+      "params": [
+        ".data",
+        "expr",
+        "as",
+        "use.names"
+      ],
+      "eval": {
+        "expr": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.names": {
+      "params": [
+        ".data",
+        "expr"
+      ],
+      "eval": {
+        "expr": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.order": {
+      "params": [
+        ".data",
+        "...",
+        "keep.names",
+        "na.last"
+      ],
+      "eval": {
+        "...": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.sample": {
+      "params": [
+        ".data",
+        "size",
+        "replace",
+        "weight",
+        "prob"
+      ],
+      "eval": {
+        "weight": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.search": {
+      "params": [
+        ".data",
+        "expr",
+        "classes",
+        "n",
+        "unlist"
+      ],
+      "eval": {
+        "expr": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.select": {
+      "params": [
+        ".data",
+        "..."
+      ],
+      "eval": {
+        "...": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.skipWhile": {
+      "params": [
+        ".data",
+        "cond"
+      ],
+      "eval": {
+        "cond": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.sort": {
+      "params": [
+        ".data",
+        "...",
+        "na.last"
+      ],
+      "eval": {
+        "...": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.table": {
+      "params": [
+        ".data",
+        "...",
+        "table.args"
+      ],
+      "eval": {
+        "...": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.takeWhile": {
+      "params": [
+        ".data",
+        "cond"
+      ],
+      "eval": {
+        "cond": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.update": {
+      "params": [
+        ".data",
+        "...",
+        "keep.null"
+      ],
+      "eval": {
+        "...": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list.which": {
+      "params": [
+        ".data",
+        "cond"
+      ],
+      "eval": {
+        "cond": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    }
+  }
+}

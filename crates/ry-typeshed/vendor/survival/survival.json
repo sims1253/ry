@@ -1,0 +1,123 @@
+{
+  "schema_version": "1",
+  "package": "survival",
+  "version": "0.0.1",
+  "functions": {
+    "Surv": {
+      "params": [
+        "time",
+        "event",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "Surv"
+        ]
+      }
+    },
+    "coxph": {
+      "params": [
+        "formula", "data", "weights", "subset", "na.action", "init",
+        "control", "ties", "singular.ok", "robust", "model", "x", "y",
+        "tt", "method", "id", "cluster", "istate", "statedata", "nocenter", "..."
+      ],
+      "eval": {
+        "weights": "data_mask",
+        "subset": "data_mask",
+        "id": "data_mask",
+        "cluster": "data_mask",
+        "istate": "data_mask"
+      },
+      "return": {"mode": "list", "length": "unknown", "class": ["coxph"]}
+    },
+    "survcheck": {
+      "params": ["formula", "data", "subset", "na.action", "id", "istate", "..."],
+      "eval": {
+        "subset": "data_mask",
+        "id": "data_mask",
+        "istate": "data_mask"
+      },
+      "return": {"mode": "list", "length": "unknown"}
+    },
+    "survfit": {
+      "params": [
+        "formula",
+        "data",
+        "weights",
+        "subset",
+        "na.action",
+        "..."
+      ],
+      "eval": {
+        "weights": "data_mask",
+        "subset": "data_mask"
+      },
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "survfit"
+        ]
+      }
+    },
+    "tmerge": {
+      "params": ["data1", "data2", "id", "...", "tstart", "tstop", "options"],
+      "eval": {
+        "id": "data_mask",
+        "...": "data_mask",
+        "tstart": "data_mask",
+        "tstop": "data_mask"
+      },
+      "return": {"mode": "list", "length": "unknown", "class": ["data.frame"]}
+    }
+  },
+  "s3_methods": [
+    {
+      "generic": "quantile",
+      "class": "survfit",
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": true,
+        "columns": {
+          "quantile": {
+            "mode": "double",
+            "length": "unknown",
+            "na": true
+          },
+          "lower": {
+            "mode": "double",
+            "length": "unknown",
+            "na": true
+          },
+          "upper": {
+            "mode": "double",
+            "length": "unknown",
+            "na": true
+          }
+        }
+      }
+    },
+    {
+      "generic": "summary",
+      "class": "survfit",
+      "params": [
+        "object",
+        "..."
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  ]
+}

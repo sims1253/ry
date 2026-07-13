@@ -7,5 +7,9 @@
 # Local tool caches
 /.claude/
 
+# Ecosystem regression harness caches and message-bearing reports
+/ecosystem/.cache/
+/ecosystem/reports/*.full.txt
+
 # rmarkdown render byproduct (README.md is the tracked output)
 /README.html

@@ -1,0 +1,9 @@
+{
+  "schema_version": "1",
+  "package": "rex",
+  "version": "0.0.1",
+  "functions": {
+    "rex": {"params": ["...", "env"], "eval": {"...": "quoted_expression"}, "return": {"mode": "opaque", "length": "unknown", "na": false}},
+    "rex_mode": {"params": [], "return": {"mode": "opaque", "length": "unknown", "na": false}}
+  }
+}

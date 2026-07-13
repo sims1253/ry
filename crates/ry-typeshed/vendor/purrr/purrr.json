@@ -1,0 +1,590 @@
+{
+  "schema_version": "1",
+  "package": "purrr",
+  "version": "0.0.1",
+  "functions": {
+    "accumulate": {
+      "params": [
+        ".x",
+        ".f",
+        "..."
+      ],
+      "higher_order": {"callback_param": ".f", "callback_position": 1, "callback_args": ["accumulator_and_element"], "result": {"kind": "callback_return"}},
+      "return": {
+        "mode": "opaque",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "as_mapper": {
+      "params": [
+        ".f",
+        "..."
+      ],
+      "return": {
+        "mode": "function",
+        "length": "1",
+        "na": false
+      }
+    },
+    "compact": {
+      "params": [
+        ".x",
+        ".p"
+      ],
+      "higher_order": {"callback_param": ".p", "callback_position": 1, "callback_args": ["element_of_arg0"], "result": {"kind": "same_as_arg0", "source_arg": 0, "unknown_length": true}},
+      "return": {
+        "mode": "arg0",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "detect": {
+      "params": [
+        ".x",
+        ".f",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "detect_index": {
+      "params": [
+        ".x",
+        ".f",
+        "..."
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "1",
+        "na": false
+      }
+    },
+    "discard": {
+      "params": [
+        ".x",
+        ".p",
+        "..."
+      ],
+      "higher_order": {"callback_param": ".p", "callback_position": 1, "callback_args": ["element_of_arg0"], "result": {"kind": "same_as_arg0", "source_arg": 0, "unknown_length": true}},
+      "return": {
+        "mode": "arg0",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "every": {
+      "params": [
+        ".x",
+        ".p",
+        "..."
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "flatten": {
+      "params": [
+        ".x"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "flatten_chr": {
+      "params": [
+        ".x"
+      ],
+      "return": {
+        "mode": "character",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "flatten_dbl": {
+      "params": [
+        ".x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "flatten_int": {
+      "params": [
+        ".x"
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "flatten_lgl": {
+      "params": [
+        ".x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "head_while": {
+      "params": [
+        ".x",
+        ".p"
+      ],
+      "return": {
+        "mode": "arg0",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "imap": {
+      "params": [
+        ".x",
+        ".f",
+        "..."
+      ],
+      "higher_order": {"callback_param": ".f", "callback_position": 1, "callback_args": ["element_of_arg0"], "result": {"kind": "list_of_callback_return", "length_arg": 0, "include_callback_schema": true}},
+      "return": {
+        "mode": "list",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "in_parallel": {
+      "params": [
+        ".f"
+      ],
+      "higher_order": {"callback_param": ".f", "callback_position": 0, "callback_args": [], "result": {"kind": "callback_identity"}},
+      "return": {
+        "mode": "arg0",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "keep": {
+      "params": [
+        ".x",
+        ".p",
+        "..."
+      ],
+      "higher_order": {"callback_param": ".p", "callback_position": 1, "callback_args": ["element_of_arg0"], "result": {"kind": "same_as_arg0", "source_arg": 0, "unknown_length": true}},
+      "return": {
+        "mode": "arg0",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "lift": {
+      "params": [
+        ".f"
+      ],
+      "return": {
+        "mode": "function",
+        "length": "1",
+        "na": false
+      }
+    },
+    "list_modify": {
+      "params": [
+        ".x",
+        "..."
+      ],
+      "return": {
+        "mode": "list",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "map": {
+      "params": [
+        ".x",
+        ".f",
+        "..."
+      ],
+      "higher_order": {"callback_param": ".f", "callback_position": 1, "callback_args": ["element_of_arg0"], "result": {"kind": "list_of_callback_return", "length_arg": 0, "include_callback_schema": true}},
+      "return": {
+        "mode": "list",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "map2": {
+      "params": [
+        ".x",
+        ".y",
+        ".f",
+        "..."
+      ],
+      "higher_order": {"callback_param": ".f", "callback_position": 2, "callback_args": ["element_of_arg0", "element_of_arg1"], "result": {"kind": "list_of_callback_return", "include_callback_schema": true}},
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "map2_chr": {
+      "params": [
+        ".x",
+        ".y",
+        ".f",
+        "..."
+      ],
+      "higher_order": {"callback_param": ".f", "callback_position": 2, "callback_args": ["element_of_arg0", "element_of_arg1"], "result": {"kind": "list_of_callback_return", "include_callback_schema": true}},
+      "return": {
+        "mode": "character",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "map2_dbl": {
+      "params": [
+        ".x",
+        ".y",
+        ".f",
+        "..."
+      ],
+      "higher_order": {"callback_param": ".f", "callback_position": 2, "callback_args": ["element_of_arg0", "element_of_arg1"], "result": {"kind": "list_of_callback_return", "include_callback_schema": true}},
+      "return": {
+        "mode": "double",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "map2_int": {
+      "params": [
+        ".x",
+        ".y",
+        ".f",
+        "..."
+      ],
+      "higher_order": {"callback_param": ".f", "callback_position": 2, "callback_args": ["element_of_arg0", "element_of_arg1"], "result": {"kind": "list_of_callback_return", "include_callback_schema": true}},
+      "return": {
+        "mode": "integer",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "map2_lgl": {
+      "params": [
+        ".x",
+        ".y",
+        ".f",
+        "..."
+      ],
+      "higher_order": {"callback_param": ".f", "callback_position": 2, "callback_args": ["element_of_arg0", "element_of_arg1"], "result": {"kind": "list_of_callback_return", "include_callback_schema": true}},
+      "return": {
+        "mode": "logical",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "map_chr": {
+      "params": [
+        ".x",
+        ".f",
+        "..."
+      ],
+      "higher_order": {"callback_param": ".f", "callback_position": 1, "callback_args": ["element_of_arg0"], "result": {"kind": "vector_of", "mode": "character", "length_arg": 0}},
+      "return": {
+        "mode": "character",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "map_dbl": {
+      "params": [
+        ".x",
+        ".f",
+        "..."
+      ],
+      "higher_order": {"callback_param": ".f", "callback_position": 1, "callback_args": ["element_of_arg0"], "result": {"kind": "vector_of", "mode": "double", "length_arg": 0}},
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "map_if": {
+      "params": [
+        ".x",
+        ".p",
+        ".f",
+        "..."
+      ],
+      "higher_order": {"callback_param": ".f", "callback_position": 1, "callback_args": ["element_of_arg0"], "result": {"kind": "list_of_callback_return", "length_arg": 0, "include_callback_schema": true}},
+      "return": {
+        "mode": "list",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "map_int": {
+      "params": [
+        ".x",
+        ".f",
+        "..."
+      ],
+      "higher_order": {"callback_param": ".f", "callback_position": 1, "callback_args": ["element_of_arg0"], "result": {"kind": "vector_of", "mode": "integer", "length_arg": 0}},
+      "return": {
+        "mode": "integer",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "map_lgl": {
+      "params": [
+        ".x",
+        ".f",
+        "..."
+      ],
+      "higher_order": {"callback_param": ".f", "callback_position": 1, "callback_args": ["element_of_arg0"], "result": {"kind": "vector_of", "mode": "logical", "length_arg": 0}},
+      "return": {
+        "mode": "logical",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "map_vec": {
+      "params": [
+        ".x",
+        ".f",
+        "..."
+      ],
+      "higher_order": {"callback_param": ".f", "callback_position": 1, "callback_args": ["element_of_arg0"], "result": {"kind": "vector_of", "mode": "opaque", "length_arg": 0}},
+      "return": {
+        "mode": "opaque",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "negate": {
+      "params": [
+        ".f"
+      ],
+      "return": {
+        "mode": "function",
+        "length": "1",
+        "na": false
+      }
+    },
+    "none": {
+      "params": [
+        ".x",
+        ".p",
+        "..."
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "partial": {
+      "params": [
+        ".f",
+        "..."
+      ],
+      "return": {
+        "mode": "function",
+        "length": "1",
+        "na": false
+      }
+    },
+    "pluck": {
+      "params": [
+        ".x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "pmap": {
+      "params": [
+        ".l",
+        ".f",
+        "..."
+      ],
+      "higher_order": {"callback_param": ".f", "callback_position": 2, "callback_args": ["element_of_arg0", "element_of_arg1"], "result": {"kind": "list_of_callback_return", "include_callback_schema": true}},
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "pmap_chr": {
+      "params": [
+        ".l",
+        ".f",
+        "..."
+      ],
+      "higher_order": {"callback_param": ".f", "callback_position": 2, "callback_args": ["element_of_arg0", "element_of_arg1"], "result": {"kind": "list_of_callback_return", "include_callback_schema": true}},
+      "return": {
+        "mode": "character",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "pmap_dbl": {
+      "params": [
+        ".l",
+        ".f",
+        "..."
+      ],
+      "higher_order": {"callback_param": ".f", "callback_position": 2, "callback_args": ["element_of_arg0", "element_of_arg1"], "result": {"kind": "list_of_callback_return", "include_callback_schema": true}},
+      "return": {
+        "mode": "double",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "pmap_int": {
+      "params": [
+        ".l",
+        ".f",
+        "..."
+      ],
+      "higher_order": {"callback_param": ".f", "callback_position": 2, "callback_args": ["element_of_arg0", "element_of_arg1"], "result": {"kind": "list_of_callback_return", "include_callback_schema": true}},
+      "return": {
+        "mode": "integer",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "pmap_lgl": {
+      "params": [
+        ".l",
+        ".f",
+        "..."
+      ],
+      "higher_order": {"callback_param": ".f", "callback_position": 2, "callback_args": ["element_of_arg0", "element_of_arg1"], "result": {"kind": "list_of_callback_return", "include_callback_schema": true}},
+      "return": {
+        "mode": "logical",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "pwalk": {
+      "params": [
+        ".l",
+        ".f",
+        "..."
+      ],
+      "higher_order": {"callback_param": ".f", "callback_position": 1, "callback_args": ["element_of_arg0"], "result": {"kind": "first_arg", "source_arg": 0}},
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "reduce": {
+      "params": [
+        ".x",
+        ".f",
+        "..."
+      ],
+      "higher_order": {"callback_param": ".f", "callback_position": 1, "callback_args": ["accumulator_and_element"], "result": {"kind": "callback_return"}},
+      "return": {
+        "mode": "opaque",
+        "length": "1",
+        "na": false
+      }
+    },
+    "set_names": {
+      "params": [
+        "x",
+        "nm",
+        "..."
+      ],
+      "return": {
+        "mode": "arg0",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "some": {
+      "params": [
+        ".x",
+        ".p",
+        "..."
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "splice": {
+      "params": [
+        ".x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "tail_while": {
+      "params": [
+        ".x",
+        ".p"
+      ],
+      "return": {
+        "mode": "arg0",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "transpose": {
+      "params": [
+        ".l"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "walk": {
+      "params": [
+        ".x",
+        ".f",
+        "..."
+      ],
+      "higher_order": {"callback_param": ".f", "callback_position": 1, "callback_args": ["element_of_arg0"], "result": {"kind": "first_arg", "source_arg": 0}},
+      "return": {
+        "mode": "opaque",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "walk2": {
+      "params": [
+        ".x",
+        ".y",
+        ".f",
+        "..."
+      ],
+      "higher_order": {"callback_param": ".f", "callback_position": 1, "callback_args": ["element_of_arg0"], "result": {"kind": "first_arg", "source_arg": 0}},
+      "return": {
+        "mode": "opaque",
+        "length": "arg0",
+        "na": false
+      }
+    }
+  }
+}

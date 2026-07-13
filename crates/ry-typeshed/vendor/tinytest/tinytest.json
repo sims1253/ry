@@ -1,0 +1,27 @@
+{
+  "schema_version": "1",
+  "package": "tinytest",
+  "version": "0.0.1",
+  "functions": {
+    "at_home": {"params": ["..."], "return": {"mode": "opaque", "length": "unknown"}},
+    "exit_file": {"params": ["..."], "return": {"mode": "opaque", "length": "unknown"}},
+    "expect_equal": {"params": ["..."], "return": {"mode": "opaque", "length": "unknown"}},
+    "expect_equal_to_reference": {"params": ["..."], "return": {"mode": "opaque", "length": "unknown"}},
+    "expect_equivalent": {"params": ["..."], "return": {"mode": "opaque", "length": "unknown"}},
+    "expect_equivalent_to_reference": {"params": ["..."], "return": {"mode": "opaque", "length": "unknown"}},
+    "expect_error": {"params": ["..."], "return": {"mode": "opaque", "length": "unknown"}},
+    "expect_false": {"params": ["..."], "return": {"mode": "opaque", "length": "unknown"}},
+    "expect_identical": {"params": ["..."], "return": {"mode": "opaque", "length": "unknown"}},
+    "expect_inherits": {"params": ["..."], "return": {"mode": "opaque", "length": "unknown"}},
+    "expect_length": {"params": ["..."], "return": {"mode": "opaque", "length": "unknown"}},
+    "expect_match": {"params": ["..."], "return": {"mode": "opaque", "length": "unknown"}},
+    "expect_message": {"params": ["..."], "return": {"mode": "opaque", "length": "unknown"}},
+    "expect_null": {"params": ["..."], "return": {"mode": "opaque", "length": "unknown"}},
+    "expect_silent": {"params": ["..."], "return": {"mode": "opaque", "length": "unknown"}},
+    "expect_stdout": {"params": ["..."], "return": {"mode": "opaque", "length": "unknown"}},
+    "expect_true": {"params": ["..."], "return": {"mode": "opaque", "length": "unknown"}},
+    "expect_warning": {"params": ["..."], "return": {"mode": "opaque", "length": "unknown"}},
+    "run_test_dir": {"params": ["..."], "return": {"mode": "opaque", "length": "unknown"}},
+    "run_test_file": {"params": ["..."], "return": {"mode": "opaque", "length": "unknown"}}
+  }
+}

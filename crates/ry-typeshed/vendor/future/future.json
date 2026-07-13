@@ -1,0 +1,8 @@
+{
+  "schema_version": "1",
+  "package": "future",
+  "version": "0.0.1",
+  "functions": {
+    "%<-%": {"params": ["x", "value"], "eval": {"x": "quoted_expression"}, "return": {"mode": "opaque", "length": "unknown", "na": false}}
+  }
+}

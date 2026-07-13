@@ -1,0 +1,8 @@
+R/compat-purrr.R:174:54 RY010
+R/compat-purrr.R:185:60 RY010
+R/compat-types-check.R:109:53 RY010
+R/compat-types-check.R:243:35 RY010
+R/compat-types-check.R:244:35 RY010
+R/lump.R:107:15 RY040
+R/lump.R:109:15 RY040
+R/lump.R:133:18 RY020

@@ -1,0 +1,133 @@
+{
+  "schema_version": "1",
+  "package": "mirai",
+  "version": "0.0.1",
+  "functions": {
+    "call_mirai": {
+      "params": [
+        ".x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "collect_mirai": {
+      "params": [
+        ".x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "daemons": {
+      "params": [
+        "n",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "1",
+        "na": false,
+        "class": [
+          "mirai_daemons"
+        ]
+      }
+    },
+    "everywhere": {
+      "params": [
+        ".expr",
+        "..."
+      ],
+      "return": {
+        "mode": "null",
+        "length": "0",
+        "na": false
+      }
+    },
+    "is_mirai": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "mirai": {
+      "params": [
+        ".expr",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "1",
+        "na": false,
+        "class": [
+          "mirai"
+        ]
+      }
+    },
+    "mirai_map": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "1",
+        "na": false,
+        "class": [
+          "mirai_map"
+        ]
+      }
+    },
+    "status": {
+      "params": [
+        ".x"
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "1",
+        "na": false
+      }
+    },
+    "stop_mirai": {
+      "params": [
+        ".x",
+        "..."
+      ],
+      "return": {
+        "mode": "null",
+        "length": "0",
+        "na": false
+      }
+    },
+    "try_mirai": {
+      "params": [
+        ".x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "unresolved": {
+      "params": [
+        ".x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    }
+  }
+}

@@ -67,8 +67,8 @@ jobs:
         # warns and exits 0 -- that silent failure previously left the
         # oracle without purrr, breaking the purrr fixtures and dropping
         # the parallel driver). It also installs system requirements and
-        # caches the package library between runs. dplyr is included so
-        # the typeshed audit covers dplyr.json in CI, not just locally.
+        # caches the package library between runs. dplyr is used by
+        # oracle fixtures.
         uses: r-lib/actions/setup-r-dependencies@v2
         with:
           # carrier is purrr's SUGGESTED (not imported) dependency that
@@ -86,18 +86,7 @@ jobs:
         # is what both the parallel driver and the fixtures rely on.
         run: |
           Rscript -e 'stopifnot(requireNamespace("purrr"), requireNamespace("mirai"), requireNamespace("carrier"), requireNamespace("dplyr"))'
-      - name: Audit typeshed (no fabricated entries)
-        # Runs AFTER package install so the purrr/mirai/dplyr stub files
-        # are actually audited against their namespaces (the audit skips
-        # stubs for packages that are not installed).
-        run: Rscript scripts/audit_typeshed.R
-      - name: Smoke-test the typeshed generator
-        # gen_typeshed.R emits a DRAFT JSON skeleton from a package's
-        # formals(). Smoke-test it on `stats` (always installed) and
-        # confirm the output parses as JSON.
-        run: |
-          Rscript scripts/gen_typeshed.R stats > /tmp/stats_draft.json
-          Rscript -e 'jsonlite::parse_json("/tmp/stats_draft.json"); cat("gen_typeshed OK\n")' || \
-            Rscript -e 'lines <- readLines("/tmp/stats_draft.json"); cat("gen_typeshed produced", length(lines), "lines\n")'
+      # Typeshed auditing and stub generation moved to the r-typeshed
+      # repository together with the stubs; its CI covers them.
       - name: Oracle suite
         run: cargo test -p ry-checker --test oracle -- --ignored --nocapture

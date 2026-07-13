@@ -1,0 +1,9454 @@
+{
+  "schema_version": "1",
+  "package": "base",
+  "version": "0.0.1",
+  "globals": {
+    "ambient": [
+      "..deparseOpts",
+      ".ArgsEnv",
+      ".AutoloadEnv",
+      ".C_R_addTaskCallback",
+      ".C_R_getTaskCallbackNames",
+      ".C_R_removeTaskCallback",
+      ".Device",
+      ".Devices",
+      ".EmptyPrimitiveSkeletons",
+      ".F_dqrcf",
+      ".F_dqrdc2",
+      ".F_dqrqty",
+      ".F_dqrqy",
+      ".F_dqrrsd",
+      ".F_dqrxb",
+      ".F_dtrco",
+      ".GenericArgsEnv",
+      ".GlobalEnv",
+      ".LC.categories",
+      ".Last.value",
+      ".Library",
+      ".Library.site",
+      ".OldClassesList",
+      ".Random.seed",
+      ".S3PrimitiveGenerics",
+      ".S3_methods_table",
+      ".ShortPrimitiveSkeletons",
+      ".__C__(",
+      ".__C__.NULL",
+      ".__C__.Other",
+      ".__C__.environment",
+      ".__C__.externalptr",
+      ".__C__.name",
+      ".__C__<-",
+      ".__C__ANY",
+      ".__C__ClassUnionRepresentation",
+      ".__C__Date",
+      ".__C__LinearMethodsList",
+      ".__C__MethodDefinition",
+      ".__C__MethodDefinitionWithTrace",
+      ".__C__MethodSelectionReport",
+      ".__C__MethodWithNext",
+      ".__C__MethodWithNextWithTrace",
+      ".__C__NULL",
+      ".__C__ObjectsWithPackage",
+      ".__C__OptionalFunction",
+      ".__C__POSIXct",
+      ".__C__POSIXlt",
+      ".__C__POSIXt",
+      ".__C__PossibleMethod",
+      ".__C__S3",
+      ".__C__S4",
+      ".__C__SClassExtension",
+      ".__C__SealedMethodDefinition",
+      ".__C__SuperClassMethod",
+      ".__C__VIRTUAL",
+      ".__C__activeBindingFunction",
+      ".__C__anova",
+      ".__C__anova.glm",
+      ".__C__anova.glm.null",
+      ".__C__aov",
+      ".__C__array",
+      ".__C__builtin",
+      ".__C__call",
+      ".__C__character",
+      ".__C__classGeneratorFunction",
+      ".__C__className",
+      ".__C__classPrototypeDef",
+      ".__C__classRepresentation",
+      ".__C__complex",
+      ".__C__conditionalExtension",
+      ".__C__data.frame",
+      ".__C__data.frameRowLabels",
+      ".__C__defaultBindingFunction",
+      ".__C__density",
+      ".__C__derivedDefaultMethod",
+      ".__C__derivedDefaultMethodWithTrace",
+      ".__C__difftime",
+      ".__C__double",
+      ".__C__dump.frames",
+      ".__C__envRefClass",
+      ".__C__environment",
+      ".__C__expression",
+      ".__C__externalRefMethod",
+      ".__C__externalptr",
+      ".__C__factor",
+      ".__C__for",
+      ".__C__formula",
+      ".__C__function",
+      ".__C__functionWithTrace",
+      ".__C__genericFunction",
+      ".__C__genericFunctionWithTrace",
+      ".__C__glm",
+      ".__C__glm.null",
+      ".__C__groupGenericFunction",
+      ".__C__groupGenericFunctionWithTrace",
+      ".__C__hsearch",
+      ".__C__if",
+      ".__C__integer",
+      ".__C__integrate",
+      ".__C__internalDispatchMethod",
+      ".__C__language",
+      ".__C__libraryIQR",
+      ".__C__list",
+      ".__C__listOfMethods",
+      ".__C__lm",
+      ".__C__localRefClass",
+      ".__C__logLik",
+      ".__C__logical",
+      ".__C__maov",
+      ".__C__matrix",
+      ".__C__missing",
+      ".__C__mlm",
+      ".__C__mtable",
+      ".__C__mts",
+      ".__C__name",
+      ".__C__namedList",
+      ".__C__nonStructure",
+      ".__C__nonstandardGeneric",
+      ".__C__nonstandardGenericFunction",
+      ".__C__nonstandardGenericWithTrace",
+      ".__C__nonstandardGroupGenericFunction",
+      ".__C__numeric",
+      ".__C__oldClass",
+      ".__C__optionalMethod",
+      ".__C__ordered",
+      ".__C__packageIQR",
+      ".__C__packageInfo",
+      ".__C__raw",
+      ".__C__recordedplot",
+      ".__C__refClass",
+      ".__C__refClassRepresentation",
+      ".__C__refGeneratorSlot",
+      ".__C__refMethodDef",
+      ".__C__refMethodDefWithTrace",
+      ".__C__refObject",
+      ".__C__refObjectGenerator",
+      ".__C__repeat",
+      ".__C__rle",
+      ".__C__signature",
+      ".__C__socket",
+      ".__C__sourceEnvironment",
+      ".__C__special",
+      ".__C__standardGeneric",
+      ".__C__standardGenericWithTrace",
+      ".__C__structure",
+      ".__C__summary.table",
+      ".__C__summaryDefault",
+      ".__C__table",
+      ".__C__traceable",
+      ".__C__ts",
+      ".__C__uninitializedField",
+      ".__C__vector",
+      ".__C__while",
+      ".__C__{",
+      ".__S3MethodsTable__.",
+      ".__T__$:base",
+      ".__T__$<-:base",
+      ".__T__Arith:base",
+      ".__T__Compare:methods",
+      ".__T__Complex:base",
+      ".__T__Logic:base",
+      ".__T__Math2:methods",
+      ".__T__Math:base",
+      ".__T__Ops:base",
+      ".__T__Summary:base",
+      ".__T__[:base",
+      ".__T__[<-:base",
+      ".__T__[[<-:base",
+      ".__T__addNextMethod:methods",
+      ".__T__body<-:base",
+      ".__T__cbind2:methods",
+      ".__T__coerce:methods",
+      ".__T__coerce<-:methods",
+      ".__T__initialize:methods",
+      ".__T__kronecker:base",
+      ".__T__loadMethod:methods",
+      ".__T__matrixOps:base",
+      ".__T__rbind2:methods",
+      ".__T__show:methods",
+      ".__T__slotsFromS3:methods",
+      ".data",
+      ".env",
+      ".internalGenerics",
+      ".knownS3Generics",
+      ".leap.seconds",
+      ".noGenerics",
+      ".popath",
+      ".romans",
+      ".sys.timezone",
+      ".userHooksEnv",
+      "Hershey",
+      "R.version",
+      "R.version.string",
+      "SweaveSyntaxLatex",
+      "SweaveSyntaxNoweb",
+      "blues9",
+      "colorspaces",
+      "osVersion",
+      "p.adjust.methods",
+      "symbols",
+      "version"
+    ],
+    "s3_generics": [
+      "Ops",
+      "Math",
+      "Summary",
+      "matrixOps",
+      "print",
+      "summary",
+      "plot",
+      "predict",
+      "fitted",
+      "residuals",
+      "coef",
+      "vcov",
+      "logLik",
+      "AIC",
+      "BIC",
+      "update",
+      "deviance",
+      "anova",
+      "str",
+      "terms",
+      "quantile"
+    ],
+    "s3_split_denylist": [
+      "t.test",
+      "all.equal",
+      "file.path",
+      "Sys.time",
+      "Sys.Date",
+      "as.data.frame",
+      "tempfile",
+      "tempdir",
+      "read.csv",
+      "write.csv",
+      "data.frame"
+    ],
+    "ambient_functions": [
+      "!",
+      "!.hexmode",
+      "!.octmode",
+      "!=",
+      "$",
+      "$.DLLInfo",
+      "$.package_version",
+      "$<-",
+      "$<-.POSIXlt",
+      "$<-.data.frame",
+      "%%",
+      "%*%",
+      "%/%",
+      "%in%",
+      "%notin%",
+      "%o%",
+      "%x%",
+      "%||%",
+      "&",
+      "&&",
+      "&.hexmode",
+      "&.octmode",
+      "(",
+      "*",
+      "*.difftime",
+      "+",
+      "+.Date",
+      "+.POSIXt",
+      "-",
+      "-.Date",
+      "-.POSIXt",
+      "...elt",
+      "...length",
+      "...names",
+      "..getNamespace",
+      ".AtNames",
+      ".Call.graphics",
+      ".Date",
+      ".Defunct",
+      ".Deprecated",
+      ".DollarNames",
+      ".External.graphics",
+      ".First.sys",
+      ".MFclass",
+      ".NotYetImplemented",
+      ".NotYetUsed",
+      ".OptRequireMethods",
+      ".POSIXct",
+      ".POSIXlt",
+      ".Primitive",
+      ".RtangleCodeLabel",
+      ".S3method",
+      ".S3methods",
+      ".S4methods",
+      ".Script",
+      ".TAOCP1997init",
+      ".__H__.cbind",
+      ".__H__.rbind",
+      ".amatch_bounds",
+      ".amatch_costs",
+      ".axisPars",
+      ".bincode",
+      ".cache_class",
+      ".checkHT",
+      ".checkMFClasses",
+      ".check_tzones",
+      ".class2",
+      ".classEnv",
+      ".clipPath",
+      ".col",
+      ".colMeans",
+      ".colSums",
+      ".decode_numeric_version",
+      ".defineGroup",
+      ".deparseOpts",
+      ".detach",
+      ".devUp",
+      ".difftime",
+      ".doSortWrap",
+      ".doTrace",
+      ".doTracePrint",
+      ".doWrap",
+      ".dynLibs",
+      ".encode_numeric_version",
+      ".expand_R_libs_env_var",
+      ".filled.contour",
+      ".format.zeros",
+      ".formula2varlist",
+      ".getNamespace",
+      ".getNamespaceInfo",
+      ".getRequiredPackages",
+      ".getRequiredPackages2",
+      ".getXlevels",
+      ".gt",
+      ".gtn",
+      ".handleSimpleError",
+      ".hasSlot",
+      ".isMethodsDispatchOn",
+      ".isOpen",
+      ".kappa_tri",
+      ".kronecker",
+      ".linearGradientPattern",
+      ".lm.fit",
+      ".makeMessage",
+      ".make_numeric_version",
+      ".mapply",
+      ".mask",
+      ".maskedMsg",
+      ".mergeExportMethods",
+      ".mergeImportMethods",
+      ".nknots.smspl",
+      ".opIndex",
+      ".preformat.ts",
+      ".pretty",
+      ".primTrace",
+      ".primUntrace",
+      ".radialGradientPattern",
+      ".rangeNum",
+      ".rmpkg",
+      ".row",
+      ".rowMeans",
+      ".rowNamesDF<-",
+      ".rowSums",
+      ".row_names_info",
+      ".ruleIndex",
+      ".selectSuperClasses",
+      ".setClipPath",
+      ".setMask",
+      ".setPattern",
+      ".set_ops_need_as_vector",
+      ".set_row_names",
+      ".signalSimpleWarning",
+      ".slotNames",
+      ".standard_regexps",
+      ".subset",
+      ".subset2",
+      ".tilingPattern",
+      ".traceback",
+      ".tryResumeInterrupt",
+      ".untracedFunction",
+      ".useGroup",
+      ".valid.factor",
+      ".valueClassTest",
+      ".vcov.aliased",
+      "/",
+      "/.difftime",
+      ":",
+      "::",
+      ":::",
+      "<",
+      "<-",
+      "<<-",
+      "<=",
+      "=",
+      "==",
+      ">",
+      ">=",
+      "?",
+      "@",
+      "@<-",
+      "ARMAacf",
+      "ARMAtoMA",
+      "Arg",
+      "Arith",
+      "Axis",
+      "Box.test",
+      "C",
+      "CIDFont",
+      "Compare",
+      "Complex",
+      "Conj",
+      "Cstack_info",
+      "D",
+      "DF2formula",
+      "Encoding",
+      "Encoding<-",
+      "Exec",
+      "Gamma",
+      "HoltWinters",
+      "I",
+      "ISOdate",
+      "ISOdatetime",
+      "Im",
+      "KalmanForecast",
+      "KalmanLike",
+      "KalmanRun",
+      "KalmanSmooth",
+      "La.svd",
+      "La_library",
+      "La_version",
+      "Logic",
+      "Math",
+      "Math.Date",
+      "Math.POSIXt",
+      "Math.data.frame",
+      "Math.difftime",
+      "Math.factor",
+      "Math2",
+      "MethodAddCoerce",
+      "MethodsList",
+      "MethodsListSelect",
+      "Mod",
+      "NLSstAsymptotic",
+      "NLSstClosestX",
+      "NLSstLfAsymptote",
+      "NLSstRtAsymptote",
+      "NextMethod",
+      "OlsonNames",
+      "Ops",
+      "Ops.Date",
+      "Ops.POSIXt",
+      "Ops.data.frame",
+      "Ops.difftime",
+      "Ops.factor",
+      "Ops.numeric_version",
+      "Ops.ordered",
+      "PP.test",
+      "Pair",
+      "Quote",
+      "R.Version",
+      "R.home",
+      "RNGkind",
+      "RNGversion",
+      "RShowDoc",
+      "RSiteSearch",
+      "R_compiled_by",
+      "R_system_version",
+      "Re",
+      "Rprof",
+      "Rprofmem",
+      "Rtangle",
+      "RtangleFinish",
+      "RtangleOptions",
+      "RtangleRuncode",
+      "RtangleSetup",
+      "RtangleWritedoc",
+      "RweaveChunkPrefix",
+      "RweaveEvalWithOpt",
+      "RweaveLatex",
+      "RweaveLatexFinish",
+      "RweaveLatexOptions",
+      "RweaveLatexSetup",
+      "RweaveLatexWritedoc",
+      "RweaveTryStop",
+      "S3Class",
+      "S3Class<-",
+      "S3Part",
+      "S3Part<-",
+      "SSD",
+      "SSasymp",
+      "SSasympOff",
+      "SSasympOrig",
+      "SSbiexp",
+      "SSfol",
+      "SSfpl",
+      "SSgompertz",
+      "SSlogis",
+      "SSmicmen",
+      "SSweibull",
+      "SignatureMethod",
+      "Stangle",
+      "StructTS",
+      "Summary",
+      "Summary.Date",
+      "Summary.POSIXct",
+      "Summary.POSIXlt",
+      "Summary.data.frame",
+      "Summary.difftime",
+      "Summary.factor",
+      "Summary.numeric_version",
+      "Summary.ordered",
+      "Sweave",
+      "SweaveGetSourceName",
+      "SweaveHooks",
+      "SweaveSyntConv",
+      "Sys.chmod",
+      "Sys.getlocale",
+      "Sys.getpid",
+      "Sys.glob",
+      "Sys.info",
+      "Sys.localeconv",
+      "Sys.readlink",
+      "Sys.setFileTime",
+      "Sys.setLanguage",
+      "Sys.setenv",
+      "Sys.setlocale",
+      "Sys.sleep",
+      "Sys.timezone",
+      "Sys.umask",
+      "Sys.unsetenv",
+      "Sys.which",
+      "Tailcall",
+      "TukeyHSD",
+      "Type1Font",
+      "URLdecode",
+      "URLencode",
+      "UseMethod",
+      "Vectorize",
+      "View",
+      "X11",
+      "X11.options",
+      "X11Font",
+      "X11Fonts",
+      "[",
+      "[.AsIs",
+      "[.DLLInfoList",
+      "[.Date",
+      "[.Dlist",
+      "[.POSIXct",
+      "[.POSIXlt",
+      "[.data.frame",
+      "[.difftime",
+      "[.factor",
+      "[.hexmode",
+      "[.listof",
+      "[.noquote",
+      "[.numeric_version",
+      "[.octmode",
+      "[.simple.list",
+      "[.table",
+      "[.warnings",
+      "[<-",
+      "[<-.Date",
+      "[<-.POSIXct",
+      "[<-.POSIXlt",
+      "[<-.data.frame",
+      "[<-.difftime",
+      "[<-.factor",
+      "[<-.numeric_version",
+      "[[",
+      "[[.Date",
+      "[[.POSIXct",
+      "[[.POSIXlt",
+      "[[.data.frame",
+      "[[.factor",
+      "[[.numeric_version",
+      "[[<-",
+      "[[<-.POSIXlt",
+      "[[<-.data.frame",
+      "[[<-.factor",
+      "[[<-.numeric_version",
+      "^",
+      "abbreviate",
+      "abline",
+      "acf",
+      "acf2AR",
+      "acosh",
+      "activeBindingFunction",
+      "add.scope",
+      "add1",
+      "addNA",
+      "addNextMethod",
+      "addTaskCallback",
+      "adist",
+      "adjustcolor",
+      "aggregate",
+      "aggregate.data.frame",
+      "aggregate.ts",
+      "agrep",
+      "agrepl",
+      "alarm",
+      "alist",
+      "all.equal",
+      "all.equal.POSIXt",
+      "all.equal.character",
+      "all.equal.default",
+      "all.equal.envRefClass",
+      "all.equal.environment",
+      "all.equal.factor",
+      "all.equal.formula",
+      "all.equal.function",
+      "all.equal.language",
+      "all.equal.list",
+      "all.equal.numeric",
+      "all.equal.raw",
+      "all.names",
+      "all.vars",
+      "allNames",
+      "allowInterrupts",
+      "ansari.test",
+      "anyDuplicated",
+      "anyDuplicated.array",
+      "anyDuplicated.data.frame",
+      "anyDuplicated.default",
+      "anyDuplicated.matrix",
+      "anyNA",
+      "anyNA.POSIXlt",
+      "anyNA.data.frame",
+      "anyNA.numeric_version",
+      "aperm",
+      "aperm.default",
+      "aperm.table",
+      "approx",
+      "approxfun",
+      "apropos",
+      "ar",
+      "ar.burg",
+      "ar.mle",
+      "ar.ols",
+      "ar.yw",
+      "aregexec",
+      "argsAnywhere",
+      "arima",
+      "arima.sim",
+      "arima0",
+      "arima0.diag",
+      "array2DF",
+      "arrayInd",
+      "arrows",
+      "as",
+      "as.Date",
+      "as.Date.POSIXct",
+      "as.Date.POSIXlt",
+      "as.Date.character",
+      "as.Date.default",
+      "as.Date.factor",
+      "as.Date.numeric",
+      "as.POSIXct",
+      "as.POSIXct.Date",
+      "as.POSIXct.POSIXlt",
+      "as.POSIXct.default",
+      "as.POSIXct.numeric",
+      "as.POSIXlt",
+      "as.POSIXlt.Date",
+      "as.POSIXlt.POSIXct",
+      "as.POSIXlt.character",
+      "as.POSIXlt.default",
+      "as.POSIXlt.factor",
+      "as.POSIXlt.numeric",
+      "as.array.default",
+      "as.character.Date",
+      "as.character.POSIXt",
+      "as.character.condition",
+      "as.character.default",
+      "as.character.error",
+      "as.character.factor",
+      "as.character.hexmode",
+      "as.character.numeric_version",
+      "as.character.octmode",
+      "as.character.srcref",
+      "as.complex",
+      "as.data.frame.AsIs",
+      "as.data.frame.Date",
+      "as.data.frame.POSIXct",
+      "as.data.frame.POSIXlt",
+      "as.data.frame.array",
+      "as.data.frame.character",
+      "as.data.frame.complex",
+      "as.data.frame.data.frame",
+      "as.data.frame.default",
+      "as.data.frame.difftime",
+      "as.data.frame.factor",
+      "as.data.frame.integer",
+      "as.data.frame.list",
+      "as.data.frame.logical",
+      "as.data.frame.matrix",
+      "as.data.frame.model.matrix",
+      "as.data.frame.noquote",
+      "as.data.frame.numeric",
+      "as.data.frame.numeric_version",
+      "as.data.frame.ordered",
+      "as.data.frame.raw",
+      "as.data.frame.table",
+      "as.data.frame.ts",
+      "as.data.frame.vector",
+      "as.dendrogram",
+      "as.difftime",
+      "as.dist",
+      "as.double.POSIXlt",
+      "as.double.difftime",
+      "as.environment",
+      "as.expression",
+      "as.expression.default",
+      "as.formula",
+      "as.function",
+      "as.function.default",
+      "as.graphicsAnnot",
+      "as.hclust",
+      "as.hexmode",
+      "as.list.Date",
+      "as.list.POSIXct",
+      "as.list.POSIXlt",
+      "as.list.data.frame",
+      "as.list.default",
+      "as.list.difftime",
+      "as.list.environment",
+      "as.list.factor",
+      "as.list.function",
+      "as.list.numeric_version",
+      "as.logical.factor",
+      "as.matrix.POSIXlt",
+      "as.matrix.data.frame",
+      "as.matrix.default",
+      "as.matrix.noquote",
+      "as.name",
+      "as.null",
+      "as.null.default",
+      "as.numeric_version",
+      "as.octmode",
+      "as.ordered",
+      "as.package_version",
+      "as.pairlist",
+      "as.person",
+      "as.personList",
+      "as.qr",
+      "as.raster",
+      "as.relistable",
+      "as.roman",
+      "as.single",
+      "as.single.default",
+      "as.stepfun",
+      "as.symbol",
+      "as.table.default",
+      "as.ts",
+      "as.vector.POSIXlt",
+      "as.vector.data.frame",
+      "as.vector.factor",
+      "as<-",
+      "asDateBuilt",
+      "asMethodDefinition",
+      "asNamespace",
+      "asOneSidedFormula",
+      "asS3",
+      "asS4",
+      "asinh",
+      "askYesNo",
+      "aspell",
+      "aspell_package_C_files",
+      "aspell_package_R_files",
+      "aspell_package_Rd_files",
+      "aspell_package_vignettes",
+      "aspell_write_personal_dictionary_file",
+      "asplit",
+      "assignClassDef",
+      "assignInMyNamespace",
+      "assignInNamespace",
+      "assignMethodsMetaData",
+      "assocplot",
+      "atan2",
+      "atanh",
+      "attachNamespace",
+      "attr.all.equal",
+      "attr<-",
+      "attributes",
+      "attributes<-",
+      "autoload",
+      "autoloader",
+      "available.packages",
+      "axTicks",
+      "axis",
+      "axis.Date",
+      "axis.POSIXct",
+      "axisTicks",
+      "backsolve",
+      "balanceMethodsList",
+      "balancePOSIXlt",
+      "bandwidth.kernel",
+      "barplot",
+      "barplot.default",
+      "baseenv",
+      "besselI",
+      "besselJ",
+      "besselK",
+      "besselY",
+      "beta",
+      "bibentry",
+      "bindingIsActive",
+      "bindingIsLocked",
+      "bindtextdomain",
+      "binom.test",
+      "binomial",
+      "biplot",
+      "bitmap",
+      "bitstring",
+      "bitwAnd",
+      "bitwNot",
+      "bitwOr",
+      "bitwShiftL",
+      "bitwShiftR",
+      "bitwXor",
+      "bmp",
+      "body<-",
+      "box",
+      "boxplot",
+      "boxplot.default",
+      "boxplot.matrix",
+      "boxplot.stats",
+      "break",
+      "browseEnv",
+      "browseURL",
+      "browseVignettes",
+      "browserCondition",
+      "browserSetDebug",
+      "browserText",
+      "bug.report",
+      "builtins",
+      "bw.SJ",
+      "bw.bcv",
+      "bw.nrd",
+      "bw.nrd0",
+      "bw.ucv",
+      "bxp",
+      "by",
+      "by.data.frame",
+      "by.default",
+      "bzfile",
+      "c.Date",
+      "c.POSIXct",
+      "c.POSIXlt",
+      "c.difftime",
+      "c.factor",
+      "c.noquote",
+      "c.numeric_version",
+      "c.warnings",
+      "cacheGenericsMetaData",
+      "cacheMetaData",
+      "cacheMethod",
+      "cairoSymbolFont",
+      "cairo_pdf",
+      "cairo_ps",
+      "callCC",
+      "callGeneric",
+      "callNextMethod",
+      "canCoerce",
+      "cancor",
+      "capabilities",
+      "capture.output",
+      "case.names",
+      "cbind.data.frame",
+      "cbind2",
+      "ccf",
+      "cdplot",
+      "changedFiles",
+      "char.expand",
+      "charClass",
+      "charToRaw",
+      "check.options",
+      "checkAtAssignment",
+      "checkCRAN",
+      "checkSlotAssignment",
+      "chkDots",
+      "chol",
+      "chol.default",
+      "chol2inv",
+      "choose",
+      "chooseBioCmirror",
+      "chooseCRANmirror",
+      "chooseOpsMethod",
+      "chooseOpsMethod.default",
+      "chull",
+      "citEntry",
+      "citFooter",
+      "citHeader",
+      "citation",
+      "cite",
+      "citeNatbib",
+      "class<-",
+      "classLabel",
+      "classMetaName",
+      "className",
+      "classesToAM",
+      "clearPushBack",
+      "clip",
+      "close",
+      "close.connection",
+      "close.screen",
+      "close.socket",
+      "close.srcfile",
+      "close.srcfilealias",
+      "closeAllConnections",
+      "clrhash",
+      "cm",
+      "cm.colors",
+      "cmdscale",
+      "co.intervals",
+      "coefficients",
+      "coerce",
+      "coerce<-",
+      "col",
+      "col2rgb",
+      "colnames<-",
+      "colorConverter",
+      "colorRamp",
+      "colorRampPalette",
+      "colors",
+      "colours",
+      "combn",
+      "commandArgs",
+      "comment",
+      "comment<-",
+      "compareVersion",
+      "completeClassDefinition",
+      "completeExtends",
+      "completeSubclasses",
+      "computeRestarts",
+      "conditionCall",
+      "conditionCall.condition",
+      "conditionMessage",
+      "conditionMessage.condition",
+      "confint.default",
+      "confint.lm",
+      "conflictRules",
+      "conflicts",
+      "conformMethod",
+      "contour",
+      "contour.default",
+      "contourLines",
+      "contr.SAS",
+      "contr.helmert",
+      "contr.poly",
+      "contr.sum",
+      "contr.treatment",
+      "contrasts",
+      "contrasts<-",
+      "contrib.url",
+      "contributors",
+      "convertColor",
+      "convolve",
+      "cooks.distance",
+      "cophenetic",
+      "coplot",
+      "cospi",
+      "count.fields",
+      "cov.wt",
+      "cov2cor",
+      "covratio",
+      "cpgram",
+      "create.post",
+      "crossprod",
+      "curlGetHeaders",
+      "curve",
+      "cut.Date",
+      "cut.POSIXt",
+      "cut.default",
+      "cutree",
+      "dQuote",
+      "data.class",
+      "data.entry",
+      "data.frame",
+      "data.matrix",
+      "dataentry",
+      "dcauchy",
+      "de",
+      "de.ncols",
+      "de.restore",
+      "de.setup",
+      "debugcall",
+      "debugger",
+      "debuggingState",
+      "debugonce",
+      "declare",
+      "decompose",
+      "default.stringsAsFactors",
+      "defaultDumpName",
+      "defaultPrototype",
+      "delete.response",
+      "demo",
+      "dendrapply",
+      "densCols",
+      "density",
+      "density.default",
+      "deparse1",
+      "deriv",
+      "deriv3",
+      "detach",
+      "determinant",
+      "determinant.matrix",
+      "dev.capabilities",
+      "dev.capture",
+      "dev.control",
+      "dev.copy",
+      "dev.copy2eps",
+      "dev.copy2pdf",
+      "dev.cur",
+      "dev.flush",
+      "dev.hold",
+      "dev.interactive",
+      "dev.list",
+      "dev.new",
+      "dev.next",
+      "dev.off",
+      "dev.prev",
+      "dev.print",
+      "dev.set",
+      "dev.size",
+      "dev2bitmap",
+      "devAskNewPage",
+      "deviceIsInteractive",
+      "df.kernel",
+      "df.residual",
+      "dfbeta",
+      "dfbetas",
+      "dffits",
+      "dgeom",
+      "dget",
+      "dhyper",
+      "diag<-",
+      "diff.Date",
+      "diff.POSIXt",
+      "diff.default",
+      "diff.difftime",
+      "diffinv",
+      "difftime",
+      "dim.data.frame",
+      "dim<-",
+      "dimnames",
+      "dimnames.data.frame",
+      "dimnames<-",
+      "dimnames<-.data.frame",
+      "dir",
+      "dir.create",
+      "dir.exists",
+      "dlogis",
+      "dmultinom",
+      "dnbinom",
+      "doPrimitiveMethod",
+      "dontCheck",
+      "dotchart",
+      "download.file",
+      "download.packages",
+      "dput",
+      "drop.scope",
+      "drop.terms",
+      "drop1",
+      "droplevels",
+      "droplevels.data.frame",
+      "droplevels.factor",
+      "dsignrank",
+      "dummy.coef",
+      "dummy.coef.lm",
+      "dump",
+      "dump.frames",
+      "dumpMethod",
+      "dumpMethods",
+      "duplicated.POSIXlt",
+      "duplicated.array",
+      "duplicated.data.frame",
+      "duplicated.default",
+      "duplicated.matrix",
+      "duplicated.numeric_version",
+      "duplicated.warnings",
+      "dweibull",
+      "dwilcox",
+      "dyn.load",
+      "dyn.unload",
+      "dynGet",
+      "eapply",
+      "ecdf",
+      "edit",
+      "eff.aovlist",
+      "effects",
+      "eigen",
+      "el",
+      "el<-",
+      "elNamed",
+      "elNamed<-",
+      "emacs",
+      "embed",
+      "embedFonts",
+      "embedGlyphs",
+      "empty.dump",
+      "emptyMethodsList",
+      "emptyenv",
+      "enc2native",
+      "enc2utf8",
+      "encodeString",
+      "enquote",
+      "env.profile",
+      "environment<-",
+      "environmentIsLocked",
+      "environmentName",
+      "erase.screen",
+      "errorCondition",
+      "estVar",
+      "eval.parent",
+      "evalOnLoad",
+      "evalSource",
+      "evalq",
+      "evalqOnLoad",
+      "example",
+      "existsFunction",
+      "existsMethod",
+      "expand.model.frame",
+      "extSoftVersion",
+      "extendrange",
+      "extends",
+      "externalRefMethod",
+      "extractAIC",
+      "factor.scope",
+      "factorial",
+      "family",
+      "fifo",
+      "file",
+      "file.access",
+      "file.append",
+      "file.choose",
+      "file.copy",
+      "file.create",
+      "file.edit",
+      "file.info",
+      "file.link",
+      "file.mode",
+      "file.mtime",
+      "file.remove",
+      "file.rename",
+      "file.show",
+      "file.size",
+      "file.symlink",
+      "fileSnapshot",
+      "file_test",
+      "filled.contour",
+      "filter",
+      "finalDefaultMethod",
+      "find",
+      "find.package",
+      "findCRANmirror",
+      "findClass",
+      "findFunction",
+      "findInterval",
+      "findLineNum",
+      "findMatches",
+      "findMethod",
+      "findMethodSignatures",
+      "findMethods",
+      "findPackageEnv",
+      "findRestart",
+      "findUnique",
+      "fitted.values",
+      "fivenum",
+      "fix",
+      "fixInNamespace",
+      "fixPre1.8",
+      "flush",
+      "flush.connection",
+      "flush.console",
+      "for",
+      "forceAndCall",
+      "formalArgs",
+      "formals<-",
+      "format.AsIs",
+      "format.Date",
+      "format.POSIXct",
+      "format.POSIXlt",
+      "format.data.frame",
+      "format.default",
+      "format.difftime",
+      "format.factor",
+      "format.hexmode",
+      "format.info",
+      "format.libraryIQR",
+      "format.numeric_version",
+      "format.octmode",
+      "format.packageInfo",
+      "format.pval",
+      "format.summaryDefault",
+      "formatDL",
+      "formatOL",
+      "formatUL",
+      "formula",
+      "forwardsolve",
+      "fourfoldplot",
+      "frame",
+      "free1way",
+      "function",
+      "functionBody",
+      "functionBody<-",
+      "gaussian",
+      "gc.time",
+      "gcinfo",
+      "gctorture",
+      "gctorture2",
+      "generic.skeleton",
+      "get0",
+      "getAllConnections",
+      "getAllSuperClasses",
+      "getAnywhere",
+      "getCRANmirrors",
+      "getCall",
+      "getCallingDLL",
+      "getCallingDLLe",
+      "getClass",
+      "getClassDef",
+      "getClasses",
+      "getConnection",
+      "getDLLRegisteredRoutines",
+      "getDLLRegisteredRoutines.DLLInfo",
+      "getDLLRegisteredRoutines.character",
+      "getDataPart",
+      "getElement",
+      "getExportedValue",
+      "getFromNamespace",
+      "getFunction",
+      "getGeneric",
+      "getGenerics",
+      "getGraphicsEvent",
+      "getGraphicsEventEnv",
+      "getGroup",
+      "getGroupMembers",
+      "getHook",
+      "getInitial",
+      "getLoadActions",
+      "getLoadedDLLs",
+      "getMethod",
+      "getMethods",
+      "getMethodsForDispatch",
+      "getMethodsMetaData",
+      "getNamespace",
+      "getNamespaceExports",
+      "getNamespaceImports",
+      "getNamespaceInfo",
+      "getNamespaceName",
+      "getNamespaceUsers",
+      "getNamespaceVersion",
+      "getNativeSymbolInfo",
+      "getPackageName",
+      "getParseData",
+      "getParseText",
+      "getRefClass",
+      "getS3method",
+      "getSlots",
+      "getSrcDirectory",
+      "getSrcFilename",
+      "getSrcLines",
+      "getSrcLocation",
+      "getSrcref",
+      "getTaskCallbackNames",
+      "getTxtProgressBar",
+      "getValidity",
+      "get_all_vars",
+      "geterrmessage",
+      "gethash",
+      "gettext",
+      "gettextf",
+      "glm.control",
+      "glm.fit",
+      "glob2rx",
+      "globalCallingHandlers",
+      "globalVariables",
+      "globalenv",
+      "glyphAnchor",
+      "glyphFont",
+      "glyphFontList",
+      "glyphFontVariation",
+      "glyphHeight",
+      "glyphHeightBottom",
+      "glyphInfo",
+      "glyphJust",
+      "glyphWidth",
+      "glyphWidthLeft",
+      "grSoftVersion",
+      "graphics.off",
+      "gray",
+      "gray.colors",
+      "grconvertX",
+      "grconvertY",
+      "gregexec",
+      "grepRaw",
+      "grepv",
+      "grey",
+      "grey.colors",
+      "grid",
+      "grouping",
+      "gzcon",
+      "gzfile",
+      "hasArg",
+      "hasLoadAction",
+      "hasMethod",
+      "hasMethods",
+      "hasName",
+      "hasTsp",
+      "hashtab",
+      "hat",
+      "hatvalues",
+      "hcl",
+      "hcl.colors",
+      "hcl.pals",
+      "head.matrix",
+      "heat.colors",
+      "heatmap",
+      "help",
+      "help.request",
+      "help.search",
+      "help.start",
+      "hist",
+      "hist.default",
+      "history",
+      "hsearch_db",
+      "hsearch_db_concepts",
+      "hsearch_db_keywords",
+      "hsv",
+      "iconv",
+      "iconvlist",
+      "icuGetCollate",
+      "icuSetCollate",
+      "identify",
+      "if",
+      "image",
+      "image.default",
+      "implicitGeneric",
+      "importIntoEnv",
+      "influence",
+      "influence.measures",
+      "infoRDS",
+      "inheritedSlotNames",
+      "initFieldArgs",
+      "initRefFields",
+      "initialize",
+      "insertClassMethods",
+      "insertMethod",
+      "insertSource",
+      "install.packages",
+      "installed.packages",
+      "intToBits",
+      "intToUtf8",
+      "integrate",
+      "interaction.plot",
+      "interactive",
+      "inverse.gaussian",
+      "inverse.rle",
+      "invokeRestart",
+      "invokeRestartInteractively",
+      "is",
+      "is.R",
+      "is.call",
+      "is.empty.model",
+      "is.environment",
+      "is.expression",
+      "is.finite.POSIXlt",
+      "is.hashtab",
+      "is.infinite.POSIXlt",
+      "is.language",
+      "is.leaf",
+      "is.loaded",
+      "is.mts",
+      "is.na.POSIXlt",
+      "is.na.data.frame",
+      "is.na.numeric_version",
+      "is.na<-",
+      "is.na<-.default",
+      "is.na<-.factor",
+      "is.na<-.numeric_version",
+      "is.name",
+      "is.nan.POSIXlt",
+      "is.numeric.Date",
+      "is.numeric.POSIXt",
+      "is.numeric.difftime",
+      "is.numeric_version",
+      "is.ordered",
+      "is.package_version",
+      "is.pairlist",
+      "is.primitive",
+      "is.qr",
+      "is.raster",
+      "is.relistable",
+      "is.single",
+      "is.stepfun",
+      "is.symbol",
+      "is.table",
+      "is.tskernel",
+      "isBaseNamespace",
+      "isClass",
+      "isClassDef",
+      "isClassUnion",
+      "isGeneric",
+      "isGrammarSymbol",
+      "isGroup",
+      "isIncomplete",
+      "isNamespace",
+      "isNamespaceLoaded",
+      "isOpen",
+      "isRematched",
+      "isRestart",
+      "isS3method",
+      "isS3stdGeneric",
+      "isS4",
+      "isSealedClass",
+      "isSealedMethod",
+      "isSeekable",
+      "isSymmetric.matrix",
+      "isVirtualClass",
+      "isXS3Class",
+      "isa",
+      "isatty",
+      "isdebugged",
+      "isoreg",
+      "jitter",
+      "jpeg",
+      "julian",
+      "julian.Date",
+      "julian.POSIXt",
+      "kappa",
+      "kappa.default",
+      "kappa.lm",
+      "kappa.qr",
+      "kernapply",
+      "kernel",
+      "knots",
+      "kronecker",
+      "ksmooth",
+      "l10n_info",
+      "labels",
+      "labels.default",
+      "lag.plot",
+      "languageEl",
+      "languageEl<-",
+      "layout",
+      "layout.show",
+      "lazyLoad",
+      "lazyLoadDBexec",
+      "lazyLoadDBfetch",
+      "lbeta",
+      "lchoose",
+      "lcm",
+      "legend",
+      "length.POSIXlt",
+      "length<-",
+      "length<-.Date",
+      "length<-.POSIXct",
+      "length<-.POSIXlt",
+      "length<-.difftime",
+      "length<-.factor",
+      "levels",
+      "levels.default",
+      "levels<-",
+      "levels<-.factor",
+      "lfactorial",
+      "libcurlVersion",
+      "library",
+      "library.dynam",
+      "library.dynam.unload",
+      "licence",
+      "license",
+      "limitedLabels",
+      "line",
+      "lines",
+      "lines.default",
+      "list.dirs",
+      "list2DF",
+      "list2env",
+      "listFromMethods",
+      "lm.fit",
+      "lm.influence",
+      "lm.wfit",
+      "load",
+      "loadMethod",
+      "loadNamespace",
+      "loadedNamespaces",
+      "loadhistory",
+      "loadingNamespaceInfo",
+      "loadings",
+      "local",
+      "localeToCharset",
+      "locator",
+      "lockBinding",
+      "lockEnvironment",
+      "loess",
+      "loess.control",
+      "loess.smooth",
+      "logb",
+      "loglin",
+      "lower.tri",
+      "lowess",
+      "ls.diag",
+      "ls.print",
+      "ls.str",
+      "lsf.str",
+      "lsfit",
+      "mahalanobis",
+      "maintainer",
+      "make.link",
+      "make.names",
+      "make.packages.html",
+      "make.rgb",
+      "make.socket",
+      "make.unique",
+      "makeARIMA",
+      "makeActiveBinding",
+      "makeClassRepresentation",
+      "makeExtends",
+      "makeGeneric",
+      "makeMethodsList",
+      "makePrototypeFromClassDef",
+      "makeRweaveLatexCodeRunner",
+      "makeStandardGeneric",
+      "makepredictcall",
+      "manova",
+      "maphash",
+      "margin.table",
+      "marginSums",
+      "mat.or.vec",
+      "match.call",
+      "matchSignature",
+      "matlines",
+      "matplot",
+      "matpoints",
+      "matrixOps",
+      "max.col",
+      "mean.Date",
+      "mean.POSIXct",
+      "mean.POSIXlt",
+      "mean.default",
+      "mean.difftime",
+      "median.default",
+      "medpolish",
+      "mem.maxNSize",
+      "mem.maxVSize",
+      "memCompress",
+      "memDecompress",
+      "memory.limit",
+      "memory.profile",
+      "memory.size",
+      "menu",
+      "merge.data.frame",
+      "merge.default",
+      "mergeMethods",
+      "messageCondition",
+      "metaNameUndo",
+      "method.skeleton",
+      "methodSignatureMatrix",
+      "methods",
+      "methodsPackageMetaName",
+      "mirror2html",
+      "missingArg",
+      "mode<-",
+      "model.extract",
+      "model.frame",
+      "model.frame.default",
+      "model.matrix.default",
+      "model.matrix.lm",
+      "model.offset",
+      "model.response",
+      "model.tables",
+      "model.weights",
+      "modifyList",
+      "monthplot",
+      "months",
+      "months.Date",
+      "months.POSIXt",
+      "mosaicplot",
+      "mostattributes<-",
+      "mtext",
+      "mtfrm",
+      "mtfrm.Date",
+      "mtfrm.POSIXct",
+      "mtfrm.POSIXlt",
+      "mtfrm.default",
+      "multipleClasses",
+      "n2mfrow",
+      "na.action",
+      "na.contiguous",
+      "na.exclude",
+      "na.fail",
+      "nameOfClass",
+      "nameOfClass.default",
+      "names.POSIXlt",
+      "names<-",
+      "names<-.POSIXlt",
+      "namespaceExport",
+      "namespaceImport",
+      "namespaceImportClasses",
+      "namespaceImportFrom",
+      "namespaceImportMethods",
+      "napredict",
+      "naprint",
+      "naresid",
+      "nargs",
+      "nclass.FD",
+      "nclass.Sturges",
+      "nclass.scott",
+      "new",
+      "new.env",
+      "new.packages",
+      "newBasic",
+      "newClassRepresentation",
+      "newEmptyObject",
+      "news",
+      "next",
+      "nextn",
+      "ngettext",
+      "nlevels",
+      "nls",
+      "nls.control",
+      "noquote",
+      "norm",
+      "nsl",
+      "nullfile",
+      "numToBits",
+      "numToInts",
+      "numericDeriv",
+      "numeric_version",
+      "numhash",
+      "object.size",
+      "objects",
+      "offset",
+      "old.packages",
+      "oldClass",
+      "oldClass<-",
+      "open",
+      "open.connection",
+      "open.srcfile",
+      "open.srcfilealias",
+      "open.srcfilecopy",
+      "optimHess",
+      "order.dendrogram",
+      "outer",
+      "p.adjust",
+      "pacf",
+      "packBits",
+      "package.skeleton",
+      "packageDate",
+      "packageDescription",
+      "packageEvent",
+      "packageHasNamespace",
+      "packageName",
+      "packageNotFoundError",
+      "packageSlot",
+      "packageSlot<-",
+      "packageStartupMessage",
+      "packageStatus",
+      "packageVersion",
+      "package_version",
+      "page",
+      "pairlist",
+      "pairs",
+      "pairs.default",
+      "pairwise.prop.test",
+      "pairwise.table",
+      "palette",
+      "palette.colors",
+      "palette.pals",
+      "panel.smooth",
+      "par",
+      "parent.env",
+      "parent.env<-",
+      "parent.frame",
+      "parseNamespaceFile",
+      "path.expand",
+      "path.package",
+      "pbirthday",
+      "pcauchy",
+      "pcre_config",
+      "pdf",
+      "pdf.options",
+      "pdfFonts",
+      "person",
+      "personList",
+      "persp",
+      "pgeom",
+      "phyper",
+      "pico",
+      "pictex",
+      "pie",
+      "pipe",
+      "plclust",
+      "plogis",
+      "plot",
+      "plot.default",
+      "plot.design",
+      "plot.ecdf",
+      "plot.function",
+      "plot.new",
+      "plot.spec.coherency",
+      "plot.spec.phase",
+      "plot.stepfun",
+      "plot.ts",
+      "plot.window",
+      "plot.xy",
+      "pmax.int",
+      "pmin.int",
+      "pnbinom",
+      "png",
+      "points",
+      "points.default",
+      "poisson",
+      "poisson.test",
+      "poly",
+      "polygon",
+      "polym",
+      "polypath",
+      "pos.to.env",
+      "possibleExtends",
+      "postscript",
+      "postscriptFonts",
+      "power",
+      "power.anova.test",
+      "power.free1way.test",
+      "power.prop.test",
+      "power.t.test",
+      "ppoints",
+      "ppplot",
+      "ppr",
+      "predict.glm",
+      "predict.lm",
+      "preplot",
+      "pretty.default",
+      "prettyNum",
+      "print.AsIs",
+      "print.DLLInfo",
+      "print.DLLInfoList",
+      "print.DLLRegisteredRoutines",
+      "print.Date",
+      "print.Dlist",
+      "print.NativeRoutineList",
+      "print.POSIXct",
+      "print.POSIXlt",
+      "print.by",
+      "print.condition",
+      "print.connection",
+      "print.data.frame",
+      "print.default",
+      "print.difftime",
+      "print.eigen",
+      "print.factor",
+      "print.function",
+      "print.hexmode",
+      "print.libraryIQR",
+      "print.listof",
+      "print.noquote",
+      "print.numeric_version",
+      "print.octmode",
+      "print.packageInfo",
+      "print.proc_time",
+      "print.restart",
+      "print.rle",
+      "print.simple.list",
+      "print.srcfile",
+      "print.srcref",
+      "print.summary.table",
+      "print.summary.warnings",
+      "print.summaryDefault",
+      "print.table",
+      "print.warnings",
+      "printCoefmat",
+      "prmatrix",
+      "process.events",
+      "profile",
+      "prohibitGeneric",
+      "proj",
+      "promax",
+      "prompt",
+      "promptClass",
+      "promptData",
+      "promptImport",
+      "promptMethods",
+      "promptPackage",
+      "prop.trend.test",
+      "proportions",
+      "prototype",
+      "provideDimnames",
+      "ps.options",
+      "psigamma",
+      "psignrank",
+      "psmirnov",
+      "ptukey",
+      "pushBack",
+      "pushBackLength",
+      "pweibull",
+      "pwilcox",
+      "q",
+      "qbinom",
+      "qbirthday",
+      "qcauchy",
+      "qgeom",
+      "qhyper",
+      "qlogis",
+      "qnbinom",
+      "qpois",
+      "qqline",
+      "qqnorm",
+      "qqplot",
+      "qr",
+      "qr.Q",
+      "qr.R",
+      "qr.X",
+      "qr.coef",
+      "qr.default",
+      "qr.fitted",
+      "qr.influence",
+      "qr.qty",
+      "qr.qy",
+      "qr.resid",
+      "qr.solve",
+      "qsignrank",
+      "qsmirnov",
+      "qtukey",
+      "quarters",
+      "quarters.Date",
+      "quarters.POSIXt",
+      "quartz",
+      "quartz.options",
+      "quartz.save",
+      "quartzFont",
+      "quartzFonts",
+      "quasi",
+      "quasibinomial",
+      "quasipoisson",
+      "quit",
+      "qweibull",
+      "qwilcox",
+      "r2dtable",
+      "rWishart",
+      "rainbow",
+      "range.Date",
+      "range.POSIXct",
+      "range.default",
+      "rasterImage",
+      "rawConnection",
+      "rawConnectionValue",
+      "rawShift",
+      "rawToBits",
+      "rawToChar",
+      "rbeta",
+      "rbind.data.frame",
+      "rbind2",
+      "rc.getOption",
+      "rc.options",
+      "rc.settings",
+      "rc.status",
+      "rcauchy",
+      "rchisq",
+      "rcond",
+      "read.DIF",
+      "read.csv2",
+      "read.dcf",
+      "read.delim",
+      "read.delim2",
+      "read.fortran",
+      "read.ftable",
+      "read.fwf",
+      "read.socket",
+      "readBin",
+      "readChar",
+      "readCitationFile",
+      "readRenviron",
+      "readline",
+      "reconcilePropertiesAndPrototype",
+      "recordGraphics",
+      "recordPlot",
+      "recover",
+      "rect",
+      "rect.hclust",
+      "reformulate",
+      "reg.finalizer",
+      "regexec",
+      "registerImplicitGenerics",
+      "registerS3method",
+      "registerS3methods",
+      "regmatches<-",
+      "relevel",
+      "relist",
+      "rematchDefinition",
+      "remhash",
+      "remove.packages",
+      "removeClass",
+      "removeGeneric",
+      "removeMethod",
+      "removeMethods",
+      "removeSource",
+      "removeTaskCallback",
+      "reorder",
+      "rep.Date",
+      "rep.POSIXct",
+      "rep.POSIXlt",
+      "rep.difftime",
+      "rep.factor",
+      "rep.int",
+      "rep.numeric_version",
+      "rep_len",
+      "repeat",
+      "replace",
+      "replayPlot",
+      "replicate",
+      "replications",
+      "representation",
+      "require",
+      "requireMethods",
+      "resetClass",
+      "resetGeneric",
+      "reshape",
+      "resid",
+      "residuals.glm",
+      "residuals.lm",
+      "restartDescription",
+      "restartFormals",
+      "retracemem",
+      "returnValue",
+      "rev.default",
+      "rf",
+      "rfree1way",
+      "rgamma",
+      "rgb",
+      "rgb2hsv",
+      "rgeom",
+      "rhyper",
+      "rlogis",
+      "rmultinom",
+      "rnbinom",
+      "round.Date",
+      "round.POSIXt",
+      "row",
+      "row.names",
+      "row.names.data.frame",
+      "row.names.default",
+      "row.names<-",
+      "row.names<-.data.frame",
+      "row.names<-.default",
+      "rownames<-",
+      "rowsum.data.frame",
+      "rowsum.default",
+      "rsignrank",
+      "rsmirnov",
+      "rstandard",
+      "rstudent",
+      "rt",
+      "rtags",
+      "rug",
+      "runmed",
+      "rweibull",
+      "rwilcox",
+      "sQuote",
+      "save",
+      "save.image",
+      "savePlot",
+      "savehistory",
+      "scale.default",
+      "scan",
+      "scatter.smooth",
+      "screen",
+      "screeplot",
+      "se.contrast",
+      "sealClass",
+      "search",
+      "searchpaths",
+      "seek",
+      "seek.connection",
+      "segments",
+      "select.list",
+      "selectMethod",
+      "selectSuperClasses",
+      "selfStart",
+      "seq.Date",
+      "seq.POSIXt",
+      "seq.default",
+      "sequence",
+      "sequence.default",
+      "serialize",
+      "serverSocket",
+      "sessionInfo",
+      "setAs",
+      "setBreakpoint",
+      "setClass",
+      "setClassUnion",
+      "setDataPart",
+      "setEPS",
+      "setGeneric",
+      "setGenericImplicit",
+      "setGraphicsEventEnv",
+      "setGraphicsEventHandlers",
+      "setGroupGeneric",
+      "setHook",
+      "setIs",
+      "setLoadAction",
+      "setLoadActions",
+      "setMethod",
+      "setNamespaceInfo",
+      "setOldClass",
+      "setPS",
+      "setPackageName",
+      "setPrimitiveMethods",
+      "setRefClass",
+      "setReplaceMethod",
+      "setRepositories",
+      "setSessionTimeLimit",
+      "setTimeLimit",
+      "setTxtProgressBar",
+      "setValidity",
+      "sethash",
+      "shQuote",
+      "show",
+      "showClass",
+      "showConnections",
+      "showDefault",
+      "showExtends",
+      "showMethods",
+      "sigToEnv",
+      "sigma",
+      "signalCondition",
+      "signature",
+      "simpleCondition",
+      "simpleError",
+      "simpleMessage",
+      "simpleWarning",
+      "simplify2array",
+      "simulate",
+      "single",
+      "sink",
+      "sink.number",
+      "sinpi",
+      "slice.index",
+      "slot",
+      "slot<-",
+      "slotNames",
+      "slotsFromS3",
+      "smooth",
+      "smooth.spline",
+      "smoothEnds",
+      "smoothScatter",
+      "socketAccept",
+      "socketConnection",
+      "socketSelect",
+      "socketTimeout",
+      "solve.default",
+      "solve.qr",
+      "sort.POSIXlt",
+      "sort.default",
+      "sort.list",
+      "sort_by",
+      "sort_by.data.frame",
+      "sort_by.default",
+      "sortedXyData",
+      "source",
+      "spec.ar",
+      "spec.pgram",
+      "spec.taper",
+      "spectrum",
+      "spineplot",
+      "spline",
+      "splinefun",
+      "splinefunH",
+      "split.Date",
+      "split.POSIXct",
+      "split.data.frame",
+      "split.default",
+      "split.screen",
+      "split<-",
+      "split<-.data.frame",
+      "split<-.default",
+      "srcfile",
+      "srcfilealias",
+      "srcfilecopy",
+      "srcref",
+      "stack",
+      "standardGeneric",
+      "stars",
+      "stat.anova",
+      "stderr",
+      "stdin",
+      "stdout",
+      "stem",
+      "stepfun",
+      "stl",
+      "storage.mode",
+      "storage.mode<-",
+      "str",
+      "str2expression",
+      "str2lang",
+      "strOptions",
+      "strcapture",
+      "strftime",
+      "strheight",
+      "stripchart",
+      "strptime",
+      "strrep",
+      "strtoi",
+      "strtrim",
+      "strwidth",
+      "strwrap",
+      "subset.data.frame",
+      "subset.default",
+      "subset.matrix",
+      "substituteDirect",
+      "substituteFunctionArgs",
+      "substr<-",
+      "substring<-",
+      "summary.Date",
+      "summary.POSIXct",
+      "summary.POSIXlt",
+      "summary.aov",
+      "summary.connection",
+      "summary.data.frame",
+      "summary.default",
+      "summary.difftime",
+      "summary.factor",
+      "summary.glm",
+      "summary.manova",
+      "summary.matrix",
+      "summary.proc_time",
+      "summary.srcfile",
+      "summary.srcref",
+      "summary.stepfun",
+      "summary.table",
+      "summary.warnings",
+      "summaryRprof",
+      "sunflowerplot",
+      "superClassDepth",
+      "suppressForeignCheck",
+      "suppressPackageStartupMessages",
+      "supsmu",
+      "suspendInterrupts",
+      "svd",
+      "svg",
+      "sweep",
+      "symnum",
+      "sys.call",
+      "sys.calls",
+      "sys.frame",
+      "sys.frames",
+      "sys.function",
+      "sys.load.image",
+      "sys.nframe",
+      "sys.on.exit",
+      "sys.parent",
+      "sys.parents",
+      "sys.save.image",
+      "sys.source",
+      "sys.status",
+      "system",
+      "system.file",
+      "system.time",
+      "system2",
+      "t.data.frame",
+      "t.default",
+      "tail.matrix",
+      "tanpi",
+      "tar",
+      "taskCallbackManager",
+      "tcrossprod",
+      "tempdir",
+      "termplot",
+      "terms.formula",
+      "terrain.colors",
+      "testInheritedMethods",
+      "testVirtual",
+      "text",
+      "text.default",
+      "textConnection",
+      "textConnectionValue",
+      "tiff",
+      "timestamp",
+      "title",
+      "toBibtex",
+      "toLatex",
+      "toString.default",
+      "toeplitz",
+      "toeplitz2",
+      "topenv",
+      "topo.colors",
+      "trace",
+      "tracemem",
+      "tracingState",
+      "trans3d",
+      "transform.data.frame",
+      "transform.default",
+      "trunc.Date",
+      "trunc.POSIXt",
+      "truncate",
+      "truncate.connection",
+      "tryInvokeRestart",
+      "tryNew",
+      "tsSmooth",
+      "tsdiag",
+      "tsp",
+      "tsp<-",
+      "txtProgressBar",
+      "type.convert",
+      "typhash",
+      "unCfillPOSIXlt",
+      "unRematchDefinition",
+      "undebugcall",
+      "unique.POSIXlt",
+      "unique.array",
+      "unique.data.frame",
+      "unique.default",
+      "unique.matrix",
+      "unique.numeric_version",
+      "unique.warnings",
+      "units",
+      "units.difftime",
+      "units<-",
+      "units<-.difftime",
+      "unix.time",
+      "unlink",
+      "unloadNamespace",
+      "unlockBinding",
+      "unserialize",
+      "unsplit",
+      "unstack",
+      "untar",
+      "untrace",
+      "untracemem",
+      "unz",
+      "unzip",
+      "update.default",
+      "update.formula",
+      "update.packages",
+      "upgrade",
+      "upper.tri",
+      "url",
+      "url.show",
+      "use",
+      "utf8ToInt",
+      "validEnc",
+      "validObject",
+      "validSlotNames",
+      "validUTF8",
+      "variable.names",
+      "varimax",
+      "vi",
+      "vignette",
+      "warnErrList",
+      "warningCondition",
+      "warnings",
+      "weekdays",
+      "weekdays.Date",
+      "weekdays.POSIXt",
+      "weighted.mean",
+      "weighted.residuals",
+      "weights",
+      "which.max",
+      "which.min",
+      "while",
+      "window<-",
+      "with.default",
+      "withAutoprint",
+      "withCallingHandlers",
+      "withRestarts",
+      "withVisible",
+      "within.data.frame",
+      "within.list",
+      "write",
+      "write.csv2",
+      "write.dcf",
+      "write.ftable",
+      "write.socket",
+      "writeBin",
+      "writeChar",
+      "writeLines",
+      "x11",
+      "xedit",
+      "xemacs",
+      "xfig",
+      "xinch",
+      "xpdrows.data.frame",
+      "xspline",
+      "xtfrm",
+      "xtfrm.AsIs",
+      "xtfrm.Date",
+      "xtfrm.POSIXct",
+      "xtfrm.POSIXlt",
+      "xtfrm.data.frame",
+      "xtfrm.default",
+      "xtfrm.difftime",
+      "xtfrm.factor",
+      "xtfrm.numeric_version",
+      "xy.coords",
+      "xyTable",
+      "xyinch",
+      "xyz.coords",
+      "xzfile",
+      "yinch",
+      "zapsmall",
+      "zip",
+      "zstdfile",
+      "{",
+      "|",
+      "|.hexmode",
+      "|.octmode",
+      "||",
+      "~"
+    ]
+  },
+  "functions": {
+    ".C": {
+      "params": [
+        "name",
+        "..."
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".Call": {
+      "params": [
+        "name",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".External": {
+      "params": [
+        "name",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".External2": {
+      "params": [
+        "name",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".Fortran": {
+      "params": [
+        "name",
+        "..."
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".Internal": {
+      "params": [
+        "call"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".libPaths": {
+      "params": [
+        "new"
+      ],
+      "return": {
+        "mode": "character",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    ".packages": {
+      "params": [
+        "all"
+      ],
+      "return": {
+        "mode": "character",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "AIC": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "1",
+        "na": false
+      }
+    },
+    "BIC": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "1",
+        "na": false
+      }
+    },
+    "Filter": {
+      "params": [
+        "f",
+        "x"
+      ],
+      "higher_order": {
+        "callback_param": "f",
+        "callback_position": 0,
+        "callback_args": [
+          "element_of_arg1"
+        ],
+        "result": {
+          "kind": "same_as_arg0",
+          "source_arg": 1
+        }
+      },
+      "return": "arg0"
+    },
+    "Find": {
+      "params": [
+        "f",
+        "x"
+      ],
+      "higher_order": {
+        "callback_param": "f",
+        "callback_position": 0,
+        "callback_args": [
+          "element_of_arg1"
+        ],
+        "result": {
+          "kind": "callback_return",
+          "source_arg": 1
+        }
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "1"
+      }
+    },
+    "IQR": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "1",
+        "na": true
+      }
+    },
+    "Map": {
+      "params": [
+        "f",
+        "..."
+      ],
+      "higher_order": {
+        "callback_param": "f",
+        "callback_position": 0,
+        "callback_args": [
+          "elements_after_callback"
+        ],
+        "result": {
+          "kind": "list_of_callback_return",
+          "length_arg": 1
+        }
+      },
+      "return": {
+        "mode": "list",
+        "length": "unknown"
+      }
+    },
+    "NCOL": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "1",
+        "na": false
+      }
+    },
+    "NROW": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "1",
+        "na": false
+      }
+    },
+    "Negate": {
+      "params": [
+        "f"
+      ],
+      "return": {
+        "mode": "function",
+        "length": "1",
+        "na": false
+      }
+    },
+    "Position": {
+      "params": [
+        "f",
+        "x"
+      ],
+      "higher_order": {
+        "callback_param": "f",
+        "callback_position": 0,
+        "callback_args": [
+          "element_of_arg1"
+        ],
+        "result": {
+          "kind": "vector_of",
+          "mode": "integer"
+        }
+      },
+      "return": {
+        "mode": "integer",
+        "length": "1"
+      }
+    },
+    "R.version": {
+      "params": [],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "Recall": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "Reduce": {
+      "params": [
+        "f",
+        "x",
+        "..."
+      ],
+      "higher_order": {
+        "callback_param": "f",
+        "callback_position": 0,
+        "callback_args": [
+          "accumulator_and_element"
+        ],
+        "result": {
+          "kind": "callback_return",
+          "source_arg": 1
+        }
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "1"
+      }
+    },
+    "Sys.Date": {
+      "params": [],
+      "return": {
+        "mode": "double",
+        "length": "1",
+        "na": false
+      }
+    },
+    "Sys.getenv": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "character",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "Sys.time": {
+      "params": [],
+      "return": {
+        "mode": "double",
+        "length": "1",
+        "na": false
+      }
+    },
+    "abs": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double_or_int",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "acos": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "addmargins": {
+      "params": [
+        "A"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "alias": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "all": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": true
+      }
+    },
+    "anova": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "any": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": true
+      }
+    },
+    "aov": {
+      "params": [
+        "formula",
+        "data"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "8",
+        "na": false,
+        "class": [
+          "aov"
+        ]
+      }
+    },
+    "append": {
+      "params": [
+        "x",
+        "values"
+      ],
+      "return": "arg0"
+    },
+    "apply": {
+      "params": [
+        "X",
+        "MARGIN",
+        "FUN",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "args": {
+      "params": [
+        "name"
+      ],
+      "return": {
+        "mode": "function",
+        "length": "1",
+        "na": false
+      }
+    },
+    "array": {
+      "params": [
+        "data",
+        "dim"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.array": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.call": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "1",
+        "na": false
+      }
+    },
+    "as.character": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "character",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "as.data.frame": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": true,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "as.double": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "as.factor": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "arg0",
+        "na": false,
+        "class": [
+          "factor"
+        ]
+      }
+    },
+    "as.integer": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "as.list": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "as.logical": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "as.matrix": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.numeric": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "as.raw": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "raw",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "as.table": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "as.vector": {
+      "params": [
+        "x"
+      ],
+      "return": "arg0"
+    },
+    "asin": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "assign": {
+      "params": [
+        "x",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "1",
+        "na": false
+      }
+    },
+    "atan": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "attach": {
+      "params": [
+        "what",
+        "pos",
+        "name",
+        "warn.conflicts"
+      ],
+      "scope_effect": "unknown_bindings",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      }
+    },
+    "attr": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "which",
+          "required": true
+        },
+        {
+          "name": "exact",
+          "default": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ave": {
+      "params": [
+        "x",
+        "f"
+      ],
+      "return": {
+        "mode": "double_or_int",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "bartlett.test": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "5",
+        "na": false
+      }
+    },
+    "basename": {
+      "params": [
+        "path"
+      ],
+      "return": {
+        "mode": "character",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "body": {
+      "params": [
+        "fun"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "1",
+        "na": false
+      }
+    },
+    "bquote": {
+      "params": [
+        "expr"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "1",
+        "na": false
+      }
+    },
+    "browser": {
+      "params": [],
+      "return": {
+        "mode": "null",
+        "length": "0",
+        "na": false
+      }
+    },
+    "c": {
+      "params": [
+        "..."
+      ],
+      "return": "concat_of_args"
+    },
+    "call": {
+      "params": [
+        "name",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "1",
+        "na": false
+      }
+    },
+    "casefold": {
+      "params": [
+        "x",
+        "upper"
+      ],
+      "return": {
+        "mode": "character",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "cat": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "null",
+        "length": "0",
+        "na": false
+      }
+    },
+    "cbind": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ceiling": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "character": {
+      "params": [
+        "length"
+      ],
+      "return": {
+        "mode": "character",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "charmatch": {
+      "params": [
+        "x",
+        "table"
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "chartr": {
+      "params": [
+        "old",
+        "new",
+        "x"
+      ],
+      "return": {
+        "mode": "character",
+        "length": "arg2",
+        "na": false
+      }
+    },
+    "chisq.test": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "5",
+        "na": false
+      }
+    },
+    "class": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "character",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "coef": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "colMeans": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "colSums": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double_or_int",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "colnames": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "character",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "complete.cases": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "complex": {
+      "params": [
+        "length"
+      ],
+      "return": {
+        "mode": "complex",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "confint": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "constrOptim": {
+      "params": [
+        "theta",
+        "f",
+        "grad",
+        "ui",
+        "ci"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "6",
+        "na": false
+      }
+    },
+    "cor": {
+      "params": [
+        "x",
+        "y"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "1",
+        "na": true
+      }
+    },
+    "cor.test": {
+      "params": [
+        "x",
+        "y"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "9",
+        "na": false
+      }
+    },
+    "cos": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "cosh": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "cov": {
+      "params": [
+        "x",
+        "y"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "1",
+        "na": true
+      }
+    },
+    "cummax": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double_or_int",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "cummin": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double_or_int",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "cumprod": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double_or_int",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "cumsum": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double_or_int",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "cut": {
+      "params": [
+        "x",
+        "breaks"
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "cycle": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "data": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "character",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "date": {
+      "params": [],
+      "return": {
+        "mode": "character",
+        "length": "1",
+        "na": false
+      }
+    },
+    "dbeta": {
+      "params": [
+        "x",
+        "shape1",
+        "shape2"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "dbinom": {
+      "params": [
+        "x",
+        "size",
+        "prob"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "dchisq": {
+      "params": [
+        "x",
+        "df"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "debug": {
+      "params": [
+        "fun"
+      ],
+      "return": {
+        "mode": "null",
+        "length": "0",
+        "na": false
+      }
+    },
+    "delayedAssign": {
+      "params": [
+        "x",
+        "value"
+      ],
+      "return": {
+        "mode": "null",
+        "length": "0",
+        "na": false
+      }
+    },
+    "deltat": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "1",
+        "na": false
+      }
+    },
+    "deparse": {
+      "params": [
+        "expr"
+      ],
+      "return": {
+        "mode": "character",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "det": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "1",
+        "na": true
+      }
+    },
+    "deviance": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "1",
+        "na": false
+      }
+    },
+    "dexp": {
+      "params": [
+        "x",
+        "rate"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "df": {
+      "params": [
+        "x",
+        "df1",
+        "df2"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "dgamma": {
+      "params": [
+        "x",
+        "shape",
+        "rate"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "diag": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "diff": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double_or_int",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "diff.ts": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "digamma": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "dim": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "dirname": {
+      "params": [
+        "path"
+      ],
+      "return": {
+        "mode": "character",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "dist": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "dlnorm": {
+      "params": [
+        "x",
+        "meanlog",
+        "sdlog"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "dnorm": {
+      "params": [
+        "x",
+        "mean",
+        "sd"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "do.call": {
+      "params": [
+        {
+          "name": "what",
+          "required": true
+        },
+        {
+          "name": "args",
+          "required": true
+        },
+        {
+          "name": "quote",
+          "default": true
+        },
+        {
+          "name": "envir",
+          "default": true
+        }
+      ],
+      "higher_order": {
+        "callback_param": "what",
+        "callback_position": 0,
+        "callback_args": [],
+        "result": {
+          "kind": "callback_return"
+        }
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "double": {
+      "params": [
+        "length"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "dpois": {
+      "params": [
+        "x",
+        "lambda"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "drop": {
+      "params": [
+        "x"
+      ],
+      "return": "arg0"
+    },
+    "dt": {
+      "params": [
+        "x",
+        "df"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "dunif": {
+      "params": [
+        "x",
+        "min",
+        "max"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "duplicated": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "end": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "1",
+        "na": false
+      }
+    },
+    "endsWith": {
+      "params": [
+        "x",
+        "suffix"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "environment": {
+      "params": [
+        "fun"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "1",
+        "na": false
+      }
+    },
+    "eval": {
+      "params": [
+        {
+          "name": "expr",
+          "required": true
+        },
+        {
+          "name": "envir",
+          "default": true
+        },
+        {
+          "name": "enclos",
+          "default": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "exists": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "where",
+          "default": true
+        },
+        {
+          "name": "envir",
+          "default": true
+        },
+        {
+          "name": "frame",
+          "default": true
+        },
+        {
+          "name": "mode",
+          "default": true
+        },
+        {
+          "name": "inherits",
+          "default": true
+        }
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "exp": {
+      "params": [
+        {
+          "name": "x",
+          "type": {
+            "mode": "union",
+            "length": "unknown",
+            "members": [
+              "logical",
+              "integer",
+              "double",
+              "complex"
+            ]
+          },
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "expand.grid": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "expm1": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "expression": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "factanal": {
+      "params": [
+        "x",
+        "factors"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "7",
+        "na": false
+      }
+    },
+    "factor": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "fft": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "complex",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "file.exists": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "file.path": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "character",
+        "length": "1",
+        "na": false
+      }
+    },
+    "fisher.test": {
+      "params": [
+        "x",
+        "y"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "7",
+        "na": false
+      }
+    },
+    "fitted": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "fligner.test": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "5",
+        "na": false
+      }
+    },
+    "floor": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "force": {
+      "params": [
+        "x"
+      ],
+      "return": "arg0"
+    },
+    "formals": {
+      "params": [
+        "fn"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "format": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "character",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "formatC": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "character",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "frequency": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "1",
+        "na": false
+      }
+    },
+    "friedman.test": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "5",
+        "na": false
+      }
+    },
+    "ftable": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "gamma": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "gc": {
+      "params": [],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "get": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "pos",
+          "default": true
+        },
+        {
+          "name": "envir",
+          "default": true
+        },
+        {
+          "name": "mode",
+          "default": true
+        },
+        {
+          "name": "inherits",
+          "default": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "getOption": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "getRversion": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "1",
+        "na": false
+      }
+    },
+    "getwd": {
+      "params": [],
+      "return": {
+        "mode": "character",
+        "length": "1",
+        "na": false
+      }
+    },
+    "gl": {
+      "params": [
+        "n",
+        "k"
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "factor"
+        ]
+      }
+    },
+    "glm": {
+      "params": [
+        "formula",
+        "data"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "30",
+        "na": false,
+        "class": [
+          "glm",
+          "lm"
+        ]
+      }
+    },
+    "gregexpr": {
+      "params": [
+        "pattern",
+        "text"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "arg1",
+        "na": false
+      }
+    },
+    "grep": {
+      "params": [
+        "pattern",
+        "x"
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "grepl": {
+      "params": [
+        {
+          "name": "pattern",
+          "required": true
+        },
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "ignore.case",
+          "default": true
+        },
+        {
+          "name": "perl",
+          "default": true
+        },
+        {
+          "name": "fixed",
+          "default": true
+        },
+        {
+          "name": "useBytes",
+          "default": true
+        }
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "arg1",
+        "na": false
+      }
+    },
+    "gsub": {
+      "params": [
+        {
+          "name": "pattern",
+          "required": true
+        },
+        {
+          "name": "replacement",
+          "required": true
+        },
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "ignore.case",
+          "default": true
+        },
+        {
+          "name": "perl",
+          "default": true
+        },
+        {
+          "name": "fixed",
+          "default": true
+        },
+        {
+          "name": "useBytes",
+          "default": true
+        }
+      ],
+      "return": {
+        "mode": "character",
+        "length": "arg2",
+        "na": true
+      }
+    },
+    "hclust": {
+      "params": [
+        "d"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "7",
+        "na": false
+      }
+    },
+    "head": {
+      "params": [
+        "x",
+        "n"
+      ],
+      "return": "arg0"
+    },
+    "identical": {
+      "params": [
+        "x",
+        "y"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "identity": {
+      "params": [
+        "x"
+      ],
+      "return": "arg0"
+    },
+    "ifelse": {
+      "params": [
+        {
+          "name": "test",
+          "required": true
+        },
+        {
+          "name": "yes",
+          "required": true
+        },
+        {
+          "name": "no",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "yes_or_no",
+        "length": "test",
+        "na": true
+      }
+    },
+    "inherits": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "what",
+          "required": true
+        },
+        {
+          "name": "which",
+          "default": true
+        }
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "integer": {
+      "params": [
+        "length"
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "interaction": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "intersect": {
+      "params": [
+        "x",
+        "y"
+      ],
+      "return": "arg0"
+    },
+    "invisible": {
+      "params": [
+        "x"
+      ],
+      "return": "arg0"
+    },
+    "is.array": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "is.atomic": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "is.character": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "is.complex": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "is.data.frame": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "is.double": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "is.element": {
+      "params": [
+        "el",
+        "set"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "is.factor": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "is.finite": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "is.function": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "is.infinite": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "is.integer": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "is.list": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "is.logical": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "is.matrix": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "is.na": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "is.nan": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "is.null": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "is.numeric": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "is.object": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "is.raw": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "is.recursive": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "is.ts": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "is.unsorted": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": true
+      }
+    },
+    "is.vector": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "isFALSE": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "isSymmetric": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "isTRUE": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "kmeans": {
+      "params": [
+        "x",
+        "centers"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "9",
+        "na": false
+      }
+    },
+    "kruskal.test": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "5",
+        "na": false
+      }
+    },
+    "ks.test": {
+      "params": [
+        "x",
+        "y"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "5",
+        "na": false
+      }
+    },
+    "lag": {
+      "params": [
+        "x",
+        "k"
+      ],
+      "return": "arg0"
+    },
+    "lapply": {
+      "params": [
+        {
+          "name": "X",
+          "required": true
+        },
+        {
+          "name": "FUN",
+          "required": true
+        },
+        "..."
+      ],
+      "higher_order": {
+        "callback_param": "FUN",
+        "callback_position": 1,
+        "callback_args": [
+          "element_of_arg0"
+        ],
+        "result": {
+          "kind": "list_of_callback_return",
+          "length_arg": 0,
+          "include_callback_schema": true
+        }
+      },
+      "return": {
+        "mode": "list",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "length": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "1",
+        "na": false
+      }
+    },
+    "lengths": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "lgamma": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "list": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "list",
+        "length": "n_args",
+        "na": false
+      }
+    },
+    "list.files": {
+      "params": [
+        "path"
+      ],
+      "return": {
+        "mode": "character",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "lm": {
+      "params": [
+        "formula",
+        "data"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "12",
+        "na": false,
+        "class": [
+          "lm"
+        ]
+      }
+    },
+    "log": {
+      "params": [
+        {
+          "name": "x",
+          "type": {
+            "mode": "union",
+            "length": "unknown",
+            "members": [
+              "logical",
+              "integer",
+              "double",
+              "complex"
+            ]
+          },
+          "required": true
+        },
+        {
+          "name": "base",
+          "default": true
+        }
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "log10": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "log1p": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "log2": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "logLik": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "1",
+        "na": false
+      }
+    },
+    "logical": {
+      "params": [
+        "length"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "ls": {
+      "params": [],
+      "return": {
+        "mode": "character",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "mad": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "1",
+        "na": true
+      }
+    },
+    "mantelhaen.test": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "6",
+        "na": false
+      }
+    },
+    "mapply": {
+      "params": [
+        "FUN",
+        "..."
+      ],
+      "higher_order": {
+        "callback_param": "FUN",
+        "callback_position": 0,
+        "callback_args": [
+          "elements_after_callback"
+        ],
+        "result": {
+          "kind": "list_of_callback_return",
+          "length_arg": 1
+        }
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "match": {
+      "params": [
+        "x",
+        "table"
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "match.arg": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "character",
+        "length": "1",
+        "na": false
+      }
+    },
+    "match.fun": {
+      "params": [
+        "FUN"
+      ],
+      "return": {
+        "mode": "function",
+        "length": "1",
+        "na": false
+      }
+    },
+    "matrix": {
+      "params": [
+        "data",
+        "nrow",
+        "ncol"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "mauchly.test": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "7",
+        "na": false
+      }
+    },
+    "max": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "double_or_int",
+        "length": "1",
+        "na": true
+      }
+    },
+    "mcnemar.test": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "4",
+        "na": false
+      }
+    },
+    "mean": {
+      "params": [
+        {
+          "name": "x",
+          "type": {
+            "mode": "union",
+            "length": "unknown",
+            "members": [
+              "logical",
+              "integer",
+              "double",
+              "complex"
+            ]
+          },
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "double_or_int",
+        "length": "1",
+        "na": true
+      }
+    },
+    "median": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double_or_int",
+        "length": "1",
+        "na": true
+      }
+    },
+    "merge": {
+      "params": [
+        "x",
+        "y"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "message": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "null",
+        "length": "0",
+        "na": false
+      }
+    },
+    "mget": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "min": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "double_or_int",
+        "length": "1",
+        "na": true
+      }
+    },
+    "missing": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "mode": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "character",
+        "length": "1",
+        "na": false
+      }
+    },
+    "model.matrix": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "mood.test": {
+      "params": [
+        "x",
+        "y"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "5",
+        "na": false
+      }
+    },
+    "mvfft": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "complex",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "na.omit": {
+      "params": [
+        "x"
+      ],
+      "return": "arg0"
+    },
+    "na.pass": {
+      "params": [
+        "object"
+      ],
+      "return": "arg0"
+    },
+    "names": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "character",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "nchar": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "type",
+          "default": true
+        },
+        {
+          "name": "allowNA",
+          "default": true
+        },
+        {
+          "name": "keepNA",
+          "default": true
+        }
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "ncol": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "1",
+        "na": false
+      }
+    },
+    "nlm": {
+      "params": [
+        "f",
+        "p"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "5",
+        "na": false
+      }
+    },
+    "nlminb": {
+      "params": [
+        "start",
+        "objective"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "5",
+        "na": false
+      }
+    },
+    "nobs": {
+      "params": [
+        "object",
+        "..."
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "1",
+        "na": false
+      }
+    },
+    "normalizePath": {
+      "params": [
+        "path"
+      ],
+      "return": {
+        "mode": "character",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "nrow": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "1",
+        "na": false
+      }
+    },
+    "numeric": {
+      "params": [
+        "length"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "nzchar": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "on.exit": {
+      "params": [
+        "expr"
+      ],
+      "return": {
+        "mode": "null",
+        "length": "0",
+        "na": false
+      }
+    },
+    "oneway.test": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "5",
+        "na": false
+      }
+    },
+    "optim": {
+      "params": [
+        "par",
+        "fn"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "5",
+        "na": false
+      }
+    },
+    "optimise": {
+      "params": [
+        "f",
+        "interval"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "2",
+        "na": false
+      }
+    },
+    "optimize": {
+      "params": [
+        "f",
+        "interval"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "2",
+        "na": false
+      }
+    },
+    "options": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "order": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ordered": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "pairwise.t.test": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "pairwise.wilcox.test": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "parse": {
+      "params": [
+        {
+          "name": "file",
+          "default": true
+        },
+        {
+          "name": "n",
+          "default": true
+        },
+        {
+          "name": "text",
+          "default": true
+        },
+        {
+          "name": "prompt",
+          "default": true
+        },
+        {
+          "name": "keep.source",
+          "default": true
+        },
+        {
+          "name": "srcfile",
+          "default": true
+        },
+        {
+          "name": "encoding",
+          "default": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "paste": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "character",
+        "length": "longest_arg",
+        "na": true
+      }
+    },
+    "paste0": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "character",
+        "length": "longest_arg",
+        "na": true
+      }
+    },
+    "pbeta": {
+      "params": [
+        "q",
+        "shape1",
+        "shape2"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "pbinom": {
+      "params": [
+        "q",
+        "size",
+        "prob"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "pchisq": {
+      "params": [
+        "q",
+        "df"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "pexp": {
+      "params": [
+        "q",
+        "rate"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "pf": {
+      "params": [
+        "q",
+        "df1",
+        "df2"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "pgamma": {
+      "params": [
+        "q",
+        "shape",
+        "rate"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "plnorm": {
+      "params": [
+        "q",
+        "meanlog",
+        "sdlog"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "pmatch": {
+      "params": [
+        "x",
+        "table"
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "pmax": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "double_or_int",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pmin": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "double_or_int",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pnorm": {
+      "params": [
+        "q",
+        "mean",
+        "sd"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "polyroot": {
+      "params": [
+        "z"
+      ],
+      "return": {
+        "mode": "complex",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ppois": {
+      "params": [
+        "q",
+        "lambda"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "prcomp": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "5",
+        "na": false
+      }
+    },
+    "predict": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pretty": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "double",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "princomp": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "9",
+        "na": false
+      }
+    },
+    "print": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "proc.time": {
+      "params": [],
+      "return": {
+        "mode": "double",
+        "length": "3",
+        "na": false
+      }
+    },
+    "prod": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "double_or_int",
+        "length": "1",
+        "na": true
+      }
+    },
+    "prop.table": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "prop.test": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "7",
+        "na": false
+      }
+    },
+    "pt": {
+      "params": [
+        "q",
+        "df"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "punif": {
+      "params": [
+        "q",
+        "min",
+        "max"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "qbeta": {
+      "params": [
+        "p",
+        "shape1",
+        "shape2"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "qchisq": {
+      "params": [
+        "p",
+        "df"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "qexp": {
+      "params": [
+        "p",
+        "rate"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "qf": {
+      "params": [
+        "p",
+        "df1",
+        "df2"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "qgamma": {
+      "params": [
+        "p",
+        "shape",
+        "rate"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "qlnorm": {
+      "params": [
+        "p",
+        "meanlog",
+        "sdlog"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "qnorm": {
+      "params": [
+        "p",
+        "mean",
+        "sd"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "qt": {
+      "params": [
+        "p",
+        "df"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "quade.test": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "5",
+        "na": false
+      }
+    },
+    "quantile": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "qunif": {
+      "params": [
+        "p",
+        "min",
+        "max"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "quote": {
+      "params": [
+        "expr"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "1",
+        "na": false
+      }
+    },
+    "range": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "double_or_int",
+        "length": "2",
+        "na": true
+      }
+    },
+    "rank": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "rapply": {
+      "params": [
+        "object",
+        "f",
+        "..."
+      ],
+      "higher_order": {
+        "callback_param": "f",
+        "callback_position": 1,
+        "callback_args": [
+          "unknown"
+        ],
+        "result": {
+          "kind": "simplify",
+          "length_arg": 0
+        }
+      },
+      "return": {
+        "mode": "list",
+        "length": "arg0"
+      }
+    },
+    "raw": {
+      "params": [
+        "length"
+      ],
+      "return": {
+        "mode": "raw",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "rbind": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rbinom": {
+      "params": [
+        "n",
+        "size",
+        "prob"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "read.csv": {
+      "params": [
+        "file"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read.table": {
+      "params": [
+        "file"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "readLines": {
+      "params": [
+        {
+          "name": "con",
+          "required": true
+        },
+        {
+          "name": "n",
+          "default": true
+        },
+        {
+          "name": "ok",
+          "default": true
+        },
+        {
+          "name": "warn",
+          "default": true
+        },
+        {
+          "name": "encoding",
+          "default": true
+        },
+        {
+          "name": "skipNul",
+          "default": true
+        }
+      ],
+      "return": {
+        "mode": "character",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "readRDS": {
+      "params": [
+        "file"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "regexpr": {
+      "params": [
+        {
+          "name": "pattern",
+          "required": true
+        },
+        {
+          "name": "text",
+          "required": true
+        },
+        {
+          "name": "ignore.case",
+          "default": true
+        },
+        {
+          "name": "perl",
+          "default": true
+        },
+        {
+          "name": "fixed",
+          "default": true
+        },
+        {
+          "name": "useBytes",
+          "default": true
+        }
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "arg1",
+        "na": false
+      }
+    },
+    "regmatches": {
+      "params": [
+        "x",
+        "m"
+      ],
+      "return": {
+        "mode": "character",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "remove": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "null",
+        "length": "0",
+        "na": false
+      }
+    },
+    "rep": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "arg0",
+        "length": "x_times",
+        "na": true
+      }
+    },
+    "requireNamespace": {
+      "params": [
+        {
+          "name": "package",
+          "required": true
+        },
+        "...",
+        {
+          "name": "quietly",
+          "default": true
+        }
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "residuals": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "return": {
+      "params": [
+        "x"
+      ],
+      "return": "arg0"
+    },
+    "rev": {
+      "params": [
+        "x"
+      ],
+      "return": "arg0"
+    },
+    "rexp": {
+      "params": [
+        "n",
+        "rate"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "rle": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "rlnorm": {
+      "params": [
+        "n",
+        "meanlog",
+        "sdlog"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "rm": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "null",
+        "length": "0",
+        "na": false
+      }
+    },
+    "rnorm": {
+      "params": [
+        "n",
+        "mean",
+        "sd"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "round": {
+      "params": [
+        {
+          "name": "x",
+          "type": {
+            "mode": "union",
+            "length": "unknown",
+            "members": [
+              "logical",
+              "integer",
+              "double",
+              "complex"
+            ]
+          },
+          "required": true
+        },
+        {
+          "name": "digits",
+          "default": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "double_or_int",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "rowMeans": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rowSums": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double_or_int",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rownames": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "character",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "rowsum": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double_or_int",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "rpois": {
+      "params": [
+        "n",
+        "lambda"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "runif": {
+      "params": [
+        "n",
+        "min",
+        "max"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "sample": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "size",
+          "default": true
+        },
+        {
+          "name": "replace",
+          "default": true
+        },
+        {
+          "name": "prob",
+          "default": true
+        }
+      ],
+      "return": {
+        "mode": "arg0",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "sample.int": {
+      "params": [
+        "n",
+        "size"
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "sapply": {
+      "params": [
+        "X",
+        "FUN"
+      ],
+      "higher_order": {
+        "callback_param": "FUN",
+        "callback_position": 1,
+        "callback_args": [
+          "element_of_arg0"
+        ],
+        "result": {
+          "kind": "simplify",
+          "length_arg": 0
+        }
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "saveRDS": {
+      "params": [
+        "object",
+        "file"
+      ],
+      "return": {
+        "mode": "null",
+        "length": "0",
+        "na": false
+      }
+    },
+    "scale": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "sd": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "1",
+        "na": true
+      }
+    },
+    "seq": {
+      "params": [
+        "from",
+        "to",
+        "by"
+      ],
+      "return": {
+        "mode": "double_or_int",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "seq.int": {
+      "params": [
+        "from",
+        "to",
+        "by"
+      ],
+      "return": {
+        "mode": "double_or_int",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "seq_along": {
+      "params": [
+        "along.with"
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "seq_len": {
+      "params": [
+        {
+          "name": "length.out",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "set.seed": {
+      "params": [
+        "n"
+      ],
+      "return": {
+        "mode": "null",
+        "length": "0",
+        "na": false
+      }
+    },
+    "setNames": {
+      "params": [
+        "object",
+        "nm"
+      ],
+      "return": "arg0"
+    },
+    "setdiff": {
+      "params": [
+        "x",
+        "y"
+      ],
+      "return": "arg0"
+    },
+    "setequal": {
+      "params": [
+        "x",
+        "y"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "setwd": {
+      "params": [
+        "dir"
+      ],
+      "return": {
+        "mode": "character",
+        "length": "1",
+        "na": false
+      }
+    },
+    "shapiro.test": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "4",
+        "na": false
+      }
+    },
+    "sign": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double_or_int",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "signif": {
+      "params": [
+        "x",
+        "digits"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "sin": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "sinh": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "solve": {
+      "params": [
+        "a",
+        "b"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "sort": {
+      "params": [
+        "x"
+      ],
+      "return": "arg0"
+    },
+    "sort.int": {
+      "params": [
+        "x"
+      ],
+      "return": "arg0"
+    },
+    "split": {
+      "params": [
+        "x",
+        "f"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "sprintf": {
+      "params": [
+        "fmt",
+        "..."
+      ],
+      "return": {
+        "mode": "character",
+        "length": "longest_arg",
+        "na": true
+      }
+    },
+    "sqrt": {
+      "params": [
+        {
+          "name": "x",
+          "type": {
+            "mode": "union",
+            "length": "unknown",
+            "members": [
+              "logical",
+              "integer",
+              "double",
+              "complex"
+            ]
+          },
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "start": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "1",
+        "na": false
+      }
+    },
+    "startsWith": {
+      "params": [
+        "x",
+        "prefix"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "step": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "stop": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "0",
+        "na": false
+      }
+    },
+    "stopifnot": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "null",
+        "length": "0",
+        "na": false
+      }
+    },
+    "strsplit": {
+      "params": [
+        "x",
+        "split"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "structure": {
+      "params": [
+        ".Data",
+        "..."
+      ],
+      "return": "arg0"
+    },
+    "sub": {
+      "params": [
+        {
+          "name": "pattern",
+          "required": true
+        },
+        {
+          "name": "replacement",
+          "required": true
+        },
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "ignore.case",
+          "default": true
+        },
+        {
+          "name": "perl",
+          "default": true
+        },
+        {
+          "name": "fixed",
+          "default": true
+        },
+        {
+          "name": "useBytes",
+          "default": true
+        }
+      ],
+      "return": {
+        "mode": "character",
+        "length": "arg2",
+        "na": true
+      }
+    },
+    "subset": {
+      "params": [
+        "x",
+        "subset",
+        "select"
+      ],
+      "eval": {
+        "subset": "data_mask",
+        "select": "tidy_select"
+      },
+      "schema_effect": "select",
+      "return": "arg0"
+    },
+    "substitute": {
+      "params": [
+        "expr"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "1",
+        "na": false
+      }
+    },
+    "substr": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "start",
+          "required": true
+        },
+        {
+          "name": "stop",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "character",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "substring": {
+      "params": [
+        "text",
+        "first",
+        "last"
+      ],
+      "return": {
+        "mode": "character",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "sum": {
+      "params": [
+        "...",
+        {
+          "name": "na.rm",
+          "default": true
+        }
+      ],
+      "return": {
+        "mode": "double_or_int",
+        "length": "1",
+        "na": true
+      }
+    },
+    "summary": {
+      "params": [
+        "object",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "summary.lm": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "11",
+        "na": false
+      }
+    },
+    "suppressMessages": {
+      "params": [
+        "expr"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "suppressWarnings": {
+      "params": [
+        "expr"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "switch": {
+      "params": [
+        "EXPR",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "t": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "t.test": {
+      "params": [
+        "x",
+        "y"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "9",
+        "na": false
+      }
+    },
+    "table": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "tabulate": {
+      "params": [
+        "bin",
+        "nbins"
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "tail": {
+      "params": [
+        "x",
+        "n"
+      ],
+      "return": "arg0"
+    },
+    "tan": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "tanh": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "tapply": {
+      "params": [
+        "X",
+        "INDEX",
+        "FUN"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "tempfile": {
+      "params": [],
+      "return": {
+        "mode": "character",
+        "length": "1",
+        "na": false
+      }
+    },
+    "terms": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "time": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "toString": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "character",
+        "length": "1",
+        "na": false
+      }
+    },
+    "tolower": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "character",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "toupper": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "character",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "traceback": {
+      "params": [],
+      "return": {
+        "mode": "null",
+        "length": "0",
+        "na": false
+      }
+    },
+    "transform": {
+      "params": [
+        "_data",
+        "..."
+      ],
+      "eval": {
+        "...": "data_mask"
+      },
+      "schema_effect": "add_named_args",
+      "return": "arg0"
+    },
+    "trigamma": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "trimws": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "character",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "trunc": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "try": {
+      "params": [
+        "expr"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tryCatch": {
+      "params": [
+        "expr"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ts": {
+      "params": [
+        "data",
+        "frequency"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "arg0",
+        "na": false
+      }
+    },
+    "ts.intersect": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ts.plot": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "null",
+        "length": "0",
+        "na": false
+      }
+    },
+    "ts.union": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "typeof": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "character",
+        "length": "1",
+        "na": false
+      }
+    },
+    "unclass": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "undebug": {
+      "params": [
+        "fun"
+      ],
+      "return": {
+        "mode": "null",
+        "length": "0",
+        "na": false
+      }
+    },
+    "union": {
+      "params": [
+        "x",
+        "y"
+      ],
+      "return": "arg0"
+    },
+    "unique": {
+      "params": [
+        "x"
+      ],
+      "return": "arg0"
+    },
+    "uniroot": {
+      "params": [
+        "f",
+        "interval"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "5",
+        "na": false
+      }
+    },
+    "unlist": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "unname": {
+      "params": [
+        "obj"
+      ],
+      "return": "arg0"
+    },
+    "update": {
+      "params": [
+        "object",
+        "formula"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "vapply": {
+      "params": [
+        "X",
+        "FUN",
+        "FUN.VALUE"
+      ],
+      "higher_order": {
+        "callback_param": "FUN",
+        "callback_position": 1,
+        "callback_args": [
+          "element_of_arg0"
+        ],
+        "result": {
+          "kind": "fun_value_template",
+          "length_arg": 0,
+          "template_position": 2
+        }
+      },
+      "return": {
+        "mode": "arg2",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "var": {
+      "params": [
+        "x",
+        "y"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "var.test": {
+      "params": [
+        "x",
+        "y"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "9",
+        "na": false
+      }
+    },
+    "vcov": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "vector": {
+      "params": [
+        "mode",
+        "length"
+      ],
+      "return": {
+        "mode": "arg0",
+        "length": "arg1",
+        "na": false
+      }
+    },
+    "version": {
+      "params": [],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "warning": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "null",
+        "length": "0",
+        "na": false
+      }
+    },
+    "which": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "wilcox.test": {
+      "params": [
+        "x",
+        "y"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "8",
+        "na": false
+      }
+    },
+    "window": {
+      "params": [
+        "x",
+        "start",
+        "end"
+      ],
+      "return": "arg0"
+    },
+    "with": {
+      "params": [
+        "data",
+        "expr"
+      ],
+      "eval": {
+        "expr": "data_mask"
+      },
+      "schema_effect": "expression_value",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "within": {
+      "params": [
+        "data",
+        "expr"
+      ],
+      "eval": {
+        "expr": "data_mask"
+      },
+      "schema_effect": "add_named_args",
+      "return": "arg0"
+    },
+    "write.csv": {
+      "params": [
+        "x",
+        "file"
+      ],
+      "return": {
+        "mode": "null",
+        "length": "0",
+        "na": false
+      }
+    },
+    "write.table": {
+      "params": [
+        "x",
+        "file"
+      ],
+      "return": {
+        "mode": "null",
+        "length": "0",
+        "na": false
+      }
+    },
+    "xor": {
+      "params": [
+        "x",
+        "y"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "xtabs": {
+      "params": [
+        "formula",
+        "data"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    }
+  },
+  "datasets": {
+    "state.name": {
+      "mode": "character",
+      "length": "50",
+      "na": false
+    },
+    ".BaseNamespaceEnv": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": false
+    },
+    "mtcars": {
+      "mode": "list",
+      "length": "11",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "mpg": {
+          "mode": "double",
+          "length": "32",
+          "na": false
+        },
+        "cyl": {
+          "mode": "double",
+          "length": "32",
+          "na": false
+        },
+        "disp": {
+          "mode": "double",
+          "length": "32",
+          "na": false
+        },
+        "hp": {
+          "mode": "double",
+          "length": "32",
+          "na": false
+        },
+        "drat": {
+          "mode": "double",
+          "length": "32",
+          "na": false
+        },
+        "wt": {
+          "mode": "double",
+          "length": "32",
+          "na": false
+        },
+        "qsec": {
+          "mode": "double",
+          "length": "32",
+          "na": false
+        },
+        "vs": {
+          "mode": "double",
+          "length": "32",
+          "na": false
+        },
+        "am": {
+          "mode": "double",
+          "length": "32",
+          "na": false
+        },
+        "gear": {
+          "mode": "double",
+          "length": "32",
+          "na": false
+        },
+        "carb": {
+          "mode": "double",
+          "length": "32",
+          "na": false
+        }
+      }
+    },
+    "iris": {
+      "mode": "list",
+      "length": "5",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "Sepal.Length": {
+          "mode": "double",
+          "length": "150",
+          "na": false
+        },
+        "Sepal.Width": {
+          "mode": "double",
+          "length": "150",
+          "na": false
+        },
+        "Petal.Length": {
+          "mode": "double",
+          "length": "150",
+          "na": false
+        },
+        "Petal.Width": {
+          "mode": "double",
+          "length": "150",
+          "na": false
+        },
+        "Species": {
+          "mode": "integer",
+          "length": "150",
+          "na": false,
+          "class": [
+            "factor"
+          ]
+        }
+      }
+    },
+    "airquality": {
+      "mode": "list",
+      "length": "6",
+      "na": true,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "Ozone": {
+          "mode": "integer",
+          "length": "153",
+          "na": true
+        },
+        "Solar.R": {
+          "mode": "integer",
+          "length": "153",
+          "na": true
+        },
+        "Wind": {
+          "mode": "double",
+          "length": "153",
+          "na": true
+        },
+        "Temp": {
+          "mode": "integer",
+          "length": "153",
+          "na": true
+        },
+        "Month": {
+          "mode": "integer",
+          "length": "153",
+          "na": false
+        },
+        "Day": {
+          "mode": "integer",
+          "length": "153",
+          "na": false
+        }
+      }
+    },
+    "PlantGrowth": {
+      "mode": "list",
+      "length": "2",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "weight": {
+          "mode": "double",
+          "length": "30",
+          "na": false
+        },
+        "group": {
+          "mode": "integer",
+          "length": "30",
+          "na": false,
+          "class": [
+            "factor"
+          ]
+        }
+      }
+    },
+    "ToothGrowth": {
+      "mode": "list",
+      "length": "3",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "len": {
+          "mode": "double",
+          "length": "60",
+          "na": false
+        },
+        "supp": {
+          "mode": "integer",
+          "length": "60",
+          "na": false,
+          "class": [
+            "factor"
+          ]
+        },
+        "dose": {
+          "mode": "double",
+          "length": "60",
+          "na": false
+        }
+      }
+    },
+    "chickwts": {
+      "mode": "list",
+      "length": "2",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "weight": {
+          "mode": "double",
+          "length": "71",
+          "na": false
+        },
+        "feed": {
+          "mode": "integer",
+          "length": "71",
+          "na": false,
+          "class": [
+            "factor"
+          ]
+        }
+      }
+    },
+    "CO2": {
+      "mode": "list",
+      "length": "5",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "Plant": {
+          "mode": "integer",
+          "length": "84",
+          "na": false,
+          "class": [
+            "factor",
+            "ordered"
+          ]
+        },
+        "Type": {
+          "mode": "integer",
+          "length": "84",
+          "na": false,
+          "class": [
+            "factor"
+          ]
+        },
+        "Treatment": {
+          "mode": "integer",
+          "length": "84",
+          "na": false,
+          "class": [
+            "factor"
+          ]
+        },
+        "conc": {
+          "mode": "double",
+          "length": "84",
+          "na": false
+        },
+        "uptake": {
+          "mode": "double",
+          "length": "84",
+          "na": false
+        }
+      }
+    },
+    "esoph": {
+      "mode": "list",
+      "length": "5",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "agegp": {
+          "mode": "integer",
+          "length": "88",
+          "na": false,
+          "class": [
+            "factor",
+            "ordered"
+          ]
+        },
+        "alcgp": {
+          "mode": "integer",
+          "length": "88",
+          "na": false,
+          "class": [
+            "factor",
+            "ordered"
+          ]
+        },
+        "tobgp": {
+          "mode": "integer",
+          "length": "88",
+          "na": false,
+          "class": [
+            "factor",
+            "ordered"
+          ]
+        },
+        "ncases": {
+          "mode": "double",
+          "length": "88",
+          "na": false
+        },
+        "ncontrols": {
+          "mode": "double",
+          "length": "88",
+          "na": false
+        }
+      }
+    },
+    "infert": {
+      "mode": "list",
+      "length": "8",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "education": {
+          "mode": "integer",
+          "length": "248",
+          "na": false,
+          "class": [
+            "factor"
+          ]
+        },
+        "age": {
+          "mode": "double",
+          "length": "248",
+          "na": false
+        },
+        "parity": {
+          "mode": "double",
+          "length": "248",
+          "na": false
+        },
+        "induced": {
+          "mode": "double",
+          "length": "248",
+          "na": false
+        },
+        "case": {
+          "mode": "double",
+          "length": "248",
+          "na": false
+        },
+        "spontaneous": {
+          "mode": "double",
+          "length": "248",
+          "na": false
+        },
+        "stratum": {
+          "mode": "integer",
+          "length": "248",
+          "na": false
+        },
+        "pooled.stratum": {
+          "mode": "double",
+          "length": "248",
+          "na": false
+        }
+      }
+    },
+    "npk": {
+      "mode": "list",
+      "length": "5",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "block": {
+          "mode": "integer",
+          "length": "24",
+          "na": false,
+          "class": [
+            "factor"
+          ]
+        },
+        "N": {
+          "mode": "double",
+          "length": "24",
+          "na": false
+        },
+        "P": {
+          "mode": "double",
+          "length": "24",
+          "na": false
+        },
+        "K": {
+          "mode": "double",
+          "length": "24",
+          "na": false
+        },
+        "yield": {
+          "mode": "double",
+          "length": "24",
+          "na": false
+        }
+      }
+    },
+    "OrchardSprays": {
+      "mode": "list",
+      "length": "8",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "rowpos": {
+          "mode": "integer",
+          "length": "64",
+          "na": false
+        },
+        "colpos": {
+          "mode": "integer",
+          "length": "64",
+          "na": false
+        },
+        "treatment": {
+          "mode": "integer",
+          "length": "64",
+          "na": false,
+          "class": [
+            "factor"
+          ]
+        },
+        "decrease": {
+          "mode": "double",
+          "length": "64",
+          "na": false
+        },
+        "rowpos.f": {
+          "mode": "integer",
+          "length": "64",
+          "na": false,
+          "class": [
+            "factor"
+          ]
+        },
+        "colpos.f": {
+          "mode": "integer",
+          "length": "64",
+          "na": false,
+          "class": [
+            "factor"
+          ]
+        }
+      }
+    },
+    "Loblolly": {
+      "mode": "list",
+      "length": "3",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "height": {
+          "mode": "double",
+          "length": "84",
+          "na": false
+        },
+        "age": {
+          "mode": "double",
+          "length": "84",
+          "na": false
+        },
+        "Seed": {
+          "mode": "integer",
+          "length": "84",
+          "na": false,
+          "class": [
+            "factor",
+            "ordered"
+          ]
+        }
+      }
+    },
+    "Formaldehyde": {
+      "mode": "list",
+      "length": "2",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "carb": {
+          "mode": "double",
+          "length": "6",
+          "na": false
+        },
+        "optden": {
+          "mode": "double",
+          "length": "6",
+          "na": false
+        }
+      }
+    },
+    "freeny": {
+      "mode": "list",
+      "length": "5",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "y": {
+          "mode": "double",
+          "length": "39",
+          "na": false
+        },
+        "lag.quarterly.revenue": {
+          "mode": "double",
+          "length": "39",
+          "na": false
+        },
+        "price.index": {
+          "mode": "double",
+          "length": "39",
+          "na": false
+        },
+        "income.level": {
+          "mode": "double",
+          "length": "39",
+          "na": false
+        },
+        "market.potential": {
+          "mode": "double",
+          "length": "39",
+          "na": false
+        }
+      }
+    },
+    "stackloss": {
+      "mode": "list",
+      "length": "4",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "Air.Flow": {
+          "mode": "double",
+          "length": "21",
+          "na": false
+        },
+        "Water.Temp": {
+          "mode": "double",
+          "length": "21",
+          "na": false
+        },
+        "Acid.Conc.": {
+          "mode": "double",
+          "length": "21",
+          "na": false
+        },
+        "stack.loss": {
+          "mode": "double",
+          "length": "21",
+          "na": false
+        }
+      }
+    },
+    "USArrests": {
+      "mode": "list",
+      "length": "4",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "Murder": {
+          "mode": "double",
+          "length": "50",
+          "na": false
+        },
+        "Assault": {
+          "mode": "integer",
+          "length": "50",
+          "na": false
+        },
+        "UrbanPop": {
+          "mode": "integer",
+          "length": "50",
+          "na": false
+        },
+        "Rape": {
+          "mode": "double",
+          "length": "50",
+          "na": false
+        }
+      }
+    },
+    "ChickWeight": {
+      "mode": "list",
+      "length": "4",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "weight": {
+          "mode": "double",
+          "length": "578",
+          "na": false
+        },
+        "Time": {
+          "mode": "double",
+          "length": "578",
+          "na": false
+        },
+        "Chick": {
+          "mode": "integer",
+          "length": "578",
+          "na": false,
+          "class": [
+            "factor",
+            "ordered"
+          ]
+        },
+        "Diet": {
+          "mode": "integer",
+          "length": "578",
+          "na": false,
+          "class": [
+            "factor"
+          ]
+        }
+      }
+    },
+    "DNase": {
+      "mode": "list",
+      "length": "3",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "Run": {
+          "mode": "integer",
+          "length": "176",
+          "na": false,
+          "class": [
+            "factor",
+            "ordered"
+          ]
+        },
+        "conc": {
+          "mode": "double",
+          "length": "176",
+          "na": false
+        },
+        "density": {
+          "mode": "double",
+          "length": "176",
+          "na": false
+        }
+      }
+    },
+    "Indometh": {
+      "mode": "list",
+      "length": "3",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "Subject": {
+          "mode": "integer",
+          "length": "66",
+          "na": false,
+          "class": [
+            "factor",
+            "ordered"
+          ]
+        },
+        "time": {
+          "mode": "double",
+          "length": "66",
+          "na": false
+        },
+        "conc": {
+          "mode": "double",
+          "length": "66",
+          "na": false
+        }
+      }
+    },
+    "LifeCycleSavings": {
+      "mode": "list",
+      "length": "5",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "sr": {
+          "mode": "double",
+          "length": "50",
+          "na": false
+        },
+        "pop15": {
+          "mode": "double",
+          "length": "50",
+          "na": false
+        },
+        "pop75": {
+          "mode": "double",
+          "length": "50",
+          "na": false
+        },
+        "dpi": {
+          "mode": "double",
+          "length": "50",
+          "na": false
+        },
+        "ddpi": {
+          "mode": "double",
+          "length": "50",
+          "na": false
+        }
+      }
+    },
+    "Orange": {
+      "mode": "list",
+      "length": "3",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "Tree": {
+          "mode": "integer",
+          "length": "35",
+          "na": false,
+          "class": [
+            "factor",
+            "ordered"
+          ]
+        },
+        "age": {
+          "mode": "double",
+          "length": "35",
+          "na": false
+        },
+        "circumference": {
+          "mode": "double",
+          "length": "35",
+          "na": false
+        }
+      }
+    },
+    "Theoph": {
+      "mode": "list",
+      "length": "3",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "Subject": {
+          "mode": "integer",
+          "length": "132",
+          "na": false,
+          "class": [
+            "factor",
+            "ordered"
+          ]
+        },
+        "Wt": {
+          "mode": "double",
+          "length": "132",
+          "na": false
+        },
+        "Dose": {
+          "mode": "double",
+          "length": "132",
+          "na": false
+        },
+        "Time": {
+          "mode": "double",
+          "length": "132",
+          "na": false
+        },
+        "conc": {
+          "mode": "double",
+          "length": "132",
+          "na": false
+        }
+      }
+    },
+    "InsectSprays": {
+      "mode": "list",
+      "length": "2",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "count": {
+          "mode": "double",
+          "length": "72",
+          "na": false
+        },
+        "spray": {
+          "mode": "integer",
+          "length": "72",
+          "na": false,
+          "class": [
+            "factor"
+          ]
+        }
+      }
+    },
+    "warpbreaks": {
+      "mode": "list",
+      "length": "3",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "breaks": {
+          "mode": "double",
+          "length": "54",
+          "na": false
+        },
+        "wool": {
+          "mode": "integer",
+          "length": "54",
+          "na": false,
+          "class": [
+            "factor"
+          ]
+        },
+        "tension": {
+          "mode": "integer",
+          "length": "54",
+          "na": false,
+          "class": [
+            "factor"
+          ]
+        }
+      }
+    },
+    "sleep": {
+      "mode": "list",
+      "length": "3",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "extra": {
+          "mode": "double",
+          "length": "20",
+          "na": false
+        },
+        "group": {
+          "mode": "integer",
+          "length": "20",
+          "na": false,
+          "class": [
+            "factor"
+          ]
+        },
+        "ID": {
+          "mode": "integer",
+          "length": "20",
+          "na": false,
+          "class": [
+            "factor"
+          ]
+        }
+      }
+    },
+    "swiss": {
+      "mode": "list",
+      "length": "6",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "Fertility": {
+          "mode": "double",
+          "length": "47",
+          "na": false
+        },
+        "Agriculture": {
+          "mode": "double",
+          "length": "47",
+          "na": false
+        },
+        "Examination": {
+          "mode": "integer",
+          "length": "47",
+          "na": false
+        },
+        "Education": {
+          "mode": "integer",
+          "length": "47",
+          "na": false
+        },
+        "Catholic": {
+          "mode": "double",
+          "length": "47",
+          "na": false
+        },
+        "Infant.Mortality": {
+          "mode": "double",
+          "length": "47",
+          "na": false
+        }
+      }
+    },
+    "trees": {
+      "mode": "list",
+      "length": "3",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "Girth": {
+          "mode": "double",
+          "length": "31",
+          "na": false
+        },
+        "Height": {
+          "mode": "double",
+          "length": "31",
+          "na": false
+        },
+        "Volume": {
+          "mode": "double",
+          "length": "31",
+          "na": false
+        }
+      }
+    },
+    "women": {
+      "mode": "list",
+      "length": "2",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "height": {
+          "mode": "double",
+          "length": "15",
+          "na": false
+        },
+        "weight": {
+          "mode": "double",
+          "length": "15",
+          "na": false
+        }
+      }
+    },
+    "cars": {
+      "mode": "list",
+      "length": "2",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "speed": {
+          "mode": "double",
+          "length": "50",
+          "na": false
+        },
+        "dist": {
+          "mode": "double",
+          "length": "50",
+          "na": false
+        }
+      }
+    },
+    "faithful": {
+      "mode": "list",
+      "length": "2",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "eruptions": {
+          "mode": "double",
+          "length": "272",
+          "na": false
+        },
+        "waiting": {
+          "mode": "double",
+          "length": "272",
+          "na": false
+        }
+      }
+    },
+    "attitude": {
+      "mode": "list",
+      "length": "7",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "rating": {
+          "mode": "double",
+          "length": "30",
+          "na": false
+        },
+        "complaints": {
+          "mode": "double",
+          "length": "30",
+          "na": false
+        },
+        "privileges": {
+          "mode": "double",
+          "length": "30",
+          "na": false
+        },
+        "learning": {
+          "mode": "double",
+          "length": "30",
+          "na": false
+        },
+        "raises": {
+          "mode": "double",
+          "length": "30",
+          "na": false
+        },
+        "critical": {
+          "mode": "double",
+          "length": "30",
+          "na": false
+        },
+        "advance": {
+          "mode": "double",
+          "length": "30",
+          "na": false
+        }
+      }
+    },
+    "USJudgeRatings": {
+      "mode": "list",
+      "length": "12",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "CONT": {
+          "mode": "double",
+          "length": "43",
+          "na": false
+        },
+        "INTG": {
+          "mode": "double",
+          "length": "43",
+          "na": false
+        },
+        "DMNR": {
+          "mode": "double",
+          "length": "43",
+          "na": false
+        },
+        "DILG": {
+          "mode": "double",
+          "length": "43",
+          "na": false
+        },
+        "CFMG": {
+          "mode": "double",
+          "length": "43",
+          "na": false
+        },
+        "DECI": {
+          "mode": "double",
+          "length": "43",
+          "na": false
+        },
+        "PREP": {
+          "mode": "double",
+          "length": "43",
+          "na": false
+        },
+        "FAMI": {
+          "mode": "double",
+          "length": "43",
+          "na": false
+        },
+        "ORAL": {
+          "mode": "double",
+          "length": "43",
+          "na": false
+        },
+        "WRIT": {
+          "mode": "double",
+          "length": "43",
+          "na": false
+        },
+        "PHYS": {
+          "mode": "double",
+          "length": "43",
+          "na": false
+        },
+        "RTEN": {
+          "mode": "double",
+          "length": "43",
+          "na": false
+        }
+      }
+    },
+    "rock": {
+      "mode": "list",
+      "length": "4",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "area": {
+          "mode": "double",
+          "length": "48",
+          "na": false
+        },
+        "peri": {
+          "mode": "double",
+          "length": "48",
+          "na": false
+        },
+        "shape": {
+          "mode": "double",
+          "length": "48",
+          "na": false
+        },
+        "perm": {
+          "mode": "double",
+          "length": "48",
+          "na": false
+        }
+      }
+    },
+    "quakes": {
+      "mode": "list",
+      "length": "5",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "lat": {
+          "mode": "double",
+          "length": "1000",
+          "na": false
+        },
+        "long": {
+          "mode": "double",
+          "length": "1000",
+          "na": false
+        },
+        "depth": {
+          "mode": "integer",
+          "length": "1000",
+          "na": false
+        },
+        "mag": {
+          "mode": "double",
+          "length": "1000",
+          "na": false
+        },
+        "stations": {
+          "mode": "integer",
+          "length": "1000",
+          "na": false
+        }
+      }
+    },
+    "Nile": {
+      "mode": "double",
+      "length": "100",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "LakeHuron": {
+      "mode": "double",
+      "length": "98",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "sunspot.year": {
+      "mode": "double",
+      "length": "289",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "sunspot.month": {
+      "mode": "double",
+      "length": "2820",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "nottem": {
+      "mode": "double",
+      "length": "240",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "co2": {
+      "mode": "double",
+      "length": "468",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "precip": {
+      "mode": "double",
+      "length": "70",
+      "na": false
+    },
+    "rivers": {
+      "mode": "integer",
+      "length": "141",
+      "na": false
+    },
+    "discoveries": {
+      "mode": "integer",
+      "length": "100",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "pressure": {
+      "mode": "double",
+      "length": "19",
+      "na": false
+    },
+    "lh": {
+      "mode": "double",
+      "length": "48",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "JohnsonJohnson": {
+      "mode": "double",
+      "length": "84",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "WorldPhones": {
+      "mode": "integer",
+      "length": "49",
+      "na": false
+    },
+    "USAccdeaths": {
+      "mode": "integer",
+      "length": "72",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "letters": {
+      "mode": "character",
+      "length": "26",
+      "na": false
+    },
+    "LETTERS": {
+      "mode": "character",
+      "length": "26",
+      "na": false
+    },
+    "month.abb": {
+      "mode": "character",
+      "length": "12",
+      "na": false
+    },
+    "month.name": {
+      "mode": "character",
+      "length": "12",
+      "na": false
+    },
+    "pi": {
+      "mode": "double",
+      "length": "1",
+      "na": false
+    },
+    "T": {
+      "mode": "logical",
+      "length": "1",
+      "na": false
+    },
+    "F": {
+      "mode": "logical",
+      "length": "1",
+      "na": false
+    },
+    ".Machine": {
+      "mode": "list",
+      "length": "unknown",
+      "na": false
+    },
+    ".Platform": {
+      "mode": "list",
+      "length": "unknown",
+      "na": false
+    },
+    ".Options": {
+      "mode": "list",
+      "length": "unknown",
+      "na": false
+    },
+    "ability.cov": {
+      "mode": "list",
+      "length": "3",
+      "na": false
+    },
+    "airmiles": {
+      "mode": "double",
+      "length": "24",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "AirPassengers": {
+      "mode": "double",
+      "length": "unknown",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "anscombe": {
+      "mode": "list",
+      "length": "8",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "columns": {
+        "x1": {
+          "mode": "double",
+          "length": "11",
+          "na": false
+        },
+        "x2": {
+          "mode": "double",
+          "length": "11",
+          "na": false
+        },
+        "x3": {
+          "mode": "double",
+          "length": "11",
+          "na": false
+        },
+        "x4": {
+          "mode": "double",
+          "length": "11",
+          "na": false
+        },
+        "y1": {
+          "mode": "double",
+          "length": "11",
+          "na": false
+        },
+        "y2": {
+          "mode": "double",
+          "length": "11",
+          "na": false
+        },
+        "y3": {
+          "mode": "double",
+          "length": "11",
+          "na": false
+        },
+        "y4": {
+          "mode": "double",
+          "length": "11",
+          "na": false
+        }
+      }
+    },
+    "attenu": {
+      "mode": "list",
+      "length": "5",
+      "na": true,
+      "class": [
+        "data.frame"
+      ],
+      "columns": {
+        "event": {
+          "mode": "double",
+          "length": "unknown",
+          "na": false
+        },
+        "mag": {
+          "mode": "double",
+          "length": "unknown",
+          "na": false
+        },
+        "station": {
+          "mode": "integer",
+          "length": "unknown",
+          "na": true,
+          "class": [
+            "factor"
+          ]
+        },
+        "dist": {
+          "mode": "double",
+          "length": "unknown",
+          "na": false
+        },
+        "accel": {
+          "mode": "double",
+          "length": "unknown",
+          "na": false
+        }
+      }
+    },
+    "austres": {
+      "mode": "double",
+      "length": "unknown",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "beaver1": {
+      "mode": "list",
+      "length": "4",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "columns": {
+        "day": {
+          "mode": "double",
+          "length": "unknown",
+          "na": false
+        },
+        "time": {
+          "mode": "double",
+          "length": "unknown",
+          "na": false
+        },
+        "temp": {
+          "mode": "double",
+          "length": "unknown",
+          "na": false
+        },
+        "activ": {
+          "mode": "double",
+          "length": "unknown",
+          "na": false
+        }
+      }
+    },
+    "beaver2": {
+      "mode": "list",
+      "length": "4",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "columns": {
+        "day": {
+          "mode": "double",
+          "length": "100",
+          "na": false
+        },
+        "time": {
+          "mode": "double",
+          "length": "100",
+          "na": false
+        },
+        "temp": {
+          "mode": "double",
+          "length": "100",
+          "na": false
+        },
+        "activ": {
+          "mode": "double",
+          "length": "100",
+          "na": false
+        }
+      }
+    },
+    "BJsales": {
+      "mode": "double",
+      "length": "150",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "BJsales.lead": {
+      "mode": "double",
+      "length": "150",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "BOD": {
+      "mode": "list",
+      "length": "2",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "columns": {
+        "Time": {
+          "mode": "double",
+          "length": "6",
+          "na": false
+        },
+        "demand": {
+          "mode": "double",
+          "length": "6",
+          "na": false
+        }
+      }
+    },
+    "crimtab": {
+      "mode": "integer",
+      "length": "unknown",
+      "na": false,
+      "class": [
+        "table"
+      ]
+    },
+    "euro": {
+      "mode": "double",
+      "length": "11",
+      "na": false
+    },
+    "euro.cross": {
+      "mode": "double",
+      "length": "unknown",
+      "na": false,
+      "class": [
+        "matrix",
+        "array"
+      ]
+    },
+    "eurodist": {
+      "mode": "double",
+      "length": "unknown",
+      "na": false,
+      "class": [
+        "dist"
+      ]
+    },
+    "EuStockMarkets": {
+      "mode": "double",
+      "length": "unknown",
+      "na": false,
+      "class": [
+        "mts",
+        "ts",
+        "matrix",
+        "array"
+      ]
+    },
+    "fdeaths": {
+      "mode": "double",
+      "length": "72",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "freeny.x": {
+      "mode": "double",
+      "length": "unknown",
+      "na": false,
+      "class": [
+        "matrix",
+        "array"
+      ]
+    },
+    "freeny.y": {
+      "mode": "double",
+      "length": "39",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "gait": {
+      "mode": "double",
+      "length": "unknown",
+      "na": false,
+      "class": [
+        "array"
+      ]
+    },
+    "HairEyeColor": {
+      "mode": "double",
+      "length": "32",
+      "na": false,
+      "class": [
+        "table"
+      ]
+    },
+    "Harman23.cor": {
+      "mode": "list",
+      "length": "3",
+      "na": false
+    },
+    "Harman74.cor": {
+      "mode": "list",
+      "length": "3",
+      "na": false
+    },
+    "iris3": {
+      "mode": "double",
+      "length": "unknown",
+      "na": false,
+      "class": [
+        "array"
+      ]
+    },
+    "islands": {
+      "mode": "double",
+      "length": "48",
+      "na": false
+    },
+    "ldeaths": {
+      "mode": "double",
+      "length": "72",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "longley": {
+      "mode": "list",
+      "length": "7",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "columns": {
+        "GNP.deflator": {
+          "mode": "double",
+          "length": "unknown",
+          "na": false
+        },
+        "GNP": {
+          "mode": "double",
+          "length": "unknown",
+          "na": false
+        },
+        "Unemployed": {
+          "mode": "double",
+          "length": "unknown",
+          "na": false
+        },
+        "Armed.Forces": {
+          "mode": "double",
+          "length": "unknown",
+          "na": false
+        },
+        "Population": {
+          "mode": "double",
+          "length": "unknown",
+          "na": false
+        },
+        "Year": {
+          "mode": "integer",
+          "length": "unknown",
+          "na": false
+        },
+        "Employed": {
+          "mode": "double",
+          "length": "unknown",
+          "na": false
+        }
+      }
+    },
+    "lynx": {
+      "mode": "double",
+      "length": "unknown",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "mdeaths": {
+      "mode": "double",
+      "length": "72",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "morley": {
+      "mode": "list",
+      "length": "3",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "columns": {
+        "Expt": {
+          "mode": "integer",
+          "length": "100",
+          "na": false
+        },
+        "Run": {
+          "mode": "integer",
+          "length": "100",
+          "na": false
+        },
+        "Speed": {
+          "mode": "integer",
+          "length": "100",
+          "na": false
+        }
+      }
+    },
+    "nhtemp": {
+      "mode": "double",
+      "length": "60",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "occupationalStatus": {
+      "mode": "integer",
+      "length": "64",
+      "na": false,
+      "class": [
+        "table"
+      ]
+    },
+    "penguins": {
+      "mode": "list",
+      "length": "8",
+      "na": true,
+      "class": [
+        "data.frame"
+      ],
+      "columns": {
+        "species": {
+          "mode": "integer",
+          "length": "unknown",
+          "na": false,
+          "class": [
+            "factor"
+          ]
+        },
+        "island": {
+          "mode": "integer",
+          "length": "unknown",
+          "na": false,
+          "class": [
+            "factor"
+          ]
+        },
+        "bill_len": {
+          "mode": "double",
+          "length": "unknown",
+          "na": true
+        },
+        "bill_dep": {
+          "mode": "double",
+          "length": "unknown",
+          "na": true
+        },
+        "flipper_len": {
+          "mode": "integer",
+          "length": "unknown",
+          "na": true
+        },
+        "body_mass": {
+          "mode": "integer",
+          "length": "unknown",
+          "na": true
+        },
+        "sex": {
+          "mode": "integer",
+          "length": "unknown",
+          "na": true,
+          "class": [
+            "factor"
+          ]
+        },
+        "year": {
+          "mode": "integer",
+          "length": "unknown",
+          "na": false
+        }
+      }
+    },
+    "penguins_raw": {
+      "mode": "list",
+      "length": "unknown",
+      "na": true,
+      "class": [
+        "data.frame"
+      ],
+      "columns": {
+        "studyName": {
+          "mode": "character",
+          "length": "unknown",
+          "na": false
+        },
+        "Sample Number": {
+          "mode": "double",
+          "length": "unknown",
+          "na": false
+        },
+        "Species": {
+          "mode": "character",
+          "length": "unknown",
+          "na": false
+        },
+        "Region": {
+          "mode": "character",
+          "length": "unknown",
+          "na": false
+        },
+        "Island": {
+          "mode": "character",
+          "length": "unknown",
+          "na": false
+        },
+        "Stage": {
+          "mode": "character",
+          "length": "unknown",
+          "na": false
+        },
+        "Individual ID": {
+          "mode": "character",
+          "length": "unknown",
+          "na": false
+        },
+        "Clutch Completion": {
+          "mode": "character",
+          "length": "unknown",
+          "na": false
+        },
+        "Date Egg": {
+          "mode": "double",
+          "length": "unknown",
+          "na": false,
+          "class": [
+            "Date"
+          ]
+        },
+        "Culmen Length (mm)": {
+          "mode": "double",
+          "length": "unknown",
+          "na": true
+        },
+        "Culmen Depth (mm)": {
+          "mode": "double",
+          "length": "unknown",
+          "na": true
+        },
+        "Flipper Length (mm)": {
+          "mode": "double",
+          "length": "unknown",
+          "na": true
+        },
+        "Body Mass (g)": {
+          "mode": "double",
+          "length": "unknown",
+          "na": true
+        },
+        "Sex": {
+          "mode": "character",
+          "length": "unknown",
+          "na": true
+        },
+        "Delta 15 N (o/oo)": {
+          "mode": "double",
+          "length": "unknown",
+          "na": true
+        },
+        "Delta 13 C (o/oo)": {
+          "mode": "double",
+          "length": "unknown",
+          "na": true
+        },
+        "Comments": {
+          "mode": "character",
+          "length": "unknown",
+          "na": true
+        }
+      }
+    },
+    "presidents": {
+      "mode": "double",
+      "length": "unknown",
+      "na": true,
+      "class": [
+        "ts"
+      ]
+    },
+    "Puromycin": {
+      "mode": "list",
+      "length": "3",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "columns": {
+        "conc": {
+          "mode": "double",
+          "length": "unknown",
+          "na": false
+        },
+        "rate": {
+          "mode": "double",
+          "length": "unknown",
+          "na": false
+        },
+        "state": {
+          "mode": "integer",
+          "length": "unknown",
+          "na": false,
+          "class": [
+            "factor"
+          ]
+        }
+      }
+    },
+    "randu": {
+      "mode": "list",
+      "length": "3",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "columns": {
+        "x": {
+          "mode": "double",
+          "length": "unknown",
+          "na": false
+        },
+        "y": {
+          "mode": "double",
+          "length": "unknown",
+          "na": false
+        },
+        "z": {
+          "mode": "double",
+          "length": "unknown",
+          "na": false
+        }
+      }
+    },
+    "Seatbelts": {
+      "mode": "double",
+      "length": "unknown",
+      "na": false,
+      "class": [
+        "mts",
+        "ts",
+        "matrix",
+        "array"
+      ]
+    },
+    "stack.loss": {
+      "mode": "double",
+      "length": "21",
+      "na": false
+    },
+    "stack.x": {
+      "mode": "double",
+      "length": "unknown",
+      "na": false,
+      "class": [
+        "matrix",
+        "array"
+      ]
+    },
+    "state.abb": {
+      "mode": "character",
+      "length": "50",
+      "na": false
+    },
+    "state.area": {
+      "mode": "double",
+      "length": "50",
+      "na": false
+    },
+    "state.center": {
+      "mode": "list",
+      "length": "2",
+      "na": false
+    },
+    "state.division": {
+      "mode": "integer",
+      "length": "50",
+      "na": false,
+      "class": [
+        "factor"
+      ]
+    },
+    "state.region": {
+      "mode": "integer",
+      "length": "50",
+      "na": false,
+      "class": [
+        "factor"
+      ]
+    },
+    "state.x77": {
+      "mode": "double",
+      "length": "unknown",
+      "na": false,
+      "class": [
+        "matrix",
+        "array"
+      ]
+    },
+    "sunspot.m2014": {
+      "mode": "double",
+      "length": "unknown",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "sunspots": {
+      "mode": "double",
+      "length": "2820",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "Titanic": {
+      "mode": "double",
+      "length": "32",
+      "na": false,
+      "class": [
+        "table"
+      ]
+    },
+    "treering": {
+      "mode": "double",
+      "length": "unknown",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "UCBAdmissions": {
+      "mode": "double",
+      "length": "24",
+      "na": false,
+      "class": [
+        "table"
+      ]
+    },
+    "UKDriverDeaths": {
+      "mode": "double",
+      "length": "unknown",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "UKgas": {
+      "mode": "double",
+      "length": "unknown",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "USAccDeaths": {
+      "mode": "double",
+      "length": "72",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "UScitiesD": {
+      "mode": "integer",
+      "length": "unknown",
+      "na": false,
+      "class": [
+        "dist"
+      ]
+    },
+    "USPersonalExpenditure": {
+      "mode": "double",
+      "length": "unknown",
+      "na": false,
+      "class": [
+        "matrix",
+        "array"
+      ]
+    },
+    "uspop": {
+      "mode": "double",
+      "length": "19",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    },
+    "VADeaths": {
+      "mode": "double",
+      "length": "20",
+      "na": false,
+      "class": [
+        "matrix",
+        "array"
+      ]
+    },
+    "volcano": {
+      "mode": "double",
+      "length": "unknown",
+      "na": false,
+      "class": [
+        "matrix",
+        "array"
+      ]
+    },
+    "WWWusage": {
+      "mode": "double",
+      "length": "100",
+      "na": false,
+      "class": [
+        "ts"
+      ]
+    }
+  },
+  "s3_methods": [
+    {
+      "generic": "print",
+      "class": "data.frame",
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": "arg0"
+    },
+    {
+      "generic": "print",
+      "class": "factor",
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": "arg0"
+    },
+    {
+      "generic": "print",
+      "class": "formula",
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": "arg0"
+    },
+    {
+      "generic": "print",
+      "class": "matrix",
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": "arg0"
+    },
+    {
+      "generic": "print",
+      "class": "array",
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": "arg0"
+    },
+    {
+      "generic": "summary",
+      "class": "default",
+      "params": [
+        "object",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    {
+      "generic": "summary",
+      "class": "lm",
+      "params": [
+        "object",
+        "..."
+      ],
+      "return": {
+        "mode": "list",
+        "length": "11",
+        "na": false
+      }
+    },
+    {
+      "generic": "summary",
+      "class": "glm",
+      "params": [
+        "object",
+        "..."
+      ],
+      "return": {
+        "mode": "list",
+        "length": "11",
+        "na": false
+      }
+    },
+    {
+      "generic": "print",
+      "class": "default",
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": "arg0"
+    },
+    {
+      "generic": "summary",
+      "class": "data.frame",
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    {
+      "generic": "summary",
+      "class": "factor",
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  ]
+}

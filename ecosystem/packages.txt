@@ -1,0 +1,17 @@
+# name<TAB>git_url<TAB>pinned_ref
+# Sources are checked only; no package code is distributed or executed.
+glue	https://github.com/tidyverse/glue.git	v1.8.1
+rlang	https://github.com/r-lib/rlang.git	v1.1.6
+purrr	https://github.com/tidyverse/purrr.git	v1.2.0
+dplyr	https://github.com/tidyverse/dplyr.git	v1.1.4
+tidyr	https://github.com/tidyverse/tidyr.git	v1.3.1
+stringr	https://github.com/tidyverse/stringr.git	v1.5.1
+forcats	https://github.com/tidyverse/forcats.git	v1.0.0
+withr	https://github.com/r-lib/withr.git	v3.0.2
+fs	https://github.com/r-lib/fs.git	v1.6.6
+cli	https://github.com/r-lib/cli.git	v3.6.5
+scales	https://github.com/r-lib/scales.git	v1.4.0
+lubridate	https://github.com/tidyverse/lubridate.git	v1.9.4
+jsonlite	https://github.com/jeroen/jsonlite.git	v1.8.8
+testthat	https://github.com/r-lib/testthat.git	v3.2.3
+curl	https://github.com/jeroen/curl.git	v6.4.0

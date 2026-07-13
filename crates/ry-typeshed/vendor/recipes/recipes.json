@@ -1,0 +1,972 @@
+{
+  "schema_version": "1",
+  "package": "recipes",
+  "version": "0.0.1",
+  "functions": {
+    "add_role": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "bake": {
+      "params": [
+        "object",
+        "new_data",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      }
+    },
+    "check_class": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": {
+        "mode": "logical",
+        "length": "1"
+      }
+    },
+    "check_cols": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": {
+        "mode": "logical",
+        "length": "1"
+      }
+    },
+    "check_missing": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": {
+        "mode": "logical",
+        "length": "1"
+      }
+    },
+    "check_new_values": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": {
+        "mode": "logical",
+        "length": "1"
+      }
+    },
+    "check_range": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": {
+        "mode": "logical",
+        "length": "1"
+      }
+    },
+    "denom_vars": {
+      "params": [
+        "..."
+      ],
+      "eval": {
+        "...": "quoted_expression"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      }
+    },
+    "imp_vars": {
+      "params": [
+        "..."
+      ],
+      "eval": {
+        "...": "quoted_expression"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      }
+    },
+    "juice": {
+      "params": [
+        "object",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      }
+    },
+    "remove_role": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_BoxCox": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_YeoJohnson": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_arrange": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "data_mask"
+      },
+      "return": "arg0"
+    },
+    "step_bin2factor": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_bs": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_center": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_classdist": {
+      "params": [
+        "recipe",
+        "...",
+        "class"
+      ],
+      "eval": {
+        "...": "tidy_select",
+        "class": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_classdist_shrunken": {
+      "params": [
+        "recipe",
+        "...",
+        "class"
+      ],
+      "eval": {
+        "...": "tidy_select",
+        "class": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_count": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_cut": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_date": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_depth": {
+      "params": [
+        "recipe",
+        "...",
+        "class"
+      ],
+      "eval": {
+        "...": "tidy_select",
+        "class": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_discretize": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_dummy": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_dummy_extract": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_dummy_multi_choice": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_factor2string": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_filter": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "data_mask"
+      },
+      "return": "arg0"
+    },
+    "step_geodist": {
+      "params": [
+        "recipe",
+        "lat",
+        "lon",
+        "..."
+      ],
+      "eval": {
+        "lat": "tidy_select",
+        "lon": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_harmonic": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_holiday": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_hyperbolic": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_ica": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_impute_bag": {
+      "params": [
+        "recipe",
+        "...",
+        "impute_with"
+      ],
+      "eval": {
+        "...": "tidy_select",
+        "impute_with": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_impute_knn": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_impute_linear": {
+      "params": [
+        "recipe",
+        "...",
+        "impute_with"
+      ],
+      "eval": {
+        "...": "tidy_select",
+        "impute_with": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_impute_lower": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_impute_mean": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_impute_median": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_impute_mode": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_impute_roll": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_indicate_na": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_integer": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_inverse": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_invlogit": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_isomap": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_kpca": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_kpca_poly": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_kpca_rbf": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_lag": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_log": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_logit": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_mutate": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "data_mask"
+      },
+      "return": "arg0"
+    },
+    "step_naomit": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_nnmf_sparse": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_normalize": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_ns": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_num2factor": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_nzv": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_ordinalscore": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_other": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_pca": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_percentile": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_pls": {
+      "params": [
+        "recipe",
+        "...",
+        "outcome"
+      ],
+      "eval": {
+        "...": "tidy_select",
+        "outcome": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_poly": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_poly_bernstein": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_profile": {
+      "params": [
+        "recipe",
+        "...",
+        "profile"
+      ],
+      "eval": {
+        "...": "tidy_select",
+        "profile": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_range": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_ratio": {
+      "params": [
+        "recipe",
+        "...",
+        "denom"
+      ],
+      "eval": {
+        "...": "tidy_select",
+        "denom": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_regex": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_relevel": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_relu": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_rename": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_rm": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_scale": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_select": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_shuffle": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_spatialsign": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_spline_b": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_spline_convex": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_spline_monotone": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_spline_natural": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_spline_nonnegative": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_sqrt": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_string2factor": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_time": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_unknown": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_unorder": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_window": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "step_zv": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    },
+    "update_role": {
+      "params": [
+        "recipe",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": "arg0"
+    }
+  }
+}

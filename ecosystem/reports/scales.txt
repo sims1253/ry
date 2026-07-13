@@ -1,0 +1,6 @@
+R/breaks-log.R:114:28 RY095
+R/breaks-log.R:119:8 RY095
+R/import-standalone-types-check.R:133:53 RY010
+R/label-compose.R:30:36 RY010
+R/offset-by.R:22:52 RY010
+R/transform-numeric.R:125:5 RY070

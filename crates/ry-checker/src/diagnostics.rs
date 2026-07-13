@@ -6,6 +6,7 @@
 //! `ry_core::ast::Comment`, and the rule registry (`crate::rules`).
 
 use ry_core::Span;
+use serde::{Deserialize, Serialize};
 
 use crate::rules;
 
@@ -18,6 +19,40 @@ pub enum Severity {
     Error,
     Warning,
     Info,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Confidence {
+    Low,
+    Medium,
+    High,
+}
+
+impl Confidence {
+    pub fn default_for(code: &str) -> Self {
+        match code {
+            "RY097" => Self::Low,
+            "RY030" | "RY033" | "RY050" | "RY070" | "RY092" | "RY093" | "RY094" | "RY095"
+            | "RY096" => Self::High,
+            _ => Self::Medium,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+
+    pub fn demote(self) -> Self {
+        match self {
+            Self::High => Self::Medium,
+            Self::Medium | Self::Low => Self::Low,
+        }
+    }
 }
 
 impl Severity {
@@ -43,6 +78,7 @@ pub struct Diagnostic {
     pub path: String,
     pub code: &'static str,
     pub message: String,
+    pub confidence: Confidence,
 }
 
 impl Diagnostic {
@@ -59,7 +95,17 @@ impl Diagnostic {
             path: path.to_string(),
             code,
             message: message.into(),
+            confidence: if severity == Severity::Info {
+                Confidence::Low
+            } else {
+                Confidence::default_for(code)
+            },
         }
+    }
+
+    pub fn with_confidence(mut self, confidence: Confidence) -> Self {
+        self.confidence = confidence;
+        self
     }
 
     /// Look up the rule metadata for this diagnostic's code, if any.

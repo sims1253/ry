@@ -1,0 +1,840 @@
+{
+  "schema_version": "1",
+  "package": "dplyr",
+  "version": "0.0.1",
+  "functions": {
+    "across": {
+      "params": [
+        ".cols",
+        ".fns",
+        "...",
+        ".names",
+        ".unpack"
+      ],
+      "eval": {
+        ".cols": "tidy_select"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "add_count": {
+      "params": [
+        "x",
+        "...",
+        "wt",
+        "sort",
+        "name",
+        ".drop"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      },
+      "eval": {
+        "...": "data_mask",
+        "wt": "data_mask"
+      }
+    },
+    "add_tally": {
+      "params": [
+        "x",
+        "wt",
+        "sort",
+        "name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      },
+      "eval": {
+        "wt": "data_mask"
+      }
+    },
+    "all_vars": {
+      "params": [
+        "expr"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      },
+      "eval": {
+        "expr": "data_mask"
+      }
+    },
+    "any_vars": {
+      "params": [
+        "expr"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      },
+      "eval": {
+        "expr": "data_mask"
+      }
+    },
+    "arrange": {
+      "params": [
+        ".data",
+        "...",
+        ".by_group"
+      ],
+      "eval": {
+        "...": "data_mask"
+      },
+      "schema_effect": "preserve",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "bind_cols": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "bind_rows": {
+      "params": [
+        "...",
+        ".id"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "c_across": {
+      "params": [
+        "cols"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      },
+      "eval": {
+        "cols": "tidy_select"
+      }
+    },
+    "count": {
+      "params": [
+        "x",
+        "...",
+        "wt",
+        "sort",
+        "name"
+      ],
+      "eval": {
+        "...": "data_mask",
+        "wt": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "distinct": {
+      "params": [
+        ".data",
+        "...",
+        ".keep_all"
+      ],
+      "eval": {
+        "...": "data_mask"
+      },
+      "schema_effect": "preserve",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "do": {
+      "params": [
+        ".data",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      },
+      "eval": {
+        "...": "data_mask"
+      }
+    },
+    "filter": {
+      "params": [
+        ".data",
+        "...",
+        ".by",
+        ".preserve"
+      ],
+      "eval": {
+        "...": "data_mask",
+        ".by": "tidy_select"
+      },
+      "schema_effect": "preserve",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "filter_out": {
+      "params": [
+        ".data",
+        "...",
+        ".by",
+        ".preserve"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      },
+      "eval": {
+        "...": "data_mask",
+        ".by": "tidy_select"
+      }
+    },
+    "full_join": {
+      "params": [
+        "x",
+        "y",
+        "..."
+      ],
+      "schema_effect": "join",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "funs": {
+      "params": [
+        "...",
+        ".args"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      },
+      "eval": {
+        "...": "data_mask"
+      }
+    },
+    "group_by": {
+      "params": [
+        ".data",
+        "...",
+        ".add",
+        ".drop"
+      ],
+      "eval": {
+        "...": "data_mask"
+      },
+      "schema_effect": "preserve",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "grouped_df",
+          "data.frame"
+        ]
+      }
+    },
+    "if_all": {
+      "params": [
+        ".cols",
+        ".fns",
+        "...",
+        ".names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      },
+      "eval": {
+        ".cols": "tidy_select"
+      }
+    },
+    "if_any": {
+      "params": [
+        ".cols",
+        ".fns",
+        "...",
+        ".names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      },
+      "eval": {
+        ".cols": "tidy_select"
+      }
+    },
+    "inner_join": {
+      "params": [
+        "x",
+        "y",
+        "..."
+      ],
+      "schema_effect": "join",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "join_by": {
+      "params": [
+        "..."
+      ],
+      "eval": {
+        "...": "quoted_expression"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "left_join": {
+      "params": [
+        "x",
+        "y",
+        "..."
+      ],
+      "schema_effect": "join",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "mutate": {
+      "params": [
+        ".data",
+        "..."
+      ],
+      "eval": {
+        "...": "data_mask"
+      },
+      "schema_effect": "add_named_args",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "n": {
+      "params": [],
+      "return": {
+        "mode": "integer",
+        "length": "1",
+        "na": false
+      }
+    },
+    "nest_by": {
+      "params": [
+        ".data",
+        "...",
+        ".key",
+        ".keep"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      },
+      "eval": {
+        "...": "data_mask"
+      }
+    },
+    "pick": {
+      "params": [
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "pull": {
+      "params": [
+        ".data",
+        "var"
+      ],
+      "eval": {
+        "var": "tidy_select"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "reframe": {
+      "params": [
+        ".data",
+        "...",
+        ".by"
+      ],
+      "eval": {
+        "...": "data_mask",
+        ".by": "tidy_select"
+      },
+      "schema_effect": "aggregate",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "relocate": {
+      "params": [
+        ".data",
+        "...",
+        ".before",
+        ".after"
+      ],
+      "eval": {
+        "...": "tidy_select",
+        ".before": "tidy_select",
+        ".after": "tidy_select"
+      },
+      "schema_effect": "preserve",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "rename": {
+      "params": [
+        ".data",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "schema_effect": "preserve",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "rename_with": {
+      "params": [
+        ".data",
+        ".fn",
+        ".cols",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      },
+      "eval": {
+        "...": "tidy_select",
+        ".cols": "tidy_select"
+      }
+    },
+    "right_join": {
+      "params": [
+        "x",
+        "y",
+        "..."
+      ],
+      "schema_effect": "join",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "rowwise": {
+      "params": [
+        "data",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      },
+      "eval": {
+        "...": "tidy_select"
+      }
+    },
+    "sample_frac": {
+      "params": [
+        "tbl",
+        "size",
+        "replace",
+        "weight",
+        ".env",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      },
+      "eval": {
+        "size": "tidy_select",
+        "weight": "tidy_select"
+      }
+    },
+    "sample_n": {
+      "params": [
+        "tbl",
+        "size",
+        "replace",
+        "weight",
+        ".env",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      },
+      "eval": {
+        "size": "tidy_select",
+        "weight": "tidy_select"
+      }
+    },
+    "select": {
+      "params": [
+        ".data",
+        "..."
+      ],
+      "eval": {
+        "...": "tidy_select"
+      },
+      "schema_effect": "select",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "slice": {
+      "params": [
+        ".data",
+        "...",
+        ".by",
+        ".preserve"
+      ],
+      "eval": {
+        "...": "data_mask",
+        ".by": "tidy_select"
+      },
+      "schema_effect": "preserve",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "slice_head": {
+      "params": [
+        ".data",
+        "...",
+        "n",
+        "prop",
+        "by"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      },
+      "eval": {
+        "...": "data_mask",
+        "by": "tidy_select"
+      }
+    },
+    "slice_max": {
+      "params": [
+        ".data",
+        "order_by",
+        "...",
+        "n",
+        "prop",
+        "by",
+        "with_ties",
+        "na_rm"
+      ],
+      "eval": {
+        "order_by": "data_mask",
+        "by": "tidy_select",
+        "...": "data_mask"
+      },
+      "schema_effect": "preserve",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "slice_min": {
+      "params": [
+        ".data",
+        "order_by",
+        "...",
+        "n",
+        "prop",
+        "by",
+        "with_ties",
+        "na_rm"
+      ],
+      "eval": {
+        "order_by": "data_mask",
+        "by": "tidy_select",
+        "...": "data_mask"
+      },
+      "schema_effect": "preserve",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "slice_sample": {
+      "params": [
+        ".data",
+        "...",
+        "n",
+        "prop",
+        "by",
+        "weight_by",
+        "replace"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      },
+      "eval": {
+        "...": "data_mask",
+        "by": "tidy_select",
+        "weight_by": "data_mask"
+      }
+    },
+    "slice_tail": {
+      "params": [
+        ".data",
+        "...",
+        "n",
+        "prop",
+        "by"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      },
+      "eval": {
+        "...": "data_mask",
+        "by": "tidy_select"
+      }
+    },
+    "summarise": {
+      "params": [
+        ".data",
+        "...",
+        ".by",
+        ".groups"
+      ],
+      "eval": {
+        "...": "data_mask",
+        ".by": "tidy_select"
+      },
+      "schema_effect": "aggregate",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "summarize": {
+      "params": [
+        ".data",
+        "...",
+        ".by",
+        ".groups"
+      ],
+      "eval": {
+        "...": "data_mask",
+        ".by": "tidy_select"
+      },
+      "schema_effect": "aggregate",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "tally": {
+      "params": [
+        "x",
+        "wt",
+        "sort",
+        "name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      },
+      "eval": {
+        "wt": "data_mask"
+      }
+    },
+    "tibble": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "tbl_df",
+          "tbl",
+          "data.frame"
+        ]
+      }
+    },
+    "transmute": {
+      "params": [
+        ".data",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      },
+      "eval": {
+        "...": "data_mask"
+      }
+    },
+    "ungroup": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "data.frame"
+        ]
+      },
+      "eval": {
+        "...": "data_mask"
+      }
+    },
+    "vars": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      },
+      "eval": {
+        "...": "tidy_select"
+      }
+    },
+    "with_groups": {
+      "params": [
+        ".data",
+        ".groups",
+        ".f",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      },
+      "eval": {
+        ".groups": "tidy_select"
+      }
+    }
+  }
+}

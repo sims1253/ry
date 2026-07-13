@@ -1,0 +1,12 @@
+{
+  "schema_version": "1",
+  "package": "patrick",
+  "version": "0.0.1",
+  "functions": {
+    "with_parameters_test_that": {
+      "params": ["desc_stub", "code", "...", ".cases"],
+      "eval": {"code": "data_mask"},
+      "return": {"mode": "opaque", "length": "unknown", "na": false}
+    }
+  }
+}

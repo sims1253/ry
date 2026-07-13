@@ -1,0 +1,43 @@
+{
+  "schema_version": "1",
+  "package": "cmdstanr",
+  "version": "0.0.1",
+  "functions": {
+    "cmdstan_model": {
+      "params": [
+        "stan_file",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "1",
+        "na": false,
+        "class": [
+          "CmdStanModel"
+        ]
+      }
+    },
+    "cmdstanr_example": {
+      "params": [
+        "example",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "1",
+        "na": false
+      }
+    },
+    "compile": {
+      "params": [
+        "stan_file",
+        "..."
+      ],
+      "return": {
+        "mode": "character",
+        "length": "1",
+        "na": false
+      }
+    }
+  }
+}

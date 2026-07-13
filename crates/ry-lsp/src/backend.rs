@@ -30,13 +30,13 @@ use tower_lsp::lsp_types::Diagnostic as LspDiagnostic;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(super) struct Backend {
     pub(super) client: Client,
     pub(super) state: Arc<Mutex<State>>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub(super) struct State {
     /// Open documents: path -> current source text. Keeping every open
     /// document's text lets us rebuild a multi-file `Project` on each
@@ -51,21 +51,28 @@ pub(super) struct State {
     /// cached parse lets every handler avoid re-parsing on each request
     ///. `SourceFile` is `Send`; `RParser` is NOT, so the
     /// parser is constructed per request and only the result is cached.
-    parsed: HashMap<String, (i32, SourceFile)>,
+    parsed: HashMap<String, (i32, Arc<SourceFile>)>,
     /// path -> (version, top-level Scope from `check_with_scope`).
     /// Reused by hover/inlay/completion so they don't re-run the
     /// single-file check on every request. Invalidated
     /// by `update_doc` alongside the parse cache.
     scopes: HashMap<String, (i32, ry_checker::Scope)>,
-    /// Debounce counter per path. `schedule_diagnostics` bumps this and
+    /// Workspace-wide debounce counter. `schedule_diagnostics` bumps this and
     /// spawns a task that sleeps, then only publishes if its generation
     /// is still the latest. A newer edit during the
     /// sleep window wins and the stale task aborts.
-    diag_generation: HashMap<String, u64>,
+    diag_generation: u64,
     /// Workspace root, set at `initialize`. Used only for diagnostics
     /// today; future revisions may use it to discover `ry.toml`.
     #[allow(dead_code)]
     root: Option<PathBuf>,
+    /// Runtime stubs loaded from the workspace's `ry.toml`. Kept in state so
+    /// every rebuilt Project and single-file hover checker sees the same data.
+    user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
+    /// Persistent multi-file checker used only by diagnostics. Its own mutex
+    /// keeps project checks serialized without holding the document-state
+    /// lock used by latency-sensitive LSP requests.
+    project: Arc<Mutex<ProjectCache>>,
     /// Counts every actual parse (`RParser::parse`) performed by
     /// `parsed_file` -- i.e. every cache MISS. The E1 acceptance test
     /// asserts that editing one file in a multi-file workspace parses
@@ -75,13 +82,50 @@ pub(super) struct State {
     pub(super) parse_count: Arc<std::sync::atomic::AtomicUsize>,
 }
 
+#[derive(Default)]
+pub(super) struct ProjectCache {
+    project: Project,
+    versions: HashMap<String, i32>,
+}
+
+impl ProjectCache {
+    pub(super) fn check(
+        &mut self,
+        files: Vec<(String, i32, Arc<SourceFile>)>,
+        user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
+    ) -> Vec<(String, Vec<ry_checker::Diagnostic>)> {
+        let current_paths: std::collections::HashSet<&str> =
+            files.iter().map(|(path, _, _)| path.as_str()).collect();
+        let removed: Vec<String> = self
+            .versions
+            .keys()
+            .filter(|path| !current_paths.contains(path.as_str()))
+            .cloned()
+            .collect();
+        for path in removed {
+            self.project.remove_file(&path);
+            self.versions.remove(&path);
+        }
+
+        self.project.set_user_stubs(user_stubs);
+        for (path, version, file) in files {
+            if self.versions.get(&path).copied() != Some(version) {
+                self.project
+                    .update_file(path.clone(), file.as_ref().clone());
+                self.versions.insert(path, version);
+            }
+        }
+        self.project.check_incremental()
+    }
+}
+
 impl State {
     /// Return the cached parse for `path` when its version matches the
     /// latest recorded version, else `None`. Pure cache read -- does
     /// NOT parse. Split out of `parsed_file` so the cache behavior is
     /// unit-testable on a bare `State` without constructing a
     /// `tower_lsp::Client`.
-    pub(super) fn cached_parse(&self, path: &str) -> Option<SourceFile> {
+    pub(super) fn cached_parse(&self, path: &str) -> Option<Arc<SourceFile>> {
         let version = self.versions.get(path).copied()?;
         let (cached_v, file) = self.parsed.get(path)?;
         if *cached_v == version {
@@ -95,7 +139,7 @@ impl State {
     /// the parse counter (test builds only). If a newer edit landed in
     /// the meantime (`versions[path] != version`), the stale parse is
     /// dropped rather than cached. Returns whether the parse was stored.
-    pub(super) fn record_parse(&mut self, path: &str, version: i32, file: SourceFile) -> bool {
+    pub(super) fn record_parse(&mut self, path: &str, version: i32, file: Arc<SourceFile>) -> bool {
         #[cfg(test)]
         self.parse_count
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -144,6 +188,7 @@ impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> LspResult<InitializeResult> {
         let mut state = self.state.lock().await;
         state.root = params.root_uri.and_then(|uri| uri.to_file_path().ok());
+        state.user_stubs = load_workspace_stubs(state.root.as_deref());
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
@@ -305,7 +350,16 @@ impl LanguageServer for Backend {
             state.versions.remove(&path);
             state.parsed.remove(&path);
             state.scopes.remove(&path);
-            state.diag_generation.remove(&path);
+            state.diag_generation = state.diag_generation.wrapping_add(1);
+        }
+        {
+            let project = {
+                let state = self.state.lock().await;
+                Arc::clone(&state.project)
+            };
+            let mut project = project.lock().await;
+            project.project.remove_file(&path);
+            project.versions.remove(&path);
         }
         // Clear diagnostics for the closed document so stale squiggles
         // don't linger after the user closes the file.
@@ -997,33 +1051,36 @@ impl Backend {
     ///
     /// Returns `None` when the path is not an open document or parsing
     /// fails.
-    async fn parsed_file(&self, path: &str) -> Option<SourceFile> {
-        // Fast path: cache hit with matching version.
-        {
-            let state = self.state.lock().await;
-            if let Some(file) = state.cached_parse(path) {
+    async fn parsed_file(&self, path: &str) -> Option<Arc<SourceFile>> {
+        loop {
+            // Fast path: cache hit with matching version.
+            {
+                let state = self.state.lock().await;
+                if let Some(file) = state.cached_parse(path) {
+                    return Some(file);
+                }
+            }
+            // Cache miss / stale: parse the current text and store it.
+            let (text, version) = {
+                let state = self.state.lock().await;
+                (
+                    state.docs.get(path).cloned(),
+                    state.versions.get(path).copied(),
+                )
+            };
+            let (text, version) = match (text, version) {
+                (Some(t), Some(v)) => (t, v),
+                _ => return None,
+            };
+            let mut parser = RParser::new().ok()?;
+            let file = Arc::new(parser.parse(path, &text).ok()?);
+            let mut state = self.state.lock().await;
+            // If an edit landed while parsing, retry against the new version
+            // instead of returning an AST already known to be stale.
+            if state.record_parse(path, version, Arc::clone(&file)) {
                 return Some(file);
             }
         }
-        // Cache miss / stale: parse the current text and store it.
-        let (text, version) = {
-            let state = self.state.lock().await;
-            (
-                state.docs.get(path).cloned(),
-                state.versions.get(path).copied(),
-            )
-        };
-        let (text, version) = match (text, version) {
-            (Some(t), Some(v)) => (t, v),
-            _ => return None,
-        };
-        let mut parser = RParser::new().ok()?;
-        let file = parser.parse(path, &text).ok()?;
-        let mut state = self.state.lock().await;
-        // Re-validate version under the lock: a concurrent edit could
-        // have invalidated what we just parsed.
-        state.record_parse(path, version, file.clone());
-        Some(file)
     }
 
     /// Return the top-level `Scope` for `path`, reusing the cached
@@ -1045,15 +1102,29 @@ impl Backend {
         }
         // Cache miss: parse (via the parse cache) + check, then store.
         let file = self.parsed_file(path).await?;
-        let version = {
+        let parsed_version = {
             let state = self.state.lock().await;
-            state.versions.get(path).copied()
+            state
+                .parsed
+                .get(path)
+                .and_then(|(version, cached)| Arc::ptr_eq(cached, &file).then_some(*version))
         };
         let mut checker = ry_checker::Checker::new(path);
+        let user_stubs = {
+            let state = self.state.lock().await;
+            Arc::clone(&state.user_stubs)
+        };
+        checker.set_user_stubs(user_stubs);
         let (_, scope) = checker.check_with_scope(&file);
         let mut state = self.state.lock().await;
-        if let Some(version) = version {
-            if state.versions.get(path).copied() == Some(version) {
+        if let Some(version) = parsed_version {
+            let same_parse = state
+                .parsed
+                .get(path)
+                .is_some_and(|(cached_version, cached)| {
+                    *cached_version == version && Arc::ptr_eq(cached, &file)
+                });
+            if state.versions.get(path).copied() == Some(version) && same_parse {
                 state
                     .scopes
                     .insert(path.to_string(), (version, scope.clone()));
@@ -1062,27 +1133,29 @@ impl Backend {
         Some(scope)
     }
 
-    /// Re-check ALL open documents and publish diagnostics for the file
-    /// identified by `uri`.
-    ///
-    /// PERFORMANCE: for each `didChange`, we rebuild a `Project` from
-    /// ALL open documents and run the full three-pass check. For small
-    /// workspaces (10-50 files) this is fast enough for interactive
-    /// use. For very large workspaces, the per-keystroke cost may
-    /// become noticeable; a future revision should add debouncing and
-    /// incremental re-checking (only re-parse the file that changed).
-    async fn publish_diagnostics(&self, uri: Url) {
+    /// Incrementally update the project and publish diagnostics for every
+    /// open document. Publishing all files is required because an edit to a
+    /// function definition can change diagnostics in its cross-file callers.
+    async fn publish_diagnostics(&self, uri: Url, generation: u64) {
         // Snapshot the open docs under the lock, then drop the lock
         // before running the checker so a slow check doesn't block
         // other LSP requests (e.g. didOpen of a second file).
-        let (path, docs) = {
+        let (path, docs, versions, user_stubs, project) = {
             let state = self.state.lock().await;
-            (uri_to_path(&uri), state.docs.clone())
+            (
+                uri_to_path(&uri),
+                state.docs.clone(),
+                state.versions.clone(),
+                Arc::clone(&state.user_stubs),
+                Arc::clone(&state.project),
+            )
         };
 
-        // Build a multi-file Project from every open document so
-        // cross-file calls resolve.
-        let mut project = Project::new();
+        // Update the persistent multi-file Project from every open document
+        // so cross-file calls resolve. Cached parses avoid re-parsing
+        // unchanged documents, and ProjectCache forwards only changed
+        // versions to Project::update_file so pass-1 collection is reused.
+        let mut project_files = Vec::with_capacity(docs.len());
         let mut per_file_comments: HashMap<String, Vec<ry_core::ast::Comment>> = HashMap::new();
         // Cached parses: `parsed_file` reuses the
         // per-document `SourceFile` cached in `State` and only re-parses
@@ -1092,87 +1165,134 @@ impl Backend {
                 continue;
             };
             per_file_comments.insert(doc_path.clone(), file.comments.clone());
-            project.add_file(doc_path.clone(), file);
+            let Some(version) = versions.get(doc_path).copied() else {
+                continue;
+            };
+            project_files.push((doc_path.clone(), version, file));
         }
 
-        let per_file = project.check();
-        // Look up the source text for the file we are diagnosing so we
-        // can convert byte offsets to precise LSP ranges. We snapshot
-        // it as a borrowed `&str` outside the iterator to avoid
-        // re-borrowing on every diagnostic.
-        let source_text = docs.get(&path).map(|s| s.as_str());
-        // Parse inline suppression comments once for the target file
-        // (`# ry: ignore`, `# noqa`, `# ry: ignore-file`) so the
-        // per-diagnostic filter below is a cheap lookup. Use the lexical
-        // (comment-based) parsers so a `#` inside a string literal is
-        // not mistaken for a directive.
-        let file_comments = per_file_comments.get(path.as_str());
-        let (file_level, suppressions) = match file_comments {
-            Some(cs) => (
-                ry_checker::has_file_suppression_from_comments(cs),
-                ry_checker::parse_suppressions_from_comments(cs),
-            ),
-            None => (false, Vec::new()),
-        };
-        let diags_for_uri: Vec<LspDiagnostic> = per_file
-            .into_iter()
-            .filter(|(p, _)| p == &path)
-            .flat_map(|(_, ds)| ds)
-            // Drop diagnostics covered by inline suppression comments.
-            .filter(|d| !file_level && !ry_checker::is_suppressed(d, &suppressions))
-            .map(|d| match source_text {
-                // Prefer the source-aware path so editors squiggle the
-                // exact offending token instead of a single character.
-                Some(text) => diagnostic_to_lsp_with_source(&d, text),
-                // Fallback: source text missing (defensive — the file
-                // was just open, so this branch should not normally
-                // fire). Keep the old single-character behavior.
-                None => diagnostic_to_lsp(d),
-            })
-            .collect();
-        self.client
-            .publish_diagnostics(uri, diags_for_uri, None)
-            .await;
+        // Hold the project lock through publication. A newer generation may
+        // queue while this loop is awaiting the client, but it cannot
+        // interleave publications and will therefore publish last.
+        let mut project = project.lock().await;
+        let per_file = project.check(project_files, user_stubs);
+        // An edit that arrived while parsing/checking invalidates this whole
+        // project result because every open document is republished below.
+        {
+            let state = self.state.lock().await;
+            if state.diag_generation != generation {
+                return;
+            }
+        }
+        for (diagnostic_path, diagnostics) in per_file {
+            let source_text = docs.get(&diagnostic_path).map(String::as_str);
+            let file_comments = per_file_comments.get(&diagnostic_path);
+            let (file_level, suppressions) = match file_comments {
+                Some(comments) => (
+                    ry_checker::has_file_suppression_from_comments(comments),
+                    ry_checker::parse_suppressions_from_comments(comments),
+                ),
+                None => (false, Vec::new()),
+            };
+            let diagnostics: Vec<LspDiagnostic> = diagnostics
+                .into_iter()
+                .filter(|diagnostic| {
+                    !file_level && !ry_checker::is_suppressed(diagnostic, &suppressions)
+                })
+                .map(|diagnostic| match source_text {
+                    Some(text) => diagnostic_to_lsp_with_source(&diagnostic, text),
+                    None => diagnostic_to_lsp(diagnostic),
+                })
+                .collect();
+            let diagnostic_uri = if diagnostic_path == path {
+                uri.clone()
+            } else {
+                path_to_uri(&diagnostic_path)
+            };
+            self.client
+                .publish_diagnostics(diagnostic_uri, diagnostics, None)
+                .await;
+        }
     }
 
-    /// Debounce diagnostics for `uri`: bump a per-path generation counter
+    /// Debounce diagnostics for `uri`: bump the workspace generation counter
     /// and spawn a task that sleeps ~180ms, then publishes diagnostics
     /// ONLY if its generation is still the latest. A newer edit during
     /// the sleep window bumps the counter and the stale task aborts, so
     /// a burst of keystrokes triggers a single check rather than one per
     /// keystroke.
     async fn schedule_diagnostics(&self, uri: Url) {
-        let path = uri_to_path(&uri);
-        // Bump the generation under the lock; capture the value the
-        // spawned task must match to publish.
+        // Diagnostics are project-wide, so one workspace generation
+        // coalesces edits in any open document.
         let generation = {
             let mut state = self.state.lock().await;
-            let g = state
-                .diag_generation
-                .get(&path)
-                .copied()
-                .unwrap_or(0)
-                .wrapping_add(1);
-            state.diag_generation.insert(path, g);
-            g
+            state.diag_generation = state.diag_generation.wrapping_add(1);
+            state.diag_generation
         };
         let backend = Backend {
             client: self.client.clone(),
             state: Arc::clone(&self.state),
         };
-        let watch_path = uri_to_path(&uri);
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(180)).await;
             // Only publish if no newer edit arrived during the sleep.
             let stale = {
                 let state = backend.state.lock().await;
-                state.diag_generation.get(&watch_path).copied() != Some(generation)
+                state.diag_generation != generation
             };
             if !stale {
-                backend.publish_diagnostics(uri).await;
+                backend.publish_diagnostics(uri, generation).await;
             }
         });
     }
+}
+
+#[derive(serde::Deserialize, Default)]
+#[serde(default)]
+struct WorkspaceConfig {
+    typeshed: Vec<PathBuf>,
+}
+
+fn load_workspace_stubs(
+    root: Option<&std::path::Path>,
+) -> Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>> {
+    let mut merged = std::collections::BTreeMap::new();
+    let Some(root) = root else {
+        return Arc::new(merged);
+    };
+    let config_path = root.join("ry.toml");
+    let text = match std::fs::read_to_string(&config_path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Arc::new(merged),
+        Err(error) => {
+            tracing::warn!(path = %config_path.display(), %error, "failed to read typeshed config");
+            return Arc::new(merged);
+        }
+    };
+    let config: WorkspaceConfig = match toml::from_str(&text) {
+        Ok(config) => config,
+        Err(error) => {
+            tracing::warn!(path = %config_path.display(), %error, "failed to parse typeshed config");
+            return Arc::new(merged);
+        }
+    };
+    for dir in config.typeshed {
+        let dir = if dir.is_relative() {
+            root.join(dir)
+        } else {
+            dir
+        };
+        match ry_typeshed::load_stub_dir_with_warnings(&dir) {
+            Ok((stubs, warnings)) => {
+                merged.extend(stubs);
+                for warning in warnings {
+                    tracing::warn!(%warning, "skipping malformed user stub");
+                }
+            }
+            Err(error) => tracing::warn!(%error, "failed to load user stub directory"),
+        }
+    }
+    Arc::new(merged)
 }
 
 /// Convert a document's path string (the key used in `State::docs`)

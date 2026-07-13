@@ -1,0 +1,33 @@
+{
+  "schema_version": "1",
+  "package": "bench",
+  "version": "0.0.1",
+  "functions": {
+    "mark": {
+      "params": [
+        "..."
+      ],
+      "eval": {
+        "...": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "press": {
+      "params": [
+        "..."
+      ],
+      "eval": {
+        "...": "data_mask"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    }
+  }
+}

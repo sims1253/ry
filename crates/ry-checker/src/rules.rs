@@ -128,6 +128,60 @@ pub const RULES: &[Rule] = &[
         default_severity: Severity::Warning,
         summary: "A purrr typed-map (`map_dbl`, `map_int`, ...) callback returns a value whose mode is incompatible with the target vector type. R coerces at runtime, but the mismatch is almost always unintended.",
     },
+    Rule {
+        code: "RY090",
+        name: "unknown-argument",
+        default_severity: Severity::Warning,
+        summary: "A named call argument does not match any formal parameter after R's exact and partial argument matching.",
+    },
+    Rule {
+        code: "RY091",
+        name: "missing-required-argument",
+        default_severity: Severity::Warning,
+        summary: "A required formal parameter is not bound by name or position.",
+    },
+    Rule {
+        code: "RY092",
+        name: "argument-type-mismatch",
+        default_severity: Severity::Error,
+        summary: "A call argument has a known mode incompatible with the parameter type declared by the resolved signature.",
+    },
+    Rule {
+        code: "RY093",
+        name: "comparison-inside-length",
+        default_severity: Severity::Warning,
+        summary: "A comparison directly inside `length()` is usually a parenthesization mistake.",
+    },
+    Rule {
+        code: "RY094",
+        name: "printf-argument-count",
+        default_severity: Severity::Warning,
+        summary: "A literal printf-family format string has more conversions than supplied value arguments.",
+    },
+    Rule {
+        code: "RY095",
+        name: "negation-comparison-precedence",
+        default_severity: Severity::Warning,
+        summary: "`!x == y` parses as `(!x) == y`; use `!(x == y)` or `x != y`.",
+    },
+    Rule {
+        code: "RY096",
+        name: "hasarg-non-formal",
+        default_severity: Severity::Warning,
+        summary: "`hasArg()` names a parameter that is not a formal of the enclosing function.",
+    },
+    Rule {
+        code: "RY097",
+        name: "not-r-source",
+        default_severity: Severity::Info,
+        summary: "File does not appear to be R source; diagnostics suppressed.",
+    },
+    Rule {
+        code: "RY098",
+        name: "default-forced-before-assignment",
+        default_severity: Severity::Warning,
+        summary: "A parameter default references a body-local that may not be assigned yet on some execution path.",
+    },
 ];
 
 pub fn find(code: &str) -> Option<&'static Rule> {

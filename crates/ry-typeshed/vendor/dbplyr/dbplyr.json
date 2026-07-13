@@ -1,0 +1,12 @@
+{
+  "schema_version": "1",
+  "package": "dbplyr",
+  "version": "0.0.1",
+  "functions": {
+    "translate_sql": {
+      "params": ["...", "con", "vars_group", "vars_order", "vars_frame", "window"],
+      "eval": {"...": "quoted_expression"},
+      "return": {"mode": "opaque", "length": "unknown"}
+    }
+  }
+}

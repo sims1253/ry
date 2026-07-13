@@ -72,7 +72,7 @@ main <- function() {
   # detectCores() can return NA (unknown core count), so fall back to 2L.
   cores <- parallel::detectCores()
   if (is.na(cores)) cores <- 2L
-  n <- min(length(files), max(1L, cores - 1L))
+  n <- min(length(files), 8L, max(1L, cores - 1L))
   mirai::daemons(n)
   on.exit(mirai::daemons(0), add = TRUE)
 

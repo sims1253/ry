@@ -21,7 +21,8 @@ use crate::{
 };
 use rayon::prelude::*;
 use ry_core::SourceFile;
-use std::collections::{HashMap, HashSet};
+use ry_typeshed::Typeshed;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 /// A multi-file R project. Functions defined in any file are visible
@@ -51,6 +52,11 @@ pub struct Project {
     /// any file. Seeded into every pass-3 emitter
     /// so the dplyr NSE gating sees a project-wide view.
     loaded: std::collections::HashSet<String>,
+    /// Packages explicitly configured by the caller. Kept separate from
+    /// `loaded`, which also contains packages discovered in source files,
+    /// so removing a `library()` call during an incremental edit removes
+    /// that package from the next project-wide union.
+    declared_loaded: HashSet<String>,
     /// Names supplied by project metadata rather than R assignments.
     /// R package `NAMESPACE` imports are the primary source: an
     /// `importFrom(shiny, tags)` directive proves that `tags` is bound in
@@ -60,6 +66,17 @@ pub struct Project {
     imported_from: HashMap<String, HashMap<String, String>>,
     external_s3_methods: HashMap<String, HashSet<(String, String)>>,
     load_bindings: HashMap<String, HashMap<usize, HashSet<String>>>,
+    user_stubs: Arc<BTreeMap<String, Typeshed>>,
+    /// Pass-1 output cached independently for each source path. Incremental
+    /// checks invalidate only the entry updated through `update_file`.
+    collected_files: HashMap<String, CollectedFile>,
+}
+
+#[derive(Clone)]
+struct CollectedFile {
+    fn_table: FnTable,
+    return_slots: ReturnSlots,
+    loaded: HashSet<String>,
 }
 
 impl Default for Project {
@@ -77,10 +94,13 @@ impl Project {
             files: Vec::new(),
             diagnostics: Vec::new(),
             loaded: std::collections::HashSet::new(),
+            declared_loaded: HashSet::new(),
             external_bindings: HashMap::new(),
             imported_from: HashMap::new(),
             external_s3_methods: HashMap::new(),
             load_bindings: HashMap::new(),
+            user_stubs: Arc::new(BTreeMap::new()),
+            collected_files: HashMap::new(),
         }
     }
 
@@ -96,13 +116,45 @@ impl Project {
         self.files.push((path, file));
     }
 
+    /// Replace an existing parsed file while preserving project order, or
+    /// append it when the path is new. Only that file's pass-1 cache entry is
+    /// invalidated; `check_incremental` reuses every other file's collection.
+    pub fn update_file(&mut self, path: String, file: SourceFile) {
+        self.collected_files.remove(&path);
+        if let Some((_, existing)) = self
+            .files
+            .iter_mut()
+            .find(|(existing_path, _)| existing_path == &path)
+        {
+            *existing = file;
+        } else {
+            self.files.push((path, file));
+        }
+    }
+
+    /// Remove a file and its cached pass-1 collection from the project.
+    pub fn remove_file(&mut self, path: &str) {
+        self.files.retain(|(existing, _)| existing != path);
+        self.collected_files.remove(path);
+    }
+
     /// Declare the project's loaded packages (from `ry.toml`'s
     /// `packages` key). These are unioned at `check()` time with
     /// packages attached via `library`/`require` in
     /// any file, and the union is seeded into every pass-3 emitter so
     /// the dplyr NSE gating sees a project-wide view.
     pub fn set_loaded(&mut self, loaded: std::collections::HashSet<String>) {
+        self.declared_loaded = loaded.clone();
         self.loaded = loaded;
+    }
+
+    /// Install runtime package stubs. User packages, including `base`,
+    /// replace same-named embedded packages wholesale for this project.
+    pub fn set_user_stubs(&mut self, stubs: Arc<BTreeMap<String, Typeshed>>) {
+        if !Arc::ptr_eq(&self.user_stubs, &stubs) {
+            self.collected_files.clear();
+        }
+        self.user_stubs = stubs;
     }
 
     /// Declare per-file names provided by project metadata, such as
@@ -137,7 +189,8 @@ impl Project {
     ///
     /// Calling `check` twice on the same `Project` is safe but
     /// wasteful: each call re-collects and re-refines from scratch.
-    /// For incremental updates, construct a fresh `Project`.
+    /// For incremental updates, use [`update_file`](Self::update_file)
+    /// followed by [`check_incremental`](Self::check_incremental).
     pub fn check(&mut self) -> Vec<(String, Vec<Diagnostic>)> {
         // Pre-scan: collect packages attached via `library`/`require`
         // from every file and union them with the
@@ -147,8 +200,9 @@ impl Project {
         // everywhere (matching R's source()-based cross-file semantics).
         // A throwaway Checker in discarding mode drives the walk; no
         // diagnostics are emitted.
-        let mut union_loaded = std::mem::take(&mut self.loaded);
+        let mut union_loaded = self.declared_loaded.clone();
         let mut loaded_scanner = Checker::new("__project_loaded__");
+        loaded_scanner.set_user_stubs(Arc::clone(&self.user_stubs));
         for (_path, file) in &self.files {
             union_loaded.extend(loaded_scanner.collect_file_loaded(file));
         }
@@ -160,12 +214,65 @@ impl Project {
         // `collect_fns` and then move its populated tables back onto
         // this Project.
         let mut collector = Checker::new("__project_pass1__");
+        collector.set_user_stubs(Arc::clone(&self.user_stubs));
         for (_path, file) in &self.files {
             collector.collect_file_fns(file);
         }
         let (fn_table, return_slots) = collector.into_tables();
         self.fn_table = fn_table;
         self.return_slots = return_slots;
+        self.refine_and_emit()
+    }
+
+    /// Check after one or more `update_file` calls, reusing pass-1
+    /// collection for every unchanged file. Pass 2 still refines the merged
+    /// tables to a fixpoint and pass 3 still emits every file, preserving
+    /// cross-file diagnostic correctness.
+    pub fn check_incremental(&mut self) -> Vec<(String, Vec<Diagnostic>)> {
+        for (path, file) in &self.files {
+            if self.collected_files.contains_key(path) {
+                continue;
+            }
+            let mut loaded_scanner = Checker::new(path);
+            loaded_scanner.set_user_stubs(Arc::clone(&self.user_stubs));
+            let loaded = loaded_scanner.collect_file_loaded(file);
+
+            let mut collector = Checker::new(path);
+            collector.set_user_stubs(Arc::clone(&self.user_stubs));
+            collector.collect_file_fns(file);
+            let (fn_table, return_slots) = collector.into_tables();
+            self.collected_files.insert(
+                path.clone(),
+                CollectedFile {
+                    fn_table,
+                    return_slots,
+                    loaded,
+                },
+            );
+        }
+
+        let mut fn_table = FnTable::default();
+        let mut return_slots = ReturnSlots::default();
+        let mut loaded = self.declared_loaded.clone();
+        for (path, _) in &self.files {
+            let collected = self
+                .collected_files
+                .get(path)
+                .expect("every project file has a pass-1 cache entry");
+            loaded.extend(collected.loaded.iter().cloned());
+            fn_table.append_collected(
+                collected.fn_table.clone(),
+                &mut return_slots,
+                collected.return_slots.clone(),
+            );
+        }
+        self.fn_table = fn_table;
+        self.return_slots = return_slots;
+        self.loaded = loaded;
+        self.refine_and_emit()
+    }
+
+    fn refine_and_emit(&mut self) -> Vec<(String, Vec<Diagnostic>)> {
         // Pass 2: refine every function's inferred return type until
         // the shared table stabilizes. A single Checker drives the
         // fixpoint loop; its table is then handed back to the Project.
@@ -174,6 +281,7 @@ impl Project {
             std::mem::take(&mut self.fn_table),
             std::mem::take(&mut self.return_slots),
         );
+        refiner.set_user_stubs(Arc::clone(&self.user_stubs));
         refiner.run_fixpoint();
         let (fn_table, return_slots) = refiner.into_tables();
         self.fn_table = fn_table;
@@ -197,6 +305,7 @@ impl Project {
         let imported_from = Arc::new(std::mem::take(&mut self.imported_from));
         let external_s3_methods = Arc::new(std::mem::take(&mut self.external_s3_methods));
         let load_bindings = Arc::new(std::mem::take(&mut self.load_bindings));
+        let user_stubs = Arc::clone(&self.user_stubs);
         let mut per_file: Vec<(usize, String, Vec<Diagnostic>)> = self
             .files
             .par_iter()
@@ -207,7 +316,9 @@ impl Project {
                     Arc::clone(&fn_table),
                     Arc::clone(&return_slots),
                 );
-                emitter.set_loaded((*loaded).clone());
+                emitter.disable_user_call_argument_validation();
+                emitter.set_shared_loaded(Arc::clone(&loaded));
+                emitter.set_user_stubs(Arc::clone(&user_stubs));
                 emitter.set_external_bindings(
                     external_bindings.get(path).cloned().unwrap_or_default(),
                 );
@@ -286,6 +397,31 @@ mod tests {
             all.iter().any(|d| d.code == "RY040"),
             "expected RY040 from char fn + int, got {:?}",
             all
+        );
+    }
+
+    #[test]
+    fn loaded_package_eval_metadata_applies_to_project_functions() {
+        let mut project = Project::new();
+        project.add_file(
+            "function.R".to_string(),
+            parse("function.R", "list.map <- function(.data, expr) expr\n"),
+        );
+        project.add_file(
+            "call.R".to_string(),
+            parse("call.R", "r <- list.map(some_list(), . + score)\n"),
+        );
+        project.set_loaded(std::collections::HashSet::from(["rlist".to_string()]));
+        let diagnostics: Vec<_> = project
+            .check()
+            .into_iter()
+            .flat_map(|(_, diagnostics)| diagnostics)
+            .collect();
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "RY010"),
+            "project calls should honor loaded stub eval metadata: {diagnostics:?}"
         );
     }
 }

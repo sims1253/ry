@@ -1,0 +1,75 @@
+{
+  "schema_version": "1",
+  "package": "loo",
+  "version": "0.0.1",
+  "functions": {
+    "loo": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "1",
+        "na": false,
+        "class": [
+          "loo"
+        ]
+      }
+    },
+    "loo.array": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "1",
+        "na": false,
+        "class": [
+          "loo"
+        ]
+      }
+    },
+    "loo_compare": {
+      "params": [
+        "...",
+        "details"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "compare.loo"
+        ]
+      }
+    },
+    "loo_model_weights": {
+      "params": [
+        "...",
+        "method"
+      ],
+      "return": {
+        "mode": "double",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "waic": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "1",
+        "na": false,
+        "class": [
+          "psis_loo",
+          "loo"
+        ]
+      }
+    }
+  }
+}

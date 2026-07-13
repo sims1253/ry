@@ -1,0 +1,86 @@
+{
+  "schema_version": "1",
+  "package": "brms",
+  "version": "0.0.1",
+  "functions": {
+    "brm": {
+      "params": [
+        "formula",
+        "data",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "1",
+        "na": false,
+        "class": [
+          "brmsfit"
+        ]
+      }
+    },
+    "fitted.brmsfit": {
+      "params": [
+        "object",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "posterior_epred": {
+      "params": [
+        "object",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "posterior_linpred": {
+      "params": [
+        "object",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "posterior_predict": {
+      "params": [
+        "object",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "prior": {
+      "params": [
+        "prior",
+        "..."
+      ],
+      "eval": {
+        "prior": "quoted_expression",
+        "...": "quoted_expression",
+        "check": "normal"
+      },
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "brmsprior",
+          "data.frame"
+        ]
+      }
+    }
+  }
+}

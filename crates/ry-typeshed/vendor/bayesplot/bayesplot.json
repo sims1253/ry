@@ -1,0 +1,131 @@
+{
+  "schema_version": "1",
+  "package": "bayesplot",
+  "version": "0.0.1",
+  "functions": {
+    "mcmc_areas": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "1",
+        "na": false,
+        "class": [
+          "gg",
+          "ggplot"
+        ]
+      }
+    },
+    "mcmc_dens": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "1",
+        "na": false,
+        "class": [
+          "gg",
+          "ggplot"
+        ]
+      }
+    },
+    "mcmc_hist": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "1",
+        "na": false,
+        "class": [
+          "gg",
+          "ggplot"
+        ]
+      }
+    },
+    "mcmc_trace": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "1",
+        "na": false,
+        "class": [
+          "gg",
+          "ggplot"
+        ]
+      }
+    },
+    "ppc_dens_overlay": {
+      "params": [
+        "y",
+        "yrep",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "1",
+        "na": false,
+        "class": [
+          "gg",
+          "ggplot"
+        ]
+      }
+    },
+    "ppc_hist": {
+      "params": [
+        "y",
+        "yrep",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "1",
+        "na": false,
+        "class": [
+          "gg",
+          "ggplot"
+        ]
+      }
+    },
+    "ppc_scatter": {
+      "params": [
+        "y",
+        "yrep",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "1",
+        "na": false,
+        "class": [
+          "gg",
+          "ggplot"
+        ]
+      }
+    },
+    "ppc_stat": {
+      "params": [
+        "y",
+        "yrep",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "1",
+        "na": false,
+        "class": [
+          "gg",
+          "ggplot"
+        ]
+      }
+    }
+  }
+}

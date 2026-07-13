@@ -1,0 +1,106 @@
+{
+  "schema_version": "1",
+  "package": "tidyselect",
+  "version": "0.0.1",
+  "functions": {
+    "eval_relocate": {
+      "params": [
+        "expr",
+        "data",
+        "...",
+        "before",
+        "after",
+        "strict",
+        "name_spec",
+        "allow_rename",
+        "allow_empty",
+        "allow_predicates",
+        "before_arg",
+        "after_arg",
+        "env",
+        "error_call"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      },
+      "eval": {
+        "expr": "tidy_select",
+        "before": "tidy_select",
+        "after": "tidy_select"
+      }
+    },
+    "eval_rename": {
+      "params": [
+        "expr",
+        "data",
+        "env",
+        "...",
+        "strict",
+        "name_spec",
+        "allow_predicates",
+        "error_call"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      },
+      "eval": {
+        "expr": "tidy_select"
+      }
+    },
+    "eval_select": {
+      "params": [
+        "expr",
+        "data",
+        "env",
+        "...",
+        "include",
+        "exclude",
+        "strict",
+        "name_spec",
+        "allow_rename",
+        "allow_empty",
+        "allow_predicates",
+        "error_call"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      },
+      "eval": {
+        "expr": "tidy_select"
+      }
+    },
+    "vars_rename": {
+      "params": [
+        ".vars",
+        "...",
+        ".strict"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      },
+      "eval": {
+        "...": "tidy_select"
+      }
+    },
+    "vars_select": {
+      "params": [
+        ".vars",
+        "...",
+        ".include",
+        ".exclude",
+        ".strict"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      },
+      "eval": {
+        "...": "tidy_select"
+      }
+    }
+  }
+}

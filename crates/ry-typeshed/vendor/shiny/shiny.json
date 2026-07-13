@@ -1,0 +1,56 @@
+{
+  "schema_version": "1",
+  "package": "shiny",
+  "version": "0.0.1",
+  "functions": {
+    "moduleServer": {
+      "params": [
+        "id",
+        "module",
+        "session"
+      ],
+      "injects": [
+        {
+          "into": [
+            "module"
+          ],
+          "names": [
+            "session",
+            "input",
+            "output"
+          ]
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "testServer": {
+      "params": [
+        "app",
+        "expr",
+        "args",
+        "session"
+      ],
+      "injects": [
+        {
+          "into": [
+            "expr"
+          ],
+          "names": [
+            "session",
+            "input",
+            "output"
+          ]
+        }
+      ],
+      "return": {
+        "mode": "null",
+        "length": "0",
+        "na": false
+      }
+    }
+  }
+}

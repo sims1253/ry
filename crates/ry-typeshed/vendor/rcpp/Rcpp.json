@@ -1,0 +1,28 @@
+{
+  "schema_version": "1",
+  "package": "Rcpp",
+  "version": "0.0.1",
+  "functions": {
+    "cppFunction": {
+      "params": ["code", "depends", "plugins", "env", "rebuild", "cacheDir", "showOutput", "verbose"],
+      "return": {"mode": "function", "length": "1"}
+    },
+    "evalCpp": {
+      "params": ["code", "depends", "plugins", "env", "rebuild", "cacheDir", "showOutput", "verbose"],
+      "return": {"mode": "opaque", "length": "unknown"}
+    },
+    "loadModule": {
+      "params": ["module", "what", "loadNow", "env"],
+      "return": {"mode": "opaque", "length": "unknown"}
+    },
+    "setRcppClass": {
+      "params": ["Class", "fields", "contains", "methods", "where", "..."],
+      "return": {"mode": "opaque", "length": "unknown"}
+    },
+    "sourceCpp": {
+      "params": ["file", "code", "env", "embeddedR", "rebuild", "cacheDir", "cleanupCacheDir", "showOutput", "verbose", "dryRun", "windowsDebugDLL"],
+      "scope_effect": "unknown_bindings",
+      "return": {"mode": "opaque", "length": "unknown"}
+    }
+  }
+}

@@ -1,0 +1,44 @@
+name: Typeshed bump
+
+# Sync the vendored typeshed from the latest r-typeshed tag and open a
+# PR when it differs. Mirrors ty's model: stubs are build-time inputs,
+# refreshed through review, never fetched at runtime.
+
+on:
+  schedule:
+    - cron: "17 5 * * 1" # Mondays 05:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Check out latest r-typeshed tag
+        run: |
+          git clone --quiet https://github.com/sims1253/r-typeshed /tmp/r-typeshed
+          tag="$(git -C /tmp/r-typeshed describe --tags --abbrev=0)"
+          git -C /tmp/r-typeshed checkout --quiet "$tag"
+          echo "TYPESHED_TAG=$tag" >> "$GITHUB_ENV"
+      - name: Sync and validate vendored typeshed
+        run: scripts/sync_typeshed.sh /tmp/r-typeshed
+      - name: Open PR on drift
+        uses: peter-evans/create-pull-request@v7
+        with:
+          base: dev
+          branch: bot/typeshed-bump
+          commit-message: "Sync vendored typeshed to r-typeshed ${{ env.TYPESHED_TAG }}"
+          title: "Sync vendored typeshed to r-typeshed ${{ env.TYPESHED_TAG }}"
+          body: |
+            Automated vendor sync from the latest r-typeshed tag
+            (${{ env.TYPESHED_TAG }}). `ry typeshed validate` ran as part
+            of `scripts/sync_typeshed.sh`; CI on this PR is the full gate.
+          delete-branch: true

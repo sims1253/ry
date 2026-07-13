@@ -2,6 +2,18 @@
 
 All notable changes to ry are documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- `RY_NO_INSTALLED_LIBRARIES=1` disables resolution of imported-package
+  exports from the machine's R installation; the ecosystem regression
+  harness sets it so committed snapshots are environment-independent.
+- The ecosystem harness report writer is implemented in R (jsonlite)
+  instead of python3; the harness now requires `Rscript`.
+- Typeshed auditing and stub generation removed from this repository's CI
+  and scripts — they live in r-typeshed, whose CI runs them.
+
 ## [0.4.0] - 2026-07-13
 
 Precision release driven by the top-300 CRAN audit: the corpus total fell

@@ -28,12 +28,16 @@ while (($#)); do
   shift
 done
 
-for command in cargo git python3; do
+for command in cargo git Rscript; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "ecosystem: required command not found: $command" >&2
     exit 2
   }
 done
+
+# Snapshots must not depend on which R packages are installed on the
+# machine that generates them: disable ry's installed-library resolution.
+export RY_NO_INSTALLED_LIBRARIES=1
 
 mkdir -p "$cache_dir" "$reports_dir"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/ry-ecosystem.XXXXXX")"
@@ -75,36 +79,44 @@ while IFS=$'\t' read -r name url pinned_ref; do
   echo "ecosystem: checking $name"
   json="$work_dir/$name.json"
   "$binary" check --output-format json --exit-zero "$package_dir/R" > "$json"
-  python3 - "$json" "$package_dir" "$generated_dir/$name.txt" "$generated_dir/$name.full.txt" <<'PY'
-import json
-import os
-import sys
+  Rscript - "$json" "$package_dir" "$generated_dir/$name.txt" "$generated_dir/$name.full.txt" <<'RS'
+args <- commandArgs(trailingOnly = TRUE)
+json_path <- args[[1]]
+package_dir <- normalizePath(args[[2]], winslash = "/", mustWork = TRUE)
+stable_path <- args[[3]]
+full_path <- args[[4]]
 
-json_path, package_dir, stable_path, full_path = sys.argv[1:]
-with open(json_path, encoding="utf-8") as source:
-    diagnostics = json.load(source)
+diagnostics <- jsonlite::fromJSON(json_path, simplifyDataFrame = FALSE)
+stable <- character(0)
+full <- character(0)
+prefix_dir <- paste0(package_dir, "/")
+for (diagnostic in diagnostics) {
+  path <- diagnostic$path
+  absolute <- tryCatch(
+    normalizePath(path, winslash = "/", mustWork = FALSE),
+    error = function(e) path
+  )
+  relative <- if (startsWith(absolute, prefix_dir)) {
+    substring(absolute, nchar(prefix_dir) + 1L)
+  } else {
+    path
+  }
+  prefix <- sprintf("%s:%s:%s %s", relative, diagnostic$line, diagnostic$column, diagnostic$code)
+  stable <- c(stable, prefix)
+  message <- paste(strsplit(trimws(as.character(diagnostic$message)), "\\s+")[[1]], collapse = " ")
+  full <- c(full, paste(prefix, message))
+}
 
-stable = []
-full = []
-package_dir = os.path.abspath(package_dir)
-for diagnostic in diagnostics:
-    path = diagnostic["path"]
-    absolute_path = path if os.path.isabs(path) else os.path.abspath(path)
-    try:
-        relative_path = os.path.relpath(absolute_path, package_dir)
-    except ValueError:
-        relative_path = path
-    relative_path = relative_path.replace(os.sep, "/")
-    prefix = f'{relative_path}:{diagnostic["line"]}:{diagnostic["column"]} {diagnostic["code"]}'
-    stable.append(prefix)
-    message = " ".join(str(diagnostic["message"]).split())
-    full.append(f"{prefix} {message}")
-
-for output_path, lines in ((stable_path, stable), (full_path, full)):
-    with open(output_path, "w", encoding="utf-8", newline="\n") as output:
-        for line in sorted(lines):
-            output.write(line + "\n")
-PY
+write_sorted <- function(lines, path) {
+  handle <- file(path, open = "wb")
+  on.exit(close(handle))
+  if (length(lines)) {
+    writeLines(sort(lines, method = "radix"), handle, sep = "\n", useBytes = TRUE)
+  }
+}
+write_sorted(stable, stable_path)
+write_sorted(full, full_path)
+RS
   processed_packages+=("$name")
 done < "$packages_file"
 
@@ -123,46 +135,52 @@ for name in "${processed_packages[@]}"; do
 done
 rm -f "$summary_input/SUMMARY.md"
 
-python3 - "$packages_file" "$summary_input" "$generated_dir/SUMMARY.md" <<'PY'
-from collections import Counter
-from pathlib import Path
-import sys
+Rscript - "$packages_file" "$summary_input" "$generated_dir/SUMMARY.md" <<'RS'
+args <- commandArgs(trailingOnly = TRUE)
+packages_file <- args[[1]]
+reports_dir <- args[[2]]
+output_path <- args[[3]]
 
-packages_file, reports_dir, output_path = map(Path, sys.argv[1:])
-package_order = []
-for line in packages_file.read_text(encoding="utf-8").splitlines():
-    if not line or line.startswith("#"):
-        continue
-    package_order.append(line.split("\t", 1)[0])
+raw <- readLines(packages_file, encoding = "UTF-8", warn = FALSE)
+raw <- raw[nzchar(raw) & !startsWith(raw, "#")]
+package_order <- vapply(strsplit(raw, "\t", fixed = TRUE), `[[`, character(1), 1L)
 
-counts = {}
-for package in package_order:
-    report = reports_dir / f"{package}.txt"
-    if not report.exists():
-        continue
-    counter = Counter()
-    for line in report.read_text(encoding="utf-8").splitlines():
-        if line:
-            counter[line.split()[1]] += 1
-    counts[package] = counter
+counts <- list()
+for (package in package_order) {
+  report <- file.path(reports_dir, paste0(package, ".txt"))
+  if (!file.exists(report)) next
+  entries <- readLines(report, encoding = "UTF-8", warn = FALSE)
+  entries <- entries[nzchar(entries)]
+  codes <- vapply(strsplit(entries, "[ \t]+"), `[[`, character(1), 2L)
+  counts[[package]] <- table(codes)
+}
 
-codes = sorted({code for counter in counts.values() for code in counter})
-packages = list(counts)
-lines = [
-    "# Ecosystem diagnostic summary",
-    "",
-    "Counts are generated from the committed message-free reports.",
-    "",
-    "| Rule | " + " | ".join(packages) + " | Total |",
-    "| :--- | " + " | ".join("---:" for _ in packages) + " | ---: |",
-]
-for code in codes:
-    values = [counts[package][code] for package in packages]
-    lines.append(f'| {code} | ' + " | ".join(map(str, values)) + f" | {sum(values)} |")
-if not codes:
-    lines.extend(["", "No diagnostics were emitted by the available package snapshots."])
-output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-PY
+all_codes <- sort(unique(unlist(lapply(counts, names), use.names = FALSE)), method = "radix")
+packages <- names(counts)
+lines <- c(
+  "# Ecosystem diagnostic summary",
+  "",
+  "Counts are generated from the committed message-free reports.",
+  "",
+  paste0("| Rule | ", paste(packages, collapse = " | "), " | Total |"),
+  paste0("| :--- | ", paste(rep("---:", length(packages)), collapse = " | "), " | ---: |")
+)
+for (code in all_codes) {
+  values <- vapply(packages, function(package) {
+    count <- counts[[package]][code]
+    if (is.na(count)) 0L else as.integer(count)
+  }, integer(1))
+  lines <- c(lines, paste0(
+    "| ", code, " | ", paste(values, collapse = " | "), " | ", sum(values), " |"
+  ))
+}
+if (!length(all_codes)) {
+  lines <- c(lines, "", "No diagnostics were emitted by the available package snapshots.")
+}
+handle <- file(output_path, open = "wb")
+writeLines(lines, handle, sep = "\n", useBytes = TRUE)
+close(handle)
+RS
 
 if ! $check; then
   for name in "${processed_packages[@]}"; do

@@ -548,6 +548,12 @@ fn r_package_root(path: &Path) -> Option<PathBuf> {
 /// The depth is only for layouts whose version/platform directories sit
 /// between the root and the package directory.
 fn r_library_roots(all_paths: &[PathBuf]) -> Vec<LibraryRoot> {
+    // Hermetic mode: resolve nothing from the machine's R installation.
+    // The ecosystem regression harness sets this so committed snapshots
+    // do not depend on which packages happen to be installed locally.
+    if std::env::var_os("RY_NO_INSTALLED_LIBRARIES").is_some_and(|v| !v.is_empty() && v != "0") {
+        return Vec::new();
+    }
     let mut roots = Vec::new();
     let mut seen_renv = HashSet::new();
     for path in all_paths {

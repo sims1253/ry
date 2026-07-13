@@ -1,4 +1,5 @@
 R/import-standalone-types-check.R:125:7 RY031
+R/import-standalone-types-check.R:129:53 RY010
 R/import-standalone-types-check.R:295:9 RY031
 R/import-standalone-types-check.R:320:9 RY031
 R/import-standalone-types-check.R:345:9 RY031

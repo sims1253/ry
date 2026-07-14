@@ -25,7 +25,7 @@ jobs:
         uses: r-lib/actions/setup-r-dependencies@v2
         with:
           packages: any::jsonlite
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             ecosystem/.cache

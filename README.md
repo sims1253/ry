@@ -246,7 +246,7 @@ code and can contain a real defect before the expected error is reached.
 ## Confidence tiers and baselines
 
 Every diagnostic carries a confidence tier. Structurally exact rules
-(RY093–RY096, RY030, RY033, …) are `high`; RY010 is `medium`;
+(RY093, RY094, RY096, RY030, RY033, …) are `high`; RY010 is `medium`;
 diagnostics from `tests/`, `data-raw/`, `demo/`, `vignettes/`, and
 `inst/` are demoted one tier. Output is sorted by tier, non-medium
 tiers are tagged in the message, and `--min-confidence high|medium|low`
@@ -315,8 +315,7 @@ explanation for one rule.
 | RY092 | argument-type-mismatch   | error    | A call argument has a known mode incompatible with the parameter type declared by the resolved signature.                                                                                                 |
 | RY093 | comparison-inside-length | warning  | A comparison directly inside `length()` (also `nchar()`, `abs()`) is usually a parenthesization mistake.                                                                                                  |
 | RY094 | printf-argument-count    | warning  | A literal printf-family format string has more conversions than supplied value arguments.                                                                                                                 |
-| RY095 | negation-comparison-precedence | warning | `!x == y` parses as `(!x) == y`; use `!(x == y)` or `x != y`.                                                                                                                                        |
-| RY096 | hasarg-non-formal        | warning  | `hasArg()` names a parameter that is not a formal of the enclosing function.                                                                                                                              |
+| RY096 | hasarg-non-formal        | warning  | `hasArg()` names a parameter that is not a formal of an enclosing function without `...`.                                                                                                                 |
 | RY097 | not-r-source             | info     | File does not appear to be R source (e.g. Ratfor); its diagnostics are suppressed.                                                                                                                        |
 | RY098 | default-forced-before-assignment | warning | A parameter default references a body-local that may not be assigned yet on some execution path.                                                                                                    |
 

@@ -11,7 +11,6 @@ fn check(src: &str) -> Vec<Diagnostic> {
 
 #[test]
 fn confidence_defaults_follow_rule_precision_and_info_severity() {
-    assert_eq!(Confidence::default_for("RY095"), Confidence::High);
     assert_eq!(Confidence::default_for("RY096"), Confidence::High);
     assert_eq!(Confidence::default_for("RY010"), Confidence::Medium);
     assert_eq!(Confidence::default_for("RY097"), Confidence::Low);
@@ -1028,22 +1027,22 @@ fn comparison_inside_call_is_diagnosed_through_short_circuit_operators() {
 }
 
 #[test]
-fn negation_comparison_precedence_is_diagnosed_for_non_logical_literals() {
-    let diags = check("x <- TRUE\na <- 1L\nb <- 2L\n!all(x) == 1L\n!x\n(!x) == TRUE\n!(a == b)\n");
-    assert_eq!(
-        diags
-            .iter()
-            .filter(|diagnostic| diagnostic.code == "RY095")
-            .count(),
-        1,
-        "only negation compared to a numeric or string literal should fire: {diags:?}"
+fn negated_comparison_binds_loosely_and_stays_silent() {
+    // R parses `!x == y` as `!(x == y)` (unary `!` binds looser than
+    // comparison), so the idiomatic `!length(x) == 1` guard is correct
+    // code. RY095 wrongly assumed C precedence and is retired.
+    let diags =
+        check("x <- c(1, 2)\nif (!length(x) == 1) x <- 1\nflag <- !\"a\" == \"b\"\n!(1L == 2L)\n");
+    assert!(
+        diags.is_empty(),
+        "negated comparisons are valid R and must stay silent: {diags:?}"
     );
 }
 
 #[test]
 fn hasarg_requires_a_formal_of_the_lexically_enclosing_function() {
     let diags = check(
-        "good <- function(value) hasArg(value)\nbad <- function(actual, ...) hasArg(missing)\nstring_bad <- function(actual) hasArg(\"missing\")\nhasArg(top_level)\n",
+        "good <- function(value) hasArg(value)\ndots_ok <- function(actual, ...) hasArg(missing)\nidiom_ok <- function(object, ...) if (hasArg(thresh)) list(...)$thresh else 0\nstring_bad <- function(actual) hasArg(\"missing\")\nbad <- function(actual) hasArg(missing)\nhasArg(top_level)\n",
     );
     assert_eq!(
         diags
@@ -1051,7 +1050,7 @@ fn hasarg_requires_a_formal_of_the_lexically_enclosing_function() {
             .filter(|diagnostic| diagnostic.code == "RY096")
             .count(),
         2,
-        "non-formals inside functions should fire, while formals and top-level calls stay silent: {diags:?}"
+        "non-formals in dots-less functions should fire; formals, dots functions, and top-level calls stay silent: {diags:?}"
     );
     assert!(
         diags.iter().all(|diagnostic| diagnostic.code != "RY010"),

@@ -158,17 +158,13 @@ pub const RULES: &[Rule] = &[
         default_severity: Severity::Warning,
         summary: "A literal printf-family format string has more conversions than supplied value arguments.",
     },
-    Rule {
-        code: "RY095",
-        name: "negation-comparison-precedence",
-        default_severity: Severity::Warning,
-        summary: "`!x == y` parses as `(!x) == y`; use `!(x == y)` or `x != y`.",
-    },
+    // RY095 (negation-comparison-precedence) is retired, not reusable: it
+    // assumed C precedence, but R parses `!x == y` as `!(x == y)`.
     Rule {
         code: "RY096",
         name: "hasarg-non-formal",
         default_severity: Severity::Warning,
-        summary: "`hasArg()` names a parameter that is not a formal of the enclosing function.",
+        summary: "`hasArg()` names a parameter that is not a formal of an enclosing function without `...`.",
     },
     Rule {
         code: "RY097",

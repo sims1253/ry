@@ -1113,26 +1113,6 @@ impl Checker {
                         }
                     }
                 }
-                if matches!(op, BinOpKind::Eq | BinOpKind::Ne)
-                    && matches!(
-                        lhs.as_ref(),
-                        Expr::UnaryOp {
-                            op: UnaryOpKind::Not,
-                            ..
-                        }
-                    )
-                    && matches!(
-                        rhs.as_ref(),
-                        Expr::Integer(_, _) | Expr::Double(_, _) | Expr::String(_, _)
-                    )
-                {
-                    self.emit(
-                        Severity::Warning,
-                        *span,
-                        "RY095",
-                        "`!x == y` parses as `(!x) == y`; use `!(x == y)` or `x != y`",
-                    );
-                }
                 if matches!(op, BinOpKind::AndAnd | BinOpKind::OrOr) {
                     return self.infer_short_circuit_binop(*op, lhs, rhs, scope, *span);
                 }
@@ -1151,31 +1131,6 @@ impl Checker {
                 self.infer_binop(*op, lt, rt, *span)
             }
             Expr::UnaryOp { op, expr, span } => {
-                // tree-sitter-r groups an unparenthesized `!x == y` as a
-                // unary node around the comparison. Its operand starts
-                // immediately after `!`; for the intentional `!(x == y)` a
-                // parenthesis lies between the two spans. Accept this parser
-                // shape in addition to the BinOp shape checked above.
-                if matches!(op, UnaryOpKind::Not)
-                    && let Expr::BinOp {
-                        op: BinOpKind::Eq | BinOpKind::Ne,
-                        rhs,
-                        span: comparison_span,
-                        ..
-                    } = expr.as_ref()
-                    && comparison_span.start == span.start.saturating_add(1)
-                    && matches!(
-                        rhs.as_ref(),
-                        Expr::Integer(_, _) | Expr::Double(_, _) | Expr::String(_, _)
-                    )
-                {
-                    self.emit(
-                        Severity::Warning,
-                        *span,
-                        "RY095",
-                        "`!x == y` parses as `(!x) == y`; use `!(x == y)` or `x != y`",
-                    );
-                }
                 // Detect tidyeval `!!` (unquote) and `!!!` (splice)
                 // operators BEFORE inferring the inner expression.
                 // tree-sitter parses these as nested unary `!`:

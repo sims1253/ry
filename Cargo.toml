@@ -39,7 +39,7 @@ insta = { version = "1.48.0", features = ["yaml"] }
 # parallelism (Project::check pass 3 + CLI parsing)
 rayon = "1"
 # Static inventory of R serialized data files (never evaluates R code).
-rds2rust = "0.1.41"
+rds2rust = "0.2.0"
 bzip2 = "0.6"
 flate2 = "1"
 xz2 = "0.1"

@@ -137,21 +137,25 @@ impl Checker {
 
         // `hasArg` captures its argument name rather than evaluating it.
         // Model that quoting here so a non-formal does not also produce RY010.
+        // With `...` in the formals, `hasArg(name)` legitimately matches
+        // dots-supplied arguments (`if (hasArg(b)) list(...)$b` idiom), so
+        // only a function without `...` makes the check provably FALSE.
         if lookup_name == "hasArg" {
             if let Some(name) = args.first().and_then(|argument| match &argument.value {
                 Expr::Ident { name, .. } | Expr::String(name, _) => Some(name),
                 _ => None,
             }) && let Some(formals) = self.enclosing_formals.last()
+                && !formals.has_dots
                 && !formals.names.contains(name)
             {
-                let message = if formals.has_dots {
+                self.emit(
+                    Severity::Warning,
+                    span,
+                    "RY096",
                     format!(
-                        "`hasArg({name})` names a non-formal; a matching argument in `...` does not bind `{name}` in the function body"
-                    )
-                } else {
-                    format!("`hasArg({name})` names a parameter that is not a formal")
-                };
-                self.emit(Severity::Warning, span, "RY096", message);
+                        "`hasArg({name})` names a parameter that is not a formal; it is always FALSE"
+                    ),
+                );
             }
             return RType::scalar(Mode::Logical);
         }

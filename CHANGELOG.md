@@ -2,6 +2,30 @@
 
 All notable changes to ry are documented in this file.
 
+## [0.4.1] - 2026-07-14
+
+### Removed
+
+- `RY095` (negation-comparison-precedence) is retired. The rule assumed C
+  operator precedence, but R gives unary `!` lower precedence than
+  comparison operators: `!x == y` parses as `!(x == y)`, so every flagged
+  site was correct code and the suggested rewrite was a semantic no-op.
+  The rule number will not be reused.
+
+### Fixed
+
+- `RY096` no longer fires in functions whose formals include `...`:
+  there, `hasArg(name)` legitimately tests for a dots-supplied argument
+  (`if (hasArg(b)) list(...)$b`). All 84 corpus hits were this idiom.
+  The rule now only flags the provable case — a `hasArg()` naming a
+  non-formal in a function without `...` is always `FALSE`.
+
+### Corrections to 0.4.0 release notes
+
+- The scales `!length(x) == 1` guards cited as newly found bugs were not
+  bugs; they parse as `length(x) != 1` and behave as intended. The same
+  applies to RY095 reports in rpart, mice, quantreg, spdep, and mlflow.
+
 ## [0.4.0] - 2026-07-13
 
 Precision release driven by the top-300 CRAN audit: the corpus total fell
@@ -201,7 +225,9 @@ in under a second in release mode.
 
 - Initial release.
 
-[Unreleased]: https://github.com/sims1253/ry/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/sims1253/ry/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/sims1253/ry/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/sims1253/ry/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/sims1253/ry/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/sims1253/ry/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/sims1253/ry/releases/tag/v0.1.0

@@ -376,7 +376,7 @@ impl Checker {
                     None => RType::unknown(),
                 };
                 let required =
-                    p.name != "..." && p.default.is_none() && block_must_force_name(&body, &p.name);
+                    p.name != "..." && p.default.is_none() && block_force_flow(&body, &p.name).0;
                 UserParam {
                     name: p.name.clone(),
                     type_: t,
@@ -798,17 +798,29 @@ fn s4_slots(expr: &Expr) -> HashMap<String, String> {
         .collect()
 }
 
-fn block_must_force_name(statements: &[Stmt], name: &str) -> bool {
+/// Return whether evaluating a block must force `name`, and whether control
+/// always falls through it. Both answers come from the same statement walk:
+/// force detection stops at the first forcing or non-falling statement, while
+/// fall-through continues across the whole block.
+fn block_force_flow(statements: &[Stmt], name: &str) -> (bool, bool) {
+    let mut forces = false;
+    let mut can_still_force = true;
+    let mut falls_through = true;
+
     for statement in statements {
-        let (forces, always_falls_through) = statement_force_flow(statement, name);
-        if forces {
-            return true;
+        let (statement_forces, statement_falls_through) = statement_force_flow(statement, name);
+        if can_still_force {
+            if statement_forces {
+                forces = true;
+                can_still_force = false;
+            } else if !statement_falls_through {
+                can_still_force = false;
+            }
         }
-        if !always_falls_through {
-            return false;
-        }
+        falls_through &= statement_falls_through;
     }
-    false
+
+    (forces, falls_through)
 }
 
 fn statement_force_flow(statement: &Stmt, name: &str) -> (bool, bool) {
@@ -826,20 +838,17 @@ fn statement_force_flow(statement: &Stmt, name: &str) -> (bool, bool) {
         Stmt::If {
             cond, then, else_, ..
         } => {
-            let then_forces = block_must_force_name(then, name);
-            let else_forces = else_
+            let (then_forces, then_falls) = block_force_flow(then, name);
+            let (else_forces, else_falls) = else_
                 .as_ref()
-                .is_some_and(|statements| block_must_force_name(statements, name));
+                .map(|statements| block_force_flow(statements, name))
+                .unwrap_or((false, true));
             let forces = expression_must_force(cond, name) || (then_forces && else_forces);
-            let then_falls = block_always_falls_through(then);
-            let else_falls = else_
-                .as_ref()
-                .is_none_or(|statements| block_always_falls_through(statements));
             (forces, then_falls && else_falls)
         }
         Stmt::For { iter, body, .. } => (
             expression_must_force(iter, name),
-            block_always_falls_through(body),
+            block_force_flow(body, name).1,
         ),
         Stmt::While { cond, .. } => (expression_must_force(cond, name), false),
         Stmt::Return { value, .. } => (
@@ -862,12 +871,6 @@ fn return_call_value(expression: &Expr) -> Option<Option<&Expr>> {
     Some(args.first().map(|argument| &argument.value))
 }
 
-fn block_always_falls_through(statements: &[Stmt]) -> bool {
-    statements
-        .iter()
-        .all(|statement| statement_force_flow(statement, "\0").1)
-}
-
 fn expression_must_force(expression: &Expr, name: &str) -> bool {
     match expression {
         Expr::Ident {
@@ -886,7 +889,7 @@ fn expression_must_force(expression: &Expr, name: &str) -> bool {
                     .any(|argument| expression_must_force(&argument.value, name))
         }
         Expr::Call { func, .. } => expression_must_force(func, name),
-        Expr::Block { body, .. } => block_must_force_name(body, name),
+        Expr::Block { body, .. } => block_force_flow(body, name).0,
         Expr::If {
             cond, then, else_, ..
         } => {

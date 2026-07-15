@@ -54,6 +54,7 @@ pub(crate) fn resolve<'a>(
     let mut export_cache: HashMap<String, HashSet<String>> = HashMap::new();
     let mut dataset_cache: HashMap<PathBuf, HashSet<String>> = HashMap::new();
     let mut serialized_cache: HashMap<PathBuf, HashSet<String>> = HashMap::new();
+    let mut source_binding_cache: HashMap<PathBuf, HashSet<String>> = HashMap::new();
     let mut attached = HashSet::new();
     let mut bindings = HashMap::new();
     let mut imported_from = HashMap::new();
@@ -78,6 +79,13 @@ pub(crate) fn resolve<'a>(
         let mut source_package = None;
         file_bindings.extend(configured_globals.iter().cloned());
         if let Some(root) = r_package_root(Path::new(&file.path)) {
+            file_bindings.extend(
+                source_binding_cache
+                    .entry(root.clone())
+                    .or_insert_with(|| source_package_namespace_bindings(&root))
+                    .iter()
+                    .cloned(),
+            );
             if let Some(package) = source_package_name(&root) {
                 file_attached.insert(package.clone());
                 source_package = Some(package);
@@ -182,6 +190,186 @@ pub(crate) fn resolve<'a>(
         imported_from,
         s3_methods,
         load_bindings,
+    }
+}
+
+/// Bindings introduced by R's literal-name namespace helpers. These calls are
+/// deliberately collected from every source file below `R/`, rather than only
+/// the files being checked: package load hooks commonly call a helper defined
+/// in a different file. We never evaluate source, and only retain literal
+/// names, so an unknown dynamic name cannot mask an unresolved variable.
+fn source_package_namespace_bindings(root: &Path) -> HashSet<String> {
+    // R creates this binding while loading every package namespace. It is
+    // present even when the DESCRIPTION omits a Package field.
+    let mut bindings = source_package_dynamic_bindings(root);
+    bindings.insert(".packageName".to_string());
+    bindings
+}
+
+fn source_package_dynamic_bindings(root: &Path) -> HashSet<String> {
+    let mut bindings = HashSet::new();
+    let mut paths = Vec::new();
+    collect_r_source_files(&root.join("R"), &mut paths);
+    let Ok(mut parser) = ry_core::RParser::new() else {
+        return bindings;
+    };
+    for path in paths {
+        let Ok(source) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(file) = parser.parse(&path.to_string_lossy(), &source) else {
+            continue;
+        };
+        for statement in &file.stmts {
+            collect_dynamic_bindings_stmt(statement, 0, &mut bindings);
+        }
+    }
+    bindings
+}
+
+fn collect_r_source_files(directory: &Path, paths: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_r_source_files(&path, paths);
+        } else if matches!(
+            path.extension().and_then(|extension| extension.to_str()),
+            Some("R") | Some("r")
+        ) {
+            paths.push(path);
+        }
+    }
+}
+
+fn collect_dynamic_bindings_stmt(
+    statement: &Stmt,
+    function_depth: usize,
+    bindings: &mut HashSet<String>,
+) {
+    match statement {
+        Stmt::Assign { target, value, .. } => {
+            collect_dynamic_bindings_expr(target, function_depth, bindings);
+            collect_dynamic_bindings_expr(value, function_depth, bindings);
+        }
+        Stmt::Expr(expr) => collect_dynamic_bindings_expr(expr, function_depth, bindings),
+        Stmt::If {
+            cond, then, else_, ..
+        } => {
+            collect_dynamic_bindings_expr(cond, function_depth, bindings);
+            for statement in then {
+                collect_dynamic_bindings_stmt(statement, function_depth, bindings);
+            }
+            if let Some(else_) = else_ {
+                for statement in else_ {
+                    collect_dynamic_bindings_stmt(statement, function_depth, bindings);
+                }
+            }
+        }
+        Stmt::For { iter, body, .. } => {
+            collect_dynamic_bindings_expr(iter, function_depth, bindings);
+            for statement in body {
+                collect_dynamic_bindings_stmt(statement, function_depth, bindings);
+            }
+        }
+        Stmt::While { cond, body, .. } => {
+            collect_dynamic_bindings_expr(cond, function_depth, bindings);
+            for statement in body {
+                collect_dynamic_bindings_stmt(statement, function_depth, bindings);
+            }
+        }
+        Stmt::FunctionDef { body, .. } => {
+            for statement in body {
+                collect_dynamic_bindings_stmt(statement, function_depth + 1, bindings);
+            }
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(value) = value {
+                collect_dynamic_bindings_expr(value, function_depth, bindings);
+            }
+        }
+    }
+}
+
+fn collect_dynamic_bindings_expr(
+    expr: &Expr,
+    function_depth: usize,
+    bindings: &mut HashSet<String>,
+) {
+    match expr {
+        Expr::Call { func, args, .. } => {
+            if let Expr::Ident { name, .. } = func.as_ref() {
+                let has_named_environment = args.iter().any(|argument| {
+                    matches!(
+                        argument.name.as_deref(),
+                        Some("envir" | "env" | "assign.env")
+                    )
+                });
+                // The environment parameter is commonly passed positionally
+                // from .onLoad helpers (for example `assign("x", value,
+                // env)`). Treat only its documented position as explicit;
+                // a two-argument assign inside a function remains local.
+                let has_positional_environment = match name.as_str() {
+                    "assign" | "makeActiveBinding" => {
+                        args.get(2).is_some_and(|arg| arg.name.is_none())
+                    }
+                    "delayedAssign" => args.get(3).is_some_and(|arg| arg.name.is_none()),
+                    _ => false,
+                };
+                if matches!(
+                    name.as_str(),
+                    "assign" | "makeActiveBinding" | "delayedAssign"
+                ) && (has_named_environment
+                    || has_positional_environment
+                    || (name == "assign" && function_depth == 0))
+                    && let Some(Expr::String(binding, _)) =
+                        args.first().map(|argument| &argument.value)
+                {
+                    bindings.insert(binding.clone());
+                }
+            }
+            collect_dynamic_bindings_expr(func, function_depth, bindings);
+            for argument in args {
+                collect_dynamic_bindings_expr(&argument.value, function_depth, bindings);
+            }
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            collect_dynamic_bindings_expr(lhs, function_depth, bindings);
+            collect_dynamic_bindings_expr(rhs, function_depth, bindings);
+        }
+        Expr::UnaryOp { expr, .. } => collect_dynamic_bindings_expr(expr, function_depth, bindings),
+        Expr::Index { base, args, .. } => {
+            collect_dynamic_bindings_expr(base, function_depth, bindings);
+            for argument in args {
+                collect_dynamic_bindings_expr(&argument.value, function_depth, bindings);
+            }
+        }
+        Expr::Function { body, .. } | Expr::Block { body, .. } => {
+            let function_depth =
+                function_depth + usize::from(matches!(expr, Expr::Function { .. }));
+            for statement in body {
+                collect_dynamic_bindings_stmt(statement, function_depth, bindings);
+            }
+        }
+        Expr::If {
+            cond, then, else_, ..
+        } => {
+            collect_dynamic_bindings_expr(cond, function_depth, bindings);
+            collect_dynamic_bindings_expr(then, function_depth, bindings);
+            if let Some(else_) = else_ {
+                collect_dynamic_bindings_expr(else_, function_depth, bindings);
+            }
+        }
+        Expr::Logical(_, _)
+        | Expr::Integer(_, _)
+        | Expr::Double(_, _)
+        | Expr::String(_, _)
+        | Expr::Null(_)
+        | Expr::Na(_, _)
+        | Expr::Ident { .. }
+        | Expr::Unknown(_) => {}
     }
 }
 
@@ -748,6 +936,84 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::sync::Arc;
+
+    fn package_bindings(root: &Path, source: &str) -> HashSet<String> {
+        let path = root.join("R/use.R");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, source).unwrap();
+        let mut parser = ry_core::RParser::new().unwrap();
+        let file = parser.parse(&path.to_string_lossy(), source).unwrap();
+        resolve(
+            std::slice::from_ref(&path),
+            &[],
+            &[],
+            &std::collections::BTreeMap::new(),
+            [&file],
+        )
+        .bindings
+        .remove(&path.to_string_lossy().to_string())
+        .unwrap_or_default()
+    }
+
+    #[test]
+    fn collects_literal_assign_with_environment_at_function_depth() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("DESCRIPTION"), "Package: fixture\n").unwrap();
+        let bindings = package_bindings(
+            root.path(),
+            "setup <- function(env) { assign(\"from_helper\", 1, envir = env) }\nuse <- from_helper\n",
+        );
+        assert!(bindings.contains("from_helper"));
+    }
+
+    #[test]
+    fn ignores_dynamic_assign_names_and_function_local_assigns() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("DESCRIPTION"), "Package: fixture\n").unwrap();
+        let bindings = package_bindings(
+            root.path(),
+            "setup <- function(env, names) { assign(names[[1]], 1, envir = env); assign(\"local_only\", 1) }\n",
+        );
+        assert!(!bindings.contains("local_only"));
+        assert!(!bindings.contains("names"));
+    }
+
+    #[test]
+    fn collects_active_and_delayed_literal_bindings() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("DESCRIPTION"), "Package: fixture\n").unwrap();
+        let bindings = package_bindings(
+            root.path(),
+            "setup <- function(env) { makeActiveBinding(\"active\", function() 1, envir = env); delayedAssign(\"delayed\", 1, assign.env = env) }\n",
+        );
+        assert!(bindings.contains("active"));
+        assert!(bindings.contains("delayed"));
+    }
+
+    #[test]
+    fn collects_literal_bindings_with_positional_environment() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("DESCRIPTION"), "Package: fixture\n").unwrap();
+        let bindings = package_bindings(
+            root.path(),
+            "setup <- function(env) { assign(\"assigned\", 1, env); makeActiveBinding(\"active\", function() 1, env); delayedAssign(\"delayed\", 1, parent.frame(), env) }\n",
+        );
+        assert!(bindings.contains("assigned"));
+        assert!(bindings.contains("active"));
+        assert!(bindings.contains("delayed"));
+    }
+
+    #[test]
+    fn injects_package_name_only_for_package_roots() {
+        let package = tempfile::tempdir().unwrap();
+        std::fs::write(package.path().join("DESCRIPTION"), "Package: fixture\n").unwrap();
+        assert!(source_package_namespace_bindings(package.path()).contains(".packageName"));
+
+        assert!(
+            r_package_root(Path::new("/nonexistent-ry-script-root/script.R")).is_none(),
+            "a directory without DESCRIPTION must not receive package bindings"
+        );
+    }
 
     #[test]
     fn inventories_rdx2_and_rdx3_pairlist_tags() {

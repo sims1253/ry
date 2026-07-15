@@ -174,6 +174,11 @@ fn split_s3_operator_method_name(name: &str) -> Option<(&'static str, String)> {
 #[derive(Debug, Clone, Default)]
 pub struct Scope {
     pub bindings: HashMap<String, RType>,
+    /// Bindings whose current type came from a function parameter default.
+    /// A default is one call shape, not a complete declaration of the
+    /// parameter's runtime type, so an explicit `is.*()` guard may replace
+    /// an otherwise incompatible default-derived type in its true branch.
+    pub default_parameter_bindings: HashSet<String>,
     /// Bare-identifier function aliases, keyed by the local binding name.
     /// The value is the ultimate semantic callee name used by call inference.
     pub function_aliases: HashMap<String, String>,
@@ -189,7 +194,19 @@ impl Scope {
     pub fn insert(&mut self, name: impl Into<String>, t: RType) {
         let name = name.into();
         self.function_aliases.remove(&name);
+        self.default_parameter_bindings.remove(&name);
         self.bindings.insert(name, t);
+    }
+
+    pub(crate) fn insert_parameter_default(&mut self, name: impl Into<String>, t: RType) {
+        let name = name.into();
+        self.function_aliases.remove(&name);
+        self.default_parameter_bindings.insert(name.clone());
+        self.bindings.insert(name, t);
+    }
+
+    pub(crate) fn is_default_parameter(&self, name: &str) -> bool {
+        self.default_parameter_bindings.contains(name)
     }
 
     pub(crate) fn set_function_alias(&mut self, name: impl Into<String>, target: String) {
@@ -407,6 +424,10 @@ pub struct Checker {
     // A stack is required because nested functions replace, rather than
     // inherit, the set of formals relevant to `hasArg()`.
     enclosing_formals: Vec<EnclosingFormals>,
+    // Values already inferred before a pipe is desugared into a call. This
+    // cache is populated only for the duration of that rewritten call, so it
+    // never crosses a scope-changing inference boundary.
+    pipe_argument_types: HashMap<Span, RType>,
 }
 
 impl Checker {
@@ -429,6 +450,7 @@ impl Checker {
             load_bindings: HashMap::new(),
             deferred_captures: Vec::new(),
             enclosing_formals: Vec::new(),
+            pipe_argument_types: HashMap::new(),
         }
     }
 
@@ -504,6 +526,7 @@ impl Checker {
             load_bindings: HashMap::new(),
             deferred_captures: Vec::new(),
             enclosing_formals: Vec::new(),
+            pipe_argument_types: HashMap::new(),
         }
     }
 
@@ -535,6 +558,7 @@ impl Checker {
             load_bindings: HashMap::new(),
             deferred_captures: Vec::new(),
             enclosing_formals: Vec::new(),
+            pipe_argument_types: HashMap::new(),
         }
     }
 

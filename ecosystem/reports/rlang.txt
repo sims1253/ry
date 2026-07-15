@@ -5,8 +5,6 @@ R/cnd-handlers.R:383:9 RY001
 R/env-special.R:220:16 RY010
 R/env.R:653:7 RY001
 R/env.R:675:9 RY001
-R/fn.R:631:8 RY010
-R/fn.R:632:8 RY010
 R/import-standalone-defer.R:91:23 RY010
 R/nse-defuse.R:200:19 RY010
 R/nse-defuse.R:201:20 RY010
@@ -26,4 +24,3 @@ R/trace.R:1094:16 RY010
 R/trace.R:1096:16 RY010
 R/trace.R:132:9 RY001
 R/trace.R:671:7 RY001
-R/utils.R:290:3 RY050

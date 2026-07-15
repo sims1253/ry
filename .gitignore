@@ -7,6 +7,9 @@
 # Local tool caches
 /.claude/
 
+# Agent working plans (local pipeline artifacts, not project docs)
+/docs/plans/
+
 # Ecosystem regression harness caches and message-bearing reports
 /ecosystem/.cache/
 /ecosystem/reports/*.full.txt

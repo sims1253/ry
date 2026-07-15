@@ -2,9 +2,12 @@
 
 All notable changes to ry are documented in this file.
 
-## [Unreleased]
+## [0.5.0] - 2026-07-16
 
 Driven by the ranks-301-500 audit (ry 0.4.0 on the top-500 CRAN packages).
+Minor bump: RY050's dispatch semantics, RY097's collapse criteria, and the
+new binding/quoting/narrowing rules intentionally change reported
+diagnostics between versions.
 
 ### Performance
 

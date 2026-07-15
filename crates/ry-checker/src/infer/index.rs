@@ -407,7 +407,7 @@ pub(crate) fn is_pipe_placeholder(e: &Expr) -> bool {
 /// Includes popular package functions commonly used in NSE contexts:
 ///   * ggplot2: from_theme, aes, aes_, aes_string, aes_q
 ///   * rlang: sym, ensym, enquo, enquos, expr, enexpr
-///   * base: quote, substitute, bquote (already in typeshed but also
+///   * base: quote, substitute, bquote, alist (already in typeshed but also
 ///     used as NSE)
 pub(crate) fn is_nse_symbol_fn(name: &str) -> bool {
     let name = name.rsplit_once("::").map(|(_, n)| n).unwrap_or(name);
@@ -422,7 +422,7 @@ pub(crate) fn is_nse_symbol_fn(name: &str) -> bool {
         // dplyr/tidyselect NSE
         | "tidyselect" | "all_vars" | "peek_vars"
         // Common NSE helpers
-        | "quote" | "substitute" | "bquote" | "delayedAssign" | "makeActiveBinding"
+        | "quote" | "substitute" | "bquote" | "alist" | "delayedAssign" | "makeActiveBinding"
         // data.table NSE
         | "setkey" | "setkeyv" | "setindex" | "setindexv"
     )

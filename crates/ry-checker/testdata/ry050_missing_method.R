@@ -1,7 +1,7 @@
 # expect: RY050
-# `print(x)` on a value whose class has no `print.<class>` method (and no
-# user-defined default) emits RY050. `print.default` exists in base R, so
-# we're confident `print` uses S3 dispatch and the missing specific method
-# is worth flagging.
+# `print.default` means print's S3 dispatch always has a valid fallback, so
+# it must not be used as a missing-method fixture. A package-local generic
+# without a default still emits RY050 when it has no matching class method.
+Summary.other <- function(...) 1L
 x <- structure(list(), class = "undefined")
-print(x)
+Summary(x)

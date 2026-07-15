@@ -852,6 +852,18 @@ struct CheckResult {
     parse_errors: usize,
 }
 
+/// Whether parser recovery indicates that a file is probably not R source.
+///
+/// Keep the original majority-error guard, and also catch foreign files whose
+/// syntax happens to produce many recoverable R expressions.  The absolute
+/// floor avoids suppressing ordinary R files with a few syntax errors.
+fn is_probably_not_r_source(file: &ry_core::SourceFile) -> bool {
+    let parse_errors = file.parse_errors.len();
+    let statements = file.stmts.len();
+
+    parse_errors > statements || (parse_errors >= 5 && parse_errors * 100 >= 15 * statements.max(1))
+}
+
 impl CheckResult {
     fn print_summary(&self, format: ry_checker::format::OutputFormat, statistics: bool) {
         // Suppress the human summary line for machine-readable formats
@@ -1000,7 +1012,7 @@ fn run_check_once(
     parsed.retain(|(_, path, src, file)| {
         file_count += 1;
         srcs.insert(path.clone(), src.clone());
-        if file.parse_errors.len() > file.stmts.len() {
+        if is_probably_not_r_source(file) {
             not_r_diagnostics.push(ry_checker::Diagnostic::new(
                 ry_checker::Severity::Info,
                 ry_core::Span::new(0, 1, 0, 0),
@@ -1727,5 +1739,127 @@ mod tests {
         assert_eq!(result.diagnostics.len(), 1);
         assert_eq!(result.diagnostics[0].code, "RY097");
         assert_eq!(result.diagnostics[0].severity, Severity::Info);
+    }
+
+    #[test]
+    fn markdown_table_file_yields_only_ry097() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("table.R");
+        std::fs::write(
+            &file,
+            "| Function | Description |\n|----------|-------------|\n| `foo` | Does a thing |\n| `bar` | Does another thing |\n| `baz` | Does one more thing |\n",
+        )
+        .unwrap();
+
+        let result = run_check_once(
+            &[file],
+            &ry_checker::SeverityFilter::default(),
+            OutputFormat::Json,
+            &[],
+            &[],
+            std::sync::Arc::new(std::collections::BTreeMap::new()),
+            false,
+            None,
+            Some(temp.path()),
+            ry_checker::Confidence::Low,
+        )
+        .unwrap();
+        assert_eq!(result.diagnostics.len(), 1);
+        assert_eq!(result.diagnostics[0].code, "RY097");
+    }
+
+    #[test]
+    fn ratfor_style_file_yields_only_ry097() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("inddup.r");
+        std::fs::write(
+            &file,
+            "subroutine inddup(x,y,n,rw,frac,dup)\nimplicit double precision(a-h,o-z)\nlogical dup(n)\ndimension x(n), y(n), rw(4)\ndup(1) = .false.\ndo i = 2,n {\n  dup(i) = .false.\n  do j = 1,i-1 {\n    if(dx < xtol & dy < ytol) {\n      dup(i) = .true.\n    }\n  }\n}\ndo k = 1,n {\n  dup(k) = .false.\n}\ndo k = 1,n {\n  dup(k) = .false.\n}\ndo k = 1,n {\n  dup(k) = .false.\n}\ndo k = 1,n {\n  dup(k) = .false.\n}\nreturn\nend\n",
+        )
+        .unwrap();
+
+        let result = run_check_once(
+            &[file],
+            &ry_checker::SeverityFilter::default(),
+            OutputFormat::Json,
+            &[],
+            &[],
+            std::sync::Arc::new(std::collections::BTreeMap::new()),
+            false,
+            None,
+            Some(temp.path()),
+            ry_checker::Confidence::Low,
+        )
+        .unwrap();
+        assert_eq!(result.diagnostics.len(), 1);
+        assert_eq!(result.diagnostics[0].code, "RY097");
+    }
+
+    #[test]
+    fn fifty_statement_r_file_with_three_syntax_errors_does_not_collapse() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("mostly-valid.R");
+        let mut source: String = (1..=50).map(|i| format!("x{i} <- {i}\n")).collect();
+        source.push_str("if )\nif )\nif )\n");
+        std::fs::write(&file, source).unwrap();
+
+        let result = run_check_once(
+            &[file],
+            &ry_checker::SeverityFilter::default(),
+            OutputFormat::Json,
+            &[],
+            &[],
+            std::sync::Arc::new(std::collections::BTreeMap::new()),
+            false,
+            None,
+            Some(temp.path()),
+            ry_checker::Confidence::Low,
+        )
+        .unwrap();
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY000")
+        );
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "RY097")
+        );
+    }
+
+    #[test]
+    fn four_statement_r_file_with_one_error_does_not_collapse_via_ratio_rule() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("small.R");
+        std::fs::write(&file, "a <- 1\nb <- 2\nc <- 3\nd <- 4\nif )\n").unwrap();
+
+        let result = run_check_once(
+            &[file],
+            &ry_checker::SeverityFilter::default(),
+            OutputFormat::Json,
+            &[],
+            &[],
+            std::sync::Arc::new(std::collections::BTreeMap::new()),
+            false,
+            None,
+            Some(temp.path()),
+            ry_checker::Confidence::Low,
+        )
+        .unwrap();
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY000")
+        );
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "RY097")
+        );
     }
 }

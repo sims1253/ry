@@ -556,9 +556,8 @@ pub struct Typeshed {
     #[serde(default)]
     pub datasets: std::collections::BTreeMap<String, JsonRType>,
     /// Built-in S3 methods keyed by `(generic, class)`. The checker
-    /// consults this during S3 dispatch; the presence of a `default`
-    /// entry for a generic suppresses RY050 for any class without a
-    /// more specific method.
+    /// consults this during S3 dispatch; a `default` entry is a valid
+    /// fallback for any class without a more specific method.
     #[serde(default)]
     pub s3_methods: std::collections::BTreeMap<(String, String), FunctionSig>,
 }

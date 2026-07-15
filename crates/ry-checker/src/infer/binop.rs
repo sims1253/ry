@@ -57,8 +57,9 @@ impl Checker {
             let comparable_rt = equality_list_leaf_type(op, &rt).unwrap_or_else(|| rt.clone());
             if let Some(t) = comparable_lt.compare(comparable_rt) {
                 // RY033: warn about comparing a character value with a
-                // non-character one. R coerces by comparing byte values,
-                // which is rarely the programmer's intent.
+                // non-character one. R coerces the numeric operand to
+                // character, then compares lexicographically, which is
+                // rarely the programmer's intent.
                 if matches!(lt_mode, Mode::Character) != matches!(rt_mode, Mode::Character)
                     && !matches!(lt_mode, Mode::Opaque)
                     && !matches!(rt_mode, Mode::Opaque)
@@ -75,7 +76,7 @@ impl Checker {
                         span,
                         "RY033",
                         format!(
-                            "comparing `{}` with `{}`; R compares byte values which is rarely intended",
+                            "comparing `{}` with `{}`; R coerces the numeric value to character and compares lexicographically, which is rarely intended",
                             lt_mode, rt_mode
                         ),
                     );
@@ -263,11 +264,15 @@ impl Checker {
         let rt = match op {
             BinOpKind::AndAnd => {
                 let mut rhs_scope = then_scope;
-                self.infer(rhs, &mut rhs_scope)
+                let rt = self.infer(rhs, &mut rhs_scope);
+                merge_condition_assignments(scope, &rhs_scope, rhs);
+                rt
             }
             BinOpKind::OrOr => {
                 let mut rhs_scope = else_scope;
-                self.infer(rhs, &mut rhs_scope)
+                let rt = self.infer(rhs, &mut rhs_scope);
+                merge_condition_assignments(scope, &rhs_scope, rhs);
+                rt
             }
             _ => self.infer(rhs, scope),
         };
@@ -294,4 +299,77 @@ impl Checker {
     // when it appears in an `Assign` statement; for a bare binop we
     // cannot reassign without a target expression, so we leave that to
     // a future pass.
+}
+
+/// R evaluates assignments nested anywhere in a condition expression in the
+/// current function environment. Short-circuit inference uses a cloned scope
+/// to model guard narrowing, so copy just those assignment targets back (not
+/// the guard refinement itself) after evaluating the RHS.
+fn merge_condition_assignments(scope: &mut Scope, evaluated: &Scope, expr: &Expr) {
+    let mut names = HashSet::new();
+    collect_condition_assignment_names(expr, &mut names);
+    for name in names {
+        if let Some(ty) = evaluated.get(&name) {
+            scope.insert(name, ty.clone());
+        }
+    }
+}
+
+fn collect_condition_assignment_names(expr: &Expr, names: &mut HashSet<String>) {
+    match expr {
+        Expr::BinOp { op, lhs, rhs, .. } => {
+            if matches!(op, BinOpKind::Assign | BinOpKind::SuperAssign)
+                && let Expr::Ident { name, .. } = lhs.as_ref()
+            {
+                names.insert(name.clone());
+            }
+            collect_condition_assignment_names(lhs, names);
+            collect_condition_assignment_names(rhs, names);
+        }
+        Expr::Call { func, args, .. } => {
+            collect_condition_assignment_names(func, names);
+            for arg in args {
+                collect_condition_assignment_names(&arg.value, names);
+            }
+        }
+        Expr::UnaryOp { expr, .. } => collect_condition_assignment_names(expr, names),
+        Expr::Index { base, args, .. } => {
+            collect_condition_assignment_names(base, names);
+            for arg in args {
+                collect_condition_assignment_names(&arg.value, names);
+            }
+        }
+        Expr::Block { body, .. } => {
+            for stmt in body {
+                match stmt {
+                    Stmt::Assign { target, value, .. } => {
+                        if let Expr::Ident { name, .. } = target {
+                            names.insert(name.clone());
+                        }
+                        collect_condition_assignment_names(value, names);
+                    }
+                    Stmt::Expr(expr) => collect_condition_assignment_names(expr, names),
+                    _ => {}
+                }
+            }
+        }
+        Expr::If {
+            cond, then, else_, ..
+        } => {
+            collect_condition_assignment_names(cond, names);
+            collect_condition_assignment_names(then, names);
+            if let Some(else_) = else_ {
+                collect_condition_assignment_names(else_, names);
+            }
+        }
+        Expr::Ident { .. }
+        | Expr::Logical(_, _)
+        | Expr::Integer(_, _)
+        | Expr::Double(_, _)
+        | Expr::String(_, _)
+        | Expr::Null(_)
+        | Expr::Na(_, _)
+        | Expr::Function { .. }
+        | Expr::Unknown(_) => {}
+    }
 }

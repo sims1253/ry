@@ -271,6 +271,9 @@ impl Checker {
         // is a name, not a value. We return opaque without evaluating
         // the args as expressions, suppressing spurious RY010.
         if is_nse_symbol_fn(&lookup_name) {
+            if lookup_name == "alist" {
+                return RType::new(Mode::List, Length::Unknown);
+            }
             return RType::unknown();
         }
 
@@ -482,6 +485,8 @@ impl Checker {
                     // one. Returning opaque here is the conservative
                     // choice (no false positives, possible false negatives).
                     return RType::unknown();
+                } else if let Some(result) = self.callable_function_union(t, args, &arg_types) {
+                    return result;
                 } else if !matches!(t.mode, Mode::Opaque) {
                     // R's function/value namespace separation: when a name is
                     // CALLED, R searches the environment chain for a *function*
@@ -576,11 +581,8 @@ impl Checker {
         // a miss with a *known* class, emit RY050. On a miss with an
         // unknown or empty class, fall through (we can't say anything).
         //
-        // We model only R's first-element dispatch rule: walking the
-        // full class vector (and matching `default`) is a future task.
-        // `default` is treated as always-present in the typeshed's S3
-        // method table for the common generics, so RY050 never fires
-        // for them unless the user explicitly shadows them away.
+        // We model the first class-vector element and then the `default`
+        // fallback. Walking later class-vector elements is a future task.
         //
         // We use the prefix-stripped `lookup_name` so a qualified call
         // like `base::print(x)` still dispatches as `print`.
@@ -753,6 +755,62 @@ impl Checker {
         }
         self.check_typeshed_call_arguments(lookup_name, &signature, args, &arg_types, span);
         Some(self.apply_sig(lookup_name, &signature, &arg_types, args, span))
+    }
+
+    /// Returns a value for a union call only when every member is a closure.
+    /// A NULL/function union deliberately stays non-callable: the NULL arm is
+    /// an unguarded runtime error, not an overload.
+    fn callable_function_union(
+        &mut self,
+        ty: &RType,
+        args: &[Arg],
+        arg_types: &[RType],
+    ) -> Option<RType> {
+        let members = ty.members.as_ref()?;
+        if ty.mode != Mode::Union
+            || members.is_empty()
+            || members.iter().any(|member| member.mode != Mode::Function)
+        {
+            return None;
+        }
+
+        let signatures: Vec<_> = members
+            .iter()
+            .filter_map(|member| member.fn_sig.as_ref())
+            .collect();
+        for (index, actual) in arg_types.iter().enumerate() {
+            let expected: Vec<_> = signatures
+                .iter()
+                .filter_map(|signature| signature.params.get(index))
+                .collect();
+            if expected.len() == signatures.len()
+                && !expected.is_empty()
+                && expected
+                    .iter()
+                    .all(|expected| types_provably_incompatible(actual, expected))
+            {
+                self.emit(
+                    Severity::Error,
+                    args[index].span,
+                    "RY092",
+                    format!(
+                        "argument {} is `{}`, incompatible with every callable union member",
+                        index + 1,
+                        actual.mode
+                    ),
+                );
+            }
+        }
+
+        let mut returns = members.iter().map(|member| {
+            member
+                .fn_sig
+                .as_ref()
+                .map(|signature| (*signature.return_type).clone())
+                .unwrap_or_else(RType::unknown)
+        });
+        let first = returns.next().unwrap_or_else(RType::unknown);
+        Some(returns.fold(first, RType::join))
     }
 
     fn infer_injected_expr(&mut self, expr: &Expr, scope: &mut Scope) -> RType {

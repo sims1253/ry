@@ -2,7 +2,58 @@
 
 All notable changes to ry are documented in this file.
 
-## [0.4.1] - 2026-07-14
+## [Unreleased]
+
+Driven by the ranks-301-500 audit (ry 0.4.0 on the top-500 CRAN packages).
+
+### Performance
+
+- Pipe-chain inference was exponential: each `%>%`/`|>` stage re-inferred
+  its entire left-hand side inside the desugared call, so a 20-stage chain
+  took ~14 s and longer chains never finished. The inferred LHS type is
+  now reused. gt (289 R files, previously unscannable) checks in ~2.4 s.
+- The required-parameter force-flow analysis walked each `if` branch twice
+  (once for "forces", once for "falls through"), which is exponential on
+  long `else if` dispatcher chains. Both facts are now computed in one
+  pass. lavaan and stargazer (previously >60 min, never completed) check
+  in ~2.3 s and ~0.8 s.
+
+### Fixed
+
+- `assign("name", value, envir = ...)`, `makeActiveBinding()`, and
+  `delayedAssign()` with a literal name now create package-level bindings
+  (any nesting depth under `R/`). Removes whole-package RY010 cascades in
+  clock (204 -> 0), rJava, otel, parallelly, and others. `.packageName`
+  is bound in every package namespace.
+- A string-literal assignment target (`"Math.foo" <- function(...)`) now
+  binds, aliases, and establishes S3 dispatch context (`.Generic`,
+  `.Method`) exactly like an identifier target (chron 35 -> 10).
+- `alist()` arguments are quoted, never resolved as variables, and the
+  call returns a list (Deriv 111 -> 8, ade4 RY010 42 -> 2).
+- A union whose members are all functions is callable; RY070 no longer
+  fires on `f <- if (p) function(...) ... else function(...)` followed by
+  `f(...)`. Argument checks report only findings that hold for every
+  member signature. NULL/function unions still report RY070.
+- RY097 (not-R-source) now also collapses files that mostly parse as R
+  but are riddled with parse errors (>= 5 errors and >= 15% of top-level
+  statements): Ratfor, GAUSS, and markdown-table files under `inst/`
+  (pacman 270 -> 27, plm 136 -> 36 total).
+- `is.list()`/`is.function()`/`is.environment()`/`is.data.frame()` guards
+  narrow a parameter whose type came only from its default, so
+  `f <- function(x = FALSE) if (is.list(x)) x$field` no longer reports
+  RY061 (visNetwork 34 -> 5 RY061).
+- Assignments nested inside call arguments of `if`/`while` conditions
+  (`if (grepl(p, ti <- text[i]))`) now bind in the enclosing scope
+  (litedown 27 -> 10).
+- RY033's message no longer claims R compares "byte values"; R coerces
+  the numeric operand to character and compares lexicographically.
+- The typeshed ships registered-but-unexported base S3 methods (e.g.
+  `stats:::print.anova`), so RY050 no longer reports them missing
+  (spatial, Cairo). RY050 also honors `<generic>.default` as a valid
+  dispatch fallback: `coef(glm_fit)` no longer reports a missing
+  `coef.glm`. Consequently RY050 can no longer fire for generics that
+  have a `.default` method (such as `print`) — dispatch always succeeds
+  for them.
 
 ### Removed
 

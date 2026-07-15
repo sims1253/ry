@@ -231,6 +231,13 @@ pub(crate) fn predicate_target(name: &str) -> Option<RType> {
         "is.complex" => Some(RType::scalar(Mode::Complex)),
         "is.list" => Some(RType::scalar(Mode::List)),
         "is.function" => Some(RType::scalar(Mode::Function)),
+        // Data frames are list-backed in the current type lattice. There is
+        // no distinct environment mode yet, so retain its opaque storage
+        // mode while recording the class evidence from the guard.
+        "is.data.frame" => {
+            Some(RType::scalar(Mode::List).with_class(ClassVector::single("data.frame")))
+        }
+        "is.environment" => Some(RType::unknown().with_class(ClassVector::single("environment"))),
         "is.null" => Some(RType::new(Mode::Null, Length::Zero)),
         "is.raw" => Some(RType::scalar(Mode::Raw)),
         _ => None,
@@ -334,7 +341,10 @@ pub(crate) fn apply_narrowing(
             // did exactly that).
             if let Some(existing) = then_scope.get(var).cloned() {
                 let class_narrowing = target.class.has_known_class();
-                let should_install = class_narrowing
+                let incompatible_parameter_default =
+                    then_scope.is_default_parameter(var) && !types_intersect(&existing, target);
+                let should_install = incompatible_parameter_default
+                    || class_narrowing
                     || match existing.mode {
                         Mode::Opaque => true,
                         // A NULL default in a function signature means "the
@@ -373,7 +383,8 @@ pub(crate) fn apply_narrowing(
                         }
                     };
                 if should_install
-                    && (class_narrowing
+                    && (incompatible_parameter_default
+                        || class_narrowing
                         || matches!(existing.mode, Mode::Opaque | Mode::Null | Mode::Union))
                 {
                     then_scope.insert(
@@ -446,6 +457,26 @@ pub(crate) fn apply_narrowing(
         }
     }
     (then_scope, else_scope, narrowed)
+}
+
+/// Whether two narrowing types have a representable mode intersection.
+/// This deliberately ignores length and class metadata: a guard such as
+/// `is.list(x)` is about storage mode, and a default value's length/class
+/// says nothing about values supplied by callers.
+fn types_intersect(left: &RType, right: &RType) -> bool {
+    fn modes(ty: &RType) -> Vec<Mode> {
+        if ty.mode == Mode::Union {
+            ty.members
+                .as_ref()
+                .map(|members| members.iter().flat_map(modes).collect())
+                .unwrap_or_default()
+        } else {
+            vec![ty.mode]
+        }
+    }
+    let left = modes(left);
+    let right = modes(right);
+    left.iter().any(|mode| right.contains(mode))
 }
 
 /// Result of trying to read a class literal from a `class = ...`
@@ -1103,7 +1134,7 @@ fn edit_distance(left: &str, right: &str) -> usize {
     previous[right_chars.len()]
 }
 
-fn types_provably_incompatible(actual: &RType, expected: &RType) -> bool {
+pub(crate) fn types_provably_incompatible(actual: &RType, expected: &RType) -> bool {
     let Some(actual_modes) = known_modes(actual) else {
         return false;
     };

@@ -362,6 +362,21 @@ impl Checker {
                         }
                         return None;
                     }
+                    if matches!(t.mode, Mode::Union)
+                        && let Some(members) = &t.members
+                        && !members.is_empty()
+                        && members.iter().all(|member| member.mode == Mode::Function)
+                    {
+                        let mut returns = members.iter().map(|member| {
+                            member
+                                .fn_sig
+                                .as_ref()
+                                .map(|signature| (*signature.return_type).clone())
+                                .unwrap_or_else(RType::unknown)
+                        });
+                        let first = returns.next().unwrap_or_else(RType::unknown);
+                        return Some(returns.fold(first, RType::join));
+                    }
                 }
                 // User-defined function in the FnTable?
                 if let Some(f) = self.fn_table.fns.get(lookup_name) {
@@ -492,15 +507,12 @@ impl Checker {
     /// use the returned type directly). Returns `None` only when the
     /// caller should fall through to other resolution paths.
     ///
-    /// RY050 emission policy: we only flag a missing method when we're
-    /// confident the generic actually uses S3 dispatch. The signal for
-    /// that confidence is the existence of a `default` method (in user
-    /// code or typeshed). Without a `default`, the call might just be a
-    /// plain function call that happens to share a name with an S3
-    /// generic, so we stay silent and let the regular function table
-    /// resolve it. This keeps the real-world baseline stable while still
-    /// catching the cases the task calls out (`print` on an undefined
-    /// class, etc.).
+    /// RY050 emission policy: a `<generic>.default` method is a real S3
+    /// dispatch target, not merely evidence that `generic` uses S3. When
+    /// it exists in any method source, a miss for a class-specific method
+    /// falls through to it and must remain silent. Without a default, we
+    /// report only for a generic that has at least one known S3 method;
+    /// otherwise the call might be an unrelated plain function.
     ///
     /// Design note: we deliberately return `Option<RType>` rather than
     /// `RType` because the caller (`infer_call`) may still want to
@@ -566,22 +578,52 @@ impl Checker {
                 return Some(self.apply_sig(generic, &sig, arg_types, &[], span));
             }
         }
-        // 3. No specific method. Only emit RY050 if we're confident the
-        // generic uses S3 dispatch, which we approximate by the
-        // existence of a `default` method anywhere in the program or
-        // typeshed. If there's no default, fall through silently: the
-        // call is probably just a plain function call.
+        // 3. A default method is the final S3 dispatch fallback. Consult
+        // every source used for specific methods above (plus external
+        // registrations), and do not report a missing class method when
+        // dispatch can reach one.
         let default_key = (generic.to_string(), "default".to_string());
         let has_default = self.fn_table.s3_methods.contains_key(&default_key)
-            || self.typeshed.s3_methods.contains_key(&default_key);
-        if !has_default {
+            || self.typeshed.s3_methods.contains_key(&default_key)
+            || self.external_s3_methods.contains(&default_key)
+            || self.available_package_names().into_iter().any(|pkg| {
+                self.package_typeshed(pkg)
+                    .is_some_and(|typeshed| typeshed.s3_methods.contains_key(&default_key))
+            });
+        if has_default {
+            return Some(RType::unknown());
+        }
+
+        // 4. Without a default, a generic is known to participate in S3
+        // dispatch only if any method source contains a method for it.
+        let has_known_s3_method = self
+            .fn_table
+            .s3_methods
+            .keys()
+            .any(|(known_generic, _)| known_generic == generic)
+            || self
+                .typeshed
+                .s3_methods
+                .keys()
+                .any(|(known_generic, _)| known_generic == generic)
+            || self
+                .external_s3_methods
+                .iter()
+                .any(|(known_generic, _)| known_generic == generic)
+            || self.available_package_names().into_iter().any(|pkg| {
+                self.package_typeshed(pkg).is_some_and(|typeshed| {
+                    typeshed
+                        .s3_methods
+                        .keys()
+                        .any(|(known_generic, _)| known_generic == generic)
+                })
+            });
+        if !has_known_s3_method {
             return None;
         }
-        // The generic is a known S3 generic (it has a default) but the
-        // specific class has no method. Emit RY050 and return opaque so
-        // callers don't trip further diagnostics on the result. R would
-        // fall back to `<generic>.default` at runtime, but the missing
-        // specific method is almost always a bug worth flagging.
+        // The generic has no dispatch target for this class. Emit RY050
+        // and return opaque so callers don't trip further diagnostics on
+        // the result.
         self.emit(
             Severity::Warning,
             span,

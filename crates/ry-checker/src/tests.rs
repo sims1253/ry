@@ -1526,6 +1526,34 @@ fn pipe_chain_infers() {
 }
 
 #[test]
+fn long_pipe_chain_infers_expected_type() {
+    let mut src = String::from("piped <- data.frame(a = 1:3)");
+    for i in 0..30 {
+        src.push_str(&format!(" |> transform(b{i} = a + {i})"));
+    }
+    src.push_str("\nresult <- piped$a + 1L\n");
+
+    let (diagnostics, scope) = check_with_scope(&src);
+    assert!(diagnostics.is_empty(), "got {diagnostics:?}");
+    assert_eq!(
+        scope.get("result").map(|ty| (&ty.mode, ty.length)),
+        Some((&Mode::Integer, Length::Known(3)))
+    );
+}
+
+#[test]
+fn long_else_if_force_flow_completes() {
+    let mut src = String::from(r#"f <- function(what) { if (what == "a0") { 0 }"#);
+    for i in 1..60 {
+        src.push_str(&format!(r#" else if (what == "a{i}") {{ {i} }}"#));
+    }
+    src.push_str(r#" else { stop("nope") } }"#);
+    src.push('\n');
+
+    let _ = check(&src);
+}
+
+#[test]
 fn pipe_base_r_infers() {
     // Base-R `|>` desugars identically to magrittr `%>%`.
     let diags = check("a <- c(1, 2, 3) |> mean()\n");
@@ -1696,18 +1724,120 @@ fn s3_dispatch_known_method() {
 }
 
 #[test]
+fn registered_unexported_s3_method_in_stub_satisfies_dispatch() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("base.json"),
+        r#"{
+            "schema_version": "1",
+            "package": "base",
+            "version": "test",
+            "functions": {},
+            "s3_methods": [
+                {"generic": "print", "class": "default", "params": ["x", "..."], "return": {"mode": "opaque", "length": "unknown"}}
+            ]
+        }"#,
+    )
+    .unwrap();
+    let stubs = Arc::new(ry_typeshed::load_stub_dir(dir.path()).unwrap());
+    let mut parser = RParser::new().unwrap();
+    let file = parser
+        .parse(
+            "registered.R",
+            "x <- structure(list(), class = \"unexported\")\nprint(x)\n",
+        )
+        .unwrap();
+    let mut checker = Checker::new("registered.R");
+    checker.set_user_stubs(stubs);
+    checker.check(&file);
+    let diagnostics = checker.take_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY050"),
+        "a registered default method must satisfy S3 dispatch: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn string_literal_assignment_binds_and_registers_s3_methods() {
+    let (diags, scope) = check_with_scope(
+        "\"x\" <- 1L\n\
+         \"Math.foo\" <- function(x, ...) .Generic\n\
+         \"print.foo\" <- function(x, ...) invisible(x)\n\
+         obj <- structure(list(), class = \"foo\")\n\
+         print(obj)\n\
+         x\n",
+    );
+    assert_eq!(scope.get("x").map(|ty| ty.mode), Some(Mode::Integer));
+    assert!(
+        diags.iter().all(|d| d.code != "RY010" && d.code != "RY050"),
+        "quoted assignment names must bind and carry S3 semantics: {diags:?}"
+    );
+}
+
+#[test]
+fn alist_quotes_arguments_and_returns_a_list() {
+    let (diags, scope) = check_with_scope("rules <- alist(e1 = e2, x = undefined)\n");
+    assert_eq!(scope.get("rules").map(|ty| ty.mode), Some(Mode::List));
+    assert!(
+        diags.iter().all(|d| d.code != "RY010"),
+        "alist arguments are unevaluated expressions: {diags:?}"
+    );
+}
+
+#[test]
+fn all_function_union_is_callable_with_intersection_argument_checks() {
+    let src = "f <- if (flag) function(x = 1L) 1L else function(x = \"x\") \"x\"\n\
+               ok <- f(1L)\n\
+               bad <- f(list())\n";
+    let (diags, scope) = check_with_scope(src);
+    assert!(
+        diags.iter().all(|d| d.code != "RY070"),
+        "all-function union must be callable: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.code == "RY092"),
+        "a mismatch shared by every callable member must be reported: {diags:?}"
+    );
+    assert_eq!(scope.get("ok").map(|ty| ty.mode), Some(Mode::Union));
+}
+
+#[test]
+fn null_function_union_remains_unguarded_call_error() {
+    let diags = check("f <- if (flag) NULL else function() 1L\nf()\n");
+    assert!(
+        diags.iter().any(|d| d.code == "RY070"),
+        "NULL/function unions are not callable without narrowing: {diags:?}"
+    );
+}
+
+#[test]
 fn s3_dispatch_missing_method() {
-    // No `print.undefined`; `print.default` exists in the typeshed,
-    // so we know `print` is an S3 generic. The missing specific
-    // method is flagged with RY050.
+    // `Summary` is a known S3 generic because it has another method, but
+    // no default method. Its missing class-specific method is flagged.
     let diags = check(
-        "x <- structure(list(), class = \"undefined\")\n\
-             print(x)\n",
+        "Summary.other <- function(...) 1L\n\
+             x <- structure(list(), class = \"undefined\")\n\
+             Summary(x)\n",
     );
     assert!(
         diags.iter().any(|d| d.code == "RY050"),
         "expected RY050 for missing method, got {:?}",
         diags
+    );
+}
+
+#[test]
+fn s3_dispatch_in_package_default_method_satisfies_dispatch() {
+    let diags = check(
+        "update.default <- function(x, ...) x\n\
+             x <- structure(list(), class = \"undefined\")\n\
+             update(x)\n",
+    );
+    assert!(
+        diags.iter().all(|d| d.code != "RY050"),
+        "an in-package default method must satisfy S3 dispatch: {diags:?}"
     );
 }
 
@@ -1731,15 +1861,16 @@ fn structure_call_sets_class() {
     // `structure(list(), class = "foo")` must produce a type whose
     // class vector contains "foo". We exercise this through the
     // public `Checker` API by relying on the fact that a missing
-    // `print.foo` method would emit RY050 only if the class was
+    // `Summary.foo` method would emit RY050 only if the class was
     // actually attached.
     let mut parser = RParser::new().unwrap();
-    let src = "x <- structure(list(), class = \"foo\")\nprint(x)\n";
+    let src =
+        "Summary.other <- function(...) 1L\nx <- structure(list(), class = \"foo\")\nSummary(x)\n";
     let f = parser.parse("test.R", src).unwrap();
     let mut c = Checker::new("test.R");
     c.check(&f);
     let diags = c.take_diagnostics();
-    // Without `print.foo`, RY050 should fire - proving the class was
+    // Without `Summary.foo` (or `Summary.default`), RY050 should fire - proving the class was
     // attached. (If `structure` had failed to set the class, the
     // value would be classless and no RY050 would appear.)
     assert!(
@@ -2781,6 +2912,66 @@ fn expression_if_applies_function_narrowing_to_then_branch() {
             .iter()
             .all(|diagnostic| diagnostic.code != "RY070"),
         "expression-position if must narrow f before inferring the call: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn default_parameter_is_list_guard_replaces_incompatible_default_only_in_then_branch() {
+    let diagnostics = check(
+        "f <- function(x = FALSE) {\n\
+           if (is.list(x)) x$enabled else x$enabled\n\
+         }\n\
+         f()\n",
+    );
+    assert_eq!(
+        diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "RY061")
+            .count(),
+        1,
+        "only the unguarded else branch should reject `$`: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn default_parameter_is_function_guard_replaces_incompatible_default() {
+    let diagnostics = check("f <- function(x = FALSE) { if (is.function(x)) x() }\nf()\n");
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY070"),
+        "function guard must make a default-logical parameter callable: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn nested_call_argument_assignment_in_if_condition_binds_after_short_circuit() {
+    let diagnostics = check(
+        "if (TRUE && grepl(\"x\", value <- \"x\")) {\n\
+           nchar(value)\n\
+         }\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "assignment nested in a condition call argument must bind: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn nested_call_argument_assignment_in_while_condition_binds_after_short_circuit() {
+    let diagnostics = check(
+        "while (FALSE || grepl(\"x\", value <- \"x\")) {\n\
+           nchar(value)\n\
+           break\n\
+         }\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "assignment nested in a while condition call argument must bind: {diagnostics:?}"
     );
 }
 

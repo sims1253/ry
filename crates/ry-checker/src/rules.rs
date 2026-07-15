@@ -72,7 +72,7 @@ pub const RULES: &[Rule] = &[
         code: "RY033",
         name: "comparison-mode-mismatch",
         default_severity: Severity::Warning,
-        summary: "Comparing a character value with a numeric value is valid R but almost always unintended. R compares byte values, not semantic equality.",
+        summary: "Comparing a character value with a numeric value coerces the numeric value to character and compares lexicographically, which is almost always unintended.",
     },
     Rule {
         code: "RY034",

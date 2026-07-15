@@ -10,7 +10,23 @@ impl Checker {
     ) -> RType {
         // Infer the LHS so diagnostics fire on it (e.g. unbound name).
         let lhs_t = self.infer(lhs, scope);
-        let result = match rhs {
+        self.infer_pipe_with_lhs_type(lhs, rhs, span, lhs_t, scope)
+    }
+
+    /// Infer a pipe RHS after its LHS has already been inferred in `scope`.
+    ///
+    /// The pipe desugaring injects a clone of `lhs` as a call argument. Keep
+    /// its type available only for the duration of that call so `infer` can
+    /// reuse it instead of recursively re-inferencing the whole pipe chain.
+    fn infer_pipe_with_lhs_type(
+        &mut self,
+        lhs: &Expr,
+        rhs: &Expr,
+        span: Span,
+        lhs_t: RType,
+        scope: &mut Scope,
+    ) -> RType {
+        match rhs {
             // Magrittr data pronoun with nested access:
             // `df %>% .$col`, `df %>% .[i]`, `df %>% .[[i]]`. The `.` at
             // the base of the index resolves to the piped LHS value, so
@@ -52,7 +68,7 @@ impl Checker {
                         },
                     );
                 }
-                self.infer_call(func, &new_args, scope, *call_span)
+                self.infer_pipe_call(func, &new_args, lhs, lhs_t.clone(), scope, *call_span)
             }
             Expr::Ident { .. } => {
                 let new_args = vec![Arg {
@@ -60,15 +76,33 @@ impl Checker {
                     value: lhs.clone(),
                     span,
                 }];
-                self.infer_call(rhs, &new_args, scope, span)
+                self.infer_pipe_call(rhs, &new_args, lhs, lhs_t.clone(), scope, span)
             }
             _ => {
                 // Unknown rhs form: infer rhs for diagnostics, give up on type.
                 let _ = self.infer(rhs, scope);
                 RType::unknown()
             }
-        };
-        let _ = lhs_t;
+        }
+    }
+
+    fn infer_pipe_call(
+        &mut self,
+        func: &Expr,
+        args: &[Arg],
+        lhs: &Expr,
+        lhs_t: RType,
+        scope: &mut Scope,
+        span: Span,
+    ) -> RType {
+        let lhs_span = span_of(lhs);
+        let previous = self.pipe_argument_types.insert(lhs_span, lhs_t);
+        let result = self.infer_call(func, args, scope, span);
+        if let Some(previous) = previous {
+            self.pipe_argument_types.insert(lhs_span, previous);
+        } else {
+            self.pipe_argument_types.remove(&lhs_span);
+        }
         result
     }
 
@@ -78,7 +112,7 @@ impl Checker {
     pub(crate) fn infer_pipe_tee(&mut self, lhs: &Expr, rhs: &Expr, scope: &mut Scope) -> RType {
         let lhs_t = self.infer(lhs, scope);
         // Still walk the RHS so any diagnostics on its body fire.
-        let _ = self.infer_pipe(lhs, rhs, span_of(rhs), scope);
+        let _ = self.infer_pipe_with_lhs_type(lhs, rhs, span_of(rhs), lhs_t.clone(), scope);
         lhs_t
     }
 

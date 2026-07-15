@@ -1,7 +1,3 @@
-R/ansi-palette.R:185:17 RY010
-R/ansiex.R:664:37 RY010
-R/ansiex.R:758:53 RY010
-R/cat.R:34:25 RY010
 R/defer.R:83:23 RY010
 R/errors.R:467:14 RY030
 R/errors.R:509:40 RY010
@@ -10,19 +6,9 @@ R/errors.R:568:30 RY010
 R/errors.R:603:24 RY010
 R/errors.R:978:34 RY010
 R/errors.R:985:27 RY010
-R/format-conditions.R:166:5 RY010
-R/glue.R:117:64 RY010
 R/onload.R:43:22 RY033
 R/onload.R:82:23 RY010
-R/progress-bar.R:86:25 RY010
-R/rules.R:175:5 RY010
-R/rules.R:178:5 RY010
-R/rules.R:185:5 RY010
-R/rules.R:2:33 RY010
-R/sitrep.R:43:17 RY010
 R/sizes.R:10:13 RY010
 R/sizes.R:8:19 RY010
 R/sizes.R:9:17 RY010
-R/symbol.R:206:24 RY010
-R/symbol.R:206:44 RY010
 R/symbol.R:207:7 RY001

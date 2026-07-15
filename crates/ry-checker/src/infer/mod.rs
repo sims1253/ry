@@ -23,8 +23,8 @@ impl Checker {
                     && !self.assign_replacement_target(target, scope)
                 {
                     self.assign_target(target, vt, scope);
-                    if let (Expr::Ident { name, .. }, Some(alias)) = (target, function_alias) {
-                        scope.set_function_alias(name.clone(), alias);
+                    if let (Some(name), Some(alias)) = (binding_name(target), function_alias) {
+                        scope.set_function_alias(name.to_string(), alias);
                     }
                 }
                 // Named function bodies (`f <- function(...) body`) must
@@ -42,7 +42,7 @@ impl Checker {
                             }
                         }
                     }
-                    if let Expr::Ident { name, .. } = target {
+                    if let Some(name) = binding_name(target) {
                         insert_s3_dispatch_context(name, &mut fn_scope, &self.typeshed.globals);
                     }
                     for parameter in params {
@@ -66,7 +66,11 @@ impl Checker {
                             }
                             None => RType::unknown(),
                         };
-                        fn_scope.insert(p.name.clone(), t);
+                        if p.default.is_some() {
+                            fn_scope.insert_parameter_default(p.name.clone(), t);
+                        } else {
+                            fn_scope.insert(p.name.clone(), t);
+                        }
                     }
                     self.deferred_captures.push(assigned);
                     self.push_enclosing_formals(params);
@@ -239,7 +243,11 @@ impl Checker {
                         }
                         None => RType::unknown(),
                     };
-                    fn_scope.insert(p.name.clone(), t);
+                    if p.default.is_some() {
+                        fn_scope.insert_parameter_default(p.name.clone(), t);
+                    } else {
+                        fn_scope.insert(p.name.clone(), t);
+                    }
                 }
                 self.deferred_captures.push(assigned);
                 self.push_enclosing_formals(params);
@@ -437,7 +445,11 @@ impl Checker {
                 Some(e) => infer_literal_default(e),
                 None => RType::unknown(),
             };
-            scope.insert(p.name.clone(), t.clone());
+            if p.default.is_some() {
+                scope.insert_parameter_default(p.name.clone(), t.clone());
+            } else {
+                scope.insert(p.name.clone(), t.clone());
+            }
             param_types.push(t);
         }
         // Walk the body in source order, simulating each statement's
@@ -606,7 +618,7 @@ impl Checker {
 
     pub(crate) fn assign_target(&mut self, target: &Expr, vt: RType, scope: &mut Scope) {
         match target {
-            Expr::Ident { name, .. } => {
+            Expr::Ident { name, .. } | Expr::String(name, _) => {
                 scope.insert(name.clone(), vt);
             }
             Expr::Index {
@@ -920,6 +932,12 @@ impl Checker {
 
     /// Infer the type of an expression, emitting diagnostics for misuse.
     pub(crate) fn infer(&mut self, e: &Expr, scope: &mut Scope) -> RType {
+        // `infer_pipe` has already inferred the expression it injects into
+        // its desugared call. The entry exists only while that call is being
+        // inferred, so its type is valid for this exact scope.
+        if let Some(t) = self.pipe_argument_types.get(&span_of(e)) {
+            return t.clone();
+        }
         match e {
             Expr::Logical(_, _) => RType::scalar(Mode::Logical),
             Expr::Integer(_, _) => RType::scalar(Mode::Integer),

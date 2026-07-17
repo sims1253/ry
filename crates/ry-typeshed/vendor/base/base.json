@@ -1486,7 +1486,6 @@
       "lm.fit",
       "lm.influence",
       "lm.wfit",
-      "load",
       "loadMethod",
       "loadNamespace",
       "loadedNamespaces",
@@ -1498,7 +1497,6 @@
       "locator",
       "lockBinding",
       "lockEnvironment",
-      "loess",
       "loess.control",
       "loess.smooth",
       "logb",
@@ -1623,7 +1621,6 @@
       "nextn",
       "ngettext",
       "nlevels",
-      "nls",
       "nls.control",
       "noquote",
       "norm",
@@ -1801,7 +1798,6 @@
       "pushBackLength",
       "pweibull",
       "pwilcox",
-      "q",
       "qbinom",
       "qbirthday",
       "qcauchy",
@@ -1839,7 +1835,6 @@
       "quasi",
       "quasibinomial",
       "quasipoisson",
-      "quit",
       "qweibull",
       "qwilcox",
       "r2dtable",
@@ -2063,7 +2058,6 @@
       "sort_by.data.frame",
       "sort_by.default",
       "sortedXyData",
-      "source",
       "spec.ar",
       "spec.pgram",
       "spec.taper",
@@ -2157,7 +2151,6 @@
       "sys.parent",
       "sys.parents",
       "sys.save.image",
-      "sys.source",
       "sys.status",
       "system",
       "system.file",
@@ -2699,7 +2692,12 @@
         "offset",
         "..."
       ],
-      "eval": {"formula": "quoted_expression", "subset": "data_mask", "weights": "data_mask", "offset": "data_mask"},
+      "eval": {
+        "formula": "quoted_expression",
+        "subset": "data_mask",
+        "weights": "data_mask",
+        "offset": "data_mask"
+      },
       "data_mask_source": "data",
       "return": {
         "mode": "list",
@@ -3243,7 +3241,10 @@
         "subset",
         "..."
       ],
-      "eval": {"formula": "quoted_expression", "subset": "data_mask"},
+      "eval": {
+        "formula": "quoted_expression",
+        "subset": "data_mask"
+      },
       "data_mask_source": "data",
       "return": {
         "mode": "list",
@@ -4076,7 +4077,12 @@
         "offset",
         "..."
       ],
-      "eval": {"formula": "quoted_expression", "weights": "data_mask", "subset": "data_mask", "offset": "data_mask"},
+      "eval": {
+        "formula": "quoted_expression",
+        "weights": "data_mask",
+        "subset": "data_mask",
+        "offset": "data_mask"
+      },
       "data_mask_source": "data",
       "return": {
         "mode": "list",
@@ -4717,7 +4723,12 @@
         "offset",
         "..."
       ],
-      "eval": {"formula": "quoted_expression", "subset": "data_mask", "weights": "data_mask", "offset": "data_mask"},
+      "eval": {
+        "formula": "quoted_expression",
+        "subset": "data_mask",
+        "weights": "data_mask",
+        "offset": "data_mask"
+      },
       "data_mask_source": "data",
       "return": {
         "mode": "list",
@@ -4729,10 +4740,27 @@
       }
     },
     "loess": {
-      "params": ["formula", "data", "weights", "subset", "..."],
-      "eval": {"formula": "quoted_expression", "weights": "data_mask", "subset": "data_mask"},
+      "params": [
+        "formula",
+        "data",
+        "weights",
+        "subset",
+        "..."
+      ],
+      "eval": {
+        "formula": "quoted_expression",
+        "weights": "data_mask",
+        "subset": "data_mask"
+      },
       "data_mask_source": "data",
-      "return": {"mode": "list", "length": "unknown", "na": false, "class": ["loess"]}
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "loess"
+        ]
+      }
     },
     "log": {
       "params": [
@@ -5140,10 +5168,28 @@
       }
     },
     "nls": {
-      "params": ["formula", "data", "start", "weights", "subset", "..."],
-      "eval": {"formula": "quoted_expression", "weights": "data_mask", "subset": "data_mask"},
+      "params": [
+        "formula",
+        "data",
+        "start",
+        "weights",
+        "subset",
+        "..."
+      ],
+      "eval": {
+        "formula": "quoted_expression",
+        "weights": "data_mask",
+        "subset": "data_mask"
+      },
       "data_mask_source": "data",
-      "return": {"mode": "list", "length": "unknown", "na": false, "class": ["nls"]}
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": false,
+        "class": [
+          "nls"
+        ]
+      }
     },
     "nobs": {
       "params": [
@@ -6745,7 +6791,10 @@
         "subset",
         "..."
       ],
-      "eval": {"formula": "quoted_expression", "subset": "data_mask"},
+      "eval": {
+        "formula": "quoted_expression",
+        "subset": "data_mask"
+      },
       "data_mask_source": "data",
       "return": {
         "mode": "list",
@@ -7180,7 +7229,10 @@
         "subset",
         "..."
       ],
-      "eval": {"formula": "quoted_expression", "subset": "data_mask"},
+      "eval": {
+        "formula": "quoted_expression",
+        "subset": "data_mask"
+      },
       "data_mask_source": "data",
       "return": {
         "mode": "list",

@@ -1,5 +1,3 @@
-R/compat-purrr.R:172:54 RY010
-R/compat-purrr.R:180:60 RY010
 R/compat-types-check.R:104:53 RY010
 R/compat-types-check.R:238:35 RY010
 R/compat-types-check.R:239:35 RY010

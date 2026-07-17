@@ -1,2 +1,1 @@
 R/import-standalone-types-check.R:133:53 RY010
-R/label-compose.R:30:36 RY010

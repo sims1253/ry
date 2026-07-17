@@ -195,13 +195,14 @@ fn split_s3_operator_method_name(name: &str) -> Option<(&'static str, String)> {
 }
 
 struct EnvironmentProfile {
-    name: &'static str,
     bindings: &'static [&'static str],
     path_trigger: fn(&str) -> bool,
 }
 
+// One built-in profile: Shiny application fragments. User-defined profiles
+// (named, path-glob-triggered) come from `ry.toml` `[[environments]]` and are
+// threaded through the CLI config instead.
 const BUILTIN_ENVIRONMENTS: &[EnvironmentProfile] = &[EnvironmentProfile {
-    name: "shiny",
     bindings: &["input", "output", "session"],
     path_trigger: is_shiny_app_fragment_path,
 }];

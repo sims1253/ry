@@ -1,11 +1,4 @@
-R/guess.r:335:30 RY010
-R/ops-compare.r:20:64 RY010
-R/ops-compare.r:55:14 RY010
-R/update.r:136:7 RY001
+R/update.r:136:7 RY003
 R/update.r:139:9 RY002
 R/update.r:141:11 RY002
 R/update.r:142:13 RY002
-R/vctrs.R:107:3 RY010
-R/vctrs.R:112:3 RY010
-R/vctrs.R:117:3 RY010
-R/vctrs.R:64:3 RY010

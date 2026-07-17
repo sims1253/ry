@@ -4,15 +4,37 @@
 //! NAMESPACE files as R syntax, then turn proven imports/exports into opaque
 //! checker bindings.
 
+use ry_checker::SERIALIZED_BINDINGS_UNENUMERABLE;
 use ry_checker::packages::NamespaceMetadata;
 use ry_core::SourceFile;
 use ry_core::ast::{Expr, Stmt};
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
+
+static MAX_SERIALIZED_BYTES: AtomicU64 = AtomicU64::new(2 * 1024 * 1024);
+
+pub(crate) fn set_max_serialized_bytes(cap: u64) {
+    MAX_SERIALIZED_BYTES.store(cap, Ordering::Relaxed);
+}
+
+static ENVIRONMENTS: OnceLock<Mutex<Vec<(Vec<String>, Vec<String>)>>> = OnceLock::new();
+pub(crate) fn set_environments(profiles: &[crate::config::EnvironmentConfig]) {
+    let profiles = profiles
+        .iter()
+        .map(|p| (p.bindings.clone(), p.paths.clone()))
+        .collect();
+    *ENVIRONMENTS
+        .get_or_init(|| Mutex::new(Vec::new()))
+        .lock()
+        .unwrap() = profiles;
+}
 
 pub(crate) struct PackageScope {
     pub(crate) attached: HashSet<String>,
+    pub(crate) bare_attached: HashMap<String, HashSet<String>>,
     pub(crate) bindings: HashMap<String, HashSet<String>>,
     pub(crate) imported_from: HashMap<String, HashMap<String, String>>,
     pub(crate) s3_methods: HashMap<String, HashSet<(String, String)>>,
@@ -56,11 +78,11 @@ pub(crate) fn resolve<'a>(
     let mut serialized_cache: HashMap<PathBuf, HashSet<String>> = HashMap::new();
     let mut source_binding_cache: HashMap<PathBuf, HashSet<String>> = HashMap::new();
     let mut attached = HashSet::new();
+    let mut bare_attached = HashMap::new();
     let mut bindings = HashMap::new();
     let mut imported_from = HashMap::new();
     let mut s3_methods = HashMap::new();
     let mut load_bindings = HashMap::new();
-    let mut description_cache: HashMap<PathBuf, DescriptionPackages> = HashMap::new();
     let project_attached: HashSet<String> = configured_packages
         .iter()
         .cloned()
@@ -78,6 +100,20 @@ pub(crate) fn resolve<'a>(
         let mut file_imported_from = HashMap::new();
         let mut source_package = None;
         file_bindings.extend(configured_globals.iter().cloned());
+        for (bindings, paths) in ENVIRONMENTS
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .unwrap()
+            .iter()
+        {
+            if paths.iter().any(|pattern| {
+                file.path
+                    .replace('\\', "/")
+                    .contains(pattern.trim_end_matches("/**"))
+            }) {
+                file_bindings.extend(bindings.iter().cloned());
+            }
+        }
         if let Some(root) = r_package_root(Path::new(&file.path)) {
             file_bindings.extend(
                 source_binding_cache
@@ -103,12 +139,25 @@ pub(crate) fn resolve<'a>(
                     .map(|prefix| format!("\0useDynLib:{prefix}")),
             );
             file_s3_methods.extend(metadata.s3_methods.iter().cloned());
-            file_attached.extend(metadata.imported_packages.iter().cloned());
+            // `import(pkg)` puts pkg's exports in the package namespace,
+            // not on the search path used to run its tests and examples.
+            // Keep wholesale imports confined to package implementation
+            // files; `importFrom()` bindings above remain available wherever
+            // the package context makes them meaningful.
+            let relative = Path::new(&file.path).strip_prefix(&root).ok();
+            if relative.is_some_and(is_package_r_file) {
+                file_attached.extend(metadata.imported_packages.iter().cloned());
+            }
             if source_package_lazy_data(&root) {
                 file_bindings.extend(
                     dataset_cache
                         .entry(root.clone())
-                        .or_insert_with(|| source_package_datasets(&root))
+                        .or_insert_with(|| {
+                            source_package_datasets(
+                                &root,
+                                MAX_SERIALIZED_BYTES.load(Ordering::Relaxed),
+                            )
+                        })
                         .iter()
                         .cloned(),
                 );
@@ -117,7 +166,9 @@ pub(crate) fn resolve<'a>(
             file_bindings.extend(
                 serialized_cache
                     .entry(sysdata.clone())
-                    .or_insert_with(|| serialized_bindings(&sysdata))
+                    .or_insert_with(|| {
+                        serialized_bindings(&sysdata, MAX_SERIALIZED_BYTES.load(Ordering::Relaxed))
+                    })
                     .iter()
                     .cloned(),
             );
@@ -128,34 +179,41 @@ pub(crate) fn resolve<'a>(
                     &root,
                     &project_attached,
                     user_stubs,
+                    MAX_SERIALIZED_BYTES.load(Ordering::Relaxed),
                     &mut serialized_cache,
                 ),
             );
 
-            let relative = Path::new(&file.path).strip_prefix(&root).ok();
-            let description = description_cache
-                .entry(root.clone())
-                .or_insert_with(|| read_description_packages(&root));
-            let testthat = relative.is_some_and(|path| path.starts_with("tests/testthat"));
-            let tinytest = relative.is_some_and(|path| path.starts_with("inst/tinytest"));
-            let interactive = relative.is_some_and(|path| {
-                path.starts_with("data-raw")
-                    || path.starts_with("demo")
-                    || path.starts_with("vignettes")
-            });
-            if testthat {
+            if relative.is_some_and(is_test_or_script_file) {
+                // Loading the package under test also attaches its Depends;
+                // tests and user-facing package scripts additionally use
+                // DESCRIPTION Suggests as their working set. Imports remain
+                // excluded: they only provide bare names through explicit
+                // NAMESPACE directives.
+                let dependencies = read_description_packages(&root);
+                let test_dependencies = dependencies
+                    .depends
+                    .into_iter()
+                    .chain(dependencies.suggests)
+                    .collect::<HashSet<_>>();
+                for package in &test_dependencies {
+                    // Without a stub, an attached test dependency can
+                    // supply arbitrary exports. This is intentionally a
+                    // file-local open search path, never a project-wide
+                    // promotion.
+                    if !user_stubs.contains_key(package)
+                        && ry_typeshed::load_package(package).is_none()
+                    {
+                        file_bindings.insert(SERIALIZED_BINDINGS_UNENUMERABLE.to_string());
+                    }
+                }
+                file_attached.extend(test_dependencies);
                 file_attached.insert("testthat".to_string());
-                file_attached.extend(description.depends.iter().cloned());
-                file_attached.extend(description.suggests.iter().cloned());
+            }
+            if relative.is_some_and(|path| path.starts_with("tests/testthat")) {
                 let helpers = testthat_helper_context(&root);
                 file_bindings.extend(helpers.bindings);
                 file_attached.extend(helpers.attached);
-            } else if tinytest {
-                file_attached.insert("tinytest".to_string());
-                file_attached.extend(description.depends.iter().cloned());
-                file_attached.extend(description.suggests.iter().cloned());
-            } else if interactive {
-                file_attached.extend(description.depends.iter().cloned());
             }
         }
         file_attached.extend(ry_checker::packages::attached_packages(file));
@@ -179,18 +237,38 @@ pub(crate) fn resolve<'a>(
                 file_bindings.extend(typeshed.globals.ambient_functions.iter().cloned());
             }
         }
-        attached.extend(file_attached);
+        attached.extend(file_attached.iter().cloned());
+        bare_attached.insert(file.path.clone(), file_attached);
         bindings.insert(file.path.clone(), file_bindings);
         imported_from.insert(file.path.clone(), file_imported_from);
         s3_methods.insert(file.path.clone(), file_s3_methods);
     }
     PackageScope {
         attached,
+        bare_attached,
         bindings,
         imported_from,
         s3_methods,
         load_bindings,
     }
+}
+
+/// Whether a path relative to a package root is source code in `R/`.
+fn is_package_r_file(path: &Path) -> bool {
+    path.components()
+        .next()
+        .is_some_and(|component| component.as_os_str() == "R")
+}
+
+/// Whether a path relative to a package root has the execution context used
+/// for tests, installed scripts, demos, or vignettes.
+fn is_test_or_script_file(path: &Path) -> bool {
+    matches!(
+        path.components()
+            .next()
+            .and_then(|component| component.as_os_str().to_str()),
+        Some("tests" | "inst" | "demo" | "vignettes")
+    )
 }
 
 /// Bindings introduced by R's literal-name namespace helpers. These calls are
@@ -493,7 +571,7 @@ fn source_package_lazy_data(root: &Path) -> bool {
 /// binding (`data/example.rda` -> `example`). This inventory is static,
 /// bounded to one directory, and cached indirectly by the per-run package
 /// scope construction.
-fn source_package_datasets(root: &Path) -> HashSet<String> {
+fn source_package_datasets(root: &Path, max_serialized_bytes: u64) -> HashSet<String> {
     let Ok(entries) = std::fs::read_dir(root.join("data")) else {
         return HashSet::new();
     };
@@ -509,7 +587,7 @@ fn source_package_datasets(root: &Path) -> HashSet<String> {
         };
         match extension.as_str() {
             "rda" | "rdata" => {
-                let serialized = serialized_bindings(&path);
+                let serialized = serialized_bindings(&path, max_serialized_bytes);
                 if serialized.is_empty() {
                     if let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) {
                         bindings.insert(stem.to_string());
@@ -551,7 +629,7 @@ fn source_package_datasets(root: &Path) -> HashSet<String> {
 /// workspaces are serialized pairlists whose tags are the binding names. The
 /// parser's lazy mode skips vector payload allocation, and bzip2 streams are
 /// decompressed in-process; no R runtime or project code is executed.
-fn serialized_bindings(path: &Path) -> HashSet<String> {
+fn serialized_bindings(path: &Path, cap: u64) -> HashSet<String> {
     type CacheKey = (PathBuf, u64, u128);
     static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<CacheKey, HashSet<String>>>> =
         std::sync::OnceLock::new();
@@ -569,7 +647,7 @@ fn serialized_bindings(path: &Path) -> HashSet<String> {
     if let Some(bindings) = cache.lock().expect("serialized cache poisoned").get(&key) {
         return bindings.clone();
     }
-    let bindings = serialized_bindings_uncached(path);
+    let bindings = serialized_bindings_uncached(path, cap);
     cache
         .lock()
         .expect("serialized cache poisoned")
@@ -577,32 +655,48 @@ fn serialized_bindings(path: &Path) -> HashSet<String> {
     bindings
 }
 
-fn serialized_bindings_uncached(path: &Path) -> HashSet<String> {
+fn serialized_bindings_uncached(path: &Path, cap: u64) -> HashSet<String> {
+    fn unenumerable() -> HashSet<String> {
+        HashSet::from([SERIALIZED_BINDINGS_UNENUMERABLE.to_string()])
+    }
+
     let Ok(bytes) = std::fs::read(path) else {
         return HashSet::new();
     };
     let bytes = if bytes.starts_with(b"BZh") {
         let mut decoded = Vec::new();
-        let mut decoder = bzip2::read::BzDecoder::new(bytes.as_slice());
-        if decoder.read_to_end(&mut decoded).is_err() {
+        let decoder = bzip2::read::BzDecoder::new(bytes.as_slice());
+        if decoder.take(cap + 1).read_to_end(&mut decoded).is_err() {
             return HashSet::new();
+        }
+        if decoded.len() as u64 > cap {
+            return unenumerable();
         }
         decoded
     } else if bytes.starts_with(&[0x1f, 0x8b]) {
         let mut decoded = Vec::new();
-        let mut decoder = flate2::read::GzDecoder::new(bytes.as_slice());
-        if decoder.read_to_end(&mut decoded).is_err() {
+        let decoder = flate2::read::GzDecoder::new(bytes.as_slice());
+        if decoder.take(cap + 1).read_to_end(&mut decoded).is_err() {
             return HashSet::new();
+        }
+        if decoded.len() as u64 > cap {
+            return unenumerable();
         }
         decoded
     } else if bytes.starts_with(&[0xfd, b'7', b'z', b'X', b'Z', 0x00]) {
         let mut decoded = Vec::new();
-        let mut decoder = xz2::read::XzDecoder::new(bytes.as_slice());
-        if decoder.read_to_end(&mut decoded).is_err() {
+        let decoder = xz2::read::XzDecoder::new(bytes.as_slice());
+        if decoder.take(cap + 1).read_to_end(&mut decoded).is_err() {
             return HashSet::new();
+        }
+        if decoded.len() as u64 > cap {
+            return unenumerable();
         }
         decoded
     } else {
+        if bytes.len() as u64 > cap {
+            return unenumerable();
+        }
         bytes
     };
     let payload = bytes
@@ -626,6 +720,7 @@ fn loaded_serialized_bindings(
     package_root: &Path,
     attached_packages: &HashSet<String>,
     user_stubs: &std::collections::BTreeMap<String, ry_typeshed::Typeshed>,
+    max_serialized_bytes: u64,
     cache: &mut HashMap<PathBuf, HashSet<String>>,
 ) -> HashMap<usize, HashSet<String>> {
     fn resolve_path(
@@ -700,7 +795,7 @@ fn loaded_serialized_bindings(
         }) {
             let loaded = cache
                 .entry(path.clone())
-                .or_insert_with(|| serialized_bindings(&path))
+                .or_insert_with(|| serialized_bindings(&path, max_serialized_bytes))
                 .clone();
             bindings.insert(span.start, loaded);
         }
@@ -937,6 +1032,25 @@ mod tests {
     use std::io::Write;
     use std::sync::Arc;
 
+    fn write_oversized_rdata(path: &Path) {
+        let object = rds2rust::RObject::Pairlist(vec![rds2rust::PairlistElement {
+            tag: Some(Arc::from("small_tag")),
+            value: rds2rust::RObject::Null,
+            tag_object: None,
+        }]);
+        let gzip = rds2rust::write_rds(&object).unwrap();
+        let mut serialization = Vec::new();
+        flate2::read::GzDecoder::new(gzip.as_slice())
+            .read_to_end(&mut serialization)
+            .unwrap();
+        let mut rdata = b"RDX2\n".to_vec();
+        rdata.extend_from_slice(&serialization);
+        rdata.resize(2 * 1024 * 1024 + 1, 0);
+        let mut encoder = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::best());
+        encoder.write_all(&rdata).unwrap();
+        std::fs::write(path, encoder.finish().unwrap()).unwrap();
+    }
+
     fn package_bindings(root: &Path, source: &str) -> HashSet<String> {
         let path = root.join("R/use.R");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -1047,10 +1161,56 @@ mod tests {
             std::fs::write(&path, compressed).unwrap();
 
             assert_eq!(
-                serialized_bindings(&path),
+                serialized_bindings(&path, 2 * 1024 * 1024),
                 HashSet::from(["alpha".to_string(), "beta".to_string()])
             );
         }
+    }
+
+    #[test]
+    fn oversized_serialized_workspace_is_unenumerable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("oversized.rda");
+        write_oversized_rdata(&path);
+
+        assert_eq!(
+            serialized_bindings(&path, 2 * 1024 * 1024),
+            HashSet::from([SERIALIZED_BINDINGS_UNENUMERABLE.to_string()])
+        );
+    }
+
+    #[test]
+    fn oversized_sysdata_opens_the_package_file_scope() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("DESCRIPTION"), "Package: fixture\n").unwrap();
+        let source_path = root.path().join("R/use.R");
+        std::fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        std::fs::write(&source_path, "arbitrary_sysdata_name\n").unwrap();
+        write_oversized_rdata(&root.path().join("R/sysdata.rda"));
+
+        let mut parser = ry_core::RParser::new().unwrap();
+        let file = parser
+            .parse(&source_path.to_string_lossy(), "arbitrary_sysdata_name\n")
+            .unwrap();
+        let scope = resolve(
+            std::slice::from_ref(&source_path),
+            &[],
+            &[],
+            &std::collections::BTreeMap::new(),
+            [&file],
+        );
+        let mut project = ry_checker::Project::new();
+        project.add_file(source_path.to_string_lossy().to_string(), file);
+        project.set_external_bindings(scope.bindings);
+        let diagnostics = project.check();
+
+        assert!(
+            diagnostics[0]
+                .1
+                .iter()
+                .all(|diagnostic| diagnostic.code != "RY010"),
+            "oversized sysdata should open the file scope: {diagnostics:?}"
+        );
     }
 
     #[test]
@@ -1088,6 +1248,7 @@ mod tests {
             dir.path(),
             &HashSet::new(),
             &user_stubs,
+            2 * 1024 * 1024,
             &mut HashMap::new(),
         );
         assert_eq!(

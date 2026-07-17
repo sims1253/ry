@@ -57,6 +57,9 @@ pub struct Project {
     /// so removing a `library()` call during an incremental edit removes
     /// that package from the next project-wide union.
     declared_loaded: HashSet<String>,
+    /// Per-file bare-name search paths.  Kept apart from `loaded`, whose
+    /// project-wide union is intentionally used for dplyr NSE gating.
+    bare_loaded: HashMap<String, HashSet<String>>,
     /// Names supplied by project metadata rather than R assignments.
     /// R package `NAMESPACE` imports are the primary source: an
     /// `importFrom(shiny, tags)` directive proves that `tags` is bound in
@@ -70,6 +73,9 @@ pub struct Project {
     /// Pass-1 output cached independently for each source path. Incremental
     /// checks invalidate only the entry updated through `update_file`.
     collected_files: HashMap<String, CollectedFile>,
+    /// Top-level bindings collected independently for each file, then pooled
+    /// for project-wide diagnostic emission.
+    file_known_vars: HashMap<String, HashSet<String>>,
 }
 
 #[derive(Clone)]
@@ -95,12 +101,14 @@ impl Project {
             diagnostics: Vec::new(),
             loaded: std::collections::HashSet::new(),
             declared_loaded: HashSet::new(),
+            bare_loaded: HashMap::new(),
             external_bindings: HashMap::new(),
             imported_from: HashMap::new(),
             external_s3_methods: HashMap::new(),
             load_bindings: HashMap::new(),
             user_stubs: Arc::new(BTreeMap::new()),
             collected_files: HashMap::new(),
+            file_known_vars: HashMap::new(),
         }
     }
 
@@ -121,6 +129,7 @@ impl Project {
     /// invalidated; `check_incremental` reuses every other file's collection.
     pub fn update_file(&mut self, path: String, file: SourceFile) {
         self.collected_files.remove(&path);
+        self.file_known_vars.remove(&path);
         if let Some((_, existing)) = self
             .files
             .iter_mut()
@@ -136,6 +145,7 @@ impl Project {
     pub fn remove_file(&mut self, path: &str) {
         self.files.retain(|(existing, _)| existing != path);
         self.collected_files.remove(path);
+        self.file_known_vars.remove(path);
     }
 
     /// Declare the project's loaded packages (from `ry.toml`'s
@@ -146,6 +156,10 @@ impl Project {
     pub fn set_loaded(&mut self, loaded: std::collections::HashSet<String>) {
         self.declared_loaded = loaded.clone();
         self.loaded = loaded;
+    }
+
+    pub fn set_bare_loaded(&mut self, loaded: HashMap<String, HashSet<String>>) {
+        self.bare_loaded = loaded;
     }
 
     /// Install runtime package stubs. User packages, including `base`,
@@ -208,17 +222,22 @@ impl Project {
         }
         self.loaded = union_loaded.clone();
 
-        // Pass 1: walk every file's top-level statements, collecting
-        // function definitions (and S3 method registrations) into the
-        // shared FnTable. We use a throwaway Checker to drive
-        // `collect_fns` and then move its populated tables back onto
-        // this Project.
-        let mut collector = Checker::new("__project_pass1__");
-        collector.set_user_stubs(Arc::clone(&self.user_stubs));
-        for (_path, file) in &self.files {
+        // Pass 1: collect each file separately before merging. Their binding
+        // sets are pooled for diagnostic emission, matching source()-based
+        // project semantics (including testthat helpers and examples).
+        let mut fn_table = FnTable::default();
+        let mut return_slots = ReturnSlots::default();
+        self.file_known_vars.clear();
+        for (path, file) in &self.files {
+            let mut collector = Checker::new(path);
+            collector.set_user_stubs(Arc::clone(&self.user_stubs));
             collector.collect_file_fns(file);
+            let (collected, slots) = collector.into_tables();
+            self.file_known_vars
+                .insert(path.clone(), collected.known_vars.clone());
+            fn_table.append_collected(collected, &mut return_slots, slots);
         }
-        let (fn_table, return_slots) = collector.into_tables();
+        fn_table.known_vars = self.pooled_known_vars();
         self.fn_table = fn_table;
         self.return_slots = return_slots;
         self.refine_and_emit()
@@ -241,6 +260,8 @@ impl Project {
             collector.set_user_stubs(Arc::clone(&self.user_stubs));
             collector.collect_file_fns(file);
             let (fn_table, return_slots) = collector.into_tables();
+            self.file_known_vars
+                .insert(path.clone(), fn_table.known_vars.clone());
             self.collected_files.insert(
                 path.clone(),
                 CollectedFile {
@@ -266,6 +287,7 @@ impl Project {
                 collected.return_slots.clone(),
             );
         }
+        fn_table.known_vars = self.pooled_known_vars();
         self.fn_table = fn_table;
         self.return_slots = return_slots;
         self.loaded = loaded;
@@ -299,12 +321,14 @@ impl Project {
         // come back in arbitrary thread order; we re-sort to match the
         // input file order so callers see a stable, deterministic vec.
         let fn_table = Arc::new(std::mem::take(&mut self.fn_table));
+        let package_known_vars = Arc::new(fn_table.known_vars.clone());
         let return_slots = Arc::new(std::mem::take(&mut self.return_slots));
         let loaded = Arc::new(std::mem::take(&mut self.loaded));
         let external_bindings = Arc::new(std::mem::take(&mut self.external_bindings));
         let imported_from = Arc::new(std::mem::take(&mut self.imported_from));
         let external_s3_methods = Arc::new(std::mem::take(&mut self.external_s3_methods));
         let load_bindings = Arc::new(std::mem::take(&mut self.load_bindings));
+        let bare_loaded = Arc::new(std::mem::take(&mut self.bare_loaded));
         let user_stubs = Arc::clone(&self.user_stubs);
         let mut per_file: Vec<(usize, String, Vec<Diagnostic>)> = self
             .files
@@ -317,7 +341,16 @@ impl Project {
                     Arc::clone(&return_slots),
                 );
                 emitter.disable_user_call_argument_validation();
+                emitter.set_shared_known_vars(Arc::clone(&package_known_vars));
                 emitter.set_shared_loaded(Arc::clone(&loaded));
+                emitter.set_bare_loaded(
+                    bare_loaded
+                        .get(path)
+                        .cloned()
+                        // Direct Project users only have the declared set;
+                        // CLI installs precise per-file paths above.
+                        .unwrap_or_else(|| loaded.as_ref().clone()),
+                );
                 emitter.set_user_stubs(Arc::clone(&user_stubs));
                 emitter.set_external_bindings(
                     external_bindings.get(path).cloned().unwrap_or_default(),
@@ -341,6 +374,7 @@ impl Project {
         self.imported_from = Arc::unwrap_or_clone(imported_from);
         self.external_s3_methods = Arc::unwrap_or_clone(external_s3_methods);
         self.load_bindings = Arc::unwrap_or_clone(load_bindings);
+        self.bare_loaded = Arc::unwrap_or_clone(bare_loaded);
         // Re-sort to input file order and drop the sort index.
         per_file.sort_by_key(|(i, _, _)| *i);
         let per_file: Vec<(String, Vec<Diagnostic>)> =
@@ -348,6 +382,13 @@ impl Project {
 
         self.diagnostics = per_file.clone();
         per_file
+    }
+
+    fn pooled_known_vars(&self) -> HashSet<String> {
+        self.file_known_vars
+            .values()
+            .flat_map(|known_vars| known_vars.iter().cloned())
+            .collect()
     }
 
     /// Apply a severity filter to the diagnostics cached from the most
@@ -363,6 +404,21 @@ impl Project {
             apply_filter_to_diagnostics(diags, filter);
         }
     }
+}
+
+/// Whether a file is directly under a package's `R/` directory.
+///
+/// Package metadata still uses this classifier even though top-level bindings
+/// are now pooled across the entire checked project tree.
+#[cfg(test)]
+pub(crate) fn is_package_library_file(path: &str) -> bool {
+    let path = std::path::Path::new(path);
+    path.parent().is_some_and(|parent| {
+        parent.file_name().and_then(|name| name.to_str()) == Some("R")
+            && parent
+                .parent()
+                .is_some_and(|root| root.join("DESCRIPTION").is_file())
+    })
 }
 
 #[cfg(test)]
@@ -397,6 +453,29 @@ mod tests {
             all.iter().any(|d| d.code == "RY040"),
             "expected RY040 from char fn + int, got {:?}",
             all
+        );
+    }
+
+    #[test]
+    fn shiny_fragment_paths_bind_server_ambient_names() {
+        let mut project = Project::new();
+        project.add_file(
+            "inst/shiny/src/server/fragment.R".to_string(),
+            parse(
+                "inst/shiny/src/server/fragment.R",
+                "output$value <- input$value\nsession$sendCustomMessage('x', list())\n",
+            ),
+        );
+        let diagnostics: Vec<_> = project
+            .check()
+            .into_iter()
+            .flat_map(|(_, diagnostics)| diagnostics)
+            .collect();
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "RY010"),
+            "Shiny fragments must receive input/output/session: {diagnostics:?}"
         );
     }
 

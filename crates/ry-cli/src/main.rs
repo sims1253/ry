@@ -662,6 +662,8 @@ fn run_check(
         cli_verbose,
         cli_quiet,
     );
+    package_metadata::set_max_serialized_bytes(cfg.max_serialized_bytes);
+    package_metadata::set_environments(&cfg.environments);
 
     let baseline = match cfg.baseline.as_deref() {
         Some(path) => match load_baseline(path) {
@@ -977,7 +979,7 @@ fn run_check_once(
             const { std::cell::RefCell::new(None) };
     }
     let parse_one = |path: &std::path::Path| -> Result<(String, String, ry_core::SourceFile), ()> {
-        let src = match std::fs::read_to_string(path) {
+        let src = match read_r_source(path) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("ry: {}: {}", path.display(), e);
@@ -1039,6 +1041,7 @@ fn run_check_once(
     }
 
     project.set_loaded(package_scope.attached);
+    project.set_bare_loaded(package_scope.bare_attached);
     project.set_user_stubs(user_stubs);
     project.set_external_bindings(package_scope.bindings);
     project.set_imported_from(package_scope.imported_from);
@@ -1276,6 +1279,20 @@ fn run_shell_completion(shell: &str) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// Read an R source file, accepting both UTF-8 and Latin-1 encodings.
+///
+/// R accepts Latin-1 source files, so retry an invalid UTF-8 decode by mapping
+/// every input byte directly to the corresponding Unicode code point.
+fn read_r_source(path: &std::path::Path) -> std::io::Result<String> {
+    match std::fs::read_to_string(path) {
+        Ok(source) => Ok(source),
+        Err(error) if error.kind() == std::io::ErrorKind::InvalidData => {
+            std::fs::read(path).map(|bytes| bytes.into_iter().map(char::from).collect())
+        }
+        Err(error) => Err(error),
+    }
+}
+
 fn collect_r_files(path: &std::path::Path, out: &mut Vec<PathBuf>) {
     if path.is_file() {
         out.push(path.to_path_buf());
@@ -1311,7 +1328,11 @@ fn collect_r_files_recursive(
         }
         if p.is_dir() {
             if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
-                if name.starts_with('.') || name == "target" || name == "node_modules" {
+                if name.starts_with('.')
+                    || name == "target"
+                    || name == "node_modules"
+                    || name.ends_with(".Rcheck")
+                {
                     continue;
                 }
             }
@@ -1329,7 +1350,7 @@ fn collect_r_files_recursive(
             collect_r_files_recursive(&p, out, nested_package_root, &nested_buildignore);
         } else if matches!(
             p.extension().and_then(|e| e.to_str()),
-            Some("R") | Some("r")
+            Some("R") | Some("r") | Some("S") | Some("s") | Some("q")
         ) {
             out.push(p);
         }
@@ -1572,6 +1593,68 @@ mod tests {
     }
 
     #[test]
+    fn collection_skips_rcheck_artifacts() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::create_dir_all(root.join("example.Rcheck/R")).unwrap();
+        let source = root.join("source.R");
+        std::fs::write(&source, "source_missing\n").unwrap();
+        std::fs::write(root.join("example.Rcheck/R/copied.R"), "copied_missing\n").unwrap();
+
+        let mut paths = Vec::new();
+        collect_r_files(root, &mut paths);
+
+        assert_eq!(paths, vec![source.clone()]);
+
+        let result = run_check_once(
+            &paths,
+            &ry_checker::SeverityFilter::default(),
+            OutputFormat::Json,
+            &[],
+            &[],
+            std::sync::Arc::new(std::collections::BTreeMap::new()),
+            false,
+            None,
+            Some(root),
+            ry_checker::Confidence::Low,
+        )
+        .unwrap();
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY010")
+        );
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.path == source.to_string_lossy().as_ref())
+        );
+    }
+
+    #[test]
+    fn collection_includes_all_supported_r_source_extensions() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        for extension in ["R", "r", "S", "s", "q"] {
+            std::fs::write(root.join(format!("source.{extension}")), "value <- 1L\n").unwrap();
+        }
+        std::fs::write(root.join("source.txt"), "not R\n").unwrap();
+
+        let mut paths = Vec::new();
+        collect_r_files(root, &mut paths);
+        paths.sort();
+
+        let mut expected = ["R", "r", "S", "s", "q"]
+            .map(|extension| root.join(format!("source.{extension}")))
+            .into_iter()
+            .collect::<Vec<_>>();
+        expected.sort();
+        assert_eq!(paths, expected);
+    }
+
+    #[test]
     fn explicitly_selected_file_is_not_package_excluded() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
@@ -1579,6 +1662,18 @@ mod tests {
         std::fs::create_dir(root.join("src")).unwrap();
         let file = root.join("src/ratfor.r");
         std::fs::write(&file, "").unwrap();
+
+        let mut paths = Vec::new();
+        collect_r_files(&file, &mut paths);
+
+        assert_eq!(paths, vec![file]);
+    }
+
+    #[test]
+    fn explicitly_selected_q_file_is_collected() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("source.q");
+        std::fs::write(&file, "value <- 1L\n").unwrap();
 
         let mut paths = Vec::new();
         collect_r_files(&file, &mut paths);
@@ -1666,9 +1761,12 @@ mod tests {
             .iter()
             .filter(|diagnostic| diagnostic.code == "RY010")
             .collect();
+        let names: Vec<_> = unresolved.iter().map(|d| d.message.as_str()).collect();
+        assert_eq!(names.len(), 1, "unexpected unbound names: {unresolved:?}");
+        assert!(names.iter().any(|m| m.contains("Surv")));
         assert!(
-            unresolved.is_empty(),
-            "unexpected unbound names: {unresolved:?}"
+            names.iter().all(|m| !m.contains("daemons")),
+            "Suggests must be attached in test contexts: {unresolved:?}"
         );
     }
 
@@ -1712,9 +1810,11 @@ mod tests {
             .iter()
             .filter(|diagnostic| diagnostic.code == "RY010")
             .collect();
+        let names: Vec<_> = unresolved.iter().map(|d| d.message.as_str()).collect();
+        assert!(names.is_empty(), "unexpected unbound names: {unresolved:?}");
         assert!(
-            unresolved.is_empty(),
-            "unexpected unbound names: {unresolved:?}"
+            names.iter().all(|m| !m.contains("daemons")),
+            "Suggests must be attached in test contexts: {unresolved:?}"
         );
     }
 
@@ -1793,6 +1893,36 @@ mod tests {
         .unwrap();
         assert_eq!(result.diagnostics.len(), 1);
         assert_eq!(result.diagnostics[0].code, "RY097");
+    }
+
+    #[test]
+    fn latin1_source_comment_does_not_skip_checking() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("latin1.R");
+        std::fs::write(&file, b"# Caf\xe9\nmissing_name\n").unwrap();
+
+        let result = run_check_once(
+            &[file],
+            &ry_checker::SeverityFilter::default(),
+            OutputFormat::Json,
+            &[],
+            &[],
+            std::sync::Arc::new(std::collections::BTreeMap::new()),
+            false,
+            None,
+            Some(temp.path()),
+            ry_checker::Confidence::Low,
+        )
+        .unwrap();
+
+        assert_eq!(result.file_count, 1);
+        assert_eq!(result.parse_errors, 0);
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY010")
+        );
     }
 
     #[test]

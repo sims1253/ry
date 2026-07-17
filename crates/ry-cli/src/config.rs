@@ -26,6 +26,15 @@ pub const DEFAULT_OUTPUT_FORMAT: &str = "full";
 
 /// The on-disk filename ry looks for.
 pub const CONFIG_FILENAME: &str = "ry.toml";
+pub const DEFAULT_MAX_SERIALIZED_BYTES: u64 = 2 * 1024 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentConfig {
+    pub name: String,
+    pub bindings: Vec<String>,
+    pub paths: Vec<String>,
+}
 
 /// Parsed contents of a `ry.toml` project config file.
 ///
@@ -75,6 +84,9 @@ pub struct Config {
     /// unresolvable `load()`. These become opaque project bindings without
     /// suppressing diagnostics for other names.
     pub globals: Vec<String>,
+    #[serde(alias = "max-serialized-bytes")]
+    pub max_serialized_bytes: u64,
+    pub environments: Vec<EnvironmentConfig>,
     /// Runtime typeshed directories. Relative entries are anchored at the
     /// directory containing this configuration file.
     pub typeshed: Vec<PathBuf>,
@@ -119,6 +131,8 @@ impl Config {
             r_version: None,
             packages: Vec::new(),
             globals: Vec::new(),
+            max_serialized_bytes: DEFAULT_MAX_SERIALIZED_BYTES,
+            environments: Vec::new(),
             typeshed: Vec::new(),
             baseline: None,
         }
@@ -260,6 +274,8 @@ impl Config {
             // Config-only (no CLI flag): passes through unchanged.
             packages: self.packages,
             globals: self.globals,
+            max_serialized_bytes: self.max_serialized_bytes,
+            environments: self.environments,
             typeshed,
             baseline,
         }
@@ -397,6 +413,26 @@ baseline = "diagnostics.json"
         assert_eq!(cfg.globals, vec!["runtime_data", "generated_lookup"]);
         assert_eq!(cfg.typeshed, vec![PathBuf::from("stubs")]);
         assert_eq!(cfg.baseline, Some(PathBuf::from("diagnostics.json")));
+    }
+
+    #[test]
+    fn parse_environment_profiles_and_serialized_byte_cap() {
+        let cfg: Config = toml::from_str(
+            r#"
+max-serialized-bytes = 4096
+
+[[environments]]
+name = "shiny-server"
+bindings = ["input", "output", "session"]
+paths = ["inst/shiny/**"]
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.max_serialized_bytes, 4096);
+        assert_eq!(cfg.environments.len(), 1);
+        assert_eq!(cfg.environments[0].name, "shiny-server");
+        assert_eq!(cfg.environments[0].bindings, ["input", "output", "session"]);
+        assert_eq!(cfg.environments[0].paths, ["inst/shiny/**"]);
     }
 
     #[test]

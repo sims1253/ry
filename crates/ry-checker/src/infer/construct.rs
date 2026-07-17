@@ -46,12 +46,23 @@ impl Checker {
     pub(crate) fn infer_list(&mut self, arg_types: &[RType], args: &[Arg], _span: Span) -> RType {
         let length = Length::Known(arg_types.len());
         let base = RType::new(Mode::List, length);
-        let schema = build_named_schema(arg_types, args);
-        if let Some(s) = schema {
-            base.with_columns(Arc::new(s))
-        } else {
-            base
+        let mut schema = build_named_schema(arg_types, args).unwrap_or(ColumnSchema {
+            columns: Vec::new(),
+            complete: true,
+            locally_constructed: true,
+        });
+        schema.locally_constructed = true;
+        // `...` (and parser-opaque splice forms) can contribute arbitrary
+        // fields at runtime. Preserve fields we can see, but never treat the
+        // result as a closed record: absent fields are not known NULL and
+        // cannot justify missing-column diagnostics.
+        if args.iter().any(|arg| {
+            matches!(&arg.value, Expr::Ident { name, .. } if name == "...")
+                || matches!(&arg.value, Expr::Unknown(_))
+        }) {
+            schema.complete = false;
         }
+        base.with_columns(Arc::new(schema))
     }
 
     // Infer the type of `data.frame(...)`. Same column-schema logic as
@@ -521,6 +532,7 @@ impl Checker {
                     result = result.with_columns(Arc::new(ColumnSchema {
                         columns: cols,
                         complete: true,
+                        locally_constructed: false,
                     }));
                 }
                 result

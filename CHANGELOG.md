@@ -2,7 +2,126 @@
 
 All notable changes to ry are documented in this file.
 
-## [0.5.0] - 2026-07-16
+## [0.6.0] - 2026-07-17
+
+Driven by the ry 0.5.0 top-500 CRAN audit (9,237 diagnostics, 1.55%
+precision) and a subsequent generalization pass. On the same 504-package
+corpus this release emits 3,442 diagnostics (-63%; -69% counting only
+warnings/errors), with every previously cataloged true positive either
+preserved or its loss individually adjudicated, and ~10 new real shipped
+bugs found by the new RY100 rule. Minor bump: scope resolution, rule
+routing (RY001/RY003), and quoting semantics intentionally change
+reported diagnostics.
+
+### Added
+
+- RY003 `numeric-condition` (Info): numeric `if`/`while` conditions are
+  legal, idiomatic R (`if (nchar(x))`, `if (n)`); they are no longer
+  RY001 warnings. RY001 keeps the genuinely erroneous modes (character,
+  list, NULL, function, length-0).
+- RY100 `comparison-inside-math-call` (Warning): a comparison directly
+  inside `abs`/`sqrt`/`exp`/`log*`/`floor`/`ceiling`/`round`/`trunc` is
+  almost always a parenthesization slip (`abs(x > y)` for `abs(x) > y`).
+  Generalizes RY093, ry's highest-precision rule; corpus census found 10+
+  real shipped bugs (effects, ggplot2 tests, performance, pracma) at ~100%
+  precision after excluding the deliberate `sign(cmp)` indicator idiom.
+- RY040 fires on arithmetic with a known-NULL operand (`x / NULL` is
+  `numeric(0)`), gated to literal NULLs and missing fields of complete,
+  locally built `list(...)` schemas so parameter defaults never trip it.
+- Environment profiles: files sourced into a known framework context get
+  its ambient bindings. Shiny app trees (`input`/`output`/`session`) ship
+  built in; users declare their own via `[[environments]]` in `ry.toml`
+  (`name`, `bindings`, `paths`).
+- `ry.toml` `max-serialized-bytes` (default 2 MiB) caps `.rda` workspace
+  enumeration; oversized workspaces open the file's scope instead of
+  stalling the scan (bigD: 190 s -> 0.13 s).
+- File collection accepts the full R source extension set (`.S`, `.s`,
+  `.q` — boot's entire library was previously invisible), decodes Latin-1
+  sources instead of skipping them, and skips `*.Rcheck` build artifacts.
+
+### Scope and name resolution
+
+- `library()`/`require()` of a package without a stub marks the search
+  path unknown, silencing RY010 for names that plausibly come from it —
+  the single largest false-positive source in the audit (lazy-loaded
+  datasets such as `sleepstudy`, `apipop`). Stubbed packages keep full
+  checking. `data()`/`load()`/`source()`/`sys.source()` declare the same
+  effect via stub metadata; `data(x)` also binds its literal names.
+- Attachment is context-scoped to match R's semantics: package `R/` code
+  resolves bare names against base plus exactly what NAMESPACE grants
+  (`importFrom` names, wholesale `import(pkg)` exports); test and script
+  files resolve against the testthat runner world (testthat, the package
+  under test, helper/setup and in-file `library()` calls, and DESCRIPTION
+  Suggests). Imports no longer leak whole-package exports into files that
+  never attached them (arrow's `string`/`int`/`dbl` vs rlang).
+- Loop bodies pre-bind names assigned anywhere in the body, so
+  loop-carried accumulators read before their first syntactic assignment
+  no longer fire RY010.
+- `on.exit(expr)` is checked against exit-time bindings (everything the
+  function assigns), not walk-order bindings.
+
+### NSE and quoting
+
+- User functions that quote their arguments are detected from their
+  bodies — `substitute`/`match.call`/`sys.call`/`bquote` and, via stub
+  metadata, the rlang capture family (`enquo`, `enexpr`, `ensym`, plural
+  forms, `quos`) — and the property propagates: through direct argument
+  forwarding between user functions, from stub eval modes into user
+  wrappers, and from S3 methods onto their generics (named method params
+  absorbed by the generic's `...` included). lambda.r: 165 -> 0 RY010;
+  sparklyr: 93 -> 0.
+- Quoted arguments receive no diagnostics at all — they are data, not
+  code (igraph's `graph_from_literal(A +-+ B)` no longer type-errors).
+- Operands of unknown `%op%` infix operators and unresolvable `.()`
+  calls are treated as quoted.
+- Formula-interface arguments (`weights`, `subset`, `offset`, `id`,
+  `cluster`, `istate`) evaluate inside the `data` mask via the new
+  `data_mask_source` stub metadata (stats and survival interfaces).
+- String-literal calls (`"paste"(1, 2)`, `"[<-.data.frame"(...)`) resolve
+  like identifiers instead of firing RY070; character *variables* in call
+  position still do.
+
+### Type system
+
+- Divergence-aware narrowing: a guard whose branch always exits
+  (`if (is.null(x)) stop(...)`, `return`, `abort` via the new `no_return`
+  stub property, `if (!length(x)) return(...)`) narrows the continuation.
+  Never-returning user helpers are detected recursively; a project-local
+  function named `abort` is not assumed to diverge.
+- Narrowing-installed bindings are tracked explicitly, so a real
+  assignment inside a branch always overrides a temporary refinement in
+  the post-if merge (fixes stale-NULL cascades through the cross-file
+  fixpoint).
+- `df[, j]` single-column selection honors `drop = TRUE` (a parser fix:
+  the empty row index was previously dropped entirely) and returns the
+  column type; scalar subscripts narrow to length 1; negative literals
+  keep vector length.
+- S3 dispatch walks the full class vector across all method sources;
+  `Ops`/`Math`/`Summary` group generics dispatch for data.frames and user
+  classes (`df / 2`, `ggplot() + NULL`-style idioms); RY050 fires only
+  for generics the project itself demonstrably owns.
+- `list(...)` containing dots yields an incomplete schema — a missing
+  field is no longer known-NULL; `$`/`[[` through a parameter whose only
+  evidence is an overridable NULL default yields unknown.
+- A condition typed as a union with at least one valid length-1 logical
+  member is not reported (only provably invalid unions are).
+- `append()` returns the concatenation of its arguments; `tapply` gained
+  a higher-order simplify spec; `mapply` honors `SIMPLIFY = TRUE`
+  (all stub-data fixes, vendored from r-typeshed 0.2.0 along with new
+  rlang and cli stubs).
+
+### Fixed
+
+- Panic (`index out of bounds`) in quoting-forwarding when a user callee
+  and a stub callee had different parameter counts; it crashed scans of
+  17 corpus packages (psych, rlang, recipes, …).
+- `readLines()` no longer demands `con` (stub had it wrongly required);
+  a generator-level fix detects `missing()`-based optionality so the
+  whole class (`rlang::env_get(default=)`) cannot recur.
+- RY033's stale-type false positives after both `if`/`else` arms rebind a
+  variable.
+- RY100 subsumes the condition-type diagnostic on the same span (no
+  double reporting).
 
 Driven by the ranks-301-500 audit (ry 0.4.0 on the top-500 CRAN packages).
 Minor bump: RY050's dispatch semantics, RY097's collapse criteria, and the

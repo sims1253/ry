@@ -382,6 +382,7 @@ impl Checker {
                     type_: t,
                     required,
                     defused: parameter_is_defused(&body, &p.name),
+                    quoting: parameter_is_quoted(&body, params, &p.name),
                 }
             })
             .collect();
@@ -432,6 +433,12 @@ impl Checker {
         scope.insert(name.to_string(), RType::scalar(Mode::Function));
         insert_s3_dispatch_context(name, &mut scope, &self.typeshed.globals);
 
+        // Keep deferred expressions (notably `on.exit(expr)`) in the same
+        // exit-time lexical context during fixpoint inference as during the
+        // final diagnostic walk.
+        self.deferred_captures
+            .push(assigned_names_in_body(&body_clone));
+
         let mut returns: Vec<RType> = Vec::new();
         // Walk the body via the unified walker in discarding mode, with
         // return collection enabled. The discarding flag is set by the
@@ -462,6 +469,7 @@ impl Checker {
             iter.fold(first, |acc, t| acc.join(t))
         };
         Arc::make_mut(&mut self.return_slots).set(slot, joined);
+        self.deferred_captures.pop();
         self.inferring.pop();
     }
 
@@ -481,6 +489,379 @@ impl Checker {
     //     (then/else); bindings leak into subsequent statements.
     //   * Loop bodies are walked once (not to fixpoint).
     //   * Indexed assignment (`x[i] <- v`) does not update the scope.
+}
+
+/// Whether `parameter` is captured without evaluation by this function.
+///
+/// `match.call()`, `sys.call()`, and `sys.function()` capture the complete
+/// call, so they make every formal quoting. `missing(p)` is deliberately not
+/// included: it tests a promise without changing how an argument is evaluated.
+fn parameter_is_quoted(body: &[Stmt], params: &[Param], parameter: &str) -> bool {
+    body.iter().any(stmt_captures_all_arguments)
+        || (params.iter().any(|formal| formal.name == parameter)
+            && (body
+                .iter()
+                .any(|statement| stmt_quotes_parameter(statement, parameter))
+                // Variadic promise-capture helpers capture the promises
+                // stored in `...`; there is no single argument to match
+                // syntactically.
+                || (parameter == "..."
+                    && body
+                        .iter()
+                .any(|statement| stmt_captures_promise_parameter(statement, parameter))))
+            // Promise-capture helpers only make a promise safe to pass
+            // unevaluated when that promise is not also used normally in
+            // this function.  This preserves eager diagnostics for mixed
+            // bodies such as a capture followed by `print(x)`.
+            && !(body
+                .iter()
+                .any(|statement| stmt_captures_promise_parameter(statement, parameter))
+                && parameter_has_normal_use(body, parameter)))
+}
+
+fn parameter_has_normal_use(body: &[Stmt], parameter: &str) -> bool {
+    let mut uses = ParameterUses::default();
+    for statement in body {
+        collect_parameter_uses_in_stmt(statement, parameter, &mut uses);
+    }
+    uses.normal
+}
+
+fn stmt_captures_all_arguments(statement: &Stmt) -> bool {
+    match statement {
+        Stmt::Assign { target, value, .. } => {
+            expr_captures_all_arguments(target) || expr_captures_all_arguments(value)
+        }
+        Stmt::Expr(expression) => expr_captures_all_arguments(expression),
+        Stmt::If {
+            cond, then, else_, ..
+        } => {
+            expr_captures_all_arguments(cond)
+                || then.iter().any(stmt_captures_all_arguments)
+                || else_.iter().flatten().any(stmt_captures_all_arguments)
+        }
+        Stmt::For { iter, body, .. } => {
+            expr_captures_all_arguments(iter) || body.iter().any(stmt_captures_all_arguments)
+        }
+        Stmt::While { cond, body, .. } => {
+            expr_captures_all_arguments(cond) || body.iter().any(stmt_captures_all_arguments)
+        }
+        Stmt::FunctionDef { .. } => false,
+        Stmt::Return { value, .. } => value.as_ref().is_some_and(expr_captures_all_arguments),
+    }
+}
+
+fn expr_captures_all_arguments(expression: &Expr) -> bool {
+    match expression {
+        Expr::Call { func, args, .. } => {
+            matches!(
+                bare_call_name(func),
+                Some("match.call" | "sys.call" | "sys.function")
+            ) || expr_captures_all_arguments(func)
+                || args
+                    .iter()
+                    .any(|argument| expr_captures_all_arguments(&argument.value))
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            expr_captures_all_arguments(lhs) || expr_captures_all_arguments(rhs)
+        }
+        Expr::UnaryOp { expr, .. } => expr_captures_all_arguments(expr),
+        Expr::Index { base, args, .. } => {
+            expr_captures_all_arguments(base)
+                || args
+                    .iter()
+                    .any(|argument| expr_captures_all_arguments(&argument.value))
+        }
+        Expr::Block { body, .. } => body.iter().any(stmt_captures_all_arguments),
+        Expr::If {
+            cond, then, else_, ..
+        } => {
+            expr_captures_all_arguments(cond)
+                || expr_captures_all_arguments(then)
+                || else_
+                    .as_ref()
+                    .is_some_and(|else_| expr_captures_all_arguments(else_))
+        }
+        Expr::Function { .. }
+        | Expr::Ident { .. }
+        | Expr::Logical(_, _)
+        | Expr::Integer(_, _)
+        | Expr::Double(_, _)
+        | Expr::String(_, _)
+        | Expr::Null(_)
+        | Expr::Na(_, _)
+        | Expr::Unknown(_) => false,
+    }
+}
+
+fn stmt_quotes_parameter(statement: &Stmt, parameter: &str) -> bool {
+    match statement {
+        Stmt::Assign { target, value, .. } => {
+            expr_quotes_parameter(target, parameter) || expr_quotes_parameter(value, parameter)
+        }
+        Stmt::Expr(expression) => expr_quotes_parameter(expression, parameter),
+        Stmt::If {
+            cond, then, else_, ..
+        } => {
+            expr_quotes_parameter(cond, parameter)
+                || then
+                    .iter()
+                    .any(|statement| stmt_quotes_parameter(statement, parameter))
+                || else_
+                    .iter()
+                    .flatten()
+                    .any(|statement| stmt_quotes_parameter(statement, parameter))
+        }
+        Stmt::For { iter, body, .. } => {
+            expr_quotes_parameter(iter, parameter)
+                || body
+                    .iter()
+                    .any(|statement| stmt_quotes_parameter(statement, parameter))
+        }
+        Stmt::While { cond, body, .. } => {
+            expr_quotes_parameter(cond, parameter)
+                || body
+                    .iter()
+                    .any(|statement| stmt_quotes_parameter(statement, parameter))
+        }
+        Stmt::FunctionDef { .. } => false,
+        Stmt::Return { value, .. } => value
+            .as_ref()
+            .is_some_and(|expression| expr_quotes_parameter(expression, parameter)),
+    }
+}
+
+fn expr_quotes_parameter(expression: &Expr, parameter: &str) -> bool {
+    match expression {
+        Expr::Call { func, args, .. } => {
+            (matches!(bare_call_name(func), Some("substitute"))
+                && args
+                    .first()
+                    .is_some_and(|argument| is_parameter(&argument.value, parameter)))
+                || (is_single_promise_capture(func)
+                    && args
+                        .first()
+                        .is_some_and(|argument| is_parameter(&argument.value, parameter)))
+                || (matches!(bare_call_name(func), Some("bquote"))
+                    && args
+                        .iter()
+                        .any(|argument| bquote_references_parameter(&argument.value, parameter)))
+                || expr_quotes_parameter(func, parameter)
+                || args
+                    .iter()
+                    .any(|argument| expr_quotes_parameter(&argument.value, parameter))
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            expr_quotes_parameter(lhs, parameter) || expr_quotes_parameter(rhs, parameter)
+        }
+        Expr::UnaryOp { expr, .. } => expr_quotes_parameter(expr, parameter),
+        Expr::Index { base, args, .. } => {
+            expr_quotes_parameter(base, parameter)
+                || args
+                    .iter()
+                    .any(|argument| expr_quotes_parameter(&argument.value, parameter))
+        }
+        Expr::Block { body, .. } => body
+            .iter()
+            .any(|statement| stmt_quotes_parameter(statement, parameter)),
+        Expr::If {
+            cond, then, else_, ..
+        } => {
+            expr_quotes_parameter(cond, parameter)
+                || expr_quotes_parameter(then, parameter)
+                || else_
+                    .as_ref()
+                    .is_some_and(|else_| expr_quotes_parameter(else_, parameter))
+        }
+        Expr::Function { .. }
+        | Expr::Ident { .. }
+        | Expr::Logical(_, _)
+        | Expr::Integer(_, _)
+        | Expr::Double(_, _)
+        | Expr::String(_, _)
+        | Expr::Null(_)
+        | Expr::Na(_, _)
+        | Expr::Unknown(_) => false,
+    }
+}
+
+fn stmt_captures_promise_parameter(statement: &Stmt, parameter: &str) -> bool {
+    match statement {
+        Stmt::Assign { target, value, .. } => {
+            expr_captures_promise_parameter(target, parameter)
+                || expr_captures_promise_parameter(value, parameter)
+        }
+        Stmt::Expr(expression) => expr_captures_promise_parameter(expression, parameter),
+        Stmt::If {
+            cond, then, else_, ..
+        } => {
+            expr_captures_promise_parameter(cond, parameter)
+                || then
+                    .iter()
+                    .any(|statement| stmt_captures_promise_parameter(statement, parameter))
+                || else_
+                    .iter()
+                    .flatten()
+                    .any(|statement| stmt_captures_promise_parameter(statement, parameter))
+        }
+        Stmt::For { iter, body, .. } => {
+            expr_captures_promise_parameter(iter, parameter)
+                || body
+                    .iter()
+                    .any(|statement| stmt_captures_promise_parameter(statement, parameter))
+        }
+        Stmt::While { cond, body, .. } => {
+            expr_captures_promise_parameter(cond, parameter)
+                || body
+                    .iter()
+                    .any(|statement| stmt_captures_promise_parameter(statement, parameter))
+        }
+        Stmt::FunctionDef { .. } => false,
+        Stmt::Return { value, .. } => value
+            .as_ref()
+            .is_some_and(|expression| expr_captures_promise_parameter(expression, parameter)),
+    }
+}
+
+fn expr_captures_promise_parameter(expression: &Expr, parameter: &str) -> bool {
+    match expression {
+        Expr::Call { func, args, .. } => {
+            (is_single_promise_capture(func)
+                && args
+                    .first()
+                    .is_some_and(|argument| is_parameter(&argument.value, parameter)))
+                || (is_dots_promise_capture(func) && parameter == "...")
+                || expr_captures_promise_parameter(func, parameter)
+                || args
+                    .iter()
+                    .any(|argument| expr_captures_promise_parameter(&argument.value, parameter))
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            expr_captures_promise_parameter(lhs, parameter)
+                || expr_captures_promise_parameter(rhs, parameter)
+        }
+        Expr::UnaryOp { expr, .. } => expr_captures_promise_parameter(expr, parameter),
+        Expr::Index { base, args, .. } => {
+            expr_captures_promise_parameter(base, parameter)
+                || args
+                    .iter()
+                    .any(|argument| expr_captures_promise_parameter(&argument.value, parameter))
+        }
+        Expr::Block { body, .. } => body
+            .iter()
+            .any(|statement| stmt_captures_promise_parameter(statement, parameter)),
+        Expr::If {
+            cond, then, else_, ..
+        } => {
+            expr_captures_promise_parameter(cond, parameter)
+                || expr_captures_promise_parameter(then, parameter)
+                || else_
+                    .as_ref()
+                    .is_some_and(|else_| expr_captures_promise_parameter(else_, parameter))
+        }
+        Expr::Function { .. }
+        | Expr::Ident { .. }
+        | Expr::Logical(_, _)
+        | Expr::Integer(_, _)
+        | Expr::Double(_, _)
+        | Expr::String(_, _)
+        | Expr::Null(_)
+        | Expr::Na(_, _)
+        | Expr::Unknown(_) => false,
+    }
+}
+
+/// Whether a package stub declares this callee as a promise-capture helper.
+/// Collection happens before ordinary call-site resolution, so bare names are
+/// recognized from the loaded stub inventory rather than lexical scope.
+fn is_promise_capture(function: &Expr, dots: bool) -> bool {
+    let Some(name) = ident_name(function) else {
+        return false;
+    };
+    let (package, function) = name
+        .rsplit_once("::")
+        .map(|(package, function)| (Some(package.trim_end_matches(':')), function))
+        .unwrap_or((None, name));
+    let has_capture = |signature: &FunctionSig| {
+        signature.eval.iter().any(|(parameter, mode)| {
+            *mode == EvalMode::CapturesPromise && (parameter == "...") == dots
+        })
+    };
+    match package {
+        Some(package) => ry_typeshed::load_package(package)
+            .and_then(|typeshed| typeshed.functions.get(function))
+            .is_some_and(has_capture),
+        None => {
+            ry_typeshed::load_base_cached()
+                .ok()
+                .and_then(|typeshed| typeshed.functions.get(function))
+                .is_some_and(has_capture)
+                || ry_typeshed::known_packages().any(|package| {
+                    ry_typeshed::load_package(package)
+                        .and_then(|typeshed| typeshed.functions.get(function))
+                        .is_some_and(has_capture)
+                })
+        }
+    }
+}
+
+fn is_single_promise_capture(function: &Expr) -> bool {
+    is_promise_capture(function, false)
+}
+
+fn is_dots_promise_capture(function: &Expr) -> bool {
+    is_promise_capture(function, true)
+}
+
+fn bquote_references_parameter(expression: &Expr, parameter: &str) -> bool {
+    match expression {
+        Expr::Call { func, args, .. }
+            if matches!(bare_call_name(func), Some("."))
+                && args
+                    .iter()
+                    .any(|argument| is_parameter(&argument.value, parameter)) =>
+        {
+            true
+        }
+        Expr::Call { func, args, .. } => {
+            bquote_references_parameter(func, parameter)
+                || args
+                    .iter()
+                    .any(|argument| bquote_references_parameter(&argument.value, parameter))
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            bquote_references_parameter(lhs, parameter)
+                || bquote_references_parameter(rhs, parameter)
+        }
+        Expr::UnaryOp { expr, .. } => bquote_references_parameter(expr, parameter),
+        Expr::Index { base, args, .. } => {
+            bquote_references_parameter(base, parameter)
+                || args
+                    .iter()
+                    .any(|argument| bquote_references_parameter(&argument.value, parameter))
+        }
+        Expr::Block { body, .. } => body
+            .iter()
+            .any(|statement| stmt_quotes_parameter(statement, parameter)),
+        Expr::If {
+            cond, then, else_, ..
+        } => {
+            bquote_references_parameter(cond, parameter)
+                || bquote_references_parameter(then, parameter)
+                || else_
+                    .as_ref()
+                    .is_some_and(|else_| bquote_references_parameter(else_, parameter))
+        }
+        _ => false,
+    }
+}
+
+fn bare_call_name(expression: &Expr) -> Option<&str> {
+    ident_name(expression).map(|name| name.rsplit_once("::").map(|(_, bare)| bare).unwrap_or(name))
+}
+
+fn is_parameter(expression: &Expr, parameter: &str) -> bool {
+    matches!(expression, Expr::Ident { name, .. } if name == parameter)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -568,24 +949,20 @@ fn collect_parameter_uses_in_expr(expression: &Expr, parameter: &str, uses: &mut
             }
         }
         Expr::Call { func, args, .. } => {
-            let defuses_direct_argument = ident_name(func).is_some_and(|name| {
-                matches!(
-                    name.rsplit_once("::").map(|(_, bare)| bare).unwrap_or(name),
-                    "enquos"
-                        | "enexprs"
-                        | "ensyms"
-                        | "quos"
-                        | "exprs"
-                        | "match.call"
-                        | "substitute"
-                )
-            });
+            let probes_promise = matches!(bare_call_name(func), Some("missing"));
+            let defuses_direct_argument = is_single_promise_capture(func)
+                || is_dots_promise_capture(func)
+                || matches!(bare_call_name(func), Some("match.call" | "substitute"));
             collect_parameter_uses_in_expr(func, parameter, uses);
             for argument in args {
                 if matches!(&argument.value, Expr::Ident { name, .. } if name == parameter) {
                     if defuses_direct_argument {
                         uses.defused = true;
-                    } else {
+                    } else if !probes_promise {
+                        // `missing(p)` inspects whether a promise was
+                        // supplied without forcing it. It should therefore
+                        // neither cancel a later NSE capture nor itself make
+                        // the parameter quoted.
                         uses.normal = true;
                     }
                 } else {
@@ -683,21 +1060,12 @@ fn first_parameter_use_in_expr(expression: &Expr, parameter: &str) -> Option<Fir
     match expression {
         Expr::Ident { name, .. } => (name == parameter).then_some(FirstParameterUse::Normal),
         Expr::Call { func, args, .. } => {
-            let defuses_direct_argument = ident_name(func).is_some_and(|name| {
-                matches!(
-                    name.rsplit_once("::").map(|(_, bare)| bare).unwrap_or(name),
-                    "enquo"
-                        | "enquos"
-                        | "enexpr"
-                        | "enexprs"
-                        | "ensym"
-                        | "ensyms"
-                        | "quo"
-                        | "substitute"
-                        | "match.call"
-                        | "bquote"
-                )
-            });
+            let defuses_direct_argument = is_single_promise_capture(func)
+                || is_dots_promise_capture(func)
+                || matches!(
+                    bare_call_name(func),
+                    Some("substitute" | "match.call" | "bquote")
+                );
             if defuses_direct_argument
                 && args.iter().any(|argument| {
                     matches!(&argument.value, Expr::Ident { name, .. } if name == parameter)

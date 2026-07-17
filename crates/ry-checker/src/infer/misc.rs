@@ -107,10 +107,10 @@ pub(crate) fn is_dot_pronoun(e: &Expr) -> bool {
 /// information we can glean from a type predicate call like
 /// `is.numeric(x)` or `is.null(x)`.
 ///
-/// `Narrowing::Positive` means "in the `then` branch, `var` is of the
-/// given mode". `Negative` means "in the `else_` branch, `var` is NOT
-/// of the given mode" (we only model this for `is.null`, where the
-/// negation is meaningful: the value is non-null).
+/// `Narrowing::Positive` means "in the `then` branch, `var` satisfies the
+/// predicate". `Negative` is its negated counterpart: the `else` branch
+/// satisfies the predicate, while the `then` branch may be narrowed away
+/// from it when that complement is representable.
 #[derive(Debug, Clone)]
 pub(crate) enum Narrowing {
     /// No refinement could be extracted from the condition.
@@ -123,11 +123,16 @@ pub(crate) enum Narrowing {
     /// `is.numeric` (a group) from `is.double` (a single mode) and so
     /// rewrote a known Integer to Double.
     Positive { var: String, target: RType },
-    /// `var` is narrowed away from `mode` in the negative (else) branch.
-    /// Only meaningful for `is.null` (negation = non-null).
-    Negative { var: String, mode: Mode },
-    /// A negated class predicate: the class is known only in the else branch.
-    NegativeClass { var: String, target: RType },
+    /// `var` satisfies `target` in the `else` branch of `!predicate(var)`.
+    Negative { var: String, target: RType },
+    /// An `||` guard whose false path proves a predicate. It deliberately
+    /// has no then-branch refinement: either operand may have made the
+    /// condition true.
+    Else { var: String, target: RType },
+    /// A zero-length guard (`!length(x)` or `length(x) == 0`) whose false
+    /// path proves only that `x` is non-NULL.  This is deliberately weaker
+    /// than claiming anything about its storage mode or non-emptiness.
+    NonNullElse { var: String },
 }
 
 /// Extract a type narrowing from an `if` condition expression.
@@ -135,12 +140,8 @@ pub(crate) enum Narrowing {
 ///   * `is.numeric(x)` / `is.double(x)` / `is.integer(x)` /
 ///     `is.character(x)` / `is.logical(x)` / `is.complex(x)` /
 ///     `is.list(x)` / `is.function(x)` / `is.null(x)`
-///   * `!is.null(x)` (negated form: `then` branch gets non-null)
+///   * negated forms of all the predicates above
 ///
-/// For the negated form `!is.null(x)`, we swap: the `then` branch gets
-/// the negative narrowing (non-null), and the `else_` branch gets the
-/// positive narrowing (null). This is handled by returning a `Negative`
-/// variant which `apply_narrowing` applies to the `then` branch.
 pub(crate) fn extract_type_narrowing(cond: &Expr) -> Narrowing {
     match cond {
         Expr::Call { func, args, .. } => {
@@ -177,9 +178,9 @@ pub(crate) fn extract_type_narrowing(cond: &Expr) -> Narrowing {
             expr,
             ..
         } => {
-            // `!is.null(x)`: swap the narrowing so the `then` branch
-            // gets the negative (non-null) and `else_` gets the
-            // positive (null).
+            if let Some(var) = length_guard_var(expr) {
+                return Narrowing::NonNullElse { var };
+            }
             let Expr::Call { func, args, .. } = expr.as_ref() else {
                 return Narrowing::None;
             };
@@ -192,27 +193,107 @@ pub(crate) fn extract_type_narrowing(cond: &Expr) -> Narrowing {
             }) else {
                 return Narrowing::None;
             };
-            if name == "inherits" {
-                let Some(target) = args.get(1).and_then(|arg| match &arg.value {
+            let target = if name == "inherits" {
+                args.get(1).and_then(|arg| match &arg.value {
                     Expr::String(class, _) if !class.is_empty() => {
                         Some(RType::unknown().with_class(ClassVector::single(class)))
                     }
                     _ => None,
-                }) else {
-                    return Narrowing::None;
-                };
-                return Narrowing::NegativeClass { var, target };
-            }
-            // Only `!is.null(x)` and `!inherits(x, "class")` are modeled.
-            if name != "is.null" {
+                })
+            } else {
+                predicate_target(name).or_else(|| s3_predicate_target(name))
+            };
+            let Some(target) = target else {
                 return Narrowing::None;
-            }
-            Narrowing::Negative {
-                var,
-                mode: Mode::Null,
+            };
+            Narrowing::Negative { var, target }
+        }
+        Expr::BinOp {
+            op: BinOpKind::Eq,
+            lhs,
+            rhs,
+            ..
+        } if is_zero_literal(rhs) => {
+            if let Some(var) = length_guard_var(lhs) {
+                Narrowing::NonNullElse { var }
+            } else {
+                Narrowing::None
             }
         }
+        Expr::BinOp {
+            op: BinOpKind::OrOr,
+            lhs,
+            rhs,
+            ..
+        } => {
+            // The false path through `a || b` reaches the continuation only
+            // when both operands are false. Keep this intentionally strict:
+            // a null guard may contribute its non-null fact only when the
+            // other operand is also a predicate over the same variable.
+            let Narrowing::Positive { var, target } = extract_type_narrowing(lhs) else {
+                return Narrowing::None;
+            };
+            if target.mode != Mode::Null || predicate_var(rhs).as_deref() != Some(&var) {
+                return Narrowing::None;
+            }
+            Narrowing::Else { var, target }
+        }
+        Expr::BinOp {
+            op: BinOpKind::And | BinOpKind::AndAnd,
+            lhs,
+            rhs,
+            ..
+        } => {
+            // A true conjunction proves each conjunct.  In particular,
+            // `if (ready & !is.null(x))` makes `x` non-null in the body;
+            // retaining the NULL default there fabricates length-zero
+            // comparisons such as `x %in% c("a", "b")`.
+            for operand in [lhs.as_ref(), rhs.as_ref()] {
+                if let Narrowing::Negative { var, target } = extract_type_narrowing(operand)
+                    && target.mode == Mode::Null
+                {
+                    return Narrowing::Negative { var, target };
+                }
+            }
+            Narrowing::None
+        }
         _ => Narrowing::None,
+    }
+}
+
+fn length_guard_var(expr: &Expr) -> Option<String> {
+    let Expr::Call { func, args, .. } = expr else {
+        return None;
+    };
+    if !matches!(func.as_ref(), Expr::Ident { name, .. } if name == "length") {
+        return None;
+    }
+    match &args.first()?.value {
+        Expr::Ident { name, .. } => Some(name.clone()),
+        _ => None,
+    }
+}
+
+fn is_zero_literal(expr: &Expr) -> bool {
+    matches!(expr, Expr::Integer(0, _)) || matches!(expr, Expr::Double(value, _) if *value == 0.0)
+}
+
+/// Return the variable inspected by a simple predicate. `is.na` is included
+/// here solely to recognize common compound guards such as
+/// `is.null(x) || is.na(x)`; it is not itself a type refinement.
+fn predicate_var(expr: &Expr) -> Option<String> {
+    let Expr::Call { func, args, .. } = expr else {
+        return None;
+    };
+    let Expr::Ident { name, .. } = func.as_ref() else {
+        return None;
+    };
+    if name != "is.na" && predicate_target(name).is_none() && name != "inherits" {
+        return None;
+    }
+    match &args.first()?.value {
+        Expr::Ident { name, .. } => Some(name.clone()),
+        _ => None,
     }
 }
 
@@ -298,30 +379,14 @@ pub(crate) fn narrow_away_from_null(t: &RType) -> Option<RType> {
     }
 }
 
-pub(crate) fn should_skip_narrowed_merge(existing: &RType, branch: &RType) -> bool {
-    if existing.mode == Mode::Null && !matches!(branch.mode, Mode::Null | Mode::Opaque) {
-        return false;
-    }
-    true
-}
-
 /// Apply a narrowing to produce separate scopes for the `then` and
 /// `else_` branches. Returns `(then_scope, else_scope)` where each is
 /// a clone of `base` with the appropriate binding updated.
 ///
-/// For `Positive { var, mode }`: the `then` scope narrows `var` to
-/// `mode`; the `else` scope is unchanged (we don't model negation for
-/// non-null predicates).
-///
-/// For `Negative { var, mode }`: the `then` scope is unchanged for
-/// `var` but we remove a `Null` mode if `mode == Null`; the `else`
-/// scope narrows `var` to `mode`. This handles `!is.null(x)`: the
-/// `then` branch knows `x` is non-null, the `else` branch knows `x`
-/// is null.
 pub(crate) fn apply_narrowing(
     base: &Scope,
     narrowing: &Narrowing,
-    has_else: bool,
+    _has_else: bool,
 ) -> (Scope, Scope, HashSet<String>) {
     let (mut then_scope, mut else_scope) = (base.clone(), base.clone());
     // Names refined by narrowing (in either branch). These must NOT be
@@ -387,7 +452,7 @@ pub(crate) fn apply_narrowing(
                         || class_narrowing
                         || matches!(existing.mode, Mode::Opaque | Mode::Null | Mode::Union))
                 {
-                    then_scope.insert(
+                    then_scope.insert_narrowed(
                         var.clone(),
                         RType {
                             mode: target.mode,
@@ -398,65 +463,79 @@ pub(crate) fn apply_narrowing(
                     narrowed.insert(var.clone());
                 }
             }
-            // For is.null, the else branch knows var is NOT null.
-            if target.mode == Mode::Null && has_else {
+            // For is.null, the else branch knows var is NOT null. Build this
+            // scope even without an explicit `else`: a diverging guard can
+            // make it the continuation scope.
+            if target.mode == Mode::Null {
                 if let Some(existing) = else_scope.get(var).cloned() {
                     if let Some(n) = narrow_away_from_null(&existing) {
-                        else_scope.insert(var.clone(), n);
+                        else_scope.insert_narrowed(var.clone(), n);
                         narrowed.insert(var.clone());
                     }
                 }
             }
         }
-        Narrowing::Negative { var, mode } => {
-            // The negation: `then` branch knows var is NOT of `mode`.
-            // For `!is.null(x)` (the only Negative emitted today), narrow
-            // NULL away from the then branch -- same helper as the Positive
-            // else branch.
-            if *mode == Mode::Null {
+        Narrowing::Negative { var, target } => {
+            // The true branch of a negated null predicate is non-null. Other
+            // complements are not representable in the current lattice, so
+            // leave them conservative and retain the useful else fact below.
+            if target.mode == Mode::Null {
                 if let Some(existing) = then_scope.get(var).cloned() {
                     if let Some(n) = narrow_away_from_null(&existing) {
-                        then_scope.insert(var.clone(), n);
+                        then_scope.insert_narrowed(var.clone(), n);
                         narrowed.insert(var.clone());
                     }
                 }
-            } else if let Some(existing) = then_scope.get(var).cloned() {
-                if existing.mode == *mode {
-                    then_scope.insert(var.clone(), RType::unknown());
-                    narrowed.insert(var.clone());
-                }
             }
-            // `else` branch knows var IS of `mode`. A union mode would
-            // build a malformed union here, so degrade to opaque.
-            // (Unreachable today -- `Narrowing::Negative` only ever carries
-            // `Mode::Null` -- but kept as defense in depth.)
+            install_positive_narrowing(&mut else_scope, var, target, &mut narrowed);
+        }
+        Narrowing::NonNullElse { var } => {
             if let Some(existing) = else_scope.get(var).cloned() {
-                if matches!(existing.mode, Mode::Opaque) || existing.mode == *mode {
-                    let t = if matches!(*mode, Mode::Union) {
-                        RType::unknown()
-                    } else {
-                        RType::new(*mode, existing.length)
-                    };
-                    else_scope.insert(var.clone(), t);
+                if let Some(n) = narrow_away_from_null(&existing) {
+                    else_scope.insert_narrowed(var.clone(), n);
                     narrowed.insert(var.clone());
                 }
             }
         }
-        Narrowing::NegativeClass { var, target } => {
-            if has_else && let Some(existing) = else_scope.get(var).cloned() {
-                else_scope.insert(
-                    var.clone(),
-                    RType {
-                        mode: target.mode,
-                        length: existing.length,
-                        ..target.clone()
-                    },
-                );
+        Narrowing::Else { var, target } => {
+            if let Some(existing) = else_scope.get(var).cloned()
+                && let Some(n) = narrow_away_from_null(&existing)
+            {
+                debug_assert_eq!(target.mode, Mode::Null);
+                else_scope.insert_narrowed(var.clone(), n);
                 narrowed.insert(var.clone());
             }
         }
     }
     (then_scope, else_scope, narrowed)
+}
+
+fn install_positive_narrowing(
+    scope: &mut Scope,
+    var: &str,
+    target: &RType,
+    narrowed: &mut HashSet<String>,
+) {
+    let Some(existing) = scope.get(var).cloned() else {
+        return;
+    };
+    let class_narrowing = target.class.has_known_class();
+    let incompatible_parameter_default =
+        scope.is_default_parameter(var) && !types_intersect(&existing, target);
+    let should_install = incompatible_parameter_default
+        || class_narrowing
+        || matches!(existing.mode, Mode::Opaque | Mode::Null | Mode::Union);
+    if should_install {
+        scope.insert_narrowed(
+            var.to_string(),
+            RType {
+                mode: target.mode,
+                length: existing.length,
+                ..target.clone()
+            },
+        );
+        narrowed.insert(var.to_string());
+    }
 }
 
 /// Whether two narrowing types have a representable mode intersection.
@@ -592,6 +671,7 @@ pub(crate) fn collect_forwarded_calls_in_expr(
                 calls.push(ForwardedCall {
                     caller: caller.to_string(),
                     callee: callee.to_string(),
+                    stub_callee: name.clone(),
                     caller_params: params.to_vec(),
                     arguments: args
                         .iter()
@@ -1213,6 +1293,20 @@ pub(crate) fn argument_eval_mode(
         .or_else(|| sig.eval.get("...").copied())
 }
 
+/// Locate the supplied argument named by a signature's data-mask source.
+/// Formula APIs place `data` after their quoted formula, and some calls put it
+/// after mask-evaluated arguments, so callers must not assume argument zero.
+pub(crate) fn data_mask_source_arg(sig: &FunctionSig, args: &[Arg]) -> Option<usize> {
+    let source = sig.data_mask_source.as_deref()?;
+    let names: Vec<&str> = sig.param_names().collect();
+    let source_parameter = names.iter().position(|name| *name == source)?;
+    let bindings = match_arguments(&names, args);
+    bindings
+        .param_for_arg
+        .iter()
+        .position(|parameter| *parameter == Some(source_parameter))
+}
+
 /// Resolve the resulting mode for `c(...)`. If any argument was a union,
 /// the coerce-rank ladder doesn't apply soundly, so degrade to opaque
 /// rather than emitting a malformed union.
@@ -1311,6 +1405,7 @@ pub(crate) fn build_named_schema(arg_types: &[RType], args: &[Arg]) -> Option<Co
     Some(ColumnSchema {
         columns,
         complete: true,
+        locally_constructed: false,
     })
 }
 
@@ -1379,6 +1474,7 @@ pub(crate) fn json_rtype_to_rtype(jt: &JsonRType) -> RType {
     let schema = Arc::new(ColumnSchema {
         columns: cols,
         complete: true,
+        locally_constructed: false,
     });
     base.with_columns(schema)
 }

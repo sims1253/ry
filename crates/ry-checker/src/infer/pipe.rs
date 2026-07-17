@@ -33,7 +33,7 @@ impl Checker {
             // we infer the index against `lhs_t` directly.
             Expr::Index {
                 base, kind, args, ..
-            } if is_dot_pronoun(base) => self.infer_index(lhs_t, *kind, args, span, scope),
+            } if is_dot_pronoun(base) => self.infer_index(lhs_t, *kind, args, span, false, scope),
             // Bare magrittr pronoun: `x %>% .` returns the LHS value
             // itself (the `.` refers to the LHS). This is distinct from
             // the general `Ident` arm below, which would treat `.` as a
@@ -117,7 +117,7 @@ impl Checker {
     }
 
     /// Infer the type of an `if` expression `if (cond) then else else_`.
-    /// The condition is inferred for diagnostics (RY001/RY002). Both
+    /// The condition is inferred for diagnostics (RY001/RY002/RY003). Both
     /// branches are inferred; the result is the join of their types.
     /// When `else_` is absent, R returns NULL for the else branch, so
     /// we join with NULL's type.
@@ -129,25 +129,33 @@ impl Checker {
         span: Span,
         scope: &mut Scope,
     ) -> RType {
+        let diagnostic_start = self.diagnostics.len();
         let ct = self.infer(cond, scope);
-        if ct.invalid_condition() {
+        let has_ry100 = self.diagnostics[diagnostic_start..]
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY100");
+        if matches!(
+            condition_diagnostic(&ct),
+            Some(ConditionDiagnostic::Invalid)
+        ) && !has_ry100
+        {
             self.emit(
                 Severity::Error,
                 span_of(cond),
                 "RY001",
                 format!("`if` condition is `{}`, expected length-1 logical", ct),
             );
-        } else if !matches!(ct.mode, Mode::Logical | Mode::Opaque)
+        } else if matches!(
+            condition_diagnostic(&ct),
+            Some(ConditionDiagnostic::Numeric)
+        ) && !has_ry100
             && !is_numeric_truthiness_idiom(cond, scope)
         {
             self.emit(
-                Severity::Warning,
+                Severity::Info,
                 span_of(cond),
-                "RY001",
-                format!(
-                    "`if` condition is `{}` (not logical); will be silently coerced",
-                    ct.mode
-                ),
+                "RY003",
+                format!("`if` condition is `{}`; R coerces nonzero to TRUE", ct.mode),
             );
         } else if matches!(ct.mode, Mode::Logical) {
             if let Length::Known(n) = ct.length {

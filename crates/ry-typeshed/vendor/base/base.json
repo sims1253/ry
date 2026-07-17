@@ -2693,8 +2693,14 @@
     "aov": {
       "params": [
         "formula",
-        "data"
+        "data",
+        "subset",
+        "weights",
+        "offset",
+        "..."
       ],
+      "eval": {"formula": "quoted_expression", "subset": "data_mask", "weights": "data_mask", "offset": "data_mask"},
+      "data_mask_source": "data",
       "return": {
         "mode": "list",
         "length": "8",
@@ -2709,7 +2715,7 @@
         "x",
         "values"
       ],
-      "return": "arg0"
+      "return": "concat_of_args"
     },
     "apply": {
       "params": [
@@ -3232,9 +3238,13 @@
     },
     "cor.test": {
       "params": [
-        "x",
-        "y"
+        "formula",
+        "data",
+        "subset",
+        "..."
       ],
+      "eval": {"formula": "quoted_expression", "subset": "data_mask"},
+      "data_mask_source": "data",
       "return": {
         "mode": "list",
         "length": "9",
@@ -3337,6 +3347,7 @@
       "params": [
         "..."
       ],
+      "scope_effect": "unknown_bindings",
       "return": {
         "mode": "character",
         "length": "unknown",
@@ -4059,8 +4070,14 @@
     "glm": {
       "params": [
         "formula",
-        "data"
+        "data",
+        "weights",
+        "subset",
+        "offset",
+        "..."
       ],
+      "eval": {"formula": "quoted_expression", "weights": "data_mask", "subset": "data_mask", "offset": "data_mask"},
+      "data_mask_source": "data",
       "return": {
         "mode": "list",
         "length": "30",
@@ -4678,11 +4695,30 @@
         "na": false
       }
     },
+    "load": {
+      "params": [
+        "file",
+        "envir",
+        "verbose"
+      ],
+      "scope_effect": "unknown_bindings",
+      "return": {
+        "mode": "character",
+        "length": "unknown",
+        "na": false
+      }
+    },
     "lm": {
       "params": [
         "formula",
-        "data"
+        "data",
+        "subset",
+        "weights",
+        "offset",
+        "..."
       ],
+      "eval": {"formula": "quoted_expression", "subset": "data_mask", "weights": "data_mask", "offset": "data_mask"},
+      "data_mask_source": "data",
       "return": {
         "mode": "list",
         "length": "12",
@@ -4691,6 +4727,12 @@
           "lm"
         ]
       }
+    },
+    "loess": {
+      "params": ["formula", "data", "weights", "subset", "..."],
+      "eval": {"formula": "quoted_expression", "weights": "data_mask", "subset": "data_mask"},
+      "data_mask_source": "data",
+      "return": {"mode": "list", "length": "unknown", "na": false, "class": ["loess"]}
     },
     "log": {
       "params": [
@@ -4809,7 +4851,7 @@
           "elements_after_callback"
         ],
         "result": {
-          "kind": "list_of_callback_return",
+          "kind": "simplify",
           "length_arg": 1
         }
       },
@@ -5096,6 +5138,12 @@
         "length": "5",
         "na": false
       }
+    },
+    "nls": {
+      "params": ["formula", "data", "start", "weights", "subset", "..."],
+      "eval": {"formula": "quoted_expression", "weights": "data_mask", "subset": "data_mask"},
+      "data_mask_source": "data",
+      "return": {"mode": "list", "length": "unknown", "na": false, "class": ["nls"]}
     },
     "nobs": {
       "params": [
@@ -5799,7 +5847,7 @@
       "params": [
         {
           "name": "con",
-          "required": true
+          "default": true
         },
         {
           "name": "n",
@@ -6347,6 +6395,26 @@
       ],
       "return": "arg0"
     },
+    "source": {
+      "params": [
+        "file",
+        "local",
+        "echo",
+        "print.eval",
+        "verbose",
+        "prompt.echo",
+        "encoding",
+        "max.deparse.length",
+        "chdir",
+        "..."
+      ],
+      "scope_effect": "unknown_bindings",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
     "split": {
       "params": [
         "x",
@@ -6427,6 +6495,33 @@
       "params": [
         "..."
       ],
+      "no_return": true,
+      "return": {
+        "mode": "opaque",
+        "length": "0",
+        "na": false
+      }
+    },
+    "q": {
+      "params": [
+        "save",
+        "status",
+        "runLast"
+      ],
+      "no_return": true,
+      "return": {
+        "mode": "opaque",
+        "length": "0",
+        "na": false
+      }
+    },
+    "quit": {
+      "params": [
+        "save",
+        "status",
+        "runLast"
+      ],
+      "no_return": true,
       "return": {
         "mode": "opaque",
         "length": "0",
@@ -6620,6 +6715,19 @@
         "na": true
       }
     },
+    "sys.source": {
+      "params": [
+        "file",
+        "envir",
+        "..."
+      ],
+      "scope_effect": "unknown_bindings",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
     "t": {
       "params": [
         "x"
@@ -6632,9 +6740,13 @@
     },
     "t.test": {
       "params": [
-        "x",
-        "y"
+        "formula",
+        "data",
+        "subset",
+        "..."
       ],
+      "eval": {"formula": "quoted_expression", "subset": "data_mask"},
+      "data_mask_source": "data",
       "return": {
         "mode": "list",
         "length": "9",
@@ -6695,10 +6807,20 @@
         "INDEX",
         "FUN"
       ],
+      "higher_order": {
+        "callback_param": "FUN",
+        "callback_position": 2,
+        "callback_args": [
+          "element_of_arg0"
+        ],
+        "result": {
+          "kind": "simplify"
+        }
+      },
       "return": {
-        "mode": "list",
+        "mode": "opaque",
         "length": "unknown",
-        "na": false
+        "na": true
       }
     },
     "tempfile": {
@@ -7053,9 +7175,13 @@
     },
     "wilcox.test": {
       "params": [
-        "x",
-        "y"
+        "formula",
+        "data",
+        "subset",
+        "..."
       ],
+      "eval": {"formula": "quoted_expression", "subset": "data_mask"},
+      "data_mask_source": "data",
       "return": {
         "mode": "list",
         "length": "8",

@@ -58,7 +58,7 @@ impl Checker {
                         self.infer(&argument.value, &mut local)
                     }
                 }
-                EvalMode::QuotedExpression => RType::unknown(),
+                EvalMode::QuotedExpression | EvalMode::CapturesPromise => RType::unknown(),
             };
             if let Some(raw_name) = argument.name.as_deref() {
                 let column = semantic_argument_name(raw_name);
@@ -138,6 +138,7 @@ impl Checker {
         data_type.columns = Some(Arc::new(ColumnSchema {
             columns,
             complete: schema.complete,
+            locally_constructed: false,
         }));
         data_type
     }
@@ -168,7 +169,11 @@ impl Checker {
         }
 
         if !columns.is_empty() {
-            result = result.with_columns(Arc::new(ColumnSchema { columns, complete }));
+            result = result.with_columns(Arc::new(ColumnSchema {
+                columns,
+                complete,
+                locally_constructed: false,
+            }));
         }
         result
     }

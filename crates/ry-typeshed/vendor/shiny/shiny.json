@@ -31,9 +31,11 @@
       "params": [
         "app",
         "expr",
-        "args",
-        "session"
+        "..."
       ],
+      "eval": {
+        "expr": "quoted_expression"
+      },
       "injects": [
         {
           "into": [
@@ -51,6 +53,72 @@
         "length": "0",
         "na": false
       }
+    },
+    "reactive": {
+      "params": ["x", "..."],
+      "eval": {"x": "quoted_expression"},
+      "return": {"mode": "function", "length": "1", "na": false}
+    },
+    "observe": {
+      "params": ["x", "..."],
+      "eval": {"x": "quoted_expression"},
+      "return": {"mode": "opaque", "length": "unknown", "na": false}
+    },
+    "observeEvent": {
+      "params": ["eventExpr", "handlerExpr", "..."],
+      "eval": {
+        "eventExpr": "quoted_expression",
+        "handlerExpr": "quoted_expression"
+      },
+      "return": {"mode": "opaque", "length": "unknown", "na": false}
+    },
+    "eventReactive": {
+      "params": ["eventExpr", "valueExpr", "..."],
+      "eval": {
+        "eventExpr": "quoted_expression",
+        "valueExpr": "quoted_expression"
+      },
+      "return": {"mode": "function", "length": "1", "na": false}
+    },
+    "isolate": {
+      "params": ["expr"],
+      "eval": {"expr": "quoted_expression"},
+      "return": {"mode": "opaque", "length": "unknown", "na": false}
+    },
+    "renderText": {
+      "params": ["expr", "..."],
+      "eval": {"expr": "quoted_expression"},
+      "return": {"mode": "function", "length": "1", "na": false}
+    },
+    "renderPrint": {
+      "params": ["expr", "..."],
+      "eval": {"expr": "quoted_expression"},
+      "return": {"mode": "function", "length": "1", "na": false}
+    },
+    "renderUI": {
+      "params": ["expr", "..."],
+      "eval": {"expr": "quoted_expression"},
+      "return": {"mode": "function", "length": "1", "na": false}
+    },
+    "renderPlot": {
+      "params": ["expr", "..."],
+      "eval": {"expr": "quoted_expression"},
+      "return": {"mode": "function", "length": "1", "na": false}
+    },
+    "renderTable": {
+      "params": ["expr", "..."],
+      "eval": {"expr": "quoted_expression"},
+      "return": {"mode": "function", "length": "1", "na": false}
+    },
+    "renderDataTable": {
+      "params": ["expr", "..."],
+      "eval": {"expr": "quoted_expression"},
+      "return": {"mode": "function", "length": "1", "na": false}
+    },
+    "renderImage": {
+      "params": ["expr", "..."],
+      "eval": {"expr": "quoted_expression"},
+      "return": {"mode": "function", "length": "1", "na": false}
     }
   }
 }

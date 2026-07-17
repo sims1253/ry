@@ -102,6 +102,13 @@ impl RParser {
                 Some(Stmt::Expr(self.lower_binary(n, src)?))
             }
             "call" => Some(Stmt::Expr(self.lower_call(n, src)?)),
+            // These control-flow keywords have no dedicated compact-AST
+            // statement variants. Preserve them as identifiers so checker
+            // flow analyses can recognize their terminating effect.
+            "break" | "next" => Some(Stmt::Expr(Expr::Ident {
+                name: n.kind().to_string(),
+                span: self.span(n, src),
+            })),
             "identifier" => Some(Stmt::Expr(Expr::Ident {
                 name: text(n, src)?,
                 span: self.span(n, src),
@@ -428,12 +435,40 @@ impl RParser {
     fn lower_index(&self, n: Node, src: &str, kind: IndexKind) -> Option<Expr> {
         // subset/subset2 share the same shape as call: `function` + `arguments`.
         let base = self.lower_expr(n.child_by_field_name("function")?, src)?;
-        let args = self.lower_arguments(n.child_by_field_name("arguments"), src);
+        let span = self.span(n, src);
+        let mut args = self.lower_arguments(n.child_by_field_name("arguments"), src);
+        // tree-sitter does not expose a named `argument` node for an empty
+        // matrix/data-frame index. Preserve it explicitly so `x[, j]` stays
+        // distinguishable from the one-dimensional `x[j]` downstream.
+        if matches!(kind, IndexKind::Single) {
+            if let Some(raw) = text(n, src)
+                && let Some(open) = raw.rfind('[')
+                && let Some(content) = raw.get(open + 1..raw.len().saturating_sub(1))
+            {
+                if content.trim_start().starts_with(',') {
+                    args.insert(
+                        0,
+                        Arg {
+                            name: None,
+                            value: Expr::Unknown(span),
+                            span,
+                        },
+                    );
+                }
+                if content.trim_end().ends_with(',') {
+                    args.push(Arg {
+                        name: None,
+                        value: Expr::Unknown(span),
+                        span,
+                    });
+                }
+            }
+        }
         Some(Expr::Index {
             base: Box::new(base),
             kind,
             args,
-            span: self.span(n, src),
+            span,
         })
     }
 

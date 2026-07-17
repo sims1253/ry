@@ -1,6 +1,5 @@
-# expect: RY070, RY070, RY070, RY070
+# expect: RY070, RY070, RY070
 # Calling a literal value errors in R ("attempt to apply non-function").
 a <- 42()
-b <- "x"()
-c <- TRUE()
-d <- NULL()
+b <- TRUE()
+c <- NULL()

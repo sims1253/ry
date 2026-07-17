@@ -33,6 +33,12 @@ pub const RULES: &[Rule] = &[
         summary: "`if` condition length is known to be greater than 1; only the first element is used.",
     },
     Rule {
+        code: "RY003",
+        name: "numeric-condition",
+        default_severity: Severity::Info,
+        summary: "`if` / `while` condition is numeric; R coerces nonzero to TRUE. Legal but implicit — prefer an explicit comparison.",
+    },
+    Rule {
         code: "RY010",
         name: "unbound-variable",
         default_severity: Severity::Warning,
@@ -177,6 +183,12 @@ pub const RULES: &[Rule] = &[
         name: "default-forced-before-assignment",
         default_severity: Severity::Warning,
         summary: "A parameter default references a body-local that may not be assigned yet on some execution path.",
+    },
+    Rule {
+        code: "RY100",
+        name: "comparison-inside-math-call",
+        default_severity: Severity::Warning,
+        summary: "A comparison directly inside a numeric math function is usually a parenthesization mistake (`abs(x > y)` instead of `abs(x) > y`).",
     },
 ];
 

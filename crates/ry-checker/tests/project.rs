@@ -63,6 +63,41 @@ fn cross_file_function_return_type_propagates() {
 }
 
 #[test]
+fn cross_file_fixpoint_rebinding_overrides_null_narrowing() {
+    // `make_writer` is opaque in the first fixpoint iteration, then its
+    // function return type is refined. The branch assignment must still
+    // replace the NULL-derived narrowing in either iteration.
+    let mut project = Project::new();
+    project.add_file(
+        "writer.R".to_string(),
+        parse(
+            "writer.R",
+            "make_writer <- function() { local({ function(value) value }) }\n",
+        ),
+    );
+    project.add_file(
+        "use.R".to_string(),
+        parse(
+            "use.R",
+            "use_writer <- function(writer = NULL) {\n\
+             if (is.null(writer)) writer <- make_writer()\n\
+             writer(1L)\n\
+             }\n\
+             use_writer()\n",
+        ),
+    );
+    let all: Vec<_> = project
+        .check()
+        .into_iter()
+        .flat_map(|(_, diagnostics)| diagnostics)
+        .collect();
+    assert!(
+        all.iter().all(|diagnostic| diagnostic.code != "RY070"),
+        "an opaque cross-file rebinding must override NULL narrowing: {all:?}"
+    );
+}
+
+#[test]
 fn incremental_edit_rechecks_cross_file_dependents() {
     let mut project = Project::new();
     project.add_file(

@@ -7,6 +7,7 @@ impl Checker {
         kind: IndexKind,
         args: &[Arg],
         span: Span,
+        default_null_receiver: bool,
         scope: &mut Scope,
     ) -> RType {
         if matches!(kind, IndexKind::Dollar) {
@@ -19,6 +20,16 @@ impl Checker {
                     .map(|class| RType::unknown().with_class(ClassVector::single(class)))
                     .unwrap_or_else(RType::unknown);
             }
+        }
+        // A parameter's NULL default describes only the omitted-argument
+        // call shape. When it is the direct receiver of `$` or `[[`, callers
+        // may instead provide a list-like value, so keep the access opaque.
+        // Directly assigned NULL deliberately retains the normal NULL result.
+        if default_null_receiver
+            && matches!(kind, IndexKind::Dollar | IndexKind::Double)
+            && matches!(bt.mode, Mode::Null)
+        {
+            return RType::unknown();
         }
         match kind {
             IndexKind::Dollar => {
@@ -167,6 +178,61 @@ impl Checker {
                 }
             }
             IndexKind::Single => {
+                // `df[i, j]` selects a column when `j` is scalar and the
+                // default `drop = TRUE` is in effect.  A data frame's own
+                // length is its number of columns, not its row count, so
+                // returning `bt` here would make `df[, 1]` look like a
+                // length-ncol vector.  Prefer the schema's column type,
+                // which `infer_data_frame` has already widened to the frame
+                // row count.
+                if bt.class.contains("data.frame") && args.len() >= 2 {
+                    let column_arg = &args[1];
+                    let drop_false = args.iter().any(|arg| {
+                        arg.name.as_deref() == Some("drop")
+                            && matches!(arg.value, Expr::Logical(false, _))
+                    });
+                    let column = match &column_arg.value {
+                        Expr::String(name, _) => {
+                            bt.columns.as_ref().and_then(|schema| schema.get(name))
+                        }
+                        Expr::Integer(index, _) if *index >= 1 => bt
+                            .columns
+                            .as_ref()
+                            .and_then(|schema| schema.columns.get(*index as usize - 1))
+                            .map(|(_, ty)| ty.clone()),
+                        Expr::Double(index, _) if *index >= 1.0 && index.fract() == 0.0 => bt
+                            .columns
+                            .as_ref()
+                            .and_then(|schema| schema.columns.get(*index as usize - 1))
+                            .map(|(_, ty)| ty.clone()),
+                        _ => None,
+                    };
+                    for argument in args {
+                        self.infer(&argument.value, scope);
+                    }
+                    if let Some(column) = column {
+                        if !drop_false {
+                            return column;
+                        }
+                        let name = match &column_arg.value {
+                            Expr::String(name, _) => name.clone(),
+                            _ => "[[1]]".to_string(),
+                        };
+                        return RType::new(Mode::List, Length::One)
+                            .with_class(ClassVector::single("data.frame"))
+                            .with_columns(Arc::new(ColumnSchema {
+                                columns: vec![(name, column)],
+                                complete: true,
+                                locally_constructed: false,
+                            }));
+                    }
+                    // A scalar but dynamic column index still drops to a
+                    // vector. Its mode and row count are not knowable.
+                    if !drop_false && is_non_negative_scalar_index(&column_arg.value, scope) {
+                        return RType::unknown();
+                    }
+                    return bt;
+                }
                 if matches!(bt.mode, Mode::List) && args.len() >= 2 {
                     if let Some(column) = args.iter().find_map(|arg| match &arg.value {
                         Expr::String(column, _) => Some(column),
@@ -191,12 +257,9 @@ impl Checker {
                 // drops). For atomic vectors with one scalar index,
                 // however, the result is a scalar of the same mode.
                 let scalar_atomic_index = args.len() == 1
-                    && args.first().is_some_and(|a| {
-                        matches!(
-                            a.value,
-                            Expr::Integer(_, _) | Expr::Double(_, _) | Expr::String(_, _)
-                        )
-                    })
+                    && args
+                        .first()
+                        .is_some_and(|a| is_non_negative_scalar_index(&a.value, scope))
                     && matches!(
                         bt.mode,
                         Mode::Integer
@@ -242,6 +305,27 @@ impl Checker {
                 col, available
             ),
         );
+    }
+}
+
+/// Whether an index expression is a scalar element selector, rather than a
+/// negative exclusion selector. R has no sign information in `RType`, so a
+/// scalar identifier is accepted while syntactically negative literals are
+/// deliberately rejected.
+fn is_non_negative_scalar_index(expr: &Expr, scope: &Scope) -> bool {
+    match expr {
+        Expr::Integer(index, _) => *index >= 0,
+        Expr::Double(index, _) => *index >= 0.0,
+        Expr::String(_, _) => true,
+        Expr::Ident { name, .. } => scope.get(name).is_some_and(|ty| {
+            matches!(ty.length, Length::One)
+                && matches!(ty.mode, Mode::Integer | Mode::Double | Mode::Character)
+        }),
+        Expr::UnaryOp {
+            op: UnaryOpKind::Neg,
+            ..
+        } => false,
+        _ => false,
     }
 }
 
@@ -336,9 +420,10 @@ pub(crate) fn span_of(e: &Expr) -> Span {
 /// non-empty check: a direct call to `length`, `nrow`, or `ncol` via a bare
 /// identifier callee (any args). These return an integer length-1, which R
 /// silently coerces to logical in `if`/`while` -- but `if (length(x))` /
-/// `if (nrow(df))` are so idiomatic in real R code that the RY001 coercion
-/// warning is pure noise there. We suppress ONLY the coercion-warning arm
-/// for this shape; a genuinely wrong condition (e.g. `if (1L)`) still warns.
+/// `if (nrow(df))` are so idiomatic in real R code that the RY003 coercion
+/// info is pure noise there. We suppress ONLY that numeric-truthiness arm
+/// for this shape; a genuinely wrong condition (e.g. `if (1L)`) still emits
+/// the informational diagnostic.
 ///
 /// Negation (`if (!length(x))`) is deliberately out of scope: it is typed
 /// through the unary `!` operator, not this call shape.
@@ -374,6 +459,35 @@ pub(crate) fn is_numeric_truthiness_idiom(cond: &Expr, scope: &Scope) -> bool {
     false
 }
 
+/// RY040's missing-list-field case is intentionally limited to a complete
+/// schema built by a local `list(...)` expression.  Imported data-frame
+/// schemas and transformed/narrowed values can look equally complete, but
+/// their absent fields are not strong enough evidence for an arithmetic
+/// diagnostic.
+pub(crate) fn known_null_arithmetic_operand(expr: &Expr, scope: &Scope) -> bool {
+    if matches!(expr, Expr::Null(_)) {
+        return true;
+    }
+    let Expr::Index {
+        base, kind, args, ..
+    } = expr
+    else {
+        return false;
+    };
+    let Some(field) = assigned_column_name(*kind, args) else {
+        return false;
+    };
+    let Expr::Ident { name, .. } = base.as_ref() else {
+        return false;
+    };
+    scope
+        .get(name)
+        .and_then(|ty| ty.columns.as_ref())
+        .is_some_and(|schema| {
+            schema.locally_constructed && schema.complete && schema.get(field).is_none()
+        })
+}
+
 /// Extract an integer value from a literal expression. Returns
 /// `Some(n)` for `Expr::Integer(n, _)` and for `Expr::Double(f, _)`
 /// when `f` is a finite whole number (e.g. `2.0`). Returns `None` for
@@ -406,7 +520,7 @@ pub(crate) fn is_pipe_placeholder(e: &Expr) -> bool {
 ///
 /// Includes popular package functions commonly used in NSE contexts:
 ///   * ggplot2: from_theme, aes, aes_, aes_string, aes_q
-///   * rlang: sym, ensym, enquo, enquos, expr, enexpr
+///   * rlang: sym, expr, quo, and other helpers with symbol arguments
 ///   * base: quote, substitute, bquote, alist (already in typeshed but also
 ///     used as NSE)
 pub(crate) fn is_nse_symbol_fn(name: &str) -> bool {
@@ -416,7 +530,7 @@ pub(crate) fn is_nse_symbol_fn(name: &str) -> bool {
         // ggplot2 NSE
         "from_theme" | "aes" | "aes_" | "aes_string" | "aes_q"
         // rlang NSE
-        | "sym" | "ensym" | "enquo" | "enquos" | "expr" | "enexpr"
+        | "sym" | "expr"
         | "exprs" | "quo" | "quos" | "abort" | "inform"
         | "defuse" | "tidyeval_data" | "new_formula" | "new_quosure"
         // dplyr/tidyselect NSE

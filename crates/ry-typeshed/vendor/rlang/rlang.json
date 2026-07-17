@@ -1,0 +1,6022 @@
+{
+  "schema_version": "1",
+  "package": "rlang",
+  "version": "draft",
+  "functions": {
+    ":=": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "y",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "!!": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "!!!": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "%@%": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "name",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "%@%<-": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "name",
+          "required": true
+        },
+        {
+          "name": "value",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "%&&%": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "y",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "%<~%": {
+      "params": [
+        {
+          "name": "lhs",
+          "required": true
+        },
+        {
+          "name": "rhs",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "%|%": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "y",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "%||%": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "y",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "abort": {
+      "params": [
+        "message",
+        "class",
+        "...",
+        "call",
+        "body",
+        "footer",
+        "trace",
+        "parent",
+        "use_cli_format",
+        ".inherit",
+        ".internal",
+        ".file",
+        ".frame",
+        ".trace_bottom",
+        ".subclass"
+      ],
+      "no_return": true,
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "are_na": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "arg_match": {
+      "params": [
+        {
+          "name": "arg",
+          "required": true
+        },
+        "values",
+        "...",
+        "multiple",
+        "error_arg",
+        "error_call"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "arg_match0": {
+      "params": [
+        {
+          "name": "arg",
+          "required": true
+        },
+        {
+          "name": "values",
+          "required": true
+        },
+        "arg_nm",
+        "error_call"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "as_box": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "class"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "as_box_if": {
+      "params": [
+        {
+          "name": ".x",
+          "required": true
+        },
+        {
+          "name": ".p",
+          "required": true
+        },
+        ".class",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "as_bytes": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "as_character": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "encoding"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "as_closure": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "as_complex": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "as_data_mask": {
+      "params": [
+        {
+          "name": "data",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "as_data_pronoun": {
+      "params": [
+        {
+          "name": "data",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "as_double": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "as_environment": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "parent"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "as_function": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "env",
+        "...",
+        "arg",
+        "call"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "as_integer": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "as_label": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "as_list": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "as_logical": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "as_name": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "as_quosure": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "as_quosures": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "env",
+        "named"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "as_string": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "as_utf8_character": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "base_env": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "bytes": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "call_args": {
+      "params": [
+        {
+          "name": "call",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "call_args_names": {
+      "params": [
+        {
+          "name": "call",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "call_fn": {
+      "params": [
+        {
+          "name": "call",
+          "required": true
+        },
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "call_inspect": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "call_match": {
+      "params": [
+        "call",
+        "fn",
+        "...",
+        "defaults",
+        "dots_env",
+        "dots_expand"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "call_modify": {
+      "params": [
+        {
+          "name": ".call",
+          "required": true
+        },
+        "...",
+        ".homonyms",
+        ".standardise",
+        ".env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "call_name": {
+      "params": [
+        {
+          "name": "call",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "call_ns": {
+      "params": [
+        {
+          "name": "call",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "call_standardise": {
+      "params": [
+        {
+          "name": "call",
+          "required": true
+        },
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "call2": {
+      "params": [
+        {
+          "name": ".fn",
+          "required": true
+        },
+        "...",
+        ".ns"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "caller_arg": {
+      "params": [
+        {
+          "name": "arg",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "caller_call": {
+      "params": [
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "caller_env": {
+      "params": [
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "caller_fn": {
+      "params": [
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "calling": {
+      "params": [
+        {
+          "name": "handler",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "catch_cnd": {
+      "params": [
+        {
+          "name": "expr",
+          "required": true
+        },
+        "classes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "check_bool": {
+      "params": [
+        "x",
+        "...",
+        "allow_na",
+        "allow_null",
+        "arg",
+        "call"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "check_data_frame": {
+      "params": [
+        "x",
+        "...",
+        "allow_null",
+        "arg",
+        "call"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "check_dots_empty": {
+      "params": [
+        "env",
+        "error",
+        "call",
+        "action"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "check_dots_empty0": {
+      "params": [
+        "...",
+        "call"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "check_dots_unnamed": {
+      "params": [
+        "env",
+        "error",
+        "call",
+        "action"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "check_dots_used": {
+      "params": [
+        "env",
+        "call",
+        "error",
+        "action"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "check_exclusive": {
+      "params": [
+        "...",
+        ".require",
+        ".frame",
+        ".call"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "check_installed": {
+      "params": [
+        {
+          "name": "pkg",
+          "required": true
+        },
+        "reason",
+        "...",
+        "version",
+        "compare",
+        "action",
+        "call"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "check_number_decimal": {
+      "params": [
+        "x",
+        "...",
+        "min",
+        "max",
+        "allow_infinite",
+        "allow_na",
+        "allow_null",
+        "arg",
+        "call"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "check_number_whole": {
+      "params": [
+        "x",
+        "...",
+        "min",
+        "max",
+        "allow_infinite",
+        "allow_na",
+        "allow_null",
+        "arg",
+        "call"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "check_required": {
+      "params": [
+        "x",
+        "arg",
+        "call"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "check_string": {
+      "params": [
+        "x",
+        "...",
+        "allow_empty",
+        "allow_na",
+        "allow_null",
+        "arg",
+        "call"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "child_env": {
+      "params": [
+        {
+          "name": ".parent",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "chr": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "chr_unserialise_unicode": {
+      "params": [
+        {
+          "name": "chr",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cnd": {
+      "params": [
+        {
+          "name": "class",
+          "required": true
+        },
+        "...",
+        "message",
+        "call",
+        "use_cli_format"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cnd_body": {
+      "params": [
+        {
+          "name": "cnd",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cnd_entrace": {
+      "params": [
+        {
+          "name": "cnd",
+          "required": true
+        },
+        "...",
+        "top",
+        "bottom"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cnd_footer": {
+      "params": [
+        {
+          "name": "cnd",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cnd_header": {
+      "params": [
+        {
+          "name": "cnd",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cnd_inherits": {
+      "params": [
+        {
+          "name": "cnd",
+          "required": true
+        },
+        {
+          "name": "class",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cnd_message": {
+      "params": [
+        {
+          "name": "cnd",
+          "required": true
+        },
+        "...",
+        "inherit",
+        "prefix"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cnd_muffle": {
+      "params": [
+        {
+          "name": "cnd",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cnd_signal": {
+      "params": [
+        {
+          "name": "cnd",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cnd_type": {
+      "params": [
+        {
+          "name": "cnd",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "coerce_class": {
+      "params": [
+        {
+          "name": ".x",
+          "required": true
+        },
+        {
+          "name": ".to",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "coerce_type": {
+      "params": [
+        {
+          "name": ".x",
+          "required": true
+        },
+        {
+          "name": ".to",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cpl": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ctxt_frame": {
+      "params": [
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "current_call": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "current_env": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "current_fn": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "data_sym": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "data_syms": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "dbl": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "done": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "dots_list": {
+      "params": [
+        "...",
+        ".named",
+        ".ignore_empty",
+        ".preserve_empty",
+        ".homonyms",
+        ".check_assign"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "dots_n": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "dots_splice": {
+      "params": [
+        "...",
+        ".ignore_empty",
+        ".preserve_empty",
+        ".homonyms",
+        ".check_assign"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "dots_values": {
+      "params": [
+        "...",
+        ".ignore_empty",
+        ".preserve_empty",
+        ".homonyms",
+        ".check_assign"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "duplicate": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "shallow"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "empty_env": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "enexpr": {
+      "params": [
+        {
+          "name": "arg",
+          "required": true
+        }
+      ],
+      "eval": {
+        "arg": "captures_promise"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "enexprs": {
+      "params": [
+        "...",
+        ".named",
+        ".ignore_empty",
+        ".ignore_null",
+        ".unquote_names",
+        ".homonyms",
+        ".check_assign"
+      ],
+      "eval": {
+        "...": "captures_promise"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "englue": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "env",
+        "error_call",
+        "error_arg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "enquo": {
+      "params": [
+        {
+          "name": "arg",
+          "required": true
+        }
+      ],
+      "eval": {
+        "arg": "captures_promise"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "enquo0": {
+      "params": [
+        {
+          "name": "arg",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "enquos": {
+      "params": [
+        "...",
+        ".named",
+        ".ignore_empty",
+        ".ignore_null",
+        ".unquote_names",
+        ".homonyms",
+        ".check_assign"
+      ],
+      "eval": {
+        "...": "captures_promise"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "enquos0": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ensym": {
+      "params": [
+        {
+          "name": "arg",
+          "required": true
+        }
+      ],
+      "eval": {
+        "arg": "captures_promise"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ensyms": {
+      "params": [
+        "...",
+        ".named",
+        ".ignore_empty",
+        ".ignore_null",
+        ".unquote_names",
+        ".homonyms",
+        ".check_assign"
+      ],
+      "eval": {
+        "...": "captures_promise"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "entrace": {
+      "params": [
+        "cnd",
+        "...",
+        "top",
+        "bottom"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_bind": {
+      "params": [
+        {
+          "name": ".env",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_bind_active": {
+      "params": [
+        {
+          "name": ".env",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_bind_lazy": {
+      "params": [
+        {
+          "name": ".env",
+          "required": true
+        },
+        "...",
+        ".eval_env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_binding_are_active": {
+      "params": [
+        {
+          "name": "env",
+          "required": true
+        },
+        "nms"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_binding_are_lazy": {
+      "params": [
+        {
+          "name": "env",
+          "required": true
+        },
+        "nms"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_binding_are_locked": {
+      "params": [
+        {
+          "name": "env",
+          "required": true
+        },
+        "nms"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_binding_lock": {
+      "params": [
+        {
+          "name": "env",
+          "required": true
+        },
+        "nms"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_binding_unlock": {
+      "params": [
+        {
+          "name": "env",
+          "required": true
+        },
+        "nms"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_browse": {
+      "params": [
+        {
+          "name": "env",
+          "required": true
+        },
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_bury": {
+      "params": [
+        {
+          "name": ".env",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_cache": {
+      "params": [
+        {
+          "name": "env",
+          "required": true
+        },
+        {
+          "name": "nm",
+          "required": true
+        },
+        {
+          "name": "default",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_clone": {
+      "params": [
+        {
+          "name": "env",
+          "required": true
+        },
+        "parent"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_coalesce": {
+      "params": [
+        {
+          "name": "env",
+          "required": true
+        },
+        {
+          "name": "from",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_depth": {
+      "params": [
+        {
+          "name": "env",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_get": {
+      "params": [
+        "env",
+        {
+          "name": "nm",
+          "required": true
+        },
+        "default",
+        "inherit",
+        "last"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_get_list": {
+      "params": [
+        "env",
+        {
+          "name": "nms",
+          "required": true
+        },
+        {
+          "name": "default",
+          "required": true
+        },
+        "inherit",
+        "last"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_has": {
+      "params": [
+        "env",
+        {
+          "name": "nms",
+          "required": true
+        },
+        "inherit"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_inherits": {
+      "params": [
+        {
+          "name": "env",
+          "required": true
+        },
+        {
+          "name": "ancestor",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_is_browsed": {
+      "params": [
+        {
+          "name": "env",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_is_locked": {
+      "params": [
+        {
+          "name": "env",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_is_user_facing": {
+      "params": [
+        {
+          "name": "env",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_label": {
+      "params": [
+        {
+          "name": "env",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_length": {
+      "params": [
+        {
+          "name": "env",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_lock": {
+      "params": [
+        {
+          "name": "env",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_name": {
+      "params": [
+        {
+          "name": "env",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_names": {
+      "params": [
+        {
+          "name": "env",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_parent": {
+      "params": [
+        "env",
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_parents": {
+      "params": [
+        "env",
+        "last"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_poke": {
+      "params": [
+        "env",
+        {
+          "name": "nm",
+          "required": true
+        },
+        {
+          "name": "value",
+          "required": true
+        },
+        "inherit",
+        "create"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_poke_parent": {
+      "params": [
+        {
+          "name": "env",
+          "required": true
+        },
+        {
+          "name": "new_env",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_print": {
+      "params": [
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_tail": {
+      "params": [
+        "env",
+        "last"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_unbind": {
+      "params": [
+        "env",
+        {
+          "name": "nms",
+          "required": true
+        },
+        "inherit"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "env_unlock": {
+      "params": [
+        {
+          "name": "env",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "error_call": {
+      "params": [
+        {
+          "name": "call",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "error_cnd": {
+      "params": [
+        "class",
+        "...",
+        "message",
+        "call",
+        "trace",
+        "parent",
+        "use_cli_format"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "eval_bare": {
+      "params": [
+        {
+          "name": "expr",
+          "required": true
+        },
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "eval_tidy": {
+      "params": [
+        {
+          "name": "expr",
+          "required": true
+        },
+        "data",
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "exec": {
+      "params": [
+        {
+          "name": ".fn",
+          "required": true
+        },
+        "...",
+        ".env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "exiting": {
+      "params": [
+        {
+          "name": "handler",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "expr": {
+      "params": [
+        {
+          "name": "expr",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "expr_deparse": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "...",
+        "width"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "expr_interp": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "expr_label": {
+      "params": [
+        {
+          "name": "expr",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "expr_name": {
+      "params": [
+        {
+          "name": "expr",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "expr_print": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "expr_text": {
+      "params": [
+        {
+          "name": "expr",
+          "required": true
+        },
+        "width",
+        "nlines"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "exprs": {
+      "params": [
+        "...",
+        ".named",
+        ".ignore_empty",
+        ".unquote_names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "exprs_auto_name": {
+      "params": [
+        {
+          "name": "exprs",
+          "required": true
+        },
+        "...",
+        "repair_auto",
+        "repair_quiet"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "f_env": {
+      "params": [
+        {
+          "name": "f",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "f_env<-": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "value",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "f_label": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "f_lhs": {
+      "params": [
+        {
+          "name": "f",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "f_lhs<-": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "value",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "f_name": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "f_rhs": {
+      "params": [
+        {
+          "name": "f",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "f_rhs<-": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "value",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "f_text": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "width",
+        "nlines"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "flatten": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "flatten_chr": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "flatten_cpl": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "flatten_dbl": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "flatten_if": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "predicate"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "flatten_int": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "flatten_lgl": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "flatten_raw": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "fn_body": {
+      "params": [
+        "fn"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "fn_body<-": {
+      "params": [
+        {
+          "name": "fn",
+          "required": true
+        },
+        {
+          "name": "value",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "fn_env": {
+      "params": [
+        {
+          "name": "fn",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "fn_env<-": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "value",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "fn_fmls": {
+      "params": [
+        "fn"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "fn_fmls_names": {
+      "params": [
+        "fn"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "fn_fmls_names<-": {
+      "params": [
+        {
+          "name": "fn",
+          "required": true
+        },
+        {
+          "name": "value",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "fn_fmls_syms": {
+      "params": [
+        "fn"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "fn_fmls<-": {
+      "params": [
+        {
+          "name": "fn",
+          "required": true
+        },
+        {
+          "name": "value",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "format_error_bullets": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "format_error_call": {
+      "params": [
+        {
+          "name": "call",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "frame_call": {
+      "params": [
+        "frame"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "frame_fn": {
+      "params": [
+        "frame"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "friendly_type": {
+      "params": [
+        {
+          "name": "type",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "get_env": {
+      "params": [
+        {
+          "name": "env",
+          "required": true
+        },
+        "default"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "get_expr": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "default"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "global_entrace": {
+      "params": [
+        "enable",
+        "class"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "global_env": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "global_frame": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "global_handle": {
+      "params": [
+        "entrace",
+        "prompt_install"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "global_prompt_install": {
+      "params": [
+        "enable"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "has_length": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "has_name": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "name",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash_file": {
+      "params": [
+        {
+          "name": "path",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "have_name": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "inform": {
+      "params": [
+        "message",
+        "class",
+        "...",
+        "body",
+        "footer",
+        "parent",
+        "use_cli_format",
+        ".inherit",
+        ".file",
+        ".frequency",
+        ".frequency_id",
+        ".subclass"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "inherits_all": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "class",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "inherits_any": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "class",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "inherits_only": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "class",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "inject": {
+      "params": [
+        {
+          "name": "expr",
+          "required": true
+        },
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "int": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "interrupt": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "invoke": {
+      "params": [
+        {
+          "name": ".fn",
+          "required": true
+        },
+        ".args",
+        "...",
+        ".env",
+        ".bury"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_atomic": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_attached": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_bare_atomic": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_bare_bytes": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_bare_character": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_bare_complex": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_bare_double": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_bare_environment": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_bare_formula": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "scoped",
+        "lhs"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_bare_integer": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_bare_integerish": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n",
+        "finite"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_bare_list": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_bare_logical": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_bare_numeric": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_bare_raw": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_bare_string": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_bare_vector": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_bool": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_box": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "class"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_bytes": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_call": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "name",
+        "n",
+        "ns"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_call_simple": {
+      "params": [
+        "x",
+        "ns"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_callable": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_character": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_chr_na": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_closure": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_complex": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n",
+        "finite"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_condition": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_copyable": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_cpl_na": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_dbl_na": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_dictionaryish": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_done_box": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "empty"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_double": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n",
+        "finite"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_empty": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_environment": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_error": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_expression": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_false": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_formula": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "scoped",
+        "lhs"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_function": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_installed": {
+      "params": [
+        {
+          "name": "pkg",
+          "required": true
+        },
+        "...",
+        "version",
+        "compare"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_int_na": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_integer": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_integerish": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n",
+        "finite"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_interactive": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_lambda": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_lang": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "name",
+        "n",
+        "ns"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_lgl_na": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_list": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_logical": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_message": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_missing": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_na": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_named": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_named2": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_namespace": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_node": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_node_list": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_null": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_pairlist": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_primitive": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_primitive_eager": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_primitive_lazy": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_quosure": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_quosures": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_raw": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_reference": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "y",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_scalar_atomic": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_scalar_bytes": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_scalar_character": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_scalar_complex": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_scalar_double": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_scalar_integer": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_scalar_integerish": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "finite"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_scalar_list": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_scalar_logical": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_scalar_raw": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_scalar_vector": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_scoped": {
+      "params": [
+        {
+          "name": "nm",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_spliced": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_spliced_bare": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_string": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "string"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_symbol": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_symbolic": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_syntactic_literal": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_true": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_vector": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_warning": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_weakref": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_zap": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "lang": {
+      "params": [
+        {
+          "name": ".fn",
+          "required": true
+        },
+        "...",
+        ".ns"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "last_error": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "last_messages": {
+      "params": [
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "last_trace": {
+      "params": [
+        "drop"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "last_warnings": {
+      "params": [
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "lgl": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list2": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ll": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "local_bindings": {
+      "params": [
+        "...",
+        ".env",
+        ".frame"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "local_error_call": {
+      "params": [
+        {
+          "name": "call",
+          "required": true
+        },
+        "frame"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "local_interactive": {
+      "params": [
+        "value",
+        "frame"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "local_options": {
+      "params": [
+        "...",
+        ".frame"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "local_use_cli": {
+      "params": [
+        "...",
+        "format",
+        "inline",
+        "frame"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "locally": {
+      "params": [
+        {
+          "name": "expr",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "maybe_missing": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "default"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "message_cnd": {
+      "params": [
+        "class",
+        "...",
+        "message",
+        "call",
+        "use_cli_format"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "missing_arg": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "names_inform_repair": {
+      "params": [
+        {
+          "name": "old",
+          "required": true
+        },
+        {
+          "name": "new",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "names2": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "names2<-": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "value",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "new_box": {
+      "params": [
+        {
+          "name": ".x",
+          "required": true
+        },
+        "class",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "new_call": {
+      "params": [
+        {
+          "name": "car",
+          "required": true
+        },
+        "cdr"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "new_character": {
+      "params": [
+        {
+          "name": "n",
+          "required": true
+        },
+        "names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "new_complex": {
+      "params": [
+        {
+          "name": "n",
+          "required": true
+        },
+        "names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "new_data_mask": {
+      "params": [
+        {
+          "name": "bottom",
+          "required": true
+        },
+        "top"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "new_double": {
+      "params": [
+        {
+          "name": "n",
+          "required": true
+        },
+        "names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "new_environment": {
+      "params": [
+        "data",
+        "parent"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "new_formula": {
+      "params": [
+        {
+          "name": "lhs",
+          "required": true
+        },
+        {
+          "name": "rhs",
+          "required": true
+        },
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "new_function": {
+      "params": [
+        {
+          "name": "args",
+          "required": true
+        },
+        {
+          "name": "body",
+          "required": true
+        },
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "new_integer": {
+      "params": [
+        {
+          "name": "n",
+          "required": true
+        },
+        "names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "new_list": {
+      "params": [
+        {
+          "name": "n",
+          "required": true
+        },
+        "names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "new_logical": {
+      "params": [
+        {
+          "name": "n",
+          "required": true
+        },
+        "names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "new_node": {
+      "params": [
+        {
+          "name": "car",
+          "required": true
+        },
+        "cdr"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "new_quosure": {
+      "params": [
+        {
+          "name": "expr",
+          "required": true
+        },
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "new_quosures": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "new_raw": {
+      "params": [
+        {
+          "name": "n",
+          "required": true
+        },
+        "names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "new_weakref": {
+      "params": [
+        {
+          "name": "key",
+          "required": true
+        },
+        "value",
+        "finalizer",
+        "on_quit"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "node_caar": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "node_cadr": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "node_car": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "node_cdar": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "node_cddr": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "node_cdr": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "node_poke_caar": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "newcar",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "node_poke_cadr": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "newcar",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "node_poke_car": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "newcar",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "node_poke_cdar": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "newcdr",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "node_poke_cddr": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "newcdr",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "node_poke_cdr": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "newcdr",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "node_poke_tag": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "newtag",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "node_tag": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ns_env": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ns_env_name": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ns_imports_env": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ns_registry_env": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "obj_address": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "on_load": {
+      "params": [
+        {
+          "name": "expr",
+          "required": true
+        },
+        "env",
+        "ns"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "on_package_load": {
+      "params": [
+        {
+          "name": "pkg",
+          "required": true
+        },
+        {
+          "name": "expr",
+          "required": true
+        },
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "pairlist2": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "parse_bytes": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "parse_expr": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "parse_exprs": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "parse_quo": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "env",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "parse_quos": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "env",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "peek_option": {
+      "params": [
+        {
+          "name": "name",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "peek_options": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "pkg_env": {
+      "params": [
+        {
+          "name": "pkg",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "pkg_env_name": {
+      "params": [
+        {
+          "name": "pkg",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "prim_name": {
+      "params": [
+        {
+          "name": "prim",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "push_options": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "qq_show": {
+      "params": [
+        {
+          "name": "expr",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "quo": {
+      "params": [
+        {
+          "name": "expr",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "quo_expr": {
+      "params": [
+        {
+          "name": "quo",
+          "required": true
+        },
+        "warn"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "quo_get_env": {
+      "params": [
+        {
+          "name": "quo",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "quo_get_expr": {
+      "params": [
+        {
+          "name": "quo",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "quo_is_call": {
+      "params": [
+        {
+          "name": "quo",
+          "required": true
+        },
+        "name",
+        "n",
+        "ns"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "quo_is_missing": {
+      "params": [
+        {
+          "name": "quo",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "quo_is_null": {
+      "params": [
+        {
+          "name": "quo",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "quo_is_symbol": {
+      "params": [
+        {
+          "name": "quo",
+          "required": true
+        },
+        "name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "quo_is_symbolic": {
+      "params": [
+        {
+          "name": "quo",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "quo_label": {
+      "params": [
+        {
+          "name": "quo",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "quo_name": {
+      "params": [
+        {
+          "name": "quo",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "quo_set_env": {
+      "params": [
+        {
+          "name": "quo",
+          "required": true
+        },
+        {
+          "name": "env",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "quo_set_expr": {
+      "params": [
+        {
+          "name": "quo",
+          "required": true
+        },
+        {
+          "name": "expr",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "quo_squash": {
+      "params": [
+        {
+          "name": "quo",
+          "required": true
+        },
+        "warn"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "quo_text": {
+      "params": [
+        {
+          "name": "quo",
+          "required": true
+        },
+        "width",
+        "nlines"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "quos": {
+      "params": [
+        "...",
+        ".named",
+        ".ignore_empty",
+        ".unquote_names"
+      ],
+      "eval": {
+        "...": "captures_promise"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "quos_auto_name": {
+      "params": [
+        {
+          "name": "quos",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "raw_deparse_str": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "prefix",
+        "suffix"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "rep_along": {
+      "params": [
+        {
+          "name": "along",
+          "required": true
+        },
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "rep_named": {
+      "params": [
+        {
+          "name": "names",
+          "required": true
+        },
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "reset_message_verbosity": {
+      "params": [
+        {
+          "name": "id",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "reset_warning_verbosity": {
+      "params": [
+        {
+          "name": "id",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "return_from": {
+      "params": [
+        {
+          "name": "frame",
+          "required": true
+        },
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "run_on_load": {
+      "params": [
+        "ns"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "scoped_bindings": {
+      "params": [
+        "...",
+        ".env",
+        ".frame"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "scoped_env": {
+      "params": [
+        {
+          "name": "nm",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "scoped_interactive": {
+      "params": [
+        "value",
+        "frame"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "scoped_options": {
+      "params": [
+        "...",
+        ".frame"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "search_env": {
+      "params": [
+        {
+          "name": "name",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "search_envs": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "seq2": {
+      "params": [
+        {
+          "name": "from",
+          "required": true
+        },
+        {
+          "name": "to",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "seq2_along": {
+      "params": [
+        {
+          "name": "from",
+          "required": true
+        },
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "set_attrs": {
+      "params": [
+        {
+          "name": ".x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "set_env": {
+      "params": [
+        {
+          "name": "env",
+          "required": true
+        },
+        "new_env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "set_expr": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "value",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "set_names": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "nm",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "signal": {
+      "params": [
+        "message",
+        {
+          "name": "class",
+          "required": true
+        },
+        "...",
+        ".subclass"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "splice": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "squash": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "squash_chr": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "squash_cpl": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "squash_dbl": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "squash_if": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "predicate"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "squash_int": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "squash_lgl": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "squash_raw": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "stop_input_type": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "what",
+          "required": true
+        },
+        "...",
+        "allow_na",
+        "allow_null",
+        "show_value",
+        "arg",
+        "call"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "string": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "encoding"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "switch_class": {
+      "params": [
+        {
+          "name": ".x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "switch_type": {
+      "params": [
+        {
+          "name": ".x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "sym": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "syms": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "trace_back": {
+      "params": [
+        "top",
+        "bottom"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "trace_length": {
+      "params": [
+        {
+          "name": "trace",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "try_fetch": {
+      "params": [
+        {
+          "name": "expr",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "type_of": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "unbox": {
+      "params": [
+        {
+          "name": "box",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "UQ": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "UQS": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "vec_poke_n": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "start",
+          "required": true
+        },
+        {
+          "name": "y",
+          "required": true
+        },
+        "from",
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "vec_poke_range": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "start",
+          "required": true
+        },
+        {
+          "name": "y",
+          "required": true
+        },
+        "from",
+        "to"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "warn": {
+      "params": [
+        "message",
+        "class",
+        "...",
+        "body",
+        "footer",
+        "parent",
+        "use_cli_format",
+        ".inherit",
+        ".frequency",
+        ".frequency_id",
+        ".subclass"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "warning_cnd": {
+      "params": [
+        "class",
+        "...",
+        "message",
+        "call",
+        "use_cli_format"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "with_bindings": {
+      "params": [
+        {
+          "name": ".expr",
+          "required": true
+        },
+        "...",
+        ".env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "with_env": {
+      "params": [
+        {
+          "name": "env",
+          "required": true
+        },
+        {
+          "name": "expr",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "with_handlers": {
+      "params": [
+        {
+          "name": ".expr",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "with_interactive": {
+      "params": [
+        {
+          "name": "expr",
+          "required": true
+        },
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "with_options": {
+      "params": [
+        {
+          "name": ".expr",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "wref_key": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "wref_value": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "zap": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "zap_srcref": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    }
+  }
+}

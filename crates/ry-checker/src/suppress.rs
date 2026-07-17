@@ -78,7 +78,7 @@ impl Checker {
             // to a package we have signatures for but where the function
             // lives under a different name is unlikely, but be thorough).
             for pk in self.available_package_names() {
-                if !self.loaded.contains(pk) {
+                if !self.bare_loaded.contains(pk) {
                     continue;
                 }
                 if let Some(t) = self.package_typeshed(pk) {
@@ -111,7 +111,7 @@ impl Checker {
         // `loaded` is a HashSet (unordered) so we walk a deterministic
         // known-packages list and check membership.
         for pkg in self.available_package_names() {
-            if !self.loaded.contains(pkg) {
+            if !self.bare_loaded.contains(pkg) {
                 continue;
             }
             if let Some(t) = self.package_typeshed(pkg) {
@@ -193,7 +193,7 @@ impl Checker {
         }
         // Loaded packages (fixed priority order; see resolve_typeshed_sig).
         for pkg in self.available_package_names() {
-            if !self.loaded.contains(pkg) {
+            if !self.bare_loaded.contains(pkg) {
                 continue;
             }
             if let Some(t) = self.package_typeshed(pkg) {
@@ -210,8 +210,14 @@ impl Checker {
     }
 
     pub(crate) fn user_s3_dispatch_return(&self, generic: &str, first: &RType) -> Option<RType> {
-        if let Some(class) = first.class.first() {
-            return self
+        for class in first
+            .class
+            .names
+            .iter()
+            .take(first.class.len as usize)
+            .flatten()
+        {
+            if let Some(result) = self
                 .fn_table
                 .fns
                 .get(&format!("{generic}.{class}"))
@@ -221,7 +227,10 @@ impl Checker {
                         .s3_methods
                         .get(&(generic.to_string(), class.to_string()))
                         .map(|slot| self.return_slots.get(*slot))
-                });
+                })
+            {
+                return Some(result);
+            }
         }
         let mut candidates = self
             .external_s3_methods

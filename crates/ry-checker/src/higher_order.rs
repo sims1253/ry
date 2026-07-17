@@ -58,6 +58,7 @@ impl Checker {
                                 .map(|i| (format!("[[{}]]", i + 1), element_type.clone()))
                                 .collect(),
                             complete: matches!(length, Length::Known(_)),
+                            locally_constructed: false,
                         }));
                     }
                 }
@@ -511,8 +512,10 @@ impl Checker {
     /// dispatch target, not merely evidence that `generic` uses S3. When
     /// it exists in any method source, a miss for a class-specific method
     /// falls through to it and must remain silent. Without a default, we
-    /// report only for a generic that has at least one known S3 method;
-    /// otherwise the call might be an unrelated plain function.
+    /// report only for a generic that has at least one project-defined S3
+    /// method. This is the conservative cross-package gate: an un-stubbed
+    /// dependency may own a foreign class, while a local method proves that
+    /// this project owns the generic's dispatch surface.
     ///
     /// Design note: we deliberately return `Option<RType>` rather than
     /// `RType` because the caller (`infer_call`) may still want to
@@ -532,91 +535,65 @@ impl Checker {
             // resolution against the bare name.
             return None;
         }
-        // We have a known class vector. R walks it in order; for v1 we
-        // model only the first-element rule.
-        let first_class = cv.first()?;
-        // `default` is never itself "missing" - it's the fallback.
-        if &*first_class == "default" {
-            return None;
-        }
-        if self
-            .external_s3_methods
-            .contains(&(generic.to_string(), first_class.to_string()))
-        {
-            return Some(RType::unknown());
-        }
-        // 1. User-defined method for the first class wins.
-        if let Some(slot) = self
-            .fn_table
-            .s3_methods
-            .get(&(generic.to_string(), first_class.to_string()))
-            .cloned()
-        {
-            return Some(self.return_slots.get(slot));
-        }
-        // 2. Built-in (typeshed) method for the first class. These are
-        // registered in the typeshed's `s3_methods` table as a
-        // `(generic, class)` -> FunctionSig map so we can reuse the
-        // existing `apply_sig` plumbing.
-        if let Some(sig) = self
-            .typeshed
-            .s3_methods
-            .get(&(generic.to_string(), first_class.to_string()))
-            .cloned()
-        {
-            return Some(self.apply_sig(generic, &sig, arg_types, &[], span));
-        }
-        for pkg in self.available_package_names() {
-            if let Some(sig) = self
-                .package_typeshed(pkg)
-                .and_then(|t| {
-                    t.s3_methods
-                        .get(&(generic.to_string(), first_class.to_string()))
-                })
-                .cloned()
-            {
-                return Some(self.apply_sig(generic, &sig, arg_types, &[], span));
+        let generics = std::iter::once(generic)
+            .chain(s3_group_generic(generic))
+            .collect::<Vec<_>>();
+        // R tries each class in order. For every class, the specific generic
+        // wins over its group generic (e.g. `abs.foo` before `Math.foo`).
+        for class in cv.names.iter().take(cv.len as usize).flatten() {
+            if &**class == "default" {
+                continue;
+            }
+            for candidate in &generics {
+                let key = ((*candidate).to_string(), class.to_string());
+                if self.external_s3_methods.contains(&key) {
+                    return Some(RType::unknown());
+                }
+                if let Some(slot) = self.fn_table.s3_methods.get(&key).cloned() {
+                    return Some(if *candidate == generic {
+                        self.return_slots.get(slot)
+                    } else {
+                        RType::unknown()
+                    });
+                }
+                if let Some(sig) = self.typeshed.s3_methods.get(&key).cloned() {
+                    return Some(self.apply_sig(candidate, &sig, arg_types, &[], span));
+                }
+                for pkg in self.available_package_names() {
+                    if let Some(sig) = self
+                        .package_typeshed(pkg)
+                        .and_then(|t| t.s3_methods.get(&key))
+                        .cloned()
+                    {
+                        return Some(self.apply_sig(candidate, &sig, arg_types, &[], span));
+                    }
+                }
             }
         }
         // 3. A default method is the final S3 dispatch fallback. Consult
         // every source used for specific methods above (plus external
         // registrations), and do not report a missing class method when
         // dispatch can reach one.
-        let default_key = (generic.to_string(), "default".to_string());
-        let has_default = self.fn_table.s3_methods.contains_key(&default_key)
-            || self.typeshed.s3_methods.contains_key(&default_key)
-            || self.external_s3_methods.contains(&default_key)
-            || self.available_package_names().into_iter().any(|pkg| {
-                self.package_typeshed(pkg)
-                    .is_some_and(|typeshed| typeshed.s3_methods.contains_key(&default_key))
-            });
+        let has_default = generics.iter().any(|candidate| {
+            let default_key = ((*candidate).to_string(), "default".to_string());
+            self.fn_table.s3_methods.contains_key(&default_key)
+                || self.typeshed.s3_methods.contains_key(&default_key)
+                || self.external_s3_methods.contains(&default_key)
+                || self.available_package_names().into_iter().any(|pkg| {
+                    self.package_typeshed(pkg)
+                        .is_some_and(|typeshed| typeshed.s3_methods.contains_key(&default_key))
+                })
+        });
         if has_default {
             return Some(RType::unknown());
         }
 
-        // 4. Without a default, a generic is known to participate in S3
-        // dispatch only if any method source contains a method for it.
-        let has_known_s3_method = self
-            .fn_table
-            .s3_methods
-            .keys()
-            .any(|(known_generic, _)| known_generic == generic)
-            || self
-                .typeshed
-                .s3_methods
-                .keys()
-                .any(|(known_generic, _)| known_generic == generic)
-            || self
-                .external_s3_methods
-                .iter()
-                .any(|(known_generic, _)| known_generic == generic)
-            || self.available_package_names().into_iter().any(|pkg| {
-                self.package_typeshed(pkg).is_some_and(|typeshed| {
-                    typeshed
-                        .s3_methods
-                        .keys()
-                        .any(|(known_generic, _)| known_generic == generic)
-                })
+        // 4. Without a default, use the project-owned-method fallback gate.
+        // External/typeshed methods alone cannot prove that this project owns
+        // the class, so suppress RY050 for potentially un-stubbed packages.
+        let has_known_s3_method =
+            self.fn_table.s3_methods.keys().any(|(known_generic, _)| {
+                generics.iter().any(|candidate| known_generic == candidate)
             });
         if !has_known_s3_method {
             return None;
@@ -629,11 +606,27 @@ impl Checker {
             span,
             "RY050",
             format!(
-                "S3 generic `{}` called on value of class `{}` but no `{}.{}` method is defined",
-                generic, first_class, generic, first_class
+                "S3 generic `{}` called on value with classes [{}] but no matching method is defined",
+                generic,
+                cv.names.iter().take(cv.len as usize).flatten().map(|class| class.as_ref()).collect::<Vec<_>>().join(", "),
             ),
         );
         Some(RType::unknown())
+    }
+}
+
+/// S3 group generics used by ordinary function calls. Operator expressions
+/// are handled in `infer/binop.rs`; these names cover calls such as
+/// `abs(x)` and `sum(x)` dispatching to `Math.foo` / `Summary.foo`.
+pub(crate) fn s3_group_generic(generic: &str) -> Option<&'static str> {
+    match generic {
+        "abs" | "acos" | "acosh" | "asin" | "asinh" | "atan" | "atanh" | "ceiling" | "cos"
+        | "cosh" | "exp" | "expm1" | "floor" | "gamma" | "lgamma" | "log" | "log10" | "log1p"
+        | "log2" | "round" | "sign" | "sin" | "sinh" | "sqrt" | "tan" | "tanh" | "trunc" => {
+            Some("Math")
+        }
+        "all" | "any" | "max" | "min" | "prod" | "range" | "sum" => Some("Summary"),
+        _ => None,
     }
 }
 

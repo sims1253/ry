@@ -25,22 +25,35 @@
         "tt", "method", "id", "cluster", "istate", "statedata", "nocenter", "..."
       ],
       "eval": {
+        "formula": "quoted_expression",
         "weights": "data_mask",
         "subset": "data_mask",
         "id": "data_mask",
         "cluster": "data_mask",
         "istate": "data_mask"
       },
+      "data_mask_source": "data",
       "return": {"mode": "list", "length": "unknown", "class": ["coxph"]}
     },
     "survcheck": {
       "params": ["formula", "data", "subset", "na.action", "id", "istate", "..."],
       "eval": {
+        "formula": "quoted_expression",
         "subset": "data_mask",
         "id": "data_mask",
         "istate": "data_mask"
       },
+      "data_mask_source": "data",
       "return": {"mode": "list", "length": "unknown"}
+    },
+    "survdiff": {
+      "params": ["formula", "data", "subset", "na.action", "..."],
+      "eval": {
+        "formula": "quoted_expression",
+        "subset": "data_mask"
+      },
+      "data_mask_source": "data",
+      "return": {"mode": "list", "length": "unknown", "class": ["survdiff"]}
     },
     "survfit": {
       "params": [
@@ -49,12 +62,20 @@
         "weights",
         "subset",
         "na.action",
+        "id",
+        "cluster",
+        "istate",
         "..."
       ],
       "eval": {
+        "formula": "quoted_expression",
         "weights": "data_mask",
-        "subset": "data_mask"
+        "subset": "data_mask",
+        "id": "data_mask",
+        "cluster": "data_mask",
+        "istate": "data_mask"
       },
+      "data_mask_source": "data",
       "return": {
         "mode": "list",
         "length": "unknown",
@@ -63,6 +84,18 @@
           "survfit"
         ]
       }
+    },
+    "survreg": {
+      "params": ["formula", "data", "weights", "subset", "na.action", "offset", "cluster", "..."],
+      "eval": {
+        "formula": "quoted_expression",
+        "weights": "data_mask",
+        "subset": "data_mask",
+        "offset": "data_mask",
+        "cluster": "data_mask"
+      },
+      "data_mask_source": "data",
+      "return": {"mode": "list", "length": "unknown", "class": ["survreg"]}
     },
     "tmerge": {
       "params": ["data1", "data2", "id", "...", "tstart", "tstop", "options"],

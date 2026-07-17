@@ -1,7 +1,14 @@
 use super::*;
 
 impl Checker {
-    pub(crate) fn infer_binop(&mut self, op: BinOpKind, lt: RType, rt: RType, span: Span) -> RType {
+    pub(crate) fn infer_binop(
+        &mut self,
+        op: BinOpKind,
+        lt: RType,
+        rt: RType,
+        span: Span,
+        known_null_is_actionable: bool,
+    ) -> RType {
         // `:` sequence operator. Always produces a vector; mode depends
         // on operand modes per R's coercion (int:int -> int, otherwise
         // double). If both operands are integer literals we can even
@@ -22,6 +29,12 @@ impl Checker {
         // logical with the LHS length (Unknown LHS length stays Unknown).
         if matches!(op, BinOpKind::In) {
             return RType::new(Mode::Logical, lt.length);
+        }
+        // `Ops.data.frame` is implemented by base R, but its stub is
+        // necessarily opaque. Keep the useful record shape here instead of
+        // letting that opaque S3 result erase it.
+        if let Some(result) = data_frame_binop_result(op, &lt, &rt) {
+            return result;
         }
         // Primitive operators dispatch through an operator-specific method
         // (`+.foo`) and then the `Ops.foo` group generic before applying the
@@ -140,6 +153,23 @@ impl Checker {
         // Arithmetic.
         let lt_mode = lt.mode;
         let rt_mode = rt.mode;
+        // Arithmetic with a known NULL is never a useful numeric operation:
+        // base R returns a zero-length numeric vector for numeric operands
+        // (and errors for some other modes).  Do this before the lattice
+        // operation, which deliberately models that runtime result.  A
+        // union that merely contains NULL remains speculative and is left to
+        // the normal lattice path.
+        if known_null_is_actionable
+            && (matches!(lt_mode, Mode::Null) || matches!(rt_mode, Mode::Null))
+        {
+            self.emit(
+                Severity::Error,
+                span,
+                "RY040",
+                "arithmetic with `NULL` produces `numeric(0)`; the operand is known to be NULL",
+            );
+            return RType::unknown();
+        }
         let recycles = non_divisible_recycling(lt.length, rt.length);
         let has_factor = lt.class.contains("factor") || rt.class.contains("factor");
         if let Some(t) = lt.arith(rt) {
@@ -194,9 +224,55 @@ impl Checker {
             if operand.class.is_unknown() && !matches!(operand.mode, Mode::Opaque | Mode::Union) {
                 return Some(RType::unknown());
             }
-            let Some(class) = operand.class.first() else {
-                continue;
-            };
+            for class in operand
+                .class
+                .names
+                .iter()
+                .take(operand.class.len as usize)
+                .flatten()
+            {
+                for generic in [symbol, "Ops"] {
+                    if self
+                        .external_s3_methods
+                        .contains(&(generic.to_string(), class.to_string()))
+                    {
+                        return Some(RType::unknown());
+                    }
+                    if let Some(slot) = self
+                        .fn_table
+                        .s3_methods
+                        .get(&(generic.to_string(), class.to_string()))
+                    {
+                        // A specific operator method has an inferable return;
+                        // a group method only promises that this operator is
+                        // supported, not its result shape.
+                        return Some(if generic == symbol {
+                            self.return_slots.get(*slot)
+                        } else {
+                            RType::unknown()
+                        });
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    pub(crate) fn try_s3_unary_dispatch(&self, op: UnaryOpKind, operand: &RType) -> Option<RType> {
+        if operand.class.is_unknown() && !matches!(operand.mode, Mode::Opaque | Mode::Union) {
+            return Some(RType::unknown());
+        }
+        let symbol = match op {
+            UnaryOpKind::Neg => "-",
+            UnaryOpKind::Not => "!",
+        };
+        for class in operand
+            .class
+            .names
+            .iter()
+            .take(operand.class.len as usize)
+            .flatten()
+        {
             for generic in [symbol, "Ops"] {
                 if self
                     .external_s3_methods
@@ -209,42 +285,12 @@ impl Checker {
                     .s3_methods
                     .get(&(generic.to_string(), class.to_string()))
                 {
-                    let _ = slot;
-                    // Operator methods commonly restore or transform class
-                    // attributes through another S3 helper (`c.foo`,
-                    // `new_foo`) that the local return inference cannot
-                    // represent. Treat the result as opaque rather than
-                    // stripping the class and producing a false error on a
-                    // chained operator expression.
-                    return Some(RType::unknown());
+                    return Some(if generic == symbol {
+                        self.return_slots.get(*slot)
+                    } else {
+                        RType::unknown()
+                    });
                 }
-            }
-        }
-        None
-    }
-
-    pub(crate) fn try_s3_unary_dispatch(&self, op: UnaryOpKind, operand: &RType) -> Option<RType> {
-        if operand.class.is_unknown() && !matches!(operand.mode, Mode::Opaque | Mode::Union) {
-            return Some(RType::unknown());
-        }
-        let class = operand.class.first()?;
-        let symbol = match op {
-            UnaryOpKind::Neg => "-",
-            UnaryOpKind::Not => "!",
-        };
-        for generic in [symbol, "Ops"] {
-            if self
-                .external_s3_methods
-                .contains(&(generic.to_string(), class.to_string()))
-            {
-                return Some(RType::unknown());
-            }
-            if let Some(slot) = self
-                .fn_table
-                .s3_methods
-                .get(&(generic.to_string(), class.to_string()))
-            {
-                return Some(self.return_slots.get(*slot));
             }
         }
         None
@@ -276,7 +322,13 @@ impl Checker {
             }
             _ => self.infer(rhs, scope),
         };
-        self.infer_binop(op, lt, rt, span)
+        self.infer_binop(
+            op,
+            lt,
+            rt,
+            span,
+            known_null_arithmetic_operand(lhs, scope) || known_null_arithmetic_operand(rhs, scope),
+        )
     }
 
     // Desugar `lhs %>% rhs` (and `lhs |> rhs`, `lhs %<>% rhs`) into a
@@ -299,6 +351,75 @@ impl Checker {
     // when it appears in an `Assign` statement; for a bare binop we
     // cannot reassign without a target expression, so we leave that to
     // a future pass.
+}
+
+/// Model the base `Ops.data.frame` method without losing the table's schema.
+/// Comparisons produce a logical matrix-like object, for which opaque is the
+/// least misleading v1 representation. Arithmetic keeps the frame shape for
+/// a scalar counterpart; otherwise it retains column names but not column
+/// element types.
+fn data_frame_binop_result(op: BinOpKind, lhs: &RType, rhs: &RType) -> Option<RType> {
+    let is_compare = matches!(
+        op,
+        BinOpKind::Lt
+            | BinOpKind::Le
+            | BinOpKind::Gt
+            | BinOpKind::Ge
+            | BinOpKind::Eq
+            | BinOpKind::Ne
+    );
+    let is_logic = matches!(
+        op,
+        BinOpKind::And | BinOpKind::AndAnd | BinOpKind::Or | BinOpKind::OrOr
+    );
+    if !(is_compare
+        || is_logic
+        || matches!(
+            op,
+            BinOpKind::Add
+                | BinOpKind::Sub
+                | BinOpKind::Mul
+                | BinOpKind::Div
+                | BinOpKind::Pow
+                | BinOpKind::Mod
+                | BinOpKind::IDiv
+        ))
+    {
+        return None;
+    }
+    let (frame, other) = if lhs.class.contains("data.frame") {
+        (lhs, rhs)
+    } else if rhs.class.contains("data.frame") {
+        (rhs, lhs)
+    } else {
+        return None;
+    };
+    if is_compare || is_logic {
+        return Some(RType::unknown());
+    }
+    let mut result = RType::new(Mode::List, frame.length).with_class(frame.class.clone());
+    if let Some(schema) = &frame.columns {
+        let keep_types = !other.class.contains("data.frame") && matches!(other.length, Length::One);
+        result = result.with_columns(Arc::new(ColumnSchema {
+            columns: schema
+                .columns
+                .iter()
+                .map(|(name, ty)| {
+                    (
+                        name.clone(),
+                        if keep_types {
+                            ty.clone()
+                        } else {
+                            RType::unknown()
+                        },
+                    )
+                })
+                .collect(),
+            complete: schema.complete,
+            locally_constructed: schema.locally_constructed,
+        }));
+    }
+    Some(result)
 }
 
 /// R evaluates assignments nested anywhere in a condition expression in the

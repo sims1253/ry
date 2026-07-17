@@ -1,0 +1,2728 @@
+{
+  "schema_version": "1",
+  "package": "cli",
+  "version": "draft",
+  "functions": {
+    "ansi_align": {
+      "params": [
+        {
+          "name": "text",
+          "required": true
+        },
+        "width",
+        "align",
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_chartr": {
+      "params": [
+        {
+          "name": "old",
+          "required": true
+        },
+        {
+          "name": "new",
+          "required": true
+        },
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_collapse": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "sep",
+        "sep2",
+        "last",
+        "trunc",
+        "width",
+        "ellipsis",
+        "style"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_columns": {
+      "params": [
+        {
+          "name": "text",
+          "required": true
+        },
+        "width",
+        "sep",
+        "fill",
+        "max_cols",
+        "align",
+        "type",
+        "ellipsis"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_grep": {
+      "params": [
+        {
+          "name": "pattern",
+          "required": true
+        },
+        {
+          "name": "x",
+          "required": true
+        },
+        "ignore.case",
+        "perl",
+        "value",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_grepl": {
+      "params": [
+        {
+          "name": "pattern",
+          "required": true
+        },
+        {
+          "name": "x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_has_any": {
+      "params": [
+        {
+          "name": "string",
+          "required": true
+        },
+        "sgr",
+        "csi",
+        "link"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_has_hyperlink_support": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_hide_cursor": {
+      "params": [
+        "stream"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_html": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "escape_reserved",
+        "csi"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_html_style": {
+      "params": [
+        "colors",
+        "palette"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_hyperlink_types": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_nchar": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_nzchar": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_palette_show": {
+      "params": [
+        "palette",
+        "colors",
+        "rows"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_regex": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_show_cursor": {
+      "params": [
+        "stream"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_simplify": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "csi"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_string": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_strip": {
+      "params": [
+        {
+          "name": "string",
+          "required": true
+        },
+        "sgr",
+        "csi",
+        "link"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_strsplit": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "split",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_strtrim": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "width",
+        "ellipsis"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_strwrap": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "width",
+        "indent",
+        "exdent",
+        "simplify"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_substr": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "start",
+          "required": true
+        },
+        {
+          "name": "stop",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_substring": {
+      "params": [
+        {
+          "name": "text",
+          "required": true
+        },
+        {
+          "name": "first",
+          "required": true
+        },
+        "last"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_tolower": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_toupper": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_trimws": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "which"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ansi_with_hidden_cursor": {
+      "params": [
+        {
+          "name": "expr",
+          "required": true
+        },
+        "stream"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "bg_black": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "bg_blue": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "bg_br_black": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "bg_br_blue": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "bg_br_cyan": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "bg_br_green": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "bg_br_magenta": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "bg_br_red": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "bg_br_white": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "bg_br_yellow": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "bg_cyan": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "bg_green": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "bg_magenta": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "bg_none": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "bg_red": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "bg_white": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "bg_yellow": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "boxx": {
+      "params": [
+        {
+          "name": "label",
+          "required": true
+        },
+        "header",
+        "footer",
+        "border_style",
+        "padding",
+        "margin",
+        "float",
+        "col",
+        "background_col",
+        "border_col",
+        "align",
+        "width"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "builtin_theme": {
+      "params": [
+        "dark"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cat_boxx": {
+      "params": [
+        "...",
+        "file"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cat_bullet": {
+      "params": [
+        "...",
+        "col",
+        "background_col",
+        "bullet",
+        "bullet_col",
+        "file"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cat_line": {
+      "params": [
+        "...",
+        "col",
+        "background_col",
+        "file"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cat_print": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "file"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cat_rule": {
+      "params": [
+        "...",
+        "file"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli": {
+      "params": [
+        {
+          "name": "expr",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_abort": {
+      "params": [
+        {
+          "name": "message",
+          "required": true
+        },
+        "...",
+        "call",
+        ".envir",
+        ".frame"
+      ],
+      "no_return": true,
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_alert": {
+      "params": [
+        {
+          "name": "text",
+          "required": true
+        },
+        "id",
+        "class",
+        "wrap",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_alert_danger": {
+      "params": [
+        {
+          "name": "text",
+          "required": true
+        },
+        "id",
+        "class",
+        "wrap",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_alert_info": {
+      "params": [
+        {
+          "name": "text",
+          "required": true
+        },
+        "id",
+        "class",
+        "wrap",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_alert_success": {
+      "params": [
+        {
+          "name": "text",
+          "required": true
+        },
+        "id",
+        "class",
+        "wrap",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_alert_warning": {
+      "params": [
+        {
+          "name": "text",
+          "required": true
+        },
+        "id",
+        "class",
+        "wrap",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_blockquote": {
+      "params": [
+        {
+          "name": "quote",
+          "required": true
+        },
+        "citation",
+        "id",
+        "class",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_bullets": {
+      "params": [
+        {
+          "name": "text",
+          "required": true
+        },
+        "id",
+        "class",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_bullets_raw": {
+      "params": [
+        {
+          "name": "text",
+          "required": true
+        },
+        "id",
+        "class"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_code": {
+      "params": [
+        "lines",
+        "...",
+        "language",
+        ".auto_close",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_div": {
+      "params": [
+        "id",
+        "class",
+        "theme",
+        ".auto_close",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_dl": {
+      "params": [
+        "items",
+        "labels",
+        "id",
+        "class",
+        ".close",
+        ".auto_close",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_end": {
+      "params": [
+        "id"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_fmt": {
+      "params": [
+        {
+          "name": "expr",
+          "required": true
+        },
+        "collapse",
+        "strip_newline"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_format": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "style",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_format_method": {
+      "params": [
+        {
+          "name": "expr",
+          "required": true
+        },
+        "theme"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_h1": {
+      "params": [
+        {
+          "name": "text",
+          "required": true
+        },
+        "id",
+        "class",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_h2": {
+      "params": [
+        {
+          "name": "text",
+          "required": true
+        },
+        "id",
+        "class",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_h3": {
+      "params": [
+        {
+          "name": "text",
+          "required": true
+        },
+        "id",
+        "class",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_inform": {
+      "params": [
+        {
+          "name": "message",
+          "required": true
+        },
+        "...",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_li": {
+      "params": [
+        "items",
+        "labels",
+        "id",
+        "class",
+        ".auto_close",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_list_themes": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_ol": {
+      "params": [
+        "items",
+        "id",
+        "class",
+        ".close",
+        ".auto_close",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_output_connection": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_par": {
+      "params": [
+        "id",
+        "class",
+        ".auto_close",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_process_done": {
+      "params": [
+        "id",
+        "msg_done",
+        ".envir",
+        "done_class"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_process_failed": {
+      "params": [
+        "id",
+        "msg",
+        "msg_failed",
+        ".envir",
+        "failed_class"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_process_start": {
+      "params": [
+        {
+          "name": "msg",
+          "required": true
+        },
+        "msg_done",
+        "msg_failed",
+        "on_exit",
+        "msg_class",
+        "done_class",
+        "failed_class",
+        ".auto_close",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_progress_along": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "name",
+        "total",
+        "...",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_progress_bar": {
+      "params": [
+        "name",
+        "status",
+        "type",
+        "total",
+        "format",
+        "format_done",
+        "format_failed",
+        "clear",
+        "current",
+        "auto_terminate",
+        "extra",
+        ".auto_close",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_progress_builtin_handlers": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_progress_cleanup": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_progress_demo": {
+      "params": [
+        "name",
+        "status",
+        "type",
+        "total",
+        ".envir",
+        "...",
+        "at",
+        "show_after",
+        "live",
+        "delay",
+        "start"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_progress_done": {
+      "params": [
+        "id",
+        ".envir",
+        "result"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_progress_message": {
+      "params": [
+        {
+          "name": "msg",
+          "required": true
+        },
+        "current",
+        ".auto_close",
+        ".envir",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_progress_num": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_progress_output": {
+      "params": [
+        {
+          "name": "text",
+          "required": true
+        },
+        "id",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_progress_step": {
+      "params": [
+        {
+          "name": "msg",
+          "required": true
+        },
+        "msg_done",
+        "msg_failed",
+        "spinner",
+        "class",
+        "current",
+        ".auto_close",
+        ".envir",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_progress_styles": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_progress_update": {
+      "params": [
+        "inc",
+        "set",
+        "total",
+        "status",
+        "extra",
+        "id",
+        "force",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_rule": {
+      "params": [
+        "left",
+        "center",
+        "right",
+        "id",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_sitrep": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_status": {
+      "params": [
+        {
+          "name": "msg",
+          "required": true
+        },
+        "msg_done",
+        "msg_failed",
+        ".keep",
+        ".auto_close",
+        ".envir",
+        ".auto_result"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_status_clear": {
+      "params": [
+        "id",
+        "result",
+        "msg_done",
+        "msg_failed",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_status_update": {
+      "params": [
+        "id",
+        "msg",
+        "msg_done",
+        "msg_failed",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_text": {
+      "params": [
+        "...",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_tick_reset": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_ul": {
+      "params": [
+        "items",
+        "id",
+        "class",
+        ".close",
+        ".auto_close",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_vec": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "style"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_verbatim": {
+      "params": [
+        "...",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "cli_warn": {
+      "params": [
+        {
+          "name": "message",
+          "required": true
+        },
+        "...",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "code_highlight": {
+      "params": [
+        {
+          "name": "code",
+          "required": true
+        },
+        "code_theme",
+        "envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "code_theme_list": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "col_black": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "col_blue": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "col_br_black": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "col_br_blue": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "col_br_cyan": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "col_br_green": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "col_br_magenta": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "col_br_red": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "col_br_white": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "col_br_yellow": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "col_cyan": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "col_green": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "col_grey": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "col_magenta": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "col_none": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "col_red": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "col_silver": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "col_white": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "col_yellow": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "combine_ansi_styles": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "console_width": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "default_app": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "demo_spinners": {
+      "params": [
+        "which"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "diff_chr": {
+      "params": [
+        {
+          "name": "old",
+          "required": true
+        },
+        {
+          "name": "new",
+          "required": true
+        },
+        "max_dist"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "diff_str": {
+      "params": [
+        {
+          "name": "old",
+          "required": true
+        },
+        {
+          "name": "new",
+          "required": true
+        },
+        "max_dist"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "format_bullets_raw": {
+      "params": [
+        {
+          "name": "text",
+          "required": true
+        },
+        "id",
+        "class"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "format_error": {
+      "params": [
+        {
+          "name": "message",
+          "required": true
+        },
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "format_inline": {
+      "params": [
+        "...",
+        ".envir",
+        "collapse",
+        "keep_whitespace"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "format_message": {
+      "params": [
+        {
+          "name": "message",
+          "required": true
+        },
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "format_warning": {
+      "params": [
+        {
+          "name": "message",
+          "required": true
+        },
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "get_spinner": {
+      "params": [
+        "which"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "has_keypress_support": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash_animal": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n_adj"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash_emoji": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "size"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash_file_md5": {
+      "params": [
+        {
+          "name": "paths",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash_file_sha1": {
+      "params": [
+        {
+          "name": "paths",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash_file_sha256": {
+      "params": [
+        {
+          "name": "paths",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash_file_xxhash": {
+      "params": [
+        {
+          "name": "paths",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash_file_xxhash64": {
+      "params": [
+        {
+          "name": "paths",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash_md5": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash_obj_animal": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n_adj",
+        "serialize_version"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash_obj_emoji": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "size",
+        "serialize_version"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash_obj_md5": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "serialize_version"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash_obj_sha1": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "serialize_version"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash_obj_sha256": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "serialize_version"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash_obj_xxhash": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "serialize_version"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash_obj_xxhash64": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "serialize_version"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash_raw_animal": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "n_adj"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash_raw_emoji": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "size"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash_raw_md5": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash_raw_sha1": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash_raw_sha256": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash_raw_xxhash": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash_raw_xxhash64": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash_sha1": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash_sha256": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash_xxhash": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "hash_xxhash64": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_ansi_tty": {
+      "params": [
+        "stream"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_dynamic_tty": {
+      "params": [
+        "stream"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "is_utf8_output": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "keypress": {
+      "params": [
+        "block"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list_border_styles": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list_spinners": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "list_symbols": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "make_ansi_style": {
+      "params": [
+        "...",
+        "bg",
+        "grey",
+        "colors"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "make_spinner": {
+      "params": [
+        "which",
+        "stream",
+        "template",
+        "static"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "no": {
+      "params": [
+        {
+          "name": "expr",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "num_ansi_colors": {
+      "params": [
+        "stream"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "pluralize": {
+      "params": [
+        "...",
+        ".envir",
+        ".transformer"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "pretty_print_code": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "qty": {
+      "params": [
+        {
+          "name": "expr",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "rule": {
+      "params": [
+        "left",
+        "center",
+        "right",
+        "line",
+        "col",
+        "line_col",
+        "background_col",
+        "width"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ruler": {
+      "params": [
+        "width"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "simple_theme": {
+      "params": [
+        "dark"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "spark_bar": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "spark_line": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "start_app": {
+      "params": [
+        "theme",
+        "output",
+        ".auto_close",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "stop_app": {
+      "params": [
+        "app"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "style_blurred": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "style_bold": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "style_dim": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "style_hidden": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "style_hyperlink": {
+      "params": [
+        {
+          "name": "text",
+          "required": true
+        },
+        {
+          "name": "url",
+          "required": true
+        },
+        "params"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "style_inverse": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "style_italic": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "style_no_bg_color": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "style_no_blurred": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "style_no_bold": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "style_no_color": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "style_no_dim": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "style_no_hidden": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "style_no_inverse": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "style_no_italic": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "style_no_strikethrough": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "style_no_underline": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "style_reset": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "style_strikethrough": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "style_underline": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "test_that_cli": {
+      "params": [
+        {
+          "name": "desc",
+          "required": true
+        },
+        {
+          "name": "code",
+          "required": true
+        },
+        "configs",
+        "links"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "ticking": {
+      "params": [
+        {
+          "name": "cond",
+          "required": true
+        },
+        "name",
+        "...",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "tree": {
+      "params": [
+        {
+          "name": "data",
+          "required": true
+        },
+        "root",
+        "style",
+        "width",
+        "trim"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "utf8_graphemes": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "utf8_nchar": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "utf8_substr": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "start",
+          "required": true
+        },
+        {
+          "name": "stop",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "vt_output": {
+      "params": [
+        {
+          "name": "output",
+          "required": true
+        },
+        "width",
+        "height"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    }
+  }
+}

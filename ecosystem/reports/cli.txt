@@ -11,4 +11,4 @@ R/onload.R:82:23 RY010
 R/sizes.R:10:13 RY010
 R/sizes.R:8:19 RY010
 R/sizes.R:9:17 RY010
-R/symbol.R:207:7 RY001
+R/symbol.R:207:7 RY003

@@ -17,6 +17,7 @@ pub enum EvalMode {
     Normal,
     QuotedSymbol,
     QuotedExpression,
+    CapturesPromise,
     DataMask,
     TidySelect,
 }
@@ -215,6 +216,8 @@ pub const SHINY_JSON: &str = include_str!("../vendor/shiny/shiny.json");
 pub const WITHR_JSON: &str = include_str!("../vendor/withr/withr.json");
 pub const R6_JSON: &str = include_str!("../vendor/R6/R6.json");
 pub const S7_JSON: &str = include_str!("../vendor/s7/S7.json");
+pub const RLANG_JSON: &str = include_str!("../vendor/rlang/rlang.json");
+pub const CLI_JSON: &str = include_str!("../vendor/cli/cli.json");
 /// Legacy Bayesian stub document. New code should load a named package via
 /// [`load_package`]; the standalone typeshed no longer publishes a combined
 /// multi-package document.
@@ -345,6 +348,14 @@ const PACKAGE_SPECS: &[PackageSpec] = &[
     PackageSpec {
         name: "S7",
         json: S7_JSON,
+    },
+    PackageSpec {
+        name: "rlang",
+        json: RLANG_JSON,
+    },
+    PackageSpec {
+        name: "cli",
+        json: CLI_JSON,
     },
 ];
 
@@ -477,6 +488,13 @@ pub struct FunctionSig {
     pub aliases: Vec<String>,
     #[serde(default)]
     pub eval: std::collections::BTreeMap<String, EvalMode>,
+    /// Whether calls to this function do not return to their caller.
+    #[serde(default)]
+    pub no_return: bool,
+    /// Parameter supplying the data frame used by `data_mask` arguments.
+    /// Absent means the traditional first-argument data mask.
+    #[serde(default)]
+    pub data_mask_source: Option<String>,
     #[serde(default)]
     pub schema_effect: Option<SchemaEffect>,
     #[serde(default)]
@@ -577,6 +595,10 @@ mod _fwd {
         #[serde(default)]
         pub eval: std::collections::BTreeMap<String, super::EvalMode>,
         #[serde(default)]
+        pub no_return: bool,
+        #[serde(default)]
+        pub data_mask_source: Option<String>,
+        #[serde(default)]
         pub schema_effect: Option<super::SchemaEffect>,
         #[serde(default)]
         pub scope_effect: Option<super::ScopeEffect>,
@@ -603,6 +625,10 @@ struct RawS3Method {
     aliases: Vec<String>,
     #[serde(default)]
     eval: BTreeMap<String, EvalMode>,
+    #[serde(default)]
+    no_return: bool,
+    #[serde(default)]
+    data_mask_source: Option<String>,
     #[serde(default)]
     schema_effect: Option<SchemaEffect>,
     #[serde(default)]
@@ -699,6 +725,8 @@ fn parse_typeshed_with_order(
                 return_: v.return_,
                 aliases: v.aliases,
                 eval: v.eval,
+                no_return: v.no_return,
+                data_mask_source: v.data_mask_source,
                 schema_effect: v.schema_effect,
                 scope_effect: v.scope_effect,
                 higher_order: v.higher_order,
@@ -717,6 +745,8 @@ fn parse_typeshed_with_order(
                 return_: m.return_,
                 aliases: m.aliases,
                 eval: m.eval,
+                no_return: m.no_return,
+                data_mask_source: m.data_mask_source,
                 schema_effect: m.schema_effect,
                 scope_effect: m.scope_effect,
                 higher_order: m.higher_order,

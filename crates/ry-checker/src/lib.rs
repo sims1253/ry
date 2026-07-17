@@ -35,6 +35,7 @@ pub use diagnostics::{
     parse_suppressions_from_comments,
 };
 
+use crate::infer::semantic_argument_name;
 use ry_core::Span;
 use ry_core::ast::*;
 use ry_core::types::{ClassVector, ColumnSchema, FunctionSignature, Length, Mode, RType};
@@ -45,6 +46,11 @@ use ry_typeshed::{
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
+
+/// Metadata marker for a serialized workspace too large to enumerate safely.
+/// This is deliberately not an R identifier; package metadata passes it through
+/// the ordinary external-bindings channel so pass 3 can open the file scope.
+pub const SERIALIZED_BINDINGS_UNENUMERABLE: &str = "\0serialized:unenumerable";
 
 fn string_literals(expr: &Expr) -> Vec<String> {
     match expr {
@@ -156,6 +162,24 @@ fn split_s3_method_name(name: &str, globals: &Globals) -> Option<(String, String
     best
 }
 
+/// Return the dispatch name for the deliberately small S3-generic shape we
+/// can reason about without executing arbitrary setup code.
+fn usemethod_generic_name(body: &[Stmt]) -> Option<String> {
+    let [Stmt::Expr(Expr::Call { func, args, .. })] = body else {
+        return None;
+    };
+    let Expr::Ident { name, .. } = func.as_ref() else {
+        return None;
+    };
+    if name != "UseMethod" {
+        return None;
+    }
+    match args.first().map(|argument| &argument.value) {
+        Some(Expr::String(generic, _)) => Some(generic.clone()),
+        _ => None,
+    }
+}
+
 /// Split operator-specific S3 methods such as `+.widget`. These cannot use
 /// the dotted-generic helper because the generic itself is punctuation.
 fn split_s3_operator_method_name(name: &str) -> Option<(&'static str, String)> {
@@ -170,10 +194,49 @@ fn split_s3_operator_method_name(name: &str) -> Option<(&'static str, String)> {
     })
 }
 
+struct EnvironmentProfile {
+    bindings: &'static [&'static str],
+    path_trigger: fn(&str) -> bool,
+}
+
+// One built-in profile: Shiny application fragments. User-defined profiles
+// (named, path-glob-triggered) come from `ry.toml` `[[environments]]` and are
+// threaded through the CLI config instead.
+const BUILTIN_ENVIRONMENTS: &[EnvironmentProfile] = &[EnvironmentProfile {
+    bindings: &["input", "output", "session"],
+    path_trigger: is_shiny_app_fragment_path,
+}];
+
+/// Whether a file is plausibly sourced into a Shiny application server.
+fn is_shiny_app_fragment_path(path: &str) -> bool {
+    use std::path::Path;
+
+    let path = Path::new(path);
+    if path.components().any(|component| {
+        component.as_os_str().to_str().is_some_and(|name| {
+            name.eq_ignore_ascii_case("shiny") || name.eq_ignore_ascii_case("shinyapp")
+        })
+    }) {
+        return true;
+    }
+
+    path.parent().is_some_and(|parent| {
+        parent.ancestors().any(|directory| {
+            ["app.R", "server.R", "ui.R"]
+                .iter()
+                .any(|entry| directory.join(entry).is_file())
+        })
+    })
+}
+
 /// A single scope's binding table.
 #[derive(Debug, Clone, Default)]
 pub struct Scope {
     pub bindings: HashMap<String, RType>,
+    /// Names whose current binding was installed by flow narrowing rather
+    /// than an R assignment. `insert` clears this marker, so branch merging
+    /// can distinguish a temporary refinement from a rebinding.
+    pub(crate) narrowed_bindings: HashSet<String>,
     /// Bindings whose current type came from a function parameter default.
     /// A default is one call shape, not a complete declaration of the
     /// parameter's runtime type, so an explicit `is.*()` guard may replace
@@ -195,13 +258,21 @@ impl Scope {
         let name = name.into();
         self.function_aliases.remove(&name);
         self.default_parameter_bindings.remove(&name);
+        self.narrowed_bindings.remove(&name);
         self.bindings.insert(name, t);
+    }
+
+    pub(crate) fn insert_narrowed(&mut self, name: impl Into<String>, t: RType) {
+        let name = name.into();
+        self.insert(name.clone(), t);
+        self.narrowed_bindings.insert(name);
     }
 
     pub(crate) fn insert_parameter_default(&mut self, name: impl Into<String>, t: RType) {
         let name = name.into();
         self.function_aliases.remove(&name);
         self.default_parameter_bindings.insert(name.clone());
+        self.narrowed_bindings.remove(&name);
         self.bindings.insert(name, t);
     }
 
@@ -251,6 +322,9 @@ pub(crate) struct UserParam {
     pub(crate) type_: RType,
     pub(crate) required: bool,
     pub(crate) defused: bool,
+    /// Whether the function captures this argument as an unevaluated
+    /// expression (for example through `substitute(x)`).
+    pub(crate) quoting: bool,
 }
 
 /// Side-table of inferred return types, indexed by `UserFn::return_slot`.
@@ -339,6 +413,9 @@ impl FnTable {
 struct ForwardedCall {
     caller: String,
     callee: String,
+    /// Original syntactic callee name, retaining a package qualifier for
+    /// typeshed resolution (`dbplyr::translate_sql`, for example).
+    stub_callee: String,
     caller_params: Vec<Param>,
     arguments: Vec<(Option<String>, Option<String>)>,
 }
@@ -394,6 +471,10 @@ pub struct Checker {
     // the refcount is >1); passes 1/2 own their tables uniquely, and pass
     // 3 only reads, so the COW clone never actually fires in practice.
     pub(crate) fn_table: Arc<FnTable>,
+    /// Top-level bindings that may suppress RY010 for the file being
+    /// emitted. Project checking installs either a package R/ pool or the
+    /// current script's own bindings.
+    known_vars: Arc<HashSet<String>>,
     // Inferred return types, refined by the fixpoint loop. Same Arc-shared
     // story as `fn_table`.
     pub(crate) return_slots: Arc<ReturnSlots>,
@@ -408,6 +489,10 @@ pub struct Checker {
     // resolution. Pass-3 emitters share the project-wide set by Arc; the
     // single-file library/require path uses copy-on-write mutation.
     pub(crate) loaded: Arc<HashSet<String>>,
+    /// Packages that may supply ordinary bare names in this file.  This is
+    /// deliberately narrower than `loaded`: Project keeps the latter as a
+    /// union for dplyr NSE gating, while R's search path is file-local.
+    pub(crate) bare_loaded: Arc<HashSet<String>>,
     // Opaque names proven to exist by metadata for the current source file.
     // Kept separate from the project-wide FnTable so imports from one R
     // package cannot suppress RY010 in an unrelated package checked in the
@@ -418,7 +503,8 @@ pub struct Checker {
     load_bindings: HashMap<usize, HashSet<String>>,
     // Names assigned anywhere in enclosing function bodies. They are added
     // only when checking a nested closure, matching R's deferred lexical
-    // capture without making a direct read-before-assignment valid.
+    // capture without making a direct read-before-assignment valid. The
+    // current body's set also models expressions deferred by `on.exit()`.
     deferred_captures: Vec<HashSet<String>>,
     // Lexical function context used by call-site rules such as RY096.
     // A stack is required because nested functions replace, rather than
@@ -441,9 +527,11 @@ impl Checker {
             discarding: false,
             validate_user_call_arguments: true,
             fn_table: Arc::new(FnTable::default()),
+            known_vars: Arc::new(HashSet::new()),
             return_slots: Arc::new(ReturnSlots::default()),
             inferring: Vec::new(),
             loaded: Arc::new(HashSet::new()),
+            bare_loaded: Arc::new(HashSet::new()),
             external_bindings: HashSet::new(),
             imported_from: HashMap::new(),
             external_s3_methods: HashSet::new(),
@@ -471,6 +559,7 @@ impl Checker {
         // Pass 2 (fixpoint): refine each function's inferred return type
         // until the table stabilizes or we hit MAX_FIXPOINT_DEPTH.
         self.run_fixpoint();
+        self.known_vars = Arc::new(self.fn_table.known_vars.clone());
 
         // Pass 3: final walk, emitting all diagnostics. Function calls
         // now resolve against the refined FnTable.
@@ -493,7 +582,8 @@ impl Checker {
         self.emit_parse_errors(file);
         self.collect_fns(&file.stmts);
         self.run_fixpoint();
-        let mut scope = Scope::default();
+        self.known_vars = Arc::new(self.fn_table.known_vars.clone());
+        let mut scope = self.top_level_scope();
         for s in &file.stmts {
             self.check_stmt(s, &mut scope);
         }
@@ -517,9 +607,11 @@ impl Checker {
             discarding: false,
             validate_user_call_arguments: true,
             fn_table: Arc::new(fn_table),
+            known_vars: Arc::new(HashSet::new()),
             return_slots: Arc::new(return_slots),
             inferring: Vec::new(),
             loaded: Arc::new(HashSet::new()),
+            bare_loaded: Arc::new(HashSet::new()),
             external_bindings: HashSet::new(),
             imported_from: HashMap::new(),
             external_s3_methods: HashSet::new(),
@@ -549,9 +641,11 @@ impl Checker {
             discarding: false,
             validate_user_call_arguments: true,
             fn_table,
+            known_vars: Arc::new(HashSet::new()),
             return_slots,
             inferring: Vec::new(),
             loaded: Arc::new(HashSet::new()),
+            bare_loaded: Arc::new(HashSet::new()),
             external_bindings: HashSet::new(),
             imported_from: HashMap::new(),
             external_s3_methods: HashSet::new(),
@@ -602,7 +696,7 @@ impl Checker {
         self.path = file.path.clone();
         let prev = self.discarding;
         self.discarding = true;
-        let mut scope = Scope::default();
+        let mut scope = self.top_level_scope();
         for s in &file.stmts {
             self.check_stmt(s, &mut scope);
         }
@@ -636,11 +730,243 @@ impl Checker {
             for name in names {
                 self.refine_fn_return(&name);
             }
-            if self.return_slots.0 == before.0 {
+            // A formal inherits quoting only when it is passed directly to a
+            // quoting formal of another user function.  Do this in the same
+            // bounded loop as return refinement so chains across files (and
+            // mutual recursion) converge before diagnostics are emitted.
+            let generic_quoting_changed = self.propagate_s3_generic_quoting();
+            let quoting_changed = self.propagate_forwarded_quoting();
+            if self.return_slots.0 == before.0 && !generic_quoting_changed && !quoting_changed {
                 break;
             }
         }
         self.discarding = prev_discarding;
+    }
+
+    /// A `UseMethod()` generic is evaluated before its selected method, but
+    /// its callers must still supply promises compatible with that method's
+    /// NSE behavior.  Derive the generic's quoting formals from every known
+    /// `generic.class` implementation.  This is intentionally a union: one
+    /// quoting method is enough to make the corresponding generic argument
+    /// opaque at a call site.
+    fn propagate_s3_generic_quoting(&mut self) -> bool {
+        let mut inherited = Vec::new();
+
+        for (name, generic) in &self.fn_table.fns {
+            let Some(dispatch_name) = usemethod_generic_name(&generic.body) else {
+                continue;
+            };
+            if semantic_argument_name(name) != dispatch_name {
+                continue;
+            }
+
+            let mut method_slots = std::collections::HashSet::new();
+            let prefix = format!("{dispatch_name}.");
+            for (method_name, method) in &self.fn_table.fns {
+                if method_name
+                    .strip_prefix(&prefix)
+                    .is_some_and(|class| !class.is_empty())
+                {
+                    method_slots.insert(method.return_slot);
+                }
+            }
+            // Registered methods can have an internal name (for example a
+            // dynamically collected definition), so include their shared
+            // return slots as well as conventionally named methods.
+            for ((registered_generic, _), slot) in &self.fn_table.s3_methods {
+                if registered_generic == &dispatch_name {
+                    method_slots.insert(*slot);
+                }
+            }
+
+            let dots = generic
+                .params
+                .iter()
+                .position(|parameter| parameter.name == "...");
+            for slot in method_slots {
+                let Some(method) = self
+                    .fn_table
+                    .fns
+                    .values()
+                    .find(|function| function.return_slot == slot)
+                else {
+                    continue;
+                };
+                for parameter in &method.params {
+                    if !parameter.quoting {
+                        continue;
+                    }
+                    let target = match generic
+                        .params
+                        .iter()
+                        .position(|generic_parameter| generic_parameter.name == parameter.name)
+                    {
+                        // A method formal with the same name is matched by
+                        // that generic formal, regardless of its position.
+                        Some(position) => Some(position),
+                        // A named method formal absent from the generic is
+                        // supplied through the generic's dots just like a
+                        // method dots formal.  This is the common S3 shape
+                        // `generic(x, ...)` / `generic.class(x, column, ...)`.
+                        None => dots,
+                    };
+                    if let Some(target) = target {
+                        inherited.push((name.clone(), target));
+                    }
+                }
+            }
+        }
+
+        let table = Arc::make_mut(&mut self.fn_table);
+        let mut changed = false;
+        for (generic, position) in inherited {
+            if let Some(parameter) = table
+                .fns
+                .get_mut(&generic)
+                .and_then(|function| function.params.get_mut(position))
+                && !parameter.quoting
+            {
+                parameter.quoting = true;
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Propagate user-NSE metadata across direct formal forwarding.
+    ///
+    /// `ForwardedCall` is collected syntactically, so an argument is present
+    /// here only when its value was an identifier.  This deliberately excludes
+    /// expressions such as `callee(p + 1)` and nested calls such as
+    /// `callee(f(p))`, which evaluate `p` before the callee can capture it.
+    fn propagate_forwarded_quoting(&mut self) -> bool {
+        let mut inherited = Vec::new();
+
+        for call in &self.fn_table.forwarded_calls {
+            let Some(caller) = self.fn_table.fns.get(&call.caller) else {
+                continue;
+            };
+
+            // An explicit namespace call bypasses any same-named user
+            // binding, just as normal call resolution does.
+            let user_callee = (!call.stub_callee.contains("::"))
+                .then(|| self.fn_table.fns.get(&call.callee))
+                .flatten();
+            let stub_callee = self.resolve_typeshed_sig(&call.stub_callee);
+            if user_callee.is_none() && stub_callee.is_none() {
+                continue;
+            }
+
+            let mut claimed = std::collections::HashSet::new();
+            let mut next_positional = 0;
+            for (argument_name, source) in &call.arguments {
+                let Some(source) = source else {
+                    continue;
+                };
+                let target = if source == "..." {
+                    // `callee(...)` forwards the caller's dots only to the
+                    // callee's dots promise, never to an arbitrary formal.
+                    user_callee
+                        .and_then(|callee| {
+                            callee.params.iter().position(|param| param.name == "...")
+                        })
+                        .or_else(|| {
+                            stub_callee.as_ref().and_then(|sig| {
+                                sig.params.iter().position(|param| param.name == "...")
+                            })
+                        })
+                } else if let Some(argument_name) = argument_name {
+                    user_callee
+                        .and_then(|callee| {
+                            callee
+                                .params
+                                .iter()
+                                .position(|param| param.name == *argument_name)
+                                .or_else(|| {
+                                    callee.params.iter().position(|param| param.name == "...")
+                                })
+                        })
+                        .or_else(|| {
+                            stub_callee.as_ref().and_then(|sig| {
+                                sig.params
+                                    .iter()
+                                    .position(|param| param.name == *argument_name)
+                                    .or_else(|| {
+                                        sig.params.iter().position(|param| param.name == "...")
+                                    })
+                            })
+                        })
+                } else {
+                    let params: Vec<&str> = if let Some(callee) = user_callee {
+                        callee
+                            .params
+                            .iter()
+                            .map(|param| param.name.as_str())
+                            .collect()
+                    } else {
+                        stub_callee
+                            .as_ref()
+                            .map(|sig| sig.params.iter().map(|param| param.name.as_str()).collect())
+                            .unwrap_or_default()
+                    };
+                    while next_positional < params.len()
+                        && (params[next_positional] == "..." || claimed.contains(&next_positional))
+                    {
+                        next_positional += 1;
+                    }
+                    let target = (next_positional < params.len()).then_some(next_positional);
+                    next_positional += usize::from(target.is_some());
+                    target
+                };
+                let Some(target) = target else {
+                    continue;
+                };
+                claimed.insert(target);
+                // `target` was computed against whichever params list was
+                // selected above; the other source's list may be shorter, so
+                // every index below must stay bounds-checked.
+                let inherits_quoting = user_callee
+                    .is_some_and(|callee| callee.params.get(target).is_some_and(|p| p.quoting))
+                    || stub_callee.as_ref().is_some_and(|sig| {
+                        sig.params.get(target).is_some_and(|param| {
+                            sig.eval.get(&param.name).is_some_and(|mode| {
+                                matches!(mode, EvalMode::QuotedExpression | EvalMode::QuotedSymbol)
+                            })
+                        })
+                    });
+                // Dots capture is already modeled as defusing (rather than
+                // quoting) so its direct arguments remain opaque.  Preserve
+                // that stronger behavior while forwarding `...` to another
+                // dots-capturing user function.
+                let inherits_defusing = source == "..."
+                    && user_callee
+                        .is_some_and(|callee| callee.params.get(target).is_some_and(|p| p.defused));
+                if (inherits_quoting || inherits_defusing)
+                    && caller.params.iter().any(|param| param.name == *source)
+                {
+                    inherited.push((call.caller.clone(), source.clone(), inherits_quoting));
+                }
+            }
+        }
+
+        let table = Arc::make_mut(&mut self.fn_table);
+        let mut changed = false;
+        for (caller, parameter, quoting) in inherited {
+            if let Some(parameter) = table
+                .fns
+                .get_mut(&caller)
+                .and_then(|function| function.params.iter_mut().find(|p| p.name == parameter))
+            {
+                if quoting && !parameter.quoting {
+                    parameter.quoting = true;
+                    changed = true;
+                } else if !quoting && !parameter.defused {
+                    parameter.defused = true;
+                    changed = true;
+                }
+            }
+        }
+        changed
     }
 
     // Pass 3: emit diagnostics for this file using the refined tables.
@@ -649,7 +975,7 @@ impl Checker {
     pub(crate) fn emit_diagnostics(&mut self, file: &SourceFile) {
         self.path = file.path.clone();
         self.emit_parse_errors(file);
-        let mut scope = Scope::default();
+        let mut scope = self.top_level_scope();
         for s in &file.stmts {
             self.check_stmt(s, &mut scope);
         }
@@ -659,17 +985,48 @@ impl Checker {
         std::mem::take(&mut self.diagnostics)
     }
 
+    /// Build the outermost scope for a checked file. Shiny app fragments are
+    /// sourced inside a server function, where these names are supplied by
+    /// Shiny rather than assigned in the fragment itself.
+    fn top_level_scope(&self) -> Scope {
+        let mut scope = Scope::default();
+        if self
+            .external_bindings
+            .contains(SERIALIZED_BINDINGS_UNENUMERABLE)
+        {
+            scope.mark_search_path_unknown();
+        }
+        for profile in BUILTIN_ENVIRONMENTS {
+            if !(profile.path_trigger)(&self.path) {
+                continue;
+            }
+            for name in profile.bindings {
+                scope.insert(*name, RType::unknown());
+            }
+        }
+        scope
+    }
+
     // Seed the loaded-packages set. Called by `Project` (with the
     // union of `ry.toml` `packages` and every file's `library`/
     // `require` calls) before pass-3 emission, and
     // by the CLI for single-file `Checker` paths. The dplyr NSE verbs
     // consult this set to decide whether to apply dplyr semantics.
     pub fn set_loaded(&mut self, loaded: HashSet<String>) {
+        self.bare_loaded = Arc::new(loaded.clone());
         self.loaded = Arc::new(loaded);
     }
 
     pub(crate) fn set_shared_loaded(&mut self, loaded: Arc<HashSet<String>>) {
         self.loaded = loaded;
+    }
+
+    pub(crate) fn set_bare_loaded(&mut self, loaded: HashSet<String>) {
+        self.bare_loaded = Arc::new(loaded);
+    }
+
+    pub(crate) fn set_shared_known_vars(&mut self, known_vars: Arc<HashSet<String>>) {
+        self.known_vars = known_vars;
     }
 
     /// Install runtime stubs for this checker. A matching package replaces

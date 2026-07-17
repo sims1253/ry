@@ -1,4 +1,5 @@
 use super::*;
+use crate::higher_order::s3_group_generic;
 
 impl Checker {
     pub(crate) fn infer_call(
@@ -23,7 +24,10 @@ impl Checker {
         // Only model direct calls `name(...)`. Pipelines and indirect calls
         // return opaque.
         let name = match func {
-            Expr::Ident { name, .. } => name.clone(),
+            // R permits a string literal as a call head, e.g. `"[<-"(...)`.
+            // Treat it exactly like the corresponding identifier so it takes
+            // the normal user-function, typeshed, S3, and higher-order paths.
+            Expr::Ident { name, .. } | Expr::String(name, _) => name.clone(),
             _ => {
                 // Calling a literal value (`42()`, `"x"()`, `TRUE()`,
                 // `NULL()`) is always a runtime error in R ("attempt to
@@ -62,10 +66,16 @@ impl Checker {
         // `::` and `:::` forms: for `pkg:::fn` it splits at the last
         // `::`, yielding `("pkg:", "fn")`.
         let semantic_name = scope.function_alias(&name).unwrap_or(&name).to_string();
-        let lookup_name = semantic_name
-            .rsplit_once("::")
-            .map(|(_, n)| n.to_string())
-            .unwrap_or_else(|| semantic_name.clone());
+        let lookup_name = if is_user_infix_name(&semantic_name) {
+            // `%::%` is an infix operator, not a namespace-qualified call.
+            // Do not split the `::` embedded in its operator spelling.
+            semantic_name.clone()
+        } else {
+            semantic_name
+                .rsplit_once("::")
+                .map(|(_, n)| n.to_string())
+                .unwrap_or_else(|| semantic_name.clone())
+        };
 
         // `foreach(iter = xs, ...) %op% { ... }` evaluates the RHS with
         // each named iteration argument bound. Operator aliases are common,
@@ -82,6 +92,31 @@ impl Checker {
                 local.insert(binding, RType::unknown());
             }
             return self.infer(&args[1].value, &mut local);
+        }
+
+        // Unknown custom infix operators are commonly small DSLs that quote
+        // both operands with `match.call()` or `substitute()`.  Treating
+        // their operands as ordinary R expressions produces false positives
+        // for DSL-only names and operations (for example lambda.r
+        // declarations and plyr's formula-like helpers). They are language
+        // objects, so infer them only to preserve traversal invariants and
+        // never emit a diagnostic from inside either operand.
+        //
+        // A user-defined operator or a typeshed-known one remains an ordinary
+        // evaluated call: `has_function_anywhere` covers both sources.
+        // `.()` is the analogous quoting helper used by plyr/data.table.
+        let custom_infix_is_known = self.has_function_anywhere(&semantic_name)
+            || self
+                .fn_table
+                .fns
+                .keys()
+                .any(|name| semantic_argument_name(name) == semantic_name);
+        if (is_user_infix_name(&semantic_name) || semantic_name == ".") && !custom_infix_is_known {
+            let mut quoted_scope = scope.clone();
+            for argument in args {
+                self.infer_discarding(&argument.value, &mut quoted_scope);
+            }
+            return RType::unknown();
         }
 
         if let Some(result) =
@@ -113,7 +148,7 @@ impl Checker {
 
         // `sum(x > 0)` is the idiomatic R way to count matches, so `sum`
         // is deliberately excluded from this mis-parenthesization family.
-        if matches!(lookup_name.as_str(), "length" | "nchar" | "abs")
+        if matches!(lookup_name.as_str(), "length" | "nchar")
             && let Some(Expr::BinOp { op, span, .. }) = args.first().map(|arg| &arg.value)
             && matches!(
                 op,
@@ -132,6 +167,42 @@ impl Checker {
                 format!(
                     "comparison is inside `{lookup_name}()`; compare `{lookup_name}(x)` instead"
                 ),
+            );
+        }
+
+        // Numeric math functions coerce logical comparisons to 0/1, which is
+        // almost always a misplaced parenthesis (`abs(x > y)` rather than
+        // `abs(x) > y`). Extra parentheses do not change the parsed argument,
+        // so deliberately parenthesized comparisons remain visible here.
+        if matches!(
+            lookup_name.as_str(),
+            "abs"
+                | "sqrt"
+                | "exp"
+                | "log"
+                | "log2"
+                | "log10"
+                | "log1p"
+                | "floor"
+                | "ceiling"
+                | "round"
+                | "trunc"
+        ) && let Some(Expr::BinOp { op, span, .. }) = args.first().map(|arg| &arg.value)
+            && matches!(
+                op,
+                BinOpKind::Lt
+                    | BinOpKind::Le
+                    | BinOpKind::Gt
+                    | BinOpKind::Ge
+                    | BinOpKind::Eq
+                    | BinOpKind::Ne
+            )
+        {
+            self.emit(
+                Severity::Warning,
+                *span,
+                "RY100",
+                "comparison directly inside a numeric math function is usually a parenthesization mistake; compare the math result instead",
             );
         }
 
@@ -160,6 +231,34 @@ impl Checker {
             return RType::scalar(Mode::Logical);
         }
 
+        // `on.exit(expr)` evaluates `expr` when the enclosing function
+        // returns, rather than where it is registered.  Names assigned later
+        // in that body therefore exist by the time this expression runs.
+        // Seed only those statically assigned names and still infer the
+        // expression normally, so genuinely unbound names retain RY010.
+        if lookup_name == "on.exit" {
+            let expression_index = args
+                .iter()
+                .position(|argument| argument.name.as_deref() == Some("expr"))
+                .or_else(|| args.iter().position(|argument| argument.name.is_none()));
+            for (index, argument) in args.iter().enumerate() {
+                if Some(index) == expression_index {
+                    let mut exit_scope = scope.clone();
+                    if let Some(assigned) = self.deferred_captures.last() {
+                        for name in assigned {
+                            if exit_scope.get(name).is_none() {
+                                exit_scope.insert(name.clone(), RType::unknown());
+                            }
+                        }
+                    }
+                    self.infer(&argument.value, &mut exit_scope);
+                } else {
+                    self.infer(&argument.value, scope);
+                }
+            }
+            return RType::new(Mode::Null, Length::Zero);
+        }
+
         if matches!(lookup_name.as_str(), "sprintf" | "gettextf")
             && let Some(Expr::String(format, format_span)) = args.first().map(|arg| &arg.value)
             && let Some(required) = printf_argument_count(format)
@@ -184,8 +283,28 @@ impl Checker {
         // treat dplyr/tidyverse as in scope after either call.
         if semantic_name == "library" || semantic_name == "require" {
             if let Some(first) = args.first() {
-                if let Expr::Ident { name: pkg, .. } = &first.value {
+                let character_only = args.iter().any(|argument| {
+                    argument.name.as_deref() == Some("character.only")
+                        && matches!(argument.value, Expr::Logical(true, _))
+                });
+                let package = match &first.value {
+                    Expr::Ident { name, .. } if !character_only => Some(name),
+                    Expr::String(name, _) => Some(name),
+                    _ => None,
+                };
+                if let Some(pkg) = package {
                     Arc::make_mut(&mut self.loaded).insert(pkg.clone());
+                    Arc::make_mut(&mut self.bare_loaded).insert(pkg.clone());
+                    // An attached package without a stub can contribute any
+                    // export or lazy-loaded dataset to the search path.
+                    if !self.package_is_known(pkg) {
+                        scope.mark_search_path_unknown();
+                    }
+                } else if character_only {
+                    // `library(pkg, character.only = TRUE)` evaluates its
+                    // argument. Without a literal package name we cannot
+                    // know which bindings were attached.
+                    scope.mark_search_path_unknown();
                 }
             }
             return if semantic_name == "require" {
@@ -207,6 +326,7 @@ impl Checker {
         // not reads of existing variables, and become bindings for following
         // statements. Package/control arguments are not introduced.
         if semantic_name == "data" {
+            scope.mark_search_path_unknown();
             for argument in args {
                 if argument.name.is_some() {
                     let _ = self.infer(&argument.value, scope);
@@ -226,12 +346,18 @@ impl Checker {
         }
 
         if semantic_name == "load" {
+            scope.mark_search_path_unknown();
             for argument in args {
                 let _ = self.infer(&argument.value, scope);
             }
             if let Some(bindings) = self.load_bindings.get(&span.start).cloned() {
                 for binding in bindings {
-                    scope.insert(binding, RType::unknown());
+                    if binding == crate::SERIALIZED_BINDINGS_UNENUMERABLE {
+                        // An oversized workspace may introduce any binding.
+                        scope.mark_search_path_unknown();
+                    } else {
+                        scope.insert(binding, RType::unknown());
+                    }
                 }
             }
             return RType::new(Mode::Character, Length::Unknown);
@@ -363,7 +489,28 @@ impl Checker {
         let inherited_sig = self.resolve_user_s3_inherited_sig(&lookup_name);
         let inherited_s3_metadata = inherited_sig.is_some();
         let resolved_sig = self.resolve_typeshed_sig(&semantic_name).or(inherited_sig);
-        let user_function = self.fn_table.fns.get(&lookup_name).cloned();
+        // Formula interfaces can name a later `data` argument as the source
+        // of their data mask. Infer it once up front so earlier `weights`,
+        // `subset`, and similar arguments see the right scope.
+        let supplied_data_mask_source = resolved_sig.as_ref().and_then(|signature| {
+            data_mask_source_arg(signature, args).map(|argument_index| {
+                (
+                    argument_index,
+                    self.infer(&args[argument_index].value, scope),
+                )
+            })
+        });
+        // Function definitions may use a quoted binding name (`'%as%' <-
+        // function(...)`), whereas an infix call is looked up as `%as%`.
+        // Match the normalized spelling as well so user-function metadata
+        // (notably NSE/quoting parameters) reaches those calls.
+        let user_function = self.fn_table.fns.get(&lookup_name).cloned().or_else(|| {
+            self.fn_table
+                .fns
+                .iter()
+                .find(|(name, _)| semantic_argument_name(name) == lookup_name)
+                .map(|(_, function)| function.clone())
+        });
         let user_argument_matches = user_function.as_ref().map(|function| {
             let names: Vec<&str> = function
                 .params
@@ -387,9 +534,38 @@ impl Checker {
                 .and_then(|matches| matches.param_for_arg[index].or(matches.dots))
                 .and_then(|parameter| user_function.as_ref()?.params.get(parameter))
                 .is_some_and(|parameter| parameter.defused);
+            let is_quoting = user_argument_matches
+                .as_ref()
+                .and_then(|matches| matches.param_for_arg[index].or(matches.dots))
+                .and_then(|parameter| user_function.as_ref()?.params.get(parameter))
+                .is_some_and(|parameter| parameter.quoting);
+            if is_quoting {
+                // User functions that capture an argument with substitute(),
+                // bquote(), or match.call()-style reflection receive the
+                // expression unevaluated. Infer it without diagnostics so
+                // nested operations and names cannot be mistaken for runtime
+                // R code.
+                let mut quoted_scope = scope.clone();
+                self.infer_discarding(&a.value, &mut quoted_scope);
+                arg_types.push(RType::unknown());
+                continue;
+            }
             if is_defused && declared_mode.is_none_or(|mode| matches!(mode, EvalMode::Normal)) {
                 let mut local = self.dplyr_data_mask_scope(scope, &RType::unknown());
                 arg_types.push(self.infer(&a.value, &mut local));
+                continue;
+            }
+            if supplied_data_mask_source
+                .as_ref()
+                .is_some_and(|(source_index, _)| *source_index == index)
+            {
+                arg_types.push(
+                    supplied_data_mask_source
+                        .as_ref()
+                        .expect("checked data-mask source")
+                        .1
+                        .clone(),
+                );
                 continue;
             }
             if let Some(mode) = declared_mode {
@@ -399,12 +575,29 @@ impl Checker {
                         if matches!(a.value, Expr::Ident { .. }) {
                             RType::unknown()
                         } else {
-                            self.infer(&a.value, scope)
+                            self.infer_discarding(&a.value, scope)
                         }
                     }
-                    EvalMode::QuotedExpression => RType::unknown(),
+                    EvalMode::QuotedExpression | EvalMode::CapturesPromise => RType::unknown(),
                     EvalMode::DataMask => {
-                        let data = arg_types.first().cloned().unwrap_or_else(RType::unknown);
+                        // A declared source is conditional: without a
+                        // supplied `data` argument, formula extras evaluate
+                        // normally in the caller environment.
+                        let Some(data) = supplied_data_mask_source
+                            .as_ref()
+                            .map(|(_, data)| data.clone())
+                            .or_else(|| {
+                                resolved_sig
+                                    .as_ref()
+                                    .is_some_and(|signature| signature.data_mask_source.is_none())
+                                    .then(|| {
+                                        arg_types.first().cloned().unwrap_or_else(RType::unknown)
+                                    })
+                            })
+                        else {
+                            arg_types.push(self.infer(&a.value, scope));
+                            continue;
+                        };
                         let mut local = self.dplyr_data_mask_scope(scope, &data);
                         local.insert(".", RType::unknown());
                         if user_dispatch {
@@ -558,6 +751,7 @@ impl Checker {
         if matches!(lookup_name.as_str(), "as.data.frame")
             && let Some(input) = arg_types.first()
             && let Some(schema) = input.columns.clone()
+            && !schema.is_empty()
         {
             return RType::new(Mode::List, Length::Known(schema.columns.len()))
                 .with_class(ClassVector::single("data.frame"))
@@ -581,8 +775,8 @@ impl Checker {
         // a miss with a *known* class, emit RY050. On a miss with an
         // unknown or empty class, fall through (we can't say anything).
         //
-        // We model the first class-vector element and then the `default`
-        // fallback. Walking later class-vector elements is a future task.
+        // Dispatch walks the complete class vector, then considers the
+        // direct generic and its Math/Summary group fallback.
         //
         // We use the prefix-stripped `lookup_name` so a qualified call
         // like `base::print(x)` still dispatches as `print`.
@@ -592,6 +786,7 @@ impl Checker {
             .s3_generics
             .iter()
             .any(|generic| generic == &lookup_name)
+            || s3_group_generic(&lookup_name).is_some()
         {
             if let Some(rt) = self.try_s3_dispatch(&lookup_name, &arg_types, span) {
                 return rt;
@@ -637,8 +832,8 @@ impl Checker {
         //
         // Qualified calls look up the stripped name; a user's `utils::
         // helper()` resolves like `helper()`.
-        if let Some(f) = self.fn_table.fns.get(&lookup_name) {
-            return self.return_slots.get(f.return_slot);
+        if let Some(function) = user_function.as_ref() {
+            return self.return_slots.get(function.return_slot);
         }
 
         // Literal-arg inference for `vector`, `rep`, `seq`, `seq.int`.
@@ -717,6 +912,10 @@ impl Checker {
         let mut arg_types = Vec::with_capacity(args.len());
         for (index, argument) in args.iter().enumerate() {
             let parameter = matches.param_for_arg[index].and_then(|index| params.get(index));
+            let quoted_expression = matches!(
+                argument_eval_mode(&signature, args, index),
+                Some(EvalMode::QuotedExpression)
+            );
             let specs: Vec<_> = signature
                 .injects
                 .iter()
@@ -747,11 +946,24 @@ impl Checker {
                     child.insert(binding.clone(), RType::unknown());
                 }
             }
-            arg_types.push(if injects_fixed_names {
-                self.infer_injected_expr(&argument.value, &mut child)
-            } else {
-                self.infer(&argument.value, &mut child)
-            });
+            arg_types.push(
+                if injects_fixed_names
+                    && quoted_expression
+                    && matches!(argument.value, Expr::Ident { .. })
+                {
+                    // An injected expression can still be a bare captured
+                    // symbol. It is not evaluated in the caller, so avoid
+                    // reporting it unbound while retaining injected checking for
+                    // blocks and function literals below.
+                    RType::unknown()
+                } else if injects_fixed_names {
+                    self.infer_injected_expr(&argument.value, &mut child)
+                } else if quoted_expression {
+                    RType::unknown()
+                } else {
+                    self.infer(&argument.value, &mut child)
+                },
+            );
         }
         self.check_typeshed_call_arguments(lookup_name, &signature, args, &arg_types, span);
         Some(self.apply_sig(lookup_name, &signature, &arg_types, args, span))

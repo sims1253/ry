@@ -576,6 +576,66 @@ fn package_namespace_bindings_do_not_leak_across_checked_roots() {
 }
 
 #[test]
+fn package_test_context_promotes_suggests_but_not_imports() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join("R")).unwrap();
+    fs::create_dir_all(tmp.path().join("tests/testthat")).unwrap();
+    fs::write(
+        tmp.path().join("DESCRIPTION"),
+        "Package: contextfixture\nVersion: 0.0.0.9000\nSuggests: mirai\n",
+    )
+    .unwrap();
+    fs::write(tmp.path().join("NAMESPACE"), "import(rlang)\n").unwrap();
+    fs::write(tmp.path().join("R/use.R"), "enquo\n").unwrap();
+    fs::write(
+        tmp.path().join("tests/testthat/test-context.R"),
+        "daemons\nenquo\n",
+    )
+    .unwrap();
+
+    let output = ry_check(tmp.path());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("variable `daemons` is not bound"),
+        "stubbed Suggests must supply their names in tests: {stdout}"
+    );
+    assert!(
+        stdout.matches("variable `enquo` is not bound").count() == 1,
+        "NAMESPACE import() must supply bare names only to R/: {stdout}"
+    );
+}
+
+#[test]
+fn imported_rlang_capture_helper_is_recognized_globally() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join("R")).unwrap();
+    fs::create_dir_all(tmp.path().join("tests/testthat")).unwrap();
+    fs::write(
+        tmp.path().join("DESCRIPTION"),
+        "Package: capturefixture\nVersion: 0.0.0.9000\n",
+    )
+    .unwrap();
+    fs::write(tmp.path().join("NAMESPACE"), "importFrom(rlang,enquos)\n").unwrap();
+    fs::write(
+        tmp.path().join("R/lst.R"),
+        "lst <- function(...) enquos(...)\n",
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("tests/testthat/test-lst.R"),
+        "lst(a = 1, b = a)\n",
+    )
+    .unwrap();
+
+    let output = ry_check(tmp.path());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("variable `a` is not bound"),
+        "global promise-capture metadata must quote lst's dots: {stdout}"
+    );
+}
+
+#[test]
 fn script_library_call_binds_exports_from_installed_namespace() {
     let tmp = tempfile::tempdir().unwrap();
     let r_lib = tmp.path().join("library");
@@ -589,8 +649,8 @@ fn script_library_call_binds_exports_from_installed_namespace() {
     let output = ry_check_with_r_lib(&tmp.path().join("script.R"), &r_lib);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("variable `genuinely_missing` is not bound"),
-        "control diagnostic must still fire: {stdout}"
+        !stdout.contains("variable `genuinely_missing` is not bound"),
+        "an un-stubbed attached package opens the search path: {stdout}"
     );
     assert!(
         !stdout.contains("variable `exported_value` is not bound"),
@@ -644,8 +704,8 @@ fn installed_namespace_lookup_preserves_r_library_precedence() {
         "the first R library must win: {stdout}"
     );
     assert!(
-        stdout.contains("variable `shadowed_export` is not bound"),
-        "exports from a shadowed package version must not leak: {stdout}"
+        !stdout.contains("variable `shadowed_export` is not bound"),
+        "an un-stubbed attached package opens the search path: {stdout}"
     );
 }
 
@@ -678,8 +738,8 @@ fn placeholder_library_path_prefers_current_r_version() {
         "the current R version must win placeholder expansion: {stdout}"
     );
     assert!(
-        stdout.contains("variable `old_export` is not bound"),
-        "exports from another R version must not leak: {stdout}"
+        !stdout.contains("variable `old_export` is not bound"),
+        "an un-stubbed attached package opens the search path: {stdout}"
     );
 }
 
@@ -714,8 +774,8 @@ fn project_renv_library_precedes_global_libraries() {
         "the project renv library must win: {stdout}"
     );
     assert!(
-        stdout.contains("variable `global_export` is not bound"),
-        "exports from the shadowed global package must not leak: {stdout}"
+        !stdout.contains("variable `global_export` is not bound"),
+        "an un-stubbed attached package opens the search path: {stdout}"
     );
 }
 

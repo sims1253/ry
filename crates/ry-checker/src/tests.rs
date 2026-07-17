@@ -57,6 +57,445 @@ fn ambient_function_in_comparison_still_diagnosed() {
 }
 
 #[test]
+fn unknown_custom_infix_quotes_its_operands() {
+    let diagnostics = check(
+        "fib(n) %::% numeric : numeric\n\
+         fib(0) %as% 1\n\
+         hof_map_zip_with(func = .(k, v1, v2) %->% (CONCAT(k, \"_\", v1, \"_\", v2)))\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "unknown infix DSL operands must be quoted: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn known_custom_infix_evaluates_its_operands() {
+    let diagnostics = check(
+        "`%myop%` <- function(a, b) a\n\
+         f <- function() { a %myop% b }\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.code == "RY010" && diagnostic.message.contains("`b`") }),
+        "known custom infix operands must remain evaluated: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn user_quoting_functions_discard_all_diagnostics_for_quoted_parameters() {
+    let diagnostics = check(
+        "`%as%` <- function(lhs, rhs) match.call()\n\
+         fib(n) %::% numeric : numeric\n\
+         fib(0) %as% 1\n\
+         myfn <- function(x) deparse(substitute(x))\n\
+         myfn(A +-+ B)\n\
+         myfn(D - E - F)\n\
+         myfn(unbound_name)\n\
+         myfn(1 + \"a\")\n\
+         myfn2 <- function(x) x + 1\n\
+         myfn2(still_unbound)\n",
+    );
+    assert!(
+        diagnostics.iter().all(|diagnostic| {
+            !["n", "numeric", "A", "B", "D", "E", "F", "unbound_name"]
+                .iter()
+                .any(|name| diagnostic.message.contains(&format!("`{name}`")))
+        }),
+        "quoted user-function arguments must emit no diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "RY010" && diagnostic.message.contains("`still_unbound`")
+        }),
+        "normally evaluated user-function arguments must retain RY010: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn normal_arguments_still_emit_type_diagnostics() {
+    let diagnostics = check("plain <- function(x) x\nplain(1 + \"a\")\n");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY040"),
+        "normally evaluated arguments must retain type diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn ry100_supersedes_condition_type_diagnostic() {
+    let diagnostics = check("if (abs(x > 1)) NULL\n");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY100")
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| !matches!(diagnostic.code, "RY001" | "RY003")),
+        "RY100 must be the only condition diagnostic: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn formula_data_mask_arguments_use_the_named_data_source() {
+    let lm = check("d <- data.frame()\nlm(y ~ x, data = d, weights = w, subset = grp == \"a\")\n");
+    assert!(
+        lm.iter().all(|diagnostic| diagnostic.code != "RY010"),
+        "lm formula, weights, and subset must be quiet under data: {lm:?}"
+    );
+
+    let survival = check(
+        "tdata <- data.frame()\nsurvival::survfit(survival::Surv(t1, t2, s) ~ 1, id = id, weights = wt, data = tdata)\n",
+    );
+    assert!(
+        survival.iter().all(|diagnostic| diagnostic.code != "RY010"),
+        "survival formula extras must use its named data argument: {survival:?}"
+    );
+}
+
+#[test]
+fn formula_data_mask_arguments_remain_normal_without_data() {
+    let diagnostics = check("lm(y ~ x, weights = w)\n");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.code == "RY010" && diagnostic.message.contains("`w`") }),
+        "without data, formula extras must be checked in the caller scope: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn match_call_quotes_every_user_function_argument() {
+    let diagnostics = check(
+        "all_quoted <- function(x, y) { call <- match.call(); NULL }\n\
+         all_quoted(first_unbound, second_unbound)\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "match.call() must quote every formal: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn bquote_dot_marks_its_parameter_as_quoting() {
+    let diagnostics = check(
+        "quoted <- function(x) bquote(list(.(x)))\n\
+         quoted(unbound_name)\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "bquote(.(x)) must quote x: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn rlang_capture_functions_mark_formals_as_quoting() {
+    let diagnostics = check(
+        "f <- function(x) rlang::enexpr(x)\n\
+         f(unbound)\n\
+         h <- function(...) rlang::enquos(...)\n\
+         h(unbound1, unbound2)\n\
+         q <- function(...) rlang::quos(...)\n\
+         q(unbound3, unbound4)\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "rlang capture helpers must quote their captured promises: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn s3_generic_inherits_quoting_from_its_methods() {
+    let diagnostics = check(
+        "tabyl <- function(d, ...) UseMethod(\"tabyl\")\n\
+         tabyl.data.frame <- function(d, ...) rlang::ensyms(...)\n\
+         df <- data.frame()\n\
+         tabyl(df, colA)\n",
+    );
+    assert!(
+        diagnostics.iter().all(|diagnostic| {
+            diagnostic.code != "RY010" || !diagnostic.message.contains("`colA`")
+        }),
+        "a quoting S3 method must make the generic's dots quoting: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn s3_generic_dots_inherit_named_method_formal_quoting() {
+    let diagnostics = check(
+        "tabyl <- function(d, ...) UseMethod(\"tabyl\")\n\
+         tabyl.data.frame <- function(d, var1, var2, var3, show_na = TRUE, ...) {\n\
+           rlang::enquo(var1)\n\
+           rlang::enquo(var2)\n\
+           rlang::enquo(var3)\n\
+         }\n\
+         d <- data.frame()\n\
+         tabyl(d, am, cyl)\n\
+         d %>% tabyl(am, cyl)\n",
+    );
+    assert!(
+        diagnostics.iter().all(|diagnostic| {
+            diagnostic.code != "RY010"
+                || (!diagnostic.message.contains("`am`") && !diagnostic.message.contains("`cyl`"))
+        }),
+        "named method quoting must make generic dots opaque: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn project_s3_generic_dots_inherit_named_method_formal_quoting() {
+    let mut project = Project::new();
+    project.add_file(
+        "generic.R".to_string(),
+        parse_file(
+            "generic.R",
+            "tabyl <- function(dat, ...) UseMethod(\"tabyl\")\n",
+        ),
+    );
+    project.add_file(
+        "method.R".to_string(),
+        parse_file(
+            "method.R",
+            "tabyl.default <- function(dat, show_na = TRUE, ...) dat\n\
+             tabyl.data.frame <- function(dat, var1, var2, var3, ...) {\n\
+             if (missing(var1) && missing(var2) && missing(var3)) NULL\n\
+             rlang::enquo(var1)\n\
+             rlang::enquo(var2)\n\
+             rlang::enquo(var3)\n\
+             }\n",
+        ),
+    );
+    project.add_file(
+        "call.R".to_string(),
+        parse_file("call.R", "d <- data.frame()\nd %>% tabyl(am, cyl)\n"),
+    );
+    let diagnostics: Vec<_> = project
+        .check()
+        .into_iter()
+        .flat_map(|(_, diagnostics)| diagnostics)
+        .collect();
+    assert!(
+        diagnostics.iter().all(|diagnostic| {
+            diagnostic.code != "RY010"
+                || (!diagnostic.message.contains("`am`") && !diagnostic.message.contains("`cyl`"))
+        }),
+        "project generic dots must inherit named method quoting: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn s3_generic_without_quoting_methods_keeps_arguments_eager() {
+    let diagnostics = check(
+        "plain <- function(d, ...) UseMethod(\"plain\")\n\
+         plain.data.frame <- function(d, ...) print(...)\n\
+         df <- data.frame()\n\
+         plain(df, unbound_column)\n",
+    );
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "RY010" && diagnostic.message.contains("`unbound_column`")
+        }),
+        "a non-quoting S3 method must not make the generic's arguments opaque: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn project_s3_generic_inherits_quoting_from_methods_in_another_file() {
+    let mut project = Project::new();
+    project.add_file(
+        "generic.R".to_string(),
+        parse_file(
+            "generic.R",
+            "tabyl <- function(d, ...) UseMethod(\"tabyl\")\n",
+        ),
+    );
+    project.add_file(
+        "method.R".to_string(),
+        parse_file(
+            "method.R",
+            "tabyl.data.frame <- function(d, ...) rlang::ensyms(...)\n",
+        ),
+    );
+    project.add_file(
+        "call.R".to_string(),
+        parse_file("call.R", "df <- data.frame()\ntabyl(df, colA)\n"),
+    );
+    let diagnostics: Vec<_> = project
+        .check()
+        .into_iter()
+        .flat_map(|(_, diagnostics)| diagnostics)
+        .collect();
+    assert!(
+        diagnostics.iter().all(|diagnostic| {
+            diagnostic.code != "RY010" || !diagnostic.message.contains("`colA`")
+        }),
+        "cross-file S3 quoting must reach generic call sites: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn on_exit_sees_locals_assigned_later_but_not_unbound_names() {
+    let later_assigned = check(
+        "f <- function() {\n\
+           on.exit(print(later))\n\
+           later <- 1L\n\
+         }\n",
+    );
+    assert!(
+        later_assigned.iter().all(|diagnostic| {
+            diagnostic.code != "RY010" || !diagnostic.message.contains("`later`")
+        }),
+        "on.exit must see locals assigned later in its enclosing body: {later_assigned:?}"
+    );
+
+    let unbound = check("f <- function() on.exit(print(never_assigned))\n");
+    assert!(
+        unbound.iter().any(|diagnostic| {
+            diagnostic.code == "RY010" && diagnostic.message.contains("`never_assigned`")
+        }),
+        "on.exit must retain RY010 for names never assigned in its body: {unbound:?}"
+    );
+}
+
+#[test]
+fn direct_forwarding_inherits_quoting_but_expressions_do_not() {
+    let diagnostics = check(
+        "q <- function(a) substitute(a)\n\
+         w <- function(b) q(b)\n\
+         w(unbound)\n\
+         w2 <- function(b) q(b + 1)\n\
+         w2(still_unbound)\n",
+    );
+    assert!(
+        diagnostics.iter().all(|diagnostic| {
+            diagnostic.code != "RY010" || !diagnostic.message.contains("`unbound`")
+        }),
+        "direct forwarding must inherit quoting: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "RY010" && diagnostic.message.contains("`still_unbound`")
+        }),
+        "non-direct forwarding must remain evaluated: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn direct_dots_forwarding_inherits_dots_quoting() {
+    let diagnostics = check(
+        "capture <- function(...) rlang::enexprs(...)\n\
+         forward <- function(...) capture(...)\n\
+         forward(unbound)\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "direct dots forwarding must inherit dots quoting: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn forwarding_to_quoted_stub_marks_the_user_formal_as_quoting() {
+    let diagnostics = check(
+        "forward <- function(...) dbplyr::translate_sql(...)\n\
+         forward(unbound)\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "quoted stub dots must make forwarded dots quoting: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn qualified_quoted_stub_forwarding_ignores_a_same_named_user_function() {
+    let diagnostics = check(
+        "translate_sql <- function(x) x\n\
+         forward <- function(...) dbplyr::translate_sql(...)\n\
+         forward(unbound)\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "a qualified stub call must not be masked by a user function: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn forwarding_to_plain_stub_does_not_mark_the_user_formal_as_quoting() {
+    let diagnostics = check("forward <- function(x) paste(x)\nforward(unbound)\n");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY010"),
+        "normally evaluated stub arguments must remain evaluated: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn quoted_stub_forwarding_suppresses_ry010_through_a_custom_infix_operator() {
+    let diagnostics = check(
+        "`%myop%` <- function(...) dbplyr::translate_sql(...)\n\
+         x %myop% (unbound_ident + 1)\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "the custom infix's forwarded dots must quote its operands: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn quoted_operator_name_with_substitute_quotes_its_operands() {
+    let diagnostics = check(
+        "'%::%' <- function(signature, types) {\n\
+           s <- deparse(substitute(signature))\n\
+           t <- deparse(substitute(types))\n\
+         }\n\
+         fib(n) %::% numeric : numeric\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "quoted operator definitions must retain their NSE metadata: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn unknown_dot_helper_quotes_its_operands_but_known_dot_evaluates_them() {
+    let unknown = check(".(alcgp)\n");
+    assert!(
+        unknown.iter().all(|diagnostic| diagnostic.code != "RY010"),
+        "unknown .() must quote its operands: {unknown:?}"
+    );
+
+    let known = check("`.` <- function(x) x\n.(alcgp)\n");
+    assert!(
+        known.iter().any(|diagnostic| {
+            diagnostic.code == "RY010" && diagnostic.message.contains("`alcgp`")
+        }),
+        "user-defined .() operands must remain evaluated: {known:?}"
+    );
+}
+
+#[test]
 fn runtime_stub_defines_package_function_for_checker() {
     let mut parser = RParser::new().unwrap();
     let file = parser
@@ -426,6 +865,68 @@ fn attach_makes_later_search_path_bindings_uncertain() {
 }
 
 #[test]
+fn require_makes_later_search_path_bindings_uncertain() {
+    let diagnostics = check("require(unstubbed_package)\nfrom_attached_package\n");
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "unstubbed require() must open the search path: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn open_scope_mutations_only_affect_later_bindings_and_nested_functions() {
+    let diagnostics = check(
+        "before_library\nlibrary(fakepkg123)\nafter_library\nf <- function() nested_after_library\nlibrary(package_name, character.only = TRUE)\nafter_dynamic_library\n",
+    );
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == "RY010" && diagnostic.message.contains("before_library")
+    }));
+    let known_package_diagnostics = check("library(dplyr)\nstill_not_a_dplyr_thing\n");
+    assert!(known_package_diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == "RY010" && diagnostic.message.contains("still_not_a_dplyr_thing")
+    }));
+    for name in [
+        "after_library",
+        "nested_after_library",
+        "after_dynamic_library",
+    ] {
+        assert!(
+            diagnostics.iter().all(|diagnostic| {
+                diagnostic.code != "RY010" || !diagnostic.message.contains(name)
+            }),
+            "{name} should be uncertain after an open-scope library call: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn data_and_load_make_later_bindings_uncertain() {
+    let (data_diagnostics, data_scope) = check_with_scope("data(api)\nprint(apipop)\n");
+    assert!(
+        data_diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010")
+    );
+    assert_eq!(data_scope.get("api"), Some(&RType::unknown()));
+
+    let load_diagnostics = check("load(\"f.rda\")\nprint(whatever)\n");
+    assert!(
+        load_diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010")
+    );
+
+    let source_diagnostics = check("source(\"generated.R\")\nprint(from_source)\n");
+    assert!(
+        source_diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010")
+    );
+}
+
+#[test]
 fn source_cpp_makes_later_scope_bindings_uncertain() {
     let diagnostics = check(
         "before_source\nRcpp::sourceCpp(\"generated.cpp\")\nafter_source\nf <- function() nested_after_source\n",
@@ -467,6 +968,32 @@ fn shiny_test_server_injects_reactive_bindings() {
 }
 
 #[test]
+fn shiny_stub_marks_reactive_code_arguments_as_quoted() {
+    let diagnostics = check(
+        "library(shiny)\n\
+         reactive(missing_reactive)\n\
+         observe(missing_observe)\n\
+         observeEvent(missing_event, missing_handler)\n\
+         eventReactive(missing_event_reactive, missing_value_reactive)\n\
+         isolate(missing_isolate)\n\
+         renderText(missing_text)\n\
+         renderPrint(missing_print)\n\
+         renderUI(missing_ui)\n\
+         renderPlot(missing_plot)\n\
+         renderTable(missing_table)\n\
+         renderDataTable(missing_data_table)\n\
+         renderImage(missing_image)\n\
+         testServer(NULL, missing_test_server)\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "Shiny reactive code arguments must be quoted: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn import_from_applies_metadata_only_to_the_imported_binding() {
     let mut parser = RParser::new().unwrap();
     let file = parser
@@ -491,14 +1018,15 @@ fn import_from_applies_metadata_only_to_the_imported_binding() {
 }
 
 #[test]
-fn user_infix_infers_both_operands_and_returns_unknown() {
+fn unknown_user_infix_quotes_both_operands_and_returns_unknown() {
     let (diagnostics, scope) =
         check_with_scope("result <- missing_left %custom% missing_right\nafter <- result + 1L\n");
     for name in ["missing_left", "missing_right"] {
         assert!(
-            diagnostics.iter().any(|diagnostic| {
-                diagnostic.code == "RY010" && diagnostic.message.contains(name)
-            })
+            diagnostics.iter().all(|diagnostic| {
+                diagnostic.code != "RY010" || !diagnostic.message.contains(name)
+            }),
+            "unknown infix must quote `{name}`: {diagnostics:?}"
         );
     }
     assert_eq!(scope.get("result").map(|ty| &ty.mode), Some(&Mode::Opaque));
@@ -545,10 +1073,10 @@ fn future_import_enables_mirrored_destructuring() {
 }
 
 #[test]
-fn destructuring_is_not_special_without_package_context() {
+fn unresolved_destructuring_operator_quotes_its_operands() {
     let diagnostics = check("c(unbound) %<-% make_value()\n");
-    assert!(diagnostics.iter().any(|diagnostic| {
-        diagnostic.code == "RY010" && diagnostic.message.contains("unbound")
+    assert!(diagnostics.iter().all(|diagnostic| {
+        diagnostic.code != "RY010" || !diagnostic.message.contains("unbound")
     }));
 }
 
@@ -695,6 +1223,47 @@ fn scalar_string_subset_of_atomic_vector_has_length_one() {
     let y = scope.get("y").expect("y should be bound");
     assert_eq!(y.mode, Mode::Integer);
     assert_eq!(y.length, Length::One);
+}
+
+#[test]
+fn data_frame_scalar_column_subset_drops_to_column_type() {
+    let (diags, scope) = check_with_scope(
+        "d <- data.frame(a = 1:10, b = 11:20)\nm <- d[, 1]\nn <- d[, \"a\"]\nkept <- d[, 1, drop = FALSE]\n",
+    );
+    assert!(diags.is_empty(), "{diags:?}");
+    for name in ["m", "n"] {
+        let column = scope.get(name).expect("selected column should be bound");
+        assert_eq!(column.mode, Mode::Integer, "{name}: {column:?}");
+        assert_eq!(column.length, Length::Known(10), "{name}: {column:?}");
+    }
+    let kept = scope
+        .get("kept")
+        .expect("drop = FALSE result should be bound");
+    assert_eq!(kept.mode, Mode::List, "{kept:?}");
+    assert_eq!(kept.length, Length::One, "{kept:?}");
+    assert!(kept.class.contains("data.frame"), "{kept:?}");
+}
+
+#[test]
+fn negative_scalar_subscript_is_not_narrowed_to_length_one() {
+    let diagnostics = check("x <- c(10, 20, 30)\nif (x[-1] > 1) print(1)\n");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY002"),
+        "negative subscript excludes an element rather than extracting one: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn condition_union_with_a_valid_logical_member_is_silent() {
+    let diagnostics = check("x <- if (runif(1) > 0.5) logical(0) else TRUE\nif (x) print(1)\n");
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY001"),
+        "a possibly-valid condition must not be reported as definitely invalid: {diagnostics:?}"
+    );
 }
 
 #[test]
@@ -1006,8 +1575,50 @@ fn comparison_inside_selected_scalar_calls_is_diagnosed() {
             .iter()
             .filter(|diagnostic| diagnostic.code == "RY093")
             .count(),
+        2,
+        "length and nchar should fire under RY093: {diags:?}"
+    );
+    assert_eq!(
+        diags
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "RY100")
+            .count(),
+        1,
+        "abs should fire under RY100, but sum and an outer comparison should not: {diags:?}"
+    );
+}
+
+#[test]
+fn comparison_directly_inside_numeric_math_is_diagnosed() {
+    let diags = check(
+        "abs(x > y)\nabs(x) > y\nsqrt(a == b)\nsum(x > 0)\nlog(x, base = 2)\nabs(x %in% y)\nabs((x > y))\n",
+    );
+    let math: Vec<_> = diags
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "RY100")
+        .collect();
+    assert_eq!(
+        math.len(),
         3,
-        "length, nchar, and abs should fire, but sum and an outer comparison should not: {diags:?}"
+        "only direct ordinary comparisons, including extra parentheses, should fire: {diags:?}"
+    );
+    assert!(
+        math.iter()
+            .all(|diagnostic| diagnostic.severity == Severity::Warning),
+        "RY100 must be a warning: {diags:?}"
+    );
+}
+
+#[test]
+fn sign_comparison_is_an_allowed_indicator_idiom() {
+    let diags = check("sign(x <= y)\nabs(x <= y)\n");
+    assert_eq!(
+        diags
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "RY100")
+            .count(),
+        1,
+        "sign() must be allowed, while abs() remains diagnosed: {diags:?}"
     );
 }
 
@@ -1331,6 +1942,30 @@ fn detects_if_on_character() {
 }
 
 #[test]
+fn numeric_conditions_use_ry003() {
+    let integer = check("if (1L) print(1)");
+    assert!(integer.iter().any(|d| d.code == "RY003"));
+    assert!(integer.iter().all(|d| d.code != "RY001"));
+    assert!(
+        integer
+            .iter()
+            .any(|d| d.code == "RY003" && d.severity == Severity::Info)
+    );
+
+    let numeric_union = check("x <- if (runif(1) > 0.5) 1L else 2.0\nif (x) print(1)");
+    assert!(numeric_union.iter().any(|d| d.code == "RY003"));
+
+    let invalid_union = check("x <- if (runif(1) > 0.5) 1L else \"a\"\nif (x) print(1)");
+    assert!(invalid_union.iter().any(|d| d.code == "RY001"));
+
+    let null = check("if (NULL) print(1)");
+    assert!(null.iter().any(|d| d.code == "RY001"));
+
+    let while_integer = check("n <- 1L\nwhile (n) n <- 0L");
+    assert!(while_integer.iter().any(|d| d.code == "RY003"));
+}
+
+#[test]
 fn detects_long_condition_warning() {
     let diags = check("if (c(TRUE, FALSE)) print(1)\n");
     assert!(diags.iter().any(|d| d.code == "RY002"));
@@ -1340,6 +1975,99 @@ fn detects_long_condition_warning() {
 fn detects_unbound_var() {
     let diags = check("y <- undefined_thing\n");
     assert!(diags.iter().any(|d| d.code == "RY010"));
+}
+
+#[test]
+fn loop_carried_bindings_are_available_at_the_start_of_each_iteration() {
+    for src in [
+        "n <- function() {\n  for (i in 1:3) {\n    if (i > 1) print(acc)\n    acc <- i\n  }\n}\n",
+        "x <- 1:3\ntotal <- 0L\nfor (i in x) { total <- total + i }\n",
+        "x <- 1:3\nfor (i in x) { total <- total + i }\n",
+        "keep_going <- TRUE\nwhile (keep_going) {\n  print(acc)\n  acc <- 1L\n}\n",
+        "repeat {\n  print(acc)\n  acc <- 1L\n  break\n}\n",
+    ] {
+        let diags = check(src);
+        assert!(
+            diags.iter().all(|diagnostic| diagnostic.code != "RY010"),
+            "loop-carried binding should not be unbound: {diags:?}"
+        );
+    }
+}
+
+// The T7b mutually-exclusive-branch refinement was reverted after repeated
+// corpus regressions; opposite-arm reads inside loops are prebound like any
+// other loop-carried name (accepted recall loss: FactoMineR MFA.R:310).
+#[test]
+fn loop_prebinding_suppresses_opposite_arm_reads() {
+    for src in [
+        "for (i in 1:3) {\n  if (is.null(tab.comp)) {\n    QuantiAct <- i\n  } else {\n    print(QuantiAct)\n  }\n}\n",
+        "while (keep_going) {\n  if (flag == TRUE) {\n    value <- 1L\n  } else {\n    print(value)\n  }\n}\n",
+    ] {
+        let diags = check(src);
+        assert!(
+            diags.iter().all(|diagnostic| {
+                diagnostic.code != "RY010"
+                    || (!diagnostic.message.contains("QuantiAct")
+                        && !diagnostic.message.contains("`value`"))
+            }),
+            "loop-assigned names are prebound in every arm: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn loop_prebinding_remains_for_variant_branch_conditions() {
+    for src in [
+        "for (i in 1:3) {\n  if (i > 1) {\n    acc <- i\n  } else {\n    print(acc)\n  }\n}\n",
+        "while (keep_going) {\n  if (flag) {\n    value <- 1L\n    flag <- FALSE\n  } else {\n    print(value)\n  }\n}\n",
+    ] {
+        let diags = check(src);
+        assert!(
+            diags.iter().all(|diagnostic| {
+                diagnostic.code != "RY010"
+                    || (!diagnostic.message.contains("acc")
+                        && !diagnostic.message.contains("value"))
+            }),
+            "variant condition must retain loop prebinding: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn loop_prebinding_clears_nested_branch_exclusions_after_assignment() {
+    let diags = check(
+        r"for (g in groups) {
+  if (nlevels > 1L) {
+    if (conditional.x) {
+      COV <- matrix
+      COV[is.na(COV)] <- 0
+      diag(COV)
+    } else {
+      COV <- matrix
+    }
+  } else {
+    COV <- matrix
+  }
+}
+",
+    );
+    assert!(
+        diags.iter().all(|diagnostic| {
+            diagnostic.code != "RY010" || !diagnostic.message.contains("`COV`")
+        }),
+        "a real assignment in a nested branch must clear inherited loop exclusions: {diags:?}"
+    );
+}
+
+#[test]
+fn straight_line_function_use_before_assignment_still_emits_ry010() {
+    let diags = check("f <- function() {\n  print(n)\n  n <- 1L\n}\n");
+    assert!(
+        diags
+            .iter()
+            .any(|diagnostic| { diagnostic.code == "RY010" && diagnostic.message.contains("n") }),
+        "non-loop use-before-assignment must remain diagnosed: {diags:?}"
+    );
 }
 
 #[test]
@@ -1829,6 +2557,63 @@ fn s3_dispatch_missing_method() {
 }
 
 #[test]
+fn s3_dispatch_walks_every_class_before_reporting_a_miss() {
+    let diags = check(
+        "print.b <- function(x, ...) invisible(x)\n\
+         x <- list()\n\
+         class(x) <- c(\"a\", \"b\")\n\
+         print(x)\n",
+    );
+    assert!(
+        diags.iter().all(|d| d.code != "RY050"),
+        "the second class's method must satisfy dispatch: {diags:?}"
+    );
+}
+
+#[test]
+fn data_frame_ops_preserve_scalar_arithmetic_schema_and_stay_quiet() {
+    let (diags, scope) = check_with_scope(
+        "d <- data.frame(a = 1:10, b = 11:20)\n\
+         divided <- d / 2\n\
+         compared <- d == 1\n\
+         negated <- -d\n",
+    );
+    assert!(
+        diags
+            .iter()
+            .all(|d| !matches!(d.code, "RY040" | "RY030" | "RY020")),
+        "data-frame Ops must not produce primitive type errors: {diags:?}"
+    );
+    let divided = scope.get("divided").expect("divided should be bound");
+    assert!(divided.class.contains("data.frame"), "{divided:?}");
+    assert_eq!(
+        divided.columns.as_ref().map(|schema| schema.columns.len()),
+        Some(2)
+    );
+    assert_eq!(scope.get("compared").map(|ty| ty.mode), Some(Mode::Opaque));
+}
+
+#[test]
+fn user_ops_and_group_generics_suppress_primitive_errors() {
+    let (diags, scope) = check_with_scope(
+        "Ops.money <- function(e1, e2) list(amount = 1L)\n\
+         Math.money <- function(x, ...) x\n\
+         m1 <- structure(list(), class = \"money\")\n\
+         m2 <- structure(list(), class = \"money\")\n\
+         total <- m1 + m2\n\
+         nullable <- m1 + NULL\n\
+         magnitude <- abs(m1)\n",
+    );
+    assert!(
+        diags.iter().all(|d| !matches!(d.code, "RY040" | "RY020")),
+        "Ops/Math methods must satisfy dispatch: {diags:?}"
+    );
+    assert_eq!(scope.get("total").map(|ty| ty.mode), Some(Mode::Opaque));
+    assert_eq!(scope.get("nullable").map(|ty| ty.mode), Some(Mode::Opaque));
+    assert_eq!(scope.get("magnitude").map(|ty| ty.mode), Some(Mode::Opaque));
+}
+
+#[test]
 fn s3_dispatch_in_package_default_method_satisfies_dispatch() {
     let diags = check(
         "update.default <- function(x, ...) x\n\
@@ -1959,6 +2744,45 @@ fn list_named_args_become_schema() {
         diags.iter().all(|d| d.code != "RY060"),
         "plain-list `$` miss must not fire RY060, got {:?}",
         diags
+    );
+}
+
+#[test]
+fn list_dots_produces_an_incomplete_schema() {
+    // A dots expansion may add any field at runtime. Consequently an absent
+    // field is not known NULL (and a later use must not produce RY040).
+    let (_, scope) = check_with_scope("x <- list(...)\n");
+    let x = scope.get("x").expect("x should be bound");
+    assert!(
+        x.columns.as_ref().is_some_and(|schema| !schema.complete),
+        "list(...) must retain an incomplete schema"
+    );
+
+    let diagnostics = check(
+        "f <- function(...) {\n\
+         argument <- list(...)\n\
+         argument$cex + 1L\n\
+         }\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY040"),
+        "a field supplied through dots is not known NULL: {diagnostics:?}"
+    );
+
+    let (_, scope) = check_with_scope("x <- list(a = 1L)\nx$missing + 1L\n");
+    let x = scope.get("x").expect("x should be bound");
+    assert!(
+        x.columns.as_ref().is_some_and(|schema| schema.complete),
+        "enumerable list arguments must retain a complete schema"
+    );
+    let diagnostics = check("x <- list(a = 1L)\nx$missing + 1L\n");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY040"),
+        "a genuinely missing field on an enumerable list must remain known NULL: {diagnostics:?}"
     );
 }
 
@@ -2886,6 +3710,230 @@ fn type_narrowing_is_null_then_branch() {
 }
 
 #[test]
+fn diverging_null_guard_makes_default_function_callable() {
+    let diagnostics = check(
+        "apply_fun <- function(x, fun = NULL) {\n\
+           if (is.null(fun)) stop(\"fun required\")\n\
+           fun(x)\n\
+         }\n\
+         apply_fun(1)\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY070"),
+        "the continuation of a diverging null guard must be callable: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn diverging_null_guard_makes_default_value_record_like() {
+    let diagnostics = check(
+        "read_field <- function(x = NULL) {\n\
+           if (is.null(x)) stop(\"x required\")\n\
+           x$field\n\
+         }\n\
+         read_field()\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY061"),
+        "the continuation of a diverging null guard must exclude NULL: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn diverging_negated_predicate_guard_narrows_continuation() {
+    let diagnostics = check(
+        "compare_text <- function(x = NULL) {\n\
+           if (!is.character(x)) stop(\"x must be character\")\n\
+           x == \"1\"\n\
+         }\n\
+         compare_text()\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY033"),
+        "the false path of !is.character must be character: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn return_guard_narrows_continuation() {
+    let diagnostics = check(
+        "read_field <- function(x = NULL) {\n\
+           if (is.null(x)) return(NULL)\n\
+           x$field\n\
+         }\n\
+         read_field()\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY061"),
+        "returning null guard must narrow its continuation: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn non_diverging_guard_does_not_narrow_continuation() {
+    let diagnostics = check(
+        "apply_fun <- function(x, fun = NULL) {\n\
+           if (is.null(fun)) warning(\"fun required\")\n\
+           fun(x)\n\
+         }\n\
+         apply_fun(1)\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY070"),
+        "a warning guard must not narrow its continuation: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn project_function_named_abort_does_not_diverge() {
+    let diagnostics = check(
+        "abort <- function(message) warning(message)\n\
+         apply_fun <- function(x, fun = NULL) {\n\
+           if (is.null(fun)) abort(\"fun required\")\n\
+           fun(x)\n\
+         }\n\
+         apply_fun(1)\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY070"),
+        "a project abort() must not be treated as a terminator: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn final_statement_in_guard_block_can_diverge() {
+    let diagnostics = check(
+        "read_field <- function(x = NULL) {\n\
+           if (is.null(x)) { log(\"x required\"); stop(\"x required\") }\n\
+           x$field\n\
+         }\n\
+         read_field()\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY061"),
+        "a guard block ending in stop must narrow its continuation: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn divergence_narrowing_works_in_nested_function_inside_loop() {
+    let diagnostics = check(
+        "for (i in 1:2) {\n\
+           read_field <- function(x = NULL) {\n\
+             if (is.null(x)) stop(\"x required\")\n\
+             x$field\n\
+           }\n\
+         }\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY061"),
+        "nested function guard should narrow independently: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn compound_null_guard_narrows_its_continuation() {
+    let diagnostics = check(
+        "read_field <- function(x = NULL) {\n\
+           if (is.null(x) || is.na(x)) stop(\"x required\")\n\
+           x$field\n\
+         }\n\
+         read_field()\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY061"),
+        "the false path of a compound null guard must exclude NULL: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn missing_guard_is_ignored_for_type_narrowing() {
+    let diagnostics = check(
+        "apply_fun <- function(x, fun = NULL) {\n\
+           if (missing(fun)) stop(\"fun required\")\n\
+           fun(x)\n\
+         }\n\
+         apply_fun(1)\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY070"),
+        "missing(x) proves nothing about x's type: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn known_never_returning_helper_narrows_continuation() {
+    let diagnostics = check(
+        "fail <- function() stop(\"required\")\n\
+         use_fun <- function(fun = NULL) {\n\
+           if (is.null(fun)) fail()\n\
+           fun()\n\
+         }\n\
+         use_fun()\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY070"),
+        "a helper ending in stop must be recognized as never returning: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn break_guard_narrows_the_rest_of_a_loop_body() {
+    let diagnostics = check(
+        "for (i in 1:2) {\n\
+           fun <- NULL\n\
+           if (is.null(fun)) break\n\
+           fun()\n\
+         }\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY070"),
+        "break must make the false guard path the loop-body continuation: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn diverging_else_branch_promotes_then_refinement() {
+    let diagnostics = check(
+        "use_fun <- function(fun = NULL) {\n\
+           if (!is.null(fun)) fun else stop(\"required\")\n\
+           fun()\n\
+         }\n\
+         use_fun()\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY070"),
+        "a diverging else branch must promote then-branch refinements: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn type_narrowing_is_numeric_then_branch() {
     // `if (is.numeric(x)) { x + 1 }`: the `then` branch narrows
     // `x` to numeric (double). If `x` was opaque, it's now double
@@ -2931,6 +3979,32 @@ fn default_parameter_is_list_guard_replaces_incompatible_default_only_in_then_br
         1,
         "only the unguarded else branch should reject `$`: {diagnostics:?}"
     );
+}
+
+#[test]
+fn null_default_parameter_access_is_unknown_but_assigned_null_is_preserved() {
+    let (_, default_scope) =
+        check_with_scope("f <- function(x = NULL) { value <- x$field; value }\nout <- f()\n");
+    assert_eq!(
+        default_scope.get("out").map(|ty| ty.mode),
+        Some(Mode::Opaque),
+        "access through a default-null parameter must be unknown"
+    );
+
+    let (_, assigned_scope) = check_with_scope("x <- NULL\nvalue <- x$field\n");
+    assert_eq!(
+        assigned_scope.get("value").map(|ty| ty.mode),
+        Some(Mode::Null),
+        "directly assigned NULL must retain its existing access result"
+    );
+}
+
+#[test]
+fn null_default_parameter_double_bracket_access_is_unknown() {
+    let (_, scope) = check_with_scope(
+        "f <- function(x = NULL) { value <- x[[\"field\"]]; value }\nout <- f()\n",
+    );
+    assert_eq!(scope.get("out").map(|ty| ty.mode), Some(Mode::Opaque));
 }
 
 #[test]
@@ -3550,13 +4624,19 @@ fn cross_file_literal_variable_resolves() {
     // references it. Without `known_vars`, B would emit RY010 on
     // `my_const`. With `known_vars`, the reference resolves to
     // opaque and no diagnostic fires.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("R")).unwrap();
+    std::fs::write(dir.path().join("DESCRIPTION"), "Package: fixture\n").unwrap();
+    let a = dir.path().join("R/a.R").to_string_lossy().to_string();
+    let b = dir.path().join("R/b.R").to_string_lossy().to_string();
+    assert!(crate::project::is_package_library_file(&a));
     let mut project = Project::new();
-    project.add_file("a.R".to_string(), parse_file("a.R", "my_const <- 42\n"));
-    project.add_file("b.R".to_string(), parse_file("b.R", "x <- my_const\n"));
+    project.add_file(a.clone(), parse_file(&a, "my_const <- 42\n"));
+    project.add_file(b.clone(), parse_file(&b, "x <- my_const\n"));
     let diags = project.check();
     let b_diags: Vec<_> = diags
         .into_iter()
-        .filter(|(p, _)| p == "b.R")
+        .filter(|(p, _)| p == &b)
         .flat_map(|(_, d)| d)
         .collect();
     assert!(
@@ -3567,27 +4647,62 @@ fn cross_file_literal_variable_resolves() {
 }
 
 #[test]
+fn open_search_path_does_not_leak_between_project_files() {
+    let mut project = Project::new();
+    project.add_file(
+        "attached.R".to_string(),
+        parse_file("attached.R", "library(fakepkg123)\nfrom_fakepkg\n"),
+    );
+    project.add_file(
+        "isolated.R".to_string(),
+        parse_file("isolated.R", "must_stay_unbound\n"),
+    );
+    let diagnostics = project.check();
+    let attached_diagnostics = diagnostics
+        .iter()
+        .find(|(path, _)| path == "attached.R")
+        .map(|(_, diagnostics)| diagnostics)
+        .expect("attached file diagnostics");
+    assert!(
+        attached_diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010")
+    );
+
+    let isolated_diagnostics = diagnostics
+        .iter()
+        .find(|(path, _)| path == "isolated.R")
+        .map(|(_, diagnostics)| diagnostics)
+        .expect("isolated file diagnostics");
+    assert!(isolated_diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == "RY010" && diagnostic.message.contains("must_stay_unbound")
+    }));
+}
+
+#[test]
 fn cross_file_opaque_call_variable_resolves() {
     // File A defines `GeomRect <- ggproto("GeomRect", Geom, ...)`.
     // The RHS is a CALL (not a function literal), so it would not
     // be in `fns`; previously any reference from file B would fire
     // RY010. With `known_vars`, `GeomRect` resolves to opaque.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("R")).unwrap();
+    std::fs::write(dir.path().join("DESCRIPTION"), "Package: fixture\n").unwrap();
+    let geom = dir.path().join("R/geom.R").to_string_lossy().to_string();
+    let user = dir.path().join("R/user.R").to_string_lossy().to_string();
     let mut project = Project::new();
     project.add_file(
-        "geom.R".to_string(),
+        geom.clone(),
         parse_file(
-            "geom.R",
+            &geom,
             "GeomRect <- ggproto(\"GeomRect\", Geom, draw = function() NULL)\n",
         ),
     );
-    project.add_file(
-        "user.R".to_string(),
-        parse_file("user.R", "x <- GeomRect\n"),
-    );
+    project.add_file(user.clone(), parse_file(&user, "x <- GeomRect\n"));
     let diags = project.check();
     let user_diags: Vec<_> = diags
         .into_iter()
-        .filter(|(p, _)| p == "user.R")
+        .filter(|(p, _)| p == &user)
         .flat_map(|(_, d)| d)
         .collect();
     assert!(
@@ -3601,25 +4716,104 @@ fn cross_file_opaque_call_variable_resolves() {
 fn cross_file_list_constructor_variable_resolves() {
     // File A defines `config <- list(timeout = 30, retries = 3)`:
     // a list constructor, not a function. File B references it.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("R")).unwrap();
+    std::fs::write(dir.path().join("DESCRIPTION"), "Package: fixture\n").unwrap();
+    let config = dir.path().join("R/config.R").to_string_lossy().to_string();
+    let main = dir.path().join("R/main.R").to_string_lossy().to_string();
     let mut project = Project::new();
     project.add_file(
-        "config.R".to_string(),
-        parse_file("config.R", "config <- list(timeout = 30, retries = 3)\n"),
+        config.clone(),
+        parse_file(&config, "config <- list(timeout = 30, retries = 3)\n"),
     );
-    project.add_file(
-        "main.R".to_string(),
-        parse_file("main.R", "t <- config$timeout\n"),
-    );
+    project.add_file(main.clone(), parse_file(&main, "t <- config$timeout\n"));
     let diags = project.check();
     let main_diags: Vec<_> = diags
         .into_iter()
-        .filter(|(p, _)| p == "main.R")
+        .filter(|(p, _)| p == &main)
         .flat_map(|(_, d)| d)
         .collect();
     assert!(
         main_diags.iter().all(|d| d.code != "RY010"),
         "cross-file list-constructor variable should not trigger RY010, got {:?}",
         main_diags
+    );
+}
+
+#[test]
+fn scripts_share_top_level_known_vars() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("inst/examples")).unwrap();
+    std::fs::write(dir.path().join("DESCRIPTION"), "Package: fixture\n").unwrap();
+    let defining = dir
+        .path()
+        .join("inst/examples/a.R")
+        .to_string_lossy()
+        .to_string();
+    let reading = dir
+        .path()
+        .join("inst/examples/b.R")
+        .to_string_lossy()
+        .to_string();
+    let mut project = Project::new();
+    project.add_file(
+        defining.clone(),
+        parse_file(&defining, "h <- list(pre = 1L)\n"),
+    );
+    project.add_file(reading.clone(), parse_file(&reading, "x <- h[[\"pre\"]]\n"));
+    let diagnostics: Vec<_> = project
+        .check()
+        .into_iter()
+        .find(|(path, _)| path == &reading)
+        .unwrap()
+        .1;
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "sourced scripts must share top-level bindings: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn function_self_read_before_assignment_reports_ry010() {
+    let diagnostics = check("f <- function() { h <- h[[\"pre\"]] }\n");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY010")
+    );
+}
+
+#[test]
+fn testthat_script_sees_package_library_functions() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("R")).unwrap();
+    std::fs::create_dir_all(dir.path().join("tests/testthat")).unwrap();
+    std::fs::write(dir.path().join("DESCRIPTION"), "Package: fixture\n").unwrap();
+    let library = dir.path().join("R/hidden.R").to_string_lossy().to_string();
+    let test = dir
+        .path()
+        .join("tests/testthat/test-hidden.R")
+        .to_string_lossy()
+        .to_string();
+    let mut project = Project::new();
+    project.add_file(
+        library.clone(),
+        parse_file(&library, "hidden <- function() 1L\n"),
+    );
+    project.add_file(test.clone(), parse_file(&test, "x <- hidden()\n"));
+    let diagnostics = project
+        .check()
+        .into_iter()
+        .find(|(path, _)| path == &test)
+        .unwrap()
+        .1;
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "testthat code must retain access to package functions: {diagnostics:?}"
     );
 }
 
@@ -3849,7 +5043,7 @@ fn calling_integer_emits_ry070() {
 
 #[test]
 fn calling_character_emits_ry070() {
-    let diags = check("x <- \"hello\"\ny <- x()\n");
+    let diags = check("x <- \"paste\"\ny <- x(1)\n");
     assert!(
         diags.iter().any(|d| d.code == "RY070"),
         "expected RY070 for calling character, got {:?}",
@@ -3891,13 +5085,14 @@ fn calling_integer_literal_emits_ry070() {
 }
 
 #[test]
-fn calling_string_literal_emits_ry070() {
-    let diags = check("y <- \"x\"()\n");
+fn calling_string_literal_uses_function_lookup() {
+    let (diags, scope) = check_with_scope("y <- \"paste\"(1, 2)\n");
     assert!(
-        diags.iter().any(|d| d.code == "RY070"),
-        "calling string literal should emit RY070, got {:?}",
+        diags.is_empty(),
+        "string-literal function lookup should be callable, got {:?}",
         diags
     );
+    assert_eq!(scope.get("y").map(|ty| ty.mode), Some(Mode::Character));
 }
 
 #[test]
@@ -4119,6 +5314,49 @@ fn dollar_missing_on_plain_list_returns_null() {
         "NULL length should be Zero, got {:?}",
         v
     );
+}
+
+#[test]
+fn arithmetic_with_known_null_reports_ry040() {
+    for source in [
+        "function(a) a / NULL\n",
+        "res <- list()\nres$ns <- a\nres$np <- res$ns / res$nv\n",
+    ] {
+        let diags = check(source);
+        assert!(
+            diags.iter().any(|diagnostic| diagnostic.code == "RY040"),
+            "known-NULL arithmetic must report RY040, got {diags:?} for {source:?}"
+        );
+    }
+}
+
+#[test]
+fn known_null_arithmetic_ignores_parameter_defaults_and_imported_schemas() {
+    for source in [
+        "f <- function(weights = NULL) 1 + weights\n",
+        "df <- mtcars\nx <- df$not_a_real_column\ny <- x + 1L\n",
+    ] {
+        let diags = check(source);
+        assert!(
+            diags.iter().all(|diagnostic| diagnostic.code != "RY040"),
+            "only literal NULL and locally-built-list schema misses may report RY040: {diags:?} for {source:?}"
+        );
+    }
+}
+
+#[test]
+fn diverging_length_guards_narrow_null_defaults_in_the_continuation() {
+    for guard in ["!length(x)", "length(x) == 0"] {
+        let diagnostics = check(&format!(
+            "f <- function(x = NULL) {{ if ({guard}) return(0L); x + 1L }}\n"
+        ));
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "RY040"),
+            "a diverging {guard} guard must narrow x away from NULL: {diagnostics:?}"
+        );
+    }
 }
 
 #[test]

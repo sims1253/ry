@@ -440,28 +440,27 @@ impl RParser {
         // tree-sitter does not expose a named `argument` node for an empty
         // matrix/data-frame index. Preserve it explicitly so `x[, j]` stays
         // distinguishable from the one-dimensional `x[j]` downstream.
-        if matches!(kind, IndexKind::Single) {
-            if let Some(raw) = text(n, src)
-                && let Some(open) = raw.rfind('[')
-                && let Some(content) = raw.get(open + 1..raw.len().saturating_sub(1))
-            {
-                if content.trim_start().starts_with(',') {
-                    args.insert(
-                        0,
-                        Arg {
-                            name: None,
-                            value: Expr::Unknown(span),
-                            span,
-                        },
-                    );
-                }
-                if content.trim_end().ends_with(',') {
-                    args.push(Arg {
+        if matches!(kind, IndexKind::Single)
+            && let Some(raw) = text(n, src)
+            && let Some(open) = raw.rfind('[')
+            && let Some(content) = raw.get(open + 1..raw.len().saturating_sub(1))
+        {
+            if content.trim_start().starts_with(',') {
+                args.insert(
+                    0,
+                    Arg {
                         name: None,
                         value: Expr::Unknown(span),
                         span,
-                    });
-                }
+                    },
+                );
+            }
+            if content.trim_end().ends_with(',') {
+                args.push(Arg {
+                    name: None,
+                    value: Expr::Unknown(span),
+                    span,
+                });
             }
         }
         Some(Expr::Index {

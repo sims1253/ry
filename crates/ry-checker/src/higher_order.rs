@@ -536,7 +536,7 @@ impl Checker {
             return None;
         }
         let generics = std::iter::once(generic)
-            .chain(s3_group_generic(generic).into_iter())
+            .chain(s3_group_generic(generic))
             .collect::<Vec<_>>();
         // R tries each class in order. For every class, the specific generic
         // wins over its group generic (e.g. `abs.foo` before `Math.foo`).

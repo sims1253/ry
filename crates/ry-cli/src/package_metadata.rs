@@ -20,11 +20,21 @@ pub(crate) fn set_max_serialized_bytes(cap: u64) {
     MAX_SERIALIZED_BYTES.store(cap, Ordering::Relaxed);
 }
 
-static ENVIRONMENTS: OnceLock<Mutex<Vec<(Vec<String>, Vec<String>)>>> = OnceLock::new();
+/// A user-declared environment profile from `ry.toml` `[[environments]]`:
+/// ambient bindings injected into files whose path matches.
+struct EnvironmentBindings {
+    bindings: Vec<String>,
+    paths: Vec<String>,
+}
+
+static ENVIRONMENTS: OnceLock<Mutex<Vec<EnvironmentBindings>>> = OnceLock::new();
 pub(crate) fn set_environments(profiles: &[crate::config::EnvironmentConfig]) {
     let profiles = profiles
         .iter()
-        .map(|p| (p.bindings.clone(), p.paths.clone()))
+        .map(|p| EnvironmentBindings {
+            bindings: p.bindings.clone(),
+            paths: p.paths.clone(),
+        })
         .collect();
     *ENVIRONMENTS
         .get_or_init(|| Mutex::new(Vec::new()))
@@ -100,18 +110,18 @@ pub(crate) fn resolve<'a>(
         let mut file_imported_from = HashMap::new();
         let mut source_package = None;
         file_bindings.extend(configured_globals.iter().cloned());
-        for (bindings, paths) in ENVIRONMENTS
+        for profile in ENVIRONMENTS
             .get_or_init(|| Mutex::new(Vec::new()))
             .lock()
             .unwrap()
             .iter()
         {
-            if paths.iter().any(|pattern| {
+            if profile.paths.iter().any(|pattern| {
                 file.path
                     .replace('\\', "/")
                     .contains(pattern.trim_end_matches("/**"))
             }) {
-                file_bindings.extend(bindings.iter().cloned());
+                file_bindings.extend(profile.bindings.iter().cloned());
             }
         }
         if let Some(root) = r_package_root(Path::new(&file.path)) {

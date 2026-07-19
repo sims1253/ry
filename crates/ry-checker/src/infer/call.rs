@@ -652,6 +652,48 @@ impl Checker {
             }
             return RType::new(Mode::Null, Length::Zero);
         }
+        if !name.contains("::")
+            && let Some(mut target) = standalone_check_target(&lookup_name)
+            && user_function.as_ref().is_none_or(|function| {
+                ["arg", "call"].into_iter().all(|required| {
+                    function
+                        .params
+                        .iter()
+                        .any(|parameter| parameter.name == required)
+                })
+            })
+            && let Some(Expr::Ident { name: var, .. }) = args.first().map(|a| &a.value)
+        {
+            // A non-literal opt-in is treated like TRUE: weakening the fact
+            // avoids excluding a value the checker may accept at runtime.
+            if args.iter().any(|argument| {
+                argument.name.as_deref() == Some("allow_null")
+                    && !matches!(argument.value, Expr::Logical(false, _))
+            }) {
+                target = target.join(RType::new(Mode::Null, Length::Zero));
+            }
+            if args.iter().any(|argument| {
+                argument.name.as_deref() == Some("allow_na")
+                    && !matches!(argument.value, Expr::Logical(false, _))
+            }) {
+                target = target.join(RType::scalar(Mode::Logical));
+            }
+            scope.insert(var.clone(), target);
+            return RType::new(Mode::Null, Length::Zero);
+        }
+
+        let assertion_predicates =
+            name == "stopifnot" || name == "assert_that" || name == "assertthat::assert_that";
+        if assertion_predicates {
+            for argument in args {
+                if name.ends_with("assert_that") && argument.name.as_deref() == Some("msg") {
+                    continue;
+                }
+                let narrowing = extract_type_narrowing(&argument.value);
+                let (positive_scope, _, _) = apply_narrowing(scope, &narrowing, false);
+                *scope = positive_scope;
+            }
+        }
 
         // Indirect call through a closure value: if the name is bound
         // in scope to a `Function`-typed value with an inferred

@@ -2,6 +2,28 @@
 
 All notable changes to ry are documented in this file.
 
+## [0.6.1] - 2026-07-20
+
+### Added
+
+- Bare calls to rlang's standalone type-check helpers now narrow the checked
+  value in subsequent code. The narrowing covers scalar, vector, class, and
+  callable checks and accounts for `allow_null` and `allow_na`.
+- `stopifnot()` and `assertthat::assert_that()` predicates now narrow values
+  after successful assertions.
+
+### Fixed
+
+- Same-named user functions are only treated as rlang standalone checkers when
+  their signatures match the expected checker shape, avoiding incorrect
+  narrowing for ordinary project functions.
+- The scheduled typeshed update workflow now targets `main` and leaves pull
+  request creation to maintainers.
+
+### Typeshed
+
+- Updated the vendored r-typeshed snapshot to v0.3.0.
+
 ## [0.6.0] - 2026-07-17
 
 Driven by the ry 0.5.0 top-500 CRAN audit (9,237 diagnostics, 1.55%

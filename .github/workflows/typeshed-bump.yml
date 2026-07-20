@@ -18,8 +18,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          ref: dev
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Check out latest r-typeshed tag
@@ -33,7 +31,7 @@ jobs:
       - name: Open PR on drift
         uses: peter-evans/create-pull-request@v8
         with:
-          base: dev
+          base: main
           branch: bot/typeshed-bump
           commit-message: "Sync vendored typeshed to r-typeshed ${{ env.TYPESHED_TAG }}"
           title: "Sync vendored typeshed to r-typeshed ${{ env.TYPESHED_TAG }}"

@@ -247,6 +247,9 @@ pub struct Scope {
     pub function_aliases: HashMap<String, String>,
     pub data_mask_unknown: bool,
     pub search_path_unknown: bool,
+    /// Execution cannot continue in this block because a preceding operation
+    /// is known to throw. Cloned scopes keep this fact local to that path.
+    pub(crate) unreachable: bool,
 }
 
 impl Scope {

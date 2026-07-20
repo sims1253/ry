@@ -364,7 +364,11 @@ pub(crate) fn standalone_check_target(name: &str) -> Option<RType> {
         "check_formula" => Some(RType::unknown().with_class(ClassVector::single("formula"))),
         "check_character" => Some(RType::new(Mode::Character, Length::Unknown)),
         "check_logical" => Some(RType::new(Mode::Logical, Length::Unknown)),
-        "check_data_frame" => predicate_target("is.data.frame"),
+        // A data frame's vector length is its column count, not a scalar
+        // constraint imposed by check_data_frame().
+        "check_data_frame" => Some(
+            RType::new(Mode::List, Length::Unknown).with_class(ClassVector::single("data.frame")),
+        ),
         _ => None,
     }
 }
@@ -1253,6 +1257,58 @@ pub(crate) fn types_provably_incompatible(actual: &RType, expected: &RType) -> b
     })
 }
 
+/// Whether every value represented by `actual` is rejected by a standalone
+/// checker accepting `expected`. Unlike ordinary argument compatibility,
+/// standalone checks are exact assertions: their length and class constraints
+/// are runtime preconditions, and numeric modes are not interchangeable.
+pub(crate) fn standalone_check_provably_rejects(actual: &RType, expected: &RType) -> bool {
+    fn members(rtype: &RType) -> Vec<&RType> {
+        if rtype.mode == Mode::Union {
+            rtype
+                .members
+                .as_deref()
+                .map(|members| members.iter().collect())
+                .unwrap_or_else(|| vec![rtype])
+        } else {
+            vec![rtype]
+        }
+    }
+
+    fn lengths_overlap(actual: Length, expected: Length) -> bool {
+        actual == Length::Unknown || expected == Length::Unknown || actual == expected
+    }
+
+    fn classes_overlap(actual: &RType, expected: &RType) -> bool {
+        if !expected.class.has_known_class() {
+            return true;
+        }
+        if actual.class.is_unknown() {
+            return true;
+        }
+        expected
+            .class
+            .names
+            .iter()
+            .flatten()
+            .any(|name| actual.class.contains(name))
+    }
+
+    fn shapes_overlap(actual: &RType, expected: &RType) -> bool {
+        let modes_overlap = actual.mode == Mode::Opaque
+            || expected.mode == Mode::Opaque
+            || actual.mode == expected.mode;
+        modes_overlap
+            && lengths_overlap(actual.length, expected.length)
+            && classes_overlap(actual, expected)
+    }
+
+    !members(actual).into_iter().any(|actual| {
+        members(expected)
+            .into_iter()
+            .any(|expected| shapes_overlap(actual, expected))
+    })
+}
+
 fn generic_argument_may_dispatch(function_name: &str, actual: &RType) -> bool {
     matches!(function_name, "round" | "mean" | "log" | "sqrt" | "exp")
         && (actual.class.has_known_class() || actual.mode == Mode::Null)
@@ -1280,7 +1336,7 @@ fn compatible_mode_pair(actual: Mode, expected: Mode) -> bool {
     actual == expected || (numeric(actual) && numeric(expected))
 }
 
-fn expected_type_label(expected: &RType) -> String {
+pub(crate) fn expected_type_label(expected: &RType) -> String {
     let Some(modes) = known_modes(expected) else {
         return "unknown".to_string();
     };

@@ -4104,6 +4104,196 @@ fn standalone_check_string_narrows_name_trusted_calls() {
 }
 
 #[test]
+fn standalone_check_string_on_known_incompatible_value_flags_guard() {
+    let diagnostics = check(
+        "choice <- c(\"foo\", \"bar\")\n\
+         check_string(choice)\n",
+    );
+    let diagnostic = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "RY092")
+        .expect("a guard that must throw should be flagged");
+    assert!(
+        diagnostic.message.contains("check_string")
+            && diagnostic.message.contains("character<len=2>")
+            && diagnostic.message.contains("character"),
+        "the diagnostic should describe the impossible guard: {diagnostic:?}"
+    );
+}
+
+#[test]
+fn standalone_check_string_impossible_guard_makes_continuation_unreachable() {
+    let diagnostics = check(
+        "choice <- c(\"foo\", \"bar\")\n\
+         check_string(choice)\n\
+         missing_after_throw\n\
+         choice + 1\n",
+    );
+    assert_eq!(
+        diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "RY092")
+            .count(),
+        1,
+        "the guard should be the only type-mismatch diagnostic: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| !matches!(diagnostic.code, "RY010" | "RY040")),
+        "the continuation after an impossible guard is unreachable: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn impossible_guard_does_not_hide_diagnostics_in_later_function_bodies() {
+    let diagnostics = check(
+        "value <- 1L\n\
+         check_string(value)\n\
+         later <- function() missing_in_function\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY010"),
+        "independent function bodies must still be checked: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn standalone_check_string_incompatibility_respects_allowances_and_uncertainty() {
+    for source in [
+        "value <- NULL\ncheck_string(value, allow_null = TRUE)\n",
+        "value <- TRUE\ncheck_string(value, allow_na = TRUE)\n",
+        "value <- if (runif(1) > 0.5) \"ok\" else 1L\ncheck_string(value)\n",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "RY092"),
+            "a guard that may succeed must not be flagged: {diagnostics:?}"
+        );
+    }
+
+    for source in [
+        "value <- NULL\ncheck_string(value)\n",
+        "value <- list()\ncheck_string(value)\n",
+        "value <- if (runif(1) > 0.5) 1L else list()\ncheck_string(value)\n",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY092"),
+            "a guard with no compatible runtime value must be flagged: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn standalone_check_string_local_value_collision_is_not_a_guard() {
+    let diagnostics = check(
+        "check_string <- 1L\n\
+         value <- 1L\n\
+         check_string(value)\n\
+         missing_after_call\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY092"),
+        "a local non-function binding is not a standalone guard: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY010"),
+        "the rejected call must not make its continuation unreachable: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn standalone_check_data_frame_accepts_multiple_columns() {
+    let diagnostics = check(
+        "value <- data.frame(x = 1L, y = 2L)\n\
+         check_data_frame(value)\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY092"),
+        "a data frame's column count is not a failed scalar check: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn impossible_guards_in_all_if_arms_make_continuation_unreachable() {
+    let diagnostics = check(
+        "if (runif(1) > 0.5) {\n\
+           left <- c(\"a\", \"b\")\n\
+           check_string(left)\n\
+         } else {\n\
+           right <- c(\"c\", \"d\")\n\
+           check_string(right)\n\
+         }\n\
+         missing_after_if\n",
+    );
+    assert_eq!(
+        diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "RY092")
+            .count(),
+        2,
+        "both impossible guards should be diagnosed: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "no path reaches the statement after the if: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn impossible_guard_in_repeat_makes_continuation_unreachable() {
+    let diagnostics = check(
+        "repeat {\n\
+           value <- c(\"a\", \"b\")\n\
+           check_string(value)\n\
+         }\n\
+         missing_after_repeat\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY092"),
+        "the impossible guard should be diagnosed: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "the repeat loop cannot reach its continuation: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn standalone_check_string_name_collision_does_not_flag_impossible_guard() {
+    let diagnostics = check(
+        "check_string <- function(x) nchar(x) > 0\n\
+         value <- 1L\n\
+         check_string(value)\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY092"),
+        "an ordinary same-named function is not a standalone guard: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn standalone_check_string_narrows_fingerprinted_user_function() {
     let diagnostics = check(
         "check_string <- function(x, ..., arg = caller_arg(x), call = caller_env()) invisible(NULL)\n\
@@ -4143,7 +4333,7 @@ fn standalone_check_string_does_not_narrow_name_collision() {
 #[test]
 fn standalone_check_string_allow_null_weakens_target() {
     let (_, scope) = check_with_scope(
-        "choice <- c(\"foo\", \"bar\")\n\
+        "choice <- unknown_string_or_null()\n\
          check_string(choice, allow_null = TRUE)\n\
          field <- choice$field\n",
     );
@@ -4168,7 +4358,7 @@ fn standalone_check_string_allow_null_weakens_target() {
 #[test]
 fn standalone_check_number_whole_narrows_to_scalar_numeric_union() {
     let (diagnostics, scope) = check_with_scope(
-        "n <- c(1L, 2L)\n\
+        "n <- unknown_number()\n\
          check_number_whole(n)\n\
          if (n > 1) 1 else 2\n",
     );

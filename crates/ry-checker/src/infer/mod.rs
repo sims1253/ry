@@ -69,6 +69,25 @@ impl Checker {
         scope: &mut Scope,
         mut returns: Option<&mut Vec<RType>>,
     ) {
+        if scope.unreachable {
+            // Function bodies remain independent analysis units even when
+            // their definition is textually located in dead code. Walk the
+            // definition with reachability restored, then keep the enclosing
+            // block unreachable.
+            if matches!(
+                s,
+                Stmt::FunctionDef { .. }
+                    | Stmt::Assign {
+                        value: Expr::Function { .. },
+                        ..
+                    }
+            ) {
+                scope.unreachable = false;
+                self.walk_stmt(s, scope, returns);
+                scope.unreachable = true;
+            }
+            return;
+        }
         match s {
             Stmt::Assign { target, value, .. } => {
                 let vt = self.infer(value, scope);
@@ -257,6 +276,11 @@ impl Checker {
                 if let Some(continuation) = continuation {
                     self.copy_continuation_narrowing(scope, continuation, &narrowed);
                 }
+                // When both explicit arms throw, no route reaches the
+                // enclosing block's continuation.
+                if has_else && then_scope.unreachable && else_scope.unreachable {
+                    scope.unreachable = true;
+                }
             }
             Stmt::For {
                 name, iter, body, ..
@@ -315,8 +339,14 @@ impl Checker {
                 }
                 // As with `for`, assignments made by `while` and `repeat`
                 // bodies remain visible in R's enclosing environment.
+                let body_unreachable = inner.unreachable;
                 for (binding, ty) in inner.bindings {
                     scope.insert(binding, ty);
+                }
+                // The parser represents `repeat` as `while (TRUE)`. If its
+                // body cannot continue, neither can the enclosing block.
+                if matches!(cond, Expr::Logical(true, _)) && body_unreachable {
+                    scope.unreachable = true;
                 }
             }
             Stmt::FunctionDef {
@@ -1089,6 +1119,9 @@ impl Checker {
     }
 
     pub(crate) fn infer_stmt_value(&mut self, stmt: &Stmt, scope: &mut Scope) -> RType {
+        if scope.unreachable {
+            return RType::unknown();
+        }
         match stmt {
             Stmt::Assign { target, value, .. } => {
                 let vt = self.infer(value, scope);

@@ -653,6 +653,7 @@ impl Checker {
             return RType::new(Mode::Null, Length::Zero);
         }
         if !name.contains("::")
+            && (!locally_shadows_stub || user_function.is_some())
             && let Some(mut target) = standalone_check_target(&lookup_name)
             && user_function.as_ref().is_none_or(|function| {
                 ["arg", "call"].into_iter().all(|required| {
@@ -678,7 +679,21 @@ impl Checker {
             }) {
                 target = target.join(RType::scalar(Mode::Logical));
             }
-            scope.insert(var.clone(), target);
+            let actual = &arg_types[0];
+            if standalone_check_provably_rejects(actual, &target) {
+                self.emit(
+                    Severity::Error,
+                    args[0].span,
+                    "RY092",
+                    format!(
+                        "argument `{var}` to `{lookup_name}` is `{actual}`, expected {}",
+                        expected_type_label(&target)
+                    ),
+                );
+                scope.unreachable = true;
+            } else {
+                scope.insert(var.clone(), target);
+            }
             return RType::new(Mode::Null, Length::Zero);
         }
 

@@ -1,8 +1,9 @@
 name: Typeshed bump
 
-# Sync the vendored typeshed from the latest r-typeshed tag and open a
-# PR when it differs. Mirrors ty's model: stubs are build-time inputs,
-# refreshed through review, never fetched at runtime.
+# Sync the vendored typeshed from the latest r-typeshed tag and push a
+# branch when it differs. A maintainer opens the PR manually. Mirrors ty's
+# model: stubs are build-time inputs, refreshed through review, never fetched
+# at runtime.
 
 on:
   schedule:
@@ -11,7 +12,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
   bump:
@@ -28,15 +28,27 @@ jobs:
           echo "TYPESHED_TAG=$tag" >> "$GITHUB_ENV"
       - name: Sync and validate vendored typeshed
         run: scripts/sync_typeshed.sh /tmp/r-typeshed
-      - name: Open PR on drift
-        uses: peter-evans/create-pull-request@v8
-        with:
-          base: main
-          branch: bot/typeshed-bump
-          commit-message: "Sync vendored typeshed to r-typeshed ${{ env.TYPESHED_TAG }}"
-          title: "Sync vendored typeshed to r-typeshed ${{ env.TYPESHED_TAG }}"
-          body: |
-            Automated vendor sync from the latest r-typeshed tag
-            (${{ env.TYPESHED_TAG }}). `ry typeshed validate` ran as part
-            of `scripts/sync_typeshed.sh`; CI on this PR is the full gate.
-          delete-branch: true
+      - name: Push bump branch on drift
+        run: |
+          if git diff --quiet; then
+            echo "Vendored typeshed is already current."
+            exit 0
+          fi
+
+          branch=bot/typeshed-bump
+          remote_sha=$(git ls-remote --heads origin "refs/heads/$branch" | cut -f1)
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C "$branch"
+          git add crates/ry-typeshed/vendor
+          git commit -m "Sync vendored typeshed to r-typeshed $TYPESHED_TAG"
+          git push --force-with-lease="refs/heads/$branch:${remote_sha:-}" origin "$branch"
+
+          compare_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/main...$branch?expand=1"
+          echo "Open the typeshed bump PR manually: $compare_url"
+          {
+            echo "### Typeshed bump ready"
+            echo
+            echo "Validation passed and \`$branch\` was updated."
+            echo "[Open the pull request]($compare_url)."
+          } >> "$GITHUB_STEP_SUMMARY"

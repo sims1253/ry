@@ -4087,6 +4087,181 @@ fn type_narrowing_is_character_then_branch() {
 }
 
 #[test]
+fn standalone_check_string_narrows_name_trusted_calls() {
+    let diagnostics = check(
+        "h2 <- function() {\n\
+           choice <- c(\"foo\", \"bar\")\n\
+           check_string(choice)\n\
+           if (choice == \"foo\") 1 else 2\n\
+         }\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY002"),
+        "the standalone guard must prove a scalar string: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn standalone_check_string_narrows_fingerprinted_user_function() {
+    let diagnostics = check(
+        "check_string <- function(x, ..., arg = caller_arg(x), call = caller_env()) invisible(NULL)\n\
+         choice <- c(\"foo\", \"bar\")\n\
+         check_string(choice)\n\
+         if (choice == \"foo\") 1 else 2\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY002"),
+        "an inlined standalone checker must retain guard semantics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn standalone_check_string_does_not_narrow_name_collision() {
+    let (diagnostics, scope) = check_with_scope(
+        "check_string <- function(x) nchar(x) > 0\n\
+         choice <- c(\"foo\", \"bar\")\n\
+         guard_result <- check_string(choice)\n\
+         if (choice == \"foo\") 1 else 2\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY002"),
+        "a same-named ordinary user function must not narrow: {diagnostics:?}"
+    );
+    assert_ne!(
+        scope.get("guard_result").map(|ty| ty.mode),
+        Some(Mode::Null),
+        "a rejected name collision must use the user function's return type"
+    );
+}
+
+#[test]
+fn standalone_check_string_allow_null_weakens_target() {
+    let (_, scope) = check_with_scope(
+        "choice <- c(\"foo\", \"bar\")\n\
+         check_string(choice, allow_null = TRUE)\n\
+         field <- choice$field\n",
+    );
+    let choice = scope.get("choice").expect("choice should stay bound");
+    assert_eq!(choice.mode, Mode::Union, "{choice:?}");
+    let members = choice
+        .members
+        .as_ref()
+        .expect("allow_null should produce a populated union");
+    assert!(
+        members
+            .iter()
+            .any(|member| member.mode == Mode::Character && member.length == Length::One),
+        "the scalar character member must be preserved: {choice:?}"
+    );
+    assert!(
+        members.iter().any(|member| member.mode == Mode::Null),
+        "the weakened guard must retain NULL: {choice:?}"
+    );
+}
+
+#[test]
+fn standalone_check_number_whole_narrows_to_scalar_numeric_union() {
+    let (diagnostics, scope) = check_with_scope(
+        "n <- c(1L, 2L)\n\
+         check_number_whole(n)\n\
+         if (n > 1) 1 else 2\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| !matches!(diagnostic.code, "RY002" | "RY033")),
+        "the numeric guard must make the condition scalar numeric: {diagnostics:?}"
+    );
+    let n = scope.get("n").expect("n should stay bound");
+    assert_eq!(n.mode, Mode::Union, "{n:?}");
+    let members = n
+        .members
+        .as_ref()
+        .expect("numeric target should be a union");
+    assert!(
+        [Mode::Integer, Mode::Double].into_iter().all(|mode| members
+            .iter()
+            .any(|member| member.mode == mode && member.length == Length::One)),
+        "the target must be scalar integer-or-double: {n:?}"
+    );
+}
+
+#[test]
+fn stopifnot_installs_positive_predicate_narrowing() {
+    let (diagnostics, scope) = check_with_scope(
+        "x <- if (runif(1) > 0.5) 1L else c(\"a\", \"b\")\n\
+         stopifnot(is.character(x))\n\
+         width <- nchar(x)\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY092"),
+        "character-only use after stopifnot must be accepted: {diagnostics:?}"
+    );
+    assert_eq!(scope.get("x").map(|ty| ty.mode), Some(Mode::Character));
+}
+
+#[test]
+fn assert_that_installs_positive_predicate_narrowing() {
+    let (diagnostics, scope) = check_with_scope(
+        "x <- if (runif(1) > 0.5) \"a\" else 1L\n\
+         assert_that(is.numeric(x))\n\
+         value <- x + 1\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY040"),
+        "numeric use after assert_that must be accepted: {diagnostics:?}"
+    );
+    let x = scope.get("x").expect("x should stay bound");
+    assert_eq!(x.mode, Mode::Union, "{x:?}");
+    let members = x
+        .members
+        .as_ref()
+        .expect("numeric target should be a union");
+    assert!(
+        [Mode::Integer, Mode::Double]
+            .into_iter()
+            .all(|mode| members.iter().any(|member| member.mode == mode)),
+        "assert_that must retain the full numeric target: {x:?}"
+    );
+}
+
+#[test]
+fn namespaced_assert_that_narrows_predicates_but_not_msg() {
+    let (_, scope) = check_with_scope(
+        "x <- if (runif(1) > 0.5) \"a\" else 1L\n\
+         y <- if (runif(1) > 0.5) \"b\" else 2L\n\
+         assertthat::assert_that(is.numeric(x), msg = is.character(y))\n",
+    );
+    let x = scope.get("x").expect("x should stay bound");
+    let x_members = x
+        .members
+        .as_ref()
+        .expect("numeric target should be a union");
+    assert!(
+        x_members
+            .iter()
+            .all(|member| matches!(member.mode, Mode::Integer | Mode::Double)),
+        "the predicate argument must narrow x: {x:?}"
+    );
+    let y = scope.get("y").expect("y should stay bound");
+    let y_members = y.members.as_ref().expect("y should remain a union");
+    assert!(
+        y_members.iter().any(|member| member.mode == Mode::Integer),
+        "the msg expression must not narrow y: {y:?}"
+    );
+}
+
+#[test]
 fn if_expr_integer_branches_join_to_integer() {
     // `if (TRUE) 1L else 2L` joins to integer. Using the result
     // with a character must fire RY040, proving the type was

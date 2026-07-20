@@ -344,6 +344,31 @@ pub(crate) fn assertion_call_target(name: &str) -> Option<RType> {
     }
 }
 
+/// Map rlang's inlined standalone checkers to the fact they establish about
+/// their first argument. These helpers are package-local rather than exported
+/// from rlang, so call-site recognition also verifies their defining shape
+/// when a definition is available.
+pub(crate) fn standalone_check_target(name: &str) -> Option<RType> {
+    match name {
+        "check_bool" => Some(RType::scalar(Mode::Logical)),
+        "check_string" | "check_name" => Some(RType::scalar(Mode::Character)),
+        "check_number_whole" | "check_number_decimal" => {
+            Some(RType::scalar(Mode::Integer).join(RType::scalar(Mode::Double)))
+        }
+        "check_function" | "check_closure" => Some(RType::scalar(Mode::Function)),
+        "check_environment" => predicate_target("is.environment"),
+        "check_symbol" | "check_arg" => {
+            Some(RType::unknown().with_class(ClassVector::single("name")))
+        }
+        "check_call" => Some(RType::unknown().with_class(ClassVector::single("call"))),
+        "check_formula" => Some(RType::unknown().with_class(ClassVector::single("formula"))),
+        "check_character" => Some(RType::new(Mode::Character, Length::Unknown)),
+        "check_logical" => Some(RType::new(Mode::Logical, Length::Unknown)),
+        "check_data_frame" => predicate_target("is.data.frame"),
+        _ => None,
+    }
+}
+
 /// Narrow a type away from NULL: the value is known to be non-null in
 /// this branch. Returns `None` when nothing changes (the type carries no
 /// NULL member to remove).

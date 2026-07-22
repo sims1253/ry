@@ -4192,6 +4192,96 @@ fn standalone_check_string_incompatibility_respects_allowances_and_uncertainty()
 }
 
 #[test]
+fn standalone_checks_do_not_reject_incompatible_parameter_defaults() {
+    let diagnostics = check(
+        "bind <- function(.id = NULL, .trace_bottom = NULL) {\n\
+           check_string(.id)\n\
+           check_environment(.trace_bottom)\n\
+         }\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY092"),
+        "a default is one call shape, not the parameter's exhaustive type: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn continuation_narrowing_preserves_parameter_default_uncertainty() {
+    let diagnostics = check(
+        "validate <- function(value = NULL) {\n\
+           if (is.null(value)) abort(\"missing\")\n\
+           check_string(value)\n\
+         }\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY092"),
+        "continuation narrowing must retain default-parameter provenance: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reassigned_parameter_can_make_standalone_check_impossible() {
+    let diagnostics = check(
+        "validate <- function(value = NULL) {\n\
+           value <- NULL\n\
+           check_string(value)\n\
+           missing_after_guard\n\
+         }\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY092"),
+        "assignment clears the parameter-default uncertainty: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "the impossible guard makes its continuation unreachable: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn project_standalone_checks_do_not_reject_incompatible_parameter_defaults() {
+    let mut parser = RParser::new().unwrap();
+    let mut project = Project::new();
+    project.add_file(
+        "R/check.R".to_string(),
+        parser
+            .parse(
+                "R/check.R",
+                "check_string <- function(x, what = NULL, ..., allow_null = FALSE, allow_na = FALSE, arg = caller_arg(x), call = caller_env()) invisible(NULL)\n",
+            )
+            .unwrap(),
+    );
+    project.add_file(
+        "R/bind.R".to_string(),
+        parser
+            .parse(
+                "R/bind.R",
+                "bind <- function(.id = NULL) { check_string(.id) }\n",
+            )
+            .unwrap(),
+    );
+    let diagnostics: Vec<_> = project
+        .check()
+        .into_iter()
+        .flat_map(|(_, diagnostics)| diagnostics)
+        .collect();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY092"),
+        "project checking must retain parameter-default provenance: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn standalone_check_string_local_value_collision_is_not_a_guard() {
     let diagnostics = check(
         "check_string <- 1L\n\

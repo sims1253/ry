@@ -514,7 +514,11 @@ impl Checker {
     ) {
         for name in narrowed {
             if let Some(ty) = continuation.get(name) {
-                scope.insert(name.clone(), ty.clone());
+                if continuation.is_default_parameter(name) {
+                    scope.insert_parameter_default(name.clone(), ty.clone());
+                } else {
+                    scope.insert(name.clone(), ty.clone());
+                }
             }
         }
     }

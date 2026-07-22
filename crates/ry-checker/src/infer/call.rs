@@ -680,7 +680,11 @@ impl Checker {
                 target = target.join(RType::scalar(Mode::Logical));
             }
             let actual = &arg_types[0];
-            if standalone_check_provably_rejects(actual, &target) {
+            // A parameter default is one possible call shape, not an
+            // exhaustive declaration of the parameter's runtime type.
+            if !scope.is_default_parameter(var)
+                && standalone_check_provably_rejects(actual, &target)
+            {
                 self.emit(
                     Severity::Error,
                     args[0].span,

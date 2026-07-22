@@ -267,7 +267,11 @@ impl Scope {
 
     pub(crate) fn insert_narrowed(&mut self, name: impl Into<String>, t: RType) {
         let name = name.into();
+        let was_default_parameter = self.default_parameter_bindings.contains(&name);
         self.insert(name.clone(), t);
+        if was_default_parameter {
+            self.default_parameter_bindings.insert(name.clone());
+        }
         self.narrowed_bindings.insert(name);
     }
 

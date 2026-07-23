@@ -2,6 +2,67 @@
 
 All notable changes to ry are documented in this file.
 
+## [0.7.0] - 2026-07-23
+
+This release follows an audit of 40 R packages and focuses on package-aware
+precision, zero-length flow, and high-confidence logic diagnostics. It is a
+minor release because it adds rules and intentionally changes project scoping
+and diagnostic output.
+
+### Added
+
+- RY099 `discarded-conditional-value` warns when a non-tail, one-arm `if`
+  discards a value from a narrowly selected pure expression, catching omitted
+  assignments such as `if (z == 0) z + 0.001` without warning on side-effect
+  calls or returned branch values.
+- RY101 `identical-list-subset-scalar` warns when `identical()` compares a
+  single-bracket list subset with an atomic scalar. `x["key"]` remains a list,
+  so the comparison is always false and usually needs `x[["key"]]`.
+- RY032 recognizes high-confidence vector misuse in `&&`/`||` guards when a
+  function independently demonstrates that the guarded parameter accepts
+  vectors.
+- Compound rejecting guards such as
+  `if (!is.numeric(x) || length(x) != 1) stop(...)` establish scalar and type
+  facts in their continuation, including longer chains and reversed
+  `1 != length(x)` comparisons.
+
+### Package and NSE semantics
+
+- Multi-package CLI invocations are partitioned by enclosing `DESCRIPTION`, so
+  functions, bindings, imports, and NSE state no longer leak between package
+  roots. Ordinary non-package multi-file scripts remain one project.
+- `DESCRIPTION Depends` activates package semantics for projects without a
+  `NAMESPACE`, and `NAMESPACE` imports continue to provide exact provenance.
+- Magrittr braced right-hand sides bind the `.` pronoun as a unary lambda
+  (`x %>% { .$field }`). Data-mask columns correctly shadow same-named base
+  functions such as `class`.
+- Package scans skip the generated `renv/` bootstrap directory by default.
+
+### Type and flow inference
+
+- `intersect()` length is bounded by its shorter operand, eliminating false
+  RY032 findings for scalar-or-empty intersections.
+- Zero length propagates through comparisons, `%in%`, and all-empty
+  `paste()`/`paste0()` calls; a supplied `collapse` correctly produces a
+  scalar string.
+- `source()` models its target environment: inside a function it does not open
+  the local scope unless `local = TRUE`, while top-level `source()` still
+  populates the global scope.
+- rlang's `is_null()` narrows like base `is.null()`, removing guarded NULL
+  false positives in dplyr and rlang.
+- Parameter-default provenance survives flow refinement, while a null-return
+  guard alone deliberately does not imply a non-empty vector.
+
+### Fixed
+
+- Impossible standalone type guards are diagnosed without rejecting values
+  whose only incompatible evidence comes from an overridable parameter
+  default.
+- Package-aware dplyr/tidyr and magrittr models no longer require a literal
+  `library()` call in package source.
+- Ecosystem snapshots were updated after removing guarded rlang RY001/RY070
+  false positives.
+
 ## [0.6.1] - 2026-07-20
 
 ### Added
@@ -420,7 +481,11 @@ in under a second in release mode.
 
 - Initial release.
 
-[Unreleased]: https://github.com/sims1253/ry/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/sims1253/ry/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/sims1253/ry/compare/v0.6.1...v0.7.0
+[0.6.1]: https://github.com/sims1253/ry/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/sims1253/ry/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/sims1253/ry/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/sims1253/ry/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/sims1253/ry/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/sims1253/ry/compare/v0.2.0...v0.3.0

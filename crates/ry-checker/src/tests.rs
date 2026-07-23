@@ -3878,6 +3878,24 @@ fn type_narrowing_is_null_then_branch() {
 }
 
 #[test]
+fn underscored_null_predicate_narrows_default_parameter() {
+    let diagnostics = check(
+        "bind_rows <- function(..., .id = NULL) {\n\
+           if (!is_null(.id)) {\n\
+             check_string(.id)\n\
+           }\n\
+         }\n\
+         bind_rows(value = 1L)\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY092"),
+        "is_null() must narrow like is.null(): {diagnostics:?}"
+    );
+}
+
+#[test]
 fn diverging_null_guard_makes_default_function_callable() {
     let diagnostics = check(
         "apply_fun <- function(x, fun = NULL) {\n\

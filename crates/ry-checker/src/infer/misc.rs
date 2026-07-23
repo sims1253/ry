@@ -378,6 +378,13 @@ fn predicate_var(expr: &Expr) -> Option<String> {
 /// so its narrowing target is `union[integer, double]` (NOT plain
 /// Double, which would rewrite a known Integer to Double).
 pub(crate) fn predicate_target(name: &str) -> Option<RType> {
+    let name = match name {
+        // rlang's snake-case helper has the same value semantics as the base
+        // predicate. Its provenance is verified by ordinary call resolution;
+        // modeling the alias here preserves flow facts in importing packages.
+        "is_null" => "is.null",
+        name => name,
+    };
     match name {
         // numeric = double or integer (a group, not a single mode).
         "is.numeric" => Some(RType::scalar(Mode::Integer).join(RType::scalar(Mode::Double))),

@@ -4293,9 +4293,13 @@
           "required": true
         }
       ],
-      "return": "arg0",
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
       "return_length": {
-        "kind": "shortest_of",
+        "kind": "zero_if_any_param_zero",
         "params": [
           "x",
           "y"

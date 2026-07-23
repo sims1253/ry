@@ -96,7 +96,10 @@ pub enum DefaultCurrentScope {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ReturnLengthSpec {
-    ShortestOf { params: Vec<String> },
+    /// An exact zero fact only: all nonzero outcomes remain unknown.
+    ZeroIfAnyParamZero {
+        params: Vec<String>,
+    },
     RecycledValues(Box<RecycledValuesLengthSpec>),
 }
 
@@ -1316,7 +1319,14 @@ fn validate_function_semantics(
     }
     if let Some(length) = &signature.return_length {
         match length {
-            ReturnLengthSpec::ShortestOf { params } => {
+            ReturnLengthSpec::ZeroIfAnyParamZero { params } => {
+                if params.len() < 2 || params.windows(2).any(|pair| pair[0] == pair[1]) {
+                    validation_error(
+                        report,
+                        path,
+                        format!("{location}.return_length.params: require distinct parameters"),
+                    );
+                }
                 for param in params {
                     validate_param(report, "return_length.params", param);
                 }
@@ -1324,6 +1334,27 @@ fn validate_function_semantics(
             ReturnLengthSpec::RecycledValues(spec) => {
                 for param in spec.value_params.iter().chain(&spec.control_params) {
                     validate_param(report, "return_length parameter", param);
+                }
+                let repeated = |params: &[String]| {
+                    params
+                        .iter()
+                        .enumerate()
+                        .any(|(index, param)| params[..index].contains(param))
+                };
+                if repeated(&spec.value_params)
+                    || repeated(&spec.control_params)
+                    || spec
+                        .value_params
+                        .iter()
+                        .any(|param| spec.control_params.contains(param))
+                {
+                    validation_error(
+                        report,
+                        path,
+                        format!(
+                            "{location}.return_length: value and control parameters must be disjoint and unique"
+                        ),
+                    );
                 }
                 validate_param(report, "return_length.collapse.param", &spec.collapse.param);
                 validate_param(report, "return_length.recycle0.param", &spec.recycle0.param);

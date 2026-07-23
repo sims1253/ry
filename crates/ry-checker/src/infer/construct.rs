@@ -579,60 +579,60 @@ fn semantic_return_length(
     arg_types: &[RType],
 ) -> Option<Length> {
     let semantics = semantics?;
-    let matched = match_args_to_params(signature_params, args, arg_types);
+    let bindings = match_arguments(
+        &signature_params
+            .iter()
+            .map(|param| param.name.as_str())
+            .collect::<Vec<_>>(),
+        args,
+    );
+    let bound_args = |param: &str| {
+        signature_params
+            .iter()
+            .position(|candidate| candidate.name == param)
+            .into_iter()
+            .flat_map(|parameter_index| {
+                bindings.param_for_arg.iter().enumerate().filter_map(
+                    move |(argument_index, bound)| {
+                        (*bound == Some(parameter_index)).then_some(argument_index)
+                    },
+                )
+            })
+    };
     match semantics {
-        ReturnLengthSpec::ShortestOf { params } => {
-            let lengths: Vec<_> = params
+        ReturnLengthSpec::ZeroIfAnyParamZero { params } => {
+            if params
                 .iter()
-                .filter_map(|param| {
-                    signature_params
-                        .iter()
-                        .position(|candidate| candidate.name == *param)
-                })
-                .filter_map(|index| matched.get(index).map(|ty| ty.length))
-                .collect();
-            if lengths.iter().any(|length| matches!(length, Length::Zero)) {
-                Some(Length::Zero)
-            } else if lengths.iter().any(|length| matches!(length, Length::One)) {
-                Some(Length::One)
-            } else if lengths.len() == params.len()
-                && lengths
-                    .iter()
-                    .all(|length| matches!(length, Length::Known(_)))
+                .flat_map(|param| bound_args(param))
+                .filter_map(|index| arg_types.get(index))
+                .any(|ty| matches!(ty.length, Length::Zero))
             {
-                Some(Length::Known(
-                    lengths
-                        .into_iter()
-                        .filter_map(|length| match length {
-                            Length::Known(value) => Some(value),
-                            _ => None,
-                        })
-                        .min()
-                        .unwrap_or(0),
-                ))
+                Some(Length::Zero)
             } else {
                 Some(Length::Unknown)
             }
         }
         ReturnLengthSpec::RecycledValues(spec) => {
-            let control_params = &spec.control_params;
-            let collapse = &spec.collapse;
-            let recycle0 = &spec.recycle0;
             let value_types: Vec<_> = args
                 .iter()
                 .zip(arg_types)
-                .filter(|(arg, _)| {
-                    !arg.name
-                        .as_deref()
-                        .is_some_and(|name| control_params.iter().any(|control| control == name))
+                .enumerate()
+                .filter(|(index, _)| {
+                    let bound = bindings.param_for_arg[*index]
+                        .and_then(|parameter| signature_params.get(parameter))
+                        .map(|parameter| parameter.name.as_str());
+                    bound.is_some_and(|name| spec.value_params.iter().any(|value| value == name))
+                        // Unmatched arguments after `...` are captured by
+                        // it, while exact controls after `...` were bound in
+                        // the first matching pass and are excluded above.
+                        || (bound.is_none()
+                            && bindings.dots.is_some()
+                            && spec.value_params.iter().any(|value| value == "..."))
                 })
-                .map(|(_, ty)| ty.clone())
+                .map(|(_, (_, ty))| ty.clone())
                 .collect();
-            let named = |param: &str| {
-                args.iter()
-                    .position(|arg| arg.name.as_deref() == Some(param))
-            };
-            if let Some(index) = named(&collapse.param) {
+            let bound = |param: &str| bound_args(param).next();
+            if let Some(index) = bound(&spec.collapse.param) {
                 // `collapse = NULL` leaves the recycled vector intact. An
                 // unknown control is not evidence of a scalar result.
                 if matches!(arg_types[index].mode, Mode::Null) {
@@ -643,7 +643,7 @@ fn semantic_return_length(
                     return Some(Length::Unknown);
                 }
             }
-            if let Some(index) = named(&recycle0.param)
+            if let Some(index) = bound(&spec.recycle0.param)
                 && matches!(args[index].value, Expr::Logical(true, _))
                 && value_types
                     .iter()

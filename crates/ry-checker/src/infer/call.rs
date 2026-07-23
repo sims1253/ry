@@ -681,8 +681,7 @@ impl Checker {
             && (name.contains("::") || user_function.is_none())
             && resolved_sig.as_ref().is_some_and(|signature| {
                 scope_effect_populates_current_scope(
-                    signature.conditional_scope_effect.as_ref(),
-                    signature.scope_effect,
+                    signature,
                     args,
                     self.enclosing_formals.is_empty(),
                 )
@@ -724,10 +723,8 @@ impl Checker {
                             .any(|param| param.name == *fingerprint)
                     })
             })
-            && let Some(subject_index) = signature
-                .params
-                .iter()
-                .position(|param| param.name == assertion.subject_param)
+            && let Some(subject_index) =
+                bound_argument_index(&signature.params, args, &assertion.subject_param)
             && let Some(Expr::Ident { name: var, .. }) =
                 args.get(subject_index).map(|arg| &arg.value)
         {
@@ -744,10 +741,8 @@ impl Checker {
                 ),
             ] {
                 if let (Some(param), Some(weakening)) = (param, null_target)
-                    && args.iter().any(|argument| {
-                        argument.name.as_deref() == Some(param)
-                            && !matches!(argument.value, Expr::Logical(false, _))
-                    })
+                    && bound_argument_index(&signature.params, args, param)
+                        .is_some_and(|index| !matches!(args[index].value, Expr::Logical(false, _)))
                 {
                     target = target.join(weakening);
                 }
@@ -1320,30 +1315,30 @@ fn printf_argument_count(format: &str) -> Option<usize> {
 }
 
 fn scope_effect_populates_current_scope(
-    conditional: Option<&ConditionalScopeEffect>,
-    legacy: Option<ScopeEffect>,
+    signature: &FunctionSig,
     args: &[Arg],
     top_level: bool,
 ) -> bool {
-    if matches!(legacy, Some(ScopeEffect::UnknownBindings)) {
+    if matches!(signature.scope_effect, Some(ScopeEffect::UnknownBindings)) {
         return true;
     }
     let Some(ConditionalScopeEffect {
         effect: ScopeEffect::UnknownBindings,
         current_scope_when,
         default_current_scope: DefaultCurrentScope::TopLevel,
-    }) = conditional
+    }) = signature.conditional_scope_effect.as_ref()
     else {
         return false;
     };
-    match args
-        .iter()
-        .find(|arg| arg.name.as_deref() == Some(&current_scope_when.param))
-    {
-        Some(argument) => {
-            matches!(argument.value, Expr::Logical(value, _) if value == current_scope_when.equals)
-        }
-        None => top_level,
+    let Some(index) = bound_argument_index(&signature.params, args, &current_scope_when.param)
+    else {
+        return top_level;
+    };
+    match &args[index].value {
+        Expr::Logical(value, _) => *value == current_scope_when.equals,
+        // An environment-valued or opaque control can be the caller frame;
+        // preserve the loader's conservative, silence-over-noise policy.
+        _ => true,
     }
 }
 

@@ -730,17 +730,16 @@ fn vectorized_predicates_over_parameters_warn_in_short_circuit_ops() {
 }
 
 #[test]
-fn intersect_result_uses_the_shorter_known_operand() {
-    let diagnostics = check(
-        "x <- 1:3\n\
-         y <- 1L\n\
-         intersect(x, y) && TRUE\n",
+fn intersect_only_preserves_its_exact_zero_fact() {
+    let (_, scope) = check_with_scope(
+        "empty <- intersect(NULL, 1:3)\n\
+         bounded <- intersect(1:3, 1L)\n",
     );
-    assert!(
-        diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.code != "RY032"),
-        "intersect() with a scalar input is provably scalar-or-empty: {diagnostics:?}"
+    assert_eq!(scope.get("empty").map(|ty| ty.length), Some(Length::Zero));
+    assert_eq!(
+        scope.get("bounded").map(|ty| ty.length),
+        Some(Length::Unknown),
+        "a shortest-input bound must not be represented as an exact length"
     );
 }
 
@@ -1054,18 +1053,35 @@ fn source_without_local_does_not_open_a_function_scope() {
 }
 
 #[test]
-fn source_local_true_may_populate_a_function_scope() {
-    let diagnostics = check(
-        "f <- function() {\n\
-           source(\"generated.R\", local = TRUE)\n\
-           generated_binding\n\
-         }\n",
-    );
-    assert!(
-        diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.code != "RY010")
-    );
+fn source_local_controls_use_normal_r_argument_matching() {
+    for call in [
+        "source(\"generated.R\", TRUE)",
+        "source(local = TRUE, file = \"generated.R\")",
+        "source(file = \"generated.R\", lo = TRUE)",
+        "source(\"generated.R\", local = unknown_environment())",
+    ] {
+        let diagnostics = check(&format!(
+            "f <- function() {{\n  {call}\n  generated_binding\n}}\n"
+        ));
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "RY010"),
+            "{call} should conservatively open the caller scope: {diagnostics:?}"
+        );
+    }
+
+    for call in [
+        "source(\"generated.R\", FALSE)",
+        "source(file = \"generated.R\", local = FALSE)",
+    ] {
+        let diagnostics = check(&format!(
+            "f <- function() {{\n  {call}\n  genuinely_missing\n}}\n"
+        ));
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "RY010" && diagnostic.message.contains("genuinely_missing")
+        }));
+    }
 }
 
 #[test]
@@ -4679,10 +4695,10 @@ fn standalone_check_string_does_not_narrow_name_collision() {
 }
 
 #[test]
-fn standalone_check_string_allow_null_weakens_target() {
+fn standalone_check_string_named_subject_and_control_use_formal_matching() {
     let (_, scope) = check_with_scope(
         "choice <- unknown_string_or_null()\n\
-         check_string(choice, allow_null = TRUE)\n\
+         check_string(allow_null = TRUE, x = choice)\n\
          field <- choice$field\n",
     );
     let choice = scope.get("choice").expect("choice should stay bound");
@@ -4700,6 +4716,21 @@ fn standalone_check_string_allow_null_weakens_target() {
     assert!(
         members.iter().any(|member| member.mode == Mode::Null),
         "the weakened guard must retain NULL: {choice:?}"
+    );
+}
+
+#[test]
+fn typeshed_predicate_named_subject_uses_formal_matching() {
+    let diagnostics = check(
+        "x <- NULL\n\
+         if (is_null(x = x)) stop(\"missing\")\n\
+         x$field\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY061"),
+        "the named predicate subject must narrow x: {diagnostics:?}"
     );
 }
 

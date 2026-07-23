@@ -1118,6 +1118,21 @@ pub(crate) fn match_arguments(param_names: &[&str], args: &[Arg]) -> ArgumentMat
     result
 }
 
+/// Return the actual argument bound to a formal under ordinary R matching.
+/// Semantic metadata must use this rather than raw call positions.
+pub(crate) fn bound_argument_index(
+    params: &[ParamSpec],
+    args: &[Arg],
+    formal: &str,
+) -> Option<usize> {
+    let names: Vec<_> = params.iter().map(|param| param.name.as_str()).collect();
+    let formal_index = params.iter().position(|param| param.name == formal)?;
+    match_arguments(&names, args)
+        .param_for_arg
+        .iter()
+        .position(|bound| *bound == Some(formal_index))
+}
+
 pub(crate) fn match_args_to_params(
     sig_params: &[ParamSpec],
     args: &[Arg],
@@ -1716,10 +1731,8 @@ impl Checker {
         let Some(predicate) = signature.predicate else {
             return Narrowing::None;
         };
-        let Some(subject_index) = signature
-            .params
-            .iter()
-            .position(|param| param.name == predicate.subject_param)
+        let Some(subject_index) =
+            bound_argument_index(&signature.params, args, &predicate.subject_param)
         else {
             return Narrowing::None;
         };
@@ -1785,6 +1798,35 @@ mod argument_matching_tests {
         assert_eq!(matched.param_for_arg, vec![Some(0), None, None]);
         assert_eq!(matched.unmatched_named, vec![2]);
         assert_eq!(matched.dots, Some(1));
+    }
+
+    #[test]
+    fn formal_lookup_supports_positional_exact_and_partial_matching() {
+        let params = ["file", "local", "..."]
+            .into_iter()
+            .map(|name| ParamSpec {
+                name: name.to_string(),
+                type_: None,
+                required: false,
+                default: None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            bound_argument_index(&params, &[argument(None), argument(None)], "local"),
+            Some(1)
+        );
+        assert_eq!(
+            bound_argument_index(
+                &params,
+                &[argument(Some("local")), argument(Some("file"))],
+                "local"
+            ),
+            Some(0)
+        );
+        assert_eq!(
+            bound_argument_index(&params, &[argument(Some("lo"))], "local"),
+            Some(0)
+        );
     }
 
     #[test]

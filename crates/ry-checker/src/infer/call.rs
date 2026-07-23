@@ -774,7 +774,7 @@ impl Checker {
                 if name.ends_with("assert_that") && argument.name.as_deref() == Some("msg") {
                     continue;
                 }
-                let narrowing = self.extract_type_narrowing(&argument.value);
+                let narrowing = self.extract_type_narrowing(&argument.value, scope);
                 let (positive_scope, _, _) = apply_narrowing(scope, &narrowing, false);
                 *scope = positive_scope;
             }

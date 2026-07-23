@@ -1713,7 +1713,7 @@ fn concrete_json_mode(mode: &str) -> Option<Mode> {
 impl Checker {
     /// Signature-declared predicates extend the built-in predicate vocabulary
     /// only when ordinary typeshed resolution establishes their provenance.
-    pub(crate) fn extract_type_narrowing(&self, cond: &Expr) -> Narrowing {
+    pub(crate) fn extract_type_narrowing(&self, cond: &Expr, scope: &Scope) -> Narrowing {
         let built_in = extract_builtin_type_narrowing(cond);
         if !matches!(built_in, Narrowing::None) {
             return built_in;
@@ -1724,8 +1724,14 @@ impl Checker {
         let Expr::Ident { name, .. } = func.as_ref() else {
             return Narrowing::None;
         };
-        let lookup = name.rsplit_once("::").map(|(_, bare)| bare).unwrap_or(name);
-        let Some(signature) = self.resolve_typeshed_sig(lookup) else {
+        // Predicate facts require the same provenance as ordinary calls.
+        // A local value/function shadows a bare stub, while a qualified
+        // name is resolved only in its explicit package.
+        if !name.contains("::") && scope.get(name).is_some() && scope.function_alias(name).is_none()
+        {
+            return Narrowing::None;
+        }
+        let Some(signature) = self.resolve_predicate_sig(name) else {
             return Narrowing::None;
         };
         let Some(predicate) = signature.predicate else {

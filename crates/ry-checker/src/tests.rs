@@ -744,16 +744,28 @@ fn intersect_only_preserves_its_exact_zero_fact() {
 }
 
 #[test]
-fn paste_preserves_an_all_zero_length_input() {
+fn paste_consumes_recycled_value_and_control_bindings() {
     let (diagnostics, scope) = check_with_scope(
         "empty <- paste(NULL, NULL)\n\
-         collapsed <- paste(NULL, collapse = \"\")\n",
+         collapsed <- paste(NULL, collapse = \"\")\n\
+         reordered <- paste(collapse = \"\", NULL)\n\
+         recycled <- paste(recycle0 = TRUE, NULL, \"x\")\n",
     );
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
     assert_eq!(scope.get("empty").map(|ty| ty.length), Some(Length::Zero));
     assert_eq!(
         scope.get("collapsed").map(|ty| ty.length),
         Some(Length::One)
+    );
+    assert_eq!(
+        scope.get("reordered").map(|ty| ty.length),
+        Some(Length::One),
+        "named controls after `...` must be excluded from recycled values"
+    );
+    assert_eq!(
+        scope.get("recycled").map(|ty| ty.length),
+        Some(Length::Zero),
+        "recycle0 must use its declared, formally bound control"
     );
 }
 
@@ -4720,18 +4732,31 @@ fn standalone_check_string_named_subject_and_control_use_formal_matching() {
 }
 
 #[test]
-fn typeshed_predicate_named_subject_uses_formal_matching() {
-    let diagnostics = check(
-        "x <- NULL\n\
-         if (is_null(x = x)) stop(\"missing\")\n\
-         x$field\n",
-    );
-    assert!(
-        diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.code != "RY061"),
-        "the named predicate subject must narrow x: {diagnostics:?}"
-    );
+fn typeshed_predicate_uses_exact_callee_provenance_and_formal_binding() {
+    for call in ["is_null(x = x)", "rlang::is_null(x = x)"] {
+        let diagnostics = check(&format!("x <- NULL\nif ({call}) stop(\"missing\")\nx()\n"));
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "RY070"),
+            "{call} must narrow its named subject: {diagnostics:?}"
+        );
+    }
+
+    for source in [
+        "x <- NULL\nif (base::is_null(x)) stop(\"missing\")\nx()\n",
+        "x <- NULL\nif (unrelated::is_null(x)) stop(\"missing\")\nx()\n",
+        "is_null <- function(x) TRUE\nx <- NULL\nif (is_null(x)) stop(\"missing\")\nx()\n",
+        "is_null <- TRUE\nx <- NULL\nif (is_null(x)) stop(\"missing\")\nx()\n",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY070"),
+            "unproven predicate provenance must stay silent: {diagnostics:?}"
+        );
+    }
 }
 
 #[test]

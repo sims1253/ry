@@ -287,7 +287,7 @@ impl Checker {
         span: Span,
     ) -> RType {
         let lt = self.infer(lhs, scope);
-        let narrowing = self.extract_type_narrowing(lhs);
+        let narrowing = self.extract_type_narrowing(lhs, scope);
         let (then_scope, else_scope, _) = apply_narrowing(scope, &narrowing, true);
         let rhs_parameter_vector = self.short_circuit_parameter_vector(op, lhs, rhs, scope);
         let rt = match op {

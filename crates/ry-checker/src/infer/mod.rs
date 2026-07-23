@@ -387,7 +387,7 @@ impl Checker {
                         }
                     }
                 }
-                let narrowing = self.extract_type_narrowing(cond);
+                let narrowing = self.extract_type_narrowing(cond, scope);
                 let has_else = else_.is_some();
                 let (then_scope, else_scope, narrowed) =
                     apply_narrowing(scope, &narrowing, has_else);

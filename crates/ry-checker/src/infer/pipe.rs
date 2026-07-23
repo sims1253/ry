@@ -196,7 +196,7 @@ impl Checker {
         // for the expression form is deferred to a later phase because
         // expression-position assignment is rare and merging here would
         // require plumbing owned branch scopes back to the caller.
-        let narrowing = self.extract_type_narrowing(cond);
+        let narrowing = self.extract_type_narrowing(cond, scope);
         let (then_scope, else_scope, _narrowed) =
             apply_narrowing(scope, &narrowing, else_.is_some());
         let then_t = self.infer(then, &mut then_scope.clone());

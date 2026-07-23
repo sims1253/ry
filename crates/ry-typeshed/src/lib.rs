@@ -1320,7 +1320,12 @@ fn validate_function_semantics(
     if let Some(length) = &signature.return_length {
         match length {
             ReturnLengthSpec::ZeroIfAnyParamZero { params } => {
-                if params.len() < 2 || params.windows(2).any(|pair| pair[0] == pair[1]) {
+                if params.len() < 2
+                    || params
+                        .iter()
+                        .enumerate()
+                        .any(|(index, param)| params[..index].contains(param))
+                {
                     validation_error(
                         report,
                         path,
@@ -1356,8 +1361,19 @@ fn validate_function_semantics(
                         ),
                     );
                 }
-                validate_param(report, "return_length.collapse.param", &spec.collapse.param);
-                validate_param(report, "return_length.recycle0.param", &spec.recycle0.param);
+                for (field, param) in [
+                    ("return_length.collapse.param", &spec.collapse.param),
+                    ("return_length.recycle0.param", &spec.recycle0.param),
+                ] {
+                    validate_param(report, field, param);
+                    if !spec.control_params.contains(param) {
+                        validation_error(
+                            report,
+                            path,
+                            format!("{location}.{field}: must declare a control parameter"),
+                        );
+                    }
+                }
                 if spec.all_values_zero != "zero"
                     || spec.collapse.when != "non_null"
                     || spec.collapse.length.as_deref() != Some("1")
@@ -1590,6 +1606,32 @@ mod tests {
                 .schema_version
                 .as_deref(),
             Some("1")
+        );
+    }
+
+    #[test]
+    fn recycled_values_controls_and_exact_zero_parameters_are_validated() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("fixture.json"),
+            r#"{"schema_version":"2","package":"fixture","version":"test","functions":{"zero":{"params":["a","b"],"return":{"mode":"logical","length":"unknown"},"return_length":{"kind":"zero_if_any_param_zero","params":["a","b","a"]}},"recycled":{"params":["x","collapse"],"return":{"mode":"character","length":"unknown"},"return_length":{"kind":"recycled_values","value_params":["x"],"control_params":[],"all_values_zero":"zero","collapse":{"param":"collapse","when":"non_null","length":"1"},"recycle0":{"param":"collapse","when":"true","any_value_zero":"zero"}}}}}"#,
+        )
+        .unwrap();
+        let report = validate_stub_dirs(&[dir.path().to_path_buf()]);
+        assert_eq!(report.error_count(), 3, "{report:?}");
+        assert!(
+            report
+                .problems
+                .iter()
+                .any(|problem| problem.message.contains("distinct parameters"))
+        );
+        assert_eq!(
+            report
+                .problems
+                .iter()
+                .filter(|problem| problem.message.contains("must declare a control parameter"))
+                .count(),
+            2
         );
     }
 

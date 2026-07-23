@@ -55,38 +55,60 @@ impl Checker {
         None
     }
 
+    /// Resolve a predicate declaration with exact callee provenance. Bare
+    /// package helpers are accepted only when their predicate declaration is
+    /// unambiguous across the candidate packages.
+    pub(crate) fn resolve_predicate_sig(&self, name: &str) -> Option<FunctionSig> {
+        if name.contains("::") {
+            return self
+                .resolve_typeshed_sig(name)
+                .filter(|signature| signature.predicate.is_some());
+        }
+        let mut candidates = Vec::new();
+        if let Some(signature) = self.resolve_typeshed_sig(name)
+            && signature.predicate.is_some()
+        {
+            candidates.push(signature);
+        }
+        for package in self.available_package_names() {
+            if let Some(signature) = self
+                .package_typeshed(package)
+                .and_then(|typeshed| typeshed.functions.get(name))
+                .filter(|signature| signature.predicate.is_some())
+                .cloned()
+            {
+                // Count package origins, not distinct metadata: matching
+                // declarations from two packages are still ambiguous.
+                candidates.push(signature);
+            }
+        }
+        (candidates.len() == 1).then(|| candidates.remove(0))
+    }
+
     pub(crate) fn resolve_typeshed_sig(&self, name: &str) -> Option<FunctionSig> {
         // Qualified call: explicit package reference.
         if let Some((pkg_raw, fun)) = name.rsplit_once("::") {
             // `pkg:::fun` splits as ("pkg:", "fun"); trim the trailing
             // colon to recover the package name.
             let pkg = pkg_raw.trim_end_matches(':');
+            // R's standard packages share our embedded base database. This
+            // is an explicit package-to-database mapping, not a fallback to
+            // a similarly named export from another package.
+            if matches!(
+                pkg,
+                "base" | "stats" | "utils" | "graphics" | "grDevices" | "methods" | "datasets"
+            ) && let Some(sig) = self.typeshed.functions.get(fun)
+            {
+                return Some(sig.clone());
+            }
             if let Some(t) = self.package_typeshed(pkg) {
                 if let Some(sig) = t.functions.get(fun) {
                     return Some(sig.clone());
                 }
             }
-            // The package is either unknown to ry (no embedded
-            // signatures) or doesn't define `fun`. For base/stats/utils
-            // (merged into `base.json`) and any other always-attached
-            // package, fall back to the BASE typeshed under the STRIPPED
-            // name: `stats::rnorm(10)` resolves as base's `rnorm`.
-            if let Some(sig) = self.typeshed.functions.get(fun) {
-                return Some(sig.clone());
-            }
-            // And under loaded packages, stripped name (a qualified call
-            // to a package we have signatures for but where the function
-            // lives under a different name is unlikely, but be thorough).
-            for pk in self.available_package_names() {
-                if !self.bare_loaded.contains(pk) {
-                    continue;
-                }
-                if let Some(t) = self.package_typeshed(pk) {
-                    if let Some(sig) = t.functions.get(fun) {
-                        return Some(sig.clone());
-                    }
-                }
-            }
+            // A qualified callee has exact provenance. In particular, do
+            // not borrow a same-named base or attached-package signature:
+            // `other::f()` is not evidence that `base::f()` was called.
             return None;
         }
         // Unqualified: base typeshed, then loaded packages (fixed

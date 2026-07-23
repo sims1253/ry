@@ -631,8 +631,17 @@ fn semantic_return_length(
                 })
                 .map(|(_, (_, ty))| ty.clone())
                 .collect();
-            let bound = |param: &str| bound_args(param).next();
-            if let Some(index) = bound(&spec.collapse.param) {
+            // Controls and values share the same formal binding result.
+            // `control_params` is semantic: only a declared control may
+            // influence a recycled-values rule.
+            let bound_control = |param: &str| {
+                spec.control_params
+                    .iter()
+                    .any(|control| control == param)
+                    .then(|| bound_args(param).next())
+                    .flatten()
+            };
+            if let Some(index) = bound_control(&spec.collapse.param) {
                 // `collapse = NULL` leaves the recycled vector intact. An
                 // unknown control is not evidence of a scalar result.
                 if matches!(arg_types[index].mode, Mode::Null) {
@@ -643,7 +652,7 @@ fn semantic_return_length(
                     return Some(Length::Unknown);
                 }
             }
-            if let Some(index) = bound(&spec.recycle0.param)
+            if let Some(index) = bound_control(&spec.recycle0.param)
                 && matches!(args[index].value, Expr::Logical(true, _))
                 && value_types
                     .iter()

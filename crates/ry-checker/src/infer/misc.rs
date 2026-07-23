@@ -146,7 +146,7 @@ pub(crate) enum Narrowing {
 ///     `is.list(x)` / `is.function(x)` / `is.null(x)`
 ///   * negated forms of all the predicates above
 ///
-pub(crate) fn extract_type_narrowing(cond: &Expr) -> Narrowing {
+pub(crate) fn extract_builtin_type_narrowing(cond: &Expr) -> Narrowing {
     match cond {
         Expr::Call { func, args, .. } => {
             let Expr::Ident { name, .. } = func.as_ref() else {
@@ -237,7 +237,7 @@ pub(crate) fn extract_type_narrowing(cond: &Expr) -> Narrowing {
             // when both operands are false. Keep this intentionally strict:
             // a null guard may contribute its non-null fact only when the
             // other operand is also a predicate over the same variable.
-            let Narrowing::Positive { var, target } = extract_type_narrowing(lhs) else {
+            let Narrowing::Positive { var, target } = extract_builtin_type_narrowing(lhs) else {
                 return Narrowing::None;
             };
             if target.mode != Mode::Null || predicate_var(rhs).as_deref() != Some(&var) {
@@ -256,7 +256,7 @@ pub(crate) fn extract_type_narrowing(cond: &Expr) -> Narrowing {
             // retaining the NULL default there fabricates length-zero
             // comparisons such as `x %in% c("a", "b")`.
             for operand in [lhs.as_ref(), rhs.as_ref()] {
-                if let Narrowing::Negative { var, target } = extract_type_narrowing(operand)
+                if let Narrowing::Negative { var, target } = extract_builtin_type_narrowing(operand)
                     && target.mode == Mode::Null
                 {
                     return Narrowing::Negative { var, target };
@@ -319,7 +319,7 @@ fn scalar_false_path_fact(expr: &Expr) -> Option<(String, Option<RType>)> {
         let Narrowing::Positive {
             var: predicate_var,
             target,
-        } = extract_type_narrowing(expr)
+        } = extract_builtin_type_narrowing(expr)
         else {
             return None;
         };
@@ -378,13 +378,6 @@ fn predicate_var(expr: &Expr) -> Option<String> {
 /// so its narrowing target is `union[integer, double]` (NOT plain
 /// Double, which would rewrite a known Integer to Double).
 pub(crate) fn predicate_target(name: &str) -> Option<RType> {
-    let name = match name {
-        // rlang's snake-case helper has the same value semantics as the base
-        // predicate. Its provenance is verified by ordinary call resolution;
-        // modeling the alias here preserves flow facts in importing packages.
-        "is_null" => "is.null",
-        name => name,
-    };
     match name {
         // numeric = double or integer (a group, not a single mode).
         "is.numeric" => Some(RType::scalar(Mode::Integer).join(RType::scalar(Mode::Double))),
@@ -423,35 +416,6 @@ pub(crate) fn assertion_call_target(name: &str) -> Option<RType> {
         "assert_logical_scalar" => Some(RType::scalar(Mode::Logical)),
         "assert_integer_scalar" => Some(RType::scalar(Mode::Integer)),
         "assert_function" => Some(RType::scalar(Mode::Function)),
-        _ => None,
-    }
-}
-
-/// Map rlang's inlined standalone checkers to the fact they establish about
-/// their first argument. These helpers are package-local rather than exported
-/// from rlang, so call-site recognition also verifies their defining shape
-/// when a definition is available.
-pub(crate) fn standalone_check_target(name: &str) -> Option<RType> {
-    match name {
-        "check_bool" => Some(RType::scalar(Mode::Logical)),
-        "check_string" | "check_name" => Some(RType::scalar(Mode::Character)),
-        "check_number_whole" | "check_number_decimal" => {
-            Some(RType::scalar(Mode::Integer).join(RType::scalar(Mode::Double)))
-        }
-        "check_function" | "check_closure" => Some(RType::scalar(Mode::Function)),
-        "check_environment" => predicate_target("is.environment"),
-        "check_symbol" | "check_arg" => {
-            Some(RType::unknown().with_class(ClassVector::single("name")))
-        }
-        "check_call" => Some(RType::unknown().with_class(ClassVector::single("call"))),
-        "check_formula" => Some(RType::unknown().with_class(ClassVector::single("formula"))),
-        "check_character" => Some(RType::new(Mode::Character, Length::Unknown)),
-        "check_logical" => Some(RType::new(Mode::Logical, Length::Unknown)),
-        // A data frame's vector length is its column count, not a scalar
-        // constraint imposed by check_data_frame().
-        "check_data_frame" => Some(
-            RType::new(Mode::List, Length::Unknown).with_class(ClassVector::single("data.frame")),
-        ),
         _ => None,
     }
 }
@@ -1729,6 +1693,45 @@ fn concrete_json_mode(mode: &str) -> Option<Mode> {
         JsonMode::Opaque => Mode::Opaque,
         _ => return None,
     })
+}
+
+impl Checker {
+    /// Signature-declared predicates extend the built-in predicate vocabulary
+    /// only when ordinary typeshed resolution establishes their provenance.
+    pub(crate) fn extract_type_narrowing(&self, cond: &Expr) -> Narrowing {
+        let built_in = extract_builtin_type_narrowing(cond);
+        if !matches!(built_in, Narrowing::None) {
+            return built_in;
+        }
+        let Expr::Call { func, args, .. } = cond else {
+            return Narrowing::None;
+        };
+        let Expr::Ident { name, .. } = func.as_ref() else {
+            return Narrowing::None;
+        };
+        let lookup = name.rsplit_once("::").map(|(_, bare)| bare).unwrap_or(name);
+        let Some(signature) = self.resolve_typeshed_sig(lookup) else {
+            return Narrowing::None;
+        };
+        let Some(predicate) = signature.predicate else {
+            return Narrowing::None;
+        };
+        let Some(subject_index) = signature
+            .params
+            .iter()
+            .position(|param| param.name == predicate.subject_param)
+        else {
+            return Narrowing::None;
+        };
+        let Some(Expr::Ident { name: var, .. }) = args.get(subject_index).map(|arg| &arg.value)
+        else {
+            return Narrowing::None;
+        };
+        Narrowing::Positive {
+            var: var.clone(),
+            target: json_rtype_to_rtype(&predicate.target),
+        }
+    }
 }
 
 #[cfg(test)]

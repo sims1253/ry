@@ -419,59 +419,6 @@ impl Checker {
         args: &[Arg],
         span: Span,
     ) -> RType {
-        // Set operations preserve a common mode but are bounded by both
-        // inputs. In particular, a scalar argument makes `intersect(x, y)`
-        // scalar-or-empty even when the other side is a known vector.
-        if name == "intersect" {
-            let mut result = arg_types.first().cloned().unwrap_or_else(RType::unknown);
-            result.length = match (
-                arg_types.first().map(|ty| ty.length),
-                arg_types.get(1).map(|ty| ty.length),
-            ) {
-                (Some(Length::Zero), _) | (_, Some(Length::Zero)) => Length::Zero,
-                (Some(Length::One), _) | (_, Some(Length::One)) => Length::One,
-                (Some(Length::Known(left)), Some(Length::Known(right))) => {
-                    Length::Known(left.min(right))
-                }
-                _ => Length::Unknown,
-            };
-            return result;
-        }
-
-        // `paste()`/`paste0()` return zero length when every value argument
-        // is zero length. A supplied scalar `collapse` reduces any result,
-        // including character(0), to one string. Control parameters do not
-        // participate in vector recycling.
-        if matches!(name, "paste" | "paste0") {
-            let has_collapse = args
-                .iter()
-                .any(|argument| argument.name.as_deref() == Some("collapse"));
-            if has_collapse {
-                return RType::scalar(Mode::Character);
-            }
-            let value_types: Vec<_> = args
-                .iter()
-                .zip(arg_types)
-                .filter(|(argument, _)| {
-                    !matches!(
-                        argument.name.as_deref(),
-                        Some("sep" | "collapse" | "recycle0")
-                    )
-                })
-                .map(|(_, ty)| ty.clone())
-                .collect();
-            let length = if value_types.is_empty()
-                || value_types
-                    .iter()
-                    .all(|ty| matches!(ty.length, Length::Zero))
-            {
-                Length::Zero
-            } else {
-                longest_arg_length(&value_types)
-            };
-            return RType::new(Mode::Character, length);
-        }
-
         // Match named arguments to parameters so that `arg0` refers to
         // the first *parameter* (by name), not the first positional arg.
         // When `sig.params` is empty or only contains `...`, fall back
@@ -491,10 +438,18 @@ impl Checker {
         };
         let first = matched.first().cloned().unwrap_or(RType::unknown());
         match &sig.return_ {
-            ReturnSpec::Slot(slot) => match slot {
-                ReturnSlot::Arg0 => first,
-                ReturnSlot::ConcatOfArgs => self.infer_c(args, arg_types, span),
-            },
+            ReturnSpec::Slot(slot) => {
+                let mut result = match slot {
+                    ReturnSlot::Arg0 => first,
+                    ReturnSlot::ConcatOfArgs => self.infer_c(args, arg_types, span),
+                };
+                if let Some(length) =
+                    semantic_return_length(sig.return_length.as_ref(), &sig.params, args, arg_types)
+                {
+                    result.length = length;
+                }
+                result
+            }
             ReturnSpec::Concrete(c) => {
                 let mode = match JsonMode::parse(&c.mode) {
                     Some(JsonMode::Logical) => Mode::Logical,
@@ -570,6 +525,13 @@ impl Checker {
                     Some(JsonLength::Test) => first.length,
                     None => Length::Unknown,
                 };
+                let length = semantic_return_length(
+                    sig.return_length.as_ref(),
+                    &sig.params,
+                    args,
+                    arg_types,
+                )
+                .unwrap_or(length);
                 let _ = name;
                 let mut result = RType::new(mode, length);
                 if !c.class.is_empty() {
@@ -608,4 +570,96 @@ impl Checker {
     // * `df[i]` or `df[i, j]` (`Single`): keep the existing opaque
     //   behavior (returns `bt`). Subsetting semantics are complex and
     //   out of scope for v1.
+}
+
+fn semantic_return_length(
+    semantics: Option<&ReturnLengthSpec>,
+    signature_params: &[ParamSpec],
+    args: &[Arg],
+    arg_types: &[RType],
+) -> Option<Length> {
+    let semantics = semantics?;
+    let matched = match_args_to_params(signature_params, args, arg_types);
+    match semantics {
+        ReturnLengthSpec::ShortestOf { params } => {
+            let lengths: Vec<_> = params
+                .iter()
+                .filter_map(|param| {
+                    signature_params
+                        .iter()
+                        .position(|candidate| candidate.name == *param)
+                })
+                .filter_map(|index| matched.get(index).map(|ty| ty.length))
+                .collect();
+            if lengths.iter().any(|length| matches!(length, Length::Zero)) {
+                Some(Length::Zero)
+            } else if lengths.iter().any(|length| matches!(length, Length::One)) {
+                Some(Length::One)
+            } else if lengths.len() == params.len()
+                && lengths
+                    .iter()
+                    .all(|length| matches!(length, Length::Known(_)))
+            {
+                Some(Length::Known(
+                    lengths
+                        .into_iter()
+                        .filter_map(|length| match length {
+                            Length::Known(value) => Some(value),
+                            _ => None,
+                        })
+                        .min()
+                        .unwrap_or(0),
+                ))
+            } else {
+                Some(Length::Unknown)
+            }
+        }
+        ReturnLengthSpec::RecycledValues(spec) => {
+            let control_params = &spec.control_params;
+            let collapse = &spec.collapse;
+            let recycle0 = &spec.recycle0;
+            let value_types: Vec<_> = args
+                .iter()
+                .zip(arg_types)
+                .filter(|(arg, _)| {
+                    !arg.name
+                        .as_deref()
+                        .is_some_and(|name| control_params.iter().any(|control| control == name))
+                })
+                .map(|(_, ty)| ty.clone())
+                .collect();
+            let named = |param: &str| {
+                args.iter()
+                    .position(|arg| arg.name.as_deref() == Some(param))
+            };
+            if let Some(index) = named(&collapse.param) {
+                // `collapse = NULL` leaves the recycled vector intact. An
+                // unknown control is not evidence of a scalar result.
+                if matches!(arg_types[index].mode, Mode::Null) {
+                    // Fall through to ordinary recycled-value length.
+                } else if !matches!(arg_types[index].mode, Mode::Opaque | Mode::Union) {
+                    return Some(Length::One);
+                } else {
+                    return Some(Length::Unknown);
+                }
+            }
+            if let Some(index) = named(&recycle0.param)
+                && matches!(args[index].value, Expr::Logical(true, _))
+                && value_types
+                    .iter()
+                    .any(|ty| matches!(ty.length, Length::Zero))
+            {
+                return Some(Length::Zero);
+            }
+            if value_types.is_empty()
+                || value_types
+                    .iter()
+                    .all(|ty| matches!(ty.length, Length::Zero))
+            {
+                Some(Length::Zero)
+            } else {
+                Some(longest_arg_length(&value_types))
+            }
+        }
+    }
 }

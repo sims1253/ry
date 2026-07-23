@@ -109,7 +109,9 @@ unqualified names.
 
 Stubs are maintained in the standalone
 [r-typeshed](https://github.com/sims1253/r-typeshed) repository and
-vendored into the binary. They currently cover base R (with a
+vendored into the binary. The embedded loader supports schema 1 and schema 2;
+schema-2 signatures can declare predicates, provenance-gated assertions,
+return-length rules, and conditional scope effects. They currently cover base R (with a
 mechanically generated symbol inventory for the default packages),
 the tidyverse core (dplyr, tidyr, tidyselect, dbplyr, purrr), the
 Bayesian stack (brms, posterior, loo, bayesplot, cmdstanr), and

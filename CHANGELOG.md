@@ -2,6 +2,21 @@
 
 All notable changes to ry are documented in this file.
 
+## [0.7.1] - 2026-07-24
+
+### Typeshed semantics
+
+- Updated the embedded r-typeshed snapshot to the schema-2 release-preparation
+  commit, including declarative predicate, assertion, return-length, and
+  conditional scope-effect metadata.
+- The loader accepts both schema 1 and schema 2 and validates semantic metadata
+  and standalone-check provenance rather than silently accepting unsupported
+  declarations.
+- Checker inference now consumes sound metadata for `rlang::is_null`, rlang
+  standalone type checks, `intersect()`, `paste()`/`paste0()`, and `source()`.
+  Existing contextual rules (flow application, scope ownership, and
+  conservative opt-in weakening) remain in the checker.
+
 ## [0.7.0] - 2026-07-23
 
 This release follows an audit of 40 R packages and focuses on package-aware

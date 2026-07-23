@@ -40,6 +40,87 @@ pub enum ScopeEffect {
     UnknownBindings,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PredicateSpec {
+    pub subject_param: String,
+    pub target: JsonRType,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AssertionProvenanceKind {
+    StandaloneTypesCheck,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AssertionProvenance {
+    pub kind: AssertionProvenanceKind,
+    pub fingerprint_params: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AssertionSpec {
+    pub subject_param: String,
+    pub target: JsonRType,
+    #[serde(default)]
+    pub allow_null_param: Option<String>,
+    #[serde(default)]
+    pub allow_na_param: Option<String>,
+    pub provenance: AssertionProvenance,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConditionalScopeEffect {
+    pub effect: ScopeEffect,
+    pub current_scope_when: CurrentScopeWhen,
+    pub default_current_scope: DefaultCurrentScope,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CurrentScopeWhen {
+    pub param: String,
+    pub equals: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DefaultCurrentScope {
+    TopLevel,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ReturnLengthSpec {
+    ShortestOf { params: Vec<String> },
+    RecycledValues(Box<RecycledValuesLengthSpec>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecycledValuesLengthSpec {
+    pub value_params: Vec<String>,
+    pub control_params: Vec<String>,
+    pub all_values_zero: String,
+    pub collapse: RecycledLengthControl,
+    pub recycle0: RecycledLengthControl,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecycledLengthControl {
+    pub param: String,
+    pub when: String,
+    #[serde(default)]
+    pub length: Option<String>,
+    #[serde(default)]
+    pub any_value_zero: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CallbackArg {
@@ -500,6 +581,14 @@ pub struct FunctionSig {
     #[serde(default)]
     pub scope_effect: Option<ScopeEffect>,
     #[serde(default)]
+    pub conditional_scope_effect: Option<ConditionalScopeEffect>,
+    #[serde(default)]
+    pub predicate: Option<PredicateSpec>,
+    #[serde(default)]
+    pub assertion: Option<AssertionSpec>,
+    #[serde(default)]
+    pub return_length: Option<ReturnLengthSpec>,
+    #[serde(default)]
     pub higher_order: Option<HigherOrderSpec>,
     #[serde(default)]
     pub injects: Vec<InjectSpec>,
@@ -603,6 +692,14 @@ mod _fwd {
         #[serde(default)]
         pub scope_effect: Option<super::ScopeEffect>,
         #[serde(default)]
+        pub conditional_scope_effect: Option<super::ConditionalScopeEffect>,
+        #[serde(default)]
+        pub predicate: Option<super::PredicateSpec>,
+        #[serde(default)]
+        pub assertion: Option<super::AssertionSpec>,
+        #[serde(default)]
+        pub return_length: Option<super::ReturnLengthSpec>,
+        #[serde(default)]
         pub higher_order: Option<super::HigherOrderSpec>,
         #[serde(default)]
         pub injects: Vec<super::InjectSpec>,
@@ -633,6 +730,14 @@ struct RawS3Method {
     schema_effect: Option<SchemaEffect>,
     #[serde(default)]
     scope_effect: Option<ScopeEffect>,
+    #[serde(default)]
+    conditional_scope_effect: Option<ConditionalScopeEffect>,
+    #[serde(default)]
+    predicate: Option<PredicateSpec>,
+    #[serde(default)]
+    assertion: Option<AssertionSpec>,
+    #[serde(default)]
+    return_length: Option<ReturnLengthSpec>,
     #[serde(default)]
     higher_order: Option<HigherOrderSpec>,
     #[serde(default)]
@@ -703,7 +808,7 @@ fn parse_typeshed_with_order(
         source,
     })?;
     if let Some(schema_version) = raw.schema_version.as_deref()
-        && schema_version != "1"
+        && !matches!(schema_version, "1" | "2")
     {
         return Err(TypeshedError::UnsupportedSchema {
             path: path.to_path_buf(),
@@ -729,6 +834,10 @@ fn parse_typeshed_with_order(
                 data_mask_source: v.data_mask_source,
                 schema_effect: v.schema_effect,
                 scope_effect: v.scope_effect,
+                conditional_scope_effect: v.conditional_scope_effect,
+                predicate: v.predicate,
+                assertion: v.assertion,
+                return_length: v.return_length,
                 higher_order: v.higher_order,
                 injects: v.injects,
                 source_relative_path_arg: v.source_relative_path_arg,
@@ -749,6 +858,10 @@ fn parse_typeshed_with_order(
                 data_mask_source: m.data_mask_source,
                 schema_effect: m.schema_effect,
                 scope_effect: m.scope_effect,
+                conditional_scope_effect: m.conditional_scope_effect,
+                predicate: m.predicate,
+                assertion: m.assertion,
+                return_length: m.return_length,
                 higher_order: m.higher_order,
                 injects: m.injects,
                 source_relative_path_arg: m.source_relative_path_arg,
@@ -1129,6 +1242,106 @@ fn validate_signature(
             format!("{location}.higher_order.result.mode: invalid mode `{mode}`"),
         );
     }
+    validate_function_semantics(report, path, location, signature);
+}
+
+fn validate_function_semantics(
+    report: &mut ValidationReport,
+    path: &Path,
+    location: &str,
+    signature: &FunctionSig,
+) {
+    let has_param = |name: &str| signature.params.iter().any(|param| param.name == name);
+    let validate_param = |report: &mut ValidationReport, field: &str, name: &str| {
+        if !has_param(name) {
+            validation_error(
+                report,
+                path,
+                format!("{location}.{field}: unknown parameter `{name}`"),
+            );
+        }
+    };
+    if let Some(predicate) = &signature.predicate {
+        validate_param(report, "predicate.subject_param", &predicate.subject_param);
+        validate_rtype(
+            report,
+            path,
+            &format!("{location}.predicate.target"),
+            &predicate.target,
+        );
+    }
+    if let Some(assertion) = &signature.assertion {
+        validate_param(report, "assertion.subject_param", &assertion.subject_param);
+        validate_rtype(
+            report,
+            path,
+            &format!("{location}.assertion.target"),
+            &assertion.target,
+        );
+        for (field, param) in [
+            (
+                "assertion.allow_null_param",
+                assertion.allow_null_param.as_deref(),
+            ),
+            (
+                "assertion.allow_na_param",
+                assertion.allow_na_param.as_deref(),
+            ),
+        ] {
+            if let Some(param) = param {
+                validate_param(report, field, param);
+            }
+        }
+        if !matches!(
+            assertion.provenance,
+            AssertionProvenance { kind: AssertionProvenanceKind::StandaloneTypesCheck, ref fingerprint_params }
+                if fingerprint_params.iter().map(String::as_str).eq(["arg", "call"])
+        ) {
+            validation_error(
+                report,
+                path,
+                format!("{location}.assertion.provenance: unsupported provenance"),
+            );
+        }
+        for param in &assertion.provenance.fingerprint_params {
+            validate_param(report, "assertion.provenance.fingerprint_params", param);
+        }
+    }
+    if let Some(effect) = &signature.conditional_scope_effect {
+        validate_param(
+            report,
+            "conditional_scope_effect.current_scope_when.param",
+            &effect.current_scope_when.param,
+        );
+    }
+    if let Some(length) = &signature.return_length {
+        match length {
+            ReturnLengthSpec::ShortestOf { params } => {
+                for param in params {
+                    validate_param(report, "return_length.params", param);
+                }
+            }
+            ReturnLengthSpec::RecycledValues(spec) => {
+                for param in spec.value_params.iter().chain(&spec.control_params) {
+                    validate_param(report, "return_length parameter", param);
+                }
+                validate_param(report, "return_length.collapse.param", &spec.collapse.param);
+                validate_param(report, "return_length.recycle0.param", &spec.recycle0.param);
+                if spec.all_values_zero != "zero"
+                    || spec.collapse.when != "non_null"
+                    || spec.collapse.length.as_deref() != Some("1")
+                    || spec.recycle0.when != "true"
+                    || spec.recycle0.any_value_zero.as_deref() != Some("zero")
+                {
+                    validation_error(
+                        report,
+                        path,
+                        format!("{location}.return_length: unsupported recycled-values rule"),
+                    );
+                }
+            }
+        }
+    }
 }
 
 fn validate_rtype(report: &mut ValidationReport, path: &Path, location: &str, rtype: &JsonRType) {
@@ -1335,11 +1548,44 @@ mod tests {
     }
 
     #[test]
+    fn schema_two_function_semantics_load_and_schema_one_remains_compatible() {
+        let json = r#"{"schema_version":"2","package":"fixture","version":"test","functions":{"predicate":{"params":["x"],"return":{"mode":"logical","length":"1"},"predicate":{"subject_param":"x","target":{"mode":"null","length":"0"}}},"check":{"params":["x","arg","call"],"return":{"mode":"null","length":"0"},"assertion":{"subject_param":"x","target":{"mode":"character","length":"1"},"provenance":{"kind":"standalone_types_check","fingerprint_params":["arg","call"]}}}}}"#;
+        let typeshed = parse_typeshed(json, Path::new("fixture.json")).unwrap();
+        assert!(typeshed.functions["predicate"].predicate.is_some());
+        assert!(typeshed.functions["check"].assertion.is_some());
+        assert_eq!(
+            parse_typeshed(&fixture(Some("legacy"), "f"), Path::new("legacy.json"))
+                .unwrap()
+                .schema_version
+                .as_deref(),
+            Some("1")
+        );
+    }
+
+    #[test]
+    fn invalid_assertion_provenance_is_reported_without_discarding_schema_two() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fixture.json");
+        std::fs::write(
+            &path,
+            r#"{"schema_version":"2","package":"fixture","version":"test","functions":{"check":{"params":["x","arg"],"return":{"mode":"null","length":"0"},"assertion":{"subject_param":"x","target":{"mode":"character","length":"1"},"provenance":{"kind":"standalone_types_check","fingerprint_params":["arg","call"]}}}}}"#,
+        )
+        .unwrap();
+        let report = validate_stub_dirs(&[dir.path().to_path_buf()]);
+        assert_eq!(report.error_count(), 1);
+        assert!(
+            report.problems[0]
+                .message
+                .contains("unknown parameter `call`")
+        );
+    }
+
+    #[test]
     fn unsupported_schema_is_rejected_with_its_path() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("future.json");
         let json = fixture(Some("future"), "f")
-            .replace(r#""schema_version":"1""#, r#""schema_version":"2""#);
+            .replace(r#""schema_version":"1""#, r#""schema_version":"3""#);
         std::fs::write(&path, json).unwrap();
         let error = load_stub_dir(dir.path()).unwrap_err();
         assert!(matches!(error, TypeshedError::UnsupportedSchema { .. }));
@@ -1349,7 +1595,8 @@ mod tests {
     #[test]
     fn typeshed_preserves_embedded_schema_version() {
         let t = load_base().expect("loads");
-        assert_eq!(t.version, "0.0.1");
+        assert_eq!(t.version, "0.0.2");
+        assert_eq!(t.schema_version.as_deref(), Some("2"));
     }
 
     #[test]

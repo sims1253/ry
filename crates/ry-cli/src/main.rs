@@ -963,10 +963,6 @@ fn run_check_once(
     let mut file_count = 0usize;
     let mut not_r_diagnostics = Vec::new();
 
-    // Multi-file project mode: build a single `Project` so functions
-    // defined in one file are visible when checking another.
-    let mut project = ry_checker::Project::new();
-
     // Parallel file parsing. tree-sitter parsers are
     // NOT `Send`, so each rayon thread keeps its own `RParser` in a
     // `thread_local!` (the grammar is loaded once per thread; the
@@ -1027,28 +1023,48 @@ fn run_check_once(
             true
         }
     });
-    let package_scope = package_metadata::resolve(
-        all_paths,
-        packages,
-        globals,
-        &user_stubs,
-        parsed.iter().map(|(_, _, _, file)| file),
-    );
-    for (_, path_str, src, file) in parsed {
-        project.add_file(path_str.clone(), file.clone());
-        srcs.insert(path_str.clone(), src);
-        comments.insert(path_str.clone(), file.comments);
+    // Each R package is a separate library scope. Pooling multiple package
+    // roots into one Project lets top-level bindings and inferred functions
+    // leak between namespaces, which can both hide real RY010 findings and
+    // activate the wrong NSE model. Non-package scripts remain one project so
+    // ordinary multi-file workflows keep their source()-style visibility.
+    let mut groups: std::collections::BTreeMap<Option<PathBuf>, Vec<usize>> =
+        std::collections::BTreeMap::new();
+    for (index, (_, path, _, _)) in parsed.iter().enumerate() {
+        groups
+            .entry(enclosing_package_root(std::path::Path::new(path)))
+            .or_default()
+            .push(index);
     }
 
-    project.set_loaded(package_scope.attached);
-    project.set_bare_loaded(package_scope.bare_attached);
-    project.set_user_stubs(user_stubs);
-    project.set_external_bindings(package_scope.bindings);
-    project.set_imported_from(package_scope.imported_from);
-    project.set_external_s3_methods(package_scope.s3_methods);
-    project.set_load_bindings(package_scope.load_bindings);
-
-    let mut per_file_diagnostics = project.check();
+    let mut per_file_diagnostics = Vec::new();
+    for indices in groups.values() {
+        let group_paths: Vec<PathBuf> = indices
+            .iter()
+            .map(|index| PathBuf::from(&parsed[*index].1))
+            .collect();
+        let package_scope = package_metadata::resolve(
+            &group_paths,
+            packages,
+            globals,
+            &user_stubs,
+            indices.iter().map(|index| &parsed[*index].3),
+        );
+        let mut project = ry_checker::Project::new();
+        for index in indices {
+            let (_, path, _, file) = &parsed[*index];
+            project.add_file(path.clone(), file.clone());
+            comments.insert(path.clone(), file.comments.clone());
+        }
+        project.set_loaded(package_scope.attached);
+        project.set_bare_loaded(package_scope.bare_attached);
+        project.set_user_stubs(Arc::clone(&user_stubs));
+        project.set_external_bindings(package_scope.bindings);
+        project.set_imported_from(package_scope.imported_from);
+        project.set_external_s3_methods(package_scope.s3_methods);
+        project.set_load_bindings(package_scope.load_bindings);
+        per_file_diagnostics.extend(project.check());
+    }
 
     // Apply inline suppression comments (`# ry: ignore`, `# noqa`,
     // `# ry: ignore-file`) before the severity filter so a suppressed
@@ -1293,6 +1309,14 @@ fn read_r_source(path: &std::path::Path) -> std::io::Result<String> {
     }
 }
 
+fn enclosing_package_root(path: &std::path::Path) -> Option<PathBuf> {
+    let start = if path.is_dir() { path } else { path.parent()? };
+    start
+        .ancestors()
+        .find(|ancestor| ancestor.join("DESCRIPTION").is_file())
+        .map(std::path::Path::to_path_buf)
+}
+
 fn collect_r_files(path: &std::path::Path, out: &mut Vec<PathBuf>) {
     if path.is_file() {
         out.push(path.to_path_buf());
@@ -1331,6 +1355,7 @@ fn collect_r_files_recursive(
                 if name.starts_with('.')
                     || name == "target"
                     || name == "node_modules"
+                    || (name == "renv" && package_root.is_some())
                     || name.ends_with(".Rcheck")
                 {
                     continue;
@@ -1556,6 +1581,45 @@ mod tests {
     }
 
     #[test]
+    fn multi_package_scan_keeps_library_bindings_isolated() {
+        let temp = tempfile::tempdir().unwrap();
+        let first = temp.path().join("first");
+        let second = temp.path().join("second");
+        for (root, package) in [(&first, "first"), (&second, "second")] {
+            std::fs::create_dir_all(root.join("R")).unwrap();
+            std::fs::write(
+                root.join("DESCRIPTION"),
+                format!("Package: {package}\nVersion: 0.0.0.9000\n"),
+            )
+            .unwrap();
+        }
+        std::fs::write(first.join("R/first.R"), "only_in_first <- 1L\n").unwrap();
+        std::fs::write(second.join("R/second.R"), "value <- only_in_first\n").unwrap();
+
+        let mut paths = Vec::new();
+        collect_r_files(temp.path(), &mut paths);
+        paths.sort();
+        let result = run_check_once(
+            &paths,
+            &ry_checker::SeverityFilter::default(),
+            OutputFormat::Json,
+            &[],
+            &[],
+            std::sync::Arc::new(std::collections::BTreeMap::new()),
+            false,
+            None,
+            Some(temp.path()),
+            ry_checker::Confidence::Low,
+        )
+        .unwrap();
+        assert!(result.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "RY010"
+                && diagnostic.path.contains("second")
+                && diagnostic.message.contains("only_in_first")
+        }));
+    }
+
+    #[test]
     fn package_scan_excludes_non_package_r_sources() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
@@ -1590,6 +1654,23 @@ mod tests {
                 root.join("tests/testthat/test-package.R")
             ]
         );
+    }
+
+    #[test]
+    fn package_scan_skips_vendored_renv_bootstrap() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
+        std::fs::create_dir_all(root.join("R")).unwrap();
+        std::fs::create_dir_all(root.join("renv")).unwrap();
+        let source = root.join("R/package.R");
+        std::fs::write(&source, "value <- 1L\n").unwrap();
+        std::fs::write(root.join("renv/activate.R"), "bootstrap_missing\n").unwrap();
+
+        let mut paths = Vec::new();
+        collect_r_files(root, &mut paths);
+
+        assert_eq!(paths, vec![source]);
     }
 
     #[test]

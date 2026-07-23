@@ -312,7 +312,7 @@ impl Checker {
 /// negative exclusion selector. R has no sign information in `RType`, so a
 /// scalar identifier is accepted while syntactically negative literals are
 /// deliberately rejected.
-fn is_non_negative_scalar_index(expr: &Expr, scope: &Scope) -> bool {
+pub(crate) fn is_non_negative_scalar_index(expr: &Expr, scope: &Scope) -> bool {
     match expr {
         Expr::Integer(index, _) => *index >= 0,
         Expr::Double(index, _) => *index >= 0.0,

@@ -419,6 +419,59 @@ impl Checker {
         args: &[Arg],
         span: Span,
     ) -> RType {
+        // Set operations preserve a common mode but are bounded by both
+        // inputs. In particular, a scalar argument makes `intersect(x, y)`
+        // scalar-or-empty even when the other side is a known vector.
+        if name == "intersect" {
+            let mut result = arg_types.first().cloned().unwrap_or_else(RType::unknown);
+            result.length = match (
+                arg_types.first().map(|ty| ty.length),
+                arg_types.get(1).map(|ty| ty.length),
+            ) {
+                (Some(Length::Zero), _) | (_, Some(Length::Zero)) => Length::Zero,
+                (Some(Length::One), _) | (_, Some(Length::One)) => Length::One,
+                (Some(Length::Known(left)), Some(Length::Known(right))) => {
+                    Length::Known(left.min(right))
+                }
+                _ => Length::Unknown,
+            };
+            return result;
+        }
+
+        // `paste()`/`paste0()` return zero length when every value argument
+        // is zero length. A supplied scalar `collapse` reduces any result,
+        // including character(0), to one string. Control parameters do not
+        // participate in vector recycling.
+        if matches!(name, "paste" | "paste0") {
+            let has_collapse = args
+                .iter()
+                .any(|argument| argument.name.as_deref() == Some("collapse"));
+            if has_collapse {
+                return RType::scalar(Mode::Character);
+            }
+            let value_types: Vec<_> = args
+                .iter()
+                .zip(arg_types)
+                .filter(|(argument, _)| {
+                    !matches!(
+                        argument.name.as_deref(),
+                        Some("sep" | "collapse" | "recycle0")
+                    )
+                })
+                .map(|(_, ty)| ty.clone())
+                .collect();
+            let length = if value_types.is_empty()
+                || value_types
+                    .iter()
+                    .all(|ty| matches!(ty.length, Length::Zero))
+            {
+                Length::Zero
+            } else {
+                longest_arg_length(&value_types)
+            };
+            return RType::new(Mode::Character, length);
+        }
+
         // Match named arguments to parameters so that `arg0` refers to
         // the first *parameter* (by name), not the first positional arg.
         // When `sig.params` is empty or only contains `...`, fall back

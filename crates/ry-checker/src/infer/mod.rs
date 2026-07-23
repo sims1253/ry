@@ -56,6 +56,148 @@ pub(crate) fn condition_diagnostic(t: &RType) -> Option<ConditionDiagnostic> {
     }
 }
 
+pub(crate) fn list_binding_origin(name: &str, scope: &Scope) -> bool {
+    scope.has_list_origin(name)
+}
+
+fn expression_has_list_origin(expression: &Expr, scope: &Scope) -> bool {
+    match expression {
+        Expr::Call { func, .. } => ident_name(func).is_some_and(|name| {
+            matches!(
+                name.rsplit_once("::").map(|(_, bare)| bare).unwrap_or(name),
+                "list" | "lapply" | "Map"
+            )
+        }),
+        Expr::Index {
+            base,
+            kind: IndexKind::Single,
+            ..
+        } => matches!(base.as_ref(), Expr::Ident { name, .. } if scope.has_list_origin(name)),
+        Expr::Ident { name, .. } => scope.has_list_origin(name),
+        _ => false,
+    }
+}
+
+fn vector_intent_parameters(params: &[Param], body: &[Stmt]) -> HashSet<String> {
+    fn visit_expr(expr: &Expr, formals: &HashSet<&str>, intent: &mut HashSet<String>) {
+        match expr {
+            Expr::Call { func, args, .. } => {
+                if ident_name(func).is_some_and(|name| {
+                    matches!(
+                        name.rsplit_once("::").map(|(_, bare)| bare).unwrap_or(name),
+                        "paste" | "paste0"
+                    )
+                }) && args
+                    .iter()
+                    .any(|argument| matches!(argument.name.as_deref(), Some("collapse")))
+                {
+                    for argument in args {
+                        if argument.name.as_deref() != Some("collapse")
+                            && let Expr::Ident { name, .. } = &argument.value
+                            && formals.contains(name.as_str())
+                        {
+                            intent.insert(name.clone());
+                        }
+                    }
+                }
+                visit_expr(func, formals, intent);
+                for argument in args {
+                    visit_expr(&argument.value, formals, intent);
+                }
+            }
+            Expr::BinOp { lhs, rhs, .. } => {
+                visit_expr(lhs, formals, intent);
+                visit_expr(rhs, formals, intent);
+            }
+            Expr::UnaryOp { expr, .. } => visit_expr(expr, formals, intent),
+            Expr::Index { base, args, .. } => {
+                visit_expr(base, formals, intent);
+                for argument in args {
+                    visit_expr(&argument.value, formals, intent);
+                }
+            }
+            Expr::Block { body, .. } | Expr::Function { body, .. } => {
+                visit_stmts(body, formals, intent)
+            }
+            Expr::If {
+                cond, then, else_, ..
+            } => {
+                visit_expr(cond, formals, intent);
+                visit_expr(then, formals, intent);
+                if let Some(else_) = else_ {
+                    visit_expr(else_, formals, intent);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn visit_stmts(stmts: &[Stmt], formals: &HashSet<&str>, intent: &mut HashSet<String>) {
+        for statement in stmts {
+            match statement {
+                Stmt::Assign { target, value, .. } => {
+                    visit_expr(target, formals, intent);
+                    visit_expr(value, formals, intent);
+                }
+                Stmt::Expr(expr) => visit_expr(expr, formals, intent),
+                Stmt::If {
+                    cond, then, else_, ..
+                } => {
+                    visit_expr(cond, formals, intent);
+                    visit_stmts(then, formals, intent);
+                    if let Some(else_) = else_ {
+                        visit_stmts(else_, formals, intent);
+                    }
+                }
+                Stmt::For { iter, body, .. } => {
+                    visit_expr(iter, formals, intent);
+                    visit_stmts(body, formals, intent);
+                }
+                Stmt::While { cond, body, .. } => {
+                    visit_expr(cond, formals, intent);
+                    visit_stmts(body, formals, intent);
+                }
+                Stmt::Return { value, .. } => {
+                    if let Some(value) = value {
+                        visit_expr(value, formals, intent);
+                    }
+                }
+                Stmt::FunctionDef { .. } => {}
+            }
+        }
+    }
+
+    let formals: HashSet<&str> = params
+        .iter()
+        .map(|parameter| parameter.name.as_str())
+        .collect();
+    let mut intent = HashSet::new();
+    visit_stmts(body, &formals, &mut intent);
+    intent
+}
+
+fn discarded_value_expression(expression: &Expr) -> bool {
+    match expression {
+        Expr::BinOp { op, .. } => matches!(
+            op,
+            BinOpKind::Add
+                | BinOpKind::Sub
+                | BinOpKind::Mul
+                | BinOpKind::Div
+                | BinOpKind::Pow
+                | BinOpKind::Mod
+                | BinOpKind::IDiv
+        ),
+        Expr::Call { func, .. } => ident_name(func).is_some_and(|name| {
+            let bare = name.rsplit_once("::").map(|(_, bare)| bare).unwrap_or(name);
+            matches!(bare, "paste" | "paste0" | "sprintf")
+                || bare.starts_with("read_")
+                || bare.starts_with("read.")
+        }),
+        _ => false,
+    }
+}
+
 // The T7b "mutually-exclusive branch" loop refinement was removed after two
 // rounds of corpus regressions (it ended up flagging loop iterators inside
 // their own bodies). Loop bodies simply pre-bind every name assigned anywhere
@@ -69,16 +211,41 @@ impl Checker {
         scope: &mut Scope,
         mut returns: Option<&mut Vec<RType>>,
     ) {
+        if scope.unreachable {
+            // Function bodies remain independent analysis units even when
+            // their definition is textually located in dead code. Walk the
+            // definition with reachability restored, then keep the enclosing
+            // block unreachable.
+            if matches!(
+                s,
+                Stmt::FunctionDef { .. }
+                    | Stmt::Assign {
+                        value: Expr::Function { .. },
+                        ..
+                    }
+            ) {
+                scope.unreachable = false;
+                self.walk_stmt(s, scope, returns);
+                scope.unreachable = true;
+            }
+            return;
+        }
         match s {
             Stmt::Assign { target, value, .. } => {
+                let value_has_list_origin = expression_has_list_origin(value, scope);
                 let vt = self.infer(value, scope);
                 let function_alias = self.function_alias_target(value, scope);
                 if !self.assign_class_attribute(target, value, scope)
                     && !self.assign_replacement_target(target, scope)
                 {
                     self.assign_target(target, vt, scope);
-                    if let (Some(name), Some(alias)) = (binding_name(target), function_alias) {
-                        scope.set_function_alias(name.to_string(), alias);
+                    if let Some(name) = binding_name(target) {
+                        if value_has_list_origin {
+                            scope.mark_list_origin(name.to_string());
+                        }
+                        if let Some(alias) = function_alias {
+                            scope.set_function_alias(name.to_string(), alias);
+                        }
                     }
                 }
                 // Named function bodies (`f <- function(...) body`) must
@@ -100,7 +267,7 @@ impl Checker {
                         insert_s3_dispatch_context(name, &mut fn_scope, &self.typeshed.globals);
                     }
                     for parameter in params {
-                        fn_scope.insert(parameter.name.clone(), RType::unknown());
+                        fn_scope.insert_parameter(parameter.name.clone(), RType::unknown());
                     }
                     let assigned = assigned_names_in_body(body);
                     self.check_lazy_default_reachability(params, body, &assigned);
@@ -123,14 +290,18 @@ impl Checker {
                         if p.default.is_some() {
                             fn_scope.insert_parameter_default(p.name.clone(), t);
                         } else {
-                            fn_scope.insert(p.name.clone(), t);
+                            fn_scope.insert_parameter(p.name.clone(), t);
                         }
                     }
                     self.deferred_captures.push(assigned);
                     self.push_enclosing_formals(params);
+                    self.vector_intent_parameters
+                        .push(vector_intent_parameters(params, body));
+                    self.check_discarded_branch_results(body);
                     for s in body {
                         self.walk_stmt(s, &mut fn_scope, None);
                     }
+                    self.vector_intent_parameters.pop();
                     self.enclosing_formals.pop();
                     self.deferred_captures.pop();
                 }
@@ -257,6 +428,11 @@ impl Checker {
                 if let Some(continuation) = continuation {
                     self.copy_continuation_narrowing(scope, continuation, &narrowed);
                 }
+                // When both explicit arms throw, no route reaches the
+                // enclosing block's continuation.
+                if has_else && then_scope.unreachable && else_scope.unreachable {
+                    scope.unreachable = true;
+                }
             }
             Stmt::For {
                 name, iter, body, ..
@@ -315,8 +491,14 @@ impl Checker {
                 }
                 // As with `for`, assignments made by `while` and `repeat`
                 // bodies remain visible in R's enclosing environment.
+                let body_unreachable = inner.unreachable;
                 for (binding, ty) in inner.bindings {
                     scope.insert(binding, ty);
+                }
+                // The parser represents `repeat` as `while (TRUE)`. If its
+                // body cannot continue, neither can the enclosing block.
+                if matches!(cond, Expr::Logical(true, _)) && body_unreachable {
+                    scope.unreachable = true;
                 }
             }
             Stmt::FunctionDef {
@@ -335,7 +517,7 @@ impl Checker {
                     }
                 }
                 for parameter in params {
-                    fn_scope.insert(parameter.name.clone(), RType::unknown());
+                    fn_scope.insert_parameter(parameter.name.clone(), RType::unknown());
                 }
                 let assigned = assigned_names_in_body(body);
                 self.check_lazy_default_reachability(params, body, &assigned);
@@ -358,14 +540,18 @@ impl Checker {
                     if p.default.is_some() {
                         fn_scope.insert_parameter_default(p.name.clone(), t);
                     } else {
-                        fn_scope.insert(p.name.clone(), t);
+                        fn_scope.insert_parameter(p.name.clone(), t);
                     }
                 }
                 self.deferred_captures.push(assigned);
                 self.push_enclosing_formals(params);
+                self.vector_intent_parameters
+                    .push(vector_intent_parameters(params, body));
+                self.check_discarded_branch_results(body);
                 for s in body {
                     self.walk_stmt(s, &mut fn_scope, None);
                 }
+                self.vector_intent_parameters.pop();
                 self.enclosing_formals.pop();
                 self.deferred_captures.pop();
             }
@@ -378,6 +564,41 @@ impl Checker {
                 } else if let Some(r) = returns {
                     r.push(RType::new(Mode::Null, Length::Zero));
                 }
+            }
+        }
+    }
+
+    /// Diagnose a value-producing one-arm `if` whose result is thrown away by
+    /// a following statement. The narrow producer allowlist avoids treating
+    /// intentional side-effect calls as bugs while covering common missing
+    /// assignment mistakes (`paste0(x, ...)`, `read_*()`, and arithmetic).
+    fn check_discarded_branch_results(&mut self, body: &[Stmt]) {
+        for (index, statement) in body.iter().enumerate() {
+            if index + 1 < body.len()
+                && let Stmt::If {
+                    then, else_: None, ..
+                } = statement
+                && let [Stmt::Expr(expression)] = then.as_slice()
+                && discarded_value_expression(expression)
+            {
+                self.emit(
+                    Severity::Warning,
+                    span_of(expression),
+                    "RY099",
+                    "value produced by this conditional expression is discarded; assign it or return it explicitly",
+                );
+            }
+            match statement {
+                Stmt::If { then, else_, .. } => {
+                    self.check_discarded_branch_results(then);
+                    if let Some(else_) = else_ {
+                        self.check_discarded_branch_results(else_);
+                    }
+                }
+                Stmt::For { body, .. } | Stmt::While { body, .. } => {
+                    self.check_discarded_branch_results(body);
+                }
+                _ => {}
             }
         }
     }
@@ -484,7 +705,11 @@ impl Checker {
     ) {
         for name in narrowed {
             if let Some(ty) = continuation.get(name) {
-                scope.insert(name.clone(), ty.clone());
+                if continuation.is_default_parameter(name) {
+                    scope.insert_parameter_default(name.clone(), ty.clone());
+                } else {
+                    scope.insert(name.clone(), ty.clone());
+                }
             }
         }
     }
@@ -892,7 +1117,11 @@ impl Checker {
         let Some(Expr::Ident { name, .. }) = args.first().map(|arg| &arg.value) else {
             return false;
         };
+        let had_list_origin = scope.has_list_origin(name);
         scope.insert(name.clone(), RType::unknown());
+        if had_list_origin {
+            scope.mark_list_origin(name.clone());
+        }
         true
     }
 
@@ -1089,6 +1318,9 @@ impl Checker {
     }
 
     pub(crate) fn infer_stmt_value(&mut self, stmt: &Stmt, scope: &mut Scope) -> RType {
+        if scope.unreachable {
+            return RType::unknown();
+        }
         match stmt {
             Stmt::Assign { target, value, .. } => {
                 let vt = self.infer(value, scope);

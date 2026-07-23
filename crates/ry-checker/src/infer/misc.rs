@@ -133,6 +133,10 @@ pub(crate) enum Narrowing {
     /// path proves only that `x` is non-NULL.  This is deliberately weaker
     /// than claiming anything about its storage mode or non-emptiness.
     NonNullElse { var: String },
+    /// A rejecting `||` chain containing `length(x) != 1`. Its false path
+    /// proves that `x` has length one. A negated type predicate over the same
+    /// variable (for example `!is.numeric(x)`) may additionally prove mode.
+    ScalarElse { var: String, target: Option<RType> },
 }
 
 /// Extract a type narrowing from an `if` condition expression.
@@ -226,6 +230,9 @@ pub(crate) fn extract_type_narrowing(cond: &Expr) -> Narrowing {
             rhs,
             ..
         } => {
+            if let Some((var, target)) = scalar_false_path_fact(cond) {
+                return Narrowing::ScalarElse { var, target };
+            }
             // The false path through `a || b` reaches the continuation only
             // when both operands are false. Keep this intentionally strict:
             // a null guard may contribute its non-null fact only when the
@@ -261,6 +268,71 @@ pub(crate) fn extract_type_narrowing(cond: &Expr) -> Narrowing {
     }
 }
 
+/// Fact established when a rejecting `||` chain is false. R's short-circuit
+/// semantics guarantee every operand was false, so `length(x) != 1` proves
+/// length one in the continuation. A false `!is.*(x)` operand independently
+/// establishes its positive type predicate.
+fn scalar_false_path_fact(expr: &Expr) -> Option<(String, Option<RType>)> {
+    fn visit(expr: &Expr, leaves: &mut Vec<Expr>) {
+        if let Expr::BinOp {
+            op: BinOpKind::OrOr,
+            lhs,
+            rhs,
+            ..
+        } = expr
+        {
+            visit(lhs, leaves);
+            visit(rhs, leaves);
+        } else {
+            leaves.push(expr.clone());
+        }
+    }
+
+    fn length_not_one_var(expr: &Expr) -> Option<String> {
+        let Expr::BinOp {
+            op: BinOpKind::Ne,
+            lhs,
+            rhs,
+            ..
+        } = expr
+        else {
+            return None;
+        };
+        if is_one_literal(rhs) {
+            length_guard_var(lhs)
+        } else if is_one_literal(lhs) {
+            length_guard_var(rhs)
+        } else {
+            None
+        }
+    }
+
+    fn false_path_target(expr: &Expr, var: &str) -> Option<RType> {
+        let Expr::UnaryOp {
+            op: UnaryOpKind::Not,
+            expr,
+            ..
+        } = expr
+        else {
+            return None;
+        };
+        let Narrowing::Positive {
+            var: predicate_var,
+            target,
+        } = extract_type_narrowing(expr)
+        else {
+            return None;
+        };
+        (predicate_var == var && target.mode != Mode::Null).then_some(target)
+    }
+
+    let mut leaves = Vec::new();
+    visit(expr, &mut leaves);
+    let var = leaves.iter().find_map(length_not_one_var)?;
+    let target = leaves.iter().find_map(|leaf| false_path_target(leaf, &var));
+    Some((var, target))
+}
+
 fn length_guard_var(expr: &Expr) -> Option<String> {
     let Expr::Call { func, args, .. } = expr else {
         return None;
@@ -276,6 +348,10 @@ fn length_guard_var(expr: &Expr) -> Option<String> {
 
 fn is_zero_literal(expr: &Expr) -> bool {
     matches!(expr, Expr::Integer(0, _)) || matches!(expr, Expr::Double(value, _) if *value == 0.0)
+}
+
+fn is_one_literal(expr: &Expr) -> bool {
+    matches!(expr, Expr::Integer(1, _)) || matches!(expr, Expr::Double(value, _) if *value == 1.0)
 }
 
 /// Return the variable inspected by a simple predicate. `is.na` is included
@@ -302,6 +378,13 @@ fn predicate_var(expr: &Expr) -> Option<String> {
 /// so its narrowing target is `union[integer, double]` (NOT plain
 /// Double, which would rewrite a known Integer to Double).
 pub(crate) fn predicate_target(name: &str) -> Option<RType> {
+    let name = match name {
+        // rlang's snake-case helper has the same value semantics as the base
+        // predicate. Its provenance is verified by ordinary call resolution;
+        // modeling the alias here preserves flow facts in importing packages.
+        "is_null" => "is.null",
+        name => name,
+    };
     match name {
         // numeric = double or integer (a group, not a single mode).
         "is.numeric" => Some(RType::scalar(Mode::Integer).join(RType::scalar(Mode::Double))),
@@ -364,7 +447,11 @@ pub(crate) fn standalone_check_target(name: &str) -> Option<RType> {
         "check_formula" => Some(RType::unknown().with_class(ClassVector::single("formula"))),
         "check_character" => Some(RType::new(Mode::Character, Length::Unknown)),
         "check_logical" => Some(RType::new(Mode::Logical, Length::Unknown)),
-        "check_data_frame" => predicate_target("is.data.frame"),
+        // A data frame's vector length is its column count, not a scalar
+        // constraint imposed by check_data_frame().
+        "check_data_frame" => Some(
+            RType::new(Mode::List, Length::Unknown).with_class(ClassVector::single("data.frame")),
+        ),
         _ => None,
     }
 }
@@ -529,6 +616,27 @@ pub(crate) fn apply_narrowing(
                 debug_assert_eq!(target.mode, Mode::Null);
                 else_scope.insert_narrowed(var.clone(), n);
                 narrowed.insert(var.clone());
+            }
+        }
+        Narrowing::ScalarElse { var, target } => {
+            if let Some(existing) = else_scope.get(var).cloned() {
+                // A concrete NULL local cannot satisfy length(x) == 1, so the
+                // false path is unreachable. A NULL parameter default is not
+                // exhaustive: callers may provide a scalar value.
+                if existing.mode == Mode::Null && !else_scope.is_default_parameter(var) {
+                    else_scope.unreachable = true;
+                } else {
+                    let mut scalar = match target {
+                        Some(target) => target.clone(),
+                        // A NULL default says nothing about the mode callers
+                        // may supply. The length guard proves only scalarity.
+                        None if existing.mode == Mode::Null => RType::unknown(),
+                        None => existing,
+                    };
+                    scalar.length = Length::One;
+                    else_scope.insert_narrowed(var.clone(), scalar);
+                    narrowed.insert(var.clone());
+                }
             }
         }
     }
@@ -1253,6 +1361,58 @@ pub(crate) fn types_provably_incompatible(actual: &RType, expected: &RType) -> b
     })
 }
 
+/// Whether every value represented by `actual` is rejected by a standalone
+/// checker accepting `expected`. Unlike ordinary argument compatibility,
+/// standalone checks are exact assertions: their length and class constraints
+/// are runtime preconditions, and numeric modes are not interchangeable.
+pub(crate) fn standalone_check_provably_rejects(actual: &RType, expected: &RType) -> bool {
+    fn members(rtype: &RType) -> Vec<&RType> {
+        if rtype.mode == Mode::Union {
+            rtype
+                .members
+                .as_deref()
+                .map(|members| members.iter().collect())
+                .unwrap_or_else(|| vec![rtype])
+        } else {
+            vec![rtype]
+        }
+    }
+
+    fn lengths_overlap(actual: Length, expected: Length) -> bool {
+        actual == Length::Unknown || expected == Length::Unknown || actual == expected
+    }
+
+    fn classes_overlap(actual: &RType, expected: &RType) -> bool {
+        if !expected.class.has_known_class() {
+            return true;
+        }
+        if actual.class.is_unknown() {
+            return true;
+        }
+        expected
+            .class
+            .names
+            .iter()
+            .flatten()
+            .any(|name| actual.class.contains(name))
+    }
+
+    fn shapes_overlap(actual: &RType, expected: &RType) -> bool {
+        let modes_overlap = actual.mode == Mode::Opaque
+            || expected.mode == Mode::Opaque
+            || actual.mode == expected.mode;
+        modes_overlap
+            && lengths_overlap(actual.length, expected.length)
+            && classes_overlap(actual, expected)
+    }
+
+    !members(actual).into_iter().any(|actual| {
+        members(expected)
+            .into_iter()
+            .any(|expected| shapes_overlap(actual, expected))
+    })
+}
+
 fn generic_argument_may_dispatch(function_name: &str, actual: &RType) -> bool {
     matches!(function_name, "round" | "mean" | "log" | "sqrt" | "exp")
         && (actual.class.has_known_class() || actual.mode == Mode::Null)
@@ -1280,7 +1440,7 @@ fn compatible_mode_pair(actual: Mode, expected: Mode) -> bool {
     actual == expected || (numeric(actual) && numeric(expected))
 }
 
-fn expected_type_label(expected: &RType) -> String {
+pub(crate) fn expected_type_label(expected: &RType) -> String {
     let Some(modes) = known_modes(expected) else {
         return "unknown".to_string();
     };

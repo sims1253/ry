@@ -620,6 +620,145 @@ fn qualified_base_schema_effect_is_applied() {
 }
 
 #[test]
+fn discarded_pure_expression_in_non_tail_if_branch_warns() {
+    let diagnostics = check(
+        "f <- function(z, text) {\n\
+           if (z == 0) z + 0.001\n\
+           if (!grepl(\"\\n$\", text)) paste0(text, \"\\n\")\n\
+           z\n\
+         }\n",
+    );
+    assert_eq!(
+        diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "RY099")
+            .count(),
+        2,
+        "both branch results are discarded: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn intentional_side_effect_and_tail_expressions_remain_silent() {
+    let diagnostics = check(
+        "f <- function(x) {\n\
+           if (x) message(\"side effect\")\n\
+           if (x) x + 1 else x - 1\n\
+         }\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY099"),
+        "side effects and returned branch values are not discarded: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn single_bracket_list_compared_with_scalar_by_identical_warns() {
+    let diagnostics = check(
+        "args <- list(font = \"monospace\")\n\
+         identical(args[\"font\"], \"monospace\")\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY101"),
+        "identical(list[...], scalar) is always false: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn double_bracket_list_compared_with_scalar_by_identical_is_valid() {
+    let diagnostics = check(
+        "args <- list(font = \"monospace\")\n\
+         identical(args[[\"font\"]], \"monospace\")\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY101"),
+        "double-bracket extraction returns the scalar element: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn magrittr_braced_rhs_binds_dot_pronoun() {
+    let diagnostics = check(
+        "library(magrittr)\n\
+         data.frame(value = 1L) %>% { .$value == 1L } %>% all()\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "the braced RHS is a magrittr dot lambda: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn unknown_bare_parameter_short_circuit_operands_remain_silent() {
+    let diagnostics = check("f <- function(x, y) x && y\n");
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY032"),
+        "unknown bare parameters are not proof of vector misuse: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn vectorized_predicates_over_parameters_warn_in_short_circuit_ops() {
+    let diagnostics = check(
+        "guarded <- function(x) {\n\
+           if (is.null(x) || x == \"\") return(NULL)\n\
+           paste(x, collapse = \"\\n\")\n\
+         }\n\
+         non_missing <- function(x) {\n\
+           if (length(x) > 0 && !is.na(x)) NULL\n\
+           paste(x, collapse = \",\")\n\
+         }\n",
+    );
+    assert_eq!(
+        diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "RY032")
+            .count(),
+        2,
+        "parameter predicates may be vectors at runtime: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn intersect_result_uses_the_shorter_known_operand() {
+    let diagnostics = check(
+        "x <- 1:3\n\
+         y <- 1L\n\
+         intersect(x, y) && TRUE\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY032"),
+        "intersect() with a scalar input is provably scalar-or-empty: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn paste_preserves_an_all_zero_length_input() {
+    let (diagnostics, scope) = check_with_scope(
+        "empty <- paste(NULL, NULL)\n\
+         collapsed <- paste(NULL, collapse = \"\")\n",
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert_eq!(scope.get("empty").map(|ty| ty.length), Some(Length::Zero));
+    assert_eq!(
+        scope.get("collapsed").map(|ty| ty.length),
+        Some(Length::One)
+    );
+}
+
+#[test]
 fn join_normal_arguments_use_the_ordinary_scope() {
     let diagnostics = check(
         "library(dplyr)\nx <- unknown_source()\ny <- data.frame(id = 1L)\nleft_join(x, y, by = missing_name)\n",
@@ -902,6 +1041,34 @@ fn open_scope_mutations_only_affect_later_bindings_and_nested_functions() {
 }
 
 #[test]
+fn source_without_local_does_not_open_a_function_scope() {
+    let diagnostics = check(
+        "f <- function() {\n\
+           source(\"generated.R\")\n\
+           genuinely_missing\n\
+         }\n",
+    );
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == "RY010" && diagnostic.message.contains("genuinely_missing")
+    }));
+}
+
+#[test]
+fn source_local_true_may_populate_a_function_scope() {
+    let diagnostics = check(
+        "f <- function() {\n\
+           source(\"generated.R\", local = TRUE)\n\
+           generated_binding\n\
+         }\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010")
+    );
+}
+
+#[test]
 fn data_and_load_make_later_bindings_uncertain() {
     let (data_diagnostics, data_scope) = check_with_scope("data(api)\nprint(apipop)\n");
     assert!(
@@ -922,7 +1089,8 @@ fn data_and_load_make_later_bindings_uncertain() {
     assert!(
         source_diagnostics
             .iter()
-            .all(|diagnostic| diagnostic.code != "RY010")
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "top-level source() populates .GlobalEnv, which is the current scope"
     );
 }
 
@@ -3844,6 +4012,78 @@ fn divergence_narrowing_works_in_nested_function_inside_loop() {
             .iter()
             .all(|diagnostic| diagnostic.code != "RY061"),
         "nested function guard should narrow independently: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn diverging_compound_length_guard_makes_continuation_scalar() {
+    let diagnostics = check(
+        "Primes <- function(n1 = 1, n2 = NULL) {\n\
+           if (is.null(n2)) return(1L)\n\
+           if (!is.numeric(n2) || length(n2) != 1) stop(\"x\")\n\
+           if (n2 > 0) return(2L)\n\
+           3L\n\
+         }\n\
+         omitted <- function() Primes(5)\n\
+         explicit_null <- function() Primes(5, NULL)\n\
+         explicit_number <- function() Primes(5, 10)\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY001"),
+        "the false path of length(n2) != 1 proves n2 is scalar: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reversed_length_guard_and_long_or_chain_make_continuation_scalar() {
+    let diagnostics = check(
+        "f <- function(x = NULL) {\n\
+           if (!is.character(x) || other_check(x) || 1 != length(x)) stop(\"x\")\n\
+           if (x == \"ok\") TRUE else FALSE\n\
+         }\n\
+         f()\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY001"),
+        "all false || operands prove scalar character x: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn non_diverging_compound_length_guard_does_not_narrow_continuation() {
+    let diagnostics = check(
+        "f <- function(x = NULL) {\n\
+           if (!is.numeric(x) || length(x) != 1) warning(\"x\")\n\
+           if (x > 0) NULL\n\
+         }\n\
+         f()\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY001"),
+        "a warning does not reject the non-scalar path: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn null_return_guard_alone_does_not_prove_non_empty() {
+    let diagnostics = check(
+        "f <- function(x = NULL) {\n\
+           if (is.null(x)) return(NULL)\n\
+           if (x > 0) NULL\n\
+         }\n\
+         f()\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY001"),
+        "a non-NULL value may still be a zero-length vector: {diagnostics:?}"
     );
 }
 

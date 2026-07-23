@@ -185,10 +185,22 @@ pub const RULES: &[Rule] = &[
         summary: "A parameter default references a body-local that may not be assigned yet on some execution path.",
     },
     Rule {
+        code: "RY099",
+        name: "discarded-conditional-value",
+        default_severity: Severity::Warning,
+        summary: "A value-producing expression in a non-tail one-arm `if` is discarded, commonly because an assignment was omitted.",
+    },
+    Rule {
         code: "RY100",
         name: "comparison-inside-math-call",
         default_severity: Severity::Warning,
         summary: "A comparison directly inside a numeric math function is usually a parenthesization mistake (`abs(x > y)` instead of `abs(x) > y`).",
+    },
+    Rule {
+        code: "RY101",
+        name: "identical-list-subset-scalar",
+        default_severity: Severity::Warning,
+        summary: "`identical()` compares a single-bracket list subset with an atomic scalar; the subset remains a list, so the result is always FALSE. Use `[[` to extract the element.",
     },
 ];
 

@@ -33,9 +33,8 @@ impl Confidence {
     pub fn default_for(code: &str) -> Self {
         match code {
             "RY097" => Self::Low,
-            "RY030" | "RY033" | "RY050" | "RY070" | "RY092" | "RY093" | "RY094" | "RY096" => {
-                Self::High
-            }
+            "RY030" | "RY033" | "RY050" | "RY070" | "RY092" | "RY093" | "RY094" | "RY096"
+            | "RY101" => Self::High,
             _ => Self::Medium,
         }
     }

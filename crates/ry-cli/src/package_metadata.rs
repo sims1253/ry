@@ -157,6 +157,10 @@ pub(crate) fn resolve<'a>(
             let relative = Path::new(&file.path).strip_prefix(&root).ok();
             if relative.is_some_and(is_package_r_file) {
                 file_attached.extend(metadata.imported_packages.iter().cloned());
+                // Packages that rely on DESCRIPTION Depends may omit a
+                // NAMESPACE (Quarto/Shiny projects commonly do). Depends are
+                // attached before package code runs, unlike Imports.
+                file_attached.extend(read_description_packages(&root).depends);
             }
             if source_package_lazy_data(&root) {
                 file_bindings.extend(

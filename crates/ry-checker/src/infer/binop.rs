@@ -127,26 +127,8 @@ impl Checker {
                 lt.length.binary(rt.length)
             };
             if matches!(op, BinOpKind::AndAnd | BinOpKind::OrOr) {
-                if let Length::Known(n) = lt.length {
-                    if n > 1 {
-                        self.emit(
-                            Severity::Warning,
-                            span,
-                            "RY032",
-                            format!("`{}` applied to a length-{} operand; only the first element is used", op_symbol(op), n),
-                        );
-                    }
-                }
-                if let Length::Known(n) = rt.length {
-                    if n > 1 {
-                        self.emit(
-                            Severity::Warning,
-                            span,
-                            "RY032",
-                            format!("`{}` applied to a length-{} operand; only the first element is used", op_symbol(op), n),
-                        );
-                    }
-                }
+                self.emit_scalar_logical_length(op, lt.length, span, false);
+                self.emit_scalar_logical_length(op, rt.length, span, false);
             }
             return RType::new(Mode::Logical, length);
         }
@@ -307,6 +289,7 @@ impl Checker {
         let lt = self.infer(lhs, scope);
         let narrowing = extract_type_narrowing(lhs);
         let (then_scope, else_scope, _) = apply_narrowing(scope, &narrowing, true);
+        let rhs_parameter_vector = self.short_circuit_parameter_vector(op, lhs, rhs, scope);
         let rt = match op {
             BinOpKind::AndAnd => {
                 let mut rhs_scope = then_scope;
@@ -322,13 +305,61 @@ impl Checker {
             }
             _ => self.infer(rhs, scope),
         };
-        self.infer_binop(
+        let before = self.diagnostics.len();
+        let result = self.infer_binop(
             op,
             lt,
             rt,
             span,
             known_null_arithmetic_operand(lhs, scope) || known_null_arithmetic_operand(rhs, scope),
-        )
+        );
+        if rhs_parameter_vector
+            && !self.diagnostics[before..]
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY032")
+        {
+            self.emit(
+                Severity::Warning,
+                span,
+                "RY032",
+                format!(
+                    "`{}` operand depends on a parameter whose length is not known to be 1; current R errors for vectors",
+                    op_symbol(op)
+                ),
+            );
+        }
+        result
+    }
+
+    fn emit_scalar_logical_length(
+        &mut self,
+        op: BinOpKind,
+        length: Length,
+        span: Span,
+        unknown_is_actionable: bool,
+    ) {
+        match length {
+            Length::Known(n) if n > 1 => self.emit(
+                Severity::Warning,
+                span,
+                "RY032",
+                format!(
+                    "`{}` applied to a length-{} operand; only the first element is used",
+                    op_symbol(op),
+                    n
+                ),
+            ),
+            Length::Unknown if unknown_is_actionable => self.emit(
+                Severity::Warning,
+                span,
+                "RY032",
+                format!(
+                    "`{}` operand length is not known to be 1; current R errors for vectors",
+                    op_symbol(op)
+                ),
+            ),
+            _ => {}
+        }
     }
 
     // Desugar `lhs %>% rhs` (and `lhs |> rhs`, `lhs %<>% rhs`) into a
@@ -351,6 +382,90 @@ impl Checker {
     // when it appears in an `Assign` statement; for a bare binop we
     // cannot reassign without a target expression, so we leave that to
     // a future pass.
+}
+
+/// Recognize the high-confidence parameter guard patterns found in package
+/// code. Unknown length by itself is not actionable: scalar parameters are
+/// common, and widening every `&&`/`||` would violate ry's silence-first bar.
+/// These forms, however, explicitly test a possibly empty parameter and then
+/// feed the un-scalarized value into a vectorized predicate.
+impl Checker {
+    fn short_circuit_parameter_vector(
+        &self,
+        op: BinOpKind,
+        lhs: &Expr,
+        rhs: &Expr,
+        scope: &Scope,
+    ) -> bool {
+        fn direct_parameter<'a>(expr: &'a Expr, scope: &Scope) -> Option<&'a str> {
+            match expr {
+                Expr::Ident { name, .. } if scope.is_parameter(name) => Some(name),
+                _ => None,
+            }
+        }
+
+        fn call_on_parameter<'a>(expr: &'a Expr, names: &[&str], scope: &Scope) -> Option<&'a str> {
+            let Expr::Call { func, args, .. } = expr else {
+                return None;
+            };
+            let name = ident_name(func)?;
+            let bare = name.rsplit_once("::").map(|(_, bare)| bare).unwrap_or(name);
+            if !names.contains(&bare) {
+                return None;
+            }
+            direct_parameter(&args.first()?.value, scope)
+        }
+
+        fn length_guard_parameter<'a>(expr: &'a Expr, scope: &Scope) -> Option<&'a str> {
+            if let Some(parameter) = call_on_parameter(expr, &["length"], scope) {
+                return Some(parameter);
+            }
+            let Expr::BinOp { lhs, rhs, .. } = expr else {
+                return None;
+            };
+            call_on_parameter(lhs, &["length"], scope)
+                .or_else(|| call_on_parameter(rhs, &["length"], scope))
+        }
+
+        fn vector_predicate_parameter<'a>(expr: &'a Expr, scope: &Scope) -> Option<&'a str> {
+            match expr {
+                Expr::BinOp {
+                    op:
+                        BinOpKind::Lt
+                        | BinOpKind::Le
+                        | BinOpKind::Gt
+                        | BinOpKind::Ge
+                        | BinOpKind::Eq
+                        | BinOpKind::Ne
+                        | BinOpKind::In,
+                    lhs,
+                    rhs,
+                    ..
+                } => direct_parameter(lhs, scope).or_else(|| direct_parameter(rhs, scope)),
+                Expr::UnaryOp {
+                    op: UnaryOpKind::Not,
+                    expr,
+                    ..
+                } => vector_predicate_parameter(expr, scope),
+                Expr::Call { .. } => call_on_parameter(expr, &["is.na", "grepl", "nzchar"], scope),
+                _ => None,
+            }
+        }
+
+        let guarded = match op {
+            BinOpKind::OrOr => call_on_parameter(lhs, &["is.null"], scope),
+            BinOpKind::AndAnd => length_guard_parameter(lhs, scope),
+            _ => None,
+        };
+        let Some(parameter) =
+            guarded.filter(|parameter| vector_predicate_parameter(rhs, scope) == Some(*parameter))
+        else {
+            return false;
+        };
+        self.vector_intent_parameters
+            .last()
+            .is_some_and(|parameters| parameters.contains(parameter))
+    }
 }
 
 /// Model the base `Ops.data.frame` method without losing the table's schema.

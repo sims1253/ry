@@ -318,6 +318,9 @@ explanation for one rule.
 | RY096 | hasarg-non-formal        | warning  | `hasArg()` names a parameter that is not a formal of an enclosing function without `...`.                                                                                                                 |
 | RY097 | not-r-source             | info     | File does not appear to be R source (e.g. Ratfor); its diagnostics are suppressed.                                                                                                                        |
 | RY098 | default-forced-before-assignment | warning | A parameter default references a body-local that may not be assigned yet on some execution path.                                                                                                    |
+| RY099 | discarded-conditional-value | warning | A value-producing expression in a non-tail one-arm `if` is discarded, commonly because an assignment was omitted.                                                                                   |
+| RY100 | comparison-inside-math-call | warning | A comparison directly inside a numeric math function is usually a parenthesization mistake.                                                                                                         |
+| RY101 | identical-list-subset-scalar | warning | `identical()` compares a single-bracket list subset with an atomic scalar, making the result always `FALSE`; use `[[` to extract the element.                                                        |
 
 Known gaps: S4 modeling covers in-package `setClass` / `setGeneric` /
 `setMethod` and `@` slot access but not full method resolution order;

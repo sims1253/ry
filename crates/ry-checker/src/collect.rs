@@ -426,7 +426,7 @@ impl Checker {
 
         let mut scope = Scope::default();
         for parameter in &params {
-            scope.insert(parameter.name.clone(), parameter.type_.clone());
+            scope.insert_parameter(parameter.name.clone(), parameter.type_.clone());
         }
         // The function's own name is in scope as a function value, so
         // recursive calls resolve to a user-fn lookup.

@@ -34,6 +34,19 @@ impl Checker {
             Expr::Index {
                 base, kind, args, ..
             } if is_dot_pronoun(base) => self.infer_index(lhs_t, *kind, args, span, false, scope),
+            // A braced magrittr RHS is a unary lambda whose `.` pronoun is
+            // bound to the LHS (`x %>% { .$field == value }`).
+            Expr::Block { body, .. } => {
+                let mut inner = scope.clone();
+                inner.insert(".", lhs_t);
+                let Some((last, prefix)) = body.split_last() else {
+                    return RType::new(Mode::Null, Length::Zero);
+                };
+                for statement in prefix {
+                    self.walk_stmt(statement, &mut inner, None);
+                }
+                self.infer_stmt_value(last, &mut inner)
+            }
             // Bare magrittr pronoun: `x %>% .` returns the LHS value
             // itself (the `.` refers to the LHS). This is distinct from
             // the general `Ident` arm below, which would treat `.` as a

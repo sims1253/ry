@@ -237,6 +237,12 @@ pub struct Scope {
     /// than an R assignment. `insert` clears this marker, so branch merging
     /// can distinguish a temporary refinement from a rebinding.
     pub(crate) narrowed_bindings: HashSet<String>,
+    /// Bindings that still refer directly to function parameters. Assigning
+    /// to the name clears this marker; flow narrowing preserves it.
+    pub parameter_bindings: HashSet<String>,
+    /// Bindings derived from list-valued expressions even when later subset
+    /// inference loses the concrete mode. Used by container-shape rules.
+    pub list_origin_bindings: HashSet<String>,
     /// Bindings whose current type came from a function parameter default.
     /// A default is one call shape, not a complete declaration of the
     /// parameter's runtime type, so an explicit `is.*()` guard may replace
@@ -260,6 +266,8 @@ impl Scope {
     pub fn insert(&mut self, name: impl Into<String>, t: RType) {
         let name = name.into();
         self.function_aliases.remove(&name);
+        self.list_origin_bindings.remove(&name);
+        self.parameter_bindings.remove(&name);
         self.default_parameter_bindings.remove(&name);
         self.narrowed_bindings.remove(&name);
         self.bindings.insert(name, t);
@@ -267,20 +275,43 @@ impl Scope {
 
     pub(crate) fn insert_narrowed(&mut self, name: impl Into<String>, t: RType) {
         let name = name.into();
+        let was_parameter = self.parameter_bindings.contains(&name);
         let was_default_parameter = self.default_parameter_bindings.contains(&name);
         self.insert(name.clone(), t);
+        if was_parameter {
+            self.parameter_bindings.insert(name.clone());
+        }
         if was_default_parameter {
             self.default_parameter_bindings.insert(name.clone());
         }
         self.narrowed_bindings.insert(name);
     }
 
+    pub(crate) fn insert_parameter(&mut self, name: impl Into<String>, t: RType) {
+        let name = name.into();
+        self.insert(name.clone(), t);
+        self.parameter_bindings.insert(name);
+    }
+
     pub(crate) fn insert_parameter_default(&mut self, name: impl Into<String>, t: RType) {
         let name = name.into();
         self.function_aliases.remove(&name);
+        self.parameter_bindings.insert(name.clone());
         self.default_parameter_bindings.insert(name.clone());
         self.narrowed_bindings.remove(&name);
         self.bindings.insert(name, t);
+    }
+
+    pub(crate) fn mark_list_origin(&mut self, name: impl Into<String>) {
+        self.list_origin_bindings.insert(name.into());
+    }
+
+    pub(crate) fn has_list_origin(&self, name: &str) -> bool {
+        self.list_origin_bindings.contains(name)
+    }
+
+    pub(crate) fn is_parameter(&self, name: &str) -> bool {
+        self.parameter_bindings.contains(name)
     }
 
     pub(crate) fn is_default_parameter(&self, name: &str) -> bool {
@@ -517,6 +548,9 @@ pub struct Checker {
     // A stack is required because nested functions replace, rather than
     // inherit, the set of formals relevant to `hasArg()`.
     enclosing_formals: Vec<EnclosingFormals>,
+    /// Formal names whose function-wide use proves vector intent (for
+    /// example `paste(x, collapse=...)`). Kept as a stack for nested bodies.
+    vector_intent_parameters: Vec<HashSet<String>>,
     // Values already inferred before a pipe is desugared into a call. This
     // cache is populated only for the duration of that rewritten call, so it
     // never crosses a scope-changing inference boundary.
@@ -545,6 +579,7 @@ impl Checker {
             load_bindings: HashMap::new(),
             deferred_captures: Vec::new(),
             enclosing_formals: Vec::new(),
+            vector_intent_parameters: Vec::new(),
             pipe_argument_types: HashMap::new(),
         }
     }
@@ -625,6 +660,7 @@ impl Checker {
             load_bindings: HashMap::new(),
             deferred_captures: Vec::new(),
             enclosing_formals: Vec::new(),
+            vector_intent_parameters: Vec::new(),
             pipe_argument_types: HashMap::new(),
         }
     }
@@ -659,6 +695,7 @@ impl Checker {
             load_bindings: HashMap::new(),
             deferred_captures: Vec::new(),
             enclosing_formals: Vec::new(),
+            vector_intent_parameters: Vec::new(),
             pipe_argument_types: HashMap::new(),
         }
     }

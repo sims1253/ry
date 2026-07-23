@@ -513,6 +513,85 @@ fn color_always_leaves_json_machine_readable() {
 }
 
 #[test]
+fn package_namespace_imports_activate_nse_and_pipe_models() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join("R")).unwrap();
+    fs::write(
+        tmp.path().join("DESCRIPTION"),
+        "Package: namespacefixture\nVersion: 0.0.0.9000\nImports: dplyr, magrittr\n",
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("NAMESPACE"),
+        "import(dplyr)\nimportFrom(magrittr,\"%>%\")\n",
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("R/use.R"),
+        "filter_rows <- function(df) filter(df, column > 0)\n\
+         pull_column <- function(df) df %>% .$column\n",
+    )
+    .unwrap();
+
+    let output = ry_check(tmp.path());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("RY010"),
+        "NAMESPACE imports must activate package NSE and pipe semantics: {stdout}"
+    );
+}
+
+#[test]
+fn data_mask_column_shadows_same_named_base_function() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join("R")).unwrap();
+    fs::write(
+        tmp.path().join("DESCRIPTION"),
+        "Package: namespacefixture\nVersion: 0.0.0.9000\nImports: dplyr\n",
+    )
+    .unwrap();
+    fs::write(tmp.path().join("NAMESPACE"), "import(dplyr)\n").unwrap();
+    fs::write(
+        tmp.path().join("R/use.R"),
+        "keep_class <- function() {\n\
+           df <- data.frame(class = \"wanted\")\n\
+           filter(df, class == \"wanted\")\n\
+         }\n",
+    )
+    .unwrap();
+
+    let output = ry_check(tmp.path());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("RY030"),
+        "the data-mask column must shadow base::class: {stdout}"
+    );
+}
+
+#[test]
+fn description_depends_activate_nse_without_namespace() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join("R")).unwrap();
+    fs::write(
+        tmp.path().join("DESCRIPTION"),
+        "Package: dependsfixture\nVersion: 0.0.0.9000\nDepends: dplyr\n",
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("R/use.R"),
+        "top <- function(df) count(df, service_request_type)\n",
+    )
+    .unwrap();
+
+    let output = ry_check(tmp.path());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("RY010"),
+        "DESCRIPTION Depends must activate package NSE semantics: {stdout}"
+    );
+}
+
+#[test]
 fn package_namespace_import_from_binds_imported_value() {
     let tmp = tempfile::tempdir().unwrap();
     fs::create_dir_all(tmp.path().join("R")).unwrap();

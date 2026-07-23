@@ -206,6 +206,48 @@ impl Checker {
             );
         }
 
+        // `x["name"]` preserves a list container, whereas `x[["name"]]`
+        // extracts its element. Comparing the former to an atomic scalar with
+        // `identical()` is therefore provably FALSE and commonly indicates a
+        // missing bracket.
+        if lookup_name == "identical"
+            && args.len() >= 2
+            && let Some(indexed) = args.iter().find(|argument| {
+                matches!(
+                    &argument.value,
+                    Expr::Index {
+                        kind: IndexKind::Single,
+                        args,
+                        ..
+                    } if args.len() == 1
+                        && matches!(args[0].value, Expr::String(_, _) | Expr::Integer(_, _) | Expr::Double(_, _))
+                )
+            })
+            && args.iter().any(|argument| {
+                !std::ptr::eq(argument, indexed)
+                    && matches!(
+                        argument.value,
+                        Expr::Logical(_, _)
+                            | Expr::Integer(_, _)
+                            | Expr::Double(_, _)
+                            | Expr::String(_, _)
+                    )
+            })
+            && let Expr::Index { base, .. } = &indexed.value
+        {
+            let base_type = self.infer(base, scope);
+            let list_origin = matches!(base_type.mode, Mode::List)
+                || matches!(base.as_ref(), Expr::Ident { name, .. } if list_binding_origin(name, scope));
+            if list_origin {
+                self.emit(
+                    Severity::Warning,
+                    indexed.span,
+                    "RY101",
+                    "single-bracket list subset remains a list, so `identical()` with an atomic scalar is always FALSE; use `[[` to extract the element",
+                );
+            }
+        }
+
         // `hasArg` captures its argument name rather than evaluating it.
         // Model that quoting here so a non-formal does not also produce RY010.
         // With `...` in the formals, `hasArg(name)` legitimately matches
@@ -635,15 +677,28 @@ impl Checker {
         let locally_shadows_stub = !name.contains("::")
             && scope.get(&name).is_some()
             && scope.function_alias(&name).is_none();
+        let source_local = args
+            .iter()
+            .find(|argument| argument.name.as_deref() == Some("local"));
+        let source_populates_current_scope = lookup_name == "source"
+            && match source_local {
+                // `local = TRUE` means the caller's frame.
+                Some(argument) => matches!(argument.value, Expr::Logical(true, _)),
+                // The default is `.GlobalEnv`, which is the current scope
+                // only for top-level code, never for a function body.
+                None => self.enclosing_formals.is_empty(),
+            };
         if !locally_shadows_stub
             && (name.contains("::") || user_function.is_none())
             && resolved_sig.as_ref().is_some_and(|signature| {
                 matches!(signature.scope_effect, Some(ScopeEffect::UnknownBindings))
             })
+            && (lookup_name != "source" || source_populates_current_scope)
         {
-            // The resolved function can add names that static analysis cannot
-            // enumerate (for example base::attach() or Rcpp::sourceCpp()).
-            // The marker is inherited by scopes cloned after this call.
+            // `source()` defaults to `.GlobalEnv`, not the caller's function
+            // environment. Only an explicit non-FALSE `local` can populate
+            // the current lexical scope. Other dynamic loaders such as
+            // `attach()` and `sourceCpp()` retain their open-scope effect.
             scope.mark_search_path_unknown();
         }
         if let Some(target) = assertion_call_target(&lookup_name) {
@@ -1091,7 +1146,7 @@ impl Checker {
             Expr::Function { params, body, .. } => {
                 let mut inner = scope.clone();
                 for parameter in params {
-                    inner.insert(parameter.name.clone(), RType::unknown());
+                    inner.insert_parameter(parameter.name.clone(), RType::unknown());
                 }
                 for name in assigned_names_in_body(body) {
                     inner.insert(name, RType::unknown());

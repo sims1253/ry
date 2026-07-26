@@ -4743,6 +4743,18 @@ fn typeshed_predicate_uses_exact_callee_provenance_and_formal_binding() {
         );
     }
 
+    let diagnostics = check(
+        "run <- function(action = NULL) {\n\
+           if (!is_null(action)) action()\n\
+         }\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY070"),
+        "a negated schema predicate must narrow its true branch: {diagnostics:?}"
+    );
+
     let mut parser = RParser::new().unwrap();
     let file = parser
         .parse(

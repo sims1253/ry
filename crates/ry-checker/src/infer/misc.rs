@@ -1718,6 +1718,18 @@ impl Checker {
         if !matches!(built_in, Narrowing::None) {
             return built_in;
         }
+        if let Expr::UnaryOp {
+            op: UnaryOpKind::Not,
+            expr,
+            ..
+        } = cond
+        {
+            return match self.extract_type_narrowing(expr, scope) {
+                Narrowing::Positive { var, target } => Narrowing::Negative { var, target },
+                Narrowing::Negative { var, target } => Narrowing::Positive { var, target },
+                _ => Narrowing::None,
+            };
+        }
         let Expr::Call { func, args, .. } = cond else {
             return Narrowing::None;
         };

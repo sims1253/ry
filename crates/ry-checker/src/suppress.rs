@@ -64,9 +64,25 @@ impl Checker {
                 .resolve_typeshed_sig(name)
                 .filter(|signature| signature.predicate.is_some());
         }
+
+        // An importFrom binding establishes one exact package origin. Do not
+        // scan it again below: ambiguity is about distinct origins, not the
+        // number of resolution paths that reach the same declaration.
+        if let Some(package) = self.imported_from.get(name) {
+            return self
+                .package_typeshed(package)
+                .and_then(|typeshed| typeshed.functions.get(name))
+                .filter(|signature| signature.predicate.is_some())
+                .cloned();
+        }
+
         let mut candidates = Vec::new();
-        if let Some(signature) = self.resolve_typeshed_sig(name)
-            && signature.predicate.is_some()
+        if let Some(signature) = self
+            .typeshed
+            .functions
+            .get(name)
+            .filter(|signature| signature.predicate.is_some())
+            .cloned()
         {
             candidates.push(signature);
         }
@@ -77,8 +93,9 @@ impl Checker {
                 .filter(|signature| signature.predicate.is_some())
                 .cloned()
             {
-                // Count package origins, not distinct metadata: matching
-                // declarations from two packages are still ambiguous.
+                // Each package appears once in available_package_names(), so
+                // an attached package cannot be counted both as the ordinary
+                // resolution result and as a schema candidate.
                 candidates.push(signature);
             }
         }

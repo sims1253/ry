@@ -4743,6 +4743,25 @@ fn typeshed_predicate_uses_exact_callee_provenance_and_formal_binding() {
         );
     }
 
+    let mut parser = RParser::new().unwrap();
+    let file = parser
+        .parse(
+            "test.R",
+            "x <- NULL\nif (is_null(x)) stop(\"missing\")\nx()\n",
+        )
+        .unwrap();
+    let mut checker = Checker::new("test.R");
+    checker.set_loaded(HashSet::from(["rlang".to_string()]));
+    checker.check(&file);
+    assert!(
+        checker
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY070"),
+        "an attached package predicate must not count the same origin twice: {:?}",
+        checker.diagnostics
+    );
+
     for source in [
         "x <- NULL\nif (base::is_null(x)) stop(\"missing\")\nx()\n",
         "x <- NULL\nif (unrelated::is_null(x)) stop(\"missing\")\nx()\n",
@@ -4757,6 +4776,21 @@ fn typeshed_predicate_uses_exact_callee_provenance_and_formal_binding() {
             "unproven predicate provenance must stay silent: {diagnostics:?}"
         );
     }
+}
+
+#[test]
+fn qualified_standalone_assertion_uses_exact_package_provenance() {
+    let diagnostics = check(
+        "value <- if (runif(1) > 0.5) \"a\" else c(\"a\", \"b\")\n\
+         rlang::check_string(value)\n\
+         if (value == \"a\") 1 else 2\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| !matches!(diagnostic.code, "RY002" | "RY092")),
+        "a qualified assertion with exact provenance must narrow: {diagnostics:?}"
+    );
 }
 
 #[test]

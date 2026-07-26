@@ -706,8 +706,7 @@ impl Checker {
                 .flatten()
                 .and_then(|typeshed| typeshed.functions.get(&lookup_name))
         });
-        if !name.contains("::")
-            && (!locally_shadows_stub || user_function.is_some())
+        if (name.contains("::") || !locally_shadows_stub || user_function.is_some())
             && let Some(signature) = assertion_signature
             && let Some(assertion) = signature.assertion.as_ref()
             && assertion_is_provenanced(signature, assertion)

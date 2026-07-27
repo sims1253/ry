@@ -736,10 +736,12 @@ fn intersect_only_preserves_its_exact_zero_fact() {
          bounded <- intersect(1:3, 1L)\n",
     );
     assert_eq!(scope.get("empty").map(|ty| ty.length), Some(Length::Zero));
+    let bounded = scope.get("bounded").expect("bounded should stay bound");
+    assert_eq!(bounded.mode, Mode::Integer);
     assert_eq!(
-        scope.get("bounded").map(|ty| ty.length),
-        Some(Length::Unknown),
-        "a shortest-input bound must not be represented as an exact length"
+        bounded.length,
+        Length::Known(3),
+        "without an exact-zero fact, intersect must retain its declared slot return"
     );
 }
 
@@ -766,6 +768,16 @@ fn paste_consumes_recycled_value_and_control_bindings() {
         scope.get("recycled").map(|ty| ty.length),
         Some(Length::Zero),
         "recycle0 must use its declared, formally bound control"
+    );
+}
+
+#[test]
+fn callback_recycled_length_does_not_look_argumentless() {
+    let (_, scope) = check_with_scope("result <- sapply(letters, paste0)\n");
+    assert_eq!(
+        scope.get("result").map(|ty| ty.length),
+        Some(Length::Known(26)),
+        "callback types without source arguments must not imply an empty call"
     );
 }
 
@@ -1068,6 +1080,7 @@ fn source_without_local_does_not_open_a_function_scope() {
 fn source_local_controls_use_normal_r_argument_matching() {
     for call in [
         "source(\"generated.R\", TRUE)",
+        "source(exprs = expression(generated_binding <- TRUE), local = TRUE)",
         "source(local = TRUE, file = \"generated.R\")",
         "source(file = \"generated.R\", lo = TRUE)",
         "source(\"generated.R\", local = unknown_environment())",
@@ -4733,19 +4746,17 @@ fn standalone_check_string_named_subject_and_control_use_formal_matching() {
 
 #[test]
 fn typeshed_predicate_uses_exact_callee_provenance_and_formal_binding() {
-    for call in ["is_null(x = x)", "rlang::is_null(x = x)"] {
-        let diagnostics = check(&format!("x <- NULL\nif ({call}) stop(\"missing\")\nx()\n"));
-        assert!(
-            diagnostics
-                .iter()
-                .all(|diagnostic| diagnostic.code != "RY070"),
-            "{call} must narrow its named subject: {diagnostics:?}"
-        );
-    }
+    let diagnostics = check("x <- NULL\nif (rlang::is_null(x = x)) stop(\"missing\")\nx()\n");
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY070"),
+        "a qualified predicate must narrow its named subject: {diagnostics:?}"
+    );
 
     let diagnostics = check(
         "run <- function(action = NULL) {\n\
-           if (!is_null(action)) action()\n\
+           if (!rlang::is_null(action)) action()\n\
          }\n",
     );
     assert!(
@@ -4771,6 +4782,17 @@ fn typeshed_predicate_uses_exact_callee_provenance_and_formal_binding() {
             .iter()
             .all(|diagnostic| diagnostic.code != "RY070"),
         "an attached package predicate must not count the same origin twice: {:?}",
+        checker.diagnostics
+    );
+
+    let mut checker = Checker::new("test.R");
+    checker.check(&file);
+    assert!(
+        checker
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY070"),
+        "an unattached package predicate must not establish bare-call provenance: {:?}",
         checker.diagnostics
     );
 

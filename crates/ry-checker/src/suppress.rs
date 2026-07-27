@@ -87,6 +87,9 @@ impl Checker {
             candidates.push(signature);
         }
         for package in self.available_package_names() {
+            if !self.bare_loaded.contains(package) {
+                continue;
+            }
             if let Some(signature) = self
                 .package_typeshed(package)
                 .and_then(|typeshed| typeshed.functions.get(name))

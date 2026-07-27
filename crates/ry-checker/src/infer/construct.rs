@@ -579,6 +579,12 @@ fn semantic_return_length(
     arg_types: &[RType],
 ) -> Option<Length> {
     let semantics = semantics?;
+    // Callback inference supplies argument types without source arguments.
+    // Formal semantic binding is unavailable there, so retain the declared
+    // return-length fallback instead of treating the callback as argumentless.
+    if args.is_empty() && !arg_types.is_empty() {
+        return None;
+    }
     let bindings = match_arguments(
         &signature_params
             .iter()
@@ -609,7 +615,7 @@ fn semantic_return_length(
             {
                 Some(Length::Zero)
             } else {
-                Some(Length::Unknown)
+                None
             }
         }
         ReturnLengthSpec::RecycledValues(spec) => {

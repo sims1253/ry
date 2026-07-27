@@ -4293,11 +4293,7 @@
           "required": true
         }
       ],
-      "return": {
-        "mode": "opaque",
-        "length": "unknown",
-        "na": true
-      },
+      "return": "arg0",
       "return_length": {
         "kind": "zero_if_any_param_zero",
         "params": [
@@ -6529,7 +6525,7 @@
       "params": [
         {
           "name": "file",
-          "required": true
+          "default": true
         },
         {
           "name": "local",

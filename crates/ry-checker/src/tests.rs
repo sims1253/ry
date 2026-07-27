@@ -2544,6 +2544,26 @@ fn pipe_dot_pronoun_dollar_column() {
 }
 
 #[test]
+fn pipe_underscore_placeholder_extraction() {
+    // R >= 4.3 allows the native-pipe placeholder as the base of an
+    // extraction: `mtcars |> _$mpg`. The `_` is the piped LHS, so it
+    // must not be reported as an unbound variable (issue #27).
+    let (diags, scope) = check_with_scope(
+        "col <- mtcars |> _$mpg\nm <- mtcars |> _$mpg |> mean()\nalso <- mtcars |> _[[\"mpg\"]]\n",
+    );
+    assert!(
+        diags.iter().all(|d| d.code != "RY010"),
+        "`_` extraction placeholder should not emit RY010, got {:?}",
+        diags
+    );
+    let col = scope.get("col").expect("col should be bound");
+    assert_eq!(col.mode, Mode::Double, "mtcars |> _$mpg must infer double");
+    assert_eq!(col.length, Length::Known(32), "mpg has 32 rows");
+    let also = scope.get("also").expect("also should be bound");
+    assert_eq!(also.mode, Mode::Double, "mtcars |> _[[\"mpg\"]] is double");
+}
+
+#[test]
 fn pipe_dot_pronoun_double_bracket() {
     // `df %>% .[["mpg"]]` resolves `.` to the LHS and indexes by
     // string-literal column name via `[[`, mirroring `$` semantics.

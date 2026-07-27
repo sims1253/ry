@@ -2,6 +2,15 @@
 
 All notable changes to ry are documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- The native-pipe extraction placeholder (R >= 4.3), as in `mtcars |> _$mpg` or
+  `df |> _[["col"]]`, no longer produces a false `RY010` "variable `_` is not
+  bound in this scope" warning. The placeholder now resolves to the piped
+  left-hand side, so the extracted type is inferred (#27).
+
 ## [0.7.1] - 2026-07-24
 
 ### Typeshed semantics

@@ -27,13 +27,17 @@ impl Checker {
         scope: &mut Scope,
     ) -> RType {
         match rhs {
-            // Magrittr data pronoun with nested access:
-            // `df %>% .$col`, `df %>% .[i]`, `df %>% .[[i]]`. The `.` at
-            // the base of the index resolves to the piped LHS value, so
-            // we infer the index against `lhs_t` directly.
+            // Pipe placeholder with nested access: magrittr's
+            // `df %>% .$col`, `df %>% .[i]`, `df %>% .[[i]]` and base R's
+            // extraction placeholder (R >= 4.3) `df |> _$col`,
+            // `df |> _[["col"]]`. The placeholder at the base of the index
+            // resolves to the piped LHS value, so we infer the index
+            // against `lhs_t` directly.
             Expr::Index {
                 base, kind, args, ..
-            } if is_dot_pronoun(base) => self.infer_index(lhs_t, *kind, args, span, false, scope),
+            } if is_pipe_placeholder(base) => {
+                self.infer_index(lhs_t, *kind, args, span, false, scope)
+            }
             // A braced magrittr RHS is a unary lambda whose `.` pronoun is
             // bound to the LHS (`x %>% { .$field == value }`).
             Expr::Block { body, .. } => {

@@ -40,9 +40,11 @@ use ry_core::Span;
 use ry_core::ast::*;
 use ry_core::types::{ClassVector, ColumnSchema, FunctionSignature, Length, Mode, RType};
 use ry_typeshed::{
-    CallbackArg, EvalMode, FunctionSig, Globals, HigherOrderResultKind, HigherOrderSpec,
-    JsonLength, JsonMode, JsonRType, ParamSpec, ReturnSlot, ReturnSpec, SchemaEffect, ScopeEffect,
-    Typeshed, is_known_package, known_packages, load_base_cached, load_package,
+    AssertionProvenanceKind, AssertionSpec, CallbackArg, ConditionalScopeEffect,
+    DefaultCurrentScope, EvalMode, FunctionSig, Globals, HigherOrderResultKind, HigherOrderSpec,
+    JsonLength, JsonMode, JsonRType, ParamSpec, ReturnLengthSpec, ReturnSlot, ReturnSpec,
+    SchemaEffect, ScopeEffect, Typeshed, is_known_package, known_packages, load_base_cached,
+    load_package,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;

@@ -1,7 +1,7 @@
 {
-  "schema_version": "1",
+  "schema_version": "2",
   "package": "rlang",
-  "version": "draft",
+  "version": "0.1.0",
   "functions": {
     ":=": {
       "params": [
@@ -739,9 +739,26 @@
         "call"
       ],
       "return": {
-        "mode": "opaque",
-        "length": "unknown",
+        "mode": "null",
+        "length": "0",
         "na": false
+      },
+      "assertion": {
+        "subject_param": "x",
+        "target": {
+          "mode": "logical",
+          "length": "1",
+          "na": false
+        },
+        "allow_null_param": "allow_null",
+        "allow_na_param": "allow_na",
+        "provenance": {
+          "kind": "standalone_types_check",
+          "fingerprint_params": [
+            "arg",
+            "call"
+          ]
+        }
       }
     },
     "check_data_frame": {
@@ -753,9 +770,28 @@
         "call"
       ],
       "return": {
-        "mode": "opaque",
-        "length": "unknown",
+        "mode": "null",
+        "length": "0",
         "na": false
+      },
+      "assertion": {
+        "subject_param": "x",
+        "target": {
+          "mode": "list",
+          "length": "unknown",
+          "na": false,
+          "class": [
+            "data.frame"
+          ]
+        },
+        "allow_null_param": "allow_null",
+        "provenance": {
+          "kind": "standalone_types_check",
+          "fingerprint_params": [
+            "arg",
+            "call"
+          ]
+        }
       }
     },
     "check_dots_empty": {
@@ -853,9 +889,30 @@
         "call"
       ],
       "return": {
-        "mode": "opaque",
-        "length": "unknown",
+        "mode": "null",
+        "length": "0",
         "na": false
+      },
+      "assertion": {
+        "subject_param": "x",
+        "target": {
+          "mode": "union",
+          "length": "1",
+          "na": false,
+          "members": [
+            "integer",
+            "double"
+          ]
+        },
+        "allow_null_param": "allow_null",
+        "allow_na_param": "allow_na",
+        "provenance": {
+          "kind": "standalone_types_check",
+          "fingerprint_params": [
+            "arg",
+            "call"
+          ]
+        }
       }
     },
     "check_number_whole": {
@@ -871,9 +928,30 @@
         "call"
       ],
       "return": {
-        "mode": "opaque",
-        "length": "unknown",
+        "mode": "null",
+        "length": "0",
         "na": false
+      },
+      "assertion": {
+        "subject_param": "x",
+        "target": {
+          "mode": "union",
+          "length": "1",
+          "na": false,
+          "members": [
+            "integer",
+            "double"
+          ]
+        },
+        "allow_null_param": "allow_null",
+        "allow_na_param": "allow_na",
+        "provenance": {
+          "kind": "standalone_types_check",
+          "fingerprint_params": [
+            "arg",
+            "call"
+          ]
+        }
       }
     },
     "check_required": {
@@ -899,9 +977,26 @@
         "call"
       ],
       "return": {
-        "mode": "opaque",
-        "length": "unknown",
+        "mode": "null",
+        "length": "0",
         "na": false
+      },
+      "assertion": {
+        "subject_param": "x",
+        "target": {
+          "mode": "character",
+          "length": "1",
+          "na": false
+        },
+        "allow_null_param": "allow_null",
+        "allow_na_param": "allow_na",
+        "provenance": {
+          "kind": "standalone_types_check",
+          "fingerprint_params": [
+            "arg",
+            "call"
+          ]
+        }
       }
     },
     "child_env": {
@@ -3638,11 +3733,24 @@
       }
     },
     "is_null": {
-      "params": [],
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
       "return": {
-        "mode": "opaque",
-        "length": "unknown",
+        "mode": "logical",
+        "length": "1",
         "na": false
+      },
+      "predicate": {
+        "subject_param": "x",
+        "target": {
+          "mode": "null",
+          "length": "0",
+          "na": false
+        }
       }
     },
     "is_pairlist": {

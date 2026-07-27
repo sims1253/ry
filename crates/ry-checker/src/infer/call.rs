@@ -677,28 +677,18 @@ impl Checker {
         let locally_shadows_stub = !name.contains("::")
             && scope.get(&name).is_some()
             && scope.function_alias(&name).is_none();
-        let source_local = args
-            .iter()
-            .find(|argument| argument.name.as_deref() == Some("local"));
-        let source_populates_current_scope = lookup_name == "source"
-            && match source_local {
-                // `local = TRUE` means the caller's frame.
-                Some(argument) => matches!(argument.value, Expr::Logical(true, _)),
-                // The default is `.GlobalEnv`, which is the current scope
-                // only for top-level code, never for a function body.
-                None => self.enclosing_formals.is_empty(),
-            };
         if !locally_shadows_stub
             && (name.contains("::") || user_function.is_none())
             && resolved_sig.as_ref().is_some_and(|signature| {
-                matches!(signature.scope_effect, Some(ScopeEffect::UnknownBindings))
+                scope_effect_populates_current_scope(
+                    signature,
+                    args,
+                    self.enclosing_formals.is_empty(),
+                )
             })
-            && (lookup_name != "source" || source_populates_current_scope)
         {
-            // `source()` defaults to `.GlobalEnv`, not the caller's function
-            // environment. Only an explicit non-FALSE `local` can populate
-            // the current lexical scope. Other dynamic loaders such as
-            // `attach()` and `sourceCpp()` retain their open-scope effect.
+            // Dynamic loaders only suppress unbound-name diagnostics in the
+            // lexical scope they can actually populate.
             scope.mark_search_path_unknown();
         }
         if let Some(target) = assertion_call_target(&lookup_name) {
@@ -707,42 +697,62 @@ impl Checker {
             }
             return RType::new(Mode::Null, Length::Zero);
         }
-        if !name.contains("::")
-            && (!locally_shadows_stub || user_function.is_some())
-            && let Some(mut target) = standalone_check_target(&lookup_name)
+        // rlang's standalone helpers are package-local, so package sources
+        // need not have a literal `library(rlang)` call. A local value never
+        // gains this fact; a local function must carry the same fingerprint.
+        let assertion_signature = resolved_sig.as_ref().or_else(|| {
+            (!name.contains("::") && (!locally_shadows_stub || user_function.is_some()))
+                .then(|| ry_typeshed::load_package("rlang"))
+                .flatten()
+                .and_then(|typeshed| typeshed.functions.get(&lookup_name))
+        });
+        if (name.contains("::") || !locally_shadows_stub || user_function.is_some())
+            && let Some(signature) = assertion_signature
+            && let Some(assertion) = signature.assertion.as_ref()
+            && assertion_is_provenanced(signature, assertion)
             && user_function.as_ref().is_none_or(|function| {
-                ["arg", "call"].into_iter().all(|required| {
-                    function
-                        .params
-                        .iter()
-                        .any(|parameter| parameter.name == required)
-                })
+                assertion
+                    .provenance
+                    .fingerprint_params
+                    .iter()
+                    .all(|fingerprint| {
+                        function
+                            .params
+                            .iter()
+                            .any(|param| param.name == *fingerprint)
+                    })
             })
-            && let Some(Expr::Ident { name: var, .. }) = args.first().map(|a| &a.value)
+            && let Some(subject_index) =
+                bound_argument_index(&signature.params, args, &assertion.subject_param)
+            && let Some(Expr::Ident { name: var, .. }) =
+                args.get(subject_index).map(|arg| &arg.value)
         {
-            // A non-literal opt-in is treated like TRUE: weakening the fact
-            // avoids excluding a value the checker may accept at runtime.
-            if args.iter().any(|argument| {
-                argument.name.as_deref() == Some("allow_null")
-                    && !matches!(argument.value, Expr::Logical(false, _))
-            }) {
-                target = target.join(RType::new(Mode::Null, Length::Zero));
+            let mut target = json_rtype_to_rtype(&assertion.target);
+            // Non-literal opt-ins are conservatively treated like TRUE.
+            for (param, null_target) in [
+                (
+                    assertion.allow_null_param.as_deref(),
+                    Some(RType::new(Mode::Null, Length::Zero)),
+                ),
+                (
+                    assertion.allow_na_param.as_deref(),
+                    Some(RType::scalar(Mode::Logical)),
+                ),
+            ] {
+                if let (Some(param), Some(weakening)) = (param, null_target)
+                    && bound_argument_index(&signature.params, args, param)
+                        .is_some_and(|index| !matches!(args[index].value, Expr::Logical(false, _)))
+                {
+                    target = target.join(weakening);
+                }
             }
-            if args.iter().any(|argument| {
-                argument.name.as_deref() == Some("allow_na")
-                    && !matches!(argument.value, Expr::Logical(false, _))
-            }) {
-                target = target.join(RType::scalar(Mode::Logical));
-            }
-            let actual = &arg_types[0];
-            // A parameter default is one possible call shape, not an
-            // exhaustive declaration of the parameter's runtime type.
+            let actual = &arg_types[subject_index];
             if !scope.is_default_parameter(var)
                 && standalone_check_provably_rejects(actual, &target)
             {
                 self.emit(
                     Severity::Error,
-                    args[0].span,
+                    args[subject_index].span,
                     "RY092",
                     format!(
                         "argument `{var}` to `{lookup_name}` is `{actual}`, expected {}",
@@ -763,7 +773,7 @@ impl Checker {
                 if name.ends_with("assert_that") && argument.name.as_deref() == Some("msg") {
                     continue;
                 }
-                let narrowing = extract_type_narrowing(&argument.value);
+                let narrowing = self.extract_type_narrowing(&argument.value, scope);
                 let (positive_scope, _, _) = apply_narrowing(scope, &narrowing, false);
                 *scope = positive_scope;
             }
@@ -1301,4 +1311,49 @@ fn printf_argument_count(format: &str) -> Option<usize> {
         }
     }
     Some(count)
+}
+
+fn scope_effect_populates_current_scope(
+    signature: &FunctionSig,
+    args: &[Arg],
+    top_level: bool,
+) -> bool {
+    if matches!(signature.scope_effect, Some(ScopeEffect::UnknownBindings)) {
+        return true;
+    }
+    let Some(ConditionalScopeEffect {
+        effect: ScopeEffect::UnknownBindings,
+        current_scope_when,
+        default_current_scope: DefaultCurrentScope::TopLevel,
+    }) = signature.conditional_scope_effect.as_ref()
+    else {
+        return false;
+    };
+    let Some(index) = bound_argument_index(&signature.params, args, &current_scope_when.param)
+    else {
+        return top_level;
+    };
+    match &args[index].value {
+        Expr::Logical(value, _) => *value == current_scope_when.equals,
+        // An environment-valued or opaque control can be the caller frame;
+        // preserve the loader's conservative, silence-over-noise policy.
+        _ => true,
+    }
+}
+
+fn assertion_is_provenanced(signature: &FunctionSig, assertion: &AssertionSpec) -> bool {
+    matches!(
+        assertion.provenance.kind,
+        AssertionProvenanceKind::StandaloneTypesCheck
+    ) && assertion.provenance.fingerprint_params == ["arg", "call"]
+        && assertion
+            .provenance
+            .fingerprint_params
+            .iter()
+            .all(|fingerprint| {
+                signature
+                    .params
+                    .iter()
+                    .any(|param| param.name == *fingerprint)
+            })
 }

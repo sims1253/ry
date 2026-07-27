@@ -730,31 +730,54 @@ fn vectorized_predicates_over_parameters_warn_in_short_circuit_ops() {
 }
 
 #[test]
-fn intersect_result_uses_the_shorter_known_operand() {
-    let diagnostics = check(
-        "x <- 1:3\n\
-         y <- 1L\n\
-         intersect(x, y) && TRUE\n",
+fn intersect_only_preserves_its_exact_zero_fact() {
+    let (_, scope) = check_with_scope(
+        "empty <- intersect(NULL, 1:3)\n\
+         bounded <- intersect(1:3, 1L)\n",
     );
-    assert!(
-        diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.code != "RY032"),
-        "intersect() with a scalar input is provably scalar-or-empty: {diagnostics:?}"
+    assert_eq!(scope.get("empty").map(|ty| ty.length), Some(Length::Zero));
+    let bounded = scope.get("bounded").expect("bounded should stay bound");
+    assert_eq!(bounded.mode, Mode::Integer);
+    assert_eq!(
+        bounded.length,
+        Length::Unknown,
+        "without an exact-zero fact, intersect length must remain unknown"
     );
 }
 
 #[test]
-fn paste_preserves_an_all_zero_length_input() {
+fn paste_consumes_recycled_value_and_control_bindings() {
     let (diagnostics, scope) = check_with_scope(
         "empty <- paste(NULL, NULL)\n\
-         collapsed <- paste(NULL, collapse = \"\")\n",
+         collapsed <- paste(NULL, collapse = \"\")\n\
+         reordered <- paste(collapse = \"\", NULL)\n\
+         recycled <- paste(recycle0 = TRUE, NULL, \"x\")\n",
     );
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
     assert_eq!(scope.get("empty").map(|ty| ty.length), Some(Length::Zero));
     assert_eq!(
         scope.get("collapsed").map(|ty| ty.length),
         Some(Length::One)
+    );
+    assert_eq!(
+        scope.get("reordered").map(|ty| ty.length),
+        Some(Length::One),
+        "named controls after `...` must be excluded from recycled values"
+    );
+    assert_eq!(
+        scope.get("recycled").map(|ty| ty.length),
+        Some(Length::Zero),
+        "recycle0 must use its declared, formally bound control"
+    );
+}
+
+#[test]
+fn callback_recycled_length_does_not_look_argumentless() {
+    let (_, scope) = check_with_scope("result <- sapply(letters, paste0)\n");
+    assert_eq!(
+        scope.get("result").map(|ty| ty.length),
+        Some(Length::Known(26)),
+        "callback types without source arguments must not imply an empty call"
     );
 }
 
@@ -1054,18 +1077,36 @@ fn source_without_local_does_not_open_a_function_scope() {
 }
 
 #[test]
-fn source_local_true_may_populate_a_function_scope() {
-    let diagnostics = check(
-        "f <- function() {\n\
-           source(\"generated.R\", local = TRUE)\n\
-           generated_binding\n\
-         }\n",
-    );
-    assert!(
-        diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.code != "RY010")
-    );
+fn source_local_controls_use_normal_r_argument_matching() {
+    for call in [
+        "source(\"generated.R\", TRUE)",
+        "source(exprs = expression(generated_binding <- TRUE), local = TRUE)",
+        "source(local = TRUE, file = \"generated.R\")",
+        "source(file = \"generated.R\", lo = TRUE)",
+        "source(\"generated.R\", local = unknown_environment())",
+    ] {
+        let diagnostics = check(&format!(
+            "f <- function() {{\n  {call}\n  generated_binding\n}}\n"
+        ));
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "RY010"),
+            "{call} should conservatively open the caller scope: {diagnostics:?}"
+        );
+    }
+
+    for call in [
+        "source(\"generated.R\", FALSE)",
+        "source(file = \"generated.R\", local = FALSE)",
+    ] {
+        let diagnostics = check(&format!(
+            "f <- function() {{\n  {call}\n  genuinely_missing\n}}\n"
+        ));
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "RY010" && diagnostic.message.contains("genuinely_missing")
+        }));
+    }
 }
 
 #[test]
@@ -4679,10 +4720,10 @@ fn standalone_check_string_does_not_narrow_name_collision() {
 }
 
 #[test]
-fn standalone_check_string_allow_null_weakens_target() {
+fn standalone_check_string_named_subject_and_control_use_formal_matching() {
     let (_, scope) = check_with_scope(
         "choice <- unknown_string_or_null()\n\
-         check_string(choice, allow_null = TRUE)\n\
+         check_string(allow_null = TRUE, x = choice)\n\
          field <- choice$field\n",
     );
     let choice = scope.get("choice").expect("choice should stay bound");
@@ -4700,6 +4741,89 @@ fn standalone_check_string_allow_null_weakens_target() {
     assert!(
         members.iter().any(|member| member.mode == Mode::Null),
         "the weakened guard must retain NULL: {choice:?}"
+    );
+}
+
+#[test]
+fn typeshed_predicate_uses_exact_callee_provenance_and_formal_binding() {
+    let diagnostics = check("x <- NULL\nif (rlang::is_null(x = x)) stop(\"missing\")\nx()\n");
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY070"),
+        "a qualified predicate must narrow its named subject: {diagnostics:?}"
+    );
+
+    let diagnostics = check(
+        "run <- function(action = NULL) {\n\
+           if (!rlang::is_null(action)) action()\n\
+         }\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY070"),
+        "a negated schema predicate must narrow its true branch: {diagnostics:?}"
+    );
+
+    let mut parser = RParser::new().unwrap();
+    let file = parser
+        .parse(
+            "test.R",
+            "x <- NULL\nif (is_null(x)) stop(\"missing\")\nx()\n",
+        )
+        .unwrap();
+    let mut checker = Checker::new("test.R");
+    checker.set_loaded(HashSet::from(["rlang".to_string()]));
+    checker.check(&file);
+    assert!(
+        checker
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY070"),
+        "an attached package predicate must not count the same origin twice: {:?}",
+        checker.diagnostics
+    );
+
+    let mut checker = Checker::new("test.R");
+    checker.check(&file);
+    assert!(
+        checker
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY070"),
+        "an unattached package predicate must not establish bare-call provenance: {:?}",
+        checker.diagnostics
+    );
+
+    for source in [
+        "x <- NULL\nif (base::is_null(x)) stop(\"missing\")\nx()\n",
+        "x <- NULL\nif (unrelated::is_null(x)) stop(\"missing\")\nx()\n",
+        "is_null <- function(x) TRUE\nx <- NULL\nif (is_null(x)) stop(\"missing\")\nx()\n",
+        "is_null <- TRUE\nx <- NULL\nif (is_null(x)) stop(\"missing\")\nx()\n",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY070"),
+            "unproven predicate provenance must stay silent: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn qualified_standalone_assertion_uses_exact_package_provenance() {
+    let diagnostics = check(
+        "value <- if (runif(1) > 0.5) \"a\" else c(\"a\", \"b\")\n\
+         rlang::check_string(value)\n\
+         if (value == \"a\") 1 else 2\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| !matches!(diagnostic.code, "RY002" | "RY092")),
+        "a qualified assertion with exact provenance must narrow: {diagnostics:?}"
     );
 }
 

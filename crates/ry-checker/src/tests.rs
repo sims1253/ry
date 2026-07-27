@@ -740,8 +740,8 @@ fn intersect_only_preserves_its_exact_zero_fact() {
     assert_eq!(bounded.mode, Mode::Integer);
     assert_eq!(
         bounded.length,
-        Length::Known(3),
-        "without an exact-zero fact, intersect must retain its declared slot return"
+        Length::Unknown,
+        "without an exact-zero fact, intersect length must remain unknown"
     );
 }
 

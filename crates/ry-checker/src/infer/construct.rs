@@ -615,7 +615,7 @@ fn semantic_return_length(
             {
                 Some(Length::Zero)
             } else {
-                None
+                Some(Length::Unknown)
             }
         }
         ReturnLengthSpec::RecycledValues(spec) => {

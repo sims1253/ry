@@ -188,10 +188,19 @@ pub enum BinOpKind {
     In,
     Assign,
     SuperAssign,
-    /// `|>` (base R 4.1+) and `%>%` (magrittr). Both desugar the same
-    /// way at v1: `lhs |> rhs` calls `rhs` with `lhs` prepended to its
-    /// positional arguments (or substituted into the placeholder).
+    /// `%>%` (magrittr). `lhs %>% rhs` calls `rhs` with `lhs` prepended
+    /// to its positional arguments, or substituted into the `.`
+    /// placeholder. Unlike [`BinOpKind::PipeNative`]'s single `_`
+    /// insertion point, `.` may appear any number of times anywhere in
+    /// the RHS (`x %>% paste(., ., sep = "-")`, `x %>% sum(rev(.))`);
+    /// only a top-level `.` argument suppresses the prepended LHS.
     PipeForward,
+    /// `|>` (base R 4.1+). Inserts the LHS as the first argument of the
+    /// RHS call. R 4.2+ additionally allows `_` once, and only as a named
+    /// argument (`x |> f(y = _)`) — never positionally or nested inside an
+    /// inner call — and R 4.3+ allows it at the root of an extraction
+    /// chain (`x |> _$col`). Its placeholder is `_`, never magrittr's `.`.
+    PipeNative,
     /// `%T>%` (magrittr tee pipe). Returns the LHS, ignoring RHS.
     PipeTee,
     /// `%<>%` (magrittr assignment pipe). `x %<>% f()` is `x <- x %>% f()`.

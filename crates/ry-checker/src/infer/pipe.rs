@@ -1,16 +1,105 @@
 use super::*;
 
+/// Which pipe operator introduced the RHS. The two forms use different
+/// placeholders: magrittr binds `.`, base R's native pipe binds `_`
+/// (R 4.2+). A placeholder only resolves to the LHS in its own form;
+/// in the other form it is an ordinary identifier reference.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PipeForm {
+    /// `%>%`, `%T>%`, `%<>%`.
+    Magrittr,
+    /// `|>`.
+    Native,
+}
+
+impl PipeForm {
+    pub(crate) fn of(op: BinOpKind) -> Self {
+        match op {
+            BinOpKind::PipeNative => PipeForm::Native,
+            _ => PipeForm::Magrittr,
+        }
+    }
+
+    /// True if `e` is the placeholder belonging to this pipe form.
+    fn is_placeholder(self, e: &Expr) -> bool {
+        match self {
+            PipeForm::Magrittr => matches!(e, Expr::Ident { name, .. } if name == "."),
+            PipeForm::Native => matches!(e, Expr::Ident { name, .. } if name == "_"),
+        }
+    }
+}
+
+/// True if `e` is an extraction chain rooted at `form`'s placeholder,
+/// e.g. `_$mpg`, `_[["mpg"]][2]` or `.$mpg[1]`.
+fn is_placeholder_chain(e: &Expr, form: PipeForm) -> bool {
+    match e {
+        Expr::Index { base, .. } => form.is_placeholder(base) || is_placeholder_chain(base, form),
+        _ => false,
+    }
+}
+
 impl Checker {
+    /// Run `f` with magrittr's `.` bound to the piped value, restoring the
+    /// previous binding (if any) afterwards. magrittr binds `.` across the
+    /// whole RHS, so pronouns nested inside call arguments or subscripts
+    /// (`df %>% .[.$mpg > 20, ]`) resolve to the piped value too. The
+    /// native `_` is deliberately not bound: R accepts it only in specific
+    /// positions, which are matched structurally instead.
+    fn with_dot_bound<R>(
+        &mut self,
+        form: PipeForm,
+        lhs_t: &RType,
+        scope: &mut Scope,
+        f: impl FnOnce(&mut Self, &mut Scope) -> R,
+    ) -> R {
+        let restore = matches!(form, PipeForm::Magrittr)
+            .then(|| scope.bindings.insert(".".to_string(), lhs_t.clone()));
+        let result = f(self, scope);
+        if let Some(previous) = restore {
+            match previous {
+                Some(t) => scope.bindings.insert(".".to_string(), t),
+                None => scope.bindings.remove("."),
+            };
+        }
+        result
+    }
+
+    /// Infer an extraction chain rooted at a pipe placeholder by applying
+    /// each index operation to `lhs_t` from the root outwards. Returns
+    /// `None` if `e` is not such a chain.
+    fn infer_placeholder_chain(
+        &mut self,
+        e: &Expr,
+        lhs_t: RType,
+        form: PipeForm,
+        span: Span,
+        scope: &mut Scope,
+    ) -> Option<RType> {
+        let Expr::Index {
+            base, kind, args, ..
+        } = e
+        else {
+            return None;
+        };
+        let base_t = if form.is_placeholder(base) {
+            lhs_t
+        } else {
+            self.infer_placeholder_chain(base, lhs_t, form, span_of(base), scope)?
+        };
+        Some(self.infer_index(base_t, *kind, args, span, false, scope))
+    }
+
     pub(crate) fn infer_pipe(
         &mut self,
         lhs: &Expr,
         rhs: &Expr,
         span: Span,
+        form: PipeForm,
         scope: &mut Scope,
     ) -> RType {
         // Infer the LHS so diagnostics fire on it (e.g. unbound name).
         let lhs_t = self.infer(lhs, scope);
-        self.infer_pipe_with_lhs_type(lhs, rhs, span, lhs_t, scope)
+        self.infer_pipe_with_lhs_type(lhs, rhs, span, lhs_t, form, scope)
     }
 
     /// Infer a pipe RHS after its LHS has already been inferred in `scope`.
@@ -24,16 +113,27 @@ impl Checker {
         rhs: &Expr,
         span: Span,
         lhs_t: RType,
+        form: PipeForm,
         scope: &mut Scope,
     ) -> RType {
         match rhs {
-            // Magrittr data pronoun with nested access:
-            // `df %>% .$col`, `df %>% .[i]`, `df %>% .[[i]]`. The `.` at
-            // the base of the index resolves to the piped LHS value, so
-            // we infer the index against `lhs_t` directly.
-            Expr::Index {
-                base, kind, args, ..
-            } if is_dot_pronoun(base) => self.infer_index(lhs_t, *kind, args, span, false, scope),
+            // Pipe placeholder with nested access: magrittr's
+            // `df %>% .$col`, `df %>% .[i]`, `df %>% .[[i]]` and base R's
+            // extraction placeholder (R >= 4.3) `df |> _$col`,
+            // `df |> _[["col"]]`. The placeholder at the root of the
+            // extraction resolves to the piped LHS value, so we infer the
+            // chain against `lhs_t` directly. Only the placeholder
+            // belonging to this pipe form counts: `df |> .$col` reads an
+            // ordinary (and here unbound) `.`, so it falls through to the
+            // generic arm below and keeps its normal index inference.
+            Expr::Index { .. } if is_placeholder_chain(rhs, form) => {
+                let chain_t = lhs_t.clone();
+                self.with_dot_bound(form, &lhs_t, scope, |checker, scope| {
+                    checker
+                        .infer_placeholder_chain(rhs, chain_t, form, span, scope)
+                        .unwrap_or_else(RType::unknown)
+                })
+            }
             // A braced magrittr RHS is a unary lambda whose `.` pronoun is
             // bound to the LHS (`x %>% { .$field == value }`).
             Expr::Block { body, .. } => {
@@ -51,7 +151,7 @@ impl Checker {
             // itself (the `.` refers to the LHS). This is distinct from
             // the general `Ident` arm below, which would treat `.` as a
             // function name and call `.(lhs)`.
-            Expr::Ident { name, .. } if name == "." => lhs_t,
+            Expr::Ident { .. } if form.is_placeholder(rhs) => lhs_t,
             Expr::Call {
                 func,
                 args,
@@ -60,7 +160,13 @@ impl Checker {
                 let mut new_args: Vec<Arg> = Vec::with_capacity(args.len() + 1);
                 let mut placeholder_seen = false;
                 for a in args {
-                    if !placeholder_seen && is_pipe_placeholder(&a.value) {
+                    // magrittr substitutes *every* `.` argument, so
+                    // `x %>% paste(., ., sep = "-")` pipes `x` into both.
+                    // The native pipe permits a single `_`, so only its
+                    // first occurrence is substituted.
+                    let substitute = form.is_placeholder(&a.value)
+                        && (!placeholder_seen || matches!(form, PipeForm::Magrittr));
+                    if substitute {
                         new_args.push(Arg {
                             name: a.name.clone(),
                             value: lhs.clone(),
@@ -81,7 +187,14 @@ impl Checker {
                         },
                     );
                 }
-                self.infer_pipe_call(func, &new_args, lhs, lhs_t.clone(), scope, *call_span)
+                // Nested pronouns resolve through the binding rather than
+                // the substitution above: `x %>% sum(rev(.))` is
+                // `sum(x, rev(x))`. Only a *top-level* `.` suppresses the
+                // prepended LHS, which is why both mechanisms are needed.
+                let call_t = lhs_t.clone();
+                self.with_dot_bound(form, &lhs_t, scope, |checker, scope| {
+                    checker.infer_pipe_call(func, &new_args, lhs, call_t, scope, *call_span)
+                })
             }
             Expr::Ident { .. } => {
                 let new_args = vec![Arg {
@@ -125,7 +238,14 @@ impl Checker {
     pub(crate) fn infer_pipe_tee(&mut self, lhs: &Expr, rhs: &Expr, scope: &mut Scope) -> RType {
         let lhs_t = self.infer(lhs, scope);
         // Still walk the RHS so any diagnostics on its body fire.
-        let _ = self.infer_pipe_with_lhs_type(lhs, rhs, span_of(rhs), lhs_t.clone(), scope);
+        let _ = self.infer_pipe_with_lhs_type(
+            lhs,
+            rhs,
+            span_of(rhs),
+            lhs_t.clone(),
+            PipeForm::Magrittr,
+            scope,
+        );
         lhs_t
     }
 

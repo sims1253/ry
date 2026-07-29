@@ -507,13 +507,6 @@ pub(crate) fn extract_literal_int(e: &Expr) -> Option<i64> {
     }
 }
 
-/// True if `e` is a magrittr (`.`) or base-R (`_`) pipe placeholder.
-/// These are bare identifier references used inside a piped call to
-/// mark where the LHS value should be substituted.
-pub(crate) fn is_pipe_placeholder(e: &Expr) -> bool {
-    matches!(e, Expr::Ident { name, .. } if name == "." || name == "_")
-}
-
 /// Functions whose arguments are bare symbols (NSE), not expressions.
 /// When these are called, the checker does NOT evaluate the arguments
 /// as variable references, preventing spurious RY010 warnings.

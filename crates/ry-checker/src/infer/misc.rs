@@ -88,19 +88,10 @@ pub(crate) fn op_symbol(op: BinOpKind) -> &'static str {
         BinOpKind::Assign => "<-",
         BinOpKind::SuperAssign => "<<-",
         BinOpKind::PipeForward => "%>%",
+        BinOpKind::PipeNative => "|>",
         BinOpKind::PipeTee => "%T>%",
         BinOpKind::PipeAssign => "%<>%",
     }
-}
-
-/// True if `e` is the magrittr `.` data pronoun. Unlike
-/// [`is_pipe_placeholder`], this excludes base-R's `_` placeholder,
-/// which has no data-pronoun role: `x %>% _$col` is not valid R.
-/// Used by `infer_pipe` to detect nested access forms like
-/// `x %>% .$col`, `x %>% .[i]`, and `x %>% .[[i]]`, where the `.` at
-/// the base of the index refers to the piped LHS value.
-pub(crate) fn is_dot_pronoun(e: &Expr) -> bool {
-    matches!(e, Expr::Ident { name, .. } if name == ".")
 }
 
 /// A type refinement extracted from an `if` condition. Represents the

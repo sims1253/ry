@@ -2544,6 +2544,128 @@ fn pipe_dot_pronoun_dollar_column() {
 }
 
 #[test]
+fn pipe_underscore_placeholder_extraction() {
+    // R >= 4.3 allows the native-pipe placeholder as the base of an
+    // extraction: `mtcars |> _$mpg`. The `_` is the piped LHS, so it
+    // must not be reported as an unbound variable (issue #27).
+    let (diags, scope) = check_with_scope(
+        "col <- mtcars |> _$mpg\nm <- mtcars |> _$mpg |> mean()\nalso <- mtcars |> _[[\"mpg\"]]\n",
+    );
+    assert!(
+        diags.iter().all(|d| d.code != "RY010"),
+        "`_` extraction placeholder should not emit RY010, got {:?}",
+        diags
+    );
+    let col = scope.get("col").expect("col should be bound");
+    assert_eq!(col.mode, Mode::Double, "mtcars |> _$mpg must infer double");
+    assert_eq!(col.length, Length::Known(32), "mpg has 32 rows");
+    let m = scope.get("m").expect("m should be bound");
+    assert_eq!(m.mode, Mode::Double, "mean() of a double column is double");
+    assert_eq!(m.length, Length::One, "mean() returns a scalar");
+    let also = scope.get("also").expect("also should be bound");
+    assert_eq!(also.mode, Mode::Double, "mtcars |> _[[\"mpg\"]] is double");
+    assert_eq!(
+        also.length,
+        Length::Known(32),
+        "mtcars |> _[[\"mpg\"]] has 32 rows"
+    );
+}
+
+#[test]
+fn pipe_placeholder_extraction_chain() {
+    // The placeholder may sit at the root of a longer extraction chain
+    // (`mtcars |> _$mpg[1]` evaluates to 21 in R 4.6). Every link is
+    // applied to the piped LHS, so no link may report an unbound `_`/`.`.
+    let (diags, scope) = check_with_scope(
+        "a <- mtcars |> _$mpg[1]\nb <- mtcars |> _[[\"mpg\"]][2]\nd <- mtcars %>% .$mpg[1]\n",
+    );
+    assert!(
+        diags.iter().all(|d| d.code != "RY010"),
+        "placeholder-rooted extraction chains should not emit RY010, got {:?}",
+        diags
+    );
+    for name in ["a", "b", "d"] {
+        let t = scope.get(name).expect("binding should exist");
+        assert_eq!(
+            t.mode,
+            Mode::Double,
+            "{} indexes the double column mpg",
+            name
+        );
+        assert_eq!(t.length, Length::One, "{} extracts a single element", name);
+    }
+}
+
+#[test]
+fn pipe_dot_substituted_at_every_placeholder_argument() {
+    // magrittr replaces every `.` argument with the LHS, so the second
+    // `.` in `paste(., ., sep = "-")` must not read as an unbound name.
+    let (diags, scope) =
+        check_with_scope("x <- c(\"a\", \"b\")\ny <- x %>% paste(., ., sep = \"-\")\n");
+    assert!(
+        diags.iter().all(|d| d.code != "RY010"),
+        "repeated `.` arguments should not emit RY010, got {:?}",
+        diags
+    );
+    let y = scope.get("y").expect("y should be bound");
+    assert_eq!(y.mode, Mode::Character, "paste() returns character");
+    assert_eq!(
+        y.length,
+        Length::Known(2),
+        "both `.` arguments have length 2"
+    );
+}
+
+#[test]
+fn pipe_dot_substituted_inside_nested_calls() {
+    // magrittr binds `.` throughout the RHS, so a pronoun nested in an
+    // inner call resolves too: `c(1, 2) %>% sum(rev(.))` is 6 in R.
+    let (diags, scope) = check_with_scope("x <- c(1, 2)\ny <- x %>% sum(rev(.))\n");
+    assert!(
+        diags.iter().all(|d| d.code != "RY010"),
+        "a nested `.` should not emit RY010, got {:?}",
+        diags
+    );
+    let y = scope.get("y").expect("y should be bound");
+    assert_eq!(y.mode, Mode::Double, "sum() of doubles is double");
+}
+
+#[test]
+fn pipe_dot_resolves_inside_subscripts() {
+    // The magrittr filtering idiom subscripts the pronoun with a
+    // predicate over the pronoun itself: `mtcars %>% .[.$mpg > 20, ]`
+    // selects 14 rows in R. The inner `.` must resolve to the LHS.
+    let diags = check("a <- mtcars %>% .[.$mpg > 20, ]\nb <- mtcars %>% .$mpg[.$cyl > 4]\n");
+    assert!(
+        diags.iter().all(|d| d.code != "RY010"),
+        "a `.` inside a subscript should not emit RY010, got {:?}",
+        diags
+    );
+}
+
+#[test]
+fn pipe_placeholders_are_specific_to_their_pipe_form() {
+    // Each pipe binds only its own placeholder: `.` is magrittr's, `_`
+    // is the native pipe's. Used in the other form they are ordinary
+    // identifier references, so they must still report RY010.
+    for (src, placeholder) in [
+        ("a <- mtcars |> .$mpg\n", "."),
+        ("b <- mtcars %>% _$mpg\n", "_"),
+    ] {
+        let diags = check(src);
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.code == "RY010" && d.message.contains(placeholder)),
+            "`{}` is unbound in `{}`, got {:?}",
+            placeholder,
+            src.trim(),
+            diags
+        );
+    }
+}
+
+#[test]
 fn pipe_dot_pronoun_double_bracket() {
     // `df %>% .[["mpg"]]` resolves `.` to the LHS and indexes by
     // string-literal column name via `[[`, mirroring `$` semantics.

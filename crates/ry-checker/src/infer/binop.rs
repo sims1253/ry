@@ -197,7 +197,7 @@ impl Checker {
         if symbol == "?"
             || matches!(
                 op,
-                BinOpKind::In | BinOpKind::Colon | BinOpKind::PipeForward
+                BinOpKind::In | BinOpKind::Colon | BinOpKind::PipeForward | BinOpKind::PipeNative
             )
         {
             return None;

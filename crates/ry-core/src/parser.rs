@@ -540,7 +540,7 @@ impl RParser {
             "|" => BinOpKind::Or,
             "||" => BinOpKind::OrOr,
             "%in%" => BinOpKind::In,
-            "|>" => BinOpKind::PipeForward,
+            "|>" => BinOpKind::PipeNative,
             "%>%" => BinOpKind::PipeForward,
             "%T>%" => BinOpKind::PipeTee,
             "%<>%" => BinOpKind::PipeAssign,
@@ -1127,11 +1127,12 @@ mod tests {
 
     #[test]
     fn parses_base_r_pipe() {
-        // Base-R `|>` lowers to PipeForward.
+        // Base-R `|>` lowers to PipeNative (distinct from magrittr's
+        // `%>%` so the checker can tell `_` and `.` placeholders apart).
         let f = parse("c(1, 2, 3) |> mean()\n");
         match f.stmts.first() {
             Some(Stmt::Expr(Expr::BinOp {
-                op: BinOpKind::PipeForward,
+                op: BinOpKind::PipeNative,
                 lhs,
                 rhs,
                 ..

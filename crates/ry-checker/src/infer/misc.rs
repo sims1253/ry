@@ -88,6 +88,7 @@ pub(crate) fn op_symbol(op: BinOpKind) -> &'static str {
         BinOpKind::Assign => "<-",
         BinOpKind::SuperAssign => "<<-",
         BinOpKind::PipeForward => "%>%",
+        BinOpKind::PipeNative => "|>",
         BinOpKind::PipeTee => "%T>%",
         BinOpKind::PipeAssign => "%<>%",
     }

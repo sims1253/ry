@@ -1,6 +1,7 @@
 use super::*;
 pub(crate) use index::*;
 pub(crate) use misc::*;
+pub(crate) use pipe::PipeForm;
 pub(crate) mod binop;
 pub(crate) mod call;
 pub(crate) mod construct;
@@ -1515,14 +1516,15 @@ impl Checker {
                 // Pipes need structural access to `rhs` (to build a
                 // desugared call), so they bypass `infer_binop`'s
                 // type-only signature.
-                if matches!(*op, BinOpKind::PipeForward) {
-                    return self.infer_pipe(lhs, rhs, *span, scope);
+                if matches!(*op, BinOpKind::PipeForward | BinOpKind::PipeNative) {
+                    let form = PipeForm::of(*op);
+                    return self.infer_pipe(lhs, rhs, *span, form, scope);
                 }
                 if matches!(*op, BinOpKind::PipeAssign) {
                     // `%<>%` (assignment pipe): like `%>%` but also
                     // rebinds the LHS identifier to the result, so
                     // `x %<>% f()` is `x <- x %>% f()`.
-                    let result = self.infer_pipe(lhs, rhs, *span, scope);
+                    let result = self.infer_pipe(lhs, rhs, *span, PipeForm::Magrittr, scope);
                     if let Expr::Ident { name, .. } = lhs.as_ref() {
                         scope.insert(name.clone(), result.clone());
                     }

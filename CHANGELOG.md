@@ -9,7 +9,18 @@ All notable changes to ry are documented in this file.
 - The native-pipe extraction placeholder (R >= 4.3), as in `mtcars |> _$mpg` or
   `df |> _[["col"]]`, no longer produces a false `RY010` "variable `_` is not
   bound in this scope" warning. The placeholder now resolves to the piped
-  left-hand side, so the extracted type is inferred (#27).
+  left-hand side, so the extracted type is inferred (#27). This also covers
+  longer extraction chains rooted at the placeholder, such as
+  `mtcars |> _$mpg[1]` and `df %>% .$col[i]`.
+- Every `.` argument of a magrittr call now receives the piped value, matching
+  magrittr's substitution rule. `x %>% paste(., ., sep = "-")` no longer reports
+  a false `RY010` on the second `.`. `.` is also bound throughout the piped
+  call, so nested pronouns such as `x %>% sum(rev(.))` and the filtering idiom
+  `mtcars %>% .[.$mpg > 20, ]` resolve as well.
+- Pipe placeholders are now specific to their operator: `.` only resolves to the
+  piped value in magrittr pipes and `_` only in the native `|>`. `mtcars |> .$mpg`
+  and `mtcars %>% _$mpg` are invalid R, and both now report `RY010` instead of
+  being silently accepted.
 
 ## [0.7.1] - 2026-07-24
 

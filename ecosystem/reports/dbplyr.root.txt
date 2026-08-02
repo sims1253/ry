@@ -1,6 +1,3 @@
-R/data-lahman.R:82:13 RY061
-R/data-nycflights13.R:58:10 RY061
-R/import-standalone-types-check.R:129:53 RY010
 tests/testthat/test-query-set-op.R:7:37 RY090
 tests/testthat/test-verb-set-ops.R:106:30 RY090
 tests/testthat/test-verb-set-ops.R:114:30 RY090

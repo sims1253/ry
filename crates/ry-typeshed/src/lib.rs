@@ -302,6 +302,7 @@ pub const R6_JSON: &str = include_str!("../vendor/R6/R6.json");
 pub const S7_JSON: &str = include_str!("../vendor/s7/S7.json");
 pub const RLANG_JSON: &str = include_str!("../vendor/rlang/rlang.json");
 pub const CLI_JSON: &str = include_str!("../vendor/cli/cli.json");
+pub const VCTRS_JSON: &str = include_str!("../vendor/vctrs/vctrs.json");
 /// Legacy Bayesian stub document. New code should load a named package via
 /// [`load_package`]; the standalone typeshed no longer publishes a combined
 /// multi-package document.
@@ -440,6 +441,10 @@ const PACKAGE_SPECS: &[PackageSpec] = &[
     PackageSpec {
         name: "cli",
         json: CLI_JSON,
+    },
+    PackageSpec {
+        name: "vctrs",
+        json: VCTRS_JSON,
     },
 ];
 
@@ -1469,6 +1474,29 @@ mod tests {
     }
 
     #[test]
+    fn load_package_vctrs_has_hermetic_imports() {
+        let vctrs = load_package("vctrs").expect("vctrs loads");
+        for name in [
+            "obj_is_list",
+            "vec_in",
+            "vec_set_union",
+            "vec_size",
+            "vec_slice",
+        ] {
+            assert!(vctrs.functions.contains_key(name), "missing vctrs::{name}");
+        }
+    }
+
+    #[test]
+    fn load_package_rlang_has_typed_non_function_constants() {
+        let rlang = load_package("rlang").expect("rlang loads");
+        assert!(rlang.datasets.contains_key("na_chr"));
+        assert!(rlang.datasets.contains_key("na_int"));
+        assert!(!rlang.functions.contains_key("na_chr"));
+        assert!(!rlang.functions.contains_key("na_int"));
+    }
+
+    #[test]
     fn load_package_purrr_has_map_family() {
         let t = load_package("purrr").expect("purrr is a known package");
         assert!(t.functions.contains_key("map"));
@@ -1668,7 +1696,7 @@ mod tests {
     #[test]
     fn typeshed_preserves_embedded_schema_version() {
         let t = load_base().expect("loads");
-        assert_eq!(t.version, "0.0.3");
+        assert_eq!(t.version, "0.0.4");
         assert_eq!(t.schema_version.as_deref(), Some("2"));
     }
 

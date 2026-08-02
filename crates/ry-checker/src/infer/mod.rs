@@ -1394,6 +1394,11 @@ impl Checker {
                     }
                 }
                 None => {
+                    // Typed package values take precedence over existence-only
+                    // import bindings so constants retain their declared type.
+                    if let Some(value_type) = self.resolve_typeshed_value(name) {
+                        return value_type;
+                    }
                     if self.external_bindings.contains(name) {
                         return RType::unknown();
                     }
@@ -1404,11 +1409,6 @@ impl Checker {
                         })
                     }) {
                         return RType::unknown();
-                    }
-                    // Built-in dataset? (mtcars, iris, ...) Resolve before
-                    // flagging the identifier as unbound.
-                    if let Some(jt) = self.typeshed.datasets.get(name) {
-                        return json_rtype_to_rtype(jt);
                     }
                     // Known typeshed function used as a value (e.g.
                     // `sapply(x, sqrt)` passes `sqrt` as a bare

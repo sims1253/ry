@@ -1,4 +1,8 @@
-# oracle: known-gap self-referential formal defaults recurse when forced
+# oracle: must-warn RY098
 outer <- 1
 recursive_default <- function(outer = outer) outer
-recursive_default()
+error <- tryCatch({
+  recursive_default()
+  NULL
+}, error = identity)
+stopifnot(inherits(error, "error"))

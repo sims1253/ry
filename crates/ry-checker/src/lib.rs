@@ -409,6 +409,11 @@ pub(crate) struct FnTable {
     // set, we know it's defined in another file (or later in this
     // same file) and return opaque instead of flagging it as unbound.
     pub(crate) known_vars: std::collections::HashSet<String>,
+    // Names bound to callable objects that are not ordinary R functions.
+    // S7 class and generic objects implement `()` themselves, so call-position
+    // lookup must treat them as candidates even though their inferred value is
+    // otherwise opaque.
+    pub(crate) callable_vars: std::collections::HashSet<String>,
     // Syntactic call sites used only for conservative internal-helper
     // default selection. Each argument records its optional exact name.
     pub(crate) call_sites: HashMap<String, Vec<Vec<Option<String>>>>,
@@ -442,6 +447,7 @@ impl FnTable {
         self.s4_methods.extend(collected.s4_methods);
         self.s4_classes.extend(collected.s4_classes);
         self.known_vars.extend(collected.known_vars);
+        self.callable_vars.extend(collected.callable_vars);
         for (name, sites) in collected.call_sites {
             self.call_sites.entry(name).or_default().extend(sites);
         }

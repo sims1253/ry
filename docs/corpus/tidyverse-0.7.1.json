@@ -131,15 +131,6 @@
     },
     {
       "package": "ggplot2",
-      "code": "RY070",
-      "path": "R/margins.R",
-      "line": 136,
-      "column": 15,
-      "label": "false_positive",
-      "workstream": "P4e"
-    },
-    {
-      "package": "ggplot2",
       "code": "RY100",
       "path": "tests/testthat/test-axis-secondary.R",
       "line": 36,
@@ -218,15 +209,6 @@
       "column": 7,
       "label": "false_positive",
       "workstream": "P4a"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY091",
-      "path": "R/data-mask.R",
-      "line": 152,
-      "column": 7,
-      "label": "false_positive",
-      "workstream": "R2"
     },
     {
       "package": "dplyr",
@@ -508,15 +490,6 @@
       "workstream": "P8"
     },
     {
-      "package": "stringr",
-      "code": "RY091",
-      "path": "tests/testthat/test-subset.R",
-      "line": 47,
-      "column": 51,
-      "label": "false_positive",
-      "workstream": "R2"
-    },
-    {
       "package": "lubridate",
       "code": "RY003",
       "path": "R/update.r",
@@ -526,42 +499,6 @@
       "workstream": "P6b"
     },
     {
-      "package": "lubridate",
-      "code": "RY002",
-      "path": "R/update.r",
-      "line": 139,
-      "column": 9,
-      "label": "false_positive",
-      "workstream": "P6b"
-    },
-    {
-      "package": "lubridate",
-      "code": "RY002",
-      "path": "R/update.r",
-      "line": 141,
-      "column": 11,
-      "label": "false_positive",
-      "workstream": "P6b"
-    },
-    {
-      "package": "lubridate",
-      "code": "RY032",
-      "path": "R/update.r",
-      "line": 142,
-      "column": 13,
-      "label": "false_positive",
-      "workstream": "P6b"
-    },
-    {
-      "package": "readxl",
-      "code": "RY002",
-      "path": "R/excel-format.R",
-      "line": 102,
-      "column": 7,
-      "label": "false_positive",
-      "workstream": "P6a"
-    },
-    {
       "package": "googlesheets4",
       "code": "RY092",
       "path": "R/sheet_write.R",
@@ -569,24 +506,6 @@
       "column": 20,
       "label": "false_positive",
       "workstream": "P8"
-    },
-    {
-      "package": "dbplyr",
-      "code": "RY061",
-      "path": "R/data-lahman.R",
-      "line": 82,
-      "column": 13,
-      "label": "false_positive",
-      "workstream": "R2"
-    },
-    {
-      "package": "dbplyr",
-      "code": "RY061",
-      "path": "R/data-nycflights13.R",
-      "line": 58,
-      "column": 10,
-      "label": "false_positive",
-      "workstream": "R2"
     },
     {
       "package": "dbplyr",
@@ -623,15 +542,6 @@
       "column": 30,
       "label": "false_positive",
       "workstream": "P3f"
-    },
-    {
-      "package": "dtplyr",
-      "code": "RY091",
-      "path": "R/tidyeval.R",
-      "line": 23,
-      "column": 20,
-      "label": "false_positive",
-      "workstream": "R2"
     },
     {
       "package": "duckplyr",
@@ -1091,186 +1001,6 @@
       "column": 20,
       "label": "false_positive",
       "workstream": "P7a"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY010",
-      "path": "R/case-match.R",
-      "line": 224,
-      "column": 32,
-      "label": "false_positive",
-      "workstream": "R5",
-      "origin": "hermetic_resolution_gap"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY010",
-      "path": "R/import-standalone-types-check.R",
-      "line": 120,
-      "column": 53,
-      "label": "false_positive",
-      "workstream": "R5",
-      "origin": "hermetic_resolution_gap"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY010",
-      "path": "R/join.R",
-      "line": 677,
-      "column": 23,
-      "label": "false_positive",
-      "workstream": "R5",
-      "origin": "hermetic_resolution_gap"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY010",
-      "path": "R/utils.R",
-      "line": 71,
-      "column": 21,
-      "label": "false_positive",
-      "workstream": "R5",
-      "origin": "hermetic_resolution_gap"
-    },
-    {
-      "package": "purrr",
-      "code": "RY010",
-      "path": "R/compat-types-check.R",
-      "line": 110,
-      "column": 53,
-      "label": "false_positive",
-      "workstream": "R5",
-      "origin": "hermetic_resolution_gap"
-    },
-    {
-      "package": "purrr",
-      "code": "RY010",
-      "path": "R/compat-types-check.R",
-      "line": 256,
-      "column": 24,
-      "label": "false_positive",
-      "workstream": "R5",
-      "origin": "hermetic_resolution_gap"
-    },
-    {
-      "package": "purrr",
-      "code": "RY010",
-      "path": "R/compat-types-check.R",
-      "line": 257,
-      "column": 24,
-      "label": "false_positive",
-      "workstream": "R5",
-      "origin": "hermetic_resolution_gap"
-    },
-    {
-      "package": "purrr",
-      "code": "RY010",
-      "path": "R/list-transpose.R",
-      "line": 83,
-      "column": 35,
-      "label": "false_positive",
-      "workstream": "R5",
-      "origin": "hermetic_resolution_gap"
-    },
-    {
-      "package": "purrr",
-      "code": "RY010",
-      "path": "R/modify-tree.R",
-      "line": 71,
-      "column": 5,
-      "label": "false_positive",
-      "workstream": "R5",
-      "origin": "hermetic_resolution_gap"
-    },
-    {
-      "package": "stringr",
-      "code": "RY010",
-      "path": "R/compat-types-check.R",
-      "line": 105,
-      "column": 53,
-      "label": "false_positive",
-      "workstream": "R5",
-      "origin": "hermetic_resolution_gap"
-    },
-    {
-      "package": "stringr",
-      "code": "RY010",
-      "path": "R/compat-types-check.R",
-      "line": 251,
-      "column": 24,
-      "label": "false_positive",
-      "workstream": "R5",
-      "origin": "hermetic_resolution_gap"
-    },
-    {
-      "package": "stringr",
-      "code": "RY010",
-      "path": "R/compat-types-check.R",
-      "line": 252,
-      "column": 24,
-      "label": "false_positive",
-      "workstream": "R5",
-      "origin": "hermetic_resolution_gap"
-    },
-    {
-      "package": "forcats",
-      "code": "RY010",
-      "path": "R/compat-types-check.R",
-      "line": 110,
-      "column": 53,
-      "label": "false_positive",
-      "workstream": "R5",
-      "origin": "hermetic_resolution_gap"
-    },
-    {
-      "package": "forcats",
-      "code": "RY010",
-      "path": "R/compat-types-check.R",
-      "line": 256,
-      "column": 24,
-      "label": "false_positive",
-      "workstream": "R5",
-      "origin": "hermetic_resolution_gap"
-    },
-    {
-      "package": "forcats",
-      "code": "RY010",
-      "path": "R/compat-types-check.R",
-      "line": 257,
-      "column": 24,
-      "label": "false_positive",
-      "workstream": "R5",
-      "origin": "hermetic_resolution_gap"
-    },
-    {
-      "package": "googledrive",
-      "code": "RY010",
-      "path": "R/promote.R",
-      "line": 37,
-      "column": 19,
-      "label": "false_positive",
-      "workstream": "R5",
-      "origin": "hermetic_resolution_gap"
-    },
-    {
-      "package": "rvest",
-      "code": "RY010",
-      "path": "R/import-standalone-types-check.R",
-      "line": 129,
-      "column": 53,
-      "label": "false_positive",
-      "workstream": "R5",
-      "origin": "hermetic_resolution_gap"
-    },
-    {
-      "package": "dbplyr",
-      "code": "RY010",
-      "path": "R/import-standalone-types-check.R",
-      "line": 129,
-      "column": 53,
-      "label": "false_positive",
-      "workstream": "R5",
-      "origin": "hermetic_resolution_gap"
     }
   ],
   "notes": [

@@ -248,6 +248,7 @@ pub(crate) fn resolve<'a>(
                 .or_else(|| ry_typeshed::load_package(package))
             {
                 file_bindings.extend(typeshed.functions.keys().cloned());
+                file_bindings.extend(typeshed.datasets.keys().cloned());
                 file_bindings.extend(typeshed.globals.ambient_functions.iter().cloned());
             }
         }

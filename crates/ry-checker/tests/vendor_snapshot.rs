@@ -146,8 +146,9 @@ fn purrr_vendor_snapshot() {
     // vendor net alongside glue; purrr is the flagship tidyverse
     // functional-programming package.
     //
-    // The ENTIRE snapshot is RY010: cross-package function and constant
-    // names not yet modeled. There are NO true positives.
+    // Snapshot entries are RY010 cross-package function and constant names
+    // not yet modeled. The `caller_env = caller_env()` default is deliberately
+    // not reported because its force is conditional on the progress-bar path.
     //
     //   * rlang functions: quo_get_expr, eval_tidy, is_bare_list,
     //     is_bare_formula, as_quosure, is_quosure, obj_is_list, is_zap.

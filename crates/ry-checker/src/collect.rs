@@ -19,9 +19,13 @@ impl Checker {
                 // to be resolvable from other files (and from later in
                 // this same file) without triggering RY010.
                 if let Some(name) = binding_name(target) {
-                    Arc::make_mut(&mut self.fn_table)
-                        .known_vars
-                        .insert(name.to_string());
+                    let table = Arc::make_mut(&mut self.fn_table);
+                    table.known_vars.insert(name.to_string());
+                    if is_callable_object_constructor(value) {
+                        table.callable_vars.insert(name.to_string());
+                    } else {
+                        table.callable_vars.remove(name);
+                    }
                 }
                 if let (Some(name), Expr::Function { params, body, .. }) =
                     (binding_name(target), value)
@@ -496,6 +500,20 @@ impl Checker {
 /// `match.call()`, `sys.call()`, and `sys.function()` capture the complete
 /// call, so they make every formal quoting. `missing(p)` is deliberately not
 /// included: it tests a promise without changing how an argument is evaluated.
+fn is_callable_object_constructor(expression: &Expr) -> bool {
+    let Expr::Call { func, .. } = expression else {
+        return false;
+    };
+    matches!(
+        func.as_ref(),
+        Expr::Ident { name, .. }
+            if matches!(
+                name.as_str(),
+                "S7::new_class" | "S7::new_generic" | "S7::new_S3_class"
+            )
+    )
+}
+
 fn parameter_is_quoted(body: &[Stmt], params: &[Param], parameter: &str) -> bool {
     body.iter().any(stmt_captures_all_arguments)
         || (params.iter().any(|formal| formal.name == parameter)

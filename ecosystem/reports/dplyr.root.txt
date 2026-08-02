@@ -1,13 +1,8 @@
-R/case-match.R:224:32 RY010
 R/conditions.R:310:14 RY010
 R/data-mask.R:112:7 RY091
 R/data-mask.R:117:7 RY091
 R/data-mask.R:131:7 RY091
-R/data-mask.R:152:7 RY091
-R/import-standalone-types-check.R:120:53 RY010
-R/join.R:677:23 RY010
 R/summarise.R:342:34 RY010
-R/utils.R:71:21 RY010
 tests/testthat/test-conditions.R:10:20 RY040
 tests/testthat/test-conditions.R:11:19 RY040
 tests/testthat/test-conditions.R:21:21 RY040

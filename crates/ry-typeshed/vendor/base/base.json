@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "base",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "globals": {
     "ambient": [
       "..deparseOpts",
@@ -2830,10 +2830,7 @@
     },
     "as.character": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
+        "x",
         "..."
       ],
       "return": {
@@ -2880,10 +2877,7 @@
     },
     "as.integer": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
+        "x",
         "..."
       ],
       "return": {
@@ -2924,10 +2918,7 @@
     },
     "as.numeric": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
+        "x",
         "..."
       ],
       "return": {
@@ -2938,7 +2929,10 @@
     },
     "as.raw": {
       "params": [
-        "x"
+        {
+          "name": "x",
+          "required": true
+        }
       ],
       "return": {
         "mode": "raw",
@@ -3408,7 +3402,7 @@
       ],
       "scope_effect": "unknown_bindings",
       "return": {
-        "mode": "character",
+        "mode": "opaque",
         "length": "unknown",
         "na": false
       }
@@ -6159,10 +6153,7 @@
     },
     "rep": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
+        "x",
         "..."
       ],
       "return": {

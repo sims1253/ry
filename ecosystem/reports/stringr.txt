@@ -1,3 +1,0 @@
-R/compat-types-check.R:105:53 RY010
-R/compat-types-check.R:251:24 RY010
-R/compat-types-check.R:252:24 RY010

@@ -54,6 +54,28 @@ impl Checker {
             }
         };
 
+        // An explicitly qualified typed package value is known not to be
+        // callable. Bare names wait until after lexical callable lookup below,
+        // because a local function or function-valued formal may legitimately
+        // shadow an attached package constant.
+        if name.contains("::")
+            && let Some(value_type) = self.resolve_typeshed_value(&name)
+        {
+            self.emit(
+                Severity::Error,
+                span,
+                "RY070",
+                format!(
+                    "`{}` is `{}`, not a function; cannot call it",
+                    name, value_type.mode
+                ),
+            );
+            for argument in args {
+                self.infer(&argument.value, scope);
+            }
+            return RType::unknown();
+        }
+
         // For namespace-qualified calls (`pkg::fn(args)`), strip the
         // package prefix for the typeshed / FnTable / higher-order /
         // S3-generic lookups below, so `stats::rnorm(10)` resolves the
@@ -816,7 +838,12 @@ impl Checker {
                     // through to the resolution below instead of firing RY070.
                     // Only when no function of that name exists anywhere does
                     // calling the non-function value warrant RY070.
-                    let has_function_elsewhere = self.has_function_anywhere(&name);
+                    // A concrete lexical value at this point wins over the
+                    // whole-project callable inventory; a later or cross-file
+                    // S7 constructor must not hide this proven call error.
+                    let has_function_elsewhere = self.has_function_anywhere(&name)
+                        && (scope.is_default_parameter(&name)
+                            || !self.fn_table.callable_vars.contains(&name));
                     if !has_function_elsewhere {
                         // RY070: a non-function value is being called as if it
                         // were a function. R errors at runtime with
@@ -838,6 +865,23 @@ impl Checker {
                 // Opaque: fall through; the name might still resolve via
                 // the FnTable or typeshed below.
             }
+        }
+
+        // No lexical callable won. A bare typed package value is therefore a
+        // non-function call, not a zero-argument function signature.
+        if scope.get(&lookup_name).is_none()
+            && let Some(value_type) = self.resolve_typeshed_value(&name)
+        {
+            self.emit(
+                Severity::Error,
+                span,
+                "RY070",
+                format!(
+                    "`{}` is `{}`, not a function; cannot call it",
+                    name, value_type.mode
+                ),
+            );
+            return RType::unknown();
         }
 
         // Built-in: `c(...)` concatenates and produces the common mode.

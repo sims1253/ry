@@ -1,0 +1,1282 @@
+{
+  "schema_version": 1,
+  "corpus": "tidyverse",
+  "ry_version": "0.7.1",
+  "source": "../ry-audits/aggregate.json",
+  "packages": [
+    {
+      "name": "tidyverse",
+      "commit": "0231aafbc56914ee5371dd6c7b60677f168d7154"
+    },
+    {
+      "name": "ggplot2",
+      "commit": "6870419aa6e106c3580c45c81d5b688cb31758bd"
+    },
+    {
+      "name": "dplyr",
+      "commit": "d5e94e7fa8fd4a5f79c1a707d1842216bb4c691f"
+    },
+    {
+      "name": "tidyr",
+      "commit": "26f83e89a690b6cf31a260489b828df0ff43ebb2"
+    },
+    {
+      "name": "readr",
+      "commit": "238ea873fdc1a34b3638f01493bd8df9f770ac62"
+    },
+    {
+      "name": "purrr",
+      "commit": "481e829f297fd4315b386518215157f361475ad0"
+    },
+    {
+      "name": "tibble",
+      "commit": "b5e7406e83d8c3291573dbd1ae06bbb9f87b6aac"
+    },
+    {
+      "name": "stringr",
+      "commit": "ae054b1d28f630fee22ddb3cb7525396e62af4fe"
+    },
+    {
+      "name": "forcats",
+      "commit": "f83e0e682d9f874d066630ff78eb12586b5b2a32"
+    },
+    {
+      "name": "lubridate",
+      "commit": "8e9f2b289ee8384d9499e2527fb1e449c97e5370"
+    },
+    {
+      "name": "haven",
+      "commit": "f067fb27e436bc1207e8424f50df90ed9d5acc3a"
+    },
+    {
+      "name": "readxl",
+      "commit": "47f8aeac0a99eee6c6db2d64ead2225e5e3ae4af"
+    },
+    {
+      "name": "googlesheets4",
+      "commit": "55cd9fdbf9c74c20de1eeb9ec2629a7d16c76aa4"
+    },
+    {
+      "name": "googledrive",
+      "commit": "8de11bfd4349ae6e7d98b51f7a6ebc148fe988fa"
+    },
+    {
+      "name": "rvest",
+      "commit": "6c955c0ecfbb0f0bdb1891f0ef952af388b51851"
+    },
+    {
+      "name": "hms",
+      "commit": "ebd2f840c33ee126083d3f1248759fe9f8b3d238"
+    },
+    {
+      "name": "blob",
+      "commit": "a8ce151abbcc43c198f344e6fb47f02d3733d509"
+    },
+    {
+      "name": "dbplyr",
+      "commit": "f478e2070c9a60f4aebcc94132048312209dd097"
+    },
+    {
+      "name": "dtplyr",
+      "commit": "bffe46e664d62021e47251c158c9f02c4cd30400"
+    },
+    {
+      "name": "duckplyr",
+      "commit": "a7eb17687a876e07eb191bab5f6a7806de997039"
+    },
+    {
+      "name": "magrittr",
+      "commit": "73d66ee89c1079d66d235bfde551b6110c934259"
+    },
+    {
+      "name": "glue",
+      "commit": "da9c73f7a3de6a27f3103cb5bb2355820a4c3a6a"
+    },
+    {
+      "name": "modelr",
+      "commit": "28e13cab9099e72cd5605d86c5418d587bd2a365"
+    },
+    {
+      "name": "reprex",
+      "commit": "0dcf301940c050e1cf32f230cab45503d85ac5a4"
+    }
+  ],
+  "findings": [
+    {
+      "package": "ggplot2",
+      "code": "RY001",
+      "path": "R/bin.R",
+      "line": 101,
+      "column": 14,
+      "label": "false_positive",
+      "workstream": "plan-29"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY061",
+      "path": "R/geom-boxplot.R",
+      "line": 164,
+      "column": 19,
+      "label": "false_positive",
+      "workstream": "P6c"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY061",
+      "path": "R/geom-boxplot.R",
+      "line": 166,
+      "column": 7,
+      "label": "false_positive",
+      "workstream": "P6c"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY070",
+      "path": "R/margins.R",
+      "line": 136,
+      "column": 15,
+      "label": "false_positive",
+      "workstream": "P4e"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY100",
+      "path": "tests/testthat/test-axis-secondary.R",
+      "line": 36,
+      "column": 23,
+      "label": "true_positive",
+      "workstream": "upstream-ggplot2"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY100",
+      "path": "tests/testthat/test-axis-secondary.R",
+      "line": 37,
+      "column": 23,
+      "label": "true_positive",
+      "workstream": "upstream-ggplot2"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY100",
+      "path": "tests/testthat/test-axis-secondary.R",
+      "line": 56,
+      "column": 23,
+      "label": "true_positive",
+      "workstream": "upstream-ggplot2"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY100",
+      "path": "tests/testthat/test-axis-secondary.R",
+      "line": 57,
+      "column": 23,
+      "label": "true_positive",
+      "workstream": "upstream-ggplot2"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY040",
+      "path": "tests/testthat/test-geom-curve.R",
+      "line": 17,
+      "column": 8,
+      "label": "false_positive",
+      "workstream": "P7a"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY010",
+      "path": "R/conditions.R",
+      "line": 310,
+      "column": 14,
+      "label": "false_positive",
+      "workstream": "P4b"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY091",
+      "path": "R/data-mask.R",
+      "line": 112,
+      "column": 7,
+      "label": "false_positive",
+      "workstream": "P4a"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY091",
+      "path": "R/data-mask.R",
+      "line": 117,
+      "column": 7,
+      "label": "false_positive",
+      "workstream": "P4a"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY091",
+      "path": "R/data-mask.R",
+      "line": 131,
+      "column": 7,
+      "label": "false_positive",
+      "workstream": "P4a"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY091",
+      "path": "R/data-mask.R",
+      "line": 152,
+      "column": 7,
+      "label": "false_positive",
+      "workstream": "R2"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY010",
+      "path": "R/summarise.R",
+      "line": 342,
+      "column": 34,
+      "label": "false_positive",
+      "workstream": "P4c"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-conditions.R",
+      "line": 4,
+      "column": 20,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-conditions.R",
+      "line": 5,
+      "column": 23,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-conditions.R",
+      "line": 6,
+      "column": 23,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-conditions.R",
+      "line": 7,
+      "column": 38,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-conditions.R",
+      "line": 8,
+      "column": 20,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-conditions.R",
+      "line": 9,
+      "column": 21,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-conditions.R",
+      "line": 10,
+      "column": 20,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-conditions.R",
+      "line": 11,
+      "column": 19,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-conditions.R",
+      "line": 21,
+      "column": 21,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-count-tally.R",
+      "line": 139,
+      "column": 38,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-count-tally.R",
+      "line": 173,
+      "column": 38,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-count-tally.R",
+      "line": 214,
+      "column": 42,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-count-tally.R",
+      "line": 245,
+      "column": 42,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY060",
+      "path": "tests/testthat/test-group-by.R",
+      "line": 26,
+      "column": 16,
+      "label": "false_positive",
+      "workstream": "P3e"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY060",
+      "path": "tests/testthat/test-group-by.R",
+      "line": 40,
+      "column": 16,
+      "label": "false_positive",
+      "workstream": "P3e"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-mutate.R",
+      "line": 408,
+      "column": 23,
+      "label": "false_positive",
+      "workstream": "P3b"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-mutate.R",
+      "line": 410,
+      "column": 36,
+      "label": "false_positive",
+      "workstream": "P3b"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY002",
+      "path": "tests/testthat/test-mutate.R",
+      "line": 793,
+      "column": 16,
+      "label": "false_positive",
+      "workstream": "P3d"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY060",
+      "path": "tests/testthat/test-mutate.R",
+      "line": 794,
+      "column": 16,
+      "label": "false_positive",
+      "workstream": "P3e"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-select.R",
+      "line": 167,
+      "column": 34,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY090",
+      "path": "tests/testthat/test-sets.R",
+      "line": 60,
+      "column": 25,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-slice.R",
+      "line": 94,
+      "column": 15,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-slice.R",
+      "line": 95,
+      "column": 28,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY002",
+      "path": "tests/testthat/test-summarise.R",
+      "line": 321,
+      "column": 11,
+      "label": "false_positive",
+      "workstream": "P3d"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY002",
+      "path": "tests/testthat/test-summarise.R",
+      "line": 331,
+      "column": 38,
+      "label": "false_positive",
+      "workstream": "P3d"
+    },
+    {
+      "package": "purrr",
+      "code": "RY010",
+      "path": "R/map.R",
+      "line": 224,
+      "column": 23,
+      "label": "false_positive",
+      "workstream": "P4d"
+    },
+    {
+      "package": "purrr",
+      "code": "RY010",
+      "path": "R/map2.R",
+      "line": 108,
+      "column": 23,
+      "label": "false_positive",
+      "workstream": "P4d"
+    },
+    {
+      "package": "purrr",
+      "code": "RY010",
+      "path": "R/pmap.R",
+      "line": 177,
+      "column": 7,
+      "label": "false_positive",
+      "workstream": "P4d"
+    },
+    {
+      "package": "purrr",
+      "code": "RY080",
+      "path": "tests/testthat/test-map.R",
+      "line": 82,
+      "column": 20,
+      "label": "false_positive",
+      "workstream": "P8"
+    },
+    {
+      "package": "purrr",
+      "code": "RY080",
+      "path": "tests/testthat/test-parallel.R",
+      "line": 120,
+      "column": 20,
+      "label": "false_positive",
+      "workstream": "P8"
+    },
+    {
+      "package": "stringr",
+      "code": "RY091",
+      "path": "tests/testthat/test-subset.R",
+      "line": 47,
+      "column": 51,
+      "label": "false_positive",
+      "workstream": "R2"
+    },
+    {
+      "package": "lubridate",
+      "code": "RY003",
+      "path": "R/update.r",
+      "line": 136,
+      "column": 7,
+      "label": "false_positive",
+      "workstream": "P6b"
+    },
+    {
+      "package": "lubridate",
+      "code": "RY002",
+      "path": "R/update.r",
+      "line": 139,
+      "column": 9,
+      "label": "false_positive",
+      "workstream": "P6b"
+    },
+    {
+      "package": "lubridate",
+      "code": "RY002",
+      "path": "R/update.r",
+      "line": 141,
+      "column": 11,
+      "label": "false_positive",
+      "workstream": "P6b"
+    },
+    {
+      "package": "lubridate",
+      "code": "RY032",
+      "path": "R/update.r",
+      "line": 142,
+      "column": 13,
+      "label": "false_positive",
+      "workstream": "P6b"
+    },
+    {
+      "package": "readxl",
+      "code": "RY002",
+      "path": "R/excel-format.R",
+      "line": 102,
+      "column": 7,
+      "label": "false_positive",
+      "workstream": "P6a"
+    },
+    {
+      "package": "googlesheets4",
+      "code": "RY092",
+      "path": "R/sheet_write.R",
+      "line": 83,
+      "column": 20,
+      "label": "false_positive",
+      "workstream": "P8"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY061",
+      "path": "R/data-lahman.R",
+      "line": 82,
+      "column": 13,
+      "label": "false_positive",
+      "workstream": "R2"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY061",
+      "path": "R/data-nycflights13.R",
+      "line": 58,
+      "column": 10,
+      "label": "false_positive",
+      "workstream": "R2"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY090",
+      "path": "tests/testthat/test-query-set-op.R",
+      "line": 7,
+      "column": 37,
+      "label": "false_positive",
+      "workstream": "P7b"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY090",
+      "path": "tests/testthat/test-verb-set-ops.R",
+      "line": 106,
+      "column": 30,
+      "label": "false_positive",
+      "workstream": "P7b"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY090",
+      "path": "tests/testthat/test-verb-set-ops.R",
+      "line": 114,
+      "column": 30,
+      "label": "false_positive",
+      "workstream": "P7b"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY092",
+      "path": "tests/testthat/test-verb-summarise.R",
+      "line": 258,
+      "column": 30,
+      "label": "false_positive",
+      "workstream": "P3f"
+    },
+    {
+      "package": "dtplyr",
+      "code": "RY091",
+      "path": "R/tidyeval.R",
+      "line": 23,
+      "column": 20,
+      "label": "false_positive",
+      "workstream": "R2"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY033",
+      "path": "R/fallback.R",
+      "line": 75,
+      "column": 21,
+      "label": "false_positive",
+      "workstream": "P8"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-across.R",
+      "line": 564,
+      "column": 53,
+      "label": "false_positive",
+      "workstream": "P3a"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-across.R",
+      "line": 568,
+      "column": 53,
+      "label": "false_positive",
+      "workstream": "P3a"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-across.R",
+      "line": 573,
+      "column": 53,
+      "label": "false_positive",
+      "workstream": "P3a"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-across.R",
+      "line": 577,
+      "column": 53,
+      "label": "false_positive",
+      "workstream": "P3a"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-across.R",
+      "line": 586,
+      "column": 56,
+      "label": "false_positive",
+      "workstream": "P3a"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-across.R",
+      "line": 590,
+      "column": 56,
+      "label": "false_positive",
+      "workstream": "P3a"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-across.R",
+      "line": 595,
+      "column": 56,
+      "label": "false_positive",
+      "workstream": "P3a"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-across.R",
+      "line": 599,
+      "column": 56,
+      "label": "false_positive",
+      "workstream": "P3a"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-across.R",
+      "line": 608,
+      "column": 60,
+      "label": "false_positive",
+      "workstream": "P3a"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-across.R",
+      "line": 612,
+      "column": 60,
+      "label": "false_positive",
+      "workstream": "P3a"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-across.R",
+      "line": 617,
+      "column": 60,
+      "label": "false_positive",
+      "workstream": "P3a"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-across.R",
+      "line": 621,
+      "column": 60,
+      "label": "false_positive",
+      "workstream": "P3a"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-across.R",
+      "line": 631,
+      "column": 59,
+      "label": "false_positive",
+      "workstream": "P3a"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-across.R",
+      "line": 636,
+      "column": 59,
+      "label": "false_positive",
+      "workstream": "P3a"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-across.R",
+      "line": 642,
+      "column": 59,
+      "label": "false_positive",
+      "workstream": "P3a"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-across.R",
+      "line": 647,
+      "column": 59,
+      "label": "false_positive",
+      "workstream": "P3a"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY031",
+      "path": "tests/testthat/test-dplyr-across.R",
+      "line": 689,
+      "column": 25,
+      "label": "false_positive",
+      "workstream": "P3a"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY031",
+      "path": "tests/testthat/test-dplyr-across.R",
+      "line": 693,
+      "column": 25,
+      "label": "false_positive",
+      "workstream": "P3a"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY033",
+      "path": "tests/testthat/test-dplyr-across.R",
+      "line": 1186,
+      "column": 37,
+      "label": "false_positive",
+      "workstream": "P3a"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-conditions.R",
+      "line": 13,
+      "column": 29,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-conditions.R",
+      "line": 14,
+      "column": 32,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-conditions.R",
+      "line": 15,
+      "column": 32,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-conditions.R",
+      "line": 16,
+      "column": 56,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-conditions.R",
+      "line": 17,
+      "column": 29,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-conditions.R",
+      "line": 18,
+      "column": 30,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-conditions.R",
+      "line": 19,
+      "column": 29,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-conditions.R",
+      "line": 20,
+      "column": 28,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-conditions.R",
+      "line": 30,
+      "column": 21,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-count-tally.R",
+      "line": 143,
+      "column": 48,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-count-tally.R",
+      "line": 144,
+      "column": 47,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-count-tally.R",
+      "line": 179,
+      "column": 38,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-count-tally.R",
+      "line": 222,
+      "column": 52,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-count-tally.R",
+      "line": 223,
+      "column": 51,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-count-tally.R",
+      "line": 254,
+      "column": 42,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY033",
+      "path": "tests/testthat/test-dplyr-filter.R",
+      "line": 363,
+      "column": 40,
+      "label": "false_positive",
+      "workstream": "P3a"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY060",
+      "path": "tests/testthat/test-dplyr-filter.R",
+      "line": 457,
+      "column": 36,
+      "label": "false_positive",
+      "workstream": "P3c"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY060",
+      "path": "tests/testthat/test-dplyr-filter.R",
+      "line": 462,
+      "column": 37,
+      "label": "false_positive",
+      "workstream": "P3c"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY060",
+      "path": "tests/testthat/test-dplyr-filter.R",
+      "line": 467,
+      "column": 37,
+      "label": "false_positive",
+      "workstream": "P3c"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY060",
+      "path": "tests/testthat/test-dplyr-filter.R",
+      "line": 472,
+      "column": 37,
+      "label": "false_positive",
+      "workstream": "P3c"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY030",
+      "path": "tests/testthat/test-dplyr-filter.R",
+      "line": 753,
+      "column": 45,
+      "label": "false_positive",
+      "workstream": "P3a"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY030",
+      "path": "tests/testthat/test-dplyr-filter.R",
+      "line": 757,
+      "column": 49,
+      "label": "false_positive",
+      "workstream": "P3a"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY030",
+      "path": "tests/testthat/test-dplyr-filter.R",
+      "line": 772,
+      "column": 57,
+      "label": "false_positive",
+      "workstream": "P3a"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY030",
+      "path": "tests/testthat/test-dplyr-filter.R",
+      "line": 781,
+      "column": 61,
+      "label": "false_positive",
+      "workstream": "P3a"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-group-by.R",
+      "line": 647,
+      "column": 62,
+      "label": "false_positive",
+      "workstream": "P3a"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-group-by.R",
+      "line": 649,
+      "column": 38,
+      "label": "false_positive",
+      "workstream": "P3a"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-select.R",
+      "line": 196,
+      "column": 43,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-slice.R",
+      "line": 109,
+      "column": 24,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-dplyr-slice.R",
+      "line": 110,
+      "column": 46,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "duckplyr",
+      "code": "RY010",
+      "path": "tests/testthat/test-fallback.R",
+      "line": 139,
+      "column": 18,
+      "label": "false_positive",
+      "workstream": "P2"
+    },
+    {
+      "package": "glue",
+      "code": "RY040",
+      "path": "tests/testthat/test-glue.R",
+      "line": 595,
+      "column": 20,
+      "label": "false_positive",
+      "workstream": "P7a"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY010",
+      "path": "R/case-match.R",
+      "line": 224,
+      "column": 32,
+      "label": "false_positive",
+      "workstream": "R5",
+      "origin": "hermetic_resolution_gap"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY010",
+      "path": "R/import-standalone-types-check.R",
+      "line": 120,
+      "column": 53,
+      "label": "false_positive",
+      "workstream": "R5",
+      "origin": "hermetic_resolution_gap"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY010",
+      "path": "R/join.R",
+      "line": 677,
+      "column": 23,
+      "label": "false_positive",
+      "workstream": "R5",
+      "origin": "hermetic_resolution_gap"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY010",
+      "path": "R/utils.R",
+      "line": 71,
+      "column": 21,
+      "label": "false_positive",
+      "workstream": "R5",
+      "origin": "hermetic_resolution_gap"
+    },
+    {
+      "package": "purrr",
+      "code": "RY010",
+      "path": "R/compat-types-check.R",
+      "line": 110,
+      "column": 53,
+      "label": "false_positive",
+      "workstream": "R5",
+      "origin": "hermetic_resolution_gap"
+    },
+    {
+      "package": "purrr",
+      "code": "RY010",
+      "path": "R/compat-types-check.R",
+      "line": 256,
+      "column": 24,
+      "label": "false_positive",
+      "workstream": "R5",
+      "origin": "hermetic_resolution_gap"
+    },
+    {
+      "package": "purrr",
+      "code": "RY010",
+      "path": "R/compat-types-check.R",
+      "line": 257,
+      "column": 24,
+      "label": "false_positive",
+      "workstream": "R5",
+      "origin": "hermetic_resolution_gap"
+    },
+    {
+      "package": "purrr",
+      "code": "RY010",
+      "path": "R/list-transpose.R",
+      "line": 83,
+      "column": 35,
+      "label": "false_positive",
+      "workstream": "R5",
+      "origin": "hermetic_resolution_gap"
+    },
+    {
+      "package": "purrr",
+      "code": "RY010",
+      "path": "R/modify-tree.R",
+      "line": 71,
+      "column": 5,
+      "label": "false_positive",
+      "workstream": "R5",
+      "origin": "hermetic_resolution_gap"
+    },
+    {
+      "package": "stringr",
+      "code": "RY010",
+      "path": "R/compat-types-check.R",
+      "line": 105,
+      "column": 53,
+      "label": "false_positive",
+      "workstream": "R5",
+      "origin": "hermetic_resolution_gap"
+    },
+    {
+      "package": "stringr",
+      "code": "RY010",
+      "path": "R/compat-types-check.R",
+      "line": 251,
+      "column": 24,
+      "label": "false_positive",
+      "workstream": "R5",
+      "origin": "hermetic_resolution_gap"
+    },
+    {
+      "package": "stringr",
+      "code": "RY010",
+      "path": "R/compat-types-check.R",
+      "line": 252,
+      "column": 24,
+      "label": "false_positive",
+      "workstream": "R5",
+      "origin": "hermetic_resolution_gap"
+    },
+    {
+      "package": "forcats",
+      "code": "RY010",
+      "path": "R/compat-types-check.R",
+      "line": 110,
+      "column": 53,
+      "label": "false_positive",
+      "workstream": "R5",
+      "origin": "hermetic_resolution_gap"
+    },
+    {
+      "package": "forcats",
+      "code": "RY010",
+      "path": "R/compat-types-check.R",
+      "line": 256,
+      "column": 24,
+      "label": "false_positive",
+      "workstream": "R5",
+      "origin": "hermetic_resolution_gap"
+    },
+    {
+      "package": "forcats",
+      "code": "RY010",
+      "path": "R/compat-types-check.R",
+      "line": 257,
+      "column": 24,
+      "label": "false_positive",
+      "workstream": "R5",
+      "origin": "hermetic_resolution_gap"
+    },
+    {
+      "package": "googledrive",
+      "code": "RY010",
+      "path": "R/promote.R",
+      "line": 37,
+      "column": 19,
+      "label": "false_positive",
+      "workstream": "R5",
+      "origin": "hermetic_resolution_gap"
+    },
+    {
+      "package": "rvest",
+      "code": "RY010",
+      "path": "R/import-standalone-types-check.R",
+      "line": 129,
+      "column": 53,
+      "label": "false_positive",
+      "workstream": "R5",
+      "origin": "hermetic_resolution_gap"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY010",
+      "path": "R/import-standalone-types-check.R",
+      "line": 129,
+      "column": 53,
+      "label": "false_positive",
+      "workstream": "R5",
+      "origin": "hermetic_resolution_gap"
+    }
+  ],
+  "notes": [
+    "Ecosystem reports are generated hermetically with RY_NO_INSTALLED_LIBRARIES=1; the source audit used installed R libraries.",
+    "Findings with origin hermetic_resolution_gap are reviewed diagnostics present only in the hermetic reports and make those reports reconcile exactly with this ledger."
+  ],
+  "ry_commit": "c29fca934ac056bdc8fc6fa54a2c9ab36baf5e13",
+  "source_sha256": "17f2f79040ab797f263a71d9af7a686a3acd8865e44dc5581ae7343e2793f626"
+}

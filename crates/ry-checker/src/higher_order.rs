@@ -1,6 +1,66 @@
 use super::*;
 use crate::infer::*;
 
+fn higher_order_argument_match(params: &[ParamSpec], args: &[Arg]) -> ArgumentMatch {
+    let names = params
+        .iter()
+        .map(|parameter| parameter.name.as_str())
+        .collect::<Vec<_>>();
+    match_arguments(&names, args)
+}
+
+fn matched_argument_index(argument_match: &ArgumentMatch, formal_index: usize) -> Option<usize> {
+    argument_match
+        .param_for_arg
+        .iter()
+        .position(|matched| *matched == Some(formal_index))
+}
+
+fn matched_argument_type<'a>(
+    arg_types: &'a [RType],
+    argument_match: &ArgumentMatch,
+    formal_index: usize,
+) -> Option<&'a RType> {
+    matched_argument_index(argument_match, formal_index).and_then(|index| arg_types.get(index))
+}
+
+fn argument_bound_to_formal<'a>(
+    args: &'a [Arg],
+    argument_match: &ArgumentMatch,
+    formal_index: usize,
+) -> Option<&'a Arg> {
+    matched_argument_index(argument_match, formal_index).and_then(|index| args.get(index))
+}
+
+/// `HigherOrderSpec` argument indices name formal slots, never raw call
+/// positions. Build one ordinary R argument match and use it for callback,
+/// source, length, and template lookup throughout the higher-order path.
+struct HigherOrderCall<'a> {
+    args: &'a [Arg],
+    arg_types: &'a [RType],
+    argument_match: &'a ArgumentMatch,
+}
+
+fn arguments_bound_to_dots<'a>(
+    arg_types: &'a [RType],
+    argument_match: &'a ArgumentMatch,
+) -> impl Iterator<Item = &'a RType> {
+    arg_types
+        .iter()
+        .enumerate()
+        .filter_map(|(index, argument_type)| {
+            // With a `...` formal, every unmatched actual is part of dots.
+            // Preserve actual call order because Map/mapply pass that order
+            // on to the callback.
+            (argument_match.dots.is_some()
+                && argument_match
+                    .param_for_arg
+                    .get(index)
+                    .is_some_and(Option::is_none))
+            .then_some(argument_type)
+        })
+}
+
 impl Checker {
     pub(crate) fn infer_higher_order_call(
         &mut self,
@@ -10,8 +70,15 @@ impl Checker {
         scope: &Scope,
         span: Span,
     ) -> Option<RType> {
-        let spec = self.resolve_typeshed_sig(name)?.higher_order?;
-        Some(self.infer_ho_result(name, &spec, args, arg_types, scope, span))
+        let signature = self.resolve_typeshed_sig(name)?;
+        let spec = signature.higher_order.as_ref()?;
+        let argument_match = higher_order_argument_match(&signature.params, args);
+        let call = HigherOrderCall {
+            args,
+            arg_types,
+            argument_match: &argument_match,
+        };
+        Some(self.infer_ho_result(name, spec, &call, scope, span))
     }
 
     /// Per-builtin result-type computation. Used by both pass 2 (pure,
@@ -19,21 +86,20 @@ impl Checker {
     /// the pass-3 entry point: it calls `self.infer` on data
     /// arguments (which may emit RY010 etc.) before computing the
     /// element type.
-    pub(crate) fn infer_ho_result(
+    fn infer_ho_result(
         &mut self,
         name: &str,
         spec: &HigherOrderSpec,
-        args: &[Arg],
-        arg_types: &[RType],
+        call: &HigherOrderCall<'_>,
         scope: &Scope,
         span: Span,
     ) -> RType {
-        let callback_types = self.higher_order_callback_types(spec, arg_types);
-        let callback = Self::extract_callback(
-            args,
-            &[spec.callback_param.as_str()],
-            spec.callback_position,
-        );
+        let args = call.args;
+        let arg_types = call.arg_types;
+        let argument_match = call.argument_match;
+        let callback_types = self.higher_order_callback_types(spec, arg_types, argument_match);
+        let callback = argument_bound_to_formal(args, argument_match, spec.callback_position)
+            .map(|argument| &argument.value);
         let callback_return = callback
             .and_then(|callback| self.callback_return_type(callback, &callback_types, scope));
         match spec.result.kind {
@@ -41,7 +107,7 @@ impl Checker {
                 let length = spec
                     .result
                     .length_arg
-                    .and_then(|i| arg_types.get(i))
+                    .and_then(|i| matched_argument_type(arg_types, argument_match, i))
                     .map(|ty| ty.length)
                     .unwrap_or(Length::Unknown);
                 let mut result = RType::new(Mode::List, length);
@@ -87,16 +153,19 @@ impl Checker {
                 let length = spec
                     .result
                     .length_arg
-                    .and_then(|i| arg_types.get(i))
+                    .and_then(|i| matched_argument_type(arg_types, argument_match, i))
                     .map(|ty| ty.length)
                     .unwrap_or(Length::One);
                 RType::new(mode, length)
             }
             HigherOrderResultKind::SameAsArg0 => {
-                let mut result = arg_types
-                    .get(spec.result.source_arg.unwrap_or(0))
-                    .cloned()
-                    .unwrap_or_else(RType::unknown);
+                let mut result = matched_argument_type(
+                    arg_types,
+                    argument_match,
+                    spec.result.source_arg.unwrap_or(0),
+                )
+                .cloned()
+                .unwrap_or_else(RType::unknown);
                 if spec.result.unknown_length {
                     result.length = Length::Unknown;
                 }
@@ -104,21 +173,23 @@ impl Checker {
             }
             HigherOrderResultKind::CallbackReturn => {
                 if let Some(index) = spec.result.source_arg {
-                    arg_types
-                        .get(index)
+                    matched_argument_type(arg_types, argument_match, index)
                         .map(RType::element)
                         .unwrap_or_else(RType::unknown)
                 } else {
                     callback_return.unwrap_or_else(RType::unknown)
                 }
             }
-            HigherOrderResultKind::FirstArg => arg_types
-                .get(spec.result.source_arg.unwrap_or(0))
-                .cloned()
-                .unwrap_or_else(RType::unknown),
+            HigherOrderResultKind::FirstArg => matched_argument_type(
+                arg_types,
+                argument_match,
+                spec.result.source_arg.unwrap_or(0),
+            )
+            .cloned()
+            .unwrap_or_else(RType::unknown),
             HigherOrderResultKind::Simplify => {
                 if spec.callback_args == [CallbackArg::Unknown] {
-                    return self.ho_rapply(args, arg_types, scope);
+                    return self.ho_rapply(args, arg_types, argument_match, scope);
                 }
                 match callback_return {
                     Some(ty)
@@ -128,7 +199,7 @@ impl Checker {
                         let length = spec
                             .result
                             .length_arg
-                            .and_then(|i| arg_types.get(i))
+                            .and_then(|i| matched_argument_type(arg_types, argument_match, i))
                             .map(|ty| ty.length)
                             .unwrap_or(Length::Unknown);
                         RType::new(ty.mode, length)
@@ -140,7 +211,7 @@ impl Checker {
                 let template = spec
                     .result
                     .template_position
-                    .and_then(|i| arg_types.get(i))
+                    .and_then(|i| matched_argument_type(arg_types, argument_match, i))
                     .cloned()
                     .unwrap_or_else(RType::unknown);
                 let mode = if matches!(template.mode, Mode::Union) {
@@ -151,7 +222,7 @@ impl Checker {
                 let length = if matches!(template.length, Length::One) {
                     spec.result
                         .length_arg
-                        .and_then(|i| arg_types.get(i))
+                        .and_then(|i| matched_argument_type(arg_types, argument_match, i))
                         .map(|ty| ty.length)
                         .unwrap_or(Length::Unknown)
                 } else {
@@ -159,7 +230,9 @@ impl Checker {
                 };
                 RType::new(mode, length)
             }
-            HigherOrderResultKind::CallbackIdentity => self.ho_callback_identity(spec, args, scope),
+            HigherOrderResultKind::CallbackIdentity => {
+                self.ho_callback_identity(spec, args, argument_match, scope)
+            }
         }
     }
 
@@ -167,58 +240,34 @@ impl Checker {
         &self,
         spec: &HigherOrderSpec,
         arg_types: &[RType],
+        argument_match: &ArgumentMatch,
     ) -> Vec<RType> {
         let mut types = Vec::new();
         for callback_arg in &spec.callback_args {
             match callback_arg {
                 CallbackArg::ElementOfArg0 => types.push(
-                    arg_types
-                        .first()
+                    matched_argument_type(arg_types, argument_match, 0)
                         .map(RType::element)
                         .unwrap_or_else(RType::unknown),
                 ),
                 CallbackArg::ElementOfArg1 => types.push(
-                    arg_types
-                        .get(1)
+                    matched_argument_type(arg_types, argument_match, 1)
                         .map(RType::element)
                         .unwrap_or_else(RType::unknown),
                 ),
                 CallbackArg::Unknown => types.push(RType::unknown()),
                 CallbackArg::AccumulatorAndElement => {
                     let data_index = if spec.callback_position == 0 { 1 } else { 0 };
-                    let element = arg_types
-                        .get(data_index)
+                    let element = matched_argument_type(arg_types, argument_match, data_index)
                         .map(RType::element)
                         .unwrap_or_else(RType::unknown);
                     types.extend([element.clone(), element]);
                 }
-                CallbackArg::ElementsAfterCallback => types.extend(
-                    arg_types
-                        .iter()
-                        .skip(spec.callback_position + 1)
-                        .map(RType::element),
-                ),
+                CallbackArg::ElementsAfterCallback => types
+                    .extend(arguments_bound_to_dots(arg_types, argument_match).map(RType::element)),
             }
         }
         types
-    }
-
-    /// Extract the callback expression from an argument list by name
-    /// (`FUN`, `f`) or by positional index. Returns `None` when no
-    /// callback argument is present.
-    pub(crate) fn extract_callback<'a>(
-        args: &'a [Arg],
-        names: &[&str],
-        positional_idx: usize,
-    ) -> Option<&'a Expr> {
-        for a in args {
-            if let Some(n) = a.name.as_deref() {
-                if names.contains(&n) {
-                    return Some(&a.value);
-                }
-            }
-        }
-        args.get(positional_idx).map(|a| &a.value)
     }
 
     /// If `expr` is a `purrr::in_parallel(.f)` / `in_parallel(.f)` call
@@ -254,14 +303,11 @@ impl Checker {
         &mut self,
         spec: &HigherOrderSpec,
         args: &[Arg],
+        argument_match: &ArgumentMatch,
         scope: &Scope,
     ) -> RType {
-        let cb = match Self::extract_callback(
-            args,
-            &[spec.callback_param.as_str()],
-            spec.callback_position,
-        ) {
-            Some(c) => c,
+        let cb = match argument_bound_to_formal(args, argument_match, spec.callback_position) {
+            Some(argument) => &argument.value,
             None => return RType::unknown(),
         };
         match cb {
@@ -285,9 +331,18 @@ impl Checker {
     /// `rapply(L, f, ...)`: recursively applies `f` to each leaf of
     /// list `L`. The result is a list of the same shape. We model only
     /// the top-level shape: result is a list with L's length.
-    pub(crate) fn ho_rapply(&mut self, args: &[Arg], arg_types: &[RType], scope: &Scope) -> RType {
-        let l_type = arg_types.first().cloned().unwrap_or(RType::unknown());
-        let callback_return = Self::extract_callback(args, &["f", "FUN"], 1)
+    pub(crate) fn ho_rapply(
+        &mut self,
+        args: &[Arg],
+        arg_types: &[RType],
+        argument_match: &ArgumentMatch,
+        scope: &Scope,
+    ) -> RType {
+        let l_type = matched_argument_type(arg_types, argument_match, 0)
+            .cloned()
+            .unwrap_or_else(RType::unknown);
+        let callback_return = argument_bound_to_formal(args, argument_match, 1)
+            .map(|argument| &argument.value)
             .and_then(|cb| self.callback_return_type(cb, &[RType::unknown()], scope));
         let how = args
             .iter()
@@ -479,13 +534,14 @@ impl Checker {
         if matches!(spec.result.kind, HigherOrderResultKind::CallbackIdentity) {
             return;
         }
-        let elem_types = self.higher_order_callback_types(&spec, arg_types);
-        let cb = match Self::extract_callback(
-            args,
-            &[spec.callback_param.as_str()],
-            spec.callback_position,
-        ) {
-            Some(c) => c,
+        let signature = match self.resolve_typeshed_sig(name) {
+            Some(signature) => signature,
+            None => return,
+        };
+        let argument_match = higher_order_argument_match(&signature.params, args);
+        let elem_types = self.higher_order_callback_types(&spec, arg_types, &argument_match);
+        let cb = match argument_bound_to_formal(args, &argument_match, spec.callback_position) {
+            Some(argument) => &argument.value,
             None => return,
         };
         // Look through a `purrr::in_parallel(.f)` wrapper so the inner

@@ -6,6 +6,7 @@ ecosystem_dir="$root/ecosystem"
 cache_dir="$ecosystem_dir/.cache"
 reports_dir="$ecosystem_dir/reports"
 packages_file="$ecosystem_dir/packages.txt"
+audit_corpus="$root/docs/corpus/tidyverse-0.7.1.json"
 check=false
 local_only=false
 
@@ -14,7 +15,7 @@ usage() {
 Usage: ecosystem/run.sh [--check] [--local]
 
   --check  Compare generated reports with committed snapshots.
-  --local  Check only locally vendored sources (currently glue); do not clone.
+  --local  Check only the locally vendored glue R/ sources; do not clone.
 EOF
 }
 
@@ -50,36 +51,13 @@ if [[ ! -x "$binary" ]]; then
   cargo build --release --locked -p ry-cli --bin ry --manifest-path "$root/Cargo.toml"
 fi
 
-processed_packages=()
-while IFS=$'\t' read -r name url pinned_ref; do
-  [[ -z "${name:-}" || "$name" == \#* ]] && continue
+write_report() {
+  local json="$1"
+  local package_dir="$2"
+  local stable_path="$3"
+  local full_path="$4"
 
-  if $local_only; then
-    if [[ "$name" != "glue" ]]; then
-      continue
-    fi
-    package_dir="$root/crates/ry-checker/testdata/vendor/glue"
-  else
-    package_dir="$cache_dir/$name"
-    if [[ ! -d "$package_dir/.git" ]]; then
-      echo "ecosystem: cloning $name at $pinned_ref"
-      git clone --depth 1 --branch "$pinned_ref" "$url" "$package_dir"
-    else
-      echo "ecosystem: refreshing $name at $pinned_ref"
-      git -C "$package_dir" fetch --depth 1 origin "$pinned_ref"
-      git -C "$package_dir" checkout --detach FETCH_HEAD
-    fi
-  fi
-
-  if [[ ! -d "$package_dir/R" ]]; then
-    echo "ecosystem: $name has no R/ directory at $pinned_ref" >&2
-    exit 1
-  fi
-
-  echo "ecosystem: checking $name"
-  json="$work_dir/$name.json"
-  "$binary" check --output-format json --exit-zero "$package_dir/R" > "$json"
-  Rscript - "$json" "$package_dir" "$generated_dir/$name.txt" "$generated_dir/$name.full.txt" <<'RS'
+  Rscript - "$json" "$package_dir" "$stable_path" "$full_path" <<'RS'
 args <- commandArgs(trailingOnly = TRUE)
 json_path <- args[[1]]
 package_dir <- normalizePath(args[[2]], winslash = "/", mustWork = TRUE)
@@ -99,7 +77,7 @@ for (diagnostic in diagnostics) {
   relative <- if (startsWith(absolute, prefix_dir)) {
     substring(absolute, nchar(prefix_dir) + 1L)
   } else {
-    path
+    sub("^\\./", "", path)
   }
   prefix <- sprintf("%s:%s:%s %s", relative, diagnostic$line, diagnostic$column, diagnostic$code)
   stable <- c(stable, prefix)
@@ -117,6 +95,59 @@ write_sorted <- function(lines, path) {
 write_sorted(stable, stable_path)
 write_sorted(full, full_path)
 RS
+}
+
+run_suite() {
+  local name="$1"
+  local package_dir="$2"
+  local target="$3"
+  local report_stem="$4"
+  local suite_label="$5"
+  local json="$work_dir/$report_stem.json"
+
+  echo "ecosystem: checking $name ($suite_label)"
+  "$binary" check --output-format json --exit-zero "$target" > "$json"
+  write_report \
+    "$json" \
+    "$package_dir" \
+    "$generated_dir/$report_stem.txt" \
+    "$generated_dir/$report_stem.full.txt"
+  processed_reports+=("$report_stem")
+}
+
+processed_packages=()
+processed_reports=()
+root_packages=()
+while IFS=$'\t' read -r name url pinned_ref; do
+  [[ -z "${name:-}" || "$name" == \#* ]] && continue
+
+  if $local_only; then
+    if [[ "$name" != "glue" ]]; then
+      continue
+    fi
+    package_dir="$root/crates/ry-checker/testdata/vendor/glue"
+  else
+    package_dir="$cache_dir/$name"
+    if [[ ! -d "$package_dir/.git" ]]; then
+      echo "ecosystem: cloning $name"
+      git clone --filter=blob:none --no-checkout "$url" "$package_dir"
+    fi
+    echo "ecosystem: refreshing $name at $pinned_ref"
+    git -C "$package_dir" fetch --depth 1 origin "$pinned_ref"
+    git -C "$package_dir" checkout --detach --force FETCH_HEAD
+    git -C "$package_dir" clean -fdx
+  fi
+
+  if [[ ! -d "$package_dir/R" ]]; then
+    echo "ecosystem: $name has no R/ directory at $pinned_ref" >&2
+    exit 1
+  fi
+
+  run_suite "$name" "$package_dir" "$package_dir/R" "$name" "R/"
+  if ! $local_only; then
+    run_suite "$name" "$package_dir" "$package_dir" "$name.root" "package root"
+    root_packages+=("$name")
+  fi
   processed_packages+=("$name")
 done < "$packages_file"
 
@@ -125,21 +156,26 @@ if ((${#processed_packages[@]} == 0)); then
   exit 1
 fi
 
-summary_input="$work_dir/summary-input"
-mkdir -p "$summary_input"
-if compgen -G "$reports_dir/*.txt" >/dev/null; then
-  cp "$reports_dir"/*.txt "$summary_input/"
-fi
-for name in "${processed_packages[@]}"; do
-  cp "$generated_dir/$name.txt" "$summary_input/$name.txt"
-done
-rm -f "$summary_input/SUMMARY.md"
+generate_summary() {
+  local suffix="$1"
+  local output_name="$2"
+  local scope_description="$3"
+  local summary_input="$work_dir/summary-input-${output_name//[^A-Za-z0-9]/-}"
+  mkdir -p "$summary_input"
+  if compgen -G "$reports_dir/*.txt" >/dev/null; then
+    cp "$reports_dir"/*.txt "$summary_input/"
+  fi
+  for report_stem in "${processed_reports[@]}"; do
+    cp "$generated_dir/$report_stem.txt" "$summary_input/$report_stem.txt"
+  done
 
-Rscript - "$packages_file" "$summary_input" "$generated_dir/SUMMARY.md" <<'RS'
+  Rscript - "$packages_file" "$summary_input" "$generated_dir/$output_name" "$suffix" "$scope_description" <<'RS'
 args <- commandArgs(trailingOnly = TRUE)
 packages_file <- args[[1]]
 reports_dir <- args[[2]]
 output_path <- args[[3]]
+suffix <- args[[4]]
+scope_description <- args[[5]]
 
 raw <- readLines(packages_file, encoding = "UTF-8", warn = FALSE)
 raw <- raw[nzchar(raw) & !startsWith(raw, "#")]
@@ -147,7 +183,7 @@ package_order <- vapply(strsplit(raw, "\t", fixed = TRUE), `[[`, character(1), 1
 
 counts <- list()
 for (package in package_order) {
-  report <- file.path(reports_dir, paste0(package, ".txt"))
+  report <- file.path(reports_dir, paste0(package, suffix, ".txt"))
   if (!file.exists(report)) next
   entries <- readLines(report, encoding = "UTF-8", warn = FALSE)
   entries <- entries[nzchar(entries)]
@@ -159,6 +195,8 @@ all_codes <- sort(unique(unlist(lapply(counts, names), use.names = FALSE)), meth
 packages <- names(counts)
 lines <- c(
   "# Ecosystem diagnostic summary",
+  "",
+  scope_description,
   "",
   "Counts are generated from the committed message-free reports.",
   "",
@@ -181,23 +219,125 @@ handle <- file(output_path, open = "wb")
 writeLines(lines, handle, sep = "\n", useBytes = TRUE)
 close(handle)
 RS
+}
+
+generate_summary "" "SUMMARY.md" \
+  "Production-source suite: each package's \`R/\` directory only."
+if ! $local_only; then
+  generate_summary ".root" "SUMMARY.root.md" \
+    "Package-root suite: production, tests, and other checked R sources."
+fi
+
+# The reviewed ledger pins every diagnostic identity in the audited packages'
+# hermetic root reports rather than an aggregate count, so removing one finding
+# cannot be mistaken for removing another. It contains the original audit
+# identities plus reviewed findings caused by disabling installed-library
+# resolution. Exact reconciliation prevents either class from becoming an
+# unowned snapshot baseline. Findings labelled `true_positive` are also
+# checked explicitly for a focused failure.
+if ! $local_only; then
+  [[ -f "$audit_corpus" ]] || {
+    echo "ecosystem: audit corpus not found: $audit_corpus" >&2
+    exit 1
+  }
+  Rscript - "$audit_corpus" "$generated_dir" "${root_packages[@]}" <<'RS'
+args <- commandArgs(trailingOnly = TRUE)
+corpus_path <- args[[1]]
+reports_dir <- args[[2]]
+processed <- args[-c(1, 2)]
+corpus <- jsonlite::fromJSON(corpus_path, simplifyDataFrame = TRUE)
+audited <- intersect(processed, corpus$packages$name)
+
+identity <- function(package, code, path, line, column) {
+  sprintf("%s\t%s\t%s\t%s\t%s", package, code, sub("^\\./", "", path), line, column)
+}
+expected_rows <- corpus$findings[corpus$findings$package %in% audited, , drop = FALSE]
+expected <- identity(
+  expected_rows$package,
+  expected_rows$code,
+  expected_rows$path,
+  expected_rows$line,
+  expected_rows$column
+)
+
+actual <- character(0)
+for (package in audited) {
+  report <- file.path(reports_dir, paste0(package, ".root.txt"))
+  lines <- readLines(report, encoding = "UTF-8", warn = FALSE)
+  lines <- lines[nzchar(lines)]
+  for (entry in lines) {
+    fields <- regmatches(entry, regexec("^(.*):([0-9]+):([0-9]+) (RY[0-9]+)$", entry))[[1]]
+    if (length(fields) != 5L) stop("malformed ecosystem report entry: ", entry)
+    actual <- c(actual, identity(package, fields[[5]], fields[[2]], fields[[3]], fields[[4]]))
+  }
+}
+
+multiset_delta <- function(left, right) {
+  left_counts <- table(left)
+  right_counts <- table(right)
+  keys <- union(names(left_counts), names(right_counts))
+  left_values <- left_counts[keys]
+  right_values <- right_counts[keys]
+  left_values[is.na(left_values)] <- 0L
+  right_values[is.na(right_values)] <- 0L
+  rep(keys, pmax(as.integer(left_values - right_values), 0L))
+}
+missing <- multiset_delta(expected, actual)
+unowned <- multiset_delta(actual, expected)
+required_rows <- expected_rows[
+  expected_rows$label == "true_positive" & expected_rows$package %in% audited,
+  ,
+  drop = FALSE
+]
+required <- identity(
+  required_rows$package,
+  required_rows$code,
+  required_rows$path,
+  required_rows$line,
+  required_rows$column
+)
+missing_required <- multiset_delta(required, actual)
+
+if (length(missing_required)) {
+  writeLines(c("ecosystem: required reviewed findings disappeared:", paste0("  - ", missing_required)), stderr())
+}
+other_missing <- multiset_delta(missing, missing_required)
+if (length(other_missing)) {
+  writeLines(c("ecosystem: reviewed audit findings disappeared:", paste0("  - ", other_missing)), stderr())
+}
+if (length(unowned)) {
+  writeLines(c("ecosystem: unowned hermetic findings appeared:", paste0("  - ", unowned)), stderr())
+}
+if (length(missing) || length(unowned)) {
+  writeLines("ecosystem: update docs/corpus/tidyverse-0.7.1.json with the reviewed workstream delta", stderr())
+  quit(status = 1L)
+}
+RS
+fi
+
+summary_names=("SUMMARY.md")
+if ! $local_only; then
+  summary_names+=("SUMMARY.root.md")
+fi
 
 if ! $check; then
-  for name in "${processed_packages[@]}"; do
-    cp "$generated_dir/$name.txt" "$reports_dir/$name.txt"
-    cp "$generated_dir/$name.full.txt" "$reports_dir/$name.full.txt"
+  for report_stem in "${processed_reports[@]}"; do
+    cp "$generated_dir/$report_stem.txt" "$reports_dir/$report_stem.txt"
+    cp "$generated_dir/$report_stem.full.txt" "$reports_dir/$report_stem.full.txt"
   done
-  cp "$generated_dir/SUMMARY.md" "$reports_dir/SUMMARY.md"
+  for summary_name in "${summary_names[@]}"; do
+    cp "$generated_dir/$summary_name" "$reports_dir/$summary_name"
+  done
   echo "ecosystem: updated reports for ${processed_packages[*]}"
   exit 0
 fi
 
 drift=0
-for name in "${processed_packages[@]}"; do
-  expected="$reports_dir/$name.txt"
-  actual="$generated_dir/$name.txt"
+for report_stem in "${processed_reports[@]}"; do
+  expected="$reports_dir/$report_stem.txt"
+  actual="$generated_dir/$report_stem.txt"
   if [[ ! -f "$expected" ]] || ! cmp -s "$expected" "$actual"; then
-    echo "ecosystem: report drift for $name" >&2
+    echo "ecosystem: report drift for $report_stem" >&2
     if [[ -f "$expected" ]]; then
       diff -u "$expected" "$actual" || true
     else
@@ -206,15 +346,19 @@ for name in "${processed_packages[@]}"; do
     drift=1
   fi
 done
-if [[ ! -f "$reports_dir/SUMMARY.md" ]] || ! cmp -s "$reports_dir/SUMMARY.md" "$generated_dir/SUMMARY.md"; then
-  echo "ecosystem: report drift for SUMMARY.md" >&2
-  if [[ -f "$reports_dir/SUMMARY.md" ]]; then
-    diff -u "$reports_dir/SUMMARY.md" "$generated_dir/SUMMARY.md" || true
-  else
-    diff -u /dev/null "$generated_dir/SUMMARY.md" || true
+for summary_name in "${summary_names[@]}"; do
+  expected="$reports_dir/$summary_name"
+  actual="$generated_dir/$summary_name"
+  if [[ ! -f "$expected" ]] || ! cmp -s "$expected" "$actual"; then
+    echo "ecosystem: report drift for $summary_name" >&2
+    if [[ -f "$expected" ]]; then
+      diff -u "$expected" "$actual" || true
+    else
+      diff -u /dev/null "$actual" || true
+    fi
+    drift=1
   fi
-  drift=1
-fi
+done
 
 if ((drift)); then
   echo "ecosystem: regenerate reports with ecosystem/run.sh and commit them" >&2

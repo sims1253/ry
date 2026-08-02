@@ -1,0 +1,9 @@
+R/bin.R:101:14 RY001
+R/geom-boxplot.R:164:19 RY061
+R/geom-boxplot.R:166:7 RY061
+R/margins.R:136:15 RY070
+tests/testthat/test-axis-secondary.R:36:23 RY100
+tests/testthat/test-axis-secondary.R:37:23 RY100
+tests/testthat/test-axis-secondary.R:56:23 RY100
+tests/testthat/test-axis-secondary.R:57:23 RY100
+tests/testthat/test-geom-curve.R:17:8 RY040

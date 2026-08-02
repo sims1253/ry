@@ -1,0 +1,3 @@
+R/data-lahman.R:82:13 RY061
+R/data-nycflights13.R:58:10 RY061
+R/import-standalone-types-check.R:129:53 RY010

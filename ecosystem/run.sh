@@ -120,6 +120,10 @@ processed_reports=()
 root_packages=()
 while IFS=$'\t' read -r name url pinned_ref; do
   [[ -z "${name:-}" || "$name" == \#* ]] && continue
+  if [[ -z "${url:-}" || -z "${pinned_ref:-}" ]]; then
+    echo "ecosystem: manifest entry for '$name' needs a URL and a pinned ref" >&2
+    exit 1
+  fi
 
   if $local_only; then
     if [[ "$name" != "glue" ]]; then
@@ -130,7 +134,11 @@ while IFS=$'\t' read -r name url pinned_ref; do
     package_dir="$cache_dir/$name"
     if [[ ! -d "$package_dir/.git" ]]; then
       echo "ecosystem: cloning $name"
-      git clone --filter=blob:none --no-checkout "$url" "$package_dir"
+      rm -rf "$package_dir"
+      if ! git clone --filter=blob:none --no-checkout "$url" "$package_dir"; then
+        rm -rf "$package_dir"
+        exit 1
+      fi
     fi
     echo "ecosystem: refreshing $name at $pinned_ref"
     git -C "$package_dir" fetch --depth 1 origin "$pinned_ref"
@@ -285,7 +293,7 @@ multiset_delta <- function(left, right) {
 missing <- multiset_delta(expected, actual)
 unowned <- multiset_delta(actual, expected)
 required_rows <- expected_rows[
-  expected_rows$label == "true_positive" & expected_rows$package %in% audited,
+  which(expected_rows$label == "true_positive"),
   ,
   drop = FALSE
 ]

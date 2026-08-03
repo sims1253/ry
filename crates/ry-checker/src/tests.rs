@@ -6242,10 +6242,10 @@ fn if_branch_join_type_is_union_when_branches_disagree() {
 #[test]
 fn if_branch_reassignment_over_existing_type_stays_visible() {
     // `s <- 1L` then reassigned to `"x"` inside a single branch (no
-    // else). The plan specifies single-branch bindings degrade to
-    // unknown (opaque), since there is no sound type for "possibly
-    // missing". What matters is that the use after the `if` stays
-    // RY010-free; the merged type is opaque by design.
+    // else). `s` is definitely bound on every path (it exists in the
+    // parent), so the merged type is the union of the branch's
+    // character and the parent's integer -- NOT opaque. That keeps the
+    // use after the `if` RY010-free while preserving the precise type.
     let (diags, top) = check_with_scope("s <- 1L\nif (TRUE) { s <- \"x\" }\ns\n");
     assert!(
         diags.iter().all(|d| d.code != "RY010"),
@@ -6254,8 +6254,8 @@ fn if_branch_reassignment_over_existing_type_stays_visible() {
     );
     let t = top.get("s").expect("s should be bound at top level");
     assert!(
-        matches!(t.mode, Mode::Opaque),
-        "single-branch reassignment degrades to unknown (opaque) per plan, got {:?}",
+        matches!(t.mode, Mode::Union),
+        "parent-defined single-branch reassignment should be a union of parent and branch types, got {:?}",
         t
     );
 }

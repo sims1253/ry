@@ -6158,7 +6158,7 @@
       ],
       "return": {
         "mode": "arg0",
-        "length": "x_times",
+        "length": "unknown",
         "na": true
       }
     },

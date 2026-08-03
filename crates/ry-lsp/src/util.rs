@@ -26,11 +26,16 @@ pub(crate) fn byte_offset_to_position(text: &str, byte_offset: usize) -> Positio
         if b >= byte_offset {
             break;
         }
-        if ch == '\n' {
-            line += 1;
-            col = 0;
-        } else {
-            col += utf16_len(ch) as u32;
+        match ch {
+            '\r' if text.as_bytes().get(b + 1) == Some(&b'\n') => {
+                // The `\r` of a CRLF line terminator is not a column
+                // character; the following `\n` handles the line break.
+            }
+            '\n' => {
+                line += 1;
+                col = 0;
+            }
+            _ => col += utf16_len(ch) as u32,
         }
     }
     Position {
@@ -55,11 +60,16 @@ pub(crate) fn position_to_byte_offset(text: &str, line: u32, utf16_col: u32) -> 
         if cur_line == line && cur_col >= utf16_col {
             return Some(b);
         }
-        if ch == '\n' {
-            cur_line += 1;
-            cur_col = 0;
-        } else {
-            cur_col += utf16_len(ch) as u32;
+        match ch {
+            '\r' if text.as_bytes().get(b + 1) == Some(&b'\n') => {
+                // CRLF: the `\r` is part of the line terminator, not a
+                // column character; only the `\n` resets the column.
+            }
+            '\n' => {
+                cur_line += 1;
+                cur_col = 0;
+            }
+            _ => cur_col += utf16_len(ch) as u32,
         }
     }
     if cur_line == line && cur_col >= utf16_col {
@@ -70,9 +80,12 @@ pub(crate) fn position_to_byte_offset(text: &str, line: u32, utf16_col: u32) -> 
 }
 
 /// Map an LSP `Position` to a byte offset. Wrapper over the line/col
-/// variant for callers that hold a `Position`.
-pub(crate) fn position_to_byte_offset_pos(text: &str, position: Position) -> usize {
-    position_to_byte_offset(text, position.line, position.character).unwrap_or(text.len())
+/// variant for callers that hold a `Position`. Returns `None` when the
+/// position does not fall inside the text (line past the end of the
+/// file, or a column past the end of its line), so callers can report
+/// "no result" instead of silently resolving against the last byte.
+pub(crate) fn position_to_byte_offset_pos(text: &str, position: Position) -> Option<usize> {
+    position_to_byte_offset(text, position.line, position.character)
 }
 
 /// Convert a ry `Span` (byte offsets) to an LSP `Range` (UTF-16

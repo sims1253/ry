@@ -813,6 +813,23 @@ pub(crate) fn collect_forwarded_calls_in_expr(
     }
 }
 
+const DEFUSING_CALLS: [&str; 14] = [
+    "expression",
+    "quote",
+    "substitute",
+    "bquote",
+    "alist",
+    "expr",
+    "exprs",
+    "quo",
+    "quos",
+    "enexpr",
+    "enquo",
+    "ensym",
+    "enquos",
+    "ensyms",
+];
+
 impl Checker {
     /// Diagnose the narrow, provable lazy-default ordering bug where a
     /// parameter is used by an earlier top-level statement than the direct
@@ -824,25 +841,8 @@ impl Checker {
         assigned: &HashSet<String>,
     ) {
         let formals: HashSet<&str> = params.iter().map(|param| param.name.as_str()).collect();
-        let mut trusted_defusers: HashSet<String> = [
-            "expression",
-            "quote",
-            "substitute",
-            "bquote",
-            "alist",
-            "expr",
-            "exprs",
-            "quo",
-            "quos",
-            "enexpr",
-            "enquo",
-            "ensym",
-            "enquos",
-            "ensyms",
-        ]
-        .into_iter()
-        .map(str::to_string)
-        .collect();
+        let mut trusted_defusers: HashSet<String> =
+            DEFUSING_CALLS.into_iter().map(str::to_string).collect();
         for (name, function) in &self.fn_table.fns {
             if function
                 .params
@@ -1060,23 +1060,7 @@ fn first_executed_identifier_in_stmt(
 
 fn is_defusing_call(name: &str) -> bool {
     let name = name.rsplit_once("::").map(|(_, bare)| bare).unwrap_or(name);
-    matches!(
-        name,
-        "expression"
-            | "quote"
-            | "substitute"
-            | "bquote"
-            | "alist"
-            | "expr"
-            | "exprs"
-            | "quo"
-            | "quos"
-            | "enexpr"
-            | "enquo"
-            | "ensym"
-            | "enquos"
-            | "ensyms"
-    )
+    DEFUSING_CALLS.contains(&name)
 }
 
 fn first_executed_identifier(
@@ -1722,29 +1706,6 @@ pub(crate) fn longest_arg_length(arg_types: &[RType]) -> Length {
         };
     }
     max
-}
-
-/// Compute the result length of `rep(x, times)`. `x` is arg0, `times`
-/// is arg1. R's `rep(x, times)` returns `x` repeated `times` times; the
-/// total length is `length(x) * times`. We can only compute this when
-/// both lengths are known and `times` is a single integer.
-pub(crate) fn rep_length(arg_types: &[RType]) -> Length {
-    let x_len = arg_types
-        .first()
-        .map(|t| t.length)
-        .unwrap_or(Length::Unknown);
-    let times_type = arg_types.get(1).cloned().unwrap_or(RType::unknown());
-    match (x_len, times_type.length) {
-        (Length::Known(x), Length::One) => {
-            // We know the structure but not the runtime `times` value;
-            // approximate as Unknown unless `times` is a length-1 value
-            // (which it is). R's `rep(x, 3)` gives `length(x) * 3`, but
-            // we can't know the value `3` statically. Return Unknown.
-            let _ = x;
-            Length::Unknown
-        }
-        _ => Length::Unknown,
-    }
 }
 
 /// Build a `ColumnSchema` from a `list(...)` / `data.frame(...)` argument

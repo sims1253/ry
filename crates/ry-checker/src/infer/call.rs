@@ -1012,7 +1012,7 @@ impl Checker {
         // we can pin the result length exactly. We place this AFTER the
         // FnTable lookup so a user-defined `rep`/`seq` still wins, and
         // BEFORE the typeshed so the precise length is preferred over
-        // the conservative `x_times` / `unknown` spec.
+        // the conservative `unknown` spec.
         if lookup_name == "vector" {
             return self.infer_vector(args);
         }

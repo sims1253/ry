@@ -325,6 +325,10 @@ fn collect_r_source_files(directory: &Path, paths: &mut Vec<PathBuf>) {
         return;
     };
     for entry in entries.flatten() {
+        // Skip symlinks to prevent infinite recursion through symlink loops.
+        if entry.file_type().map(|ft| ft.is_symlink()).unwrap_or(false) {
+            continue;
+        }
         let path = entry.path();
         if path.is_dir() {
             collect_r_source_files(&path, paths);

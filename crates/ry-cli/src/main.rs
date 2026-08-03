@@ -527,16 +527,6 @@ fn render_diagnostics(
     srcs: &HashMap<String, String>,
     color: bool,
 ) -> String {
-    if matches!(format, ry_checker::format::OutputFormat::Json) {
-        let rendered = ry_checker::format::render_with_color(diagnostics, format, srcs, color);
-        let Ok(mut values) = serde_json::from_str::<Vec<serde_json::Value>>(&rendered) else {
-            return rendered;
-        };
-        for (value, diagnostic) in values.iter_mut().zip(diagnostics) {
-            value["confidence"] = serde_json::json!(diagnostic.confidence.as_str());
-        }
-        return serde_json::to_string_pretty(&values).unwrap_or(rendered);
-    }
     if matches!(
         format,
         ry_checker::format::OutputFormat::Full | ry_checker::format::OutputFormat::Concise
@@ -1073,7 +1063,8 @@ fn run_check_once(
     // mistaken for a suppression directive.
     for (path, diags) in &mut per_file_diagnostics {
         if let Some(cs) = comments.get(path) {
-            *diags = ry_checker::filter_suppressed_with_comments(std::mem::take(diags), cs);
+            let src = srcs.get(path).map(String::as_str).unwrap_or("");
+            *diags = ry_checker::filter_suppressed_with_comments(std::mem::take(diags), cs, src);
         }
     }
 
@@ -1343,6 +1334,10 @@ fn collect_r_files_recursive(
         return;
     };
     for entry in entries.flatten() {
+        // Skip symlinks to prevent infinite recursion through symlink loops.
+        if entry.file_type().map(|ft| ft.is_symlink()).unwrap_or(false) {
+            continue;
+        }
         let p = entry.path();
         if package_root
             .as_deref()
@@ -1404,11 +1399,14 @@ fn rbuildignore_pattern(regex: &str) -> Option<glob::Pattern> {
     }
     let anchored_start = regex.starts_with('^');
     let anchored_end = regex.ends_with('$') && !regex.ends_with("\\$");
-    let body = regex
-        .strip_prefix('^')
-        .unwrap_or(regex)
-        .strip_suffix('$')
-        .unwrap_or_else(|| regex.strip_prefix('^').unwrap_or(regex));
+    let body = regex.strip_prefix('^').unwrap_or(regex);
+    // Only strip the trailing `$` when it is a genuine anchor, not an
+    // escaped `\$` (which must survive as a literal in the glob body).
+    let body = if anchored_end {
+        body.strip_suffix('$').unwrap_or(body)
+    } else {
+        body
+    };
     let mut glob = String::new();
     if !anchored_start {
         glob.push('*');

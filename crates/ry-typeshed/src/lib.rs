@@ -212,7 +212,6 @@ pub enum JsonLength {
     NArgs,
     Test,
     Unknown,
-    XTimes,
 }
 
 impl JsonLength {
@@ -225,7 +224,6 @@ impl JsonLength {
             "n_args" => Self::NArgs,
             "test" => Self::Test,
             "unknown" => Self::Unknown,
-            "x_times" => Self::XTimes,
             value => {
                 const KNOWN: &[usize] = &[
                     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 15, 19, 20, 21, 24, 26, 30, 31, 32, 35,

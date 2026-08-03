@@ -21,28 +21,29 @@ use crate::util::byte_offset_to_position;
 
 /// Find every definition site of `name` in `file`, returning each as an
 /// LSP `Location` inside `uri`.
-pub(super) fn find_definition_locations(file: &SourceFile, name: &str, uri: &Url) -> Vec<Location> {
+pub(super) fn find_definition_locations(
+    file: &SourceFile,
+    name: &str,
+    uri: &Url,
+    text: &str,
+) -> Vec<Location> {
     let mut spans: Vec<Span> = Vec::new();
     for stmt in &file.stmts {
         find_def_spans_in_stmt(stmt, name, &mut spans);
     }
     spans
         .into_iter()
-        .map(|sp| span_to_location(sp, name, uri))
+        .map(|sp| span_to_location(sp, name, uri, text))
         .collect()
 }
 
 /// Convert a definition-site `Span` into an LSP `Location`. The range
-/// highlights the identifier itself (col .. col + name.len()).
-fn span_to_location(span: Span, name: &str, uri: &Url) -> Location {
-    let start = Position {
-        line: span.line as u32,
-        character: span.col as u32,
-    };
-    let end = Position {
-        line: span.line as u32,
-        character: span.col as u32 + name.len() as u32,
-    };
+/// highlights the identifier itself (start .. start + name.len()).
+/// Columns are UTF-16 code units, converted from the span's byte
+/// offsets against the source text.
+fn span_to_location(span: Span, name: &str, uri: &Url, text: &str) -> Location {
+    let start = byte_offset_to_position(text, span.start);
+    let end = byte_offset_to_position(text, span.start + name.len());
     Location {
         uri: uri.clone(),
         range: Range { start, end },
@@ -87,11 +88,11 @@ fn find_def_spans_in_stmt(stmt: &Stmt, name: &str, out: &mut Vec<Span>) {
         Stmt::For {
             name: loop_var,
             body,
-            span,
+            name_span,
             ..
         } => {
             if loop_var == name {
-                out.push(*span);
+                out.push(*name_span);
             }
             for s in body {
                 find_def_spans_in_stmt(s, name, out);
@@ -237,10 +238,11 @@ fn find_ref_spans_in_stmt(stmt: &Stmt, name: &str, out: &mut Vec<Span>, include_
             name: loop_var,
             iter,
             body,
-            span,
+            name_span,
+            ..
         } => {
             if include_declaration && loop_var == name {
-                out.push(*span);
+                out.push(*name_span);
             }
             find_ref_spans_in_expr(iter, name, out, include_declaration);
             for s in body {
@@ -381,10 +383,11 @@ fn collect_highlight_entries_from_stmt(
             name: loop_var,
             iter,
             body,
-            span,
+            name_span,
+            ..
         } => {
             if loop_var == name {
-                out.push((*span, DocumentHighlightKind::WRITE));
+                out.push((*name_span, DocumentHighlightKind::WRITE));
             }
             collect_highlight_entries_from_expr(iter, name, out);
             for s in body {

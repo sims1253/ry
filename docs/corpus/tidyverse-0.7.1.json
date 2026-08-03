@@ -1005,7 +1005,7 @@
   ],
   "notes": [
     "Ecosystem reports are generated hermetically with RY_NO_INSTALLED_LIBRARIES=1; the source audit used installed R libraries.",
-    "Findings with origin hermetic_resolution_gap are reviewed diagnostics present only in the hermetic reports and make those reports reconcile exactly with this ledger."
+    "The ecosystem audit reconciles each hermetic report against finding identities in this ledger, including diagnostics that are absent from production-only reports."
   ],
   "ry_commit": "c29fca934ac056bdc8fc6fa54a2c9ab36baf5e13",
   "source_sha256": "17f2f79040ab797f263a71d9af7a686a3acd8865e44dc5581ae7343e2793f626"

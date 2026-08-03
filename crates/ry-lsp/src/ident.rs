@@ -66,12 +66,13 @@ fn find_ident_in_stmt(s: &Stmt, offset: usize, best: &mut Option<(String, Span)>
             iter,
             body,
             name,
-            span,
+            name_span,
+            ..
         } => {
             find_ident_in_expr(iter, offset, best);
-            // The loop variable binding is a bare name (no inner span);
-            // use the statement span as a coarse fallback.
-            consider(name, *span, offset, best);
+            // The loop variable binding has no inner expression span, but
+            // `name_span` covers just the identifier.
+            consider(name, *name_span, offset, best);
             for s in body {
                 find_ident_in_stmt(s, offset, best);
             }

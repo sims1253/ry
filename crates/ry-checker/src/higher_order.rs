@@ -615,14 +615,13 @@ impl Checker {
                 if let Some(sig) = self.typeshed.s3_methods.get(&key).cloned() {
                     return Some(self.apply_sig(candidate, &sig, arg_types, &[], span));
                 }
-                for pkg in self.available_package_names() {
-                    if let Some(sig) = self
-                        .package_typeshed(pkg)
+                let sig = self.available_package_names().find_map(|pkg| {
+                    self.package_typeshed(pkg)
                         .and_then(|t| t.s3_methods.get(&key))
                         .cloned()
-                    {
-                        return Some(self.apply_sig(candidate, &sig, arg_types, &[], span));
-                    }
+                });
+                if let Some(sig) = sig {
+                    return Some(self.apply_sig(candidate, &sig, arg_types, &[], span));
                 }
             }
         }

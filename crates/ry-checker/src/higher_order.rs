@@ -524,22 +524,19 @@ impl Checker {
         arg_types: &[RType],
         scope: &mut Scope,
     ) {
-        let spec = match self
-            .resolve_typeshed_sig(name)
-            .and_then(|signature| signature.higher_order)
-        {
+        let signature = match self.resolve_typeshed_sig(name) {
+            Some(signature) => signature,
+            None => return,
+        };
+        let spec = match signature.higher_order.as_ref() {
             Some(spec) => spec,
             None => return,
         };
         if matches!(spec.result.kind, HigherOrderResultKind::CallbackIdentity) {
             return;
         }
-        let signature = match self.resolve_typeshed_sig(name) {
-            Some(signature) => signature,
-            None => return,
-        };
         let argument_match = higher_order_argument_match(&signature.params, args);
-        let elem_types = self.higher_order_callback_types(&spec, arg_types, &argument_match);
+        let elem_types = self.higher_order_callback_types(spec, arg_types, &argument_match);
         let cb = match argument_bound_to_formal(args, &argument_match, spec.callback_position) {
             Some(argument) => &argument.value,
             None => return,

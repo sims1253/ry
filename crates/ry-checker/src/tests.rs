@@ -1230,7 +1230,10 @@ fn import_from_applies_metadata_only_to_the_imported_binding() {
 fn typed_package_constants_are_values_not_functions() {
     let mut parser = RParser::new().unwrap();
     let file = parser
-        .parse("test.R", "value <- na_chr\nbad <- na_chr()\n")
+        .parse(
+            "test.R",
+            "value <- na_chr\nbad <- na_chr()\nqualified_bad <- rlang::na_chr()\n",
+        )
         .unwrap();
     let mut checker = Checker::new("test.R");
     checker.set_loaded(HashSet::from(["rlang".to_string()]));
@@ -1241,11 +1244,12 @@ fn typed_package_constants_are_values_not_functions() {
         Some(&Mode::Character)
     );
     assert_eq!(scope.get("value").map(|ty| ty.length), Some(Length::One));
-    assert!(
-        diagnostics.iter().any(|diagnostic| {
-            diagnostic.code == "RY070" && diagnostic.message.contains("na_chr")
-        })
-    );
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == "RY070" && diagnostic.message.contains("`na_chr`")
+    }));
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == "RY070" && diagnostic.message.contains("`rlang::na_chr`")
+    }));
 }
 
 #[test]
@@ -1503,18 +1507,36 @@ fn data_frame_scalar_column_subset_drops_to_column_type() {
 }
 
 #[test]
-fn negative_scalar_subscript_is_not_narrowed_to_length_one() {
+fn literal_negative_scalar_subscript_preserves_exact_exclusion_length() {
     let (diagnostics, scope) =
         check_with_scope("x <- c(10, 20, 30)\ny <- x[-1]\nif (y > 1) print(1)\n");
     assert!(
         diagnostics
             .iter()
-            .all(|diagnostic| diagnostic.code != "RY002"),
-        "an exclusion index has unknown result length and must stay silent: {diagnostics:?}"
+            .any(|diagnostic| diagnostic.code == "RY002"),
+        "excluding one element from a known length-three vector leaves length two: {diagnostics:?}"
     );
     assert_eq!(
         scope.get("y").map(|value| value.length),
-        Some(Length::Unknown)
+        Some(Length::Known(2))
+    );
+}
+
+#[test]
+fn list_subset_drops_stale_column_schema() {
+    let (diagnostics, scope) =
+        check_with_scope("x <- list(a = 1L, b = \"x\")\ny <- x[2]\nmissing <- y$a\n");
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let y = scope.get("y").expect("subset should be bound");
+    assert_eq!(y.length, Length::One);
+    assert!(
+        y.columns.is_none(),
+        "subset must not retain the source schema"
+    );
+    assert_eq!(
+        scope.get("missing").map(|value| &value.mode),
+        Some(&Mode::Opaque),
+        "without a transformed schema, missing name access stays conservative"
     );
 }
 

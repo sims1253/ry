@@ -278,9 +278,19 @@ impl Checker {
                         Mode::Integer | Mode::Double if positive_numeric_index(&args[0].value) => {
                             index.length
                         }
+                        Mode::Integer | Mode::Double => {
+                            literal_negative_exclusion_length(bt.length, &args[0].value)
+                                .unwrap_or(Length::Unknown)
+                        }
                         _ => Length::Unknown,
                     };
-                    return RType { length, ..bt };
+                    let mut result = RType { length, ..bt };
+                    // Generic `[` changes which names/elements are present.
+                    // Until we transform ColumnSchema by the index itself,
+                    // retaining the source schema would expose fields that the
+                    // subset may not contain (e.g. list(a=1, b=2)[2]$a).
+                    result.columns = None;
+                    return result;
                 }
                 bt
             }
@@ -340,6 +350,40 @@ fn positive_numeric_index(expr: &Expr) -> bool {
         }
         _ => false,
     }
+}
+
+/// Exact result length for a single literal negative exclusion. R ignores an
+/// out-of-range exclusion; an in-range exclusion removes exactly one element.
+/// Dynamic or compound negative indices remain unknown until the AST/value
+/// model can prove uniqueness and bounds for every excluded position.
+fn literal_negative_exclusion_length(base: Length, expr: &Expr) -> Option<Length> {
+    let Expr::UnaryOp {
+        op: UnaryOpKind::Neg,
+        expr,
+        ..
+    } = expr
+    else {
+        return None;
+    };
+    let excluded = match expr.as_ref() {
+        Expr::Integer(index, _) if *index > 0 => *index as usize,
+        Expr::Double(index, _) if index.is_finite() && *index > 0.0 && index.fract() == 0.0 => {
+            *index as usize
+        }
+        _ => return None,
+    };
+    let base = match base {
+        Length::Zero => 0,
+        Length::One => 1,
+        Length::Known(length) => length,
+        Length::Unknown => return None,
+    };
+    let length = base - usize::from(excluded <= base);
+    Some(match length {
+        0 => Length::Zero,
+        1 => Length::One,
+        length => Length::Known(length),
+    })
 }
 
 /// Apply a `SeverityFilter` to a vec of diagnostics in place. Each

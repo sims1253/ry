@@ -2,15 +2,16 @@
 # Higher-order metadata uses formal indices, so R argument matching must happen
 # before callback argument, source, length, and result-template inference.
 f <- function(x) {
-  # Exact names can scramble the formals. FUN.VALUE after `...` requires an
-  # exact match, while FUN.VAL is a legal partial match before `...`.
+  # Exact names can be supplied out of order. FUN.VALUE precedes `...`, so
+  # FUN.VAL is a legal partial match to that formal.
   a <- vapply(FUN.VALUE = logical(1), X = x, FUN = is.numeric)
   b <- vapply(x, is.numeric, FUN.VAL = logical(1))
 
   # Map and mapply invoke the callback with the actuals absorbed by `...`, not
   # with every raw argument appearing after the callback's formal position.
-  d <- Map(x, x, f = function(p, q) q - 1)
-  e <- mapply(right = x, FUN = function(p, q) q - 1, left = x)
+  # Distinct inputs and use of both callback parameters catch swapped bindings.
+  d <- Map(x, x + 1, f = function(p, q) p + q)
+  e <- mapply(right = x, FUN = function(p, q) p + q, left = x + 1)
 
   # Source and callback formals likewise resolve by name for the other base
   # higher-order signatures.

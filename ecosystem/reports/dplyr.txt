@@ -1,10 +1,5 @@
-R/conditions.R:301:14 RY010
-R/data-mask.R:120:7 RY091
-R/data-mask.R:89:7 RY091
-R/data-mask.R:94:7 RY091
-R/data-mask.R:99:7 RY091
-R/import-standalone-types-check.R:120:53 RY010
-R/join.R:629:23 RY010
-R/mutate.R:510:9 RY010
-R/utils.R:65:21 RY010
-R/vec-case-match.R:27:32 RY010
+R/conditions.R:310:14 RY010
+R/data-mask.R:112:7 RY091
+R/data-mask.R:117:7 RY091
+R/data-mask.R:131:7 RY091
+R/summarise.R:342:34 RY010

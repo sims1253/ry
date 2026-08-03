@@ -1,0 +1,5 @@
+R/map.R:224:23 RY010
+R/map2.R:108:23 RY010
+R/pmap.R:177:7 RY010
+tests/testthat/test-map.R:82:20 RY080
+tests/testthat/test-parallel.R:120:20 RY080

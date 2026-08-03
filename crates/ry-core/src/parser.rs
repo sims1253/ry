@@ -224,11 +224,13 @@ impl RParser {
     }
 
     fn lower_for(&self, n: Node, src: &str) -> Option<Stmt> {
-        let name = text(n.child_by_field_name("variable")?, src)?;
+        let variable = n.child_by_field_name("variable")?;
+        let name = text(variable, src)?;
         let iter = self.lower_expr(n.child_by_field_name("sequence")?, src)?;
         let body = self.lower_block(n.child_by_field_name("body")?, src);
         Some(Stmt::For {
             name,
+            name_span: self.span(variable, src),
             iter,
             body,
             span: self.span(n, src),
@@ -803,7 +805,7 @@ fn try_unwrap_raw_string(body: &str) -> Option<String> {
 
 /// Process R string escape sequences. Handles the common cases:
 /// `\"`, `\\`, `\n`, `\r`, `\t`, `\b`, `\f`, `\v`, `\0`, `\'`, and
-/// `\uXXXX` / `\UXXXXXXXX` (4 or 8 hex digits). Unknown escapes are
+/// `\uXXXX` / `\UXXXXXXXX` (1-4 or 1-8 hex digits). Unknown escapes are
 /// passed through verbatim (R warns but keeps the backslash), matching
 /// R's documented behavior.
 fn process_r_escapes(s: &str) -> String {
@@ -840,31 +842,25 @@ fn process_r_escapes(s: &str) -> String {
             b'\'' => (Some('\''), 2),
             b'\\' => (Some('\\'), 2),
             b'\n' => (None, 2), // physical line continuation: drop
-            b'u' => {
-                // \uXXXX (exactly 4 hex).
-                let hex = std::str::from_utf8(bytes.get(i + 2..i + 6).unwrap_or(&[])).unwrap_or("");
-                if let Ok(n) = u32::from_str_radix(hex, 16) {
-                    if let Some(c) = char::from_u32(n) {
-                        (Some(c), 6)
-                    } else {
-                        (None, 6)
-                    }
-                } else {
-                    (None, 2)
+            b'u' | b'U' => {
+                // R accepts 1-4 hex digits after \u and 1-8 after \U.
+                let max_hex = if next == b'u' { 4 } else { 8 };
+                let mut end = i + 2;
+                while end < bytes.len() && end < i + 2 + max_hex && bytes[end].is_ascii_hexdigit() {
+                    end += 1;
                 }
-            }
-            b'U' => {
-                // \UXXXXXXXX (exactly 8 hex).
-                let hex =
-                    std::str::from_utf8(bytes.get(i + 2..i + 10).unwrap_or(&[])).unwrap_or("");
-                if let Ok(n) = u32::from_str_radix(hex, 16) {
-                    if let Some(c) = char::from_u32(n) {
-                        (Some(c), 10)
-                    } else {
-                        (None, 10)
-                    }
-                } else {
+                let hex_bytes = &bytes[i + 2..end];
+                if hex_bytes.is_empty() {
                     (None, 2)
+                } else {
+                    let hex = std::str::from_utf8(hex_bytes).unwrap_or("");
+                    match u32::from_str_radix(hex, 16).ok().and_then(char::from_u32) {
+                        Some(c) => (Some(c), end - i),
+                        // Consume only the prefix for an invalid scalar; the
+                        // main loop then copies the hex digits, preserving the
+                        // complete raw escape.
+                        None => (None, 2),
+                    }
                 }
             }
             b'x' => {
@@ -1474,7 +1470,10 @@ mod tests {
     fn string_unicode_escapes() {
         use super::unquote_r_string;
         assert_eq!(unquote_r_string(r#""\u00e9""#), "é");
-        // Malformed \u (too few hex): keep verbatim, don't panic.
+        assert_eq!(unquote_r_string(r#""\uE9""#), "é");
+        assert_eq!(unquote_r_string(r#""\U1F600""#), "😀");
+        assert_eq!(unquote_r_string(r#""\U00110000""#), r#"\U00110000"#);
+        // A malformed escape without any hex digits remains verbatim.
         assert_eq!(unquote_r_string(r#""\uXY""#), r#"\uXY"#);
     }
 

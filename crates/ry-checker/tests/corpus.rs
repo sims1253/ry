@@ -113,7 +113,8 @@ fn run(name: &str, src: &str) -> Vec<(String, Severity)> {
     // feature behave the same way the CLI / LSP do. Use the lexical
     // (comment-based) filter so a `#` inside a string literal is not
     // mistaken for a suppression directive.
-    let diags = ry_checker::filter_suppressed_with_comments(c.take_diagnostics(), &file.comments);
+    let diags =
+        ry_checker::filter_suppressed_with_comments(c.take_diagnostics(), &file.comments, src);
     diags
         .into_iter()
         .map(|d| (d.code.to_string(), d.severity))

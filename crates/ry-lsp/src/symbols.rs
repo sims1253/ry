@@ -2,11 +2,9 @@
 
 use ry_checker::Scope;
 use ry_core::{Expr, Span, Stmt};
-use tower_lsp::lsp_types::{
-    DocumentSymbol, Location, Position, Range, SymbolInformation, SymbolKind, Url,
-};
+use tower_lsp::lsp_types::{DocumentSymbol, Location, Range, SymbolInformation, SymbolKind, Url};
 
-use crate::util::span_to_range;
+use crate::util::{byte_offset_to_position, span_to_range};
 
 /// Recursively flatten a tree of `DocumentSymbol`s (with their
 /// children) into a flat list of `SymbolInformation`s, attaching the
@@ -160,7 +158,7 @@ fn stmt_to_symbol(stmt: &Stmt, text: &str, scope: Option<&Scope>) -> Option<Docu
                 SymbolKind::VARIABLE
             };
             let detail = compute_detail(name, is_function, scope);
-            let selection_range = ident_to_range(*ident_span, name);
+            let selection_range = ident_to_range(text, *ident_span, name);
             let range = span_to_range(text, *span).unwrap_or(selection_range);
             // For function-valued assignments, the body's local
             // definitions become children of this symbol so the
@@ -188,10 +186,12 @@ fn stmt_to_symbol(stmt: &Stmt, text: &str, scope: Option<&Scope>) -> Option<Docu
             // completeness / future grammar changes. Children include
             // the parameters plus any nested definitions in the body.
             let detail = compute_detail(n, true, scope);
-            let selection_range = span_start_range(*span, n);
+            let selection_range = span_start_range(text, *span, n);
             let range = span_to_range(text, *span).unwrap_or(selection_range);
-            let mut children: Vec<DocumentSymbol> =
-                params.iter().filter_map(param_to_symbol).collect();
+            let mut children: Vec<DocumentSymbol> = params
+                .iter()
+                .filter_map(|p| param_to_symbol(p, text))
+                .collect();
             children.extend(collect_symbols(body, text, None));
             let children = if children.is_empty() {
                 None
@@ -218,7 +218,10 @@ fn stmt_to_symbol(stmt: &Stmt, text: &str, scope: Option<&Scope>) -> Option<Docu
 /// body has no bindings, so that non-function symbols stay flat.
 fn function_body_symbols(value: &Expr, text: &str) -> Option<Vec<DocumentSymbol>> {
     if let Expr::Function { params, body, .. } = value {
-        let mut children: Vec<DocumentSymbol> = params.iter().filter_map(param_to_symbol).collect();
+        let mut children: Vec<DocumentSymbol> = params
+            .iter()
+            .filter_map(|p| param_to_symbol(p, text))
+            .collect();
         children.extend(collect_symbols(body, text, None));
         if children.is_empty() {
             None
@@ -233,8 +236,8 @@ fn function_body_symbols(value: &Expr, text: &str) -> Option<Vec<DocumentSymbol>
 /// Build a `DocumentSymbol` for a function parameter. Parameters use
 /// `SymbolKind::VARIABLE` (LSP has no dedicated parameter kind) and
 /// their range covers exactly the parameter name.
-fn param_to_symbol(param: &ry_core::Param) -> Option<DocumentSymbol> {
-    let range = ident_to_range(param.span, &param.name);
+fn param_to_symbol(param: &ry_core::Param, text: &str) -> Option<DocumentSymbol> {
+    let range = ident_to_range(text, param.span, &param.name);
     Some(make_document_symbol(
         param.name.clone(),
         Some("parameter".to_string()),
@@ -259,26 +262,19 @@ fn compute_detail(name: &str, is_function: bool, scope: Option<&Scope>) -> Optio
 }
 
 /// Build an LSP `Range` covering exactly an identifier, using the
-/// identifier's `Span` for the start position and the name's length
-/// for the end column. This matches the convention used by
-/// `span_to_location` for go-to-definition.
-fn ident_to_range(span: Span, name: &str) -> Range {
-    let start = Position {
-        line: span.line as u32,
-        character: span.col as u32,
-    };
-    let end = Position {
-        line: span.line as u32,
-        character: span.col as u32 + name.len() as u32,
-    };
+/// identifier's `Span` start byte offset and the name's length for the
+/// end offset, converted to UTF-16 columns against the source text.
+fn ident_to_range(text: &str, span: Span, name: &str) -> Range {
+    let start = byte_offset_to_position(text, span.start);
+    let end = byte_offset_to_position(text, span.start + name.len());
     Range { start, end }
 }
 
 /// Build a `Range` anchored at a span's start position, spanning
 /// `name.len()` characters. Used for `Stmt::FunctionDef` where we
 /// only have the enclosing statement span (no dedicated name span).
-fn span_start_range(span: Span, name: &str) -> Range {
-    ident_to_range(span, name)
+fn span_start_range(text: &str, span: Span, name: &str) -> Range {
+    ident_to_range(text, span, name)
 }
 
 /// Construct a `DocumentSymbol` with all fields filled. The

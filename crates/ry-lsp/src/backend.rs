@@ -62,10 +62,6 @@ pub(super) struct State {
     /// is still the latest. A newer edit during the
     /// sleep window wins and the stale task aborts.
     diag_generation: u64,
-    /// Workspace root, set at `initialize`. Used only for diagnostics
-    /// today; future revisions may use it to discover `ry.toml`.
-    #[allow(dead_code)]
-    root: Option<PathBuf>,
     /// Runtime stubs loaded from the workspace's `ry.toml`. Kept in state so
     /// every rebuilt Project and single-file hover checker sees the same data.
     user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
@@ -186,9 +182,15 @@ impl State {
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> LspResult<InitializeResult> {
+        let root = params.root_uri.and_then(|uri| uri.to_file_path().ok());
+        // `load_workspace_stubs` does blocking filesystem I/O (reads
+        // `ry.toml` and walks typeshed directories); run it off the async
+        // executor so a slow disk does not stall every LSP request.
+        let user_stubs = tokio::task::spawn_blocking(move || load_workspace_stubs(root.as_deref()))
+            .await
+            .unwrap_or_else(|_| Arc::new(std::collections::BTreeMap::new()));
         let mut state = self.state.lock().await;
-        state.root = params.root_uri.and_then(|uri| uri.to_file_path().ok());
-        state.user_stubs = load_workspace_stubs(state.root.as_deref());
+        state.user_stubs = user_stubs;
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
@@ -344,14 +346,17 @@ impl LanguageServer for Backend {
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri.clone();
         let path = uri_to_path(&uri);
-        {
+        let remaining_open_paths = {
             let mut state = self.state.lock().await;
             state.docs.remove(&path);
             state.versions.remove(&path);
             state.parsed.remove(&path);
             state.scopes.remove(&path);
+            // Bump the generation so any in-flight diagnostics publish
+            // queued while the file was open is invalidated.
             state.diag_generation = state.diag_generation.wrapping_add(1);
-        }
+            state.docs.keys().cloned().collect::<Vec<_>>()
+        };
         {
             let project = {
                 let state = self.state.lock().await;
@@ -364,6 +369,14 @@ impl LanguageServer for Backend {
         // Clear diagnostics for the closed document so stale squiggles
         // don't linger after the user closes the file.
         self.client.publish_diagnostics(uri, Vec::new(), None).await;
+        // Closing a document can change diagnostics in the REMAINING open
+        // documents (a name that was defined in the closed file may now
+        // be unresolved, or a locally suppressed diagnostic may surface),
+        // so schedule a re-publish to refresh them rather than leaving
+        // stale cross-file diagnostics.
+        if let Some(first) = remaining_open_paths.first() {
+            self.schedule_diagnostics(path_to_uri(first)).await;
+        }
     }
 
     async fn shutdown(&self) -> LspResult<()> {
@@ -379,17 +392,8 @@ impl LanguageServer for Backend {
         let path = uri_to_path(&uri);
         let position = params.text_document_position_params.position;
 
-        let text = {
-            let state = self.state.lock().await;
-            state.docs.get(&path).cloned()
-        };
-
-        let Some(text) = text else {
-            return Ok(None);
-        };
-
         // Parse (cached) and reuse the cached scope for the type lookup.
-        let Some(file) = self.parsed_file(&path).await else {
+        let Some((file, text)) = self.parsed_file(&path).await else {
             return Ok(None);
         };
         let Some(scope) = self.scope_for(&path).await else {
@@ -399,7 +403,9 @@ impl LanguageServer for Backend {
         // Find the identifier at the hover position via an AST walk
         // (smallest enclosing Expr::Ident), so non-ASCII identifiers and
         // identifiers in any syntactic position resolve correctly.
-        let byte_offset = position_to_byte_offset_pos(&text, position);
+        let Some(byte_offset) = position_to_byte_offset_pos(&text, position) else {
+            return Ok(None);
+        };
         let Some((identifier, _)) = find_ident_at_offset(&file, byte_offset) else {
             return Ok(None);
         };
@@ -431,30 +437,23 @@ impl LanguageServer for Backend {
         let path = uri_to_path(&uri);
         let position = params.text_document_position_params.position;
 
-        let text = {
-            let state = self.state.lock().await;
-            state.docs.get(&path).cloned()
-        };
-
-        let Some(text) = text else {
-            return Ok(None);
-        };
-
         // Parse the current document (cached). We do not
         // need the checker's scope here: definitions live in the AST,
         // not the type environment.
-        let Some(file) = self.parsed_file(&path).await else {
+        let Some((file, text)) = self.parsed_file(&path).await else {
             return Ok(None);
         };
 
         // Find the identifier under the cursor via an AST walk. Returns
         // `None` (no definition) for operators, numbers, and keywords.
-        let byte_offset = position_to_byte_offset_pos(&text, position);
+        let Some(byte_offset) = position_to_byte_offset_pos(&text, position) else {
+            return Ok(None);
+        };
         let Some((identifier, _)) = find_ident_at_offset(&file, byte_offset) else {
             return Ok(None);
         };
 
-        let locations = find_definition_locations(&file, &identifier, &uri);
+        let locations = find_definition_locations(&file, &identifier, &uri, &text);
         if locations.is_empty() {
             Ok(None)
         } else {
@@ -477,40 +476,34 @@ impl LanguageServer for Backend {
             state.docs.clone()
         };
 
-        let text = docs.get(&path).cloned();
-        let Some(text) = text else {
-            return Ok(None);
-        };
-
         // Find the identifier under the cursor via an AST walk of the
         // current document (cached). Returns `None` for
         // operators, numbers, and keywords.
-        let Some(current_file) = self.parsed_file(&path).await else {
+        let Some((current_file, text)) = self.parsed_file(&path).await else {
             return Ok(None);
         };
-        let byte_offset = position_to_byte_offset_pos(&text, position);
+        let Some(byte_offset) = position_to_byte_offset_pos(&text, position) else {
+            return Ok(None);
+        };
         let Some((identifier, _)) = find_ident_at_offset(&current_file, byte_offset) else {
             return Ok(None);
         };
 
         let mut all_locations = Vec::new();
-        for (doc_path, doc_text) in &docs {
-            let file = if doc_path == &path {
-                current_file.clone()
-            } else {
-                // Use the cached parse; skip documents that fail to parse
-                // rather than aborting the whole search.
-                match self.parsed_file(doc_path).await {
-                    Some(f) => f,
-                    None => continue,
-                }
+        for doc_path in docs.keys() {
+            // Use the cache-consistent pairing: `parsed_file` returns the
+            // AST and the text it was parsed FROM, so byte-offset ranges
+            // generated against `doc_text` always match the AST. Skip
+            // documents that fail to parse rather than aborting the search.
+            let Some((file, doc_text)) = self.parsed_file(doc_path).await else {
+                continue;
             };
             let doc_uri = path_to_uri(doc_path);
             let locs = find_references_in_file(
                 &file,
                 &identifier,
                 &doc_uri,
-                doc_text,
+                &doc_text,
                 include_declaration,
             );
             all_locations.extend(locs);
@@ -530,21 +523,12 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri.clone();
         let path = uri_to_path(&uri);
 
-        let text = {
-            let state = self.state.lock().await;
-            state.docs.get(&path).cloned()
-        };
-
-        let Some(text) = text else {
-            return Ok(None);
-        };
-
         // Reuse the cached parse and cached single-file
         // scope so the symbol panel doesn't re-check on
         // every request. Symbols nested inside function bodies fall back
         // to "function" / "variable" since the top-level scope does not
         // track locals.
-        let Some(file) = self.parsed_file(&path).await else {
+        let Some((file, text)) = self.parsed_file(&path).await else {
             return Ok(None);
         };
         let Some(scope) = self.scope_for(&path).await else {
@@ -564,20 +548,11 @@ impl LanguageServer for Backend {
         let path = uri_to_path(&uri);
         let range = params.range;
 
-        let text = {
-            let state = self.state.lock().await;
-            state.docs.get(&path).cloned()
-        };
-
-        let Some(text) = text else {
-            return Ok(None);
-        };
-
         // Parse the document (cached). On any parse
         // failure we return `None` (no hints) rather than erroring, so
         // the editor simply shows nothing instead of a broken state.
         // Mirrors `document_symbol`.
-        let Some(file) = self.parsed_file(&path).await else {
+        let Some((file, text)) = self.parsed_file(&path).await else {
             return Ok(None);
         };
 
@@ -667,10 +642,10 @@ impl LanguageServer for Backend {
                 None => return Ok(None),
             };
 
-        // Look up the function's parameter names. We only support
-        // base-R functions from the curated table; user-defined
-        // functions would require reaching into the checker's FnTable
-        // from the LSP crate, which is out of scope for v1.
+        // Look up the function's parameter names from the base
+        // typeshed. User-defined functions would require reaching
+        // into the checker's FnTable from the LSP crate, which is
+        // out of scope for v1.
         let Some(params_list) = get_signature(&func_name) else {
             return Ok(None);
         };
@@ -724,18 +699,18 @@ impl LanguageServer for Backend {
         };
 
         let mut all_symbols: Vec<SymbolInformation> = Vec::new();
-        for (doc_path, doc_text) in &docs {
+        for doc_path in docs.keys() {
             // Cached parse and cached single-file scope
             //; skip documents that fail to parse rather
             // than aborting the whole search.
-            let Some(file) = self.parsed_file(doc_path).await else {
+            let Some((file, doc_text)) = self.parsed_file(doc_path).await else {
                 continue;
             };
             let Some(scope) = self.scope_for(doc_path).await else {
                 continue;
             };
 
-            let doc_symbols = collect_symbols(&file.stmts, doc_text, Some(&scope));
+            let doc_symbols = collect_symbols(&file.stmts, &doc_text, Some(&scope));
             let doc_uri = path_to_uri(doc_path);
             // Flatten the hierarchical `DocumentSymbol` tree (which
             // nests function-body bindings as children) into a flat
@@ -767,18 +742,29 @@ impl LanguageServer for Backend {
         let position = params.text_document_position.position;
         let new_name = params.new_name;
 
-        // Snapshot ALL open documents under the lock, then drop the
+        // A rename to an empty / whitespace-only name, or one that is
+        // not a valid R identifier, would corrupt the document. Reject
+        // it up front rather than silently "renaming" to garbage.
+        let is_valid_ident = !new_name.is_empty()
+            && new_name
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
+            && !new_name
+                .chars()
+                .any(|c| c.is_whitespace() || c.is_control());
+        if !is_valid_ident {
+            return Ok(None);
+        }
+
+        // Snapshot ALL open document paths under the lock, then drop the
         // lock before parsing/walking so a slow rename doesn't block
         // other LSP requests. Rename is workspace-wide, so we walk
-        // every open document (not just the current one).
+        // every open document (not just the current one). The per-file
+        // source text comes from `parsed_file` so it always matches the
+        // AST it was parsed from.
         let docs = {
             let state = self.state.lock().await;
-            state.docs.clone()
-        };
-
-        let text = docs.get(&path).cloned();
-        let Some(text) = text else {
-            return Ok(None);
+            state.docs.keys().cloned().collect::<Vec<_>>()
         };
 
         // Find the identifier at the cursor position via an AST walk to
@@ -786,10 +772,12 @@ impl LanguageServer for Backend {
         // ALL occurrences of that name across all open documents,
         // mirroring how `references` works. Returns `None` (no rename)
         // for operators, numbers, keywords.
-        let Some(current_file) = self.parsed_file(&path).await else {
+        let Some((current_file, text)) = self.parsed_file(&path).await else {
             return Ok(None);
         };
-        let byte_offset = position_to_byte_offset_pos(&text, position);
+        let Some(byte_offset) = position_to_byte_offset_pos(&text, position) else {
+            return Ok(None);
+        };
         let Some((old_name, _)) = find_ident_at_offset(&current_file, byte_offset) else {
             return Ok(None);
         };
@@ -800,32 +788,27 @@ impl LanguageServer for Backend {
         // `TextEdit` replacing the old name with the new one. Edits
         // are grouped by file URI into the `WorkspaceEdit.changes`
         // map; the editor applies each group atomically per file.
-        //
-        // The same loop logic is factored into `build_rename_edits`
-        // (used by the unit tests). We inline it here rather than
-        // share the helper because the helper borrows pre-parsed
-        // `SourceFile`s, while here we parse lazily inside the loop
-        // and skip parse failures per-document.
         let mut edits: HashMap<Url, Vec<TextEdit>> = HashMap::new();
-        for (doc_path, doc_text) in &docs {
-            let file = if doc_path == &path {
-                current_file.clone()
-            } else {
-                match self.parsed_file(doc_path).await {
-                    Some(f) => f,
-                    None => continue,
-                }
+        for doc_path in &docs {
+            let Some((file, doc_text)) = self.parsed_file(doc_path).await else {
+                continue;
             };
             let doc_uri = path_to_uri(doc_path);
             // include_declaration = true: a rename must rewrite the
             // definition site as well as every read / call site.
-            let locations = find_references_in_file(&file, &old_name, &doc_uri, doc_text, true);
+            let locations = find_references_in_file(&file, &old_name, &doc_uri, &doc_text, true);
             for loc in locations {
                 edits.entry(doc_uri.clone()).or_default().push(TextEdit {
                     range: loc.range,
                     new_text: new_name.clone(),
                 });
             }
+        }
+
+        // No occurrences across any open document: report no rename
+        // rather than an empty (no-op) workspace edit.
+        if edits.is_empty() {
+            return Ok(None);
         }
 
         Ok(Some(WorkspaceEdit {
@@ -839,38 +822,24 @@ impl LanguageServer for Backend {
         params: TextDocumentPositionParams,
     ) -> LspResult<Option<PrepareRenameResponse>> {
         let uri = params.text_document.uri.clone();
-        let _ = uri; // retained for symmetry with other handlers
         let path = uri_to_path(&uri);
         let position = params.position;
-
-        let text = {
-            let state = self.state.lock().await;
-            state.docs.get(&path).cloned()
-        };
-
-        let Some(text) = text else {
-            return Ok(None);
-        };
 
         // Validate that the cursor is on a renameable identifier before
         // the editor shows the rename UI. Use the AST-based finder so we
         // get the exact span of the innermost identifier, then convert
         // it to an LSP range. Returns `None` for operators, numbers,
         // keywords, and whitespace.
-        let Some(file) = self.parsed_file(&path).await else {
+        let Some((file, text)) = self.parsed_file(&path).await else {
             return Ok(None);
         };
-        let byte_offset = position_to_byte_offset_pos(&text, position);
+        let Some(byte_offset) = position_to_byte_offset_pos(&text, position) else {
+            return Ok(None);
+        };
         let Some((_, span)) = find_ident_at_offset(&file, byte_offset) else {
             return Ok(None);
         };
-        let range = span_to_range(&text, span).unwrap_or(Range {
-            start: position,
-            end: Position {
-                line: position.line,
-                character: position.character + 1,
-            },
-        });
+        let range = span_to_range(&text, span).unwrap();
 
         Ok(Some(PrepareRenameResponse::Range(range)))
     }
@@ -887,25 +856,19 @@ impl LanguageServer for Backend {
         let path = uri_to_path(&uri);
         let position = params.text_document_position_params.position;
 
-        let text = {
-            let state = self.state.lock().await;
-            state.docs.get(&path).cloned()
-        };
-
-        let Some(text) = text else {
-            return Ok(None);
-        };
-
         // Parse the current document (cached). Document
         // highlight is scoped to the current file (per the LSP spec), so
-        // we only parse once.
-        let Some(file) = self.parsed_file(&path).await else {
+        // we only parse once. `text` comes from the same version the
+        // AST was parsed from, so offsets always match.
+        let Some((file, text)) = self.parsed_file(&path).await else {
             return Ok(None);
         };
 
         // Find the identifier under the cursor via an AST walk. Returns
         // `None` (no highlights) for operators, numbers, and keywords.
-        let byte_offset = position_to_byte_offset_pos(&text, position);
+        let Some(byte_offset) = position_to_byte_offset_pos(&text, position) else {
+            return Ok(None);
+        };
         let Some((identifier, _)) = find_ident_at_offset(&file, byte_offset) else {
             return Ok(None);
         };
@@ -925,19 +888,11 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri.clone();
         let path = uri_to_path(&uri);
 
-        let text = {
-            let state = self.state.lock().await;
-            state.docs.get(&path).cloned()
-        };
-
-        let Some(text) = text else {
-            return Ok(None);
-        };
-
-        // Parse the document (cached). On any parse
-        // failure we return `None` (no folding ranges) rather than
-        // erroring. Mirrors `document_symbol` / `inlay_hint`.
-        let Some(file) = self.parsed_file(&path).await else {
+        // Parse the document (cached), pairing the AST with the exact
+        // text it was parsed from. On any parse failure we return
+        // `None` (no folding ranges) rather than erroring. Mirrors
+        // `document_symbol` / `inlay_hint`.
+        let Some((file, text)) = self.parsed_file(&path).await else {
             return Ok(None);
         };
 
@@ -995,22 +950,13 @@ impl LanguageServer for Backend {
         params: SelectionRangeParams,
     ) -> LspResult<Option<Vec<SelectionRange>>> {
         let uri = params.text_document.uri.clone();
-        let _ = uri; // retained for symmetry with the other handlers
         let path = uri_to_path(&uri);
 
-        let text = {
-            let state = self.state.lock().await;
-            state.docs.get(&path).cloned()
-        };
-
-        let Some(text) = text else {
-            return Ok(None);
-        };
-
-        // Parse the document (cached). On any parse
-        // failure we return `None` (no selection ranges) rather than
-        // erroring. Mirrors `document_symbol` / `folding_range`.
-        let Some(file) = self.parsed_file(&path).await else {
+        // Parse the document (cached), pairing the AST with the exact
+        // text it was parsed from. On any parse failure we return
+        // `None` (no selection ranges) rather than erroring. Mirrors
+        // `document_symbol` / `folding_range`.
+        let Some((file, text)) = self.parsed_file(&path).await else {
             return Ok(None);
         };
 
@@ -1047,17 +993,26 @@ impl Backend {
     /// parse when its version matches the latest known version. The
     /// cache is read + repopulated under the state lock; parsing itself
     /// (which needs a non-`Send` `RParser`) happens after releasing the
-    /// lock, then the result is stored back.
+    /// Return the current AST for `path` together with the exact source
+    /// text it was parsed from. Pairing the two is atomic: handlers use
+    /// the text for byte-offset / UTF-16 conversions that must match the
+    /// AST's span offsets, so a concurrent `didChange` racing the parse
+    /// can never yield a stale text applied to a fresher AST (or vice
+    /// versa).
     ///
     /// Returns `None` when the path is not an open document or parsing
     /// fails.
-    async fn parsed_file(&self, path: &str) -> Option<Arc<SourceFile>> {
+    async fn parsed_file(&self, path: &str) -> Option<(Arc<SourceFile>, String)> {
         loop {
-            // Fast path: cache hit with matching version.
+            // Fast path: cache hit with matching version. The cache only
+            // returns a parse whose recorded version equals the current
+            // document version, so `docs[path]` is exactly the text that
+            // parse was produced from.
             {
                 let state = self.state.lock().await;
                 if let Some(file) = state.cached_parse(path) {
-                    return Some(file);
+                    let text = state.docs.get(path).cloned()?;
+                    return Some((file, text));
                 }
             }
             // Cache miss / stale: parse the current text and store it.
@@ -1078,7 +1033,7 @@ impl Backend {
             // If an edit landed while parsing, retry against the new version
             // instead of returning an AST already known to be stale.
             if state.record_parse(path, version, Arc::clone(&file)) {
-                return Some(file);
+                return Some((file, text));
             }
         }
     }
@@ -1101,7 +1056,7 @@ impl Backend {
             }
         }
         // Cache miss: parse (via the parse cache) + check, then store.
-        let file = self.parsed_file(path).await?;
+        let (file, _) = self.parsed_file(path).await?;
         let parsed_version = {
             let state = self.state.lock().await;
             state
@@ -1161,7 +1116,7 @@ impl Backend {
         // per-document `SourceFile` cached in `State` and only re-parses
         // documents whose version changed since the last request.
         for doc_path in docs.keys() {
-            let Some(file) = self.parsed_file(doc_path).await else {
+            let Some((file, _)) = self.parsed_file(doc_path).await else {
                 continue;
             };
             per_file_comments.insert(doc_path.clone(), file.comments.clone());
@@ -1190,7 +1145,10 @@ impl Backend {
             let (file_level, suppressions) = match file_comments {
                 Some(comments) => (
                     ry_checker::has_file_suppression_from_comments(comments),
-                    ry_checker::parse_suppressions_from_comments(comments),
+                    ry_checker::parse_suppressions_from_comments(
+                        comments,
+                        source_text.unwrap_or(""),
+                    ),
                 ),
                 None => (false, Vec::new()),
             };

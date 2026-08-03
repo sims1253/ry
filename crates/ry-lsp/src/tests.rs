@@ -199,7 +199,7 @@ fn goto_def_finds_variable_assignment() {
     let mut parser = RParser::new().unwrap();
     let file = parser.parse("test.R", text).unwrap();
     let uri = Url::parse("file:///tmp/test.R").unwrap();
-    let locs = find_definition_locations(&file, "x", &uri);
+    let locs = find_definition_locations(&file, "x", &uri, text);
     assert_eq!(locs.len(), 1, "expected exactly one definition of x");
     let loc = &locs[0];
     assert_eq!(loc.uri, uri);
@@ -220,7 +220,7 @@ fn goto_def_finds_function_definition() {
     let mut parser = RParser::new().unwrap();
     let file = parser.parse("test.R", text).unwrap();
     let uri = Url::parse("file:///tmp/test.R").unwrap();
-    let locs = find_definition_locations(&file, "add", &uri);
+    let locs = find_definition_locations(&file, "add", &uri, text);
     assert_eq!(locs.len(), 1, "expected exactly one definition of add");
     let loc = &locs[0];
     assert_eq!(loc.range.start.line, 0);
@@ -237,7 +237,7 @@ fn goto_def_finds_local_definition_inside_function_body() {
     let mut parser = RParser::new().unwrap();
     let file = parser.parse("test.R", text).unwrap();
     let uri = Url::parse("file:///tmp/test.R").unwrap();
-    let locs = find_definition_locations(&file, "local", &uri);
+    let locs = find_definition_locations(&file, "local", &uri, text);
     assert_eq!(locs.len(), 1, "expected exactly one definition of local");
     let loc = &locs[0];
     assert_eq!(loc.range.start.line, 1);
@@ -253,7 +253,7 @@ fn goto_def_finds_reassignment_as_multiple_locations() {
     let mut parser = RParser::new().unwrap();
     let file = parser.parse("test.R", text).unwrap();
     let uri = Url::parse("file:///tmp/test.R").unwrap();
-    let locs = find_definition_locations(&file, "x", &uri);
+    let locs = find_definition_locations(&file, "x", &uri, text);
     assert_eq!(locs.len(), 2);
     assert_eq!(locs[0].range.start.line, 0);
     assert_eq!(locs[1].range.start.line, 1);
@@ -265,7 +265,7 @@ fn goto_def_returns_empty_for_undefined_name() {
     let mut parser = RParser::new().unwrap();
     let file = parser.parse("test.R", text).unwrap();
     let uri = Url::parse("file:///tmp/test.R").unwrap();
-    let locs = find_definition_locations(&file, "does_not_exist", &uri);
+    let locs = find_definition_locations(&file, "does_not_exist", &uri, text);
     assert!(locs.is_empty(), "expected no definitions");
 }
 
@@ -638,14 +638,14 @@ fn find_enclosing_call_returns_none_for_non_ident_func() {
 
 #[test]
 fn get_signature_returns_known_params() {
-    // `round` has the conventional `x, digits` parameters; the
-    // helper must surface them in order.
+    // The base typeshed is the source of truth: `round` declares
+    // `x, digits` plus `...` (forwarded to the default method).
     let params = get_signature("round").expect("round should have a signature");
-    assert_eq!(params, vec!["x", "digits"]);
+    assert_eq!(params, vec!["x", "digits", "..."]);
 
-    // `mean` has three formal parameters.
+    // `mean` declares `x` and `...` (trim/na.rm are method-level).
     let params = get_signature("mean").expect("mean should have a signature");
-    assert_eq!(params, vec!["x", "trim", "na.rm"]);
+    assert_eq!(params, vec!["x", "..."]);
 
     // Variadic functions collapse to `...`.
     let params = get_signature("c").expect("c should have a signature");
@@ -679,9 +679,9 @@ fn signature_help_label_and_active_param() {
 
     let params = get_signature(&name).expect("round should have a signature");
     let label = format!("{}({})", name, params.join(", "));
-    assert_eq!(label, "round(x, digits)");
+    assert_eq!(label, "round(x, digits, ...)");
     // The active parameter must be clamped to the parameter list
-    // length: with 2 params and active=1, the highlight should
+    // length: with 3 params and active=1, the highlight should
     // land on `digits`.
     let active_param = if active < params.len() {
         Some(active as u32)
@@ -697,8 +697,8 @@ fn signature_help_clamps_when_past_last_param() {
     // parameters (e.g. `round(1, 2, 3, `), the active-parameter
     // index should clamp to `None` so the editor clears the
     // highlight instead of pointing at a non-existent parameter.
-    // `round` has 2 params; typing 3 commas puts the cursor on a
-    // 4th parameter that doesn't exist.
+    // `round` has 3 params (x, digits, ...); typing 3 commas puts
+    // the cursor on a 4th parameter that doesn't exist.
     let text = "round(1, 2, 3, \n";
     // After the third comma (byte 14): active param 3.
     let (_, active) = find_enclosing_call(text, 0, 14).expect("should find call");
@@ -1246,6 +1246,45 @@ fn rename_edits_single_file_includes_declaration_and_usages() {
 }
 
 #[test]
+fn rename_edits_loop_variable_replaces_only_the_identifier() {
+    // Renaming a `for` loop variable must produce edits covering
+    // exactly the loop-variable identifier and its uses -- NOT the
+    // whole `for` statement. (Regression: the declaration site used
+    // to be the entire statement span, so the rename replaced the
+    // whole loop with the new name.)
+    let src = "for (i in 1:3) {\n  print(i)\n}\n";
+    let mut parser = RParser::new().unwrap();
+    let file = parser.parse("test.R", src).unwrap();
+    let edit = build_rename_edits(&[("test.R", &file, src)], "i", "idx");
+
+    let changes = edit.changes.expect("should have changes");
+    let edits = changes
+        .get(&path_to_uri("test.R"))
+        .expect("edits for test.R");
+    // One edit for the declaration (`i` in the header), one for the
+    // use inside the body.
+    assert_eq!(edits.len(), 2, "got {:?}", edits);
+    for e in edits {
+        assert_eq!(e.new_text, "idx");
+        // The range must cover exactly the 1-char identifier, so the
+        // whole loop is never rewritten.
+        assert_eq!(
+            e.range.end.character - e.range.start.character,
+            1,
+            "rename must replace only the identifier: {:?}",
+            e
+        );
+    }
+    let lines: Vec<u32> = edits.iter().map(|e| e.range.start.line).collect();
+    assert!(
+        lines.contains(&0),
+        "declaration edit on line 0: {:?}",
+        lines
+    );
+    assert!(lines.contains(&1), "usage edit on line 1: {:?}", lines);
+}
+
+#[test]
 fn rename_edits_across_files_group_by_uri() {
     // Simulate two open documents: a.R defines `helper`, b.R calls
     // it. Renaming `helper` to `h` must produce one edit in each
@@ -1338,6 +1377,11 @@ fn prepare_rename_returns_none_for_keywords_and_operators() {
         None,
         "pure numbers must not be renameable"
     );
+}
+
+#[test]
+fn prepare_rename_rejects_utf16_column_inside_surrogate_pair() {
+    assert_eq!(find_identifier_range_at_position("😀name", 0, 1), None);
 }
 
 #[test]
@@ -1690,6 +1734,22 @@ fn code_action_ignore_line_skips_already_suppressed() {
         make_ignore_action(&uri, &diag, text).is_none(),
         "should not offer an action for an already-suppressed line"
     );
+}
+
+#[test]
+fn code_action_ignore_line_ignores_hash_inside_string() {
+    let text = "x <- \"# not a comment\"\n";
+    let diag = lsp_diag(0, 0, 1, "RY040");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(make_ignore_action(&uri, &diag, text).is_some());
+}
+
+#[test]
+fn code_action_ignore_line_detects_noqa_after_string_hash() {
+    let text = "x <- \"# not a comment\"  # noqa\n";
+    let diag = lsp_diag(0, 0, 1, "RY040");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(make_ignore_action(&uri, &diag, text).is_none());
 }
 
 #[test]

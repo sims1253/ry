@@ -4,7 +4,7 @@ use ry_core::{SourceFile, Span};
 use tower_lsp::lsp_types::{Position, Range, SelectionRange};
 
 use crate::folding::span_of_stmt;
-use crate::util::{byte_offset_to_position, position_to_byte_offset_pos, span_to_range};
+use crate::util::{byte_offset_to_position, position_to_byte_offset_pos, span_to_range, utf16_len};
 
 /// Find the identifier (variable name) at a given line and column in
 /// the source text, returning BOTH the identifier string AND its LSP
@@ -26,28 +26,33 @@ pub(super) fn find_identifier_range_at_position(
     col: usize,
 ) -> Option<(String, Range)> {
     let line_str = text.lines().nth(line)?;
+    // `col` is a UTF-16 code-unit column (LSP), but the byte-based
+    // scan below indexes the line by bytes. Convert it so a line with
+    // a non-ASCII character before the cursor neither panics nor
+    // lands mid-character.
+    let byte_col = utf16_col_to_byte(line_str, col as u32)?;
     let bytes = line_str.as_bytes();
-    if bytes.is_empty() || col >= bytes.len() {
+    if bytes.is_empty() || byte_col >= bytes.len() {
         return None;
     }
     // The character at the cursor must be identifier-like.
     let is_ident_char = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'.';
-    if !is_ident_char(bytes[col]) {
+    if !is_ident_char(bytes[byte_col]) {
         // Check if the cursor is just after an identifier (common when
         // the user places the cursor right at the end of a word).
-        if col > 0 && is_ident_char(bytes[col - 1]) {
-            // Expand from col-1 instead.
+        if byte_col > 0 && is_ident_char(bytes[byte_col - 1]) {
+            // Expand from byte_col-1 instead.
         } else {
             return None;
         }
     }
     // Expand left to find the start of the identifier.
-    let mut start = col;
+    let mut start = byte_col;
     while start > 0 && is_ident_char(bytes[start - 1]) {
         start -= 1;
     }
     // Expand right to find the end.
-    let mut end = col;
+    let mut end = byte_col;
     while end < bytes.len() && is_ident_char(bytes[end]) {
         end += 1;
     }
@@ -80,17 +85,39 @@ pub(super) fn find_identifier_range_at_position(
     ) {
         return None;
     }
+    // Convert the byte-exclusive boundaries back to UTF-16 character
+    // columns for the LSP range.
+    let start_char = byte_offset_to_position(line_str, start).character;
+    let end_char = byte_offset_to_position(line_str, end).character;
     let range = Range {
         start: Position {
             line: line as u32,
-            character: start as u32,
+            character: start_char,
         },
         end: Position {
             line: line as u32,
-            character: end as u32,
+            character: end_char,
         },
     };
     Some((ident.to_string(), range))
+}
+
+/// Convert a UTF-16 code-unit column (LSP) to a byte offset within a
+/// single line. Returns `None` when the column lands past the end of
+/// the line or inside a surrogate pair.
+fn utf16_col_to_byte(line: &str, utf16_col: u32) -> Option<usize> {
+    let mut col = 0u32;
+    for (byte, ch) in line.char_indices() {
+        if col == utf16_col {
+            return Some(byte);
+        }
+        let next_col = col + utf16_len(ch) as u32;
+        if utf16_col < next_col {
+            return None;
+        }
+        col = next_col;
+    }
+    (col == utf16_col).then_some(line.len())
 }
 /// Find the smallest enclosing statement whose `Span` contains the
 /// cursor position, returning its range as an LSP `Range`. Returns
@@ -106,7 +133,7 @@ pub(super) fn find_identifier_range_at_position(
 /// hop, and the file-level range provides the "expand all the way"
 /// step.
 fn find_enclosing_stmt_range(position: Position, file: &SourceFile, text: &str) -> Option<Range> {
-    let byte_offset = position_to_byte_offset_pos(text, position);
+    let byte_offset = position_to_byte_offset_pos(text, position)?;
     let mut best: Option<Span> = None;
     for stmt in &file.stmts {
         if let Some(span) = span_of_stmt(stmt) {

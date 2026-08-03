@@ -7,7 +7,7 @@ use tower_lsp::lsp_types::{
     InlayHintLabel, Position,
 };
 
-use crate::util::byte_offset_to_position;
+use crate::util::{byte_offset_to_position, position_to_byte_offset};
 
 /// Collect `InlayHint`s for every assignment whose target is a bare
 /// identifier with a known (non-opaque) inferred type. The hint is
@@ -65,12 +65,10 @@ fn collect_inlay_hints_from_stmt(
                 }
                 // Place the hint right after the identifier name.
                 // `span.start + name.len()` lands on the first
-                // character past the identifier (in byte space,
-                // which `byte_offset_to_position` converts to an
-                // LSP `Position`). For ASCII identifiers this is
-                // exact; non-ASCII names would need a UTF-16-aware
-                // helper, matching the existing approximation in
-                // `byte_offset_to_position`.
+                // character past the identifier (the identifier's
+                // byte end); `byte_offset_to_position` converts it to
+                // a UTF-16 LSP `Position`, so non-ASCII identifiers
+                // are handled correctly too.
                 let pos = byte_offset_to_position(text, span.start + name.len());
                 hints.push(InlayHint {
                     position: pos,
@@ -144,13 +142,13 @@ pub(super) fn collect_completions(
         // list (no completions) rather than falling through to the
         // generic list, so the editor popup stays focused.
         if let Some(line) = text.lines().nth(position.line as usize) {
-            // `position.character` is a UTF-16 offset; we
-            // approximate it as a byte index (matching the rest of
-            // this file's ASCII assumption). Clamp to the line end
-            // so a cursor past the last char doesn't slice out of
-            // bounds.
-            let until = position.character.min(line.len() as u32) as usize;
-            let before_cursor = &line[..until];
+            // `position.character` is a UTF-16 offset, not a byte
+            // index; resolve it to a byte offset before slicing so a
+            // line with a non-ASCII character before the cursor cannot
+            // panic (or truncate) the slice.
+            let until = position_to_byte_offset(text, position.line, position.character)
+                .unwrap_or(text.len());
+            let before_cursor = &line[..until.min(line.len())];
             // Strip the trailing `$` (and any whitespace between the
             // identifier and it) so `extract_last_identifier` lands
             // on the variable name.
@@ -212,137 +210,90 @@ pub(super) fn collect_completions(
 
 /// Build a small, curated list of common base-R keywords and
 /// functions. Kept short on purpose: the task calls for a focused
-/// popup, and the typeshed's full function table isn't directly
-/// reachable from the LSP crate. These names cover the constructs R
-/// users type most often at the top level.
+/// popup, and dumping the typeshed's full function table (thousands of
+/// entries) would bury the common names under noise.
+///
+/// Keyword entries are pure R syntax, so they cannot come from the
+/// typeshed and stay curated. The function entries keep a curated name
+/// plus a one-line human hint (the typeshed has no descriptions), but
+/// every name is validated against the base typeshed: a function must
+/// appear in its `functions` map or `ambient_functions` globals or it
+/// is dropped, so the popup cannot offer a name the checker does not
+/// know. We use the full `CompletionItemKind::X` form (rather than a
+/// `use` alias) because `CompletionItemKind` is a tuple struct with
+/// associated constants, not an enum, so a glob import is not allowed.
 pub(super) fn common_r_completions() -> Vec<CompletionItem> {
-    // (name, kind, detail). The detail is a one-line human hint so
-    // the popup shows something useful next to each entry. We use the
-    // full `CompletionItemKind::X` form (rather than a `use` alias)
-    // because `CompletionItemKind` is a tuple struct with associated
-    // constants, not an enum, so a glob import is not allowed.
-    const ENTRIES: &[(&str, CompletionItemKind, &str)] = &[
+    const KEYWORD_ENTRIES: &[(&str, &str)] = &[
         // Keywords / control flow.
-        ("if", CompletionItemKind::KEYWORD, "conditional"),
-        (
-            "else",
-            CompletionItemKind::KEYWORD,
-            "conditional alternative",
-        ),
-        ("for", CompletionItemKind::KEYWORD, "for loop"),
-        ("while", CompletionItemKind::KEYWORD, "while loop"),
-        ("repeat", CompletionItemKind::KEYWORD, "repeat loop"),
-        (
-            "function",
-            CompletionItemKind::KEYWORD,
-            "function definition",
-        ),
-        (
-            "return",
-            CompletionItemKind::KEYWORD,
-            "return from function",
-        ),
-        ("break", CompletionItemKind::KEYWORD, "break out of loop"),
-        (
-            "next",
-            CompletionItemKind::KEYWORD,
-            "skip to next iteration",
-        ),
-        // Common base-R functions.
-        (
-            "c",
-            CompletionItemKind::FUNCTION,
-            "combine values into a vector",
-        ),
-        ("list", CompletionItemKind::FUNCTION, "create a list"),
-        (
-            "data.frame",
-            CompletionItemKind::FUNCTION,
-            "create a data frame",
-        ),
-        ("matrix", CompletionItemKind::FUNCTION, "create a matrix"),
-        ("vector", CompletionItemKind::FUNCTION, "create a vector"),
-        (
-            "length",
-            CompletionItemKind::FUNCTION,
-            "length of an object",
-        ),
-        ("names", CompletionItemKind::FUNCTION, "names of an object"),
-        ("mean", CompletionItemKind::FUNCTION, "arithmetic mean"),
-        ("sum", CompletionItemKind::FUNCTION, "sum of elements"),
-        ("min", CompletionItemKind::FUNCTION, "minimum"),
-        ("max", CompletionItemKind::FUNCTION, "maximum"),
-        ("print", CompletionItemKind::FUNCTION, "print an object"),
-        (
-            "str",
-            CompletionItemKind::FUNCTION,
-            "display the structure of an object",
-        ),
-        (
-            "library",
-            CompletionItemKind::FUNCTION,
-            "load an attached package",
-        ),
-        (
-            "require",
-            CompletionItemKind::FUNCTION,
-            "load an attached package",
-        ),
-        (
-            "sapply",
-            CompletionItemKind::FUNCTION,
-            "apply a function over a list or vector",
-        ),
-        (
-            "lapply",
-            CompletionItemKind::FUNCTION,
-            "apply a function over a list",
-        ),
-        (
-            "mapply",
-            CompletionItemKind::FUNCTION,
-            "apply a function over multiple arguments",
-        ),
-        (
-            "which",
-            CompletionItemKind::FUNCTION,
-            "indices of TRUE values",
-        ),
-        (
-            "is.na",
-            CompletionItemKind::FUNCTION,
-            "detect missing values",
-        ),
-        (
-            "as.integer",
-            CompletionItemKind::FUNCTION,
-            "coerce to integer",
-        ),
-        (
-            "as.numeric",
-            CompletionItemKind::FUNCTION,
-            "coerce to numeric",
-        ),
-        (
-            "as.character",
-            CompletionItemKind::FUNCTION,
-            "coerce to character",
-        ),
-        (
-            "as.logical",
-            CompletionItemKind::FUNCTION,
-            "coerce to logical",
-        ),
+        ("if", "conditional"),
+        ("else", "conditional alternative"),
+        ("for", "for loop"),
+        ("while", "while loop"),
+        ("repeat", "repeat loop"),
+        ("function", "function definition"),
+        ("return", "return from function"),
+        ("break", "break out of loop"),
+        ("next", "skip to next iteration"),
     ];
-    ENTRIES
+    // (name, detail). The detail is a one-line human hint so the
+    // popup shows something useful next to each entry.
+    const FUNCTION_ENTRIES: &[(&str, &str)] = &[
+        ("c", "combine values into a vector"),
+        ("list", "create a list"),
+        ("data.frame", "create a data frame"),
+        ("matrix", "create a matrix"),
+        ("vector", "create a vector"),
+        ("length", "length of an object"),
+        ("names", "names of an object"),
+        ("mean", "arithmetic mean"),
+        ("sum", "sum of elements"),
+        ("min", "minimum"),
+        ("max", "maximum"),
+        ("print", "print an object"),
+        ("str", "display the structure of an object"),
+        ("library", "load an attached package"),
+        ("require", "load an attached package"),
+        ("sapply", "apply a function over a list or vector"),
+        ("lapply", "apply a function over a list"),
+        ("mapply", "apply a function over multiple arguments"),
+        ("which", "indices of TRUE values"),
+        ("is.na", "detect missing values"),
+        ("as.integer", "coerce to integer"),
+        ("as.numeric", "coerce to numeric"),
+        ("as.character", "coerce to character"),
+        ("as.logical", "coerce to logical"),
+    ];
+    let base = ry_typeshed::load_base_cached().ok();
+    let mut items: Vec<CompletionItem> = KEYWORD_ENTRIES
         .iter()
-        .map(|(name, kind, detail)| CompletionItem {
+        .map(|(name, detail)| CompletionItem {
             label: (*name).to_string(),
-            kind: Some(*kind),
+            kind: Some(CompletionItemKind::KEYWORD),
             detail: Some((*detail).to_string()),
             ..Default::default()
         })
-        .collect()
+        .collect();
+    items.extend(
+        FUNCTION_ENTRIES
+            .iter()
+            .filter(|(name, _)| {
+                base.is_none_or(|typeshed| {
+                    typeshed.functions.contains_key(*name)
+                        || typeshed
+                            .globals
+                            .ambient_functions
+                            .iter()
+                            .any(|n| n == *name)
+                })
+            })
+            .map(|(name, detail)| CompletionItem {
+                label: (*name).to_string(),
+                kind: Some(CompletionItemKind::FUNCTION),
+                detail: Some((*detail).to_string()),
+                ..Default::default()
+            }),
+    );
+    items
 }
 
 /// Extract the identifier at the end of `s`, scanning backwards. An
@@ -385,12 +336,13 @@ pub(super) fn extract_last_identifier(s: &str) -> Option<String> {
 ///     call).
 pub(super) fn find_enclosing_call(text: &str, line: usize, col: usize) -> Option<(String, usize)> {
     let line_str = text.lines().nth(line)?;
-    // Clamp the column to the line length so a cursor past the last
-    // character (a common transient state right after typing `(`)
-    // doesn't slice out of bounds. `col` is treated as a byte index,
-    // matching the ASCII assumption used throughout this file.
-    let until = col.min(line_str.len());
-    let before_cursor = &line_str[..until];
+    // `col` is a UTF-16 code-unit column from the LSP request.
+    // Resolve it to a byte offset before slicing, so a line with a
+    // non-ASCII character before the cursor cannot panic the slice.
+    // A cursor past the last character (a common transient state
+    // right after typing `(`) is clamped to the line end.
+    let until = position_to_byte_offset(text, line as u32, col as u32).unwrap_or(text.len());
+    let before_cursor = &line_str[..until.min(line_str.len())];
 
     // Walk backward to find the last unmatched `(`. We track depth so
     // a `(` belonging to a nested call (e.g. the inner `(` in
@@ -444,63 +396,15 @@ pub(super) fn find_enclosing_call(text: &str, line: usize, col: usize) -> Option
 }
 
 /// Look up the formal parameter names of a base-R function for
-/// signature help. Returns `None` for functions outside the curated
-/// table (user-defined functions are out of scope; the checker's
+/// signature help. Returns `None` for functions outside the base
+/// typeshed (user-defined functions are out of scope; the checker's
 /// FnTable isn't reachable from the LSP crate).
 ///
-/// The table is a small hand-maintained list of the most common base-R
-/// functions with their conventional parameter names. `...` is used
-/// for variadic functions where naming the rest of the parameters
-/// would be misleading. This intentionally avoids the typeshed: it
-/// would require exposing `ry-typeshed`'s internal `params` arrays to
-/// the LSP crate, and the curated list covers the cases users hit most.
+/// The embedded base typeshed is the single source of truth for
+/// parameter names: there is no parallel hand-maintained table here,
+/// so the LSP cannot drift from what the checker resolves.
 pub(super) fn get_signature(name: &str) -> Option<Vec<String>> {
-    let params: &[&str] = match name {
-        "c" => &["..."],
-        "list" => &["..."],
-        "mean" => &["x", "trim", "na.rm"],
-        "sum" => &["..."],
-        "length" => &["x"],
-        "rep" => &["x", "times", "each"],
-        "seq" => &["from", "to", "by"],
-        "round" => &["x", "digits"],
-        "paste" => &["...", "sep", "collapse"],
-        "paste0" => &["...", "collapse"],
-        "sprintf" => &["fmt", "..."],
-        "lapply" => &["X", "FUN"],
-        "sapply" => &["X", "FUN"],
-        "vapply" => &["X", "FUN", "FUN.VALUE"],
-        "mapply" => &["FUN", "..."],
-        "Map" => &["f", "..."],
-        "Reduce" => &["f", "x", "accumulate"],
-        "grepl" => &["pattern", "x"],
-        "gsub" => &["pattern", "replacement", "x"],
-        "substr" => &["x", "start", "stop"],
-        "matrix" => &["data", "nrow", "ncol"],
-        "data.frame" => &["..."],
-        "factor" => &["x", "levels", "labels"],
-        "ifelse" => &["test", "yes", "no"],
-        "which" => &["x"],
-        "order" => &["..."],
-        "sort" => &["x"],
-        "unique" => &["x"],
-        "match" => &["x", "table"],
-        "names" => &["x"],
-        "nchar" => &["x"],
-        "toupper" => &["x"],
-        "tolower" => &["x"],
-        "print" => &["x"],
-        "cat" => &["..."],
-        "stop" => &["..."],
-        "warning" => &["..."],
-        "nrow" => &["x"],
-        "ncol" => &["x"],
-        "head" => &["x", "n"],
-        "tail" => &["x", "n"],
-        "cbind" => &["..."],
-        "rbind" => &["..."],
-        "merge" => &["x", "y"],
-        _ => return None,
-    };
-    Some(params.iter().map(|s| s.to_string()).collect())
+    let base = ry_typeshed::load_base_cached().ok()?;
+    let signature = base.functions.get(name)?;
+    Some(signature.param_names().map(str::to_owned).collect())
 }

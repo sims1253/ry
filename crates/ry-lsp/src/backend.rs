@@ -11,8 +11,10 @@ use crate::diagnostics::{
     diagnostic_to_lsp, diagnostic_to_lsp_with_source, make_ignore_action, make_ignore_file_action,
 };
 use crate::folding::collect_folding_ranges;
-use crate::hints::{collect_completions, collect_inlay_hints, find_enclosing_call, get_signature};
-use crate::ident::find_ident_at_offset;
+use crate::hints::{
+    active_parameter, collect_completions, collect_inlay_hints, find_enclosing_call, get_signature,
+};
+use crate::ident::{find_ident_at_offset, is_valid_identifier};
 use crate::navigation::{
     collect_document_highlights, find_definition_locations, find_references_in_file,
 };
@@ -651,17 +653,10 @@ impl LanguageServer for Backend {
         };
 
         // Build the signature label like `round(x, digits)` and the
-        // per-parameter `ParameterInformation` list. The active
-        // parameter (highlighted by the editor) is clamped to the
-        // parameter count; if the user has typed more commas than
-        // there are formal parameters, we return `None` so the editor
-        // clears the popup rather than highlighting a non-existent
-        // parameter.
-        let active_param = if active_param < params_list.len() {
-            Some(active_param as u32)
-        } else {
-            None
-        };
+        // per-parameter `ParameterInformation` list. Extra arguments keep
+        // the final variadic parameter active; non-variadic signatures clear
+        // the highlight once the cursor moves past their final parameter.
+        let active_param = active_parameter(&params_list, active_param);
         let label = format!("{}({})", func_name, params_list.join(", "));
         let param_infos: Vec<ParameterInformation> = params_list
             .iter()
@@ -742,17 +737,9 @@ impl LanguageServer for Backend {
         let position = params.text_document_position.position;
         let new_name = params.new_name;
 
-        // A rename to an empty / whitespace-only name, or one that is
-        // not a valid R identifier, would corrupt the document. Reject
-        // it up front rather than silently "renaming" to garbage.
-        let is_valid_ident = !new_name.is_empty()
-            && new_name
-                .chars()
-                .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
-            && !new_name
-                .chars()
-                .any(|c| c.is_whitespace() || c.is_control());
-        if !is_valid_ident {
+        // Rename inserts the supplied text without backticks, so reject names
+        // that are not syntactically valid unquoted R identifiers.
+        if !is_valid_identifier(&new_name) {
             return Ok(None);
         }
 

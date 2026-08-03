@@ -4,7 +4,9 @@ use ry_core::{SourceFile, Span};
 use tower_lsp::lsp_types::{Position, Range, SelectionRange};
 
 use crate::folding::span_of_stmt;
-use crate::util::{byte_offset_to_position, position_to_byte_offset_pos, span_to_range, utf16_len};
+use crate::util::{
+    byte_offset_to_position, position_to_byte_offset_pos, span_to_range, utf16_col_to_byte,
+};
 
 /// Find the identifier (variable name) at a given line and column in
 /// the source text, returning BOTH the identifier string AND its LSP
@@ -102,23 +104,6 @@ pub(super) fn find_identifier_range_at_position(
     Some((ident.to_string(), range))
 }
 
-/// Convert a UTF-16 code-unit column (LSP) to a byte offset within a
-/// single line. Returns `None` when the column lands past the end of
-/// the line or inside a surrogate pair.
-fn utf16_col_to_byte(line: &str, utf16_col: u32) -> Option<usize> {
-    let mut col = 0u32;
-    for (byte, ch) in line.char_indices() {
-        if col == utf16_col {
-            return Some(byte);
-        }
-        let next_col = col + utf16_len(ch) as u32;
-        if utf16_col < next_col {
-            return None;
-        }
-        col = next_col;
-    }
-    (col == utf16_col).then_some(line.len())
-}
 /// Find the smallest enclosing statement whose `Span` contains the
 /// cursor position, returning its range as an LSP `Range`. Returns
 /// `None` when the cursor is not inside any statement (e.g. on a

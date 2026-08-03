@@ -1334,8 +1334,12 @@ fn collect_r_files_recursive(
         return;
     };
     for entry in entries.flatten() {
-        // Skip symlinks to prevent infinite recursion through symlink loops.
-        if entry.file_type().map(|ft| ft.is_symlink()).unwrap_or(false) {
+        // Skip symlinks and entries whose type cannot be classified; following
+        // either could make recursive discovery escape the requested tree.
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() {
             continue;
         }
         let p = entry.path();
@@ -1398,7 +1402,11 @@ fn rbuildignore_pattern(regex: &str) -> Option<glob::Pattern> {
         return None;
     }
     let anchored_start = regex.starts_with('^');
-    let anchored_end = regex.ends_with('$') && !regex.ends_with("\\$");
+    let trailing_backslashes = regex
+        .strip_suffix('$')
+        .map(|prefix| prefix.chars().rev().take_while(|&ch| ch == '\\').count())
+        .unwrap_or(0);
+    let anchored_end = regex.ends_with('$') && trailing_backslashes.is_multiple_of(2);
     let body = regex.strip_prefix('^').unwrap_or(regex);
     // Only strip the trailing `$` when it is a genuine anchor, not an
     // escaped `\$` (which must survive as a literal in the glob body).
@@ -1466,8 +1474,8 @@ fn sort_and_deduplicate_paths(paths: &mut Vec<PathBuf>) {
 mod tests {
     use super::{
         Baseline, BaselineEntry, ColorChoice, collect_r_files, demote_non_source_paths,
-        load_baseline, run_check_once, sort_and_deduplicate_diagnostics, subtract_baseline,
-        write_baseline_file,
+        load_baseline, rbuildignore_pattern, run_check_once, sort_and_deduplicate_diagnostics,
+        subtract_baseline, write_baseline_file,
     };
     use ry_checker::format::OutputFormat;
     use ry_checker::{Diagnostic, Severity};
@@ -1481,6 +1489,19 @@ mod tests {
             code,
             "same message",
         )
+    }
+
+    #[test]
+    fn rbuildignore_trailing_dollar_respects_escape_parity() {
+        assert!(rbuildignore_pattern("^file$").unwrap().matches("file"));
+        assert!(!rbuildignore_pattern("^file$").unwrap().matches("filex"));
+        assert!(rbuildignore_pattern(r"^file\$").unwrap().matches("file$"));
+        assert!(rbuildignore_pattern(r"^file\\$").unwrap().matches(r"file\"));
+        assert!(
+            !rbuildignore_pattern(r"^file\\$")
+                .unwrap()
+                .matches(r"file\x")
+        );
     }
 
     #[test]

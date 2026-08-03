@@ -152,12 +152,27 @@ fn find_ident_in_expr(e: &Expr, offset: usize, best: &mut Option<(String, Span)>
     }
 }
 
-/// True if `name` is a pure number or an R reserved word -- rename/hover/
-/// go-to-def ignore keywords and numeric literals.
-pub(super) fn is_numeric_or_keyword(name: &str) -> bool {
-    if name.parse::<f64>().is_ok() {
-        return true;
+/// True when `name` is a syntactically valid, unquoted R identifier.
+/// Backtick-quoted names are intentionally excluded because rename inserts
+/// the supplied text directly without adding quotes.
+pub(super) fn is_valid_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first.is_alphabetic() || first == '.') {
+        return false;
     }
+    if first == '.' && chars.clone().next().is_some_and(char::is_numeric) {
+        return false;
+    }
+    if !chars.all(|ch| ch.is_alphanumeric() || ch == '_' || ch == '.') {
+        return false;
+    }
+    !is_reserved_word(name)
+}
+
+fn is_reserved_word(name: &str) -> bool {
     matches!(
         name,
         "if" | "else"
@@ -179,9 +194,29 @@ pub(super) fn is_numeric_or_keyword(name: &str) -> bool {
             | "NA_character_"
             | "Inf"
             | "NaN"
-            | "T"
-            | "F"
-            | "library"
-            | "require"
     )
+}
+
+/// True if `name` is a pure number or an R reserved word -- rename/hover/
+/// go-to-def ignore keywords and numeric literals.
+pub(super) fn is_numeric_or_keyword(name: &str) -> bool {
+    if name.parse::<f64>().is_ok() {
+        return true;
+    }
+    is_reserved_word(name) || matches!(name, "T" | "F" | "library" | "require")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_valid_identifier;
+
+    #[test]
+    fn validates_unquoted_r_identifiers() {
+        for valid in ["name", ".name", "snake_case", "café", "x2"] {
+            assert!(is_valid_identifier(valid), "expected valid: {valid}");
+        }
+        for invalid in ["", "2name", ".2name", "has space", "if", "TRUE", "a-b"] {
+            assert!(!is_valid_identifier(invalid), "expected invalid: {invalid}");
+        }
+    }
 }

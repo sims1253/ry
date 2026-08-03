@@ -7,7 +7,7 @@ use tower_lsp::lsp_types::{
     InlayHintLabel, Position,
 };
 
-use crate::util::{byte_offset_to_position, position_to_byte_offset};
+use crate::util::{byte_offset_to_position, utf16_col_to_byte};
 
 /// Collect `InlayHint`s for every assignment whose target is a bare
 /// identifier with a known (non-opaque) inferred type. The hint is
@@ -146,9 +146,8 @@ pub(super) fn collect_completions(
             // index; resolve it to a byte offset before slicing so a
             // line with a non-ASCII character before the cursor cannot
             // panic (or truncate) the slice.
-            let until = position_to_byte_offset(text, position.line, position.character)
-                .unwrap_or(text.len());
-            let before_cursor = &line[..until.min(line.len())];
+            let until = utf16_col_to_byte(line, position.character).unwrap_or(line.len());
+            let before_cursor = &line[..until];
             // Strip the trailing `$` (and any whitespace between the
             // identifier and it) so `extract_last_identifier` lands
             // on the variable name.
@@ -277,7 +276,7 @@ pub(super) fn common_r_completions() -> Vec<CompletionItem> {
         FUNCTION_ENTRIES
             .iter()
             .filter(|(name, _)| {
-                base.is_none_or(|typeshed| {
+                base.as_ref().is_none_or(|typeshed| {
                     typeshed.functions.contains_key(*name)
                         || typeshed
                             .globals
@@ -341,8 +340,8 @@ pub(super) fn find_enclosing_call(text: &str, line: usize, col: usize) -> Option
     // non-ASCII character before the cursor cannot panic the slice.
     // A cursor past the last character (a common transient state
     // right after typing `(`) is clamped to the line end.
-    let until = position_to_byte_offset(text, line as u32, col as u32).unwrap_or(text.len());
-    let before_cursor = &line_str[..until.min(line_str.len())];
+    let until = utf16_col_to_byte(line_str, col as u32).unwrap_or(line_str.len());
+    let before_cursor = &line_str[..until];
 
     // Walk backward to find the last unmatched `(`. We track depth so
     // a `(` belonging to a nested call (e.g. the inner `(` in
@@ -407,4 +406,14 @@ pub(super) fn get_signature(name: &str) -> Option<Vec<String>> {
     let base = ry_typeshed::load_base_cached().ok()?;
     let signature = base.functions.get(name)?;
     Some(signature.param_names().map(str::to_owned).collect())
+}
+
+pub(super) fn active_parameter(params: &[String], active: usize) -> Option<u32> {
+    if active < params.len() {
+        Some(active as u32)
+    } else if params.last().is_some_and(|param| param == "...") {
+        Some((params.len() - 1) as u32)
+    } else {
+        None
+    }
 }

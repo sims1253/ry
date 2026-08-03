@@ -5,8 +5,8 @@ use crate::diagnostics::{
 };
 use crate::folding::collect_folding_ranges;
 use crate::hints::{
-    collect_completions, collect_inlay_hints, common_r_completions, extract_last_identifier,
-    find_enclosing_call, get_signature,
+    active_parameter, collect_completions, collect_inlay_hints, common_r_completions,
+    extract_last_identifier, find_enclosing_call, get_signature,
 };
 use crate::navigation::{
     build_rename_edits, collect_document_highlights, find_definition_locations,
@@ -562,6 +562,14 @@ fn trigger_context(ch: &str) -> Option<CompletionContext> {
 }
 
 #[test]
+fn dollar_completions_ignore_text_after_utf16_cursor_on_later_line() {
+    let src = "prefix <- 1\ndf <- data.frame(café = 1)\ndf$ trailing\n";
+    let position = Position::new(2, "df$".encode_utf16().count() as u32);
+    let items = completions(src, position, trigger_context("$"));
+    assert!(items.iter().any(|item| item.label == "café"), "{items:?}");
+}
+
+#[test]
 fn extract_last_identifier_basic() {
     // The variable name sits at the end of the input; the helper
     // must scan back to its start, stopping at the first non-ident
@@ -591,6 +599,15 @@ fn find_enclosing_call_basic_round() {
     let (name, active) = find_enclosing_call(text, 0, 6).expect("should find call");
     assert_eq!(name, "round");
     assert_eq!(active, 0);
+}
+
+#[test]
+fn find_enclosing_call_uses_line_local_utf16_column() {
+    let text = "first line\n😀round(x, trailing)\n";
+    let cursor = "😀round(x,".encode_utf16().count();
+    let (name, active) = find_enclosing_call(text, 1, cursor).expect("should find call");
+    assert_eq!(name, "round");
+    assert_eq!(active, 1);
 }
 
 #[test]
@@ -683,36 +700,19 @@ fn signature_help_label_and_active_param() {
     // The active parameter must be clamped to the parameter list
     // length: with 3 params and active=1, the highlight should
     // land on `digits`.
-    let active_param = if active < params.len() {
-        Some(active as u32)
-    } else {
-        None
-    };
-    assert_eq!(active_param, Some(1));
+    assert_eq!(active_parameter(&params, active), Some(1));
 }
 
 #[test]
-fn signature_help_clamps_when_past_last_param() {
-    // When the user has typed more commas than there are formal
-    // parameters (e.g. `round(1, 2, 3, `), the active-parameter
-    // index should clamp to `None` so the editor clears the
-    // highlight instead of pointing at a non-existent parameter.
-    // `round` has 3 params (x, digits, ...); typing 3 commas puts
-    // the cursor on a 4th parameter that doesn't exist.
+fn signature_help_keeps_variadic_parameter_active() {
     let text = "round(1, 2, 3, \n";
-    // After the third comma (byte 14): active param 3.
     let (_, active) = find_enclosing_call(text, 0, 14).expect("should find call");
     assert_eq!(active, 3);
     let params = get_signature("round").expect("round should have a signature");
-    let active_param = if active < params.len() {
-        Some(active as u32)
-    } else {
-        None
-    };
-    assert_eq!(
-        active_param, None,
-        "active param should clamp to None past the last formal"
-    );
+    assert_eq!(active_parameter(&params, active), Some(2));
+
+    let non_variadic = vec!["x".to_string(), "digits".to_string()];
+    assert_eq!(active_parameter(&non_variadic, active), None);
 }
 
 #[test]

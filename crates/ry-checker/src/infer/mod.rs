@@ -678,7 +678,25 @@ impl Checker {
         for (name, (then_t, else_t)) in branch_types {
             let merged = match (then_t, else_t) {
                 (Some(a), Some(b)) => a.join(b),
-                (Some(a), None) | (None, Some(a)) => a.join(RType::unknown()),
+                (Some(a), None) | (None, Some(a)) => {
+                    // The name is assigned in only one branch (no
+                    // `else`). When the name is already bound in the
+                    // parent it is definitely defined on every path --
+                    // only its type changes -- so carry the branch's
+                    // type and let the parent fold below union in the
+                    // prior type (so `s <- 1L; if (c) { s <- "x" }`
+                    // stays `union[integer, character]` rather than
+                    // collapsing to opaque). When the parent has NO
+                    // binding the name is possibly missing, which has no
+                    // sound type, so it degrades to opaque. Joining with
+                    // `RType::unknown()` here would be absorbing and make
+                    // the parent fold below dead code.
+                    if scope.get(&name).is_some() {
+                        a
+                    } else {
+                        a.join(RType::unknown())
+                    }
+                }
                 (None, None) => continue,
             };
             // If the name already existed in the parent with a *different*
@@ -1394,6 +1412,11 @@ impl Checker {
                     }
                 }
                 None => {
+                    // Typed package values take precedence over existence-only
+                    // import bindings so constants retain their declared type.
+                    if let Some(value_type) = self.resolve_typeshed_value(name) {
+                        return value_type;
+                    }
                     if self.external_bindings.contains(name) {
                         return RType::unknown();
                     }
@@ -1404,11 +1427,6 @@ impl Checker {
                         })
                     }) {
                         return RType::unknown();
-                    }
-                    // Built-in dataset? (mtcars, iris, ...) Resolve before
-                    // flagging the identifier as unbound.
-                    if let Some(jt) = self.typeshed.datasets.get(name) {
-                        return json_rtype_to_rtype(jt);
                     }
                     // Known typeshed function used as a value (e.g.
                     // `sapply(x, sqrt)` passes `sqrt` as a bare

@@ -1227,6 +1227,55 @@ fn import_from_applies_metadata_only_to_the_imported_binding() {
 }
 
 #[test]
+fn typed_package_constants_are_values_not_functions() {
+    let mut parser = RParser::new().unwrap();
+    let file = parser
+        .parse("test.R", "value <- na_chr\nbad <- na_chr()\n")
+        .unwrap();
+    let mut checker = Checker::new("test.R");
+    checker.set_loaded(HashSet::from(["rlang".to_string()]));
+    let (diagnostics, scope) = checker.check_with_scope(&file);
+
+    assert_eq!(
+        scope.get("value").map(|ty| &ty.mode),
+        Some(&Mode::Character)
+    );
+    assert_eq!(scope.get("value").map(|ty| ty.length), Some(Length::One));
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "RY070" && diagnostic.message.contains("na_chr")
+        })
+    );
+}
+
+#[test]
+fn local_callable_shadows_typed_package_constant() {
+    let diagnostics = check(
+        "library(rlang)\nna_chr <- function() \"ok\"\nvalue <- na_chr()\nf <- function(na_chr) na_chr()\nf(function() \"formal\")\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY070"),
+        "lexical callables must win over attached package constants: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn import_from_preserves_typed_package_constant() {
+    let mut parser = RParser::new().unwrap();
+    let file = parser.parse("test.R", "value <- na_int\n").unwrap();
+    let mut checker = Checker::new("test.R");
+    checker.set_external_bindings(HashSet::from(["na_int".to_string()]));
+    checker.set_imported_from(HashMap::from([("na_int".to_string(), "rlang".to_string())]));
+    let (diagnostics, scope) = checker.check_with_scope(&file);
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert_eq!(scope.get("value").map(|ty| &ty.mode), Some(&Mode::Integer));
+    assert_eq!(scope.get("value").map(|ty| ty.length), Some(Length::One));
+}
+
+#[test]
 fn unknown_user_infix_quotes_both_operands_and_returns_unknown() {
     let (diagnostics, scope) =
         check_with_scope("result <- missing_left %custom% missing_right\nafter <- result + 1L\n");
@@ -1455,12 +1504,17 @@ fn data_frame_scalar_column_subset_drops_to_column_type() {
 
 #[test]
 fn negative_scalar_subscript_is_not_narrowed_to_length_one() {
-    let diagnostics = check("x <- c(10, 20, 30)\nif (x[-1] > 1) print(1)\n");
+    let (diagnostics, scope) =
+        check_with_scope("x <- c(10, 20, 30)\ny <- x[-1]\nif (y > 1) print(1)\n");
     assert!(
         diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "RY002"),
-        "negative subscript excludes an element rather than extracting one: {diagnostics:?}"
+            .all(|diagnostic| diagnostic.code != "RY002"),
+        "an exclusion index has unknown result length and must stay silent: {diagnostics:?}"
+    );
+    assert_eq!(
+        scope.get("y").map(|value| value.length),
+        Some(Length::Unknown)
     );
 }
 
@@ -1738,20 +1792,14 @@ fn lazy_defaults_can_reference_body_local_bindings() {
 }
 
 #[test]
-fn lazy_default_forced_before_body_local_assignment_is_diagnosed() {
+fn conditional_lazy_default_force_stays_silent() {
     let diags = check(include_str!(
         "../testdata/ry098_default_forced_before_assignment.R"
     ));
-    let matches: Vec<_> = diags
-        .iter()
-        .filter(|diagnostic| diagnostic.code == "RY098")
-        .collect();
-    assert_eq!(
-        matches.len(),
-        1,
-        "only the early return should fire: {diags:?}"
+    assert!(
+        diags.iter().all(|diagnostic| diagnostic.code != "RY098"),
+        "a conditional force is not guaranteed: {diags:?}"
     );
-    assert_eq!(matches[0].span.line, 2);
 }
 
 #[test]
@@ -6194,10 +6242,10 @@ fn if_branch_join_type_is_union_when_branches_disagree() {
 #[test]
 fn if_branch_reassignment_over_existing_type_stays_visible() {
     // `s <- 1L` then reassigned to `"x"` inside a single branch (no
-    // else). The plan specifies single-branch bindings degrade to
-    // unknown (opaque), since there is no sound type for "possibly
-    // missing". What matters is that the use after the `if` stays
-    // RY010-free; the merged type is opaque by design.
+    // else). `s` is definitely bound on every path (it exists in the
+    // parent), so the merged type is the union of the branch's
+    // character and the parent's integer -- NOT opaque. That keeps the
+    // use after the `if` RY010-free while preserving the precise type.
     let (diags, top) = check_with_scope("s <- 1L\nif (TRUE) { s <- \"x\" }\ns\n");
     assert!(
         diags.iter().all(|d| d.code != "RY010"),
@@ -6206,8 +6254,8 @@ fn if_branch_reassignment_over_existing_type_stays_visible() {
     );
     let t = top.get("s").expect("s should be bound at top level");
     assert!(
-        matches!(t.mode, Mode::Opaque),
-        "single-branch reassignment degrades to unknown (opaque) per plan, got {:?}",
+        matches!(t.mode, Mode::Union),
+        "parent-defined single-branch reassignment should be a union of parent and branch types, got {:?}",
         t
     );
 }

@@ -252,31 +252,35 @@ impl Checker {
                         return RType::unknown();
                     }
                 }
-                // Single-bracket subsetting semantics are complex
-                // (column slice vs row slice depends on commas and
-                // drops). For atomic vectors with one scalar index,
-                // however, the result is a scalar of the same mode.
-                let scalar_atomic_index = args.len() == 1
-                    && args
-                        .first()
-                        .is_some_and(|a| is_non_negative_scalar_index(&a.value, scope))
-                    && matches!(
-                        bt.mode,
-                        Mode::Integer
-                            | Mode::Double
-                            | Mode::Character
-                            | Mode::Logical
-                            | Mode::Complex
-                            | Mode::Raw
-                    );
-                for a in args {
-                    self.infer(&a.value, scope);
-                }
-                if scalar_atomic_index {
-                    return RType {
-                        length: Length::One,
-                        ..bt
+                // For one-dimensional vector subsetting, result length is
+                // controlled by the index rather than the source. Logical
+                // masks select by their TRUE count, and numeric indices may
+                // exclude or select nothing, so retain a length only when R's
+                // index mode makes that length provable.
+                let index_types: Vec<_> = args
+                    .iter()
+                    .map(|argument| self.infer(&argument.value, scope))
+                    .collect();
+                let vector_base = matches!(
+                    bt.mode,
+                    Mode::Integer
+                        | Mode::Double
+                        | Mode::Character
+                        | Mode::Logical
+                        | Mode::Complex
+                        | Mode::Raw
+                        | Mode::List
+                );
+                if vector_base && args.len() == 1 {
+                    let index = &index_types[0];
+                    let length = match index.mode {
+                        Mode::Character => index.length,
+                        Mode::Integer | Mode::Double if positive_numeric_index(&args[0].value) => {
+                            index.length
+                        }
+                        _ => Length::Unknown,
                     };
+                    return RType { length, ..bt };
                 }
                 bt
             }
@@ -309,22 +313,31 @@ impl Checker {
 }
 
 /// Whether an index expression is a scalar element selector, rather than a
-/// negative exclusion selector. R has no sign information in `RType`, so a
-/// scalar identifier is accepted while syntactically negative literals are
-/// deliberately rejected.
-pub(crate) fn is_non_negative_scalar_index(expr: &Expr, scope: &Scope) -> bool {
+/// negative exclusion selector. Zero selects no elements under `[`, so only a
+/// syntactically positive numeric literal proves scalar result length. A
+/// scalar identifier has unknown sign and is therefore not sufficient.
+pub(crate) fn is_non_negative_scalar_index(expr: &Expr, _scope: &Scope) -> bool {
     match expr {
-        Expr::Integer(index, _) => *index >= 0,
-        Expr::Double(index, _) => *index >= 0.0,
+        Expr::Integer(index, _) => *index > 0,
+        Expr::Double(index, _) => *index > 0.0,
         Expr::String(_, _) => true,
-        Expr::Ident { name, .. } => scope.get(name).is_some_and(|ty| {
-            matches!(ty.length, Length::One)
-                && matches!(ty.mode, Mode::Integer | Mode::Double | Mode::Character)
-        }),
-        Expr::UnaryOp {
-            op: UnaryOpKind::Neg,
-            ..
-        } => false,
+        _ => false,
+    }
+}
+
+/// Numeric subsetting preserves index length only when every index value is
+/// provably positive and non-zero. The AST currently retains concrete values
+/// for literals and `c(...)`; identifiers carry mode and length but no sign.
+fn positive_numeric_index(expr: &Expr) -> bool {
+    match expr {
+        Expr::Integer(index, _) => *index > 0,
+        Expr::Double(index, _) => index.is_finite() && *index > 0.0 && index.fract() == 0.0,
+        Expr::Call { func, args, .. } if matches!(func.as_ref(), Expr::Ident { name, .. } if name == "c") => {
+            !args.is_empty()
+                && args
+                    .iter()
+                    .all(|argument| positive_numeric_index(&argument.value))
+        }
         _ => false,
     }
 }
@@ -523,8 +536,8 @@ pub(crate) fn is_nse_symbol_fn(name: &str) -> bool {
         // ggplot2 NSE
         "from_theme" | "aes" | "aes_" | "aes_string" | "aes_q"
         // rlang NSE
-        | "sym" | "expr"
-        | "exprs" | "quo" | "quos" | "abort" | "inform"
+        | "sym" | "expr" | "enexpr" | "ensym"
+        | "exprs" | "quo" | "quos" | "enquo" | "enquos" | "ensyms" | "abort" | "inform"
         | "defuse" | "tidyeval_data" | "new_formula" | "new_quosure"
         // dplyr/tidyselect NSE
         | "tidyselect" | "all_vars" | "peek_vars"

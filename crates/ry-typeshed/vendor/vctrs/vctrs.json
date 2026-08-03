@@ -1,0 +1,95 @@
+{
+  "schema_version": "2",
+  "package": "vctrs",
+  "version": "0.0.1",
+  "functions": {
+    "obj_is_list": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "vec_in": {
+      "params": [
+        {
+          "name": "needles",
+          "required": true
+        },
+        {
+          "name": "haystack",
+          "required": true
+        },
+        "...",
+        "na_equal",
+        "needles_arg",
+        "haystack_arg"
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "arg0",
+        "na": true
+      }
+    },
+    "vec_set_union": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "y",
+          "required": true
+        },
+        "...",
+        "ptype",
+        "x_arg",
+        "y_arg",
+        "error_call"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "vec_size": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "integer",
+        "length": "1",
+        "na": false
+      }
+    },
+    "vec_slice": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "i",
+          "required": true
+        },
+        "...",
+        "error_call"
+      ],
+      "return": {
+        "mode": "arg0",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  }
+}

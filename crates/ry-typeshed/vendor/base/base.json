@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "base",
-  "version": "0.0.2",
+  "version": "0.0.4",
   "globals": {
     "ambient": [
       "..deparseOpts",
@@ -2415,8 +2415,14 @@
     },
     "Filter": {
       "params": [
-        "f",
-        "x"
+        {
+          "name": "f",
+          "required": true
+        },
+        {
+          "name": "x",
+          "required": true
+        }
       ],
       "higher_order": {
         "callback_param": "f",
@@ -2433,8 +2439,22 @@
     },
     "Find": {
       "params": [
-        "f",
-        "x"
+        {
+          "name": "f",
+          "required": true
+        },
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "right",
+          "default": true
+        },
+        {
+          "name": "nomatch",
+          "default": true
+        }
       ],
       "higher_order": {
         "callback_param": "f",
@@ -2464,7 +2484,10 @@
     },
     "Map": {
       "params": [
-        "f",
+        {
+          "name": "f",
+          "required": true
+        },
         "..."
       ],
       "higher_order": {
@@ -2515,8 +2538,22 @@
     },
     "Position": {
       "params": [
-        "f",
-        "x"
+        {
+          "name": "f",
+          "required": true
+        },
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "right",
+          "default": true
+        },
+        {
+          "name": "nomatch",
+          "default": true
+        }
       ],
       "higher_order": {
         "callback_param": "f",
@@ -2554,9 +2591,30 @@
     },
     "Reduce": {
       "params": [
-        "f",
-        "x",
-        "..."
+        {
+          "name": "f",
+          "required": true
+        },
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "init",
+          "default": true
+        },
+        {
+          "name": "right",
+          "default": true
+        },
+        {
+          "name": "accumulate",
+          "default": true
+        },
+        {
+          "name": "simplify",
+          "default": true
+        }
       ],
       "higher_order": {
         "callback_param": "f",
@@ -2772,10 +2830,7 @@
     },
     "as.character": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
+        "x",
         "..."
       ],
       "return": {
@@ -2822,10 +2877,7 @@
     },
     "as.integer": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
+        "x",
         "..."
       ],
       "return": {
@@ -2866,10 +2918,7 @@
     },
     "as.numeric": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
+        "x",
         "..."
       ],
       "return": {
@@ -2880,7 +2929,10 @@
     },
     "as.raw": {
       "params": [
-        "x"
+        {
+          "name": "x",
+          "required": true
+        }
       ],
       "return": {
         "mode": "raw",
@@ -3350,7 +3402,7 @@
       ],
       "scope_effect": "unknown_bindings",
       "return": {
-        "mode": "character",
+        "mode": "opaque",
         "length": "unknown",
         "na": false
       }
@@ -4882,8 +4934,23 @@
     },
     "mapply": {
       "params": [
-        "FUN",
-        "..."
+        {
+          "name": "FUN",
+          "required": true
+        },
+        "...",
+        {
+          "name": "MoreArgs",
+          "default": true
+        },
+        {
+          "name": "SIMPLIFY",
+          "default": true
+        },
+        {
+          "name": "USE.NAMES",
+          "default": true
+        }
       ],
       "higher_order": {
         "callback_param": "FUN",
@@ -5897,8 +5964,26 @@
     },
     "rapply": {
       "params": [
-        "object",
-        "f",
+        {
+          "name": "object",
+          "required": true
+        },
+        {
+          "name": "f",
+          "required": true
+        },
+        {
+          "name": "classes",
+          "default": true
+        },
+        {
+          "name": "deflt",
+          "default": true
+        },
+        {
+          "name": "how",
+          "default": true
+        },
         "..."
       ],
       "higher_order": {
@@ -6068,15 +6153,12 @@
     },
     "rep": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
+        "x",
         "..."
       ],
       "return": {
         "mode": "arg0",
-        "length": "x_times",
+        "length": "unknown",
         "na": true
       }
     },
@@ -6304,8 +6386,23 @@
     },
     "sapply": {
       "params": [
-        "X",
-        "FUN"
+        {
+          "name": "X",
+          "required": true
+        },
+        {
+          "name": "FUN",
+          "required": true
+        },
+        "...",
+        {
+          "name": "simplify",
+          "default": true
+        },
+        {
+          "name": "USE.NAMES",
+          "default": true
+        }
       ],
       "higher_order": {
         "callback_param": "FUN",
@@ -6997,9 +7094,27 @@
     },
     "tapply": {
       "params": [
-        "X",
-        "INDEX",
-        "FUN"
+        {
+          "name": "X",
+          "required": true
+        },
+        {
+          "name": "INDEX",
+          "required": true
+        },
+        {
+          "name": "FUN",
+          "default": true
+        },
+        "...",
+        {
+          "name": "default",
+          "default": true
+        },
+        {
+          "name": "simplify",
+          "default": true
+        }
       ],
       "higher_order": {
         "callback_param": "FUN",
@@ -7274,9 +7389,23 @@
     },
     "vapply": {
       "params": [
-        "X",
-        "FUN",
-        "FUN.VALUE"
+        {
+          "name": "X",
+          "required": true
+        },
+        {
+          "name": "FUN",
+          "required": true
+        },
+        {
+          "name": "FUN.VALUE",
+          "required": true
+        },
+        "...",
+        {
+          "name": "USE.NAMES",
+          "default": true
+        }
       ],
       "higher_order": {
         "callback_param": "FUN",

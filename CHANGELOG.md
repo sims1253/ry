@@ -4,23 +4,67 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
-### Fixed
+## [0.8.0] - 2026-08-04
 
-- The native-pipe extraction placeholder (R >= 4.3), as in `mtcars |> _$mpg` or
-  `df |> _[["col"]]`, no longer produces a false `RY010` "variable `_` is not
-  bound in this scope" warning. The placeholder now resolves to the piped
-  left-hand side, so the extracted type is inferred (#27). This also covers
-  longer extraction chains rooted at the placeholder, such as
-  `mtcars |> _$mpg[1]` and `df %>% .$col[i]`.
-- Every `.` argument of a magrittr call now receives the piped value, matching
-  magrittr's substitution rule. `x %>% paste(., ., sep = "-")` no longer reports
-  a false `RY010` on the second `.`. `.` is also bound throughout the piped
-  call, so nested pronouns such as `x %>% sum(rev(.))` and the filtering idiom
-  `mtcars %>% .[.$mpg > 20, ]` resolve as well.
-- Pipe placeholders are now specific to their operator: `.` only resolves to the
-  piped value in magrittr pipes and `_` only in the native `|>`. `mtcars |> .$mpg`
-  and `mtcars %>% _$mpg` are invalid R, and both now report `RY010` instead of
-  being silently accepted.
+This release focuses on checker precision, higher-order R semantics, and editor
+correctness. It is a minor release because diagnostic output and inferred
+warning sets intentionally change, and JSON diagnostics gain a new field.
+
+### Checker and type inference
+
+- Higher-order calls such as `Map()`, `mapply()`, `vapply()`, `Filter()`, and
+  purrr map-family functions now bind callbacks, sources, templates, and
+  controls by R formal-argument matching rather than raw call position. Named,
+  reordered, and partially matched arguments therefore infer consistently.
+- Single-bracket vector and list subsetting derives result length from logical
+  and numeric indices when it is provable. Literal negative exclusions retain
+  exact length for known inputs, while transformed subsets no longer carry
+  stale source-column schemas.
+- Recursive parameter defaults (`RY098`) distinguish guaranteed forcing from
+  quoting, conditional paths, short-circuit evaluation, loop reachability, and
+  replacement assignments. This removes false positives while preserving
+  provable recursion diagnostics.
+- Types merged after one-arm `if` reassignment retain the parent/branch union
+  instead of becoming opaque, and repeated checks on one `Checker` no longer
+  accumulate diagnostics from previous files.
+
+### Pipes, suppressions, and output
+
+- Native-pipe extraction placeholders (R >= 4.3), such as `mtcars |> _$mpg`
+  and `df |> _[["col"]]`, resolve to the piped value. Magrittr substitutes every
+  `.` occurrence, including nested calls, while `.` and `_` remain specific to
+  their respective pipe operators. Invalid cross-operator placeholders now
+  report `RY010`. Thanks to [@tjmahr](https://github.com/tjmahr) for reporting
+  the placeholder scope issue in [#27](https://github.com/sims1253/ry/issues/27).
+- Standalone `# ry: ignore` directives target the next actual code line,
+  skipping blank and comment-only lines without mistaking `#` inside strings
+  for a directive. Rule lists stop at their closing `]`.
+- JSON diagnostics now include the diagnostic `confidence` tier. Severity
+  overrides preserve confidence, so `--min-confidence` behaves consistently.
+
+### Editor and language server
+
+- Cached parses are paired atomically with the exact source text they came
+  from, preventing concurrent edits from mixing stale text with a newer AST.
+- LSP byte offsets and columns now correctly handle UTF-16, non-ASCII
+  identifiers, CRLF files, invalid/out-of-range positions, completion and
+  signature-help cursors, and code-action edits.
+- Rename validates R identifiers (including Unicode and reserved-word rules),
+  and loop-variable navigation/rename highlights only the binding identifier.
+- Closing a document refreshes cross-file diagnostics in remaining documents.
+  Completion and signature help use the embedded base typeshed rather than a
+  separate hand-maintained signature table.
+
+### Typeshed and package handling
+
+- Updated the embedded r-typeshed snapshot to `d4453457` (schema 0.0.4),
+  including corrected base and rlang metadata, typed rlang missing-value
+  constants, and new vctrs function metadata.
+- Recursive package scans skip symlinks and unclassifiable directory entries,
+  preventing filesystem loops. `.Rbuildignore` handling now distinguishes a
+  real trailing `$` anchor from escaped dollar literals.
+- R string decoding accepts R's variable-width `\u` (1-4 hex digits) and
+  `\U` (1-8 hex digits) forms.
 
 ## [0.7.1] - 2026-07-24
 
@@ -516,7 +560,9 @@ in under a second in release mode.
 
 - Initial release.
 
-[Unreleased]: https://github.com/sims1253/ry/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/sims1253/ry/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/sims1253/ry/compare/v0.7.1...v0.8.0
+[0.7.1]: https://github.com/sims1253/ry/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/sims1253/ry/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/sims1253/ry/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/sims1253/ry/compare/v0.5.0...v0.6.0

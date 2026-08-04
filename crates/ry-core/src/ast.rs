@@ -62,6 +62,11 @@ pub enum Stmt {
     /// `for (nm in iter) body`
     For {
         name: String,
+        /// Span of just the loop-variable identifier (`nm`), as opposed
+        /// to `span`, the whole statement. Consumers that highlight or
+        /// rename the binding (LSP navigation) use this so they do not
+        /// accidentally cover `iter` / `body`.
+        name_span: Span,
         iter: Expr,
         body: Vec<Stmt>,
         span: Span,

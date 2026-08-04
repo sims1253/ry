@@ -211,49 +211,75 @@ pub fn parse_suppressions(src: &str) -> Vec<Suppression> {
 /// Standalone-vs-trailing is decided by the comment's column: a comment
 /// at column 0 (no code before it on the line) defers to the next code
 /// line; a comment at column > 0 applies to its own line.
-pub fn parse_suppressions_from_comments(comments: &[ry_core::ast::Comment]) -> Vec<Suppression> {
+///
+/// Resolving a standalone directive to "the next code line" requires the
+/// source text: blank lines and comment-only lines in between must be
+/// skipped, which cannot be determined from the comment list alone. Pass
+/// the full source so the resolution matches the legacy
+/// `parse_suppressions(&str)` behavior exactly.
+pub fn parse_suppressions_from_comments(
+    comments: &[ry_core::ast::Comment],
+    src: &str,
+) -> Vec<Suppression> {
+    let src_lines: Vec<&str> = src.lines().collect();
     let mut suppressions = Vec::new();
-    let mut pending: Option<Suppression> = None;
     for c in comments {
-        if let Some(codes) = parse_ignore_comment_body(&c.body) {
-            if c.col == 0 {
-                // Standalone: applies to the next code line. We don't
-                // know which line that is from comments alone, so defer
-                // and resolve against the next comment's line minus one
-                // (a trailing comment on the target line) or the next
-                // comment's line if none.
-                pending = Some(Suppression {
-                    line: 0,
-                    rules: codes,
-                });
-            } else {
-                // Trailing: applies to this line.
-                suppressions.push(Suppression {
-                    line: c.line,
-                    rules: codes,
-                });
-            }
+        let Some(codes) = parse_ignore_comment_body(&c.body) else {
             continue;
-        }
-        // A non-directive comment resolves a pending standalone
-        // suppression if it sits on a later line (heuristic: it marks a
-        // line that has code, since trailing comments follow code).
-        if let Some(mut supp) = pending.take() {
-            if c.col > 0 && c.line > supp.line {
-                supp.line = c.line;
-                suppressions.push(supp);
-            } else {
-                pending = Some(supp);
+        };
+        if c.col == 0 || is_whitespace_only_prefix(&src_lines, c) {
+            // Standalone: applies to the next non-comment, non-blank
+            // line after this comment. If there is no such line (e.g.
+            // the directive is the last thing in the file) there is
+            // nothing to suppress, so the directive is dropped.
+            if let Some(line) = next_code_line(&src_lines, c.line) {
+                suppressions.push(Suppression { line, rules: codes });
             }
+        } else {
+            // Trailing: applies to this line.
+            suppressions.push(Suppression {
+                line: c.line,
+                rules: codes,
+            });
         }
-    }
-    if let Some(mut supp) = pending.take() {
-        // File ended with an unresolved standalone directive: attach to
-        // the line after the last comment as a best effort.
-        supp.line = comments.last().map(|c| c.line + 1).unwrap_or(0);
-        suppressions.push(supp);
     }
     suppressions
+}
+
+/// Whether everything on the comment's line before the `#` is
+/// whitespace. A comment whose line is entirely whitespace up to the
+/// `#` is standalone even when indented (`    # ry: ignore`), as opposed
+/// to a trailing comment that follows code (`x <- 1  # ry: ignore`).
+fn is_whitespace_only_prefix(src_lines: &[&str], c: &ry_core::ast::Comment) -> bool {
+    src_lines
+        .get(c.line)
+        .and_then(|line| {
+            // `c.col` is a BYTE column; only slice when it is within the
+            // line's byte length.
+            if c.col <= line.len() {
+                Some(&line[..c.col])
+            } else {
+                None
+            }
+        })
+        .map(|prefix| prefix.trim().is_empty())
+        .unwrap_or(false)
+}
+
+/// Find the first line after `start` that is neither blank nor a
+/// comment-only line (a line whose first non-whitespace character is
+/// `#`). Used to resolve standalone `# ry: ignore` directives to their
+/// target code line.
+fn next_code_line(lines: &[&str], start: usize) -> Option<usize> {
+    let mut line = start + 1;
+    while line < lines.len() {
+        let trimmed = lines[line].trim();
+        if !trimmed.is_empty() && !trimmed.starts_with('#') {
+            return Some(line);
+        }
+        line += 1;
+    }
+    None
 }
 
 /// Parse a single comment line for an ignore directive. Returns
@@ -316,9 +342,16 @@ fn parse_rule_codes(text: &str) -> Vec<String> {
     if text.is_empty() {
         return Vec::new();
     }
+    // Stop at the closing `]`: anything after it is prose, not a code
+    // (so `# ry: ignore[RY040] note` yields `RY040`, not a bogus
+    // `RY040]` token that never matches).
+    let text = match text.find(']') {
+        Some(pos) => &text[..pos],
+        None => text,
+    };
     // Strip a single layer of surrounding brackets / leading colon.
     let text = text.trim_start_matches(['[', ':', ' ']);
-    let text = text.trim_end_matches(']');
+    let text = text.trim_end();
     text.split([',', ' '])
         .filter(|s| !s.is_empty())
         .map(|s| s.trim().to_uppercase())
@@ -400,15 +433,17 @@ pub fn filter_suppressed(diags: Vec<Diagnostic>, src: &str) -> Vec<Diagnostic> {
 
 /// Lexical variant of `filter_suppressed`: uses the parser's collected
 /// comments so a `#` inside a string literal is not mistaken for a
-/// suppression directive.
+/// suppression directive. The source text is required to resolve
+/// standalone `# ry: ignore` directives to their target code line.
 pub fn filter_suppressed_with_comments(
     diags: Vec<Diagnostic>,
     comments: &[ry_core::ast::Comment],
+    src: &str,
 ) -> Vec<Diagnostic> {
     if has_file_suppression_from_comments(comments) {
         return Vec::new();
     }
-    let supps = parse_suppressions_from_comments(comments);
+    let supps = parse_suppressions_from_comments(comments, src);
     diags
         .into_iter()
         .filter(|d| !is_suppressed(d, &supps))
@@ -417,11 +452,19 @@ pub fn filter_suppressed_with_comments(
 
 /// Severity overrides that a caller (typically the CLI) wants to apply.
 /// Matches ty's `--error` / `--warn` / `--ignore` semantics.
+///
+/// The `expanded_*` fields are private precomputed caches: each `add_*`
+/// expands its token (rule name, code, or "all") into the concrete code
+/// list once, so `effective` is O(codes) per diagnostic instead of
+/// re-examining every token against the rule table on every call.
 #[derive(Debug, Clone, Default)]
 pub struct SeverityFilter {
     pub errors: Vec<String>,
     pub warns: Vec<String>,
     pub ignores: Vec<String>,
+    expanded_errors: Vec<&'static str>,
+    expanded_warns: Vec<&'static str>,
+    expanded_ignores: Vec<&'static str>,
 }
 
 impl SeverityFilter {
@@ -437,34 +480,32 @@ impl SeverityFilter {
         }
     }
 
-    /// Add a token (code / name / "all") to one of the buckets.
+    /// Add a token (code / name / "all") to one of the buckets,
+    /// pre-expanding it into the cached code list.
     pub fn add_error(&mut self, token: &str) {
         self.errors.push(token.to_string());
+        self.expanded_errors.extend(Self::expand(token));
     }
     pub fn add_warn(&mut self, token: &str) {
         self.warns.push(token.to_string());
+        self.expanded_warns.extend(Self::expand(token));
     }
     pub fn add_ignore(&mut self, token: &str) {
         self.ignores.push(token.to_string());
+        self.expanded_ignores.extend(Self::expand(token));
     }
 
     /// Returns the effective severity for a code, or None to suppress it.
     /// Precedence (highest to lowest): ignore > error > warn > default.
     pub fn effective(&self, code: &str, default: Severity) -> Option<Severity> {
-        for tok in &self.ignores {
-            if Self::expand(tok).contains(&code) {
-                return None;
-            }
+        if self.expanded_ignores.contains(&code) {
+            return None;
         }
-        for tok in &self.errors {
-            if Self::expand(tok).contains(&code) {
-                return Some(Severity::Error);
-            }
+        if self.expanded_errors.contains(&code) {
+            return Some(Severity::Error);
         }
-        for tok in &self.warns {
-            if Self::expand(tok).contains(&code) {
-                return Some(Severity::Warning);
-            }
+        if self.expanded_warns.contains(&code) {
+            return Some(Severity::Warning);
         }
         Some(default)
     }
@@ -482,6 +523,9 @@ pub fn apply_filter_to_diagnostics(diagnostics: &mut Vec<Diagnostic>, filter: &S
             .unwrap_or(Severity::Warning);
         if let Some(sev) = filter.effective(d.code, default) {
             let mut d = d;
+            // Severity overrides do not change the evidence supporting a
+            // diagnostic. Preserve instance-specific confidence so
+            // --min-confidence behaves the same with or without an override.
             d.severity = sev;
             out.push(d);
         }

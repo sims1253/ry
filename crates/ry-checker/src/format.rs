@@ -42,6 +42,7 @@ struct JsonDiagnostic<'a> {
     path: &'a str,
     line: usize,
     column: usize,
+    confidence: &'a str,
 }
 
 /// Render the diagnostics to a string. `srcs` maps `path` -> source text
@@ -135,6 +136,7 @@ pub fn render_with_color(
                         path: &d.path,
                         line,
                         column: col,
+                        confidence: d.confidence.as_str(),
                     }
                 })
                 .collect();
@@ -395,6 +397,7 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(parsed[0]["code"], "RY001");
         assert_eq!(parsed[0]["severity"], "warning");
+        assert_eq!(parsed[0]["confidence"], "medium");
     }
 
     #[test]

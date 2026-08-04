@@ -1531,7 +1531,7 @@ fn user_function_argument_rules_wait_for_callable_provenance() {
 
 #[test]
 fn typeshed_required_arguments_are_still_checked() {
-    let diags = check("as.character()\n");
+    let diags = check("Filter()\n");
     assert!(
         diags.iter().any(|diagnostic| diagnostic.code == "RY091"),
         "explicit typeshed required metadata should remain authoritative: {diags:?}"

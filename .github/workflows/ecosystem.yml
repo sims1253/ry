@@ -9,6 +9,10 @@ permissions:
 
 jobs:
   ecosystem:
+    # Stacked changes may intentionally defer regenerated snapshots to a
+    # dedicated follow-up PR. Label only those intermediate PRs; the snapshot
+    # PR itself stays unlabelled and must pass this check.
+    if: ${{ github.event_name != 'pull_request' || !contains(github.event.pull_request.labels.*.name, 'ecosystem-deferred') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

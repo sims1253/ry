@@ -520,8 +520,6 @@ impl Checker {
                     Some(JsonLength::LongestArg) => longest_arg_length(arg_types),
                     // Number of arguments (for list()).
                     Some(JsonLength::NArgs) => Length::Known(args.len()),
-                    // x_times: arg0 length * arg1 value (for rep).
-                    Some(JsonLength::XTimes) => rep_length(arg_types),
                     Some(JsonLength::Test) => first.length,
                     None => Length::Unknown,
                 };

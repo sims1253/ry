@@ -19,9 +19,13 @@ impl Checker {
                 // to be resolvable from other files (and from later in
                 // this same file) without triggering RY010.
                 if let Some(name) = binding_name(target) {
-                    Arc::make_mut(&mut self.fn_table)
-                        .known_vars
-                        .insert(name.to_string());
+                    let table = Arc::make_mut(&mut self.fn_table);
+                    table.known_vars.insert(name.to_string());
+                    if is_callable_object_constructor(value) {
+                        table.callable_vars.insert(name.to_string());
+                    } else {
+                        table.callable_vars.remove(name);
+                    }
                 }
                 if let (Some(name), Expr::Function { params, body, .. }) =
                     (binding_name(target), value)
@@ -496,6 +500,20 @@ impl Checker {
 /// `match.call()`, `sys.call()`, and `sys.function()` capture the complete
 /// call, so they make every formal quoting. `missing(p)` is deliberately not
 /// included: it tests a promise without changing how an argument is evaluated.
+fn is_callable_object_constructor(expression: &Expr) -> bool {
+    let Expr::Call { func, .. } = expression else {
+        return false;
+    };
+    matches!(
+        func.as_ref(),
+        Expr::Ident { name, .. }
+            if matches!(
+                name.as_str(),
+                "S7::new_class" | "S7::new_generic" | "S7::new_S3_class"
+            )
+    )
+}
+
 fn parameter_is_quoted(body: &[Stmt], params: &[Param], parameter: &str) -> bool {
     body.iter().any(stmt_captures_all_arguments)
         || (params.iter().any(|formal| formal.name == parameter)
@@ -554,10 +572,8 @@ fn stmt_captures_all_arguments(statement: &Stmt) -> bool {
 fn expr_captures_all_arguments(expression: &Expr) -> bool {
     match expression {
         Expr::Call { func, args, .. } => {
-            matches!(
-                bare_call_name(func),
-                Some("match.call" | "sys.call" | "sys.function")
-            ) || expr_captures_all_arguments(func)
+            matches!(bare_call_name(func), Some("match.call" | "sys.call"))
+                || expr_captures_all_arguments(func)
                 || args
                     .iter()
                     .any(|argument| expr_captures_all_arguments(&argument.value))
@@ -774,6 +790,10 @@ fn expr_captures_promise_parameter(expression: &Expr, parameter: &str) -> bool {
 /// Whether a package stub declares this callee as a promise-capture helper.
 /// Collection happens before ordinary call-site resolution, so bare names are
 /// recognized from the loaded stub inventory rather than lexical scope.
+///
+/// Unqualified names resolve against a one-time global index built from the
+/// embedded base and package stubs, so each call-site check is a single map
+/// lookup instead of a scan of the whole package inventory.
 fn is_promise_capture(function: &Expr, dots: bool) -> bool {
     let Some(name) = ident_name(function) else {
         return false;
@@ -782,27 +802,73 @@ fn is_promise_capture(function: &Expr, dots: bool) -> bool {
         .rsplit_once("::")
         .map(|(package, function)| (Some(package.trim_end_matches(':')), function))
         .unwrap_or((None, name));
-    let has_capture = |signature: &FunctionSig| {
-        signature.eval.iter().any(|(parameter, mode)| {
-            *mode == EvalMode::CapturesPromise && (parameter == "...") == dots
-        })
-    };
     match package {
         Some(package) => ry_typeshed::load_package(package)
             .and_then(|typeshed| typeshed.functions.get(function))
-            .is_some_and(has_capture),
-        None => {
-            ry_typeshed::load_base_cached()
-                .ok()
-                .and_then(|typeshed| typeshed.functions.get(function))
-                .is_some_and(has_capture)
-                || ry_typeshed::known_packages().any(|package| {
-                    ry_typeshed::load_package(package)
-                        .and_then(|typeshed| typeshed.functions.get(function))
-                        .is_some_and(has_capture)
-                })
-        }
+            .is_some_and(|signature| signature_captures_promises(signature, dots)),
+        // Unqualified names consult the one-time global index below.
+        //
+        // Known limitation: the index is built exclusively from the
+        // embedded base and the bundled package stubs, NOT from
+        // user-provided stubs installed via `Checker::set_user_stubs`.
+        // A custom stub that DECLARES a promise-capturing helper is
+        // therefore recognized only when called QUALIFIED
+        // (`mypkg::captures(...)`, which reaches the stub through
+        // `load_package`); an unqualified `captures(...)` call to such a
+        // user-stub helper is treated as an ordinary function. This is a
+        // deliberate trade-off: scoring unqualified names against the
+        // per-checker user stubs would thread an `&Arc<BTreeMap>` through
+        // the entire quoting-analysis call tree for an edge case, so we
+        // document rather than refactor. The qualified path is unaffected.
+        None => promise_capture_index()
+            .get(function)
+            .is_some_and(|&(single, dots_capture)| if dots { dots_capture } else { single }),
     }
+}
+
+/// Whether `signature` declares a promise-capturing parameter: a `...`
+/// capture when `dots` is set, otherwise a named-parameter capture.
+fn signature_captures_promises(signature: &FunctionSig, dots: bool) -> bool {
+    signature
+        .eval
+        .iter()
+        .any(|(parameter, mode)| *mode == EvalMode::CapturesPromise && (parameter == "...") == dots)
+}
+
+/// One-time global index over the embedded base and package stubs:
+/// function name -> (named-parameter capture, `...` capture). Built
+/// lazily on first use; `is_promise_capture` consults it for
+/// unqualified names instead of re-scanning every package's function
+/// table on every call-site check.
+fn promise_capture_index() -> &'static std::collections::HashMap<String, (bool, bool)> {
+    static INDEX: std::sync::OnceLock<std::collections::HashMap<String, (bool, bool)>> =
+        std::sync::OnceLock::new();
+    INDEX.get_or_init(|| {
+        let mut index = std::collections::HashMap::new();
+        let mut add_typeshed = |typeshed: &ry_typeshed::Typeshed| {
+            for (name, signature) in &typeshed.functions {
+                let flags = index.entry(name.clone()).or_insert((false, false));
+                for (parameter, mode) in &signature.eval {
+                    if *mode == EvalMode::CapturesPromise {
+                        if parameter == "..." {
+                            flags.1 = true;
+                        } else {
+                            flags.0 = true;
+                        }
+                    }
+                }
+            }
+        };
+        if let Ok(base) = ry_typeshed::load_base_cached() {
+            add_typeshed(base);
+        }
+        for package in ry_typeshed::known_packages() {
+            if let Some(typeshed) = ry_typeshed::load_package(package) {
+                add_typeshed(typeshed);
+            }
+        }
+        index
+    })
 }
 
 fn is_single_promise_capture(function: &Expr) -> bool {
@@ -1214,10 +1280,14 @@ fn statement_force_flow(statement: &Stmt, name: &str) -> (bool, bool) {
             let forces = expression_must_force(cond, name) || (then_forces && else_forces);
             (forces, then_falls && else_falls)
         }
-        Stmt::For { iter, body, .. } => (
-            expression_must_force(iter, name),
-            block_force_flow(body, name).1,
-        ),
+        // A `for` loop always falls through for force-flow purposes: an
+        // empty iterable never runs the body, so a name forced only
+        // inside the body is not guaranteed on any path (and the code
+        // after the loop is always reachable, even when the body
+        // `return`s on its first iteration). Reporting the body's
+        // fall-through as the loop's own could wrongly mark a parameter
+        // required.
+        Stmt::For { iter, .. } => (expression_must_force(iter, name), true),
         Stmt::While { cond, .. } => (expression_must_force(cond, name), false),
         Stmt::Return { value, .. } => (
             value

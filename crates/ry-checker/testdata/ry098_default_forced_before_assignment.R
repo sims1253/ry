@@ -1,4 +1,4 @@
-# expect: RY098
+# no-diag
 dmt <- function(x, mean = rep(0, d), S, df = Inf) {
   if (df == Inf) return(dmnorm(x, mean, S))
   d <- ncol(S)

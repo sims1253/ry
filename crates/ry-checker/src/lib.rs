@@ -409,6 +409,11 @@ pub(crate) struct FnTable {
     // set, we know it's defined in another file (or later in this
     // same file) and return opaque instead of flagging it as unbound.
     pub(crate) known_vars: std::collections::HashSet<String>,
+    // Names bound to callable objects that are not ordinary R functions.
+    // S7 class and generic objects implement `()` themselves, so call-position
+    // lookup must treat them as candidates even though their inferred value is
+    // otherwise opaque.
+    pub(crate) callable_vars: std::collections::HashSet<String>,
     // Syntactic call sites used only for conservative internal-helper
     // default selection. Each argument records its optional exact name.
     pub(crate) call_sites: HashMap<String, Vec<Vec<Option<String>>>>,
@@ -442,6 +447,7 @@ impl FnTable {
         self.s4_methods.extend(collected.s4_methods);
         self.s4_classes.extend(collected.s4_classes);
         self.known_vars.extend(collected.known_vars);
+        self.callable_vars.extend(collected.callable_vars);
         for (name, sites) in collected.call_sites {
             self.call_sites.entry(name).or_default().extend(sites);
         }
@@ -561,33 +567,20 @@ pub struct Checker {
 
 impl Checker {
     pub fn new(path: &str) -> Self {
-        let typeshed = embedded_base();
-        Self {
-            typeshed,
-            user_stubs: Arc::new(BTreeMap::new()),
-            diagnostics: Vec::new(),
-            path: path.to_string(),
-            discarding: false,
-            validate_user_call_arguments: true,
-            fn_table: Arc::new(FnTable::default()),
-            known_vars: Arc::new(HashSet::new()),
-            return_slots: Arc::new(ReturnSlots::default()),
-            inferring: Vec::new(),
-            loaded: Arc::new(HashSet::new()),
-            bare_loaded: Arc::new(HashSet::new()),
-            external_bindings: HashSet::new(),
-            imported_from: HashMap::new(),
-            external_s3_methods: HashSet::new(),
-            load_bindings: HashMap::new(),
-            deferred_captures: Vec::new(),
-            enclosing_formals: Vec::new(),
-            vector_intent_parameters: Vec::new(),
-            pipe_argument_types: HashMap::new(),
-        }
+        Self::with_tables_impl(
+            path,
+            Arc::new(FnTable::default()),
+            Arc::new(ReturnSlots::default()),
+        )
     }
 
     pub fn check(&mut self, file: &SourceFile) -> &[Diagnostic] {
         self.path = file.path.clone();
+
+        // Clear diagnostics FIRST so a second `check` on the same
+        // instance starts fresh rather than accumulating the previous
+        // run's diagnostics on top of the re-collected tables.
+        self.diagnostics.clear();
 
         // Parse errors first: a syntax error means the recovered tree is
         // unreliable, so RY000 is the primary signal for broken input. We
@@ -642,29 +635,7 @@ impl Checker {
     //
     // [`into_tables`]: Checker::into_tables
     pub(crate) fn with_tables(path: &str, fn_table: FnTable, return_slots: ReturnSlots) -> Self {
-        let typeshed = embedded_base();
-        Self {
-            typeshed,
-            user_stubs: Arc::new(BTreeMap::new()),
-            diagnostics: Vec::new(),
-            path: path.to_string(),
-            discarding: false,
-            validate_user_call_arguments: true,
-            fn_table: Arc::new(fn_table),
-            known_vars: Arc::new(HashSet::new()),
-            return_slots: Arc::new(return_slots),
-            inferring: Vec::new(),
-            loaded: Arc::new(HashSet::new()),
-            bare_loaded: Arc::new(HashSet::new()),
-            external_bindings: HashSet::new(),
-            imported_from: HashMap::new(),
-            external_s3_methods: HashSet::new(),
-            load_bindings: HashMap::new(),
-            deferred_captures: Vec::new(),
-            enclosing_formals: Vec::new(),
-            vector_intent_parameters: Vec::new(),
-            pipe_argument_types: HashMap::new(),
-        }
+        Self::with_tables_impl(path, Arc::new(fn_table), Arc::new(return_slots))
     }
 
     // Construct a checker that SHARES the given tables by `Arc` handle
@@ -677,9 +648,21 @@ impl Checker {
         fn_table: Arc<FnTable>,
         return_slots: Arc<ReturnSlots>,
     ) -> Self {
-        let typeshed = embedded_base();
+        Self::with_tables_impl(path, fn_table, return_slots)
+    }
+
+    /// Shared private constructor: builds a checker with the given
+    /// (already-shared) tables and the standard default field list.
+    /// The three public/crate constructors differ only in table
+    /// ownership, so they delegate here rather than re-listing every
+    /// field (keeps the field list in one place).
+    fn with_tables_impl(
+        path: &str,
+        fn_table: Arc<FnTable>,
+        return_slots: Arc<ReturnSlots>,
+    ) -> Self {
         Self {
-            typeshed,
+            typeshed: embedded_base(),
             user_stubs: Arc::new(BTreeMap::new()),
             diagnostics: Vec::new(),
             path: path.to_string(),
@@ -1097,15 +1080,19 @@ impl Checker {
         self.user_stubs.contains_key(package) || is_known_package(package)
     }
 
-    pub(crate) fn available_package_names(&self) -> Vec<&str> {
-        let mut packages: Vec<&str> = known_packages().collect();
-        packages.extend(
+    /// All package names with typeshed signatures, in resolution
+    /// order: the embedded known packages, then user-stub packages
+    /// that do not shadow a known one. Each name appears once. The
+    /// iterator chains over static data and the stub map directly, so
+    /// no per-call `Vec` is allocated (callers iterate inside nested
+    /// loops over loaded packages).
+    pub(crate) fn available_package_names<'a>(&'a self) -> impl Iterator<Item = &'a str> + 'a {
+        known_packages().map(|package| package as &'a str).chain(
             self.user_stubs
                 .keys()
                 .map(String::as_str)
                 .filter(|package| *package != "base" && !is_known_package(package)),
-        );
-        packages
+        )
     }
 
     // Seed opaque bindings established by metadata for this source file.

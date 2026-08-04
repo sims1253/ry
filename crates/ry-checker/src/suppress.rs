@@ -1,4 +1,5 @@
 use super::*;
+use crate::infer::json_rtype_to_rtype;
 
 impl Checker {
     /// Resolve only signatures that declare checker schema semantics. Unlike
@@ -103,6 +104,47 @@ impl Checker {
             }
         }
         (candidates.len() == 1).then(|| candidates.remove(0))
+    }
+
+    /// Resolve a typed package value under the same provenance rules as
+    /// function signatures. The legacy `datasets` map stores typed exported
+    /// values as well as package datasets; unlike `functions`, these names are
+    /// never callable.
+    pub(crate) fn resolve_typeshed_value(&self, name: &str) -> Option<RType> {
+        if let Some((pkg_raw, value)) = name.rsplit_once("::") {
+            let package = pkg_raw.trim_end_matches(':');
+            if matches!(
+                package,
+                "base" | "stats" | "utils" | "graphics" | "grDevices" | "methods" | "datasets"
+            ) && let Some(value_type) = self.typeshed.datasets.get(value)
+            {
+                return Some(json_rtype_to_rtype(value_type));
+            }
+            return self
+                .package_typeshed(package)
+                .and_then(|typeshed| typeshed.datasets.get(value))
+                .map(json_rtype_to_rtype);
+        }
+        if let Some(package) = self.imported_from.get(name)
+            && let Some(value_type) = self
+                .package_typeshed(package)
+                .and_then(|typeshed| typeshed.datasets.get(name))
+        {
+            return Some(json_rtype_to_rtype(value_type));
+        }
+        if let Some(value_type) = self.typeshed.datasets.get(name) {
+            return Some(json_rtype_to_rtype(value_type));
+        }
+        for package in self.available_package_names() {
+            if self.bare_loaded.contains(package)
+                && let Some(value_type) = self
+                    .package_typeshed(package)
+                    .and_then(|typeshed| typeshed.datasets.get(name))
+            {
+                return Some(json_rtype_to_rtype(value_type));
+            }
+        }
+        None
     }
 
     pub(crate) fn resolve_typeshed_sig(&self, name: &str) -> Option<FunctionSig> {
@@ -244,7 +286,7 @@ impl Checker {
                 }
             }
         }
-        self.fn_table.fns.contains_key(name)
+        self.fn_table.fns.contains_key(name) || self.fn_table.callable_vars.contains(name)
     }
 
     pub(crate) fn resolves_user_s3_dispatch(&self, generic: &str, first: &RType) -> bool {

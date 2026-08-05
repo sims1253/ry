@@ -13,6 +13,19 @@ use std::collections::{HashMap, HashSet};
 /// The `\0` keeps it out of the R identifier namespace.
 pub const NATIVE_ROUTINE_PREFIX_SENTINEL: &str = "\0useDynLib:";
 
+/// R's foreign-function-interface primitives. Their first argument is a
+/// native routine entry-point symbol (a bare identifier or backtick name),
+/// not a variable reference. A bare name in that position is therefore
+/// evidence that the name is a registered native routine.
+pub const FFI_PRIMITIVES: &[&str] = &[
+    ".Call",
+    ".C",
+    ".Fortran",
+    ".External",
+    ".External2",
+    ".Internal",
+];
+
 /// External-binding sentinel recording `useDynLib(..., .registration = TRUE)`.
 /// The registered entry points are declared in `src/`'s `R_registerRoutines`
 /// table, which ry does not read, so the flag instead licenses bare symbols in

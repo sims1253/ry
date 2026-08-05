@@ -1140,3 +1140,57 @@ fn degraded_scope_is_reported_once_per_file_not_per_reader() {
         "the count must match the number of distinct offending files: {stderr}"
     );
 }
+
+/// Plan 31 W6. `useDynLib(pkg, .registration = TRUE)` binds every routine in
+/// the package's `R_registerRoutines` table into the namespace. ry does not
+/// read `src/`, so a name the package itself passes as an FFI entry point is
+/// the evidence that it is one of them — which is what lets rlang's
+/// `capture_arg = ffi_enquo` resolve, eight `R/nse-defuse.R` findings that
+/// the call-position rule alone cannot reach.
+#[test]
+fn registered_native_symbols_resolve_in_value_position() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path();
+    fs::write(pkg.join("DESCRIPTION"), "Package: ffi\n").unwrap();
+    fs::create_dir_all(pkg.join("R")).unwrap();
+    fs::write(
+        pkg.join("R/defuse.R"),
+        "enquo <- function(arg) .Call(ffi_enquo, substitute(arg))\n\
+         enquos <- function(...) endots(capture_arg = ffi_enquo)\n\
+         bad <- function() genuinely_missing_xyz\n",
+    )
+    .unwrap();
+
+    fs::write(
+        pkg.join("NAMESPACE"),
+        "useDynLib(ffi, .registration = TRUE)\n",
+    )
+    .unwrap();
+    let declared = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .args(["check", pkg.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let declared_stdout = String::from_utf8_lossy(&declared.stdout);
+    assert!(
+        !declared_stdout.contains("ffi_enquo"),
+        "a symbol proven native by .Call must resolve in value position too: {declared_stdout}"
+    );
+    assert!(
+        declared_stdout.contains("genuinely_missing_xyz"),
+        "the witness set must not disable RY010 generally: {declared_stdout}"
+    );
+
+    // Negative control: without the declaration the value-position use is an
+    // ordinary unbound read again. (The `.Call` entry-point argument stays
+    // suppressed either way — that is the long-standing call-position rule.)
+    fs::write(pkg.join("NAMESPACE"), "export(enquo)\n").unwrap();
+    let undeclared = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .args(["check", pkg.to_str().unwrap(), "--exit-zero"])
+        .output()
+        .unwrap();
+    let undeclared_stdout = String::from_utf8_lossy(&undeclared.stdout);
+    assert!(
+        undeclared_stdout.contains("ffi_enquo"),
+        "without .registration the symbol is not proven bound: {undeclared_stdout}"
+    );
+}

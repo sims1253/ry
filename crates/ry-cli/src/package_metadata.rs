@@ -126,7 +126,7 @@ pub(crate) fn resolve<'a>(
     let mut export_cache: HashMap<String, HashSet<String>> = HashMap::new();
     let mut dataset_cache: HashMap<PathBuf, DataInventory> = HashMap::new();
     let mut serialized_cache: HashMap<PathBuf, SerializedInventory> = HashMap::new();
-    let mut source_binding_cache: HashMap<PathBuf, HashSet<String>> = HashMap::new();
+    let mut source_binding_cache: HashMap<PathBuf, SourceBindings> = HashMap::new();
     let mut attached = HashSet::new();
     let mut bare_attached = HashMap::new();
     let mut bindings = HashMap::new();
@@ -169,13 +169,11 @@ pub(crate) fn resolve<'a>(
             }
         }
         if let Some(root) = r_package_root(Path::new(&file.path)) {
-            file_bindings.extend(
-                source_binding_cache
-                    .entry(root.clone())
-                    .or_insert_with(|| source_package_namespace_bindings(&root))
-                    .iter()
-                    .cloned(),
-            );
+            let source_bindings = source_binding_cache
+                .entry(root.clone())
+                .or_insert_with(|| source_package_namespace_bindings(&root))
+                .clone();
+            file_bindings.extend(source_bindings.bindings.iter().cloned());
             if let Some(package) = source_package_name(&root) {
                 file_attached.insert(package.clone());
                 source_package = Some(package);
@@ -183,6 +181,15 @@ pub(crate) fn resolve<'a>(
             let metadata = namespace_cache
                 .entry(root.clone())
                 .or_insert_with(|| read_namespace(&root.join("NAMESPACE")));
+            // `useDynLib(pkg, .registration = TRUE)` binds every routine in
+            // the package's `R_registerRoutines` table into the namespace.
+            // ry does not read `src/`, so the witness set collected above --
+            // names this package itself passes as an FFI entry point -- is
+            // the evidence that a name is one of them. Without the
+            // declaration the same names are ordinary unbound reads.
+            if metadata.native_registration {
+                file_bindings.extend(source_bindings.native_symbols.iter().cloned());
+            }
             file_bindings.extend(metadata.imported_bindings.iter().cloned());
             file_imported_from.extend(metadata.imported_from.clone());
             file_bindings.extend(metadata.s3_generics.iter().cloned());
@@ -341,20 +348,33 @@ fn is_test_or_script_file(path: &Path) -> bool {
 /// the files being checked: package load hooks commonly call a helper defined
 /// in a different file. We never evaluate source, and only retain literal
 /// names, so an unknown dynamic name cannot mask an unresolved variable.
-fn source_package_namespace_bindings(root: &Path) -> HashSet<String> {
-    // R creates this binding while loading every package namespace. It is
-    // present even when the DESCRIPTION omits a Package field.
-    let mut bindings = source_package_dynamic_bindings(root);
-    bindings.insert(".packageName".to_string());
-    bindings
+/// What a scan of a package's own `R/` sources establishes.
+#[derive(Default, Clone)]
+struct SourceBindings {
+    /// Names bound dynamically (`assign`, `delayedAssign`,
+    /// `makeActiveBinding`) into the package namespace.
+    bindings: HashSet<String>,
+    /// Names used as the entry-point argument of an FFI primitive somewhere
+    /// in the package, which proves they are native routines rather than
+    /// ordinary variables. Only meaningful when the NAMESPACE declares
+    /// `useDynLib(..., .registration = TRUE)`; see [`resolve`].
+    native_symbols: HashSet<String>,
 }
 
-fn source_package_dynamic_bindings(root: &Path) -> HashSet<String> {
-    let mut bindings = HashSet::new();
+fn source_package_namespace_bindings(root: &Path) -> SourceBindings {
+    // R creates this binding while loading every package namespace. It is
+    // present even when the DESCRIPTION omits a Package field.
+    let mut found = source_package_dynamic_bindings(root);
+    found.bindings.insert(".packageName".to_string());
+    found
+}
+
+fn source_package_dynamic_bindings(root: &Path) -> SourceBindings {
+    let mut found = SourceBindings::default();
     let mut paths = Vec::new();
     collect_r_source_files(&root.join("R"), &mut paths);
     let Ok(mut parser) = ry_core::RParser::new() else {
-        return bindings;
+        return found;
     };
     for path in paths {
         let Ok(source) = std::fs::read_to_string(&path) else {
@@ -364,10 +384,10 @@ fn source_package_dynamic_bindings(root: &Path) -> HashSet<String> {
             continue;
         };
         for statement in &file.stmts {
-            collect_dynamic_bindings_stmt(statement, 0, &mut bindings);
+            collect_dynamic_bindings_stmt(statement, 0, &mut found);
         }
     }
-    bindings
+    found
 }
 
 fn collect_r_source_files(directory: &Path, paths: &mut Vec<PathBuf>) {
@@ -394,60 +414,69 @@ fn collect_r_source_files(directory: &Path, paths: &mut Vec<PathBuf>) {
 fn collect_dynamic_bindings_stmt(
     statement: &Stmt,
     function_depth: usize,
-    bindings: &mut HashSet<String>,
+    found: &mut SourceBindings,
 ) {
     match statement {
         Stmt::Assign { target, value, .. } => {
-            collect_dynamic_bindings_expr(target, function_depth, bindings);
-            collect_dynamic_bindings_expr(value, function_depth, bindings);
+            collect_dynamic_bindings_expr(target, function_depth, found);
+            collect_dynamic_bindings_expr(value, function_depth, found);
         }
-        Stmt::Expr(expr) => collect_dynamic_bindings_expr(expr, function_depth, bindings),
+        Stmt::Expr(expr) => collect_dynamic_bindings_expr(expr, function_depth, found),
         Stmt::If {
             cond, then, else_, ..
         } => {
-            collect_dynamic_bindings_expr(cond, function_depth, bindings);
+            collect_dynamic_bindings_expr(cond, function_depth, found);
             for statement in then {
-                collect_dynamic_bindings_stmt(statement, function_depth, bindings);
+                collect_dynamic_bindings_stmt(statement, function_depth, found);
             }
             if let Some(else_) = else_ {
                 for statement in else_ {
-                    collect_dynamic_bindings_stmt(statement, function_depth, bindings);
+                    collect_dynamic_bindings_stmt(statement, function_depth, found);
                 }
             }
         }
         Stmt::For { iter, body, .. } => {
-            collect_dynamic_bindings_expr(iter, function_depth, bindings);
+            collect_dynamic_bindings_expr(iter, function_depth, found);
             for statement in body {
-                collect_dynamic_bindings_stmt(statement, function_depth, bindings);
+                collect_dynamic_bindings_stmt(statement, function_depth, found);
             }
         }
         Stmt::While { cond, body, .. } => {
-            collect_dynamic_bindings_expr(cond, function_depth, bindings);
+            collect_dynamic_bindings_expr(cond, function_depth, found);
             for statement in body {
-                collect_dynamic_bindings_stmt(statement, function_depth, bindings);
+                collect_dynamic_bindings_stmt(statement, function_depth, found);
             }
         }
         Stmt::FunctionDef { body, .. } => {
             for statement in body {
-                collect_dynamic_bindings_stmt(statement, function_depth + 1, bindings);
+                collect_dynamic_bindings_stmt(statement, function_depth + 1, found);
             }
         }
         Stmt::Return { value, .. } => {
             if let Some(value) = value {
-                collect_dynamic_bindings_expr(value, function_depth, bindings);
+                collect_dynamic_bindings_expr(value, function_depth, found);
             }
         }
     }
 }
 
-fn collect_dynamic_bindings_expr(
-    expr: &Expr,
-    function_depth: usize,
-    bindings: &mut HashSet<String>,
-) {
+fn collect_dynamic_bindings_expr(expr: &Expr, function_depth: usize, found: &mut SourceBindings) {
     match expr {
         Expr::Call { func, args, .. } => {
             if let Expr::Ident { name, .. } = func.as_ref() {
+                // `.Call(ffi_enquo, ...)` proves `ffi_enquo` names a native
+                // routine, not a variable. rlang then passes the same symbol
+                // as an ordinary value (`capture_arg = ffi_enquo`), which the
+                // call-position rule alone cannot see. Record the witness so
+                // every later use of the name resolves.
+                if ry_checker::packages::FFI_PRIMITIVES.contains(&name.as_str())
+                    && let Some(Expr::Ident { name: symbol, .. }) = args
+                        .first()
+                        .filter(|arg| arg.name.is_none())
+                        .map(|arg| &arg.value)
+                {
+                    found.native_symbols.insert(symbol.clone());
+                }
                 let has_named_environment = args.iter().any(|argument| {
                     matches!(
                         argument.name.as_deref(),
@@ -474,39 +503,39 @@ fn collect_dynamic_bindings_expr(
                     && let Some(Expr::String(binding, _)) =
                         args.first().map(|argument| &argument.value)
                 {
-                    bindings.insert(binding.clone());
+                    found.bindings.insert(binding.clone());
                 }
             }
-            collect_dynamic_bindings_expr(func, function_depth, bindings);
+            collect_dynamic_bindings_expr(func, function_depth, found);
             for argument in args {
-                collect_dynamic_bindings_expr(&argument.value, function_depth, bindings);
+                collect_dynamic_bindings_expr(&argument.value, function_depth, found);
             }
         }
         Expr::BinOp { lhs, rhs, .. } => {
-            collect_dynamic_bindings_expr(lhs, function_depth, bindings);
-            collect_dynamic_bindings_expr(rhs, function_depth, bindings);
+            collect_dynamic_bindings_expr(lhs, function_depth, found);
+            collect_dynamic_bindings_expr(rhs, function_depth, found);
         }
-        Expr::UnaryOp { expr, .. } => collect_dynamic_bindings_expr(expr, function_depth, bindings),
+        Expr::UnaryOp { expr, .. } => collect_dynamic_bindings_expr(expr, function_depth, found),
         Expr::Index { base, args, .. } => {
-            collect_dynamic_bindings_expr(base, function_depth, bindings);
+            collect_dynamic_bindings_expr(base, function_depth, found);
             for argument in args {
-                collect_dynamic_bindings_expr(&argument.value, function_depth, bindings);
+                collect_dynamic_bindings_expr(&argument.value, function_depth, found);
             }
         }
         Expr::Function { body, .. } | Expr::Block { body, .. } => {
             let function_depth =
                 function_depth + usize::from(matches!(expr, Expr::Function { .. }));
             for statement in body {
-                collect_dynamic_bindings_stmt(statement, function_depth, bindings);
+                collect_dynamic_bindings_stmt(statement, function_depth, found);
             }
         }
         Expr::If {
             cond, then, else_, ..
         } => {
-            collect_dynamic_bindings_expr(cond, function_depth, bindings);
-            collect_dynamic_bindings_expr(then, function_depth, bindings);
+            collect_dynamic_bindings_expr(cond, function_depth, found);
+            collect_dynamic_bindings_expr(then, function_depth, found);
             if let Some(else_) = else_ {
-                collect_dynamic_bindings_expr(else_, function_depth, bindings);
+                collect_dynamic_bindings_expr(else_, function_depth, found);
             }
         }
         Expr::Logical(_, _)
@@ -1246,7 +1275,11 @@ mod tests {
     fn injects_package_name_only_for_package_roots() {
         let package = tempfile::tempdir().unwrap();
         std::fs::write(package.path().join("DESCRIPTION"), "Package: fixture\n").unwrap();
-        assert!(source_package_namespace_bindings(package.path()).contains(".packageName"));
+        assert!(
+            source_package_namespace_bindings(package.path())
+                .bindings
+                .contains(".packageName")
+        );
 
         assert!(
             r_package_root(Path::new("/nonexistent-ry-script-root/script.R")).is_none(),

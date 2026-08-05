@@ -36,10 +36,7 @@ pub(crate) fn equality_list_leaf_type(op: BinOpKind, value: &RType) -> Option<RT
 /// native routine entry-point symbol (a bare identifier or backtick
 /// name), not a variable reference, so RY010 must not fire on it.
 pub(crate) fn is_ffi_primitive(name: &str) -> bool {
-    matches!(
-        name,
-        ".Call" | ".C" | ".Fortran" | ".External" | ".External2" | ".Internal"
-    )
+    crate::packages::FFI_PRIMITIVES.contains(&name)
 }
 
 /// Wrappers that forward their first argument to an FFI primitive, so it is

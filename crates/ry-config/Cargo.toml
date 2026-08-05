@@ -1,0 +1,24 @@
+[package]
+name = "ry-config"
+description = "Configuration types for ry, a static analyzer for R."
+keywords = ["r", "linter", "static-analysis"]
+categories = ["config", "development-tools"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+ry-checker = { path = "../ry-checker" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }
+glob = { workspace = true }
+tracing = { workspace = true }
+miette = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -1,0 +1,11 @@
+id = "ry"
+name = "ry"
+description = "Static type checker for R"
+version = "0.1.0"
+schema_version = 1
+authors = ["Maximilian Scholz"]
+repository = "https://github.com/sims1253/ry"
+
+[language_servers.ry]
+name = "ry"
+languages = ["R"]

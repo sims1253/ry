@@ -1,0 +1,33 @@
+name: Build VS Code extension
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "editors/code/**"
+      - ".github/workflows/build-vscode.yml"
+  pull_request:
+    paths:
+      - "editors/code/**"
+      - ".github/workflows/build-vscode.yml"
+
+defaults:
+  run:
+    working-directory: editors/code
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Compile
+        run: bun run compile
+      - name: Package VSIX
+        run: bunx @vscode/vsce package --no-dependencies
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ry-vscode-vsix
+          path: editors/code/*.vsix

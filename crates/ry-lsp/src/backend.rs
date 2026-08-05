@@ -10,7 +10,6 @@
 use crate::diagnostics::{
     diagnostic_to_lsp, diagnostic_to_lsp_with_source, make_ignore_action, make_ignore_file_action,
 };
-use crate::settings::{FolderSettings, ServerSettings};
 use crate::folding::collect_folding_ranges;
 use crate::hints::{
     active_parameter, collect_completions, collect_inlay_hints, find_enclosing_call, get_signature,
@@ -20,6 +19,7 @@ use crate::navigation::{
     collect_document_highlights, find_definition_locations, find_references_in_file,
 };
 use crate::selection::build_selection_range;
+use crate::settings::{FolderSettings, ServerSettings};
 use crate::symbols::{collect_symbols, flatten_symbols_to_symbol_info};
 use crate::util::{position_to_byte_offset_pos, span_to_range};
 use ry_checker::Project;
@@ -81,7 +81,6 @@ pub(super) struct State {
     pub(super) parse_count: Arc<std::sync::atomic::AtomicUsize>,
 
     // --- S2: settings channel ---
-
     /// The workspace root directory (from `root_uri`), used for
     /// `ry.toml` discovery and relative path resolution.
     root: Option<PathBuf>,
@@ -102,7 +101,6 @@ pub(super) struct State {
     supports_did_change_watched_files: bool,
 
     // --- S4: multi-root workspace folders ---
-
     /// Workspace folder roots, each with its own loaded `ry.toml` config.
     /// Empty when only a single `root_uri` is provided. Each entry is
     /// (folder_root, file_config), ordered by root path length descending
@@ -268,7 +266,8 @@ impl State {
     /// S4: Compute the effective filter for a specific document path,
     /// using its owning folder's config if available.
     pub(super) fn effective_filter_for_path(&self, doc_path: &str) -> ry_checker::SeverityFilter {
-        let file_config = self.folder_config_for_path(doc_path)
+        let file_config = self
+            .folder_config_for_path(doc_path)
             .unwrap_or(&self.file_config);
         let error = self
             .folder_settings
@@ -354,11 +353,10 @@ impl LanguageServer for Backend {
         // We also load the full `ry-config::Config` here so the severity
         // filter and baseline are available in `publish_diagnostics`.
         let root_clone = root.clone();
-        let user_stubs = tokio::task::spawn_blocking(move || {
-            load_workspace_stubs(root_clone.as_deref())
-        })
-        .await
-        .unwrap_or_else(|_| Arc::new(std::collections::BTreeMap::new()));
+        let user_stubs =
+            tokio::task::spawn_blocking(move || load_workspace_stubs(root_clone.as_deref()))
+                .await
+                .unwrap_or_else(|_| Arc::new(std::collections::BTreeMap::new()));
 
         // Load the full ry.toml config for severity filtering (S2).
         let file_config = root
@@ -539,7 +537,10 @@ impl LanguageServer for Backend {
         if should_pull {
             let root_uri = {
                 let state = self.state.lock().await;
-                state.root.as_ref().and_then(|p| Url::from_file_path(p).ok())
+                state
+                    .root
+                    .as_ref()
+                    .and_then(|p| Url::from_file_path(p).ok())
             };
             let item = ConfigurationItem {
                 scope_uri: root_uri,
@@ -577,7 +578,11 @@ impl LanguageServer for Backend {
                     "watchers": [{"globPattern": "**/ry.toml"}]
                 })),
             };
-            if let Err(e) = self.client.register_capability(vec![watcher_registration]).await {
+            if let Err(e) = self
+                .client
+                .register_capability(vec![watcher_registration])
+                .await
+            {
                 tracing::warn!("failed to register ry.toml watcher: {e}");
             }
         }
@@ -619,7 +624,10 @@ impl LanguageServer for Backend {
         if should_pull {
             let root_uri = {
                 let state = self.state.lock().await;
-                state.root.as_ref().and_then(|p| Url::from_file_path(p).ok())
+                state
+                    .root
+                    .as_ref()
+                    .and_then(|p| Url::from_file_path(p).ok())
             };
             let item = ConfigurationItem {
                 scope_uri: root_uri,
@@ -676,10 +684,14 @@ impl LanguageServer for Backend {
             state.workspace_folders.extend(added_configs);
             // Remove deleted folders.
             state.workspace_folders.retain(|(path, _)| {
-                !removed_uris.iter().any(|uri| uri.to_file_path().ok().as_deref() == Some(path))
+                !removed_uris
+                    .iter()
+                    .any(|uri| uri.to_file_path().ok().as_deref() == Some(path))
             });
             // Sort by path length descending for longest-prefix matching.
-            state.workspace_folders.sort_by_key(|(path, _)| std::cmp::Reverse(path.as_os_str().len()));
+            state
+                .workspace_folders
+                .sort_by_key(|(path, _)| std::cmp::Reverse(path.as_os_str().len()));
         }
 
         // Republish diagnostics for all open documents.
@@ -696,9 +708,10 @@ impl LanguageServer for Backend {
         // S3: Reload config when `ry.toml` changes on disk. Only
         // `ry.toml` is watched (registered in `initialized`), but the
         // client may forward other file changes too.
-        let config_changed = params.changes.iter().any(|change| {
-            change.uri.path().ends_with("ry.toml")
-        });
+        let config_changed = params
+            .changes
+            .iter()
+            .any(|change| change.uri.path().ends_with("ry.toml"));
         if !config_changed {
             return;
         }

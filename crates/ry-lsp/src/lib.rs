@@ -33,12 +33,12 @@
 
 mod backend;
 mod diagnostics;
-mod settings;
 mod folding;
 mod hints;
 mod ident;
 mod navigation;
 mod selection;
+mod settings;
 mod symbols;
 mod util;
 

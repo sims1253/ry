@@ -15,8 +15,8 @@
 //! unreachable from `ry-lsp`. Extracting them into a library crate lets
 //! the LSP server honour the same configuration as the CLI.
 
-pub mod config;
 pub mod baseline;
+pub mod config;
 
-pub use config::*;
 pub use baseline::*;
+pub use config::*;

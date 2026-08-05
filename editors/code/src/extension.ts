@@ -12,7 +12,9 @@ let serverState: ServerState | null = null;
 let restartQueued = false;
 let restartPromise: Promise<void> | null = null;
 
-export async function activate(context: vscode.ExtensionContext): Promise<void> {
+export async function activate(
+  context: vscode.ExtensionContext,
+): Promise<void> {
   const serverId = LOG_CHANNEL_NAME;
 
   logger.info(`Name: ${LOG_CHANNEL_NAME}`);
@@ -20,8 +22,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Three output channels: the extension's own log (the logger channel),
   // the server's stderr, and the LSP trace (lazily created).
-  const outputChannel = vscode.window.createOutputChannel(`${LOG_CHANNEL_NAME} Language Server`);
-  const traceOutputChannel = new LazyOutputChannel(`${LOG_CHANNEL_NAME} Language Server Trace`);
+  const outputChannel = vscode.window.createOutputChannel(
+    `${LOG_CHANNEL_NAME} Language Server`,
+  );
+  const traceOutputChannel = new LazyOutputChannel(
+    `${LOG_CHANNEL_NAME} Language Server Trace`,
+  );
 
   context.subscriptions.push(outputChannel);
   context.subscriptions.push(traceOutputChannel);
@@ -38,7 +44,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   // The `ry.enable` gate: return early from activation when disabled.
-  const { enable } = getConfiguration(serverId) as unknown as { enable: boolean };
+  const { enable } = getConfiguration(serverId) as unknown as {
+    enable: boolean;
+  };
   if (!enable) {
     logger.info(
       `Extension is disabled. To enable, change \`${serverId}.enable\` to \`true\` and restart VS Code.`,
@@ -52,7 +60,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       serverState = null;
     }
 
-    serverState = await startServer(serverId, outputChannel, traceOutputChannel);
+    serverState = await startServer(
+      serverId,
+      outputChannel,
+      traceOutputChannel,
+    );
   };
 
   // Restart orchestration (ruff-vscode's coalescing pattern): a restart

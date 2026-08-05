@@ -842,6 +842,13 @@ struct CheckResult {
     diagnostics: Vec<ry_checker::Diagnostic>,
     file_count: usize,
     parse_errors: usize,
+    /// Serialized R data files (`.rda`/`.rdata`) that exceeded the byte cap
+    /// and were reduced to a file-stem binding, so unbound-variable (RY010)
+    /// analysis for their scope is less precise than usual. Each entry is a
+    /// human-readable `path (reason)` string. Surfaced in the summary line
+    /// and `--statistics` rather than as a diagnostic so the JSON/diagnostic
+    /// stream (consumed by the ecosystem harness) stays stable.
+    degraded: Vec<String>,
 }
 
 /// Whether parser recovery indicates that a file is probably not R source.
@@ -892,6 +899,7 @@ impl CheckResult {
                 self.file_count,
                 self.diagnostics.len()
             );
+            self.print_degraded();
             return;
         }
         let errors = self
@@ -908,6 +916,26 @@ impl CheckResult {
             "ry: checked {} file(s), {} error(s), {} warning(s)",
             self.file_count, errors, warnings
         );
+        self.print_degraded();
+    }
+
+    /// Surface scopes whose RY010 (unbound-variable) precision dropped
+    /// because a serialized data file exceeded the byte cap and was reduced
+    /// to a file-stem binding. Printed to stderr (never the stdout
+    /// diagnostic stream) so it is visible in both the human summary and
+    /// `--statistics` without disturbing machine-readable output.
+    fn print_degraded(&self) {
+        if self.degraded.is_empty() {
+            return;
+        }
+        eprintln!(
+            "ry: {} degraded scope(s) — serialized data file(s) over the byte cap fell back to file stems; RY010 precision reduced:",
+            self.degraded.len()
+        );
+        for note in &self.degraded {
+            eprintln!("  - {note}");
+        }
+        eprintln!("ry: raise `max-serialized-bytes` in ry.toml to enumerate them precisely");
     }
 
     fn exit_code(&self, cfg: &config::Config) -> ExitCode {
@@ -952,6 +980,9 @@ fn run_check_once(
     let mut parse_errors = 0usize;
     let mut file_count = 0usize;
     let mut not_r_diagnostics = Vec::new();
+    // Degraded scopes (serialized data over the byte cap), deduplicated and
+    // sorted for a stable summary. Keyed on the formatted `path (reason)`.
+    let mut degraded: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     // Parallel file parsing. tree-sitter parsers are
     // NOT `Send`, so each rayon thread keeps its own `RParser` in a
@@ -1054,6 +1085,9 @@ fn run_check_once(
         project.set_external_s3_methods(package_scope.s3_methods);
         project.set_load_bindings(package_scope.load_bindings);
         per_file_diagnostics.extend(project.check());
+        for (path, reason) in package_scope.degraded {
+            degraded.insert(format!("{} ({})", path.display(), reason));
+        }
     }
 
     // Apply inline suppression comments (`# ry: ignore`, `# noqa`,
@@ -1098,6 +1132,7 @@ fn run_check_once(
         diagnostics: all_diagnostics,
         file_count,
         parse_errors,
+        degraded: degraded.into_iter().collect(),
     })
 }
 

@@ -49,6 +49,46 @@ pub(crate) struct PackageScope {
     pub(crate) imported_from: HashMap<String, HashMap<String, String>>,
     pub(crate) s3_methods: HashMap<String, HashSet<(String, String)>>,
     pub(crate) load_bindings: HashMap<String, HashMap<usize, HashSet<String>>>,
+    /// Serialized R data files (`.rda`/`.rdata`) whose decoded payload
+    /// exceeded the byte cap and were reduced to a single file-stem
+    /// binding instead of having their object names enumerated. Each
+    /// entry pairs the offending path with a short reason. Surfaced so
+    /// the CLI can report that RY010 (unbound-variable) analysis is less
+    /// precise for the affected scope than usual.
+    pub(crate) degraded: Vec<(PathBuf, &'static str)>,
+}
+
+/// Inventory of a serialized R data file (`.rda`/`.rdata`). `bindings`
+/// are the enumerated object names, or a single file-stem fallback when
+/// the decoded payload exceeds the byte cap. `degraded` is true when
+/// enumeration was skipped, which means the binding set is an
+/// approximation rather than the real object names.
+#[derive(Clone)]
+struct SerializedInventory {
+    bindings: HashSet<String>,
+    degraded: bool,
+}
+
+/// Inventory of a directory of data files (`data/`, `R/sysdata.rda`).
+/// `bindings` aggregates the per-file object names (or file-stem
+/// fallbacks); `degraded` lists files that exceeded the byte cap.
+#[derive(Clone, Default)]
+struct DataInventory {
+    bindings: HashSet<String>,
+    degraded: Vec<PathBuf>,
+}
+
+/// A single file-stem binding, used as the conservative fallback when a
+/// serialized workspace cannot be enumerated. A package's `sysdata.rda`
+/// over the byte cap used to disable RY010 for every file in the package
+/// (via [`SERIALIZED_BINDINGS_UNENUMERABLE`]); reducing it to its stem
+/// (`sysdata`) keeps unbound-variable analysis live and only masks the
+/// single colliding name.
+fn file_stem_binding(path: &Path) -> HashSet<String> {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(|stem| HashSet::from([stem.to_string()]))
+        .unwrap_or_default()
 }
 
 struct LibraryRoot {
@@ -84,8 +124,8 @@ pub(crate) fn resolve<'a>(
     let preferred_version = current_r_minor_version(&library_roots);
     let mut namespace_cache: HashMap<PathBuf, NamespaceMetadata> = HashMap::new();
     let mut export_cache: HashMap<String, HashSet<String>> = HashMap::new();
-    let mut dataset_cache: HashMap<PathBuf, HashSet<String>> = HashMap::new();
-    let mut serialized_cache: HashMap<PathBuf, HashSet<String>> = HashMap::new();
+    let mut dataset_cache: HashMap<PathBuf, DataInventory> = HashMap::new();
+    let mut serialized_cache: HashMap<PathBuf, SerializedInventory> = HashMap::new();
     let mut source_binding_cache: HashMap<PathBuf, HashSet<String>> = HashMap::new();
     let mut attached = HashSet::new();
     let mut bare_attached = HashMap::new();
@@ -93,6 +133,7 @@ pub(crate) fn resolve<'a>(
     let mut imported_from = HashMap::new();
     let mut s3_methods = HashMap::new();
     let mut load_bindings = HashMap::new();
+    let mut degraded: Vec<(PathBuf, &'static str)> = Vec::new();
     let project_attached: HashSet<String> = configured_packages
         .iter()
         .cloned()
@@ -163,40 +204,40 @@ pub(crate) fn resolve<'a>(
                 file_attached.extend(read_description_packages(&root).depends);
             }
             if source_package_lazy_data(&root) {
-                file_bindings.extend(
-                    dataset_cache
-                        .entry(root.clone())
-                        .or_insert_with(|| {
-                            source_package_datasets(
-                                &root,
-                                MAX_SERIALIZED_BYTES.load(Ordering::Relaxed),
-                            )
-                        })
-                        .iter()
-                        .cloned(),
-                );
+                let datasets = dataset_cache
+                    .entry(root.clone())
+                    .or_insert_with(|| {
+                        source_package_datasets(&root, MAX_SERIALIZED_BYTES.load(Ordering::Relaxed))
+                    })
+                    .clone();
+                file_bindings.extend(datasets.bindings.iter().cloned());
+                for path in &datasets.degraded {
+                    degraded.push((path.clone(), "oversized dataset in data/"));
+                }
             }
             let sysdata = root.join("R/sysdata.rda");
-            file_bindings.extend(
-                serialized_cache
-                    .entry(sysdata.clone())
-                    .or_insert_with(|| {
-                        serialized_bindings(&sysdata, MAX_SERIALIZED_BYTES.load(Ordering::Relaxed))
-                    })
-                    .iter()
-                    .cloned(),
+            let sysdata_inventory = serialized_cache
+                .entry(sysdata.clone())
+                .or_insert_with(|| {
+                    serialized_inventory(&sysdata, MAX_SERIALIZED_BYTES.load(Ordering::Relaxed))
+                })
+                .clone();
+            file_bindings.extend(sysdata_inventory.bindings.iter().cloned());
+            if sysdata_inventory.degraded {
+                degraded.push((sysdata, "oversized R/sysdata.rda"));
+            }
+            let loaded = loaded_serialized_bindings(
+                file,
+                &root,
+                &project_attached,
+                user_stubs,
+                MAX_SERIALIZED_BYTES.load(Ordering::Relaxed),
+                &mut serialized_cache,
             );
-            load_bindings.insert(
-                file.path.clone(),
-                loaded_serialized_bindings(
-                    file,
-                    &root,
-                    &project_attached,
-                    user_stubs,
-                    MAX_SERIALIZED_BYTES.load(Ordering::Relaxed),
-                    &mut serialized_cache,
-                ),
-            );
+            for path in &loaded.degraded {
+                degraded.push((path.clone(), "oversized load() target"));
+            }
+            load_bindings.insert(file.path.clone(), loaded.per_span);
 
             if relative.is_some_and(is_test_or_script_file) {
                 // Loading the package under test also attaches its Depends;
@@ -265,6 +306,7 @@ pub(crate) fn resolve<'a>(
         imported_from,
         s3_methods,
         load_bindings,
+        degraded,
     }
 }
 
@@ -590,11 +632,11 @@ fn source_package_lazy_data(root: &Path) -> bool {
 /// binding (`data/example.rda` -> `example`). This inventory is static,
 /// bounded to one directory, and cached indirectly by the per-run package
 /// scope construction.
-fn source_package_datasets(root: &Path, max_serialized_bytes: u64) -> HashSet<String> {
+fn source_package_datasets(root: &Path, max_serialized_bytes: u64) -> DataInventory {
     let Ok(entries) = std::fs::read_dir(root.join("data")) else {
-        return HashSet::new();
+        return DataInventory::default();
     };
-    let mut bindings = HashSet::new();
+    let mut out = DataInventory::default();
     for entry in entries.flatten() {
         let path = entry.path();
         let Some(extension) = path
@@ -606,18 +648,21 @@ fn source_package_datasets(root: &Path, max_serialized_bytes: u64) -> HashSet<St
         };
         match extension.as_str() {
             "rda" | "rdata" => {
-                let serialized = serialized_bindings(&path, max_serialized_bytes);
-                if serialized.is_empty() {
+                let inventory = serialized_inventory(&path, max_serialized_bytes);
+                if inventory.bindings.is_empty() {
                     if let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) {
-                        bindings.insert(stem.to_string());
+                        out.bindings.insert(stem.to_string());
                     }
                 } else {
-                    bindings.extend(serialized);
+                    out.bindings.extend(inventory.bindings);
+                }
+                if inventory.degraded {
+                    out.degraded.push(path);
                 }
             }
             "rds" => {
                 if let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) {
-                    bindings.insert(stem.to_string());
+                    out.bindings.insert(stem.to_string());
                 }
             }
             "r" => {
@@ -630,30 +675,40 @@ fn source_package_datasets(root: &Path, max_serialized_bytes: u64) -> HashSet<St
                 let Ok(file) = parser.parse(&path.to_string_lossy(), &source) else {
                     continue;
                 };
-                bindings.extend(file.stmts.iter().filter_map(|statement| match statement {
-                    Stmt::Assign {
-                        target: Expr::Ident { name, .. },
-                        ..
-                    } => Some(name.clone()),
-                    _ => None,
-                }));
+                out.bindings
+                    .extend(file.stmts.iter().filter_map(|statement| match statement {
+                        Stmt::Assign {
+                            target: Expr::Ident { name, .. },
+                            ..
+                        } => Some(name.clone()),
+                        _ => None,
+                    }));
             }
             _ => {}
         }
     }
-    bindings
+    out
 }
 
 /// Read only the top-level tags from an R serialization stream. `.rda`
 /// workspaces are serialized pairlists whose tags are the binding names. The
 /// parser's lazy mode skips vector payload allocation, and bzip2 streams are
 /// decompressed in-process; no R runtime or project code is executed.
-fn serialized_bindings(path: &Path, cap: u64) -> HashSet<String> {
+///
+/// Returns the enumerated object names plus a `degraded` flag. When the
+/// decoded payload exceeds the byte cap, enumeration is skipped and the
+/// binding set is reduced to a single file-stem fallback ([`file_stem_binding`])
+/// so unbound-variable analysis (RY010) stays live instead of being disabled
+/// package-wide (the previous behavior via [`SERIALIZED_BINDINGS_UNENUMERABLE`]).
+fn serialized_inventory(path: &Path, cap: u64) -> SerializedInventory {
     type CacheKey = (PathBuf, u64, u128);
-    static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<CacheKey, HashSet<String>>>> =
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<CacheKey, SerializedInventory>>> =
         std::sync::OnceLock::new();
     let Ok(metadata) = std::fs::metadata(path) else {
-        return HashSet::new();
+        return SerializedInventory {
+            bindings: HashSet::new(),
+            degraded: false,
+        };
     };
     let modified = metadata
         .modified()
@@ -663,58 +718,68 @@ fn serialized_bindings(path: &Path, cap: u64) -> HashSet<String> {
         .unwrap_or_default();
     let key = (path.to_path_buf(), metadata.len(), modified);
     let cache = CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
-    if let Some(bindings) = cache.lock().expect("serialized cache poisoned").get(&key) {
-        return bindings.clone();
+    if let Some(inventory) = cache.lock().expect("serialized cache poisoned").get(&key) {
+        return inventory.clone();
     }
-    let bindings = serialized_bindings_uncached(path, cap);
+    let inventory = serialized_inventory_uncached(path, cap);
     cache
         .lock()
         .expect("serialized cache poisoned")
-        .insert(key, bindings.clone());
-    bindings
+        .insert(key, inventory.clone());
+    inventory
 }
 
-fn serialized_bindings_uncached(path: &Path, cap: u64) -> HashSet<String> {
-    fn unenumerable() -> HashSet<String> {
-        HashSet::from([SERIALIZED_BINDINGS_UNENUMERABLE.to_string()])
-    }
+fn serialized_inventory_uncached(path: &Path, cap: u64) -> SerializedInventory {
+    // Decoded payload exceeded the byte cap: rather than disabling
+    // unbound-variable analysis package-wide (the former
+    // `SERIALIZED_BINDINGS_UNENUMERABLE` path), fall back to the file
+    // stem as a single conservative binding. Callers flag the scope as
+    // degraded so the user knows RY010 precision dropped for that file.
+    let degraded = |path: &Path| SerializedInventory {
+        bindings: file_stem_binding(path),
+        degraded: true,
+    };
+    let empty = || SerializedInventory {
+        bindings: HashSet::new(),
+        degraded: false,
+    };
 
     let Ok(bytes) = std::fs::read(path) else {
-        return HashSet::new();
+        return empty();
     };
     let bytes = if bytes.starts_with(b"BZh") {
         let mut decoded = Vec::new();
         let decoder = bzip2::read::BzDecoder::new(bytes.as_slice());
         if decoder.take(cap + 1).read_to_end(&mut decoded).is_err() {
-            return HashSet::new();
+            return empty();
         }
         if decoded.len() as u64 > cap {
-            return unenumerable();
+            return degraded(path);
         }
         decoded
     } else if bytes.starts_with(&[0x1f, 0x8b]) {
         let mut decoded = Vec::new();
         let decoder = flate2::read::GzDecoder::new(bytes.as_slice());
         if decoder.take(cap + 1).read_to_end(&mut decoded).is_err() {
-            return HashSet::new();
+            return empty();
         }
         if decoded.len() as u64 > cap {
-            return unenumerable();
+            return degraded(path);
         }
         decoded
     } else if bytes.starts_with(&[0xfd, b'7', b'z', b'X', b'Z', 0x00]) {
         let mut decoded = Vec::new();
         let decoder = xz2::read::XzDecoder::new(bytes.as_slice());
         if decoder.take(cap + 1).read_to_end(&mut decoded).is_err() {
-            return HashSet::new();
+            return empty();
         }
         if decoded.len() as u64 > cap {
-            return unenumerable();
+            return degraded(path);
         }
         decoded
     } else {
         if bytes.len() as u64 > cap {
-            return unenumerable();
+            return degraded(path);
         }
         bytes
     };
@@ -723,15 +788,27 @@ fn serialized_bindings_uncached(path: &Path, cap: u64) -> HashSet<String> {
         .or_else(|| bytes.strip_prefix(b"RDX3\n"))
         .unwrap_or(&bytes);
     let Ok(parsed) = rds2rust::read_rds_lazy(payload) else {
-        return HashSet::new();
+        return empty();
     };
-    match parsed.object.into_concrete() {
+    let bindings = match parsed.object.into_concrete() {
         rds2rust::RObject::Pairlist(elements) => elements
             .into_iter()
             .filter_map(|element| element.tag.map(|tag| tag.to_string()))
             .collect(),
         _ => HashSet::new(),
+    };
+    SerializedInventory {
+        bindings,
+        degraded: false,
     }
+}
+
+/// Per-file `load()` resolution result. `per_span` maps each `load()`
+/// call's start span to the bindings it introduces; `degraded` lists any
+/// target workspaces that exceeded the byte cap.
+struct LoadedInventory {
+    per_span: HashMap<usize, HashSet<String>>,
+    degraded: Vec<PathBuf>,
 }
 
 fn loaded_serialized_bindings(
@@ -740,8 +817,8 @@ fn loaded_serialized_bindings(
     attached_packages: &HashSet<String>,
     user_stubs: &std::collections::BTreeMap<String, ry_typeshed::Typeshed>,
     max_serialized_bytes: u64,
-    cache: &mut HashMap<PathBuf, HashSet<String>>,
-) -> HashMap<usize, HashSet<String>> {
+    cache: &mut HashMap<PathBuf, SerializedInventory>,
+) -> LoadedInventory {
     fn resolve_path(
         expr: &Expr,
         file: &SourceFile,
@@ -792,7 +869,10 @@ fn loaded_serialized_bindings(
             Some(package_root.join(raw))
         }
     }
-    let mut bindings = HashMap::new();
+    let mut out = LoadedInventory {
+        per_span: HashMap::new(),
+        degraded: Vec::new(),
+    };
     for statement in &file.stmts {
         let Stmt::Expr(Expr::Call {
             func, args, span, ..
@@ -812,14 +892,17 @@ fn loaded_serialized_bindings(
                 user_stubs,
             )
         }) {
-            let loaded = cache
+            let inventory = cache
                 .entry(path.clone())
-                .or_insert_with(|| serialized_bindings(&path, max_serialized_bytes))
+                .or_insert_with(|| serialized_inventory(&path, max_serialized_bytes))
                 .clone();
-            bindings.insert(span.start, loaded);
+            if inventory.degraded {
+                out.degraded.push(path);
+            }
+            out.per_span.insert(span.start, inventory.bindings);
         }
     }
-    bindings
+    out
 }
 
 /// Parse an R NAMESPACE file with the regular R parser. This handles quoted
@@ -1180,36 +1263,45 @@ mod tests {
             std::fs::write(&path, compressed).unwrap();
 
             assert_eq!(
-                serialized_bindings(&path, 2 * 1024 * 1024),
+                serialized_inventory(&path, 2 * 1024 * 1024).bindings,
                 HashSet::from(["alpha".to_string(), "beta".to_string()])
             );
         }
     }
 
     #[test]
-    fn oversized_serialized_workspace_is_unenumerable() {
+    fn oversized_serialized_workspace_falls_back_to_file_stem() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("oversized.rda");
         write_oversized_rdata(&path);
 
+        // Over-cap workspaces no longer emit the package-global
+        // `SERIALIZED_BINDINGS_UNENUMERABLE` marker (which disabled RY010
+        // project-wide). They degrade to the file stem, matching the
+        // `.rds` and empty-`.rda` fallbacks, and flag the scope degraded.
         assert_eq!(
-            serialized_bindings(&path, 2 * 1024 * 1024),
-            HashSet::from([SERIALIZED_BINDINGS_UNENUMERABLE.to_string()])
+            serialized_inventory(&path, 2 * 1024 * 1024).bindings,
+            HashSet::from(["oversized".to_string()])
         );
+        assert!(serialized_inventory(&path, 2 * 1024 * 1024).degraded);
     }
 
     #[test]
-    fn oversized_sysdata_opens_the_package_file_scope() {
+    fn oversized_sysdata_falls_back_to_file_stem_not_global_disable() {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("DESCRIPTION"), "Package: fixture\n").unwrap();
         let source_path = root.path().join("R/use.R");
         std::fs::create_dir_all(source_path.parent().unwrap()).unwrap();
-        std::fs::write(&source_path, "arbitrary_sysdata_name\n").unwrap();
         write_oversized_rdata(&root.path().join("R/sysdata.rda"));
 
+        // `sysdata` resolves via the file-stem fallback; `real_missing` is
+        // genuinely unbound. Previously the oversized sysdata disabled RY010
+        // for the whole file (both stayed silent); now only the stem binding
+        // is masked and the real miss is reported.
+        let source = "ok <- sysdata\nbad <- real_missing\n";
         let mut parser = ry_core::RParser::new().unwrap();
         let file = parser
-            .parse(&source_path.to_string_lossy(), "arbitrary_sysdata_name\n")
+            .parse(&source_path.to_string_lossy(), source)
             .unwrap();
         let scope = resolve(
             std::slice::from_ref(&source_path),
@@ -1218,17 +1310,31 @@ mod tests {
             &std::collections::BTreeMap::new(),
             [&file],
         );
+        assert!(
+            scope
+                .degraded
+                .iter()
+                .any(|(path, _)| path.ends_with("sysdata.rda")),
+            "oversized sysdata should flag the scope degraded: {:?}",
+            scope.degraded
+        );
         let mut project = ry_checker::Project::new();
         project.add_file(source_path.to_string_lossy().to_string(), file);
         project.set_external_bindings(scope.bindings);
-        let diagnostics = project.check();
-
+        let diagnostics: Vec<_> = project
+            .check()
+            .into_iter()
+            .flat_map(|(_, diagnostics)| diagnostics)
+            .collect();
+        let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
         assert!(
-            diagnostics[0]
-                .1
-                .iter()
-                .all(|diagnostic| diagnostic.code != "RY010"),
-            "oversized sysdata should open the file scope: {diagnostics:?}"
+            codes.contains(&"RY010"),
+            "oversized sysdata must not globally disable RY010; the real miss should fire: {diagnostics:?}"
+        );
+        assert_eq!(
+            codes.iter().filter(|&&c| c == "RY010").count(),
+            1,
+            "only the genuinely unbound name should fire RY010: {diagnostics:?}"
         );
     }
 
@@ -1271,9 +1377,13 @@ mod tests {
             &mut HashMap::new(),
         );
         assert_eq!(
-            bindings.len(),
+            bindings.per_span.len(),
             1,
             "custom signature should resolve the path"
+        );
+        assert!(
+            bindings.degraded.is_empty(),
+            "an invalid (non-serialized) fixture should not be flagged degraded"
         );
     }
 }

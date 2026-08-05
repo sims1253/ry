@@ -1023,3 +1023,81 @@ fn full_output_reports_argument_type_mismatch_with_types() {
         "{stdout}"
     );
 }
+
+#[test]
+fn oversized_sysdata_surfaces_degraded_scope_without_global_ry010_disable() {
+    // W20/W21d end-to-end: an over-cap serialized data file must (1) fall
+    // back to its file-stem binding instead of disabling RY010 project-wide,
+    // (2) keep RY010 live for genuinely unbound names, and (3) surface the
+    // degraded scope on stderr (never stdout) so the JSON diagnostic stream
+    // consumed by the ecosystem harness stays stable. We shrink the byte cap
+    // via `ry.toml` so a tiny `sysdata.rda` triggers the cap without writing
+    // a real 2 MB serialization.
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path();
+    fs::write(pkg.join("DESCRIPTION"), "Package: fixture\n").unwrap();
+    fs::write(pkg.join("ry.toml"), "max-serialized-bytes = 1\n").unwrap();
+    fs::create_dir_all(pkg.join("R")).unwrap();
+    // `sysdata` resolves via the file-stem fallback; `genuinely_missing` is
+    // a real miss that must fire RY010.
+    fs::write(
+        pkg.join("R/use.R"),
+        "ok <- sysdata\nbad <- genuinely_missing\n",
+    )
+    .unwrap();
+    fs::write(pkg.join("R/sysdata.rda"), "over-cap-bytes").unwrap();
+
+    // Human format: degraded note on stderr, RY010 on stdout.
+    let human = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .args(["check", pkg.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let human_stdout = String::from_utf8_lossy(&human.stdout);
+    let human_stderr = String::from_utf8_lossy(&human.stderr);
+    assert!(
+        human_stdout.contains("RY010") && human_stdout.contains("genuinely_missing"),
+        "RY010 must stay live for the real miss (no global disable): {human_stdout}"
+    );
+    assert!(
+        !human_stdout.contains("sysdata") || human_stdout.contains("RY010"),
+        "the file-stem binding must not itself fire RY010: {human_stdout}"
+    );
+    assert!(
+        human_stderr.contains("degraded scope"),
+        "the degraded scope must be reported on stderr: {human_stderr}"
+    );
+    assert!(
+        human_stderr.contains("sysdata.rda"),
+        "the degraded report must name the offending file: {human_stderr}"
+    );
+    assert!(
+        !human_stdout.contains("degraded scope"),
+        "the degraded note must never reach the stdout diagnostic stream: {human_stdout}"
+    );
+
+    // Machine format: degraded note suppressed, JSON stays clean.
+    let json = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .args([
+            "check",
+            pkg.to_str().unwrap(),
+            "--output-format",
+            "json",
+            "--exit-zero",
+        ])
+        .output()
+        .unwrap();
+    let json_stdout = String::from_utf8_lossy(&json.stdout);
+    let json_stderr = String::from_utf8_lossy(&json.stderr);
+    assert!(
+        json_stdout.contains("RY010"),
+        "JSON must still carry the RY010 finding: {json_stdout}"
+    );
+    assert!(
+        json_stderr.is_empty(),
+        "JSON output must not emit the human degraded note on stderr: {json_stderr}"
+    );
+    assert!(
+        !json_stdout.contains("degraded"),
+        "the degraded note must not leak into JSON diagnostics: {json_stdout}"
+    );
+}

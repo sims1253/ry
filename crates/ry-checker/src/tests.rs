@@ -6494,3 +6494,82 @@ fn public_check_with_scope_surfaces_ry000_on_broken_file() {
         diags
     );
 }
+
+// ===== search-path-unknown audit (W20/W21d) =====
+//
+// `mark_search_path_unknown()` suppresses RY010 (unbound-variable) for the
+// rest of a scope. It is a conservative open-search-path flag set whenever a
+// construct can introduce arbitrary bindings. These tests pin every call site
+// so the suppression stays intentional and scoped, and so an accidental
+// widening — e.g. re-introducing the package-global disabling the W20 fix
+// removed for oversized serialized data — is caught immediately.
+
+#[test]
+fn plain_unbound_reference_fires_ry010() {
+    // Negative control for the whole audit block: with no search-path-opening
+    // construct, a real miss must still fire RY010. This is the invariant the
+    // W20 fix restored (oversized sysdata used to suppress this project-wide).
+    let diags = check("x <- genuinely_unbound_name\n");
+    assert!(
+        diags.iter().any(|d| d.code == "RY010"),
+        "a plain unbound reference must fire RY010: {diags:?}"
+    );
+}
+
+#[test]
+fn external_unenumerable_marker_suppresses_ry010_for_its_file() {
+    // The `SERIALIZED_BINDINGS_UNENUMERABLE` marker still flows from the
+    // unstubbed-attached-package path (tests/examples with unstubbed
+    // Suggests). It must suppress RY010 for THAT file only — never
+    // project-wide. The W20 fix removed the package-global sysdata route;
+    // this is the remaining legitimate, file-local open search path.
+    let mut p = RParser::new().unwrap();
+    let f = p.parse("test.R", "x <- genuinely_unbound_name\n").unwrap();
+    let mut c = Checker::new("test.R");
+    c.set_external_bindings(HashSet::from(
+        [SERIALIZED_BINDINGS_UNENUMERABLE.to_string()],
+    ));
+    c.check(&f);
+    let diags = c.take_diagnostics();
+    assert!(
+        diags.iter().all(|d| d.code != "RY010"),
+        "the unenumerable marker should suppress RY010 for its file: {diags:?}"
+    );
+}
+
+#[test]
+fn library_of_unknown_package_opens_search_path() {
+    let diags = check("library(definitely_not_a_real_pkg_xyz)\nx <- some_unbound_value\n");
+    assert!(
+        diags.iter().all(|d| d.code != "RY010"),
+        "library() of an unstubbed package opens the search path: {diags:?}"
+    );
+}
+
+#[test]
+fn library_character_only_without_literal_opens_search_path() {
+    let diags = check("pkg <- \"x\"\nlibrary(pkg, character.only = TRUE)\ny <- still_unbound\n");
+    assert!(
+        diags.iter().all(|d| d.code != "RY010"),
+        "library(character.only=TRUE) without a literal name opens the search path: {diags:?}"
+    );
+}
+
+#[test]
+fn data_and_load_calls_open_search_path() {
+    let diags = check("data(some_dataset)\nload(\"workspace.rda\")\nz <- unbound_after_load\n");
+    assert!(
+        diags.iter().all(|d| d.code != "RY010"),
+        "data()/load() open the search path: {diags:?}"
+    );
+}
+
+#[test]
+fn attach_opens_search_path_via_unknown_bindings_scope_effect() {
+    // `attach()` is the canonical `ScopeEffect::UnknownBindings` loader.
+    let diags = check("attach(list(a = 1))\nw <- unbound_after_attach\n");
+    assert!(
+        diags.iter().all(|d| d.code != "RY010"),
+        "attach() opens the search path: {diags:?}"
+    );
+}

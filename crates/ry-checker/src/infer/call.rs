@@ -417,7 +417,11 @@ impl Checker {
             if let Some(bindings) = self.load_bindings.get(&span.start).cloned() {
                 for binding in bindings {
                     if binding == crate::SERIALIZED_BINDINGS_UNENUMERABLE {
-                        // An oversized workspace may introduce any binding.
+                        // Oversized workspaces now fall back to a file-stem
+                        // binding at scope-construction time (see
+                        // `serialized_inventory`), so this marker no longer
+                        // reaches `load_bindings`. Kept defensively: an
+                        // unenumerable workspace may introduce any binding.
                         scope.mark_search_path_unknown();
                     } else {
                         scope.insert(binding, RType::unknown());

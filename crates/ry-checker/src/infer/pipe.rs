@@ -262,6 +262,9 @@ impl Checker {
         span: Span,
         scope: &mut Scope,
     ) -> RType {
+        // RY103: an `if` used in expression position still requires a
+        // length-1 logical condition.
+        self.check_class_equality_operand(cond);
         let diagnostic_start = self.diagnostics.len();
         let ct = self.infer(cond, scope);
         let has_ry100 = self.diagnostics[diagnostic_start..]

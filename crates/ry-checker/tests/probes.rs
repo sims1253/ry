@@ -241,6 +241,24 @@ static PROBES: &[Probe] = &[
         positive: "args <- list(font = \"monospace\")\nbad <- identical(args[\"font\"], \"monospace\")\n",
         negative: "args <- list(font = \"monospace\")\nok <- identical(args[[\"font\"]], \"monospace\")\n",
     },
+    Probe {
+        code: "RY102",
+        note: "`<-` where `=` was meant inside a name-carrying container",
+        positive: "bad <- list(ref = \"a\", \"github-ref\" <- \"b\")\n",
+        negative: "ok <- list(ref = \"a\", `github-ref` = \"b\")\n",
+    },
+    Probe {
+        code: "RY103",
+        note: "`class(x) ==` in a length-1 logical context",
+        positive: "f <- function(x) if (class(x) == \"data.frame\") 1 else 2\n",
+        negative: "f <- function(x) if (inherits(x, \"data.frame\")) 1 else 2\n",
+    },
+    Probe {
+        code: "RY105",
+        note: "`length()` of a length-1-by-construction value against 0",
+        positive: "f <- function(v) if (length(sum(v)) > 0) 1 else 2\n",
+        negative: "f <- function(v) if (length(v) > 0) 1 else 2\n",
+    },
 ];
 
 #[test]

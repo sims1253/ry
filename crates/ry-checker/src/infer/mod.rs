@@ -8,6 +8,7 @@ pub(crate) mod construct;
 pub(crate) mod index;
 pub(crate) mod misc;
 pub(crate) mod pipe;
+pub(crate) mod recall;
 
 /// The diagnostic family appropriate for a known condition type. Opaque
 /// conditions deliberately remain silent: the runtime value may be logical.
@@ -353,6 +354,8 @@ impl Checker {
             Stmt::If {
                 cond, then, else_, ..
             } => {
+                // RY103: an `if` condition is a length-1 logical context.
+                self.check_class_equality_operand(cond);
                 let diagnostic_start = self.diagnostics.len();
                 let ct = self.infer(cond, scope);
                 let has_ry100 = self.diagnostics[diagnostic_start..]
@@ -464,6 +467,8 @@ impl Checker {
                 }
             }
             Stmt::While { cond, body, .. } => {
+                // RY103: a loop condition is a length-1 logical context.
+                self.check_class_equality_operand(cond);
                 let diagnostic_start = self.diagnostics.len();
                 let ct = self.infer(cond, scope);
                 let has_ry100 = self.diagnostics[diagnostic_start..]
@@ -1634,6 +1639,9 @@ impl Checker {
                         "comparison with `NA` always produces `NA`; use `is.na()` instead",
                     );
                 }
+                // Plan 31 W18 shape rules. Both read the operand syntax, so
+                // they run before `infer` collapses the operands to types.
+                self.check_constant_length_comparison(*op, lhs, rhs, *span, scope);
                 let lt = self.infer(lhs, scope);
                 let rt = self.infer(rhs, scope);
                 self.infer_binop(
@@ -1719,7 +1727,14 @@ impl Checker {
                     }
                 }
             }
-            Expr::Call { func, args, span } => self.infer_call(func, args, scope, *span),
+            Expr::Call { func, args, span } => {
+                // RY102 is decided by the call's own syntax, so it runs here
+                // rather than inside `infer_call`, where several container
+                // constructors take an early return before the shared
+                // diagnostic block.
+                self.check_named_element_arrow(func, args);
+                self.infer_call(func, args, scope, *span)
+            }
             Expr::Index {
                 base,
                 kind,

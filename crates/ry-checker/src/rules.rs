@@ -209,6 +209,24 @@ pub const RULES: &[Rule] = &[
         default_severity: Severity::Warning,
         summary: "`identical()` compares a single-bracket list subset with an atomic scalar; the subset remains a list, so the result is always FALSE. Use `[[` to extract the element.",
     },
+    Rule {
+        code: "RY102",
+        name: "named-list-element-arrow",
+        default_severity: Severity::Warning,
+        summary: "`<-` where `=` was meant inside `list()`/`c()`/`data.frame()`/`structure()`. The element is created without a name and a stray binding is assigned as a side effect.",
+    },
+    Rule {
+        code: "RY103",
+        name: "class-equality",
+        default_severity: Severity::Warning,
+        summary: "`class(x)` compared with `==`/`!=` in a length-1 logical context. `class()` returns a character vector, so a multi-class object makes `if`/`&&` error. Use `inherits()`.",
+    },
+    Rule {
+        code: "RY105",
+        name: "constant-length-comparison",
+        default_severity: Severity::Warning,
+        summary: "`length()` of a value that is length-1 by construction, compared with a literal. The comparison has a constant result, so the guard is dead.",
+    },
 ];
 
 pub fn find(code: &str) -> Option<&'static Rule> {

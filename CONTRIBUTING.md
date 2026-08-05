@@ -58,6 +58,47 @@ Never add a function name you have not verified against R.
 `scripts/gen_typeshed.R <pkg>` drafts a stub file from a package's
 exports for hand-refinement.
 
+
+## Editor extensions
+
+The VS Code / Positron extension lives in `editors/code/`. It uses
+[bun](https://bun.sh) for package management and esbuild for bundling.
+
+### Running from source
+
+```bash
+cd editors/code
+bun install
+bun run compile
+```
+
+Press `F5` in VS Code to launch an Extension Development Host with ry
+loaded. The `ry` binary must be on your `PATH`, or placed in
+`editors/code/bundled/bin/`.
+
+### The `--no-dependencies` rule
+
+Package VSIXs with `--no-dependencies`:
+
+```bash
+bunx @vscode/vsce package --no-dependencies
+```
+
+This is required because `vsce`'s dependency walker cannot read
+`bun.lock`, so a non-bundled extension mis-resolves `node_modules`.
+Bundling with esbuild sidesteps this.
+
+### Zed extension
+
+The Zed extension lives in `editors/zed/`. It has its own `Cargo.lock`
+and is excluded from the root workspace (see R1 in the plan) because
+`zed_extension_api` is not held to ry's MSRV.
+
+```bash
+cargo build --manifest-path editors/zed/Cargo.toml
+cargo test --manifest-path editors/zed/Cargo.toml
+```
+
 ## Style
 
 - Match the existing comment style: comments explain R semantics and

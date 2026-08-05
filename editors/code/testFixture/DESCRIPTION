@@ -1,0 +1,7 @@
+Package: ryFixture
+Type: Package
+Title: ry LSP Test Fixture
+Version: 0.0.1
+Description: A minimal R package fixture for the ry VS Code/Positron extension.
+License: MIT
+Encoding: UTF-8

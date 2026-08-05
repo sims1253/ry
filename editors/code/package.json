@@ -1,0 +1,252 @@
+{
+  "name": "ry",
+  "displayName": "ry",
+  "description": "Static type checker for R.",
+  "version": "0.1.0",
+  "publisher": "ry",
+  "license": "MIT",
+  "homepage": "https://github.com/sims1253/ry",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sims1253/ry.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sims1253/ry/issues"
+  },
+  "keywords": [
+    "r",
+    "linter",
+    "type-checker"
+  ],
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "restrictedConfigurations": [
+        "ry.path",
+        "ry.importStrategy",
+        "ry.configuration"
+      ]
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "Virtual Workspaces are not supported by the ry extension."
+    }
+  },
+  "activationEvents": [
+    "onLanguage:r",
+    "workspaceContains:*.R",
+    "workspaceContains:*.r",
+    "workspaceContains:ry.toml",
+    "workspaceContains:DESCRIPTION",
+    "workspaceContains:*.Rproj"
+  ],
+  "main": "./dist/extension.js",
+  "scripts": {
+    "fmt": "prettier -w .",
+    "fmt-check": "prettier --check .",
+    "lint": "eslint src --ext ts --max-warnings=0",
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "tsc": "tsc --noEmit",
+    "compile-tests": "tsc -p . --outDir out",
+    "test": "vscode-test",
+    "pretest": "npm run compile-tests && npm run compile",
+    "vscode:prepublish": "npm run compile",
+    "vsce-package": "vsce package -o ry.vsix --no-dependencies"
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "r",
+        "extensions": [
+          ".R",
+          ".r",
+          ".Rprofile",
+          ".rprofile"
+        ],
+        "aliases": [
+          "R",
+          "r"
+        ],
+        "filenames": [
+          "NAMESPACE"
+        ]
+      }
+    ],
+    "configuration": {
+      "title": "ry",
+      "properties": {
+        "ry.enable": {
+          "default": true,
+          "markdownDescription": "Whether to enable the ry extension.",
+          "scope": "window",
+          "type": "boolean"
+        },
+        "ry.path": {
+          "default": [],
+          "markdownDescription": "Ordered list of paths to a `ry` executable. The first existing entry wins, checked before `importStrategy`.",
+          "scope": "machine-overridable",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ry.importStrategy": {
+          "default": "fromEnvironment",
+          "enum": [
+            "fromEnvironment",
+            "useBundled"
+          ],
+          "markdownDescriptions": [
+            "Use `ry` from `PATH`, falling back to the bundled binary.",
+            "Always use the bundled `ry` binary."
+          ],
+          "scope": "machine-overridable",
+          "type": "string"
+        },
+        "ry.configuration": {
+          "default": null,
+          "markdownDescription": "Path to a `ry.toml`, overriding automatic discovery.",
+          "scope": "machine-overridable",
+          "type": "string"
+        },
+        "ry.lint.select": {
+          "default": [],
+          "markdownDescription": "Rules to select (replaces the default set).",
+          "scope": "resource",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ry.lint.extendSelect": {
+          "default": [],
+          "markdownDescription": "Additional rules to enable on top of the defaults.",
+          "scope": "resource",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ry.lint.ignore": {
+          "default": [],
+          "markdownDescription": "Rules to suppress (e.g. `[\"RY010\"]`).",
+          "scope": "resource",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ry.lint.error": {
+          "default": [],
+          "markdownDescription": "Rules to treat as errors.",
+          "scope": "resource",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ry.lint.warn": {
+          "default": [],
+          "markdownDescription": "Rules to treat as warnings.",
+          "scope": "resource",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ry.minConfidence": {
+          "default": "low",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "markdownDescription": "Minimum confidence level for diagnostics (mirrors `--min-confidence`).",
+          "scope": "resource",
+          "type": "string"
+        },
+        "ry.baseline": {
+          "default": null,
+          "markdownDescription": "Path to a baseline diagnostics file (mirrors `--baseline`).",
+          "scope": "resource",
+          "type": "string"
+        },
+        "ry.checkTestFixtures": {
+          "default": false,
+          "markdownDescription": "Check R fixture data nested under a package's `tests/` tree.",
+          "scope": "resource",
+          "type": "boolean"
+        },
+        "ry.logLevel": {
+          "default": "warn",
+          "enum": [
+            "error",
+            "warn",
+            "info",
+            "debug",
+            "trace"
+          ],
+          "markdownDescription": "Server tracing filter level.",
+          "scope": "window",
+          "type": "string"
+        },
+        "ry.addExecutableToTerminalPath": {
+          "default": true,
+          "markdownDescription": "Add the resolved `ry` binary to the integrated terminal `PATH`.",
+          "scope": "machine-overridable",
+          "type": "boolean"
+        }
+      }
+    },
+    "commands": [
+      {
+        "title": "Restart Server",
+        "category": "ry",
+        "command": "ry.restart"
+      },
+      {
+        "title": "Show client logs",
+        "category": "ry",
+        "command": "ry.showLogs"
+      },
+      {
+        "title": "Show server logs",
+        "category": "ry",
+        "command": "ry.showServerLogs"
+      },
+      {
+        "title": "Debug Information",
+        "category": "ry",
+        "command": "ry.debugInformation"
+      },
+      {
+        "title": "Explain Rule",
+        "category": "ry",
+        "command": "ry.explainRule"
+      }
+    ]
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.4.1",
+    "@vscode/vsce": "^3.4.2",
+    "esbuild": "^0.25.0",
+    "eslint": "^9.0.0",
+    "prettier": "^3.4.0",
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.0.0"
+  }
+}

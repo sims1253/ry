@@ -3976,6 +3976,242 @@ fn r6_and_s7_class_body_pronouns_are_bound() {
 }
 
 #[test]
+fn r6_non_portable_public_field_binds_in_sibling_method() {
+    // `portable = FALSE` makes the object's own environment the enclosure
+    // of every method, so `.dir` resolves without a `self$` prefix.
+    let diags = check(
+        r#"FileUploadOperation <- R6Class(
+  "FileUploadOperation",
+  portable = FALSE,
+  class = FALSE,
+  public = list(
+    .dir = character(0),
+    initialize = function(dir) {
+      .dir <<- dir
+    },
+    fileBegin = function() {
+      file.path(.dir, "x")
+    }
+  )
+)
+"#,
+    );
+    assert!(
+        diags.iter().all(|d| d.code != "RY010"),
+        "non-portable R6 fields should be bound in sibling methods, got {diags:?}"
+    );
+}
+
+#[test]
+fn r6_non_portable_binds_private_and_active_members() {
+    // All three member lists share one environment, so a public method may
+    // name a private field and vice versa.
+    let diags = check(
+        r#"Thing <- R6::R6Class(
+  "Thing",
+  portable = FALSE,
+  public = list(
+    show = function() {
+      cat(secret, computed_size)
+    }
+  ),
+  private = list(
+    secret = "s",
+    peek = function() {
+      show()
+    }
+  ),
+  active = list(
+    computed_size = function() {
+      nchar(secret)
+    }
+  )
+)
+"#,
+    );
+    assert!(
+        diags.iter().all(|d| d.code != "RY010"),
+        "public, private and active members should all be bound, got {diags:?}"
+    );
+}
+
+#[test]
+fn r6_non_portable_field_type_comes_from_literal_initialiser() {
+    // `.dir = character(0)` declares the field's mode, so a comparison
+    // against a number is still caught inside the method body.
+    let diags = check(
+        r#"Thing <- R6Class(
+  "Thing",
+  portable = FALSE,
+  public = list(
+    .dir = character(0),
+    bad = function() {
+      .dir < 42
+    }
+  )
+)
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == "RY033"),
+        "field type should come from the declared initialiser, got {diags:?}"
+    );
+}
+
+#[test]
+fn r6_non_portable_placeholder_field_is_untyped_once_reassigned() {
+    // shiny's convention: the declared value names the class the field will
+    // hold rather than storing a string, and `initialize()` overwrites it.
+    // Taking the declaration at face value would make every method call on
+    // the field a `$`-on-atomic error.
+    let diags = check(
+        r#"Logger <- R6Class(
+  "Logger",
+  portable = FALSE,
+  public = list(
+    msg = "<MessageLogger>",
+    initialize = function(logger) {
+      self$msg <- logger
+    },
+    emit = function() {
+      msg$log("x")
+    }
+  )
+)
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "a reassigned placeholder field carries no type: {diags:?}"
+    );
+}
+
+#[test]
+fn r6_non_portable_superassigned_field_is_untyped() {
+    // `.dir <<- dir` replaces the declared `character(0)` with whatever the
+    // caller passed, so the declaration no longer describes the field.
+    let diags = check(
+        r#"Thing <- R6Class(
+  "Thing",
+  portable = FALSE,
+  public = list(
+    .dir = character(0),
+    initialize = function(dir) {
+      .dir <<- dir
+    },
+    compare = function() {
+      .dir < 42
+    }
+  )
+)
+"#,
+    );
+    assert!(
+        diags.iter().all(|d| d.code != "RY033"),
+        "a superassigned field must not keep its declared mode, got {diags:?}"
+    );
+}
+
+#[test]
+fn r6_non_portable_still_reports_undeclared_names() {
+    // Injecting the member names must not blanket-suppress RY010 inside
+    // the class body.
+    let diags = check(
+        r#"Thing <- R6Class(
+  "Thing",
+  portable = FALSE,
+  public = list(
+    .dir = character(0),
+    bad = function() {
+      file.path(.no_such_field_xyz, "x")
+    }
+  )
+)
+"#,
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == "RY010" && d.message.contains(".no_such_field_xyz")),
+        "a name that is not a declared member is still unbound, got {diags:?}"
+    );
+}
+
+/// R6 turns every `active` member into an active binding, so reading the
+/// bare name yields the getter's *result*, not the function. Typing it
+/// `function` made ordinary arithmetic on an active field an RY040 error.
+#[test]
+fn r6_non_portable_active_member_is_a_value_not_a_function() {
+    let diags = check(
+        r#"Counter <- R6::R6Class(
+  "Counter",
+  portable = FALSE,
+  public = list(
+    n = 1,
+    use = function() total + n
+  ),
+  active = list(
+    total = function() 2
+  )
+)
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "an active binding reads as its getter's result: {diags:?}"
+    );
+}
+
+#[test]
+fn r6_portable_default_leaves_bare_field_unbound() {
+    // Negative control (W19 recall guard). R6 defaults to `portable = TRUE`,
+    // where method enclosures do not contain the members: a bare `.dir`
+    // genuinely fails at runtime and must still be reported.
+    let diags = check(
+        r#"Thing <- R6Class(
+  "Thing",
+  public = list(
+    .dir = character(0),
+    fileBegin = function() {
+      file.path(.dir, "x")
+    }
+  )
+)
+"#,
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == "RY010" && d.message.contains(".dir")),
+        "portable (default) R6 must still report the bare field, got {diags:?}"
+    );
+}
+
+#[test]
+fn r6_explicit_portable_true_leaves_bare_field_unbound() {
+    // Negative control (W19 recall guard), explicit spelling.
+    let diags = check(
+        r#"Thing <- R6::R6Class(
+  "Thing",
+  portable = TRUE,
+  public = list(
+    .dir = character(0),
+    fileBegin = function() {
+      file.path(.dir, "x")
+    }
+  )
+)
+"#,
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == "RY010" && d.message.contains(".dir")),
+        "explicit `portable = TRUE` must still report the bare field, got {diags:?}"
+    );
+}
+
+#[test]
 fn local_standalone_errors_idiom_is_clean() {
     let diags = check(include_str!("../testdata/ok_local_standalone_errors.R"));
     assert!(

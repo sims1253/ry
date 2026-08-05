@@ -1100,6 +1100,19 @@ impl Checker {
         }
         let params: Vec<&str> = signature.param_names().collect();
         let matches = match_arguments(&params, args);
+        // R6 has two evaluation models for method bodies. Under the default
+        // (`portable = TRUE`) a method is enclosed by a separate environment
+        // in which members are reachable only through `self$` / `private$`,
+        // so a bare member name is genuinely unbound. With
+        // `portable = FALSE` the object's own environment is the enclosure,
+        // so every public, private and active member -- fields and sibling
+        // methods alike -- is in scope as a bare name.
+        let member_bindings =
+            if lookup_name == "R6Class" && r6_call_is_non_portable(args, &params, &matches) {
+                self.r6_member_bindings(args, &params, &matches, scope)
+            } else {
+                Vec::new()
+            };
         let mut arg_types = Vec::with_capacity(args.len());
         for (index, argument) in args.iter().enumerate() {
             let parameter = matches.param_for_arg[index].and_then(|index| params.get(index));
@@ -1136,6 +1149,11 @@ impl Checker {
                 for binding in &spec.names {
                     child.insert(binding.clone(), RType::unknown());
                 }
+            }
+            // Non-empty for a non-portable `R6Class()` call only, and the
+            // injected params there are exactly the three member lists.
+            for (member, member_type) in &member_bindings {
+                child.insert(member.clone(), member_type.clone());
             }
             arg_types.push(
                 if injects_fixed_names
@@ -1214,6 +1232,88 @@ impl Checker {
         });
         let first = returns.next().unwrap_or_else(RType::unknown);
         Some(returns.fold(first, RType::join))
+    }
+
+    /// The names declared in the `public` / `private` / `active` lists of an
+    /// `R6Class()` call, paired with the type of their declared initialiser.
+    ///
+    /// Only a literal `list(...)` can be enumerated; a member list produced by
+    /// a helper call contributes nothing, so the injected set stays limited to
+    /// names R6 is known to define on the object.
+    fn r6_member_bindings(
+        &mut self,
+        args: &[Arg],
+        params: &[&str],
+        matches: &ArgumentMatch,
+        scope: &Scope,
+    ) -> Vec<(String, RType)> {
+        // `active` is kept separate: R6 turns each of its members into an
+        // active binding, so a sibling method reading the bare name gets the
+        // getter's *result*, not the function. Typing it `function` makes
+        // `total + n` an RY040 error on correct code.
+        let member_lists: Vec<(&Expr, bool)> = args
+            .iter()
+            .enumerate()
+            .filter_map(|(index, argument)| {
+                let parameter = matches.param_for_arg[index]
+                    .and_then(|index| params.get(index))
+                    .copied()?;
+                matches!(parameter, "public" | "private" | "active")
+                    .then_some((&argument.value, parameter == "active"))
+            })
+            .collect();
+        let only_lists: Vec<&Expr> = member_lists.iter().map(|(list, _)| *list).collect();
+        let rebound = r6_rebound_members(&only_lists);
+        let mut bindings = Vec::new();
+        for (list, is_active) in member_lists {
+            let Expr::Call {
+                func,
+                args: members,
+                ..
+            } = list
+            else {
+                continue;
+            };
+            if ident_name(func) != Some("list") {
+                continue;
+            }
+            for member in members {
+                let Some(name) = member.name.as_deref() else {
+                    continue;
+                };
+                let member_type = if rebound.contains(name) || is_active {
+                    // An active member's type is whatever its getter returns.
+                    // Return-type inference through an R6 active binding is
+                    // not modelled, so stay unknown rather than claim it is
+                    // the function itself.
+                    RType::unknown()
+                } else {
+                    self.r6_member_type(&member.value, scope)
+                };
+                bindings.push((name.to_string(), member_type));
+            }
+        }
+        bindings
+    }
+
+    /// The type a declared R6 member contributes to sibling method bodies.
+    ///
+    /// A literal initialiser carries the field's mode (`character(0)` is a
+    /// character field). `NULL` is the conventional placeholder for a field
+    /// that `initialize()` fills in later, so it declares nothing about the
+    /// eventual value and stays unknown.
+    fn r6_member_type(&mut self, initialiser: &Expr, scope: &Scope) -> RType {
+        match initialiser {
+            Expr::Function { .. } => RType::scalar(Mode::Function),
+            Expr::Null(_) => RType::unknown(),
+            other => {
+                // Inferred against a throwaway scope and in discarding mode:
+                // the member list is walked again for diagnostics below, and
+                // this probe must not emit them twice.
+                let mut probe = scope.clone();
+                self.infer_discarding(other, &mut probe)
+            }
+        }
     }
 
     fn infer_injected_expr(&mut self, expr: &Expr, scope: &mut Scope) -> RType {
@@ -1311,6 +1411,142 @@ impl Checker {
     //
     // The augmented scope is local to this call: column bindings must
     // NOT leak back into the enclosing scope (we operate on a clone).
+}
+
+/// Whether an `R6Class()` call opts out of R6's portable evaluation model.
+///
+/// Only a literal `portable = FALSE` counts. R6's default is portable, and a
+/// computed value cannot be resolved here, so anything else keeps the strict
+/// reading in which bare member names do not resolve.
+fn r6_call_is_non_portable(args: &[Arg], params: &[&str], matches: &ArgumentMatch) -> bool {
+    args.iter().enumerate().any(|(index, argument)| {
+        matches.param_for_arg[index]
+            .and_then(|index| params.get(index))
+            .is_some_and(|parameter| *parameter == "portable")
+            && matches!(argument.value, Expr::Logical(false, _))
+    })
+}
+
+/// The member names an R6 class body assigns to after declaring them.
+///
+/// A declared initialiser only describes the member while the declaration
+/// holds. R6 classes routinely declare a placeholder that `initialize()`
+/// overwrites with the real object -- shiny's `msg = "<MessageLogger>"` names
+/// the eventual class rather than storing a string -- so a member that the
+/// body assigns to (`x <<- v`, `self$x <- v`, `private$x <- v`, `x[[i]] <- v`)
+/// contributes no type. Over-approximating costs precision, never soundness:
+/// the member is still bound, just untyped.
+fn r6_rebound_members(member_lists: &[&Expr]) -> HashSet<String> {
+    fn record_target(target: &Expr, names: &mut HashSet<String>) {
+        match target {
+            Expr::Ident { name, .. } => {
+                names.insert(name.clone());
+            }
+            Expr::Index {
+                base, kind, args, ..
+            } => {
+                // `self$x <- v` / `private$x <- v` rebind the member itself;
+                // any other subscripted target rebinds its base.
+                if *kind == IndexKind::Dollar
+                    && matches!(ident_name(base), Some("self" | "private"))
+                    && let Some(field) = args.first()
+                {
+                    match &field.value {
+                        Expr::Ident { name, .. } | Expr::String(name, _) => {
+                            names.insert(name.clone());
+                        }
+                        _ => {}
+                    }
+                }
+                record_target(base, names);
+            }
+            _ => {}
+        }
+    }
+    fn visit_stmt(statement: &Stmt, names: &mut HashSet<String>) {
+        match statement {
+            Stmt::Assign { target, value, .. } => {
+                record_target(target, names);
+                visit_expr(value, names);
+            }
+            Stmt::Expr(expr) => visit_expr(expr, names),
+            Stmt::If {
+                cond, then, else_, ..
+            } => {
+                visit_expr(cond, names);
+                for statement in then.iter().chain(else_.iter().flatten()) {
+                    visit_stmt(statement, names);
+                }
+            }
+            Stmt::For { iter, body, .. } => {
+                visit_expr(iter, names);
+                for statement in body {
+                    visit_stmt(statement, names);
+                }
+            }
+            Stmt::While { cond, body, .. } => {
+                visit_expr(cond, names);
+                for statement in body {
+                    visit_stmt(statement, names);
+                }
+            }
+            Stmt::FunctionDef { body, .. } => {
+                for statement in body {
+                    visit_stmt(statement, names);
+                }
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(value) = value {
+                    visit_expr(value, names);
+                }
+            }
+        }
+    }
+    fn visit_expr(expr: &Expr, names: &mut HashSet<String>) {
+        match expr {
+            Expr::BinOp { op, lhs, rhs, .. } => {
+                if matches!(op, BinOpKind::Assign | BinOpKind::SuperAssign) {
+                    record_target(lhs, names);
+                } else {
+                    visit_expr(lhs, names);
+                }
+                visit_expr(rhs, names);
+            }
+            Expr::Call { func, args, .. } => {
+                visit_expr(func, names);
+                for argument in args {
+                    visit_expr(&argument.value, names);
+                }
+            }
+            Expr::Index { base, args, .. } => {
+                visit_expr(base, names);
+                for argument in args {
+                    visit_expr(&argument.value, names);
+                }
+            }
+            Expr::UnaryOp { expr, .. } => visit_expr(expr, names),
+            Expr::Function { body, .. } | Expr::Block { body, .. } => {
+                for statement in body {
+                    visit_stmt(statement, names);
+                }
+            }
+            Expr::If {
+                cond, then, else_, ..
+            } => {
+                visit_expr(cond, names);
+                visit_expr(then, names);
+                if let Some(else_) = else_ {
+                    visit_expr(else_, names);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut names = HashSet::new();
+    for list in member_lists {
+        visit_expr(list, &mut names);
+    }
+    names
 }
 
 fn is_user_infix_name(name: &str) -> bool {

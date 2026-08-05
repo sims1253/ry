@@ -97,6 +97,9 @@ pub(super) struct State {
     /// pull request. When true, `didChangeConfiguration` re-pulls
     /// instead of parsing the notification payload.
     supports_workspace_configuration: bool,
+    /// Whether the client supports dynamic registration of
+    /// `workspace/didChangeWatchedFiles` (S3).
+    supports_did_change_watched_files: bool,
 }
 
 #[derive(Default)]
@@ -289,6 +292,14 @@ impl LanguageServer for Backend {
             .and_then(|w| w.configuration)
             .unwrap_or(false);
 
+        let supports_did_change_watched_files = params
+            .capabilities
+            .workspace
+            .as_ref()
+            .and_then(|w| w.did_change_watched_files.as_ref())
+            .and_then(|f| f.dynamic_registration)
+            .unwrap_or(false);
+
         // `load_workspace_stubs` does blocking filesystem I/O (reads
         // `ry.toml` and walks typeshed directories); run it off the async
         // executor so a slow disk does not stall every LSP request.
@@ -313,6 +324,7 @@ impl LanguageServer for Backend {
         state.file_config = file_config;
         state.folder_settings = folder_settings;
         state.supports_workspace_configuration = supports_workspace_configuration;
+        state.supports_did_change_watched_files = supports_did_change_watched_files;
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
@@ -470,6 +482,28 @@ impl LanguageServer for Backend {
                 }
             }
         }
+
+        // S3: Register a file watcher for `**/ry.toml` so editing the
+        // config file reloads diagnostics without a server restart.
+        // Gated on the client's dynamic-registration capability.
+        let supports_watchers = {
+            // Read from the stored capabilities (set in initialize).
+            // We check the workspace.didChangeWatchedFiles capability.
+            let state = self.state.lock().await;
+            state.supports_did_change_watched_files
+        };
+        if supports_watchers {
+            let watcher_registration = Registration {
+                id: "ry-toml-watcher".to_string(),
+                method: "workspace/didChangeWatchedFiles".into(),
+                register_options: Some(serde_json::json!({
+                    "watchers": [{"globPattern": "**/ry.toml"}]
+                })),
+            };
+            if let Err(e) = self.client.register_capability(vec![watcher_registration]).await {
+                tracing::warn!("failed to register ry.toml watcher: {e}");
+            }
+        }
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
@@ -535,6 +569,55 @@ impl LanguageServer for Backend {
 
         // Republish diagnostics for every open document so the new
         // settings take effect immediately.
+        let open_uris: Vec<Url> = {
+            let state = self.state.lock().await;
+            state.docs.keys().map(|p| path_to_uri(p)).collect()
+        };
+        for uri in open_uris {
+            self.schedule_diagnostics(uri).await;
+        }
+    }
+
+    async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
+        // S3: Reload config when `ry.toml` changes on disk. Only
+        // `ry.toml` is watched (registered in `initialized`), but the
+        // client may forward other file changes too.
+        let config_changed = params.changes.iter().any(|change| {
+            change.uri.path().ends_with("ry.toml")
+        });
+        if !config_changed {
+            return;
+        }
+
+        // Reload the full ry.toml config, retaining the previous good
+        // config on parse error (per S3 done-when criterion).
+        let root = {
+            let state = self.state.lock().await;
+            state.root.clone()
+        };
+        if let Some(root) = root.as_deref() {
+            match ry_config::Config::load_from_dir(root) {
+                Ok(Some(new_config)) => {
+                    tracing::info!("ry.toml changed; reloading config");
+                    let mut state = self.state.lock().await;
+                    state.file_config = new_config;
+                }
+                Ok(None) => {
+                    // ry.toml was deleted; fall back to defaults.
+                    tracing::info!("ry.toml removed; falling back to defaults");
+                    let mut state = self.state.lock().await;
+                    state.file_config = ry_config::Config::default();
+                }
+                Err(e) => {
+                    // Malformed ry.toml: log warning and retain previous
+                    // good config rather than falling back to defaults.
+                    tracing::warn!("failed to reload ry.toml, retaining previous config: {e}");
+                }
+            }
+        }
+
+        // Republish diagnostics for every open document so the new
+        // config takes effect immediately.
         let open_uris: Vec<Url> = {
             let state = self.state.lock().await;
             state.docs.keys().map(|p| path_to_uri(p)).collect()

@@ -7,7 +7,10 @@ import {
   ShowMessageNotification,
   State,
 } from "vscode-languageclient";
-import { LanguageClient, RevealOutputChannelOn } from "vscode-languageclient/node";
+import {
+  LanguageClient,
+  RevealOutputChannelOn,
+} from "vscode-languageclient/node";
 import {
   BUNDLED_RY_EXECUTABLE,
   LOG_CHANNEL_NAME,
@@ -87,7 +90,9 @@ function readFolderSettings(namespace: string): FolderSettings {
     enable: config.get<boolean>("enable"),
     path: config.get<string[]>("path"),
     importStrategy: config.get<string>("importStrategy"),
-    addExecutableToTerminalPath: config.get<boolean>("addExecutableToTerminalPath"),
+    addExecutableToTerminalPath: config.get<boolean>(
+      "addExecutableToTerminalPath",
+    ),
   };
 }
 
@@ -98,7 +103,9 @@ function readFolderSettings(namespace: string): FolderSettings {
  * global fallback. E3's `getExtensionSettings` will replace this with a
  * proper per-workspace-folder array (consumed by S4 multi-root support).
  */
-export function getInitializationOptions(namespace: string): InitializationOptions {
+export function getInitializationOptions(
+  namespace: string,
+): InitializationOptions {
   const globalSettings = readFolderSettings(namespace);
   return {
     settings: [globalSettings],
@@ -159,10 +166,14 @@ export async function startServer(
   const binaryPath = await resolveBinary(namespace);
 
   const initializationOptions = getInitializationOptions(namespace);
-  logger.info(`Initialization options: ${JSON.stringify(initializationOptions, null, 4)}`);
+  logger.info(
+    `Initialization options: ${JSON.stringify(initializationOptions, null, 4)}`,
+  );
 
   const serverArgs: string[] = [RY_SERVER_SUBCOMMAND];
-  logger.info(`ry language server command: '${[binaryPath, ...serverArgs].join(" ")}'`);
+  logger.info(
+    `ry language server command: '${[binaryPath, ...serverArgs].join(" ")}'`,
+  );
 
   const serverOptions = {
     command: binaryPath,

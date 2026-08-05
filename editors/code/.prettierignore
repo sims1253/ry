@@ -1,0 +1,10 @@
+dist/
+out/
+node_modules/
+.vscode-test/
+bundled/
+*.vsix
+bun.lock
+justfile
+.gitignore
+.vscodeignore

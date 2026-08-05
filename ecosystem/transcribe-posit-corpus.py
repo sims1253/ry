@@ -53,8 +53,9 @@ EXPECTED_TP = 34
 EXPECTED_FP = 1108
 EXPECTED_UNCERTAIN = 0
 
-DEFAULT_AUDIT_DIR = Path("/home/m0hawk/Documents/ry-audits/posit-corpus")
 REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_AUDIT_DIR = Path(os.environ.get(
+    "RY_POSIT_AUDIT_DIR", REPO_ROOT.parent / "ry-audits" / "posit-corpus"))
 DEFAULT_OUTPUT = REPO_ROOT / "docs" / "corpus" / "posit-0.8.0.json"
 RY_VERSION = "0.8.0"
 RY_COMMIT = "da7261cfebafa2163546fd011743b4a06d47afb1"  # the v0.8.0 tag
@@ -166,6 +167,13 @@ def load_audit(audit_dir: Path):
     aggregate = json.loads((audit_dir / "aggregate.json").read_text())
     audit_results = audit_dir / "audit-results"
     slugs = sorted(d.name for d in audit_results.iterdir() if d.is_dir())
+    missing = sorted(set(packages_meta) - set(slugs))
+    unexpected = sorted(set(slugs) - set(packages_meta))
+    if missing or unexpected:
+        sys.exit(
+            "transcribe: package metadata/audit-results mismatch: "
+            f"missing audit results={missing}; unexpected audit results={unexpected}"
+        )
     return packages_meta, aggregate, audit_results, slugs
 
 
@@ -325,7 +333,6 @@ def main(argv=None):
         "corpus": "posit",
         "ry_version": RY_VERSION,
         "source": "posit-corpus/aggregate.json",
-        "source_path": str(aggregate_path),
         "source_sha256": sha256_of(aggregate_path),
         "ry_commit": RY_COMMIT,
         # The Posit ledger is an audit transcript of an installed-library run.
@@ -359,10 +366,8 @@ def main(argv=None):
 
     if args.check:
         existing = json.loads(args.output.read_text())
-        if existing["findings"] != findings:
+        if existing != corpus:
             sys.exit(f"transcribe: {args.output} is out of date; regenerate it")
-        if existing["classification"] != corpus["classification"]:
-            sys.exit(f"transcribe: {args.output} classification drifted")
         print(f"transcribe: {args.output} matches the audit "
               f"({len(findings)} findings, {len(packages)} packages)")
         return

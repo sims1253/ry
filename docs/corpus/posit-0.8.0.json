@@ -3,7 +3,6 @@
   "corpus": "posit",
   "ry_version": "0.8.0",
   "source": "posit-corpus/aggregate.json",
-  "source_path": "/home/m0hawk/Documents/ry-audits/posit-corpus/aggregate.json",
   "source_sha256": "011507a5bdfd6b3a85a95ae64a49ca3412202c4a32d080581ddfdab52a067ca4",
   "ry_commit": "da7261cfebafa2163546fd011743b4a06d47afb1",
   "reconciliation": "audit-transcript",

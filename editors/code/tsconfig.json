@@ -14,7 +14,9 @@
     "noUnusedParameters": true,
     "types": [
       "node",
-      "vscode"
+      "vscode",
+      "mocha",
+      "chai"
     ]
   },
   "include": [

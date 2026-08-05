@@ -2177,7 +2177,6 @@ fn editing_utils_updates_cross_file_analysis_diagnostics() {
     );
 }
 
-
 // === S2: LSP settings channel tests ===
 
 #[test]
@@ -2188,7 +2187,10 @@ fn effective_filter_uses_editor_ignore_setting() {
     state.folder_settings_mut().lint.ignore = Some(vec!["RY010".to_string()]);
     let filter = state.effective_filter();
     // RY010 should be suppressed (effective returns None).
-    assert_eq!(filter.effective("RY010", ry_checker::Severity::Warning), None);
+    assert_eq!(
+        filter.effective("RY010", ry_checker::Severity::Warning),
+        None
+    );
 }
 
 #[test]
@@ -2198,7 +2200,10 @@ fn effective_filter_falls_back_to_ry_toml_when_editor_unset() {
     let mut state = State::default();
     state.file_config_mut().ignore = vec!["RY010".to_string()];
     let filter = state.effective_filter();
-    assert_eq!(filter.effective("RY010", ry_checker::Severity::Warning), None);
+    assert_eq!(
+        filter.effective("RY010", ry_checker::Severity::Warning),
+        None
+    );
 }
 
 #[test]
@@ -2210,7 +2215,10 @@ fn effective_filter_editor_overrides_ry_toml() {
     state.folder_settings_mut().lint.ignore = Some(vec!["RY010".to_string()]);
     let filter = state.effective_filter();
     // Editor's RY010 is ignored.
-    assert_eq!(filter.effective("RY010", ry_checker::Severity::Warning), None);
+    assert_eq!(
+        filter.effective("RY010", ry_checker::Severity::Warning),
+        None
+    );
     // ry.toml's RY030 is NOT ignored (editor replaced it).
     assert_eq!(
         filter.effective("RY030", ry_checker::Severity::Warning),
@@ -2225,8 +2233,14 @@ fn effective_filter_editor_error_and_warn() {
     state.folder_settings_mut().lint.error = Some(vec!["RY010".to_string()]);
     state.folder_settings_mut().lint.warn = Some(vec!["RY030".to_string()]);
     let filter = state.effective_filter();
-    assert_eq!(filter.effective("RY010", ry_checker::Severity::Warning), Some(ry_checker::Severity::Error));
-    assert_eq!(filter.effective("RY030", ry_checker::Severity::Error), Some(ry_checker::Severity::Warning));
+    assert_eq!(
+        filter.effective("RY010", ry_checker::Severity::Warning),
+        Some(ry_checker::Severity::Error)
+    );
+    assert_eq!(
+        filter.effective("RY030", ry_checker::Severity::Error),
+        Some(ry_checker::Severity::Warning)
+    );
 }
 
 #[test]
@@ -2292,5 +2306,3 @@ fn empty_initialization_options_produces_empty_settings() {
     assert!(settings.settings.is_empty());
     assert!(settings.global_settings.lint.ignore.is_none());
 }
-
-

@@ -1354,8 +1354,8 @@ mod tests {
         Baseline, BaselineEntry, load_baseline, subtract_baseline, write_baseline_file,
     };
     use super::{
-        ColorChoice, collect_r_files, demote_non_source_paths,
-        rbuildignore_pattern, run_check_once, sort_and_deduplicate_diagnostics,
+        ColorChoice, collect_r_files, demote_non_source_paths, rbuildignore_pattern,
+        run_check_once, sort_and_deduplicate_diagnostics,
     };
     use ry_checker::format::OutputFormat;
     use ry_checker::{Diagnostic, Severity};

@@ -107,9 +107,7 @@ impl RyExtension {
                 )
             })?;
 
-        if !fs::metadata(&release_details.downloaded_binary_path)
-            .is_ok_and(|stat| stat.is_file())
-        {
+        if !fs::metadata(&release_details.downloaded_binary_path).is_ok_and(|stat| stat.is_file()) {
             zed::set_language_server_installation_status(
                 language_server_id,
                 &zed::LanguageServerInstallationStatus::Downloading,
@@ -148,7 +146,11 @@ impl RyExtension {
 }
 
 impl GithubReleaseDetails {
-    fn new(platform: zed_extension_api::Os, arch: zed_extension_api::Architecture, version: String) -> Self {
+    fn new(
+        platform: zed_extension_api::Os,
+        arch: zed_extension_api::Architecture,
+        version: String,
+    ) -> Self {
         // Note the asymmetry: the asset prefix is `ry-cli` (cargo-dist uses
         // the package name) while the binary inside is `ry`.
         let asset_stem = format!(
@@ -263,9 +265,7 @@ mod test {
                 asset_name: String::from("ry-cli-aarch64-apple-darwin.tar.gz"),
                 downloaded_file_type: zed_extension_api::DownloadedFileType::GzipTar,
                 downloaded_directory: String::from("ry-0.8.0"),
-                downloaded_binary_path: String::from(
-                    "ry-0.8.0/ry-cli-aarch64-apple-darwin/ry"
-                )
+                downloaded_binary_path: String::from("ry-0.8.0/ry-cli-aarch64-apple-darwin/ry")
             }
         );
 
@@ -280,9 +280,7 @@ mod test {
                 asset_name: String::from("ry-cli-x86_64-apple-darwin.tar.gz"),
                 downloaded_file_type: zed_extension_api::DownloadedFileType::GzipTar,
                 downloaded_directory: String::from("ry-0.8.0"),
-                downloaded_binary_path: String::from(
-                    "ry-0.8.0/ry-cli-x86_64-apple-darwin/ry"
-                )
+                downloaded_binary_path: String::from("ry-0.8.0/ry-cli-x86_64-apple-darwin/ry")
             }
         );
 
@@ -314,9 +312,7 @@ mod test {
                 asset_name: String::from("ry-cli-x86_64-unknown-linux-gnu.tar.gz"),
                 downloaded_file_type: zed_extension_api::DownloadedFileType::GzipTar,
                 downloaded_directory: String::from("ry-0.8.0"),
-                downloaded_binary_path: String::from(
-                    "ry-0.8.0/ry-cli-x86_64-unknown-linux-gnu/ry"
-                )
+                downloaded_binary_path: String::from("ry-0.8.0/ry-cli-x86_64-unknown-linux-gnu/ry")
             }
         );
 

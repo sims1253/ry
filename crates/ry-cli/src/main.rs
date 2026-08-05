@@ -144,7 +144,13 @@ enum Cmd {
     /// (LSP) over stdio, publishing type-check diagnostics for open R
     /// files. Connect to it from any LSP-aware editor (VS Code, Neovim,
     /// Helix, etc.).
-    Server,
+    Server {
+        /// Tracing filter for the LSP server. Passed to
+        /// `tracing_subscriber`'s `EnvFilter`. Defaults to `ry=warn`.
+        /// Examples: `ry=debug`, `ry_lsp=trace`, `warn`.
+        #[arg(long, default_value = "ry=warn")]
+        log_level: String,
+    },
     /// Display ry's version.
     Version {
         /// Output format for version info.
@@ -283,7 +289,7 @@ fn main() -> Result<ExitCode> {
             baseline,
             min_confidence,
         ),
-        Cmd::Server => {
+        Cmd::Server { log_level } => {
             // The LSP server reads JSON-RPC from stdin and writes
             // JSON-RPC to stdout. CRITICAL: any tracing or log output
             // on stdout will corrupt the stream. We install a tracing
@@ -296,7 +302,7 @@ fn main() -> Result<ExitCode> {
             // we don't have to coordinate with `run_check`'s init.
             tracing_subscriber::fmt()
                 .with_writer(std::io::stderr)
-                .with_env_filter("ry=warn")
+                .with_env_filter(&log_level)
                 .try_init()
                 .ok();
             // The LSP server is async (tower-lsp is built on tokio), but

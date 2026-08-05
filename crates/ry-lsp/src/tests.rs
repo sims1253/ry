@@ -2176,3 +2176,121 @@ fn editing_utils_updates_cross_file_analysis_diagnostics() {
         "editing utils.R must republish corrected analysis.R diagnostics: {after_analysis:?}"
     );
 }
+
+
+// === S2: LSP settings channel tests ===
+
+#[test]
+fn effective_filter_uses_editor_ignore_setting() {
+    // When the editor sends lint.ignore, it should take effect even
+    // with no ry.toml.
+    let mut state = State::default();
+    state.folder_settings_mut().lint.ignore = Some(vec!["RY010".to_string()]);
+    let filter = state.effective_filter();
+    // RY010 should be suppressed (effective returns None).
+    assert_eq!(filter.effective("RY010", ry_checker::Severity::Warning), None);
+}
+
+#[test]
+fn effective_filter_falls_back_to_ry_toml_when_editor_unset() {
+    // When the editor doesn't send lint.ignore, the ry.toml value
+    // should be used.
+    let mut state = State::default();
+    state.file_config_mut().ignore = vec!["RY010".to_string()];
+    let filter = state.effective_filter();
+    assert_eq!(filter.effective("RY010", ry_checker::Severity::Warning), None);
+}
+
+#[test]
+fn effective_filter_editor_overrides_ry_toml() {
+    // When both editor and ry.toml provide ignore lists, the editor
+    // value wins.
+    let mut state = State::default();
+    state.file_config_mut().ignore = vec!["RY030".to_string()];
+    state.folder_settings_mut().lint.ignore = Some(vec!["RY010".to_string()]);
+    let filter = state.effective_filter();
+    // Editor's RY010 is ignored.
+    assert_eq!(filter.effective("RY010", ry_checker::Severity::Warning), None);
+    // ry.toml's RY030 is NOT ignored (editor replaced it).
+    assert_eq!(
+        filter.effective("RY030", ry_checker::Severity::Warning),
+        Some(ry_checker::Severity::Warning)
+    );
+}
+
+#[test]
+fn effective_filter_editor_error_and_warn() {
+    // Editor error/warn remapping.
+    let mut state = State::default();
+    state.folder_settings_mut().lint.error = Some(vec!["RY010".to_string()]);
+    state.folder_settings_mut().lint.warn = Some(vec!["RY030".to_string()]);
+    let filter = state.effective_filter();
+    assert_eq!(filter.effective("RY010", ry_checker::Severity::Warning), Some(ry_checker::Severity::Error));
+    assert_eq!(filter.effective("RY030", ry_checker::Severity::Error), Some(ry_checker::Severity::Warning));
+}
+
+#[test]
+fn effective_filter_empty_when_nothing_configured() {
+    // With no editor settings and no ry.toml, the default filter is
+    // empty: everything keeps its default severity.
+    let state = State::default();
+    let filter = state.effective_filter();
+    assert_eq!(
+        filter.effective("RY010", ry_checker::Severity::Warning),
+        Some(ry_checker::Severity::Warning)
+    );
+}
+
+#[test]
+fn server_settings_deserialize_from_initialization_options() {
+    // Verify the initializationOptions shape that the plan specifies:
+    // { settings: [{ lint: { ignore: [...] } }], globalSettings: { ... } }
+    let json = serde_json::json!({
+        "settings": [
+            { "lint": { "ignore": ["RY010"], "error": ["RY030"] } }
+        ],
+        "globalSettings": {
+            "lint": { "warn": ["RY040"] }
+        }
+    });
+    let settings: crate::settings::ServerSettings = serde_json::from_value(json).unwrap();
+    assert_eq!(settings.settings.len(), 1);
+    assert_eq!(
+        settings.settings[0].lint.ignore.as_deref(),
+        Some(["RY010".to_string()].as_slice())
+    );
+    assert_eq!(
+        settings.settings[0].lint.error.as_deref(),
+        Some(["RY030".to_string()].as_slice())
+    );
+    assert_eq!(
+        settings.global_settings.lint.warn.as_deref(),
+        Some(["RY040".to_string()].as_slice())
+    );
+}
+
+#[test]
+fn folder_settings_deserialize_camel_case() {
+    let json = serde_json::json!({
+        "minConfidence": "high",
+        "baseline": "/path/to/baseline.json",
+        "checkTestFixtures": true,
+        "logLevel": "debug"
+    });
+    let settings: crate::settings::FolderSettings = serde_json::from_value(json).unwrap();
+    assert_eq!(settings.min_confidence.as_deref(), Some("high"));
+    assert_eq!(settings.baseline.as_deref(), Some("/path/to/baseline.json"));
+    assert_eq!(settings.check_test_fixtures, Some(true));
+    assert_eq!(settings.log_level.as_deref(), Some("debug"));
+}
+
+#[test]
+fn empty_initialization_options_produces_empty_settings() {
+    // No initializationOptions → empty ServerSettings.
+    let json = serde_json::json!({});
+    let settings: crate::settings::ServerSettings = serde_json::from_value(json).unwrap();
+    assert!(settings.settings.is_empty());
+    assert!(settings.global_settings.lint.ignore.is_none());
+}
+
+

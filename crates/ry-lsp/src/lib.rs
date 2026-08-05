@@ -33,6 +33,7 @@
 
 mod backend;
 mod diagnostics;
+mod settings;
 mod folding;
 mod hints;
 mod ident;

@@ -381,7 +381,7 @@ if (length(missing) || length(unowned)) {
     writeLines(c(
       sprintf("ecosystem: %s is an audit transcript of an installed-library run;", corpus_path),
       "ecosystem: the hermetic-vs-audit delta above is reported for visibility and does not gate this build.",
-      sprintf("ecosystem: re-audit and regenerate with ecosystem/transcribe-%s-corpus.py to update the ledger.", corpus$corpus[[1L]])
+      sprintf("ecosystem: to update the ledger, re-audit the %s corpus and regenerate it from the audit results (see docs/corpus/README.md).", corpus$corpus[[1L]])
     ), stderr())
   } else {
     writeLines(sprintf("ecosystem: update %s with the reviewed workstream delta", corpus_path), stderr())

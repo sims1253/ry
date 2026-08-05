@@ -10744,7 +10744,7 @@
   },
   "notes": [
     "Each finding identity is transcribed from the audited ry-stdout.json and joined to the auditor's per-diagnostic classification in summary.json; the transcription script re-derives this file and asserts 34 TP / 1108 FP / 0 uncertain over 1,142 diagnostics.",
-    "Workstreams are assigned deterministically from the rule code and the auditor rationale (see ecosystem/transcribe-posit-corpus.py); true positives are real defects in upstream package source.",
+    "Workstreams are assigned deterministically from the rule code and the auditor rationale (see transcribe-corpus.R in the audit corpus); true positives are real defects in upstream package source.",
     "The source audit ran ry 0.8.0 with installed R libraries; ecosystem reports are hermetic (RY_NO_INSTALLED_LIBRARIES=1), so the hermetic run is compared against this transcript informationally rather than as a strict CI gate."
   ]
 }

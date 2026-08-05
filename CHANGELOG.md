@@ -4,6 +4,28 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Added — Editor extensions
+
+- **VS Code / Positron extension** (`editors/code/`): installable from
+  the VS Code Marketplace and Open VSX. Bundles the `ry` binary, exposes
+  `ry.lint.*` settings, and supports both `fromEnvironment` and
+  `useBundled` import strategies.
+- **Zed extension** (`editors/zed/`): downloads the `ry` binary from
+  GitHub releases on first use, with path construction unit-tested for
+  all six cargo-dist targets.
+- **Editor configuration channel**: `ignore`, `error`, `warn`, `exclude`,
+  and `baseline` from `ry.toml` now produce identical filtering in
+  `ry check` and in the editor over the same open file.
+- **`ry.toml` hot-reload**: editing `ry.toml` updates diagnostics
+  without restarting the language server.
+- **Multi-root workspaces**: per-folder `ry.toml` configs are honoured.
+- **`ry server --log-level`**: configurable server tracing on stderr.
+
+### Changed
+
+- Extracted `Config`, `Baseline`, and diagnostic-filter types into a
+  new `ry-config` library crate, shared between `ry-cli` and `ry-lsp`.
+
 ## [0.8.0] - 2026-08-04
 
 This release focuses on checker precision, higher-order R semantics, and editor

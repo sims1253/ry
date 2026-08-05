@@ -1,0 +1,52 @@
+# ry VS Code / Positron extension recipes.
+#
+# Requires bun (https://bun.sh) and, for packaging, the `vsce` CLI.
+# Uses bun for package management per the house rule; `vsce package`
+# runs with --no-dependencies because esbuild bundles everything and
+# vsce's dependency walker does not understand bun.lock.
+
+# List the available recipes
+default:
+    @just --list
+
+# Install dependencies with bun
+install:
+    bun install
+
+# Format source
+fmt:
+    bun run fmt
+
+# Check code quality: format, lint, and type-check
+check:
+    bun run fmt-check
+    bun run lint
+    bun run tsc
+
+# Compile the extension to dist/extension.js
+compile:
+    bun run compile
+
+# Watch and recompile on change
+watch:
+    bun run watch
+
+# Package the extension into ry.vsix (bundled, no node_modules shipped)
+package: compile
+    bunx vsce package -o ry.vsix --no-dependencies
+
+# Install the extension into VS Code
+install-vscode: package
+    code --install-extension ry.vsix --force
+
+# Install the extension into Positron
+install-positron: package
+    positron --install-extension ry.vsix --force
+
+# Run the extension test suite
+test: compile
+    bun run test
+
+# Clean build artifacts
+clean:
+    rm -rf dist out node_modules .vscode-test

@@ -1,0 +1,4 @@
+# Suppress RY010 (unbound-variable) for this fixture so the LSP settings
+# channel can be exercised: bad.R contains an unbound reference that must
+# NOT produce a squiggle, while the arithmetic error below still does.
+ignore = ["RY010"]

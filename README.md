@@ -272,8 +272,47 @@ removed by regenerating the baseline.
 as you type (debounced, cached parses), hover with inferred types,
 go-to-definition, references, rename, completion, signature help, inlay
 hints, folding, and quick-fix actions that insert suppression comments.
-Connect it from any LSP-aware editor (VS Code, Positron, Neovim, Helix,
-…).
+
+### VS Code / Positron
+
+Install the **ry** extension from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=sims1253.ry)
+or Open VSX (for Positron). The extension bundles the `ry` binary — no
+separate install required.
+
+Settings (in `settings.json`):
+
+| Setting | Default | Description |
+| :-- | :-- | :-- |
+| `ry.enable` | `true` | Enable/disable the language server |
+| `ry.importStrategy` | `fromEnvironment` | `fromEnvironment` (use `PATH`, fall back to bundled) or `useBundled` |
+| `ry.path` | `[]` | Ordered list of candidate `ry` executables; first existing wins |
+| `ry.lint.ignore` | `[]` | Rules to suppress (e.g. `["RY010"]`) |
+| `ry.lint.error` | `[]` | Rules to treat as errors |
+| `ry.lint.warn` | `[]` | Rules to treat as warnings |
+| `ry.logLevel` | `"warn"` | Server log level (`error`, `warn`, `info`, `debug`, `trace`) |
+
+> **Note:** Diagnostics cover only files you have open in the editor.
+> `ry check .` may report additional findings in files you haven't
+> opened. This is a known limitation being addressed in incremental
+> core work.
+
+### Zed
+
+Install the **ry** extension from Zed's extension gallery. The extension
+downloads the `ry` binary from GitHub releases on first use.
+
+### Other editors (Neovim, Helix, Emacs)
+
+Connect manually by pointing your LSP client at `ry server`. For
+example, with Neovim's built-in LSP:
+
+```lua
+vim.lsp.start({
+  name = 'ry',
+  cmd = {'ry', 'server'},
+  root_dir = vim.fs.dirname(vim.fs.find({'ry.toml', 'DESCRIPTION', '.git'}, { upward = true })[1]),
+})
+```
 
 ## CI
 

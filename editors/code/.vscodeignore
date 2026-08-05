@@ -1,0 +1,19 @@
+# Everything is bundled into dist/extension.js by esbuild.
+.vscode/**
+.vscode-test/**
+src/**
+out/**
+node_modules/**
+test/**
+testFixture/**
+
+# Build tooling and configs are not needed at runtime.
+esbuild.js
+tsconfig.json
+justfile
+.gitignore
+bun.lock
+
+# TypeScript sources and source maps are not shipped.
+**/*.map
+**/*.ts

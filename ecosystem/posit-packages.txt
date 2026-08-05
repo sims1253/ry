@@ -1,0 +1,80 @@
+# name<TAB>git_url<TAB>pinned_ref
+# Posit open-source R corpus (>=500 stars on
+# https://opensource.posit.co/software/?sort=stars), audited with ry 0.8.0.
+# Sources are checked only; no package code is distributed or executed.
+# ledger: docs/corpus/posit-0.8.0.json
+#
+# Collision-safe: each package is keyed by a unique slug (column 1);
+# ecosystem/run.sh aborts if a slug appears twice in a manifest.
+#
+# Tiering (ecosystem/run.sh --tier {fast,full}):
+#   fast   only the packages below the "full tier" marker (the ones that
+#          emitted >=1 diagnostic -- the signal-dense set the ledger
+#          reconciles against). Clones fewer, heavier-signal repos.
+#   full   every package in this manifest (default); adds the clean
+#          packages so one turning noisy is caught as an unowned finding.
+#
+# === fast tier (>=1 ry diagnostic) ===
+ggplot2	https://github.com/tidyverse/ggplot2.git	6870419aa6e106c3580c45c81d5b688cb31758bd	# 8 diagnostics, 6982 stars
+shiny-r	https://github.com/rstudio/shiny.git	ca1800475ac5a1e6037fea1020260a868d8798ee	# 310 diagnostics, 5673 stars
+dplyr	https://github.com/tidyverse/dplyr.git	d5e94e7fa8fd4a5f79c1a707d1842216bb4c691f	# 30 diagnostics, 5054 stars
+gt	https://github.com/rstudio/gt.git	caa074012b9825ddd71996f40e309c00f7b9e180	# 16 diagnostics, 2161 stars
+blogdown	https://github.com/rstudio/blogdown.git	07f3de89f672c0155149fd657a0946c29684a7f8	# 4 diagnostics, 1792 stars
+reticulate	https://github.com/rstudio/reticulate.git	afe2221ded74a7f18ab3d5e89bb0a49b1f9d3114	# 4 diagnostics, 1759 stars
+broom	https://github.com/tidymodels/broom.git	6230a9014b0d839e4e8ed5b1763de65dde8f2205	# 5 diagnostics, 1524 stars
+plumber	https://github.com/rstudio/plumber.git	393920505f289f914150d57e06d97347556a55dc	# 1 diagnostics, 1437 stars
+purrr	https://github.com/tidyverse/purrr.git	481e829f297fd4315b386518215157f361475ad0	# 5 diagnostics, 1401 stars
+tensorflow	https://github.com/rstudio/tensorflow.git	fed1fe79742d9a979884b07f69c126b91a93050b	# 1 diagnostics, 1340 stars
+lintr	https://github.com/r-lib/lintr.git	990e57870498634ce67d1fa0e53311f385b4b3d4	# 12 diagnostics, 1289 stars
+renv	https://github.com/rstudio/renv.git	a3f8952cf8f4b9cd6e676805431cb81ca5a24b64	# 51 diagnostics, 1160 stars
+tinytex	https://github.com/rstudio/tinytex.git	db1fc10763fa637f758a75ec24e070d82920bbce	# 1 diagnostics, 1140 stars
+httr	https://github.com/r-lib/httr.git	34b956569ebaa20cd955150fad765cd834f38be4	# 1 diagnostics, 980 stars
+sparklyr	https://github.com/sparklyr/sparklyr.git	7f006a6d5c01a4e7a36d203d1ace56c53261900e	# 3 diagnostics, 972 stars
+testthat	https://github.com/r-lib/testthat.git	9b6f12b9f50c297b4b5f485f728a2a19305770eb	# 9 diagnostics, 938 stars
+usethis	https://github.com/r-lib/usethis.git	5f60819dc5dee7071d6e67cfa1fd934bb665466c	# 1 diagnostics, 919 stars
+keras3	https://github.com/rstudio/keras3.git	753ffeeb4b9a76ae37388cf63be64a45a5a8ef20	# 14 diagnostics, 856 stars
+flexdashboard	https://github.com/rstudio/flexdashboard.git	8ae8623f2d9cdadb2316b953908bed0ba7bc3f87	# 3 diagnostics, 846 stars
+pak	https://github.com/r-lib/pak.git	cdbd4ceb07f5a7eb2b317c57237dad561e5fb4e7	# 35 diagnostics, 817 stars
+lubridate	https://github.com/tidyverse/lubridate.git	8e9f2b289ee8384d9499e2527fb1e449c97e5370	# 1 diagnostics, 801 stars
+infer	https://github.com/tidymodels/infer.git	0b9c910e658a5d4ed9f6b13e4978b9c23a225cad	# 1 diagnostics, 795 stars
+pkgdown	https://github.com/r-lib/pkgdown.git	179cfaee3d4e17eaa9e7d7c700b1269dc62e4d46	# 7 diagnostics, 772 stars
+styler	https://github.com/r-lib/styler.git	d3d7854df2d73f539b6cb2286dbf5dddaf3e58f6	# 471 diagnostics, 770 stars
+glue	https://github.com/tidyverse/glue.git	da9c73f7a3de6a27f3103cb5bb2355820a4c3a6a	# 1 diagnostics, 748 stars
+cli	https://github.com/r-lib/cli.git	86bdefe1eb23399499b40884f7fab84194283bc1	# 18 diagnostics, 719 stars
+parsnip	https://github.com/tidymodels/parsnip.git	b992bc4f13bdb70d661dd629afee615d3711dd80	# 2 diagnostics, 658 stars
+roxygen2	https://github.com/r-lib/roxygen2.git	81691b0f075f707b70b443131a0edcca065d5fbb	# 14 diagnostics, 658 stars
+recipes	https://github.com/tidymodels/recipes.git	92704cb072b1bb4951061034be6bfa4678e0e43a	# 28 diagnostics, 618 stars
+ellmer	https://github.com/tidyverse/ellmer.git	f8281bed083ff0228e9064c38fb2164cd594d3f1	# 2 diagnostics, 612 stars
+corrr	https://github.com/tidymodels/corrr.git	aa0488f1a26e0e04dda9e08535719e8f6b6f9154	# 1 diagnostics, 592 stars
+rlang	https://github.com/r-lib/rlang.git	1d0e00659b628c07c93c362687550727597ef09f	# 37 diagnostics, 581 stars
+torch	https://github.com/mlverse/torch.git	c67c2fb2909fc77e8fc127ec2867e1a551ee1bf3	# 18 diagnostics, 567 stars
+bigrquery	https://github.com/r-dbi/bigrquery.git	fdb0f1eaebc6b7bab66d3727b2817f966d55e473	# 23 diagnostics, 528 stars
+dbplyr	https://github.com/tidyverse/dbplyr.git	f478e2070c9a60f4aebcc94132048312209dd097	# 4 diagnostics, 514 stars
+# === full tier (0 ry diagnostics; clean) ===
+bookdown	https://github.com/rstudio/bookdown.git	92e702a5133adcbce1f7e3f35cd9700bcbb370b6	# clean, 4063 stars
+rmarkdown	https://github.com/rstudio/rmarkdown.git	194c2a11e3d345e294906152b6f60f0439422022	# clean, 3054 stars
+devtools	https://github.com/r-lib/devtools.git	5a10248bb3b727f84a34e517b92fff118652be1e	# clean, 2516 stars
+tidyverse	https://github.com/tidyverse/tidyverse.git	0231aafbc56914ee5371dd6c7b60677f168d7154	# clean, 1797 stars
+rticles	https://github.com/rstudio/rticles.git	2e55e747dacb65c2645cc0273db7f7374a1bb1f2	# clean, 1538 stars
+rvest	https://github.com/tidyverse/rvest.git	6c955c0ecfbb0f0bdb1891f0ef952af388b51851	# clean, 1522 stars
+tidyr	https://github.com/tidyverse/tidyr.git	26f83e89a690b6cf31a260489b828df0ff43ebb2	# clean, 1437 stars
+actions	https://github.com/r-lib/actions.git	aae88a2d9cd3d63571eb05980b09f44611788515	# clean, 1064 stars
+readr	https://github.com/tidyverse/readr.git	238ea873fdc1a34b3638f01493bd8df9f770ac62	# clean, 1036 stars
+magrittr	https://github.com/tidyverse/magrittr.git	73d66ee89c1079d66d235bfde551b6110c934259	# clean, 972 stars
+pagedown	https://github.com/rstudio/pagedown.git	4fbb005adb8e666d43896ef577e3d2de2b0544e5	# clean, 928 stars
+shinydashboard	https://github.com/rstudio/shinydashboard.git	b6d9ca7fb0d9572cd91a8e97f513ee66d610f9af	# clean, 927 stars
+leaflet	https://github.com/rstudio/leaflet.git	e568bdaba32010e76dffd7d9de7b7299ec7d1809	# clean, 840 stars
+tidymodels	https://github.com/tidymodels/tidymodels.git	35bb4145b32999a651e3b6dba2b7bc2f731b3663	# clean, 819 stars
+tibble	https://github.com/tidyverse/tibble.git	b5e7406e83d8c3291573dbd1ae06bbb9f87b6aac	# clean, 755 stars
+readxl	https://github.com/tidyverse/readxl.git	47f8aeac0a99eee6c6db2d64ead2225e5e3ae4af	# clean, 752 stars
+reprex	https://github.com/tidyverse/reprex.git	0dcf301940c050e1cf32f230cab45503d85ac5a4	# clean, 752 stars
+learnr	https://github.com/rstudio/learnr.git	e7164a86172200cdfeb53c5f17382e1f86e3e78a	# clean, 735 stars
+dtplyr	https://github.com/tidyverse/dtplyr.git	bffe46e664d62021e47251c158c9f02c4cd30400	# clean, 676 stars
+stringr	https://github.com/tidyverse/stringr.git	ae054b1d28f630fee22ddb3cb7525396e62af4fe	# clean, 665 stars
+multidplyr	https://github.com/tidyverse/multidplyr.git	e960a1e83f6a0dded147366053b1d057d46ad2f4	# clean, 650 stars
+vroom	https://github.com/tidyverse/vroom.git	56e0ce23bd40de8acc3daacc0e85924b7c18d766	# clean, 642 stars
+dt	https://github.com/rstudio/DT.git	6f957f3126b2999e2f65cdeac942d930fb34b8ea	# clean, 621 stars
+blastula	https://github.com/rstudio/blastula.git	8b8a6f97ec3aa4cf605321ed3ee7a65c31dc4b24	# clean, 575 stars
+bslib	https://github.com/rstudio/bslib.git	f74283b4782f0871254d21b3edf59d84a621b1d2	# clean, 565 stars
+forcats	https://github.com/tidyverse/forcats.git	f83e0e682d9f874d066630ff78eb12586b5b2a32	# clean, 558 stars
+r2d3	https://github.com/rstudio/r2d3.git	becfb81989c7fabfe79dee2dde999190025d4ba3	# clean, 525 stars

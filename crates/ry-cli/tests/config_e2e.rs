@@ -266,6 +266,66 @@ fn ry_toml_exclude_patterns_skip_matched_files() {
 }
 
 #[test]
+fn package_test_fixtures_are_skipped_by_default() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(
+        tmp.path().join("DESCRIPTION"),
+        "Package: fixturepkg\nVersion: 0.0.0.9000\n",
+    )
+    .unwrap();
+    fs::create_dir_all(tmp.path().join("R")).unwrap();
+    fs::create_dir_all(tmp.path().join("tests/testthat/fixtures")).unwrap();
+    fs::write(tmp.path().join("R/good.R"), "value <- 1L\n").unwrap();
+    fs::write(
+        tmp.path().join("tests/testthat/test-live.R"),
+        "live_missing_name\n",
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("tests/testthat/fixtures/bad.R"),
+        "fixture_missing_name\n",
+    )
+    .unwrap();
+
+    let output = ry_check(tmp.path());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("live_missing_name"),
+        "test code was skipped: {stdout}"
+    );
+    assert!(
+        !stdout.contains("fixture_missing_name"),
+        "fixture data must be skipped by default: {stdout}"
+    );
+}
+
+#[test]
+fn check_test_fixtures_config_opts_back_in() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(
+        tmp.path().join("DESCRIPTION"),
+        "Package: fixturepkg\nVersion: 0.0.0.9000\n",
+    )
+    .unwrap();
+    fs::write(tmp.path().join("ry.toml"), "check-test-fixtures = true\n").unwrap();
+    fs::create_dir_all(tmp.path().join("R")).unwrap();
+    fs::create_dir_all(tmp.path().join("tests/testthat/fixtures")).unwrap();
+    fs::write(tmp.path().join("R/good.R"), "value <- 1L\n").unwrap();
+    fs::write(
+        tmp.path().join("tests/testthat/fixtures/bad.R"),
+        "fixture_missing_name\n",
+    )
+    .unwrap();
+
+    let output = ry_check(tmp.path());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("fixture_missing_name"),
+        "configured fixture data must be checked: {stdout}"
+    );
+}
+
+#[test]
 fn ry_toml_output_format_json() {
     let tmp = tempfile::tempdir().unwrap();
     fs::write(

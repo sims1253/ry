@@ -406,19 +406,67 @@ impl Project {
     }
 }
 
+/// The role an R source file has inside its enclosing package.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackageFileKind {
+    Library,
+    TestCode,
+    TestFixture,
+    Inst,
+    Other,
+}
+
+/// Classify a path relative to its nearest ancestor containing `DESCRIPTION`.
+/// Testthat only sources runner files at `tests/` root and files with its
+/// executable prefixes directly under `tests/testthat/`; deeper R files are
+/// data consumed by tests, not code executed by the package test runner.
+pub fn package_file_kind(path: &std::path::Path) -> PackageFileKind {
+    let Some(root) = path
+        .parent()
+        .and_then(|parent| parent.ancestors().find(|p| p.join("DESCRIPTION").is_file()))
+    else {
+        return PackageFileKind::Other;
+    };
+    let Ok(relative) = path.strip_prefix(root) else {
+        return PackageFileKind::Other;
+    };
+    let components: Vec<_> = relative
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .collect();
+    match components.as_slice() {
+        ["R", _] => PackageFileKind::Library,
+        ["inst", ..] => PackageFileKind::Inst,
+        ["tests", file] if is_r_source_name(file) => PackageFileKind::TestCode,
+        ["tests", "testthat", file] if is_r_source_name(file) && is_testthat_code_name(file) => {
+            PackageFileKind::TestCode
+        }
+        ["tests", ..] => PackageFileKind::TestFixture,
+        _ => PackageFileKind::Other,
+    }
+}
+
+fn is_r_source_name(name: &str) -> bool {
+    std::path::Path::new(name)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| matches!(extension, "R" | "r" | "S" | "s" | "q"))
+}
+
+fn is_testthat_code_name(name: &str) -> bool {
+    let stem = std::path::Path::new(name)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or(name);
+    ["test", "helper", "setup", "teardown"]
+        .iter()
+        .any(|prefix| stem.starts_with(prefix))
+}
+
 /// Whether a file is directly under a package's `R/` directory.
-///
-/// Package metadata still uses this classifier even though top-level bindings
-/// are now pooled across the entire checked project tree.
 #[cfg(test)]
 pub(crate) fn is_package_library_file(path: &str) -> bool {
-    let path = std::path::Path::new(path);
-    path.parent().is_some_and(|parent| {
-        parent.file_name().and_then(|name| name.to_str()) == Some("R")
-            && parent
-                .parent()
-                .is_some_and(|root| root.join("DESCRIPTION").is_file())
-    })
+    package_file_kind(std::path::Path::new(path)) == PackageFileKind::Library
 }
 
 #[cfg(test)]

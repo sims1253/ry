@@ -4,6 +4,7 @@ members = [
     "crates/ry-core",
     "crates/ry-checker",
     "crates/ry-typeshed",
+    "crates/ry-config",
     "crates/ry-cli",
     "crates/ry-lsp",
 ]

@@ -1193,6 +1193,7 @@ dependencies = [
  "rayon",
  "rds2rust",
  "ry-checker",
+ "ry-config",
  "ry-core",
  "ry-lsp",
  "ry-typeshed",
@@ -1205,6 +1206,21 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "xz2",
+]
+
+[[package]]
+name = "ry-config"
+version = "0.8.0"
+dependencies = [
+ "glob",
+ "miette",
+ "ry-checker",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "toml",
+ "tracing",
 ]
 
 [[package]]
@@ -1222,6 +1238,7 @@ name = "ry-lsp"
 version = "0.8.0"
 dependencies = [
  "ry-checker",
+ "ry-config",
  "ry-core",
  "ry-typeshed",
  "serde",

@@ -10,6 +10,7 @@
 use crate::diagnostics::{
     diagnostic_to_lsp, diagnostic_to_lsp_with_source, make_ignore_action, make_ignore_file_action,
 };
+use crate::settings::{FolderSettings, ServerSettings};
 use crate::folding::collect_folding_ranges;
 use crate::hints::{
     active_parameter, collect_completions, collect_inlay_hints, find_enclosing_call, get_signature,
@@ -78,6 +79,24 @@ pub(super) struct State {
     ///.
     #[cfg(test)]
     pub(super) parse_count: Arc<std::sync::atomic::AtomicUsize>,
+
+    // --- S2: settings channel ---
+
+    /// The workspace root directory (from `root_uri`), used for
+    /// `ry.toml` discovery and relative path resolution.
+    root: Option<PathBuf>,
+    /// The full `ry-config::Config` loaded from `ry.toml` at the
+    /// workspace root. Stored so the severity filter and baseline can
+    /// be applied in `publish_diagnostics` without re-reading the file.
+    file_config: ry_config::Config,
+    /// Editor-supplied per-folder settings, received via
+    /// `initializationOptions`, `workspace/configuration`, or
+    /// `didChangeConfiguration`.
+    folder_settings: FolderSettings,
+    /// Whether the client supports the `workspace/configuration`
+    /// pull request. When true, `didChangeConfiguration` re-pulls
+    /// instead of parsing the notification payload.
+    supports_workspace_configuration: bool,
 }
 
 #[derive(Default)]
@@ -179,20 +198,121 @@ impl State {
     pub(super) fn doc_text(&self, path: &str) -> Option<&str> {
         self.docs.get(path).map(|s| s.as_str())
     }
+
+    /// Mutable access to editor settings for tests.
+    #[cfg(test)]
+    pub(super) fn folder_settings_mut(&mut self) -> &mut crate::settings::FolderSettings {
+        &mut self.folder_settings
+    }
+
+    /// Mutable access to file config for tests.
+    #[cfg(test)]
+    pub(super) fn file_config_mut(&mut self) -> &mut ry_config::Config {
+        &mut self.file_config
+    }
+
+    // --- S2: effective config computation ---
+
+    /// Compute the effective `SeverityFilter` from editor settings
+    /// merged over `ry.toml`. Editor settings take precedence: if the
+    /// editor provides an `ignore`/`error`/`warn` list, it replaces
+    /// the `ry.toml` value; otherwise the `ry.toml` value (which may
+    /// itself be the empty default) is used.
+    pub(super) fn effective_filter(&self) -> ry_checker::SeverityFilter {
+        let error = self
+            .folder_settings
+            .lint
+            .error
+            .clone()
+            .unwrap_or_else(|| self.file_config.error.clone());
+        let warn = self
+            .folder_settings
+            .lint
+            .warn
+            .clone()
+            .unwrap_or_else(|| self.file_config.warn.clone());
+        let ignore = self
+            .folder_settings
+            .lint
+            .ignore
+            .clone()
+            .unwrap_or_else(|| self.file_config.ignore.clone());
+        ry_config::build_filter(&error, &warn, &ignore)
+    }
+
+    /// Load and return the effective baseline, if any. Editor setting
+    /// takes precedence over `ry.toml`.
+    pub(super) fn effective_baseline(&self) -> Option<ry_config::Baseline> {
+        let baseline_path = self
+            .folder_settings
+            .baseline
+            .as_ref()
+            .map(PathBuf::from)
+            .or_else(|| self.file_config.baseline.clone())?;
+        let resolved = if baseline_path.is_relative() {
+            self.root.as_deref().map(|r| r.join(&baseline_path))?
+        } else {
+            baseline_path
+        };
+        ry_config::load_baseline(&resolved).ok()
+    }
 }
 
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> LspResult<InitializeResult> {
         let root = params.root_uri.and_then(|uri| uri.to_file_path().ok());
+
+        // S2: Read initializationOptions if present. This is the only
+        // settings channel Zed can drive, so it must be sufficient on
+        // its own. The shape mirrors ruff-vscode's: an array of
+        // per-folder settings plus a global fallback.
+        let server_settings: ServerSettings = params
+            .initialization_options
+            .as_ref()
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
+        // Use the first folder's settings, falling back to the global
+        // settings. (Multi-root is S4; for now we take the first entry.)
+        let folder_settings = server_settings
+            .settings
+            .into_iter()
+            .next()
+            .unwrap_or(server_settings.global_settings);
+
+        // Check if the client supports workspace/configuration pull.
+        let supports_workspace_configuration = params
+            .capabilities
+            .workspace
+            .as_ref()
+            .and_then(|w| w.configuration)
+            .unwrap_or(false);
+
         // `load_workspace_stubs` does blocking filesystem I/O (reads
         // `ry.toml` and walks typeshed directories); run it off the async
         // executor so a slow disk does not stall every LSP request.
-        let user_stubs = tokio::task::spawn_blocking(move || load_workspace_stubs(root.as_deref()))
-            .await
-            .unwrap_or_else(|_| Arc::new(std::collections::BTreeMap::new()));
+        // We also load the full `ry-config::Config` here so the severity
+        // filter and baseline are available in `publish_diagnostics`.
+        let root_clone = root.clone();
+        let user_stubs = tokio::task::spawn_blocking(move || {
+            load_workspace_stubs(root_clone.as_deref())
+        })
+        .await
+        .unwrap_or_else(|_| Arc::new(std::collections::BTreeMap::new()));
+
+        // Load the full ry.toml config for severity filtering (S2).
+        let file_config = root
+            .as_deref()
+            .and_then(|r| ry_config::Config::load_from_dir(r).ok().flatten())
+            .unwrap_or_default();
+
         let mut state = self.state.lock().await;
         state.user_stubs = user_stubs;
+        state.root = root;
+        state.file_config = file_config;
+        state.folder_settings = folder_settings;
+        state.supports_workspace_configuration = supports_workspace_configuration;
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
@@ -319,6 +439,37 @@ impl LanguageServer for Backend {
 
     async fn initialized(&self, _: InitializedParams) {
         tracing::info!("ry LSP initialized");
+
+        // S2: If the client supports workspace/configuration, pull the
+        // `ry.*` section now. This is the primary settings path for VS
+        // Code and supersedes whatever was in initializationOptions.
+        let should_pull = {
+            let state = self.state.lock().await;
+            state.supports_workspace_configuration
+        };
+        if should_pull {
+            let root_uri = {
+                let state = self.state.lock().await;
+                state.root.as_ref().and_then(|p| Url::from_file_path(p).ok())
+            };
+            let item = ConfigurationItem {
+                scope_uri: root_uri,
+                section: Some("ry".to_string()),
+            };
+            match self.client.configuration(vec![item]).await {
+                Ok(values) => {
+                    if let Some(value) = values.into_iter().next() {
+                        if let Ok(settings) = serde_json::from_value::<FolderSettings>(value) {
+                            let mut state = self.state.lock().await;
+                            state.folder_settings = settings;
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("workspace/configuration pull failed: {e}");
+                }
+            }
+        }
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
@@ -341,6 +492,54 @@ impl LanguageServer for Backend {
             self.update_doc(path, change.text, version).await;
             // Debounced: a burst of keystrokes coalesces into a single
             // diagnostic publish.
+            self.schedule_diagnostics(uri).await;
+        }
+    }
+
+    async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
+        // S2: Configuration changed. If the client supports pull
+        // configuration, re-pull the `ry.*` section. Otherwise parse
+        // the settings blob sent in the notification.
+        let should_pull = {
+            let state = self.state.lock().await;
+            state.supports_workspace_configuration
+        };
+
+        if should_pull {
+            let root_uri = {
+                let state = self.state.lock().await;
+                state.root.as_ref().and_then(|p| Url::from_file_path(p).ok())
+            };
+            let item = ConfigurationItem {
+                scope_uri: root_uri,
+                section: Some("ry".to_string()),
+            };
+            if let Ok(values) = self.client.configuration(vec![item]).await {
+                if let Some(value) = values.into_iter().next() {
+                    if let Ok(settings) = serde_json::from_value::<FolderSettings>(value) {
+                        let mut state = self.state.lock().await;
+                        state.folder_settings = settings;
+                    }
+                }
+            }
+        } else {
+            // The client sent settings inline. They may be wrapped in
+            // an outer "ry" key (VS Code) or be the raw ry settings.
+            let raw = &params.settings;
+            let ry_section = raw.get("ry").unwrap_or(raw);
+            if let Ok(settings) = serde_json::from_value::<FolderSettings>(ry_section.clone()) {
+                let mut state = self.state.lock().await;
+                state.folder_settings = settings;
+            }
+        }
+
+        // Republish diagnostics for every open document so the new
+        // settings take effect immediately.
+        let open_uris: Vec<Url> = {
+            let state = self.state.lock().await;
+            state.docs.keys().map(|p| path_to_uri(p)).collect()
+        };
+        for uri in open_uris {
             self.schedule_diagnostics(uri).await;
         }
     }
@@ -1082,7 +1281,7 @@ impl Backend {
         // Snapshot the open docs under the lock, then drop the lock
         // before running the checker so a slow check doesn't block
         // other LSP requests (e.g. didOpen of a second file).
-        let (path, docs, versions, user_stubs, project) = {
+        let (path, docs, versions, user_stubs, project, filter, baseline, config_root) = {
             let state = self.state.lock().await;
             (
                 uri_to_path(&uri),
@@ -1090,6 +1289,9 @@ impl Backend {
                 state.versions.clone(),
                 Arc::clone(&state.user_stubs),
                 Arc::clone(&state.project),
+                state.effective_filter(),
+                state.effective_baseline(),
+                state.root.clone(),
             )
         };
 
@@ -1134,6 +1336,16 @@ impl Backend {
             // Without this an opt-in rule shows up in the editor but not in
             // `ry check`, which reads as ry contradicting itself.
             ry_checker::filter_default_disabled(&mut diagnostics);
+
+            // S2: Apply the effective severity filter from editor
+            // settings merged over `ry.toml`. This is what makes
+            // `ignore`, `error`, and `warn` settings work in the editor.
+            ry_checker::apply_filter_to_diagnostics(&mut diagnostics, &filter);
+
+            // S2: Apply baseline subtraction if configured.
+            if let Some(ref baseline) = baseline {
+                ry_config::subtract_baseline(&mut diagnostics, baseline, config_root.as_deref());
+            }
             let source_text = docs.get(&diagnostic_path).map(String::as_str);
             let file_comments = per_file_comments.get(&diagnostic_path);
             let (file_level, suppressions) = match file_comments {

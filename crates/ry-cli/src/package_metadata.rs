@@ -183,6 +183,7 @@ pub(crate) fn resolve<'a>(
             file_bindings.extend(metadata.imported_bindings.iter().cloned());
             file_imported_from.extend(metadata.imported_from.clone());
             file_bindings.extend(metadata.s3_generics.iter().cloned());
+            file_bindings.extend(metadata.native_routines.iter().cloned());
             file_bindings.extend(
                 metadata
                     .native_routine_prefixes

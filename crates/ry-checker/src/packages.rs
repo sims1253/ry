@@ -13,6 +13,11 @@ use std::collections::{HashMap, HashSet};
 pub struct NamespaceMetadata {
     /// Native routine prefixes introduced by `useDynLib(..., .fixes = "prefix")`.
     pub native_routine_prefixes: HashSet<String>,
+    /// Native routine names explicitly listed by `useDynLib(pkg, foo, bar)`.
+    pub native_routines: HashSet<String>,
+    /// Whether `useDynLib(..., .registration = TRUE)` enables registered
+    /// symbols in native-call positions without enumerating C sources.
+    pub native_registration: bool,
     /// Names introduced by `importFrom(package, name, ...)`.
     pub imported_bindings: HashSet<String>,
     /// Exact package provenance for `importFrom(package, name, ...)` names.
@@ -49,6 +54,16 @@ pub fn namespace_metadata(file: &SourceFile) -> NamespaceMetadata {
                         .filter(|arg| arg.name.as_deref() == Some(".fixes"))
                         .filter_map(|arg| static_name(&arg.value))
                         .filter(|prefix| !prefix.is_empty()),
+                );
+                metadata.native_registration |= args.iter().any(|arg| {
+                    arg.name.as_deref() == Some(".registration")
+                        && matches!(&arg.value, Expr::Logical(true, _))
+                });
+                metadata.native_routines.extend(
+                    args.iter()
+                        .skip(1)
+                        .filter(|arg| arg.name.is_none())
+                        .filter_map(|arg| static_name(&arg.value)),
                 );
             }
             "importFrom" => {
@@ -221,6 +236,27 @@ mod tests {
         assert_eq!(
             metadata.imported_from.get("mutate").map(String::as_str),
             Some("dplyr")
+        );
+    }
+
+    #[test]
+    fn use_dyn_lib_records_registration_and_explicit_routines() {
+        let mut parser = ry_core::RParser::new().unwrap();
+        let file = parser
+            .parse(
+                "NAMESPACE",
+                "useDynLib(pkg, foo, bar, .registration = TRUE, .fixes = \"pkg_\")\n",
+            )
+            .unwrap();
+        let metadata = namespace_metadata(&file);
+        assert!(metadata.native_registration);
+        assert_eq!(
+            metadata.native_routines,
+            HashSet::from(["foo".to_string(), "bar".to_string()])
+        );
+        assert_eq!(
+            metadata.native_routine_prefixes,
+            HashSet::from(["pkg_".to_string()])
         );
     }
 

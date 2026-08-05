@@ -38,7 +38,13 @@ pub(crate) fn equality_list_leaf_type(op: BinOpKind, value: &RType) -> Option<RT
 pub(crate) fn is_ffi_primitive(name: &str) -> bool {
     matches!(
         name,
-        ".Call" | ".C" | ".Fortran" | ".External" | ".External2" | ".Internal"
+        ".Call"
+            | ".C"
+            | ".Fortran"
+            | ".External"
+            | ".External2"
+            | ".Internal"
+            | "call_with_cleanup"
     )
 }
 

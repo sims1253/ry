@@ -11,10 +11,10 @@ use clap::{
     ArgMatches, CommandFactory, FromArgMatches, Parser as ClapParser, Subcommand, ValueEnum,
 };
 use miette::{IntoDiagnostic, Result};
-use serde::{Deserialize, Serialize};
 
-mod config;
 mod package_metadata;
+
+use ry_config as config;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum ColorChoice {
@@ -350,24 +350,6 @@ fn init_tracing(verbose: u8, quiet: u8) {
         .try_init();
 }
 
-fn build_filter(
-    error: &[String],
-    warn: &[String],
-    ignore: &[String],
-) -> ry_checker::SeverityFilter {
-    let mut f = ry_checker::SeverityFilter::default();
-    for e in error {
-        f.add_error(e);
-    }
-    for w in warn {
-        f.add_warn(w);
-    }
-    for i in ignore {
-        f.add_ignore(i);
-    }
-    f
-}
-
 /// Returns true if the named argument was explicitly provided on the
 /// command line (rather than coming from a clap default value). Used to
 /// distinguish "the user passed `--error-on-warning`" from "the field's
@@ -375,116 +357,6 @@ fn build_filter(
 /// effect when the CLI flag is omitted.
 fn flag_set(matches: Option<&ArgMatches>, id: &str) -> bool {
     matches.and_then(|m| m.value_source(id)) == Some(ValueSource::CommandLine)
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Baseline {
-    version: u32,
-    entries: Vec<BaselineEntry>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-struct BaselineEntry {
-    path: String,
-    code: String,
-    message: String,
-    count: usize,
-}
-
-fn load_baseline(path: &std::path::Path) -> Result<Baseline> {
-    let contents = std::fs::read_to_string(path)
-        .map_err(|error| miette::miette!("could not read baseline {}: {error}", path.display()))?;
-    let baseline: Baseline = serde_json::from_str(&contents)
-        .map_err(|error| miette::miette!("could not parse baseline {}: {error}", path.display()))?;
-    if baseline.version != 1 {
-        return Err(miette::miette!(
-            "unsupported baseline version {} in {}; expected 1",
-            baseline.version,
-            path.display()
-        ));
-    }
-    Ok(baseline)
-}
-
-fn diagnostic_path(path: &str, repo_root: Option<&std::path::Path>) -> String {
-    let path = std::path::Path::new(path);
-    let root = repo_root
-        .map(std::path::Path::to_path_buf)
-        .or_else(|| std::env::current_dir().ok());
-    root.as_deref()
-        .and_then(|root| path.strip_prefix(root).ok())
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace(std::path::MAIN_SEPARATOR, "/")
-}
-
-fn write_baseline_file(
-    path: &std::path::Path,
-    diagnostics: &[ry_checker::Diagnostic],
-    repo_root: Option<&std::path::Path>,
-) -> Result<()> {
-    let mut counts = std::collections::BTreeMap::new();
-    for diagnostic in diagnostics {
-        *counts
-            .entry((
-                diagnostic_path(&diagnostic.path, repo_root),
-                diagnostic.code.to_string(),
-                diagnostic.message.clone(),
-            ))
-            .or_insert(0usize) += 1;
-    }
-    let entries = counts
-        .into_iter()
-        .map(|((path, code, message), count)| BaselineEntry {
-            path,
-            code,
-            message,
-            count,
-        })
-        .collect();
-    let baseline = Baseline {
-        version: 1,
-        entries,
-    };
-    let contents = serde_json::to_string_pretty(&baseline).into_diagnostic()?;
-    std::fs::write(path, format!("{contents}\n"))
-        .map_err(|error| miette::miette!("could not write baseline {}: {error}", path.display()))
-}
-
-fn subtract_baseline(
-    diagnostics: &mut Vec<ry_checker::Diagnostic>,
-    baseline: &Baseline,
-    repo_root: Option<&std::path::Path>,
-) {
-    let mut remaining: HashMap<(String, String, String), usize> = baseline
-        .entries
-        .iter()
-        .map(|entry| {
-            (
-                (
-                    entry.path.clone(),
-                    entry.code.clone(),
-                    entry.message.clone(),
-                ),
-                entry.count,
-            )
-        })
-        .collect();
-    diagnostics.retain(|diagnostic| {
-        let path = diagnostic_path(&diagnostic.path, repo_root);
-        let key = (
-            path,
-            diagnostic.code.to_string(),
-            diagnostic.message.clone(),
-        );
-        match remaining.get_mut(&key) {
-            Some(count) if *count > 0 => {
-                *count -= 1;
-                false
-            }
-            _ => true,
-        }
-    });
 }
 
 fn demote_non_source_paths(
@@ -656,7 +528,7 @@ fn run_check(
     package_metadata::set_environments(&cfg.environments);
 
     let baseline = match cfg.baseline.as_deref() {
-        Some(path) => match load_baseline(path) {
+        Some(path) => match config::load_baseline(path) {
             Ok(value) => Some(value),
             Err(error) if baseline_from_cli => return Err(error),
             Err(error) => {
@@ -681,7 +553,7 @@ fn run_check(
         )
     })?;
     let color = color.enabled(format);
-    let filter = build_filter(&cfg.error, &cfg.warn, &cfg.ignore);
+    let filter = config::build_filter(&cfg.error, &cfg.warn, &cfg.ignore);
     let excludes = config::Excludes::from_config(&cfg);
     let user_stubs = load_user_stubs(&cfg.typeshed);
 
@@ -734,7 +606,7 @@ fn run_check(
         min_confidence.into(),
     )?;
     if let Some(path) = write_baseline.as_deref() {
-        write_baseline_file(path, &result.diagnostics, config_root.as_deref())?;
+        config::write_baseline_file(path, &result.diagnostics, config_root.as_deref())?;
     }
     result.print_summary(format, statistics);
 
@@ -970,7 +842,7 @@ fn run_check_once(
     globals: &[String],
     user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
     color: bool,
-    baseline: Option<&Baseline>,
+    baseline: Option<&config::Baseline>,
     repo_root: Option<&std::path::Path>,
     min_confidence: ry_checker::Confidence,
 ) -> Result<CheckResult> {
@@ -1113,7 +985,7 @@ fn run_check_once(
 
     demote_non_source_paths(&mut all_diagnostics, repo_root);
     if let Some(baseline) = baseline {
-        subtract_baseline(&mut all_diagnostics, baseline, repo_root);
+        config::subtract_baseline(&mut all_diagnostics, baseline, repo_root);
     }
     all_diagnostics.retain(|diagnostic| diagnostic.confidence >= min_confidence);
 
@@ -1517,10 +1389,12 @@ fn sort_and_deduplicate_paths(paths: &mut Vec<PathBuf>) {
 
 #[cfg(test)]
 mod tests {
+    use super::config::{
+        Baseline, BaselineEntry, load_baseline, subtract_baseline, write_baseline_file,
+    };
     use super::{
-        Baseline, BaselineEntry, ColorChoice, collect_r_files, demote_non_source_paths,
-        load_baseline, rbuildignore_pattern, run_check_once, sort_and_deduplicate_diagnostics,
-        subtract_baseline, write_baseline_file,
+        ColorChoice, collect_r_files, demote_non_source_paths,
+        rbuildignore_pattern, run_check_once, sort_and_deduplicate_diagnostics,
     };
     use ry_checker::format::OutputFormat;
     use ry_checker::{Diagnostic, Severity};

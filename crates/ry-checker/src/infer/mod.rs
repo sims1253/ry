@@ -244,6 +244,11 @@ impl Checker {
                         if value_has_list_origin {
                             scope.mark_list_origin(name.to_string());
                         }
+                        if matches!(value, Expr::Function { .. })
+                            && !self.enclosing_formals.is_empty()
+                        {
+                            scope.mark_lexical_function(name.to_string());
+                        }
                         if let Some(alias) = function_alias {
                             scope.set_function_alias(name.to_string(), alias);
                         }
@@ -335,6 +340,9 @@ impl Checker {
                                 .unwrap_or_else(|| RType::new(Mode::Null, Length::Zero));
                             if let Some(r) = returns {
                                 r.push(t);
+                            }
+                            if name == "return" {
+                                scope.unreachable = true;
                             }
                             return;
                         }
@@ -565,6 +573,7 @@ impl Checker {
                 } else if let Some(r) = returns {
                     r.push(RType::new(Mode::Null, Length::Zero));
                 }
+                scope.unreachable = true;
             }
         }
     }
@@ -640,6 +649,28 @@ impl Checker {
         has_else: bool,
         narrowed: &HashSet<String>,
     ) {
+        // A diverging branch contributes no state to the continuation. Treat
+        // its live sibling as the only arm, while retaining the parent path
+        // for a one-arm `if` whose then branch can continue.
+        let then_reaches = !then_scope.unreachable;
+        let else_reaches = has_else && !else_scope.unreachable;
+        if has_else && then_reaches != else_reaches {
+            let continuation = if then_reaches {
+                &then_scope
+            } else {
+                &else_scope
+            };
+            for (name, ty) in &continuation.bindings {
+                if narrowed.contains(name) && continuation.narrowed_bindings.contains(name) {
+                    continue;
+                }
+                if scope.get(name) != Some(ty) {
+                    scope.insert(name.clone(), ty.clone());
+                }
+            }
+            return;
+        }
+
         // Collect the candidate names (only those that differ from the
         // parent) without holding a borrow of `scope` while we mutate it.
         let mut branch_types: HashMap<String, (Option<RType>, Option<RType>)> =
@@ -953,6 +984,12 @@ impl Checker {
         scope: &mut Scope,
         depth: usize,
     ) -> Option<RType> {
+        // `walk_stmt` marks paths after an unconditional return/throw as
+        // unreachable. Such a syntactic tail is not an implicit return and
+        // must not be joined into the function's result.
+        if scope.unreachable {
+            return None;
+        }
         let last = body.last()?;
         match last {
             Stmt::Expr(e) => {

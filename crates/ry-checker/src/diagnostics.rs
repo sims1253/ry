@@ -507,7 +507,7 @@ impl SeverityFilter {
         if self.expanded_warns.contains(&code) {
             return Some(Severity::Warning);
         }
-        Some(default)
+        rules::enabled_by_default(code).then_some(default)
     }
 }
 

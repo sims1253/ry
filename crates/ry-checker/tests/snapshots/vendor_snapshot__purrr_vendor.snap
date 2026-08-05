@@ -1,11 +1,13 @@
 ---
 source: crates/ry-checker/tests/vendor_snapshot.rs
+assertion_line: 168
 expression: rendered
 ---
 - "adverb-partial.R:101:23 RY010 variable `quo_get_expr` is not bound in this scope"
 - "compat-types-check.R:110:53 RY010 variable `na_chr` is not bound in this scope"
 - "compat-types-check.R:256:24 RY010 variable `na_dbl` is not bound in this scope"
 - "compat-types-check.R:257:24 RY010 variable `na_int` is not bound in this scope"
+- "deprec-prepend.R:34:7 RY032 `||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
 - "deprec-rerun.R:46:18 RY010 variable `eval_tidy` is not bound in this scope"
 - "deprec-rerun.R:48:40 RY010 variable `eval_tidy` is not bound in this scope"
 - "deprec-splice.R:27:24 RY010 variable `is_bare_list` is not bound in this scope"

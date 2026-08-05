@@ -6176,6 +6176,70 @@ fn dollar_on_opaque_no_warning() {
     assert!(diags.iter().all(|d| d.code != "RY061"), "got {:?}", diags);
 }
 
+#[test]
+fn dollar_on_all_atomic_union_emits_ry061() {
+    let diags = check("x <- if (runif(1) > 0.5) 1L else \"x\"\nx$field\n");
+    assert!(diags.iter().any(|d| d.code == "RY061"), "got {diags:?}");
+
+    let mixed = check("x <- if (runif(1) > 0.5) 1L else list(field = 1)\nx$field\n");
+    assert!(mixed.iter().all(|d| d.code != "RY061"), "got {mixed:?}");
+}
+
+#[test]
+fn lexical_nested_function_shadows_same_named_project_function_signature() {
+    let diags = check(
+        "helper <- function(required) required\n\nouter <- function() {\n  helper <- function() 1L\n  helper()\n}\nouter()\n",
+    );
+    assert!(diags.iter().all(|d| d.code != "RY091"), "got {diags:?}");
+}
+
+#[test]
+fn diverging_branch_and_unreachable_tail_do_not_pollute_return_join() {
+    let (diags, scope) = check_with_scope(
+        "f <- function(x) {\n  if (is.null(x)) return(list(field = 1L))\n  x <- list(field = 2L)\n  x\n}\ny <- f(NULL)$field\n",
+    );
+    assert!(diags.iter().all(|d| d.code != "RY061"), "got {diags:?}");
+    assert_eq!(scope.get("y").map(|ty| ty.mode), Some(Mode::Integer));
+
+    let tail = check("g <- function() { return(list(field = 1L)); 1L }\ng()$field\n");
+    assert!(tail.iter().all(|d| d.code != "RY061"), "got {tail:?}");
+}
+
+#[test]
+fn ry003_is_default_off_but_explicitly_selectable() {
+    let mut diagnostics = check("if (1L) print(1)\n");
+    assert!(diagnostics.iter().any(|d| d.code == "RY003"));
+
+    apply_filter_to_diagnostics(&mut diagnostics, &SeverityFilter::default());
+    assert!(diagnostics.iter().all(|d| d.code != "RY003"));
+
+    let mut diagnostics = check("if (1L) print(1)\n");
+    let mut filter = SeverityFilter::default();
+    filter.add_warn("RY003");
+    apply_filter_to_diagnostics(&mut diagnostics, &filter);
+    assert!(diagnostics.iter().any(|d| d.code == "RY003"));
+}
+
+#[test]
+fn guarded_unknown_parameter_vector_emits_ry032_without_other_vector_intent() {
+    for source in [
+        "f <- function(x) is.null(x) || is.na(x)\n",
+        "f <- function(x) length(x) && x == 1L\n",
+    ] {
+        let diags = check(source);
+        assert!(
+            diags.iter().any(|d| d.code == "RY032"),
+            "{source}: {diags:?}"
+        );
+    }
+
+    let reassigned = check("f <- function(x) { x <- TRUE; is.null(x) || is.na(x) }\n");
+    assert!(
+        reassigned.iter().all(|d| d.code != "RY032"),
+        "got {reassigned:?}"
+    );
+}
+
 /// Idempotence: running the checker twice on the same
 /// input must yield identical diagnostics. The fixpoint/refinement
 /// machinery walks function tables whose iteration order is not

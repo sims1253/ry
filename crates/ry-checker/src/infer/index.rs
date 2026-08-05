@@ -1,5 +1,27 @@
 use super::*;
 
+fn dollar_receiver_is_definitely_atomic(receiver: &RType) -> bool {
+    fn atomic(member: &RType) -> bool {
+        matches!(
+            member.mode,
+            Mode::Integer
+                | Mode::Double
+                | Mode::Character
+                | Mode::Logical
+                | Mode::Complex
+                | Mode::Raw
+        ) && member.columns.is_none()
+    }
+
+    match receiver.mode {
+        Mode::Union => receiver
+            .members
+            .as_ref()
+            .is_some_and(|members| !members.is_empty() && members.iter().all(atomic)),
+        _ => atomic(receiver),
+    }
+}
+
 impl Checker {
     pub(crate) fn infer_index(
         &mut self,
@@ -40,16 +62,7 @@ impl Checker {
                 // without a schema are fine -- the column might exist
                 // dynamically -- and atomic types *with* a schema are
                 // already covered by the schema lookup / RY060 below.
-                if matches!(
-                    bt.mode,
-                    Mode::Integer
-                        | Mode::Double
-                        | Mode::Character
-                        | Mode::Logical
-                        | Mode::Complex
-                        | Mode::Raw
-                ) && bt.columns.is_none()
-                {
+                if dollar_receiver_is_definitely_atomic(&bt) {
                     self.emit(
                         Severity::Error,
                         span,

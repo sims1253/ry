@@ -568,13 +568,23 @@ impl Checker {
         // function(...)`), whereas an infix call is looked up as `%as%`.
         // Match the normalized spelling as well so user-function metadata
         // (notably NSE/quoting parameters) reaches those calls.
-        let user_function = self.fn_table.fns.get(&lookup_name).cloned().or_else(|| {
-            self.fn_table
-                .fns
-                .iter()
-                .find(|(name, _)| semantic_argument_name(name) == lookup_name)
-                .map(|(_, function)| function.clone())
-        });
+        // A function value in the current lexical scope shadows the flat
+        // project function table. The table intentionally indexes by name and
+        // may contain a same-named nested/top-level definition from elsewhere;
+        // using that signature here produces bogus RY090/RY091 diagnostics.
+        let lexical_callable = !name.contains("::") && scope.is_lexical_function(&lookup_name);
+        let user_function = (!lexical_callable)
+            .then(|| self.fn_table.fns.get(&lookup_name).cloned())
+            .flatten()
+            .or_else(|| {
+                (!lexical_callable).then(|| {
+                    self.fn_table
+                        .fns
+                        .iter()
+                        .find(|(name, _)| semantic_argument_name(name) == lookup_name)
+                        .map(|(_, function)| function.clone())
+                })?
+            });
         let user_argument_matches = user_function.as_ref().map(|function| {
             let names: Vec<&str> = function
                 .params

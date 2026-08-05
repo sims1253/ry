@@ -462,9 +462,11 @@ impl Checker {
         else {
             return false;
         };
-        self.vector_intent_parameters
-            .last()
-            .is_some_and(|parameters| parameters.contains(parameter))
+        // The guard itself proves that this is still the unspecialized formal:
+        // Scope's parameter marker is cleared by assignment. Its vectorized
+        // predicate therefore has unknown length and is unsafe for `&&`/`||`
+        // even when no separate vector-intent call appears in the body.
+        scope.is_parameter(parameter)
     }
 }
 

@@ -12,6 +12,13 @@ pub struct Rule {
     pub summary: &'static str,
 }
 
+/// Rules omitted from normal output unless explicitly selected with a
+/// severity override. Keep this policy in the registry so every checker
+/// entry point and CLI output path agrees.
+pub fn enabled_by_default(code: &str) -> bool {
+    code != "RY003"
+}
+
 /// All rules currently emitted by the checker. Keep codes lexicographic.
 pub const RULES: &[Rule] = &[
     Rule {

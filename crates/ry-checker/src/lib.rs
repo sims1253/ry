@@ -30,8 +30,8 @@ pub use project::Project;
 // `ry_checker::{Severity, Diagnostic, ...}` directly).
 pub use diagnostics::{
     Confidence, Diagnostic, Severity, SeverityFilter, Suppression, apply_filter_to_diagnostics,
-    filter_suppressed, filter_suppressed_with_comments, has_file_suppression,
-    has_file_suppression_from_comments, is_suppressed, parse_suppressions,
+    filter_default_disabled, filter_suppressed, filter_suppressed_with_comments,
+    has_file_suppression, has_file_suppression_from_comments, is_suppressed, parse_suppressions,
     parse_suppressions_from_comments,
 };
 

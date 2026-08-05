@@ -2176,3 +2176,68 @@ fn editing_utils_updates_cross_file_analysis_diagnostics() {
         "editing utils.R must republish corrected analysis.R diagnostics: {after_analysis:?}"
     );
 }
+
+/// Plan 31 W10. RY003 is opt-in: `ry check` never reports it by default,
+/// so the editor must not either. `Project::check` still *emits* it — the
+/// default rule set is applied at publication — so this pins both halves:
+/// the checker produces it, and the LSP's filter removes it.
+#[test]
+fn default_disabled_rules_are_not_published() {
+    let mut parser = RParser::new().unwrap();
+    let path = "/ws/numeric_condition.R";
+    let file = parser.parse(path, "n <- 3L\nif (n) 1 else 2\n").unwrap();
+    let user_stubs = std::sync::Arc::new(std::collections::BTreeMap::new());
+    let mut project = ProjectCache::default();
+
+    let per_file = project.check(
+        vec![(path.to_string(), 1, std::sync::Arc::new(file))],
+        user_stubs,
+    );
+    let mut diagnostics = per_file
+        .into_iter()
+        .find(|(diagnostic_path, _)| diagnostic_path == path)
+        .expect("checked file is reported")
+        .1;
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY003"),
+        "the checker still emits the opt-in rule; if this fails the test no \
+         longer proves the filter does anything: {diagnostics:?}"
+    );
+
+    ry_checker::filter_default_disabled(&mut diagnostics);
+    assert!(
+        diagnostics.iter().all(|d| d.code != "RY003"),
+        "an opt-in rule must not reach the editor: {diagnostics:?}"
+    );
+}
+
+/// The filter is severity-neutral: it drops default-off rules and leaves
+/// every other diagnostic exactly as emitted, including instance
+/// severities that confidence logic downgraded.
+#[test]
+fn default_disabled_filter_preserves_instance_severity() {
+    let mut diagnostics = vec![
+        Diagnostic::new(
+            Severity::Info,
+            Span::default(),
+            "/ws/a.R",
+            "RY010",
+            "kept as info",
+        ),
+        Diagnostic::new(
+            Severity::Error,
+            Span::default(),
+            "/ws/a.R",
+            "RY003",
+            "dropped",
+        ),
+    ];
+    ry_checker::filter_default_disabled(&mut diagnostics);
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].code, "RY010");
+    assert_eq!(
+        diagnostics[0].severity,
+        Severity::Info,
+        "filtering must not re-severity surviving diagnostics"
+    );
+}

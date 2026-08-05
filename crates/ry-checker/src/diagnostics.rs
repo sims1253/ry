@@ -33,8 +33,11 @@ impl Confidence {
     pub fn default_for(code: &str) -> Self {
         match code {
             "RY097" => Self::Low,
+            // RY102/RY105 are decided by syntax or by a length that is fixed
+            // by construction, so neither depends on inference that could be
+            // wrong about the runtime value.
             "RY030" | "RY033" | "RY050" | "RY070" | "RY092" | "RY093" | "RY094" | "RY096"
-            | "RY101" => Self::High,
+            | "RY101" | "RY102" | "RY105" => Self::High,
             _ => Self::Medium,
         }
     }
@@ -509,6 +512,19 @@ impl SeverityFilter {
         }
         rules::enabled_by_default(code).then_some(default)
     }
+}
+
+/// Drop diagnostics whose rule is off by default (see
+/// [`rules::enabled_by_default`]).
+///
+/// This is the severity-neutral half of [`apply_filter_to_diagnostics`]:
+/// it never rewrites an instance's severity, so a confidence-based
+/// downgrade survives. Callers that have no user severity configuration to
+/// apply — the LSP, which publishes straight from `Project::check` — use it
+/// to enforce the same default rule set the CLI ships, instead of silently
+/// reporting opt-in rules that `ry check` would not.
+pub fn filter_default_disabled(diagnostics: &mut Vec<Diagnostic>) {
+    diagnostics.retain(|diagnostic| rules::enabled_by_default(diagnostic.code));
 }
 
 /// Apply a [`SeverityFilter`] to a vec of diagnostics in place:

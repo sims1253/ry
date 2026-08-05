@@ -3901,6 +3901,71 @@ fn dynlib_prefix_resolves_only_with_nonempty_remainder() {
     assert!(checker.take_diagnostics().iter().any(|d| d.code == "RY010"));
 }
 
+/// Plan 31 W6. `call_with_cleanup(native_symbol, ...)` is the cleancall
+/// wrapper purrr, cli and rlang vendor; its first argument is a registered
+/// native routine, not a variable. It is an ordinary R function, so the
+/// suppression is licensed by `useDynLib(..., .registration = TRUE)` and
+/// must not apply without it.
+#[test]
+fn call_with_cleanup_symbol_needs_declared_registration() {
+    let src = "f <- function(x) call_with_cleanup(map_impl, environment(), x)\n";
+
+    let mut parser = RParser::new().unwrap();
+    let file = parser.parse("test.R", src).unwrap();
+    let mut checker = Checker::new("test.R");
+    checker.set_external_bindings(HashSet::from([
+        crate::packages::NATIVE_REGISTRATION_SENTINEL.to_string(),
+        "call_with_cleanup".to_string(),
+    ]));
+    checker.check(&file);
+    let diags = checker.take_diagnostics();
+    assert!(
+        !diags.iter().any(|d| d.message.contains("map_impl")),
+        "registered native symbol must not be reported unbound: {diags:?}"
+    );
+
+    // Negative control: the same call in a package that never declared
+    // `.registration = TRUE` keeps reporting the unbound symbol.
+    let mut parser = RParser::new().unwrap();
+    let file = parser.parse("test.R", src).unwrap();
+    let mut checker = Checker::new("test.R");
+    checker.set_external_bindings(HashSet::from(["call_with_cleanup".to_string()]));
+    checker.check(&file);
+    assert!(
+        checker
+            .take_diagnostics()
+            .iter()
+            .any(|d| d.code == "RY010" && d.message.contains("map_impl")),
+        "without .registration the symbol is an ordinary unbound read"
+    );
+}
+
+/// The registration gate licenses the native-symbol position only. Other
+/// arguments of the same call are still ordinary reads.
+#[test]
+fn call_with_cleanup_still_checks_non_symbol_arguments() {
+    let mut parser = RParser::new().unwrap();
+    let file = parser
+        .parse(
+            "test.R",
+            "f <- function() call_with_cleanup(map_impl, undefined_thing_xyz)\n",
+        )
+        .unwrap();
+    let mut checker = Checker::new("test.R");
+    checker.set_external_bindings(HashSet::from([
+        crate::packages::NATIVE_REGISTRATION_SENTINEL.to_string(),
+        "call_with_cleanup".to_string(),
+    ]));
+    checker.check(&file);
+    assert!(
+        checker
+            .take_diagnostics()
+            .iter()
+            .any(|d| d.code == "RY010" && d.message.contains("undefined_thing_xyz")),
+        "only the first argument is a native symbol"
+    );
+}
+
 #[test]
 fn r6_and_s7_class_body_pronouns_are_bound() {
     let diags = check(include_str!("../testdata/ok_r6_class_body_bindings.R"));

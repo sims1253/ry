@@ -444,7 +444,14 @@ impl Checker {
         // normally would fire a spurious RY010. Skip RY010 on a
         // bare-symbol first arg, infer the remaining args normally, and
         // return opaque (the return type depends on the native routine).
-        if is_ffi_primitive(&semantic_name) {
+        //
+        // Wrappers that forward to a primitive (`call_with_cleanup`) follow
+        // the same convention, but they are ordinary redefinable R
+        // functions, so they only get this treatment in a package that
+        // declares `useDynLib(..., .registration = TRUE)`.
+        if is_ffi_primitive(&semantic_name)
+            || (is_registered_ffi_wrapper(&semantic_name) && self.native_registration)
+        {
             for (i, a) in args.iter().enumerate() {
                 if i == 0 {
                     // The entry-point symbol: a bare identifier or

@@ -556,6 +556,9 @@ pub struct Checker {
     // package cannot suppress RY010 in an unrelated package checked in the
     // same invocation.
     external_bindings: HashSet<String>,
+    // Whether this file's package declares `useDynLib(..., .registration =
+    // TRUE)`. Derived from `external_bindings` in `set_external_bindings`.
+    pub(crate) native_registration: bool,
     imported_from: HashMap<String, String>,
     external_s3_methods: HashSet<(String, String)>,
     load_bindings: HashMap<usize, HashSet<String>>,
@@ -687,6 +690,7 @@ impl Checker {
             loaded: Arc::new(HashSet::new()),
             bare_loaded: Arc::new(HashSet::new()),
             external_bindings: HashSet::new(),
+            native_registration: false,
             imported_from: HashMap::new(),
             external_s3_methods: HashSet::new(),
             load_bindings: HashMap::new(),
@@ -1109,6 +1113,7 @@ impl Checker {
 
     // Seed opaque bindings established by metadata for this source file.
     pub fn set_external_bindings(&mut self, bindings: HashSet<String>) {
+        self.native_registration = bindings.contains(crate::packages::NATIVE_REGISTRATION_SENTINEL);
         self.external_bindings = bindings;
     }
 

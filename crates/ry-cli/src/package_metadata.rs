@@ -184,12 +184,16 @@ pub(crate) fn resolve<'a>(
             file_imported_from.extend(metadata.imported_from.clone());
             file_bindings.extend(metadata.s3_generics.iter().cloned());
             file_bindings.extend(metadata.native_routines.iter().cloned());
-            file_bindings.extend(
-                metadata
-                    .native_routine_prefixes
-                    .iter()
-                    .map(|prefix| format!("\0useDynLib:{prefix}")),
-            );
+            file_bindings.extend(metadata.native_routine_prefixes.iter().map(|prefix| {
+                format!(
+                    "{}{prefix}",
+                    ry_checker::packages::NATIVE_ROUTINE_PREFIX_SENTINEL
+                )
+            }));
+            if metadata.native_registration {
+                file_bindings
+                    .insert(ry_checker::packages::NATIVE_REGISTRATION_SENTINEL.to_string());
+            }
             file_s3_methods.extend(metadata.s3_methods.iter().cloned());
             // `import(pkg)` puts pkg's exports in the package namespace,
             // not on the search path used to run its tests and examples.

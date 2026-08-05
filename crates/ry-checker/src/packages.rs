@@ -8,6 +8,17 @@ use ry_core::SourceFile;
 use ry_core::ast::{Expr, Stmt};
 use std::collections::{HashMap, HashSet};
 
+/// External-binding sentinel carrying a `useDynLib(..., .fixes = "prefix")`
+/// prefix. Any name starting with the prefix resolves to a native routine.
+/// The `\0` keeps it out of the R identifier namespace.
+pub const NATIVE_ROUTINE_PREFIX_SENTINEL: &str = "\0useDynLib:";
+
+/// External-binding sentinel recording `useDynLib(..., .registration = TRUE)`.
+/// The registered entry points are declared in `src/`'s `R_registerRoutines`
+/// table, which ry does not read, so the flag instead licenses bare symbols in
+/// native-call argument position (see `is_native_symbol_call`).
+pub const NATIVE_REGISTRATION_SENTINEL: &str = "\0useDynLibRegistration";
+
 /// Bindings and whole-package imports declared by an R package NAMESPACE.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct NamespaceMetadata {

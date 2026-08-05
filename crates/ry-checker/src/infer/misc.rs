@@ -42,6 +42,17 @@ pub(crate) fn is_ffi_primitive(name: &str) -> bool {
     )
 }
 
+/// Wrappers that forward their first argument to an FFI primitive, so it is
+/// a native routine symbol under the same convention. Unlike the primitives
+/// these are ordinary R functions a user could redefine, so callers gate
+/// them on `useDynLib(..., .registration = TRUE)` being declared.
+///
+/// `call_with_cleanup` is the cleancall wrapper vendored by purrr, cli and
+/// rlang: `call_with_cleanup(map_impl, environment(), ...)`.
+pub(crate) fn is_registered_ffi_wrapper(name: &str) -> bool {
+    matches!(name, "call_with_cleanup")
+}
+
 /// Whether a purrr typed-map's callback return `mode` can coerce into
 /// the target `target` mode without a lossy or surprising conversion.
 /// Numeric modes (double/int/logical) coerce among themselves harmlessly;

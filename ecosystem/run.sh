@@ -171,6 +171,14 @@ while IFS= read -r raw || [[ -n "${raw:-}" ]]; do
     echo "ecosystem: manifest entry for '$name' needs a URL and a pinned ref" >&2
     exit 1
   fi
+  # The corpus is a regression benchmark: a ledger reconciles diagnostic
+  # identities against the exact source that produced them. A branch name
+  # or tag can move upstream, which would silently re-point the benchmark
+  # and make a ledger delta unattributable. Only a full commit ID pins.
+  if ! [[ "$pinned_ref" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "ecosystem: manifest entry for '$name' pins '$pinned_ref'; a corpus entry needs a full 40-character commit ID, not a branch or tag" >&2
+    exit 1
+  fi
   # Collision-safe manifest: a slug must not appear twice, otherwise two
   # different upstream packages would share one clone/cache/report slot.
   for seen in "${seen_names[@]}"; do

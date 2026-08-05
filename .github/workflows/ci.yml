@@ -106,3 +106,16 @@ jobs:
       # repository together with the stubs; its CI covers them.
       - name: Oracle suite
         run: cargo test -p ry-checker --test oracle -- --ignored --nocapture
+
+  # E6: Zed extension has its own lockfile and must NOT be built with
+  # --workspace (R1 constraint). Separate job, separate lockfile.
+  zed-extension:
+    name: Zed extension
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build Zed extension
+        run: cargo build --manifest-path editors/zed/Cargo.toml
+      - name: Test Zed extension
+        run: cargo test --manifest-path editors/zed/Cargo.toml

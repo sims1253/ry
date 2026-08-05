@@ -1,0 +1,155 @@
+name: Release VS Code extension
+
+# R2 (constraint): This is a STANDALONE workflow. Do NOT add publishing
+# steps to .github/workflows/release.yml — it is cargo-dist-generated and
+# ci.yml enforces `dist generate --check` against it. Extension
+# publishing lives here, on workflow_dispatch, so an extension-only fix
+# does not require cutting a binary release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pre-release:
+        description: "Publish as a pre-release"
+        type: boolean
+        default: false
+
+permissions: {}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build: one job per platform, downloading the matching cargo-dist binary
+  # and packaging a platform-specific VSIX.
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dist-target: x86_64-pc-windows-msvc
+            code-target: win32-x64
+          - dist-target: aarch64-pc-windows-msvc
+            code-target: win32-arm64
+          - dist-target: x86_64-unknown-linux-gnu
+            code-target: linux-x64
+          - dist-target: aarch64-unknown-linux-gnu
+            code-target: linux-arm64
+          - dist-target: x86_64-apple-darwin
+            code-target: darwin-x64
+          - dist-target: aarch64-apple-darwin
+            code-target: darwin-arm64
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Download binary
+        run: |
+          set -euo pipefail
+          base_url="https://github.com/sims1253/ry/releases/latest/download"
+          dist_target="${{ matrix.dist-target }}"
+
+          # Download the binary archive and its sha256 sidecar.
+          if [[ "${{ matrix.code-target }}" == win32-* ]]; then
+            archive="ry-cli-${dist_target}.zip"
+          else
+            archive="ry-cli-${dist_target}.tar.gz"
+          fi
+
+          curl -fL "${base_url}/${archive}" -o "${archive}"
+          curl -fL "${base_url}/${archive}.sha256" -o "${archive}.sha256"
+
+          # Verify the checksum.
+          sha256sum -c "${archive}.sha256"
+
+          # Extract the binary into bundled/bin/.
+          mkdir -p editors/code/bundled/bin
+          if [[ "${{ matrix.code-target }}" == win32-* ]]; then
+            unzip -o "${archive}" -d tmp_extract
+            find tmp_extract -name "ry.exe" -exec cp {} editors/code/bundled/bin/ry.exe \;
+          else
+            tar xzf "${archive}"
+            find . -path "*/ry-cli-*/ry" -type f -exec cp {} editors/code/bundled/bin/ry \;
+          fi
+          chmod +x editors/code/bundled/bin/ry* || true
+
+      - name: Install dependencies
+        working-directory: editors/code
+        run: bun install --frozen-lockfile
+
+      - name: Set pre-release version
+        if: ${{ inputs.pre-release }}
+        working-directory: editors/code
+        run: |
+          # Bump to a pre-release version using timestamp.
+          ts=$(date -u +%Y%m%d%H%M)
+          bunx npm-version --preid pre --preid-tag $ts prepatch
+
+      - name: Package VSIX
+        working-directory: editors/code
+        run: bunx @vscode/vsce package --target ${{ matrix.code-target }} --no-dependencies ${{ inputs.pre-release && '--pre-release' || '' }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ry-vscode-${{ matrix.code-target }}
+          path: editors/code/*.vsix
+
+  # ---------------------------------------------------------------------------
+  # Publish: two jobs consuming all platform VSIXs.
+  # ---------------------------------------------------------------------------
+  publish-marketplace:
+    name: Publish to VS Code Marketplace
+    runs-on: ubuntu-latest
+    needs: build
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ry-vscode-*
+          merge-multiple: true
+          path: vsix
+
+      - name: Publish to Marketplace
+        run: |
+          for vsix in vsix/*.vsix; do
+            npx @vscode/vsce publish --no-dependencies --skip-duplicate \
+              ${{ inputs.pre-release && '--pre-release' || '' }} \
+              --packagePath "$vsix"
+          done
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+  publish-openvsx:
+    name: Publish to Open VSX
+    runs-on: ubuntu-latest
+    needs: build
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ry-vscode-*
+          merge-multiple: true
+          path: vsix
+
+      - name: Publish to Open VSX
+        run: |
+          for vsix in vsix/*.vsix; do
+            npx ovsx publish --skip-duplicate \
+              ${{ inputs.pre-release && '--pre-release' || '' }} \
+              "$vsix"
+          done
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}

@@ -100,6 +100,14 @@ pub(super) struct State {
     /// Whether the client supports dynamic registration of
     /// `workspace/didChangeWatchedFiles` (S3).
     supports_did_change_watched_files: bool,
+
+    // --- S4: multi-root workspace folders ---
+
+    /// Workspace folder roots, each with its own loaded `ry.toml` config.
+    /// Empty when only a single `root_uri` is provided. Each entry is
+    /// (folder_root, file_config), ordered by root path length descending
+    /// so that longest-prefix matching finds the most specific folder first.
+    workspace_folders: Vec<(PathBuf, ry_config::Config)>,
 }
 
 #[derive(Default)]
@@ -243,6 +251,46 @@ impl State {
         ry_config::build_filter(&error, &warn, &ignore)
     }
 
+    /// S4: Find the owning workspace folder config for a document path.
+    /// Uses longest-prefix matching against workspace folder roots.
+    /// Returns None if no workspace folder owns the path (the single-root
+    /// config is the fallback).
+    fn folder_config_for_path(&self, doc_path: &str) -> Option<&ry_config::Config> {
+        let path = std::path::Path::new(doc_path);
+        for (folder_root, config) in &self.workspace_folders {
+            if path.starts_with(folder_root) {
+                return Some(config);
+            }
+        }
+        None
+    }
+
+    /// S4: Compute the effective filter for a specific document path,
+    /// using its owning folder's config if available.
+    pub(super) fn effective_filter_for_path(&self, doc_path: &str) -> ry_checker::SeverityFilter {
+        let file_config = self.folder_config_for_path(doc_path)
+            .unwrap_or(&self.file_config);
+        let error = self
+            .folder_settings
+            .lint
+            .error
+            .clone()
+            .unwrap_or_else(|| file_config.error.clone());
+        let warn = self
+            .folder_settings
+            .lint
+            .warn
+            .clone()
+            .unwrap_or_else(|| file_config.warn.clone());
+        let ignore = self
+            .folder_settings
+            .lint
+            .ignore
+            .clone()
+            .unwrap_or_else(|| file_config.ignore.clone());
+        ry_config::build_filter(&error, &warn, &ignore)
+    }
+
     /// Load and return the effective baseline, if any. Editor setting
     /// takes precedence over `ry.toml`.
     pub(super) fn effective_baseline(&self) -> Option<ry_config::Baseline> {
@@ -318,6 +366,25 @@ impl LanguageServer for Backend {
             .and_then(|r| ry_config::Config::load_from_dir(r).ok().flatten())
             .unwrap_or_default();
 
+        // S4: Load per-folder configs for multi-root workspaces.
+        let ws_folders: Vec<(PathBuf, ry_config::Config)> = params
+            .workspace_folders
+            .as_ref()
+            .map(|folders| {
+                folders
+                    .iter()
+                    .filter_map(|f| f.uri.to_file_path().ok())
+                    .map(|path| {
+                        let cfg = ry_config::Config::load_from_dir(&path)
+                            .ok()
+                            .flatten()
+                            .unwrap_or_default();
+                        (path, cfg)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let mut state = self.state.lock().await;
         state.user_stubs = user_stubs;
         state.root = root;
@@ -325,6 +392,7 @@ impl LanguageServer for Backend {
         state.folder_settings = folder_settings;
         state.supports_workspace_configuration = supports_workspace_configuration;
         state.supports_did_change_watched_files = supports_did_change_watched_files;
+        state.workspace_folders = ws_folders;
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
@@ -440,6 +508,15 @@ impl LanguageServer for Backend {
                 // enclosing statement -> whole file) for each cursor
                 // position requested.
                 selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
+                // S4: Advertise workspace folder support so clients send
+                // multi-root workspace folders and change notifications.
+                workspace: Some(WorkspaceServerCapabilities {
+                    workspace_folders: Some(WorkspaceFoldersServerCapabilities {
+                        supported: Some(true),
+                        change_notifications: Some(OneOf::Left(true)),
+                    }),
+                    file_operations: None,
+                }),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -569,6 +646,43 @@ impl LanguageServer for Backend {
 
         // Republish diagnostics for every open document so the new
         // settings take effect immediately.
+        let open_uris: Vec<Url> = {
+            let state = self.state.lock().await;
+            state.docs.keys().map(|p| path_to_uri(p)).collect()
+        };
+        for uri in open_uris {
+            self.schedule_diagnostics(uri).await;
+        }
+    }
+
+    async fn did_change_workspace_folders(&self, params: DidChangeWorkspaceFoldersParams) {
+        // S4: Handle workspace folder additions and removals.
+        let mut added_configs: Vec<(PathBuf, ry_config::Config)> = Vec::new();
+        for folder in &params.event.added {
+            if let Ok(path) = folder.uri.to_file_path() {
+                let cfg = ry_config::Config::load_from_dir(&path)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default();
+                added_configs.push((path, cfg));
+            }
+        }
+
+        let removed_uris: Vec<Url> = params.event.removed.iter().map(|f| f.uri.clone()).collect();
+
+        {
+            let mut state = self.state.lock().await;
+            // Add new folders.
+            state.workspace_folders.extend(added_configs);
+            // Remove deleted folders.
+            state.workspace_folders.retain(|(path, _)| {
+                !removed_uris.iter().any(|uri| uri.to_file_path().ok().as_deref() == Some(path))
+            });
+            // Sort by path length descending for longest-prefix matching.
+            state.workspace_folders.sort_by_key(|(path, _)| std::cmp::Reverse(path.as_os_str().len()));
+        }
+
+        // Republish diagnostics for all open documents.
         let open_uris: Vec<Url> = {
             let state = self.state.lock().await;
             state.docs.keys().map(|p| path_to_uri(p)).collect()
@@ -1364,7 +1478,7 @@ impl Backend {
         // Snapshot the open docs under the lock, then drop the lock
         // before running the checker so a slow check doesn't block
         // other LSP requests (e.g. didOpen of a second file).
-        let (path, docs, versions, user_stubs, project, filter, baseline, config_root) = {
+        let (path, docs, versions, user_stubs, project, _default_filter, baseline, config_root) = {
             let state = self.state.lock().await;
             (
                 uri_to_path(&uri),
@@ -1372,7 +1486,7 @@ impl Backend {
                 state.versions.clone(),
                 Arc::clone(&state.user_stubs),
                 Arc::clone(&state.project),
-                state.effective_filter(),
+                state.effective_filter(), // fallback for non-multi-root
                 state.effective_baseline(),
                 state.root.clone(),
             )
@@ -1412,9 +1526,12 @@ impl Backend {
             }
         }
         for (diagnostic_path, mut diagnostics) in per_file {
-            // S2: Apply the effective severity filter from editor
-            // settings merged over `ry.toml`. This is what makes
-            // `ignore`, `error`, and `warn` settings work in the editor.
+            // S2/S4: Apply the effective severity filter. For multi-root
+            // workspaces, each document uses its owning folder's config.
+            let filter = {
+                let state = self.state.lock().await;
+                state.effective_filter_for_path(&diagnostic_path)
+            };
             ry_checker::apply_filter_to_diagnostics(&mut diagnostics, &filter);
 
             // S2: Apply baseline subtraction if configured.

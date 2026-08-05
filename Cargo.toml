@@ -8,6 +8,12 @@ members = [
     "crates/ry-cli",
     "crates/ry-lsp",
 ]
+# The Zed extension (editors/zed) is a standalone WASM cdylib kept out of the
+# workspace on purpose: zed_extension_api and its transitive dependencies are
+# not held to ry's MSRV (1.88), and it builds to wasm32-wasip2, not the native
+# target. It has its own Cargo.lock and is built in a separate CI job. See
+# plan 32, E5 / R1.
+exclude = ["editors/zed"]
 
 [workspace.package]
 version = "0.8.0"

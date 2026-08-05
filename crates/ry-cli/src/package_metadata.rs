@@ -8,7 +8,7 @@ use ry_checker::SERIALIZED_BINDINGS_UNENUMERABLE;
 use ry_checker::packages::NamespaceMetadata;
 use ry_core::SourceFile;
 use ry_core::ast::{Expr, Stmt};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -133,7 +133,10 @@ pub(crate) fn resolve<'a>(
     let mut imported_from = HashMap::new();
     let mut s3_methods = HashMap::new();
     let mut load_bindings = HashMap::new();
-    let mut degraded: Vec<(PathBuf, &'static str)> = Vec::new();
+    // A package root is visited once per file in it, so a single oversized
+    // dataset would otherwise be reported once per file. Deduplicate on the
+    // (path, reason) pair; the CLI prints one line per entry.
+    let mut degraded: BTreeSet<(PathBuf, &'static str)> = BTreeSet::new();
     let project_attached: HashSet<String> = configured_packages
         .iter()
         .cloned()
@@ -217,7 +220,7 @@ pub(crate) fn resolve<'a>(
                     .clone();
                 file_bindings.extend(datasets.bindings.iter().cloned());
                 for path in &datasets.degraded {
-                    degraded.push((path.clone(), "oversized dataset in data/"));
+                    degraded.insert((path.clone(), "oversized dataset in data/"));
                 }
             }
             let sysdata = root.join("R/sysdata.rda");
@@ -229,7 +232,7 @@ pub(crate) fn resolve<'a>(
                 .clone();
             file_bindings.extend(sysdata_inventory.bindings.iter().cloned());
             if sysdata_inventory.degraded {
-                degraded.push((sysdata, "oversized R/sysdata.rda"));
+                degraded.insert((sysdata, "oversized R/sysdata.rda"));
             }
             let loaded = loaded_serialized_bindings(
                 file,
@@ -240,7 +243,7 @@ pub(crate) fn resolve<'a>(
                 &mut serialized_cache,
             );
             for path in &loaded.degraded {
-                degraded.push((path.clone(), "oversized load() target"));
+                degraded.insert((path.clone(), "oversized load() target"));
             }
             load_bindings.insert(file.path.clone(), loaded.per_span);
 
@@ -311,7 +314,7 @@ pub(crate) fn resolve<'a>(
         imported_from,
         s3_methods,
         load_bindings,
-        degraded,
+        degraded: degraded.into_iter().collect(),
     }
 }
 
@@ -706,9 +709,14 @@ fn source_package_datasets(root: &Path, max_serialized_bytes: u64) -> DataInvent
 /// so unbound-variable analysis (RY010) stays live instead of being disabled
 /// package-wide (the previous behavior via [`SERIALIZED_BINDINGS_UNENUMERABLE`]).
 fn serialized_inventory(path: &Path, cap: u64) -> SerializedInventory {
-    type CacheKey = (PathBuf, u64, u128);
-    static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<CacheKey, SerializedInventory>>> =
-        std::sync::OnceLock::new();
+    /// What the cached inventory was derived from. A mismatch on any field
+    /// means the entry is stale. `cap` is part of it because raising
+    /// `max-serialized-bytes` must re-enumerate a file that was previously
+    /// reduced to its stem.
+    type Stamp = (u64, u128, u64);
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<HashMap<PathBuf, (Stamp, SerializedInventory)>>,
+    > = std::sync::OnceLock::new();
     let Ok(metadata) = std::fs::metadata(path) else {
         return SerializedInventory {
             bindings: HashSet::new(),
@@ -721,16 +729,26 @@ fn serialized_inventory(path: &Path, cap: u64) -> SerializedInventory {
         .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
-    let key = (path.to_path_buf(), metadata.len(), modified);
+    let stamp: Stamp = (metadata.len(), modified, cap);
     let cache = CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
-    if let Some(inventory) = cache.lock().expect("serialized cache poisoned").get(&key) {
-        return inventory.clone();
+    if let Some(inventory) = cache
+        .lock()
+        .expect("serialized cache poisoned")
+        .get(path)
+        .filter(|(cached, _)| *cached == stamp)
+        .map(|(_, inventory)| inventory.clone())
+    {
+        return inventory;
     }
     let inventory = serialized_inventory_uncached(path, cap);
+    // Keyed on the path, not on (path, stamp): a long-lived LSP session
+    // re-checks the same data files after every edit, and keying on the
+    // stamp would retain one binding set per historical version forever.
+    // Replacing the entry bounds the cache by the number of distinct files.
     cache
         .lock()
         .expect("serialized cache poisoned")
-        .insert(key, inventory.clone());
+        .insert(path.to_path_buf(), (stamp, inventory.clone()));
     inventory
 }
 

@@ -1058,8 +1058,12 @@ fn oversized_sysdata_surfaces_degraded_scope_without_global_ry010_disable() {
         human_stdout.contains("RY010") && human_stdout.contains("genuinely_missing"),
         "RY010 must stay live for the real miss (no global disable): {human_stdout}"
     );
+    // The previous form of this assertion was
+    // `!contains("sysdata") || contains("RY010")`, which is vacuous: the
+    // `genuinely_missing` diagnostic above guarantees "RY010" is present, so
+    // the second disjunct always held. Match the specific message instead.
     assert!(
-        !human_stdout.contains("sysdata") || human_stdout.contains("RY010"),
+        !human_stdout.contains("variable `sysdata` is not bound in this scope"),
         "the file-stem binding must not itself fire RY010: {human_stdout}"
     );
     assert!(
@@ -1099,5 +1103,40 @@ fn oversized_sysdata_surfaces_degraded_scope_without_global_ry010_disable() {
     assert!(
         !json_stdout.contains("degraded"),
         "the degraded note must not leak into JSON diagnostics: {json_stdout}"
+    );
+}
+
+/// A package root is re-resolved once per file in it, so an oversized
+/// dataset used to be pushed onto the degraded list once per file and
+/// printed that many times. The report is per file, not per reader.
+#[test]
+fn degraded_scope_is_reported_once_per_file_not_per_reader() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path();
+    fs::write(pkg.join("DESCRIPTION"), "Package: fixture\n").unwrap();
+    fs::write(pkg.join("ry.toml"), "max-serialized-bytes = 1\n").unwrap();
+    fs::create_dir_all(pkg.join("R")).unwrap();
+    fs::write(pkg.join("R/sysdata.rda"), "over-cap-bytes").unwrap();
+    // Three files in the same package: one resolve pass each.
+    for name in ["a", "b", "c"] {
+        fs::write(pkg.join(format!("R/{name}.R")), "x <- sysdata\n").unwrap();
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .args(["check", pkg.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr
+            .lines()
+            .filter(|line| line.trim_start().starts_with("- "))
+            .count(),
+        1,
+        "one oversized file must produce one degraded line: {stderr}"
+    );
+    assert!(
+        stderr.contains("1 degraded scope(s)"),
+        "the count must match the number of distinct offending files: {stderr}"
     );
 }

@@ -355,3 +355,26 @@ because the decision gets more expensive with every rule added to the checker.
    size.
 4. A second `ry check` on an unchanged tree reuses cached work.
 5. The salsa question is decided in writing, either way.
+
+---
+
+## Baseline measurements (recorded for Plan 33 W0)
+
+Measured on the plan-32 worktree at `0.8.0`. Hardware: CI development
+machine. Criterion `--quick` mode (sample size 20, 1s warmup, 3s measure).
+
+| Benchmark | Time | Notes |
+| :-- | :-- | :-- |
+| `parse_large` | 4.4 ms | All glue sources concatenated, single parse |
+| `check_project_glue` (cold) | 24.4 ms | 12-file vendored glue corpus, `Project::check` |
+| `check_single_synthetic` | 43.4 ms | 20k-line synthetic file, single-file `Checker` |
+| `warm_edit_dependent` | 25.5 ms | Edit `glue.R` (other files depend on it), `check_incremental` |
+| **`warm_edit_leaf`** | **20.7 ms** | Edit `zzz.R` (leaf — nothing depends on it). **The number W1/W2 should move.** |
+| `warm_edit_library` | 20.7 ms | Add/remove `library(tools)` in `utils.R` |
+| `lsp_edit_sim` | 25.7 ms | Legacy full-simulation LSP edit |
+| Peak RSS | ~92 MB | All scenarios |
+
+**Key finding:** the warm-edit path (20.7 ms) is **85% of the cold-check
+cost** (24.4 ms), confirming that passes 2 and 3 rebuild from scratch on
+every incremental check. This is the O(project) per-keystroke problem W1
+and W2 exist to fix.

@@ -326,7 +326,7 @@ impl Checker {
 
     /// Whether the typeshed stub for `callee` declares a concrete return
     /// length of exactly 1. This replaces a hardcoded list of function
-    /// names (the former `SCALAR_REDUCTIONS` constant): the data lives in
+    /// This eliminates the need for a hardcoded function list: the data lives in
     /// the stubs, is maintained in one place, and automatically covers
     /// every function the typeshed documents as scalar.
     fn is_typeshed_scalar_reduction(&self, callee: &str) -> bool {

@@ -57,7 +57,7 @@ fn synthetic_source() -> String {
 /// Peak RSS in kilobytes, read from `/proc/self/status`.
 /// Returns 0 on non-Linux or if unavailable.
 #[cfg(target_os = "linux")]
-fn peak_rss_kb() -> u64 {
+fn current_rss_kb() -> u64 {
     let status = fs::read_to_string("/proc/self/status").unwrap_or_default();
     for line in status.lines() {
         if let Some(rest) = line.strip_prefix("VmRSS:") {
@@ -74,7 +74,7 @@ fn peak_rss_kb() -> u64 {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn peak_rss_kb() -> u64 {
+fn current_rss_kb() -> u64 {
     0
 }
 
@@ -138,7 +138,7 @@ fn check_single_synthetic(c: &mut Criterion) {
 //   3. Add/remove a `library()` call (project-wide invalidation).
 //   4. Cold `check` baseline (already in `check_project_glue` above).
 //
-// Each benchmark also prints peak RSS via `throughput`/custom
+// Each benchmark also prints current RSS via `throughput`/custom
 // measurement so CI can track memory regressions.
 // ---------------------------------------------------------------------------
 
@@ -171,20 +171,25 @@ fn find_source(sources: &[(String, String)], suffix: &str) -> (String, String) {
 fn warm_edit_dependent(c: &mut Criterion) {
     let (mut project, sources, mut parser) = primed_project();
     let (edited_path, original) = find_source(&sources, "glue.R");
-    let edited_src = format!("{original}\n.ry_bench_value <- 1L\n");
+    let edited_sources = [
+        format!("{original}\n.ry_bench_value <- 1L\n"),
+        format!("{original}\n.ry_bench_value <- 2L\n"),
+    ];
+    let mut toggle = false;
 
     c.bench_function("warm_edit_dependent", |b| {
         b.iter(|| {
+            toggle = !toggle;
             let changed = parser
-                .parse(&edited_path, black_box(&edited_src))
+                .parse(&edited_path, black_box(&edited_sources[toggle as usize]))
                 .expect("reparse");
             project.update_file(edited_path.clone(), Arc::new(changed));
             black_box(project.check_incremental());
         });
     });
 
-    let rss = peak_rss_kb();
-    eprintln!("[warm_edit_dependent] peak RSS: {rss} kB");
+    let rss = current_rss_kb();
+    eprintln!("[warm_edit_dependent] current RSS: {rss} kB");
 }
 
 /// Benchmark: warm `check_incremental` after a one-line edit to a leaf
@@ -194,20 +199,25 @@ fn warm_edit_dependent(c: &mut Criterion) {
 fn warm_edit_leaf(c: &mut Criterion) {
     let (mut project, sources, mut parser) = primed_project();
     let (edited_path, original) = find_source(&sources, "zzz.R");
-    let edited_src = format!("{original}\n.ry_bench_value <- 1L\n");
+    let edited_sources = [
+        format!("{original}\n.ry_bench_value <- 1L\n"),
+        format!("{original}\n.ry_bench_value <- 2L\n"),
+    ];
+    let mut toggle = false;
 
     c.bench_function("warm_edit_leaf", |b| {
         b.iter(|| {
+            toggle = !toggle;
             let changed = parser
-                .parse(&edited_path, black_box(&edited_src))
+                .parse(&edited_path, black_box(&edited_sources[toggle as usize]))
                 .expect("reparse");
             project.update_file(edited_path.clone(), Arc::new(changed));
             black_box(project.check_incremental());
         });
     });
 
-    let rss = peak_rss_kb();
-    eprintln!("[warm_edit_leaf] peak RSS: {rss} kB");
+    let rss = current_rss_kb();
+    eprintln!("[warm_edit_leaf] current RSS: {rss} kB");
 }
 
 /// Benchmark: warm `check_incremental` after adding/removing a
@@ -234,8 +244,8 @@ fn warm_edit_library(c: &mut Criterion) {
         });
     });
 
-    let rss = peak_rss_kb();
-    eprintln!("[warm_edit_library] peak RSS: {rss} kB");
+    let rss = current_rss_kb();
+    eprintln!("[warm_edit_library] current RSS: {rss} kB");
 }
 
 // ---------------------------------------------------------------------------

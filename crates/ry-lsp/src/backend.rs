@@ -1476,7 +1476,13 @@ impl Backend {
             };
             let mut parser = RParser::new().ok()?;
             let file = if let Some(tree) = old_tree {
-                Arc::new(parser.parse_with_tree(path, &text, Some(&tree)).ok()?)
+                let (parsed, new_tree) = parser.parse_with_tree(path, &text, Some(&tree)).ok()?;
+                // Store the new tree for the next incremental parse.
+                {
+                    let mut state = self.state.lock().await;
+                    state.trees.insert(path.to_string(), new_tree);
+                }
+                Arc::new(parsed)
             } else {
                 Arc::new(parser.parse(path, &text).ok()?)
             };
@@ -1736,7 +1742,11 @@ impl Backend {
                     let mut state = state_clone.lock().await;
                     state.disk_files = all_disk_files;
                 }
-                tracing::info!("W4 background index complete");
+                // Trigger a diagnostic refresh by bumping the generation
+                // so open documents re-check with the new disk files.
+                let mut state = state_clone.lock().await;
+                state.diag_generation = state.diag_generation.wrapping_add(1);
+                tracing::info!("W4 background index complete, diagnostics refreshed");
             });
         });
     }
@@ -1886,32 +1896,34 @@ fn build_input_edit(old_text: &str, range: Range, new_text: &str) -> Option<ry_c
 /// Convert an LSP Position (0-based line, UTF-16 code unit column) to a
 /// byte offset in the source text.
 fn position_to_byte(text: &str, pos: Position) -> usize {
-    let mut byte_offset = 0;
-    let mut current_line = 0u32;
+    let mut line_start = 0;
+    let mut current_line = 0;
 
-    for (i, ch) in text.char_indices() {
-        if current_line == pos.line {
-            // We're on the right line. Convert byte column to UTF-16 column.
-            let utf16_col: u32 = text[byte_offset..i].encode_utf16().count() as u32;
-            if utf16_col >= pos.character {
-                return i;
-            }
-        }
-        if ch == '\n' {
-            if current_line == pos.line {
-                // End of the target line — position is at end of line.
-                let utf16_col: u32 = text[byte_offset..=i].encode_utf16().count() as u32;
-                if pos.character >= utf16_col {
-                    return i + 1;
-                }
-            }
+    // Find the start of the target line.
+    while current_line < pos.line {
+        if let Some(nl) = text[line_start..].find('\n') {
+            line_start += nl + 1;
             current_line += 1;
-            byte_offset = i + 1;
+        } else {
+            return text.len();
         }
     }
 
-    // Position is at or beyond end of text.
-    text.len()
+    // Find the byte offset within the line corresponding to the UTF-16 column.
+    let line = &text[line_start..];
+    let line_end = line.find('\n').unwrap_or(line.len());
+    let line = &line[..line_end];
+
+    let mut utf16_col = 0u32;
+    for (byte_off, ch) in line.char_indices() {
+        if utf16_col >= pos.character {
+            return line_start + byte_off;
+        }
+        utf16_col += ch.len_utf16() as u32;
+    }
+
+    // Position at or beyond end of line.
+    line_start + line.len()
 }
 
 /// Convert a byte offset to an LSP Position (line, UTF-16 column).

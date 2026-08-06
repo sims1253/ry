@@ -9,4 +9,5 @@ pub mod types;
 pub use ast::*;
 pub use parser::{ParseError, RParser};
 pub use span::Span;
+pub use tree_sitter::{InputEdit, Point, Tree};
 pub use types::{Length, Mode, RType};

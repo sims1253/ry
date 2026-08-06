@@ -89,6 +89,11 @@ pub struct Project {
     /// so the dirty-set computation in `refine_and_emit` can check whether
     /// a file references any function whose return slot changed.
     file_called_fns: HashMap<String, HashSet<String>>,
+    /// Previous pass-2 refined return types, keyed by function name.
+    /// Used to seed the next fixpoint iteration so already-converged
+    /// entries start from their refined value rather than re-converging
+    /// from scratch (Plan 33 W2).
+    prev_fn_returns: HashMap<String, ry_core::RType>,
     /// Test-visible counter: how many files were actually emitted (not
     /// served from cache) in the most recent `refine_and_emit` call.
     /// Asserted on in unit tests the same way `parse_count` is in backend.rs.
@@ -131,6 +136,7 @@ impl Project {
             prev_loaded: None,
             prev_return_slots: None,
             file_called_fns: HashMap::new(),
+            prev_fn_returns: HashMap::new(),
             emit_count: 0,
         }
     }
@@ -277,6 +283,7 @@ impl Project {
         self.dirty_paths = self.files.iter().map(|(p, _)| p.clone()).collect();
         self.prev_loaded = None;
         self.prev_return_slots = None;
+        self.prev_fn_returns.clear();
         self.refine_and_emit()
     }
 
@@ -337,17 +344,89 @@ impl Project {
         self.refine_and_emit()
     }
 
+    /// Compute the set of function names that need fixpoint refinement.
+    ///
+    /// Returns `None` when the scope is "all functions" (first call or no
+    /// incremental state). Returns `Some(set)` with only the functions whose
+    /// return type can have changed: those defined in dirty files plus their
+    /// transitive callers via the reverse call graph.
+    fn compute_fixpoint_scope(&self) -> Option<HashSet<String>> {
+        // First call → refine everything.
+        self.prev_return_slots.as_ref()?;
+        // Nothing changed → nothing to refine.
+        if self.dirty_paths.is_empty() {
+            return Some(HashSet::new());
+        }
+
+        // Build function-name → defining-file mapping.
+        let mut fn_to_file: HashMap<&str, &str> = HashMap::new();
+        for (path, collected) in &self.collected_files {
+            for fn_name in collected.fn_table.fns.keys() {
+                fn_to_file.insert(fn_name.as_str(), path.as_str());
+            }
+        }
+
+        // Functions defined in dirty files are the seed of the affected set.
+        let mut affected: HashSet<&str> = HashSet::new();
+        for dirty_path in &self.dirty_paths {
+            if let Some(collected) = self.collected_files.get(dirty_path) {
+                for fn_name in collected.fn_table.fns.keys() {
+                    affected.insert(fn_name.as_str());
+                }
+            }
+        }
+
+        // Transitive closure: if function G's defining file calls function F,
+        // and F is affected, then G is also affected. Iterate until fixpoint.
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for (path, collected) in &self.collected_files {
+                let Some(calls) = self.file_called_fns.get(path) else {
+                    continue;
+                };
+                // Does this file call any affected function?
+                if !calls.iter().any(|name| affected.contains(name.as_str())) {
+                    continue;
+                }
+                // All functions defined in this file are potential callers.
+                for fn_name in collected.fn_table.fns.keys() {
+                    if affected.insert(fn_name.as_str()) {
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        Some(affected.iter().map(|s| s.to_string()).collect())
+    }
+
     fn refine_and_emit(&mut self) -> Vec<(String, Vec<Diagnostic>)> {
         // Pass 2: refine every function's inferred return type until
         // the shared table stabilizes. A single Checker drives the
         // fixpoint loop; its table is then handed back to the Project.
+        //
+        // W2 optimization: seed the fixpoint with the previous run's
+        // refined return types (keyed by function name). Already-converged
+        // entries keep their refined value, so the loop needs fewer
+        // iterations to re-stabilize after a small edit.
         let mut refiner = Checker::with_tables(
             "__project_pass2__",
             std::mem::take(&mut self.fn_table),
             std::mem::take(&mut self.return_slots),
         );
         refiner.set_user_stubs(Arc::clone(&self.user_stubs));
-        refiner.run_fixpoint();
+        refiner.seed_return_types(&self.prev_fn_returns);
+
+        // W2 scoping: refine only functions whose return type can have
+        // changed, rather than the entire project. On the first call or
+        // when `loaded` changed, fall back to refining everything.
+        let fixpoint_scope = self.compute_fixpoint_scope();
+        if let Some(ref scope) = fixpoint_scope {
+            refiner.run_fixpoint_scoped(scope);
+        } else {
+            refiner.run_fixpoint();
+        }
         let (fn_table, return_slots) = refiner.into_tables();
         self.fn_table = fn_table;
         self.return_slots = return_slots;
@@ -535,6 +614,14 @@ impl Project {
         // Record state for the next incremental check.
         self.prev_loaded = Some(self.loaded.clone());
         self.prev_return_slots = Some(self.return_slots.0.clone());
+        // Save refined return types keyed by function name for the next
+        // fixpoint seeding (W2).
+        self.prev_fn_returns = self
+            .fn_table
+            .fns
+            .iter()
+            .map(|(name, uf)| (name.clone(), self.return_slots.get(uf.return_slot)))
+            .collect();
         self.dirty_paths.clear();
 
         self.diagnostics = result.clone();

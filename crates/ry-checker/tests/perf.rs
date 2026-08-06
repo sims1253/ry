@@ -86,3 +86,49 @@ fn hundred_file_project_checks_quickly() {
         elapsed.as_secs_f64()
     );
 }
+
+/// Warm `check_incremental` after a one-line edit. Models the LSP
+/// debounce path: prime a Project with a cold `check()`, then edit one
+/// file and call `check_incremental()`. The budget catches regressions
+/// in the incremental path that the cold-check tests cannot see.
+///
+/// See Plan 33 W0: the incremental path (`update_file` +
+/// `check_incremental`) is the hot path the LSP exercises on every
+/// keystroke. This test guards its wall-clock cost.
+#[test]
+#[ignore]
+fn warm_edit_checks_quickly() {
+    // Build a 100-file project (same as hundred_file_project_checks_quickly).
+    let mut parser = RParser::new().expect("parser init");
+    let mut project = Project::new();
+    for i in 0..100 {
+        let src =
+            format!("f{i} <- function(x) x * {i}\ng{i} <- function(x) f{i}(x) + 1\nh <- f{i}(2)\n");
+        let file = parser
+            .parse(&format!("file{i}.R"), &src)
+            .unwrap_or_else(|e| panic!("parse file{i}: {e}"));
+        project.add_file(format!("file{i}.R"), file);
+    }
+    // Prime the incremental cache.
+    let _ = project.check();
+
+    // Edit one file and measure incremental check time.
+    let edited = parser
+        .parse(
+            "file0.R",
+            "f0 <- function(x) x * 999\ng0 <- function(x) f0(x) + 1\nh <- f0(2)\n",
+        )
+        .expect("reparse file0");
+    project.update_file("file0.R".to_string(), edited);
+
+    let start = Instant::now();
+    let diags = project.check_incremental();
+    let elapsed = start.elapsed();
+
+    assert_eq!(diags.len(), 100, "one diagnostic-vec per file");
+    assert!(
+        elapsed.as_secs_f64() < 1.0,
+        "warm incremental check took {:.3}s (budget 1.0s)",
+        elapsed.as_secs_f64()
+    );
+}

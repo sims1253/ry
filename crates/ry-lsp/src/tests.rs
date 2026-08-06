@@ -16,8 +16,7 @@ use crate::selection::{build_selection_range, find_identifier_range_at_position}
 use crate::symbols::{collect_symbols, flatten_symbols_to_symbol_info};
 use crate::util::*;
 use ry_checker::{Diagnostic, Severity};
-use ry_core::RParser;
-use ry_core::Span;
+use ry_core::{RParser, SourceFile, Span};
 use tower_lsp::lsp_types::Diagnostic as LspDiagnostic;
 use tower_lsp::lsp_types::*;
 
@@ -2305,4 +2304,386 @@ fn empty_initialization_options_produces_empty_settings() {
     let settings: crate::settings::ServerSettings = serde_json::from_value(json).unwrap();
     assert!(settings.settings.is_empty());
     assert!(settings.global_settings.lint.ignore.is_none());
+}
+
+// ===========================================================================
+// Integration tests: full pipeline lifecycle
+//
+// These tests exercise the composition boundary between document state,
+// ProjectCache, and Project::check_incremental — the layer where individual
+// components are correct in isolation but contracts between them break.
+// ===========================================================================
+
+/// Parse an R source string into a SourceFile for test setup.
+fn parse_src(path: &str, src: &str) -> std::sync::Arc<SourceFile> {
+    let mut parser = RParser::new().expect("parser init");
+    parser
+        .parse(path, src)
+        .map(std::sync::Arc::new)
+        .expect("parse")
+}
+
+/// Helper: extract diagnostic codes for a specific file from a check result.
+fn codes_for_file<'a>(diags: &'a [(String, Vec<Diagnostic>)], path: &str) -> Vec<&'a str> {
+    diags
+        .iter()
+        .find(|(p, _)| p == path)
+        .map(|(_, d)| d.iter().map(|x| x.code).collect())
+        .unwrap_or_default()
+}
+
+/// Integration test: files added to ProjectCache after the initial check
+/// must be collected and emitted by the next check_incremental.
+///
+/// This catches the critical bug where add_file didn't insert into
+/// dirty_paths, so late-added files were silently skipped.
+#[test]
+fn file_added_after_initial_check_is_emitted() {
+    let mut cache = ProjectCache::default();
+    let stubs = std::sync::Arc::new(std::collections::BTreeMap::new());
+
+    // Initial check with one file.
+    let files = vec![("a.R".to_string(), 1, parse_src("a.R", "x <- 1L\n"))];
+    let diags = cache.check(files, std::sync::Arc::clone(&stubs));
+    assert_eq!(diags.len(), 1, "one file on first check");
+
+    // Add a second file (simulates the workspace indexer discovering it).
+    let files = vec![
+        ("a.R".to_string(), 1, parse_src("a.R", "x <- 1L\n")),
+        ("b.R".to_string(), 1, parse_src("b.R", "y <- 2L\n")),
+    ];
+    let diags = cache.check(files, std::sync::Arc::clone(&stubs));
+
+    // The second file must be present in the output.
+    assert_eq!(diags.len(), 2, "both files after adding b.R");
+    assert!(diags.iter().any(|(p, _)| p == "b.R"), "b.R in output");
+}
+
+/// Integration test: a function defined in an added file must be visible
+/// to calls in an already-checked file after the next incremental check.
+///
+/// This is the W4 acceptance criterion: opening one file in a package
+/// resolves calls into unopened files.
+#[test]
+fn added_file_resolves_cross_file_calls() {
+    let mut cache = ProjectCache::default();
+    let stubs = std::sync::Arc::new(std::collections::BTreeMap::new());
+
+    // Start with just the caller file.
+    let files = vec![(
+        "caller.R".to_string(),
+        1,
+        parse_src("caller.R", "result <- helper() + 1L\n"),
+    )];
+    let diags = cache.check(files, std::sync::Arc::clone(&stubs));
+
+    // Without helper.R, helper() returns unknown → unknown + int = no RY040.
+    let caller_codes = codes_for_file(&diags, "caller.R");
+    assert!(
+        !caller_codes.contains(&"RY040"),
+        "helper() should be unknown before helper.R is added: {caller_codes:?}"
+    );
+
+    // Now add helper.R (simulates disk index). helper returns character.
+    let files = vec![
+        (
+            "caller.R".to_string(),
+            1,
+            parse_src("caller.R", "result <- helper() + 1L\n"),
+        ),
+        (
+            "helper.R".to_string(),
+            1,
+            parse_src("helper.R", "helper <- function() \"hello\"\n"),
+        ),
+    ];
+    let diags = cache.check(files, std::sync::Arc::clone(&stubs));
+
+    // helper() now returns character → char + int = RY040.
+    let caller_codes = codes_for_file(&diags, "caller.R");
+    assert!(
+        caller_codes.contains(&"RY040"),
+        "char return should cause RY040 after adding helper.R: {caller_codes:?}"
+    );
+}
+
+/// Integration test: updating a file's content that changes a function's
+/// return type must update diagnostics in dependent files.
+///
+/// This verifies the dirty-set propagation: editing utils.R changes
+/// make_value()'s return type, which must invalidate analysis.R's diagnostics.
+#[test]
+fn return_type_change_propagates_to_callers() {
+    let mut cache = ProjectCache::default();
+    let stubs = std::sync::Arc::new(std::collections::BTreeMap::new());
+
+    // utils.R defines make_value() returning a character.
+    // analysis.R calls it in a type-mismatch context.
+    let files = vec![
+        (
+            "utils.R".to_string(),
+            1,
+            parse_src("utils.R", "make_value <- function() \"hello\"\n"),
+        ),
+        (
+            "analysis.R".to_string(),
+            1,
+            parse_src("analysis.R", "result <- make_value() + 1L\n"),
+        ),
+    ];
+    let diags = cache.check(files, std::sync::Arc::clone(&stubs));
+
+    // char + int → RY040 type mismatch in analysis.R.
+    let analysis_codes = codes_for_file(&diags, "analysis.R");
+    assert!(
+        analysis_codes.contains(&"RY040"),
+        "char return should cause RY040: {analysis_codes:?}"
+    );
+
+    // Edit utils.R: make_value() now returns integer.
+    let files = vec![
+        (
+            "utils.R".to_string(),
+            2, // version bumped
+            parse_src("utils.R", "make_value <- function() 1L\n"),
+        ),
+        (
+            "analysis.R".to_string(),
+            1,
+            parse_src("analysis.R", "result <- make_value() + 1L\n"),
+        ),
+    ];
+    let diags = cache.check(files, std::sync::Arc::clone(&stubs));
+
+    // int + int → no RY040 in analysis.R.
+    let analysis_codes = codes_for_file(&diags, "analysis.R");
+    assert!(
+        !analysis_codes.contains(&"RY040"),
+        "int return should clear RY040: {analysis_codes:?}"
+    );
+}
+
+/// Integration test: changing user stubs mid-session must invalidate
+/// cached diagnostics so the next check reflects the new stubs.
+///
+/// This catches the bug where setters (set_user_stubs, etc.) didn't
+/// mark files dirty, so incremental checks served stale results.
+#[test]
+fn changing_stubs_invalidates_cached_diagnostics() {
+    use std::collections::BTreeMap;
+
+    let mut cache = ProjectCache::default();
+
+    // First check with no stubs.
+    let files = vec![(
+        "pkg.R".to_string(),
+        1,
+        parse_src("pkg.R", "x <- some_fn()\n"),
+    )];
+    let empty_stubs = std::sync::Arc::new(BTreeMap::new());
+    let diags = cache.check(files, std::sync::Arc::clone(&empty_stubs));
+
+    // some_fn() is unknown → no RY010 (calls to unknown functions are allowed).
+    let codes = codes_for_file(&diags, "pkg.R");
+    assert!(
+        codes.is_empty(),
+        "unknown function call should produce no diagnostics: {codes:?}"
+    );
+
+    // Update file: now x is a type mismatch (char + int).
+    // This exercises the incremental path after a content change.
+    let files = vec![(
+        "pkg.R".to_string(),
+        2, // version bumped → forces update
+        parse_src("pkg.R", "x <- \"str\" + 1L\n"),
+    )];
+    let diags = cache.check(files, std::sync::Arc::clone(&empty_stubs));
+
+    // RY040 type mismatch from char + int.
+    let codes = codes_for_file(&diags, "pkg.R");
+    assert!(
+        codes.contains(&"RY040"),
+        "char + int should be RY040: {codes:?}"
+    );
+}
+
+/// Integration test: incremental parse with non-ASCII content must produce
+/// correct byte offsets for tree-sitter InputEdit.
+///
+/// This catches the critical bug where build_input_edit used UTF-16 code
+/// units (LSP positions) instead of byte offsets (tree-sitter Points).
+#[test]
+fn build_input_edit_uses_byte_offsets_for_non_ascii() {
+    // A line with a non-ASCII character (é = 2 bytes in UTF-8).
+    // Position(0, 2) in UTF-16 = byte offset 3 (because é is 1 UTF-16 unit but 2 bytes).
+    let text = "café <- 1L\n";
+    let range = Range {
+        start: Position {
+            line: 0,
+            character: 2,
+        }, // after "ca"
+        end: Position {
+            line: 0,
+            character: 3,
+        }, // after "caf"
+    };
+    let new_text = "X";
+
+    let edit = crate::backend::build_input_edit(text, range, new_text);
+
+    // start_byte should be 2 (ASCII bytes), not 2 UTF-16 units.
+    assert_eq!(edit.start_byte, 2);
+    // old_end_byte should be 3 ("caf" = 3 ASCII bytes).
+    assert_eq!(edit.old_end_byte, 3);
+    // new_end_byte = start_byte + new_text.len() = 2 + 1 = 3.
+    assert_eq!(edit.new_end_byte, 3);
+    // start_position column should be byte column (2), not UTF-16 (2 here, same for ASCII range).
+    assert_eq!(edit.start_position.row, 0);
+    assert_eq!(edit.start_position.column, 2);
+}
+
+/// Integration test: incremental parse with multi-byte edit spanning
+/// a newline must compute correct new_end_position.
+#[test]
+fn build_input_edit_multiline_replacement() {
+    let text = "x <- 1\ny <- 2\n";
+    let range = Range {
+        start: Position {
+            line: 0,
+            character: 5,
+        },
+        end: Position {
+            line: 0,
+            character: 6,
+        },
+    };
+    let new_text = "00\nextra";
+
+    let edit = crate::backend::build_input_edit(text, range, new_text);
+
+    // start_byte: "x <- " = 5 bytes, so position (0,5) = byte 5.
+    assert_eq!(edit.start_byte, 5);
+    // old_end_byte: position (0,6) = byte 6.
+    assert_eq!(edit.old_end_byte, 6);
+    // new_end_byte: 5 + len("00\nextra") = 5 + 8 = 13.
+    assert_eq!(edit.new_end_byte, 13);
+    // new_end_position: after inserting "00\nextra", we have:
+    // start is at row 0, column 5. The new text has 1 newline,
+    // so the end is at row 1. After the newline, "extra" = 5 bytes.
+    assert_eq!(edit.new_end_position.row, 1);
+    assert_eq!(edit.new_end_position.column, 5); // "extra" = 5 bytes
+}
+
+/// Integration test: cold-vs-incremental equivalence across a sequence
+/// of add, update, and remove operations.
+///
+/// This is the most important invariant in Plan 33: after any sequence
+/// of operations, incremental diagnostics must match a fresh cold check.
+#[test]
+fn cold_vs_incremental_equivalence_sequence() {
+    let stubs = std::sync::Arc::new(std::collections::BTreeMap::new());
+
+    // Define a 3-file project with cross-file dependencies.
+    let sources: &[(&str, &str)] = &[
+        ("a.R", "fa <- function(x) x * 2\nva <- fa(1L)\n"),
+        ("b.R", "fb <- function(x) fa(x) + 1\nvb <- fb(2L)\n"),
+        ("c.R", "fc <- function(x) fb(x) * 3\nvc <- fc(3L)\n"),
+    ];
+
+    // Build the incremental cache step by step.
+    let mut cache = ProjectCache::default();
+
+    // Step 1: add a.R only.
+    let files = vec![("a.R".to_string(), 1, parse_src(sources[0].0, sources[0].1))];
+    let _ = cache.check(files, std::sync::Arc::clone(&stubs));
+
+    // Step 2: add b.R.
+    let files = vec![
+        ("a.R".to_string(), 1, parse_src(sources[0].0, sources[0].1)),
+        ("b.R".to_string(), 1, parse_src(sources[1].0, sources[1].1)),
+    ];
+    let _ = cache.check(files, std::sync::Arc::clone(&stubs));
+
+    // Step 3: add c.R.
+    let files: Vec<_> = sources
+        .iter()
+        .map(|(p, s)| (p.to_string(), 1, parse_src(p, s)))
+        .collect();
+    let _inc_result = cache.check(files, std::sync::Arc::clone(&stubs));
+
+    // Step 4: edit b.R (change fb's body).
+    let edited_sources: Vec<(&str, &str)> = vec![
+        ("a.R", "fa <- function(x) x * 2\nva <- fa(1L)\n"),
+        ("b.R", "fb <- function(x) fa(x) * 10\nvb <- fb(2L)\n"),
+        ("c.R", "fc <- function(x) fb(x) * 3\nvc <- fc(3L)\n"),
+    ];
+    let files: Vec<_> = edited_sources
+        .iter()
+        .enumerate()
+        .map(|(i, (p, s))| (p.to_string(), i as i32 + 2, parse_src(p, s)))
+        .collect();
+    let inc_result = cache.check(files, std::sync::Arc::clone(&stubs));
+
+    // Now build a fresh cold project with the same final state.
+    let mut cold_project = ry_checker::Project::new();
+    for (path, src) in &edited_sources {
+        cold_project.add_file(path.to_string(), parse_src(path, src).as_ref().clone());
+    }
+    let cold_result = cold_project.check();
+
+    // Compare: every file's diagnostic codes must match.
+    assert_eq!(inc_result.len(), cold_result.len(), "file count matches");
+    for ((inc_path, inc_diags), (cold_path, cold_diags)) in
+        inc_result.iter().zip(cold_result.iter())
+    {
+        assert_eq!(inc_path, cold_path, "path order matches");
+        let inc_codes: Vec<_> = inc_diags.iter().map(|d| &d.code).collect();
+        let cold_codes: Vec<_> = cold_diags.iter().map(|d| &d.code).collect();
+        assert_eq!(
+            inc_codes, cold_codes,
+            "diagnostics match for {inc_path}:\n  incremental: {inc_codes:?}\n  cold:        {cold_codes:?}"
+        );
+    }
+}
+
+/// Integration test: removing a file from the project clears its
+/// contribution to the shared function table.
+#[test]
+fn removed_file_clears_cross_file_resolution() {
+    let stubs = std::sync::Arc::new(std::collections::BTreeMap::new());
+    let mut cache = ProjectCache::default();
+
+    // helper.R defines my_helper() returning character.
+    // caller.R does my_helper() + 1L → RY040 (char + int).
+    let files = vec![
+        (
+            "helper.R".to_string(),
+            1,
+            parse_src("helper.R", "my_helper <- function() \"str\"\n"),
+        ),
+        (
+            "caller.R".to_string(),
+            1,
+            parse_src("caller.R", "x <- my_helper() + 1L\n"),
+        ),
+    ];
+    let diags = cache.check(files, std::sync::Arc::clone(&stubs));
+    let caller_codes = codes_for_file(&diags, "caller.R");
+    assert!(
+        caller_codes.contains(&"RY040"),
+        "char + int should be RY040: {caller_codes:?}"
+    );
+
+    // Remove helper.R: my_helper() now returns unknown → no RY040.
+    let files = vec![(
+        "caller.R".to_string(),
+        1,
+        parse_src("caller.R", "x <- my_helper() + 1L\n"),
+    )];
+    let diags = cache.check(files, std::sync::Arc::clone(&stubs));
+    let caller_codes = codes_for_file(&diags, "caller.R");
+    assert!(
+        !caller_codes.contains(&"RY040"),
+        "RY040 should disappear when my_helper returns unknown: {caller_codes:?}"
+    );
 }

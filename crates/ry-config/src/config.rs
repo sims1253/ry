@@ -329,6 +329,21 @@ impl Excludes {
     }
 }
 
+/// Compute a hash of the effective config that affects pass-1 collection
+/// output (Plan 33 W5). Includes `exclude`, `packages`, `globals`, and the
+/// full serialized config so any relevant change invalidates the cache.
+pub fn config_hash(config: &Config) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    config.exclude.hash(&mut hasher);
+    config.packages.hash(&mut hasher);
+    config.globals.hash(&mut hasher);
+    if let Ok(json) = serde_json::to_string(config) {
+        json.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
 /// Errors that can occur while reading or parsing a `ry.toml`.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {

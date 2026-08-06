@@ -4,7 +4,8 @@
     "types": [
       "node",
       "vscode",
-      "mocha"
+      "mocha",
+      "chai"
     ]
   },
   "include": [

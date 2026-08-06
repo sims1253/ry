@@ -92,7 +92,7 @@ impl RParser {
         path: &str,
         src: &str,
         old_tree: Option<&Tree>,
-    ) -> Result<SourceFile, ParseError> {
+    ) -> Result<(SourceFile, Tree), ParseError> {
         let tree = self
             .parser
             .parse(src, old_tree)
@@ -102,6 +102,9 @@ impl RParser {
                 message: "parser returned no tree".into(),
             })?;
         let root = tree.root_node();
+        // The lowering borrows `tree` immutably; clone it for the return
+        // value so the borrow ends before we move the original.
+        let tree_clone = tree.clone();
         let mut stmts = Vec::new();
         let mut cursor = root.walk();
         for child in root.named_children(&mut cursor) {
@@ -120,12 +123,15 @@ impl RParser {
         }
         let parse_errors = collect_parse_errors(root);
         let comments = collect_comments(root, src);
-        Ok(SourceFile {
-            path: path.to_string(),
-            stmts,
-            parse_errors,
-            comments,
-        })
+        Ok((
+            SourceFile {
+                path: path.to_string(),
+                stmts,
+                parse_errors,
+                comments,
+            },
+            tree_clone,
+        ))
     }
 
     fn span(&self, n: Node, _src: &str) -> Span {

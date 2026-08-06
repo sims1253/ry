@@ -796,13 +796,15 @@ fn serialized_inventory_uncached(path: &Path, cap: u64) -> SerializedInventory {
         degraded: false,
     };
 
-    let Ok(bytes) = std::fs::read(path) else {
-        return empty();
+    let read_cap = cap.saturating_add(1);
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(_) => return empty(),
     };
     let bytes = if bytes.starts_with(b"BZh") {
         let mut decoded = Vec::new();
         let decoder = bzip2::read::BzDecoder::new(bytes.as_slice());
-        if decoder.take(cap + 1).read_to_end(&mut decoded).is_err() {
+        if decoder.take(read_cap).read_to_end(&mut decoded).is_err() {
             return empty();
         }
         if decoded.len() as u64 > cap {
@@ -812,7 +814,7 @@ fn serialized_inventory_uncached(path: &Path, cap: u64) -> SerializedInventory {
     } else if bytes.starts_with(&[0x1f, 0x8b]) {
         let mut decoded = Vec::new();
         let decoder = flate2::read::GzDecoder::new(bytes.as_slice());
-        if decoder.take(cap + 1).read_to_end(&mut decoded).is_err() {
+        if decoder.take(read_cap).read_to_end(&mut decoded).is_err() {
             return empty();
         }
         if decoded.len() as u64 > cap {
@@ -822,7 +824,7 @@ fn serialized_inventory_uncached(path: &Path, cap: u64) -> SerializedInventory {
     } else if bytes.starts_with(&[0xfd, b'7', b'z', b'X', b'Z', 0x00]) {
         let mut decoded = Vec::new();
         let decoder = xz2::read::XzDecoder::new(bytes.as_slice());
-        if decoder.take(cap + 1).read_to_end(&mut decoded).is_err() {
+        if decoder.take(read_cap).read_to_end(&mut decoded).is_err() {
             return empty();
         }
         if decoded.len() as u64 > cap {
@@ -830,6 +832,9 @@ fn serialized_inventory_uncached(path: &Path, cap: u64) -> SerializedInventory {
         }
         decoded
     } else {
+        // An uncompressed file already has a known size from `metadata.len()`
+        // checked in the cached wrapper. Short-circuit before parsing if it
+        // exceeds the cap — no need to read the whole payload.
         if bytes.len() as u64 > cap {
             return degraded(path);
         }

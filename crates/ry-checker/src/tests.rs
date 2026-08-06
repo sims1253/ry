@@ -4112,6 +4112,35 @@ fn r6_non_portable_superassigned_field_is_untyped() {
     );
 }
 
+/// `r6_rebound_members` must handle replacement-function assignment targets
+/// (`class(x) <- v`) inside a non-portable R6 class body. The target is an
+/// `Expr::Call`, not an `Expr::Ident` or `Expr::Index`, and the unhandled
+/// catch-all arm silently dropped it — the field kept its declared type even
+/// though the replacement overwrites it.
+#[test]
+fn r6_non_portable_replacement_function_assignment_rebinds_field() {
+    let diags = check(
+        r#"Thing <- R6Class(
+  "Thing",
+  portable = FALSE,
+  public = list(
+    kind = "default",
+    upgrade = function() {
+      class(kind) <- "upgraded"
+    },
+    show = function() {
+      kind$render()
+    }
+  )
+)
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "class(kind) <- v should rebind `kind` to unknown,          preventing RY033/RY061 on the later `$`: {diags:?}"
+    );
+}
+
 #[test]
 fn r6_non_portable_still_reports_undeclared_names() {
     // Injecting the member names must not blanket-suppress RY010 inside
@@ -6492,6 +6521,52 @@ fn lexical_nested_function_shadows_same_named_project_function_signature() {
         "helper <- function(required) required\n\nouter <- function() {\n  helper <- function() 1L\n  helper()\n}\nouter()\n",
     );
     assert!(diags.iter().all(|d| d.code != "RY091"), "got {diags:?}");
+}
+
+#[test]
+fn lexical_function_shadows_base_signature() {
+    // W7: a function literal defined inside an enclosing body shadows
+    // the typeshed/base signature, so RY090/RY091 must not fire against
+    // base::inherits' parameters.
+    let diags = check(
+        "f <- function(topics) {\n  inherits <- function(type) function(x) x$inherits_from(type)\n  topics$apply(inherits(\"return\"))\n}\n",
+    );
+    assert!(
+        diags.iter().all(|d| d.code != "RY090" && d.code != "RY091"),
+        "got {diags:?}"
+    );
+}
+
+#[test]
+fn lexical_function_shadows_base_eval() {
+    // Same lookup-order bug with a different base name (base::eval).
+    let diags =
+        check("g <- function(quo) {\n  eval <- function() .Call(\"x\", quo)\n  eval()\n}\n");
+    assert!(
+        diags.iter().all(|d| d.code != "RY090" && d.code != "RY091"),
+        "got {diags:?}"
+    );
+}
+
+#[test]
+fn early_return_joins_trailing_if_tail_type() {
+    // W8: an early `return()` must join, not replace, the trailing
+    // `if`-expression type. When the union contains a non-atomic member
+    // (here the opaque `fromJSON` result), `$` must not fire RY061.
+    let diags = check(
+        "process <- function(req, raw = FALSE) {\n  if (req == 204) return(TRUE)\n  if (raw) req else jsonlite::fromJSON(\"x\")\n}\nuse <- function(x) process(x)$config\n",
+    );
+    assert!(diags.iter().all(|d| d.code != "RY061"), "got {diags:?}");
+}
+
+#[test]
+fn early_return_with_all_atomic_trailing_if_still_reports() {
+    // W8 correctness guard: when every branch of the joined union IS
+    // atomic, `$` is a real runtime error and RY061 must still fire.
+    let diags = check(
+        "a <- function(req, raw) {\n  if (req == 204) return(TRUE)\n  if (raw) 1 else 2\n}\nb <- function(x) a(x, FALSE)$k\n",
+    );
+    assert!(diags.iter().any(|d| d.code == "RY061"), "got {diags:?}");
 }
 
 #[test]

@@ -1,25 +1,47 @@
 use super::*;
 
-fn dollar_receiver_is_definitely_atomic(receiver: &RType) -> bool {
-    fn atomic(member: &RType) -> bool {
-        matches!(
-            member.mode,
-            Mode::Integer
-                | Mode::Double
-                | Mode::Character
-                | Mode::Logical
-                | Mode::Complex
-                | Mode::Raw
-        ) && member.columns.is_none()
-    }
+fn atomic_mode(member: &RType) -> bool {
+    matches!(
+        member.mode,
+        Mode::Integer | Mode::Double | Mode::Character | Mode::Logical | Mode::Complex | Mode::Raw
+    ) && member.columns.is_none()
+}
 
+fn dollar_receiver_is_definitely_atomic(receiver: &RType) -> bool {
     match receiver.mode {
         Mode::Union => receiver
             .members
             .as_ref()
-            .is_some_and(|members| !members.is_empty() && members.iter().all(atomic)),
-        _ => atomic(receiver),
+            .is_some_and(|members| !members.is_empty() && members.iter().all(atomic_mode)),
+        _ => atomic_mode(receiver),
     }
+}
+
+/// A human-readable description of the receiver's mode(s) for the RY061
+/// message. For a single type this is just the mode name; for a union
+/// the member modes are listed so the user can see which types combined.
+fn dollar_receiver_mode_description(receiver: &RType) -> String {
+    if receiver.mode == Mode::Union {
+        if let Some(members) = &receiver.members {
+            let modes: Vec<&str> = members
+                .iter()
+                .map(|m| match m.mode {
+                    Mode::Integer => "integer",
+                    Mode::Double => "double",
+                    Mode::Character => "character",
+                    Mode::Logical => "logical",
+                    Mode::Complex => "complex",
+                    Mode::Raw => "raw",
+                    _ => "unknown",
+                })
+                .collect();
+            if modes.len() == 1 {
+                return modes[0].to_string();
+            }
+            return modes.join("` or `");
+        }
+    }
+    receiver.mode.to_string()
 }
 
 impl Checker {
@@ -69,7 +91,7 @@ impl Checker {
                         "RY061",
                         format!(
                             "$ operator is invalid for atomic vectors of mode `{}`",
-                            bt.mode
+                            dollar_receiver_mode_description(&bt)
                         ),
                     );
                     return RType::unknown();

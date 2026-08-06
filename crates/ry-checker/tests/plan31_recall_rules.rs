@@ -293,6 +293,69 @@ fn ry105_stays_silent_when_the_comparison_is_true_for_some_lengths() {
     ));
 }
 
+#[test]
+fn ry105_normalizes_operand_order_for_constant_outcome() {
+    // `0 > length(sum(v))` is `0 > 1`, which is FALSE — not TRUE. The
+    // operator must be mirrored when the zero literal is on the left.
+    let mut parser = RParser::new().expect("parser init");
+    let file = parser
+        .parse(
+            "plan31.R",
+            "f <- function(v) if (0 > length(sum(v))) 1
+",
+        )
+        .expect("parse");
+    let mut checker = Checker::new("plan31.R");
+    checker.check(&file);
+    let diags = checker.take_diagnostics();
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == "RY105" && d.message.contains("FALSE")),
+        "0 > length(1) is FALSE: {diags:?}"
+    );
+
+    // `0 < length(sum(v))` is `0 < 1`, which is TRUE.
+    let file = parser
+        .parse(
+            "plan31.R",
+            "f <- function(v) if (0 < length(sum(v))) 1
+",
+        )
+        .expect("parse");
+    let mut checker = Checker::new("plan31.R");
+    checker.check(&file);
+    let diags = checker.take_diagnostics();
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == "RY105" && d.message.contains("TRUE")),
+        "0 < length(1) is TRUE: {diags:?}"
+    );
+}
+
+#[test]
+fn ry105_stays_silent_for_non_scalar_reductions() {
+    // `nrow(NULL)` returns NULL (length 0), so it is NOT a guaranteed
+    // scalar. `length(nrow(x)) > 0` is not constant.
+    assert!(!fires(
+        "f <- function(df) if (length(nrow(df)) > 0) 1
+",
+        "RY105"
+    ));
+    assert!(!fires(
+        "f <- function(df) if (length(ncol(df)) > 0) 1
+",
+        "RY105"
+    ));
+    // `which.max(numeric(0))` returns integer(0).
+    assert!(!fires(
+        "f <- function(v) if (length(which.max(v)) > 0) 1
+",
+        "RY105"
+    ));
+}
+
 // ---------------------------------------------------------------------------
 // `not-before-comparison` is deliberately NOT implemented
 // ---------------------------------------------------------------------------

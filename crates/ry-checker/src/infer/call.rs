@@ -584,18 +584,17 @@ impl Checker {
         // may contain a same-named nested/top-level definition from elsewhere;
         // using that signature here produces bogus RY090/RY091 diagnostics.
         let lexical_callable = !name.contains("::") && scope.is_lexical_function(&lookup_name);
-        let user_function = (!lexical_callable)
-            .then(|| self.fn_table.fns.get(&lookup_name).cloned())
-            .flatten()
-            .or_else(|| {
-                (!lexical_callable).then(|| {
-                    self.fn_table
-                        .fns
-                        .iter()
-                        .find(|(name, _)| semantic_argument_name(name) == lookup_name)
-                        .map(|(_, function)| function.clone())
-                })?
-            });
+        let user_function = if lexical_callable {
+            None
+        } else {
+            self.fn_table.fns.get(&lookup_name).cloned().or_else(|| {
+                self.fn_table
+                    .fns
+                    .iter()
+                    .find(|(name, _)| semantic_argument_name(name) == lookup_name)
+                    .map(|(_, function)| function.clone())
+            })
+        };
         let user_argument_matches = user_function.as_ref().map(|function| {
             let names: Vec<&str> = function
                 .params
@@ -706,13 +705,19 @@ impl Checker {
         }
         // Validate ordinary R argument matching only for signatures whose
         // origin is known. A user definition shadows a same-named stub.
+        // A lexical function binding (a function literal defined inside an
+        // enclosing function body) shadows both the flat project table and
+        // the typeshed/base signature, so neither is consulted for it —
+        // checking `inherits("x")` against `base::inherits` is a lookup-order
+        // bug, not a missing argument (Plan 31 W7).
         if self.validate_user_call_arguments {
             if let Some(user_function) = user_function.as_ref() {
                 self.check_user_call_arguments(&lookup_name, user_function, args, span);
-            } else if let Some(signature) = resolved_sig.as_ref() {
+            } else if !lexical_callable && let Some(signature) = resolved_sig.as_ref() {
                 self.check_typeshed_call_arguments(&lookup_name, signature, args, &arg_types, span);
             }
-        } else if !self.fn_table.fns.contains_key(&lookup_name)
+        } else if !lexical_callable
+            && !self.fn_table.fns.contains_key(&lookup_name)
             && let Some(signature) = resolved_sig.as_ref()
         {
             self.check_typeshed_call_arguments(&lookup_name, signature, args, &arg_types, span);
@@ -1459,6 +1464,13 @@ fn r6_rebound_members(member_lists: &[&Expr]) -> HashSet<String> {
                     }
                 }
                 record_target(base, names);
+            }
+            // `class(x) <- v`, `names(x) <- v`, `attr(x, "k") <- v`:
+            // a replacement-function assignment rebinds its first argument.
+            Expr::Call { args, .. } => {
+                if let Some(first) = args.first() {
+                    record_target(&first.value, names);
+                }
             }
             _ => {}
         }

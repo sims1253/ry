@@ -41,3 +41,5 @@ jobs:
         run: cargo build --release --locked -p ry-cli --bin ry
       - name: Check ecosystem snapshots
         run: ecosystem/run.sh --check
+      - name: Drift detection integration test
+        run: ecosystem/test-drift-detection.sh

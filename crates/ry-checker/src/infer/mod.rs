@@ -1010,6 +1010,22 @@ impl Checker {
                 // signature is attached.
                 Some(self.function_value_from_literal(params, body, scope, depth))
             }
+            Stmt::If { then, else_, .. } => {
+                // An `if` statement as the trailing element is the implicit
+                // return value: the join of its branches' tail types.
+                // Without an `else`, R returns NULL on the FALSE arm.
+                let then_t = self.trailing_return_type(then, &mut scope.clone(), depth);
+                let else_t = match else_ {
+                    Some(block) => self.trailing_return_type(block, &mut scope.clone(), depth),
+                    None => Some(RType::new(Mode::Null, Length::Zero)),
+                };
+                match (then_t, else_t) {
+                    (Some(a), Some(b)) => Some(a.join(b)),
+                    (Some(a), None) => Some(a),
+                    (None, Some(b)) => Some(b),
+                    (None, None) => None,
+                }
+            }
             _ => None,
         }
     }

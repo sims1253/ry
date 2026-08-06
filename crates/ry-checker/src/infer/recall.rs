@@ -39,14 +39,12 @@ const NAME_CARRYING_CONTAINERS: &[&str] = &["list", "c", "data.frame", "structur
 /// of a call to one of them is the constant 1. Kept to reductions whose
 /// documented value is a single number; anything vectorised (`nchar`,
 /// `range`, `which`) is excluded.
-const SCALAR_REDUCTIONS: &[&str] = &[
+pub(crate) const SCALAR_REDUCTIONS: &[&str] = &[
     "sum",
     "prod",
     "mean",
     "median",
     "length",
-    "nrow",
-    "ncol",
     "NROW",
     "NCOL",
     "nlevels",
@@ -55,8 +53,6 @@ const SCALAR_REDUCTIONS: &[&str] = &[
     "isTRUE",
     "isFALSE",
     "identical",
-    "which.max",
-    "which.min",
 ];
 
 /// The callee of a direct call, with any `pkg::` / `pkg:::` prefix removed.
@@ -274,15 +270,28 @@ impl Checker {
                 _ => None,
             }
         }
-        let measured = match (length_operand(lhs), length_operand(rhs)) {
-            (Some(measured), None) if numeric_literal(rhs) == Some(0.0) => measured,
-            (None, Some(measured)) if numeric_literal(lhs) == Some(0.0) => measured,
+        let (measured, measured_on_left) = match (length_operand(lhs), length_operand(rhs)) {
+            (Some(measured), None) if numeric_literal(rhs) == Some(0.0) => (measured, true),
+            (None, Some(measured)) if numeric_literal(lhs) == Some(0.0) => (measured, false),
             _ => return,
         };
         let Some(reason) = self.scalar_by_construction(measured, scope) else {
             return;
         };
-        let outcome = match op {
+        // Normalize to `length(...) <op> 0` by mirroring the operator when
+        // the zero literal is on the left side of the comparison.
+        let effective_op = if measured_on_left {
+            op
+        } else {
+            match op {
+                BinOpKind::Lt => BinOpKind::Gt,
+                BinOpKind::Le => BinOpKind::Ge,
+                BinOpKind::Gt => BinOpKind::Lt,
+                BinOpKind::Ge => BinOpKind::Le,
+                other => other,
+            }
+        };
+        let outcome = match effective_op {
             BinOpKind::Eq | BinOpKind::Lt | BinOpKind::Le => "FALSE",
             _ => "TRUE",
         };
@@ -327,5 +336,40 @@ impl Checker {
             return None;
         }
         Some(format!("`{name}` is a length-1 {}", bound.mode))
+    }
+}
+
+#[cfg(test)]
+mod scalar_reductions_tests {
+    use super::*;
+
+    /// Every entry in [`SCALAR_REDUCTIONS`] must cause RY105 to fire when used
+    /// inside `length(f(x)) > 0`. A stale entry (a function that was removed
+    /// from the list or renamed) is a dead match arm: the rule silently
+    /// ignores it and the author never notices.
+    ///
+    /// This test does NOT verify the semantic claim ("returns length-1 for all
+    /// inputs") — that requires R runtime knowledge. Its value is making the
+    /// list visible and ensuring its mechanism works for every member, so a
+    /// careless addition or removal is at least noticed at test time.
+    #[test]
+    fn every_scalar_reduction_fires_ry105() {
+        fn fires(src: &str, code: &str) -> bool {
+            let mut parser = ry_core::RParser::new().expect("parser init");
+            let file = parser.parse("t.R", src).expect("parse");
+            let mut checker = crate::Checker::new("t.R");
+            checker.check(&file);
+            checker.take_diagnostics().iter().any(|d| d.code == code)
+        }
+        for &callee in SCALAR_REDUCTIONS {
+            let src = format!(
+                "f <- function(x) if (length({callee}(x)) > 0) 1
+"
+            );
+            assert!(
+                fires(&src, "RY105"),
+                "`{callee}` is in SCALAR_REDUCTIONS but did not fire RY105"
+            );
+        }
     }
 }

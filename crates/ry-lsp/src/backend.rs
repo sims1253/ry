@@ -106,6 +106,11 @@ pub(super) struct State {
     /// (folder_root, file_config), ordered by root path length descending
     /// so that longest-prefix matching finds the most specific folder first.
     workspace_folders: Vec<(PathBuf, ry_config::Config)>,
+    /// On-disk `.R`/`.r` files discovered by the background indexer
+    /// (Plan 33 W4). Keyed by absolute path. Open documents shadow
+    /// these — when a path exists in both `docs` and `disk_files`,
+    /// the open document's content is authoritative.
+    disk_files: HashMap<String, Arc<SourceFile>>,
 }
 
 #[derive(Default)]
@@ -566,6 +571,10 @@ impl LanguageServer for Backend {
                 tracing::warn!("failed to register ry.toml watcher: {e}");
             }
         }
+
+        // W4: Spawn a background indexer to discover and parse all .R/.r
+        // files under the workspace root(s).
+        self.spawn_background_index().await;
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
@@ -1518,6 +1527,22 @@ impl Backend {
             project_files.push((doc_path.clone(), version, file));
         }
 
+        // W4: Merge on-disk files from the background indexer. Open
+        // documents shadow disk files (the editor's buffer is
+        // authoritative), so skip paths already in project_files.
+        let disk_files = {
+            let state = self.state.lock().await;
+            state.disk_files.clone()
+        };
+        let open_paths: std::collections::HashSet<String> =
+            project_files.iter().map(|(p, _, _)| p.clone()).collect();
+        for (path, file) in &disk_files {
+            if open_paths.contains(path) {
+                continue;
+            }
+            project_files.push((path.clone(), 0, Arc::clone(file)));
+        }
+
         // Hold the project lock through publication. A newer generation may
         // queue while this loop is awaiting the client, but it cannot
         // interleave publications and will therefore publish last.
@@ -1605,6 +1630,49 @@ impl Backend {
                 .publish_diagnostics(diagnostic_uri, diagnostics, None)
                 .await;
         }
+    }
+
+    /// W4: Discover and parse all `.R`/`.r` files under the workspace root(s)
+    /// in a background task. Results are stored in `state.disk_files` and a
+    /// diagnostic refresh is triggered so cross-file calls into unopened
+    /// files resolve on the next check.
+    async fn spawn_background_index(&self) {
+        let roots_with_config = {
+            let state = self.state.lock().await;
+            if !state.workspace_folders.is_empty() {
+                state.workspace_folders.clone()
+            } else if let Some(root) = &state.root {
+                vec![(root.clone(), state.file_config.clone())]
+            } else {
+                Vec::new()
+            }
+        };
+
+        if roots_with_config.is_empty() {
+            return;
+        }
+
+        let state_arc = Arc::clone(&self.state);
+        tokio::task::spawn_blocking(move || {
+            let mut all_disk_files: HashMap<String, Arc<SourceFile>> = HashMap::new();
+            for (root, config) in &roots_with_config {
+                let excludes = ry_config::Excludes::from_config(config);
+                let indexed = crate::index::index_workspace(root, &excludes);
+                all_disk_files.extend(indexed);
+            }
+            tracing::info!(
+                "W4 background index: discovered {} disk files",
+                all_disk_files.len()
+            );
+            let state_clone = Arc::clone(&state_arc);
+            tokio::spawn(async move {
+                {
+                    let mut state = state_clone.lock().await;
+                    state.disk_files = all_disk_files;
+                }
+                tracing::info!("W4 background index complete");
+            });
+        });
     }
 
     /// Debounce diagnostics for `uri`: bump the workspace generation counter

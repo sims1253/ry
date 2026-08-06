@@ -5,10 +5,9 @@
 
 import * as vscode from "vscode";
 import * as cp from "child_process";
-import { registerCommand } from "./vscodeapi";
 import { Logger } from "./logger";
 import { ResolvedBinary } from "./binary";
-import { ISettings, resolveVariables } from "./settings";
+import { type ISettings } from "./settings";
 
 export async function restartCommand(): Promise<void> {
     // The actual restart is handled by the extension's restart

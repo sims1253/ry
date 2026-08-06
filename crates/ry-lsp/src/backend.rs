@@ -111,6 +111,8 @@ pub(super) struct State {
     /// these — when a path exists in both `docs` and `disk_files`,
     /// the open document's content is authoritative.
     disk_files: HashMap<String, Arc<SourceFile>>,
+    /// Tree-sitter trees for incremental parsing (Plan 33 W6).
+    trees: HashMap<String, ry_core::Tree>,
 }
 
 #[derive(Default)]
@@ -379,12 +381,10 @@ impl LanguageServer for Backend {
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
-                    // v1: send the whole document on each change. This
-                    // avoids the complexity of incremental range sync
-                    // and matches the common "re-check on save" mode of
-                    // most R users. The client sends the full text in
-                    // `changes[0]`.
-                    TextDocumentSyncKind::FULL,
+                    // Incremental sync (Plan 33 W6): the client sends
+                    // only the edited range, which we use to build a
+                    // tree-sitter InputEdit for incremental reparse.
+                    TextDocumentSyncKind::INCREMENTAL,
                 )),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 // Enable `textDocument/definition` so the client can
@@ -590,15 +590,15 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri.clone();
         let path = uri_to_path(&uri);
         let version = params.text_document.version;
-        // TextDocumentSyncKind::FULL means the whole new text arrives in
-        // `changes[0]`. v1 does not implement incremental sync, so we
-        // ignore any further entries in `content_changes`.
-        if let Some(change) = params.content_changes.into_iter().next() {
-            self.update_doc(path, change.text, version).await;
-            // Debounced: a burst of keystrokes coalesces into a single
-            // diagnostic publish.
-            self.schedule_diagnostics(uri).await;
+        // Incremental sync (W6): process each change event, applying
+        // range-based edits to the old text and building a tree-sitter
+        // InputEdit for incremental reparse.
+        for change in params.content_changes {
+            self.apply_incremental_change(&path, change, version).await;
         }
+        // Debounced: a burst of keystrokes coalesces into a single
+        // diagnostic publish.
+        self.schedule_diagnostics(uri).await;
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
@@ -752,6 +752,7 @@ impl LanguageServer for Backend {
             state.versions.remove(&path);
             state.parsed.remove(&path);
             state.scopes.remove(&path);
+            state.trees.remove(&path);
             // Bump the generation so any in-flight diagnostics publish
             // queued while the file was open is invalidated.
             state.diag_generation = state.diag_generation.wrapping_add(1);
@@ -1364,6 +1365,62 @@ impl LanguageServer for Backend {
 }
 
 impl Backend {
+    /// Apply a single incremental text change (Plan 33 W6).
+    ///
+    /// For changes with a range (incremental sync), we:
+    /// 1. Apply the edit to the old text to produce the new text
+    /// 2. Build a tree-sitter `InputEdit` from the range
+    /// 3. Edit the old tree-sitter tree and feed it to `parse_with_tree`
+    /// 4. Store the new tree for the next incremental parse
+    ///
+    /// For changes without a range (full text — fallback), we do a full parse.
+    async fn apply_incremental_change(
+        &self,
+        path: &str,
+        change: TextDocumentContentChangeEvent,
+        version: i32,
+    ) {
+        if let Some(range) = change.range {
+            // Incremental: apply the range edit to the old text.
+            let (old_text, old_tree) = {
+                let state = self.state.lock().await;
+                let old = state.docs.get(path).cloned();
+                (old, state.trees.get(path).cloned())
+            };
+
+            if let Some(old_text) = old_text {
+                let new_text = apply_range_edit(&old_text, range, &change.text);
+                self.update_doc(path.to_string(), new_text, version).await;
+
+                // Build InputEdit and do incremental parse.
+                let input_edit = build_input_edit(&old_text, range, &change.text);
+                if let Some(edit) = input_edit {
+                    let mut tree_mut = old_tree;
+                    if let Some(ref mut tree) = tree_mut {
+                        tree.edit(&edit);
+                    }
+                    // Store the tree for next time. The actual SourceFile
+                    // will be produced lazily by parsed_file, but we store
+                    // the tree so the next parse is incremental.
+                    let mut state = self.state.lock().await;
+                    if let Some(tree) = tree_mut {
+                        state.trees.insert(path.to_string(), tree);
+                    } else {
+                        state.trees.remove(path);
+                    }
+                }
+            } else {
+                // No old text — treat as full replacement.
+                self.update_doc(path.to_string(), change.text, version)
+                    .await;
+            }
+        } else {
+            // Full text change (no range).
+            self.update_doc(path.to_string(), change.text, version)
+                .await;
+        }
+    }
+
     async fn update_doc(&self, path: String, text: String, version: i32) {
         let mut state = self.state.lock().await;
         state.docs.insert(path.clone(), text);
@@ -1412,8 +1469,17 @@ impl Backend {
                 (Some(t), Some(v)) => (t, v),
                 _ => return None,
             };
+            // W6: Use incremental parse when we have an old tree.
+            let old_tree = {
+                let state = self.state.lock().await;
+                state.trees.get(path).cloned()
+            };
             let mut parser = RParser::new().ok()?;
-            let file = Arc::new(parser.parse(path, &text).ok()?);
+            let file = if let Some(tree) = old_tree {
+                Arc::new(parser.parse_with_tree(path, &text, Some(&tree)).ok()?)
+            } else {
+                Arc::new(parser.parse(path, &text).ok()?)
+            };
             let mut state = self.state.lock().await;
             // If an edit landed while parsing, retry against the new version
             // instead of returning an AST already known to be stale.
@@ -1772,4 +1838,103 @@ pub(crate) fn uri_to_path(uri: &Url) -> String {
     uri.to_file_path()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| uri.as_str().to_string())
+}
+
+/// Apply an LSP range-based edit to the old source text, producing the
+/// new text. LSP positions are 0-based line/character (UTF-16 code units).
+/// We convert to byte offsets for the splice.
+fn apply_range_edit(old_text: &str, range: Range, new_text: &str) -> String {
+    let start_byte = position_to_byte(old_text, range.start);
+    let end_byte = position_to_byte(old_text, range.end);
+    let mut result = String::with_capacity(old_text.len() + new_text.len());
+    result.push_str(&old_text[..start_byte]);
+    result.push_str(new_text);
+    result.push_str(&old_text[end_byte..]);
+    result
+}
+
+/// Build a tree-sitter `InputEdit` from an LSP range and replacement text.
+/// The InputEdit tells tree-sitter which byte range changed and the new
+/// positions, so it can reuse unchanged subtrees.
+fn build_input_edit(old_text: &str, range: Range, new_text: &str) -> Option<ry_core::InputEdit> {
+    let start_byte = position_to_byte(old_text, range.start);
+    let old_end_byte = position_to_byte(old_text, range.end);
+    let new_end_byte = start_byte + new_text.len();
+
+    // Compute the new end position by counting lines/chars in new_text.
+    let new_end_position = byte_offset_to_position(new_text, new_text.len());
+
+    Some(ry_core::InputEdit {
+        start_byte,
+        old_end_byte,
+        new_end_byte,
+        start_position: ry_core::Point {
+            row: range.start.line as usize,
+            column: range.start.character as usize,
+        },
+        old_end_position: ry_core::Point {
+            row: range.end.line as usize,
+            column: range.end.character as usize,
+        },
+        new_end_position: ry_core::Point {
+            row: new_end_position.line as usize,
+            column: new_end_position.character as usize,
+        },
+    })
+}
+
+/// Convert an LSP Position (0-based line, UTF-16 code unit column) to a
+/// byte offset in the source text.
+fn position_to_byte(text: &str, pos: Position) -> usize {
+    let mut byte_offset = 0;
+    let mut current_line = 0u32;
+
+    for (i, ch) in text.char_indices() {
+        if current_line == pos.line {
+            // We're on the right line. Convert byte column to UTF-16 column.
+            let utf16_col: u32 = text[byte_offset..i].encode_utf16().count() as u32;
+            if utf16_col >= pos.character {
+                return i;
+            }
+        }
+        if ch == '\n' {
+            if current_line == pos.line {
+                // End of the target line — position is at end of line.
+                let utf16_col: u32 = text[byte_offset..=i].encode_utf16().count() as u32;
+                if pos.character >= utf16_col {
+                    return i + 1;
+                }
+            }
+            current_line += 1;
+            byte_offset = i + 1;
+        }
+    }
+
+    // Position is at or beyond end of text.
+    text.len()
+}
+
+/// Convert a byte offset to an LSP Position (line, UTF-16 column).
+fn byte_offset_to_position(text: &str, byte_offset: usize) -> Position {
+    let mut line = 0u32;
+    let mut last_line_start = 0usize;
+
+    for (i, ch) in text.char_indices() {
+        if i >= byte_offset {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            last_line_start = i + 1;
+        }
+    }
+
+    let column = text[last_line_start..byte_offset.min(text.len())]
+        .encode_utf16()
+        .count() as u32;
+
+    Position {
+        line,
+        character: column,
+    }
 }

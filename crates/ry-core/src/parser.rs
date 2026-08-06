@@ -6,7 +6,7 @@
 use crate::ast::*;
 use crate::span::Span;
 use thiserror::Error;
-use tree_sitter::{Node, Parser};
+use tree_sitter::{Node, Parser, Tree};
 
 #[derive(Debug, Error)]
 pub enum ParseError {
@@ -70,6 +70,54 @@ impl RParser {
         // tokens with `MISSING` nodes. Collect these so the checker can
         // surface them as RY000 instead of silently checking a recovered
         // (and possibly nonsense) tree.
+        let parse_errors = collect_parse_errors(root);
+        let comments = collect_comments(root, src);
+        Ok(SourceFile {
+            path: path.to_string(),
+            stmts,
+            parse_errors,
+            comments,
+        })
+    }
+
+    /// Parse with an old tree-sitter `Tree` for incremental re-parsing
+    /// (Plan 33 W6). The old tree must have been edited via `InputEdit`
+    /// before calling this method. The AST is rebuilt from the new tree,
+    /// but tree-sitter reuses unchanged subtrees internally, making
+    /// reparse cost proportional to the edited region, not the file size.
+    ///
+    /// If `old_tree` is `None`, falls back to a full parse.
+    pub fn parse_with_tree(
+        &mut self,
+        path: &str,
+        src: &str,
+        old_tree: Option<&Tree>,
+    ) -> Result<SourceFile, ParseError> {
+        let tree = self
+            .parser
+            .parse(src, old_tree)
+            .ok_or_else(|| ParseError::TreeSitter {
+                line: 0,
+                col: 0,
+                message: "parser returned no tree".into(),
+            })?;
+        let root = tree.root_node();
+        let mut stmts = Vec::new();
+        let mut cursor = root.walk();
+        for child in root.named_children(&mut cursor) {
+            if child.kind() == "braced_expression" {
+                let mut inner_cursor = child.walk();
+                for inner in child.named_children(&mut inner_cursor) {
+                    if let Some(stmt) = self.lower_stmt(inner, src) {
+                        stmts.push(stmt);
+                    }
+                }
+                continue;
+            }
+            if let Some(stmt) = self.lower_stmt(child, src) {
+                stmts.push(stmt);
+            }
+        }
         let parse_errors = collect_parse_errors(root);
         let comments = collect_comments(root, src);
         Ok(SourceFile {

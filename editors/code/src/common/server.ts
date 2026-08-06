@@ -45,9 +45,10 @@ export type InitializationOptions = {
 export function getInitializationOptions(
   namespace: string,
 ): InitializationOptions {
+  const folderSettings = getExtensionSettings(namespace);
   const globalSettings = getGlobalSettings(namespace);
   return {
-    settings: [globalSettings],
+    settings: folderSettings.length > 0 ? folderSettings : [globalSettings],
     globalSettings,
   };
 }
@@ -111,7 +112,11 @@ export async function startServer(
     `Initialization options: ${JSON.stringify(initializationOptions, null, 4)}`,
   );
 
-  const serverArgs: string[] = [RY_SERVER_SUBCOMMAND];
+  // M10: Pass --log-level to the server if configured.
+  const logLevel = getConfiguration(namespace).get<string>("logLevel");
+  const serverArgs: string[] = logLevel
+    ? [RY_SERVER_SUBCOMMAND, "--log-level", logLevel]
+    : [RY_SERVER_SUBCOMMAND];
   logger.info(
     `ry language server command: '${[binaryPath, ...serverArgs].join(" ")}'`,
   );

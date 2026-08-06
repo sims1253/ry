@@ -16,15 +16,9 @@
 import * as path from "path";
 import * as cp from "child_process";
 import * as fs from "fs";
-import { Logger } from "./logger";
-import {
-    BUNDLED_RY_EXECUTABLE,
-    EXTENSION_ROOT_DIR,
-    RY_BINARY_NAME,
-} from "./constants";
+import { BUNDLED_RY_EXECUTABLE, RY_BINARY_NAME } from "./constants";
 import { VersionInfo, versionFromString, versionGte, MINIMUM_SETTINGS_CHANNEL_VERSION, versionToString } from "./version";
 import { ISettings } from "./settings";
-import * as vscode from "vscode";
 
 export interface ResolvedBinary {
     path: string;

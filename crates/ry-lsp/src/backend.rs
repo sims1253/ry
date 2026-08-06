@@ -227,34 +227,38 @@ impl State {
     /// editor provides an `ignore`/`error`/`warn` list, it replaces
     /// the `ry.toml` value; otherwise the `ry.toml` value (which may
     /// itself be the empty default) is used.
-    #[cfg(test)]
-    pub(super) fn effective_filter(&self) -> ry_checker::SeverityFilter {
-        let error = self
-            .folder_settings
-            .lint
+    /// Merge editor lint settings over a given `ry.toml` config.
+    pub(super) fn merge_filter(
+        &self,
+        file_config: &ry_config::Config,
+    ) -> ry_checker::SeverityFilter {
+        let lint = &self.folder_settings.lint;
+        let error = lint
             .error
             .clone()
-            .unwrap_or_else(|| self.file_config.error.clone());
-        let warn = self
-            .folder_settings
-            .lint
+            .unwrap_or_else(|| file_config.error.clone());
+        let warn = lint
             .warn
             .clone()
-            .unwrap_or_else(|| self.file_config.warn.clone());
-        let ignore = self
-            .folder_settings
-            .lint
+            .unwrap_or_else(|| file_config.warn.clone());
+        let ignore = lint
             .ignore
             .clone()
-            .unwrap_or_else(|| self.file_config.ignore.clone());
+            .unwrap_or_else(|| file_config.ignore.clone());
         ry_config::build_filter(&error, &warn, &ignore)
+    }
+
+    /// Test helper: compute the effective `SeverityFilter` from editor
+    /// settings merged over the root `ry.toml`.
+    #[cfg(test)]
+    pub(super) fn effective_filter(&self) -> ry_checker::SeverityFilter {
+        self.merge_filter(&self.file_config)
     }
 
     /// S4: Find the owning workspace folder config for a document path.
     /// Uses longest-prefix matching against workspace folder roots.
-    /// Returns None if no workspace folder owns the path (the single-root
-    /// config is the fallback).
-    fn folder_config_for_path(&self, doc_path: &str) -> Option<&ry_config::Config> {
+    /// Returns None if no workspace folder owns the path.
+    pub(super) fn folder_config_for_path(&self, doc_path: &str) -> Option<&ry_config::Config> {
         let path = std::path::Path::new(doc_path);
         for (folder_root, config) in &self.workspace_folders {
             if path.starts_with(folder_root) {
@@ -262,33 +266,6 @@ impl State {
             }
         }
         None
-    }
-
-    /// S4: Compute the effective filter for a specific document path,
-    /// using its owning folder's config if available.
-    pub(super) fn effective_filter_for_path(&self, doc_path: &str) -> ry_checker::SeverityFilter {
-        let file_config = self
-            .folder_config_for_path(doc_path)
-            .unwrap_or(&self.file_config);
-        let error = self
-            .folder_settings
-            .lint
-            .error
-            .clone()
-            .unwrap_or_else(|| file_config.error.clone());
-        let warn = self
-            .folder_settings
-            .lint
-            .warn
-            .clone()
-            .unwrap_or_else(|| file_config.warn.clone());
-        let ignore = self
-            .folder_settings
-            .lint
-            .ignore
-            .clone()
-            .unwrap_or_else(|| file_config.ignore.clone());
-        ry_config::build_filter(&error, &warn, &ignore)
     }
 
     /// Load and return the effective baseline, if any. Editor setting
@@ -1544,11 +1521,40 @@ impl Backend {
         for (diagnostic_path, mut diagnostics) in per_file {
             // S2/S4: Apply the effective severity filter. For multi-root
             // workspaces, each document uses its owning folder's config.
-            let filter = {
-                let state = self.state.lock().await;
-                state.effective_filter_for_path(&diagnostic_path)
-            };
+            let (filter, min_confidence, excludes) =
+                {
+                    let state = self.state.lock().await;
+                    let file_config = state
+                        .folder_config_for_path(&diagnostic_path)
+                        .unwrap_or(&state.file_config)
+                        .clone();
+                    let filter = state.merge_filter(&file_config);
+                    let min_confidence =
+                        state.folder_settings.min_confidence.as_ref().and_then(|s| {
+                            match s.as_str() {
+                                "low" => Some(ry_checker::Confidence::Low),
+                                "medium" => Some(ry_checker::Confidence::Medium),
+                                "high" => Some(ry_checker::Confidence::High),
+                                _ => None,
+                            }
+                        });
+                    let excludes = ry_config::Excludes::from_config(&file_config);
+                    (filter, min_confidence, excludes)
+                };
             ry_checker::apply_filter_to_diagnostics(&mut diagnostics, &filter);
+
+            // S2: Apply min-confidence filtering (mirrors --min-confidence).
+            if let Some(min) = min_confidence {
+                diagnostics.retain(|d| d.confidence >= min);
+            }
+
+            // S2: Apply exclude filtering (mirrors `exclude` in ry.toml).
+            if !excludes.is_empty() {
+                let rel = ry_config::diagnostic_path(&diagnostic_path, config_root.as_deref());
+                if excludes.matches(&rel) {
+                    continue;
+                }
+            }
 
             // S2: Apply baseline subtraction if configured.
             if let Some(ref baseline) = baseline {

@@ -4,6 +4,7 @@
 
 use ry_checker::Project;
 use ry_core::RParser;
+use std::sync::Arc;
 
 fn parse(path: &str, src: &str) -> ry_core::SourceFile {
     let mut p = RParser::new().unwrap();
@@ -124,7 +125,7 @@ fn incremental_edit_rechecks_cross_file_dependents() {
 
     project.update_file(
         "utils.R".to_string(),
-        parse("utils.R", "make_value <- function() { 1L }\n"),
+        Arc::new(parse("utils.R", "make_value <- function() { 1L }\n")),
     );
     let after = project.check_incremental();
     let after_analysis = after.iter().find(|(path, _)| path == "analysis.R").unwrap();

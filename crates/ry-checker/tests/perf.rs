@@ -14,6 +14,7 @@
 //! latency.
 
 use std::io::Write;
+use std::sync::Arc;
 use std::time::Instant;
 
 use ry_checker::Checker;
@@ -119,7 +120,7 @@ fn warm_edit_checks_quickly() {
             "f0 <- function(x) x * 999\ng0 <- function(x) f0(x) + 1\nh <- f0(2)\n",
         )
         .expect("reparse file0");
-    project.update_file("file0.R".to_string(), edited);
+    project.update_file("file0.R".to_string(), Arc::new(edited));
 
     let start = Instant::now();
     let diags = project.check_incremental();

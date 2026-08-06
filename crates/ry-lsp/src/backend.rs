@@ -136,8 +136,7 @@ impl ProjectCache {
         self.project.set_user_stubs(user_stubs);
         for (path, version, file) in files {
             if self.versions.get(&path).copied() != Some(version) {
-                self.project
-                    .update_file(path.clone(), file.as_ref().clone());
+                self.project.update_file(path.clone(), Arc::clone(&file));
                 self.versions.insert(path, version);
             }
         }
@@ -1472,11 +1471,14 @@ impl Backend {
         // Snapshot the open docs under the lock, then drop the lock
         // before running the checker so a slow check doesn't block
         // other LSP requests (e.g. didOpen of a second file).
-        let (path, docs, versions, user_stubs, project, baseline, config_root) = {
+        // Snapshot document paths + versions (cheap: string keys, i32 values)
+        // without cloning every file's full text. Source text is fetched
+        // per-document below via `state.docs` lookups only when needed.
+        let (path, doc_paths, versions, user_stubs, project, baseline, config_root) = {
             let state = self.state.lock().await;
             (
                 uri_to_path(&uri),
-                state.docs.clone(),
+                state.docs.keys().cloned().collect::<Vec<_>>(),
                 state.versions.clone(),
                 Arc::clone(&state.user_stubs),
                 Arc::clone(&state.project),
@@ -1489,16 +1491,27 @@ impl Backend {
         // so cross-file calls resolve. Cached parses avoid re-parsing
         // unchanged documents, and ProjectCache forwards only changed
         // versions to Project::update_file so pass-1 collection is reused.
-        let mut project_files = Vec::with_capacity(docs.len());
+        let mut project_files = Vec::with_capacity(doc_paths.len());
         let mut per_file_comments: HashMap<String, Vec<ry_core::ast::Comment>> = HashMap::new();
+        let mut per_file_source: HashMap<String, String> = HashMap::new();
         // Cached parses: `parsed_file` reuses the
         // per-document `SourceFile` cached in `State` and only re-parses
         // documents whose version changed since the last request.
-        for doc_path in docs.keys() {
+        for doc_path in &doc_paths {
             let Some((file, _)) = self.parsed_file(doc_path).await else {
                 continue;
             };
             per_file_comments.insert(doc_path.clone(), file.comments.clone());
+            // Snapshot source text for this document only (used later for
+            // comment-based suppression filtering and source-aware LSP
+            // diagnostic formatting). This avoids cloning the entire docs
+            // map up front.
+            {
+                let state = self.state.lock().await;
+                if let Some(text) = state.docs.get(doc_path) {
+                    per_file_source.insert(doc_path.clone(), text.clone());
+                }
+            }
             let Some(version) = versions.get(doc_path).copied() else {
                 continue;
             };
@@ -1568,7 +1581,8 @@ impl Backend {
             if let Some(ref baseline) = baseline {
                 ry_config::subtract_baseline(&mut diagnostics, baseline, config_root.as_deref());
             }
-            let source_text = docs.get(&diagnostic_path).map(String::as_str);
+
+            let source_text = per_file_source.get(&diagnostic_path).map(String::as_str);
             let file_comments = per_file_comments.get(&diagnostic_path);
             let (file_level, suppressions) = match file_comments {
                 Some(comments) => (

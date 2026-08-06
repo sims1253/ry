@@ -378,3 +378,23 @@ machine. Criterion `--quick` mode (sample size 20, 1s warmup, 3s measure).
 cost** (24.4 ms), confirming that passes 2 and 3 rebuild from scratch on
 every incremental check. This is the O(project) per-keystroke problem W1
 and W2 exist to fix.
+
+---
+
+## Post-W1+W2+W3 measurements
+
+| Benchmark | Baseline (0.8.0) | After W1+W2+W3 | Change |
+| :-- | :-- | :-- | :-- |
+| `check_project_glue` (cold) | 24.4 ms | 26.2 ms | +7% (noise; cold path unchanged) |
+| `warm_edit_dependent` | 25.5 ms | 16.8 ms | −34% |
+| **`warm_edit_leaf`** | **20.7 ms** | **1.9 ms** | **−91%** |
+| `warm_edit_library` | 20.7 ms | 16.6 ms | −20% |
+| `lsp_edit_sim` | 25.7 ms | 17.4 ms | −32% |
+
+The dominant win is on `warm_edit_leaf` — editing a file that nothing depends
+on now costs ~1.9 ms instead of ~20.7 ms. The scoped fixpoint skips refining
+all 60+ functions in the project and only refines the 1–2 affected by the edit.
+
+The `warm_edit_dependent` and `warm_edit_library` numbers are higher because
+those edits transitively affect more functions (or all of them, in the library
+case), so the scoped fixpoint still refines most of the project.

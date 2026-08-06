@@ -36,6 +36,7 @@ mod diagnostics;
 mod folding;
 mod hints;
 mod ident;
+mod index;
 mod navigation;
 mod selection;
 mod settings;

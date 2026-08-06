@@ -6,6 +6,7 @@
 
 import * as vscode from "vscode";
 import { ResolvedBinary } from "./binary";
+import { versionToString } from "./version";
 
 export class StatusItem {
     private readonly item: vscode.LanguageStatusItem;
@@ -20,6 +21,7 @@ export class StatusItem {
 
     setBusy(): void {
         this.item.busy = true;
+        this.item.severity = vscode.LanguageStatusSeverity.Information;
         this.item.text = "ry: starting…";
         this.item.detail = undefined;
     }
@@ -27,7 +29,7 @@ export class StatusItem {
     setReady(binary: ResolvedBinary): void {
         this.item.busy = false;
         this.item.severity = vscode.LanguageStatusSeverity.Information;
-        this.item.text = `ry ${binary.version ? `${binary.version.major}.${binary.version.minor}.${binary.version.patch}` : "unknown"}`;
+        this.item.text = `ry ${binary.version ? versionToString(binary.version) : "unknown"}`;
         this.item.detail = binary.path;
     }
 

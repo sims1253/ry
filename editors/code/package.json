@@ -55,7 +55,7 @@
     "compile": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "tsc": "tsc --noEmit",
-    "compile-tests": "tsc -p . --outDir out",
+    "compile-tests": "tsc -p tsconfig.test.json --outDir out",
     "test": "vscode-test",
     "pretest": "npm run compile-tests && npm run compile",
     "vscode:prepublish": "npm run compile",
@@ -104,12 +104,12 @@
             "fromEnvironment",
             "useBundled"
           ],
-          "markdownDescriptions": [
+          "scope": "machine-overridable",
+          "type": "string",
+          "markdownEnumDescriptions": [
             "Use `ry` from `PATH`, falling back to the bundled binary.",
             "Always use the bundled `ry` binary."
-          ],
-          "scope": "machine-overridable",
-          "type": "string"
+          ]
         },
         "ry.configuration": {
           "default": null,

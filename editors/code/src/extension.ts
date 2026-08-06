@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { LOG_CHANNEL_NAME } from "./common/constants";
+import { LOG_CHANNEL_NAME, RY_SETTINGS_NAMESPACE } from "./common/constants";
 import { LazyOutputChannel, logger } from "./common/logger";
 import { type ServerState, startServer, stopServer } from "./common/server";
 import {
@@ -15,7 +15,7 @@ let restartPromise: Promise<void> | null = null;
 export async function activate(
   context: vscode.ExtensionContext,
 ): Promise<void> {
-  const serverId = LOG_CHANNEL_NAME;
+  const serverId = RY_SETTINGS_NAMESPACE;
 
   logger.info(`Name: ${LOG_CHANNEL_NAME}`);
   logger.info(`Module: ${serverId}`);
@@ -123,12 +123,23 @@ export async function activate(
   // activation call's critical path.
   setImmediate(async () => {
     if (serverState == null && restartPromise == null) {
-      await requestRestart();
+      try {
+        await requestRestart();
+      } catch (ex) {
+        logger.error(`Failed to start the ${LOG_CHANNEL_NAME} server: ${ex}`);
+      }
     }
   });
 }
 
 export async function deactivate(): Promise<void> {
+  if (restartPromise != null) {
+    try {
+      await restartPromise;
+    } catch {
+      // A failed start leaves nothing to stop.
+    }
+  }
   if (serverState != null) {
     await stopServer(serverState.client);
     serverState = null;

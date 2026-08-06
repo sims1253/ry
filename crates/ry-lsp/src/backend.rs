@@ -582,6 +582,11 @@ impl LanguageServer for Backend {
         let path = uri_to_path(&uri);
         let text = params.text_document.text.clone();
         let version = params.text_document.version;
+        // Clear any stale tree from a previous session for this path.
+        {
+            let mut state = self.state.lock().await;
+            state.trees.remove(&path);
+        }
         self.update_doc(path, text, version).await;
         self.schedule_diagnostics(uri).await;
     }
@@ -1406,12 +1411,20 @@ impl Backend {
                     state.trees.remove(path);
                 }
             } else {
-                // No old text — treat as full replacement.
+                // No old text — treat as full replacement. Clear stale tree.
+                {
+                    let mut state = self.state.lock().await;
+                    state.trees.remove(path);
+                }
                 self.update_doc(path.to_string(), change.text, version)
                     .await;
             }
         } else {
-            // Full text change (no range).
+            // Full text change (no range). Clear stale tree.
+            {
+                let mut state = self.state.lock().await;
+                state.trees.remove(path);
+            }
             self.update_doc(path.to_string(), change.text, version)
                 .await;
         }

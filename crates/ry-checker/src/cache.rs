@@ -167,12 +167,11 @@ fn rtype_to_json(t: &RType) -> serde_json::Value {
 #[allow(dead_code)]
 fn rtype_from_json(v: &serde_json::Value) -> Option<RType> {
     let s = v.as_str()?;
-    // RType's Debug format is stable enough for caching purposes.
-    // On any mismatch, we return Unknown, which is always safe (the
-    // fixpoint will refine it back to the correct type).
+    // Only "Unknown" is reversible; any other type triggers a cache miss
+    // so the collection is recomputed instead of serving a lossy value.
     match s {
         "Unknown" => Some(RType::unknown()),
-        _ => Some(RType::unknown()),
+        _ => None,
     }
 }
 

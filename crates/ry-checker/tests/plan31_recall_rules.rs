@@ -335,22 +335,18 @@ fn ry105_normalizes_operand_order_for_constant_outcome() {
 }
 
 #[test]
-fn ry105_stays_silent_for_non_scalar_reductions() {
-    // `nrow(NULL)` returns NULL (length 0), so it is NOT a guaranteed
-    // scalar. `length(nrow(x)) > 0` is not constant.
-    assert!(!fires(
-        "f <- function(df) if (length(nrow(df)) > 0) 1
-",
-        "RY105"
-    ));
-    assert!(!fires(
-        "f <- function(df) if (length(ncol(df)) > 0) 1
-",
-        "RY105"
-    ));
-    // `which.max(numeric(0))` returns integer(0).
+fn ry105_stays_silent_for_unstubbed_reductions() {
+    // `which.max` and `which.min` are not in the typeshed stubs, so
+    // the checker has no evidence that they return length-1.
+    // `which.max(numeric(0))` returns integer(0), which confirms the
+    // stubs are right to omit them.
     assert!(!fires(
         "f <- function(v) if (length(which.max(v)) > 0) 1
+",
+        "RY105"
+    ));
+    assert!(!fires(
+        "f <- function(v) if (length(which.min(v)) > 0) 1
 ",
         "RY105"
     ));

@@ -35,26 +35,6 @@ use super::*;
 /// without losing anything.
 const NAME_CARRYING_CONTAINERS: &[&str] = &["list", "c", "data.frame", "structure"];
 
-/// Base functions whose result is length 1 for every input, so `length()`
-/// of a call to one of them is the constant 1. Kept to reductions whose
-/// documented value is a single number; anything vectorised (`nchar`,
-/// `range`, `which`) is excluded.
-pub(crate) const SCALAR_REDUCTIONS: &[&str] = &[
-    "sum",
-    "prod",
-    "mean",
-    "median",
-    "length",
-    "NROW",
-    "NCOL",
-    "nlevels",
-    "any",
-    "all",
-    "isTRUE",
-    "isFALSE",
-    "identical",
-];
-
 /// The callee of a direct call, with any `pkg::` / `pkg:::` prefix removed.
 /// Indirect callees (an index expression, a call returning a function) have
 /// no name and are never matched by these rules.
@@ -233,8 +213,8 @@ impl Checker {
     /// claim does not rest on inference that could be over-narrow (the failure
     /// mode plan 31 files as W12):
     ///
-    /// 1. a direct call to a base reduction whose documented value is a single
-    ///    number ([`SCALAR_REDUCTIONS`]); or
+    /// 1. a direct call to a function whose typeshed stub declares a return
+    ///    length of exactly 1 (Checker::is_typeshed_scalar_reduction); or
     /// 2. a local binding whose inferred type is a length-1 *atomic* and which
     ///    is neither a parameter, a parameter default, nor a flow-narrowed
     ///    refinement — a parameter's type comes from one default or one call
@@ -309,11 +289,16 @@ impl Checker {
     /// established from construction alone. See
     /// [`Checker::check_constant_length_comparison`] for the two admitted
     /// forms.
+    ///
+    /// Form 1 consults the typeshed stubs: any function whose declared
+    /// return length is exactly 1 is a scalar reduction. This replaces a
+    /// hardcoded list — the stubs are the authoritative source and are
+    /// maintained in one place.
     fn scalar_by_construction(&self, expr: &Expr, scope: &Scope) -> Option<String> {
         if let Some(callee) = bare_callee(expr)
-            && SCALAR_REDUCTIONS.contains(&callee)
             && !scope.is_lexical_function(callee)
             && matches!(expr, Expr::Call { args, .. } if !args.is_empty())
+            && self.is_typeshed_scalar_reduction(callee)
         {
             return Some(format!("`{callee}()` always returns a single value"));
         }
@@ -338,23 +323,29 @@ impl Checker {
         }
         Some(format!("`{name}` is a length-1 {}", bound.mode))
     }
+
+    /// Whether the typeshed stub for `callee` declares a concrete return
+    /// length of exactly 1. This replaces a hardcoded list of function
+    /// names (the former `SCALAR_REDUCTIONS` constant): the data lives in
+    /// the stubs, is maintained in one place, and automatically covers
+    /// every function the typeshed documents as scalar.
+    fn is_typeshed_scalar_reduction(&self, callee: &str) -> bool {
+        let Some(sig) = self.resolve_typeshed_sig(callee) else {
+            return false;
+        };
+        matches!(
+            sig.return_(),
+            ReturnSpec::Concrete(rt) if rt.length == "1"
+        )
+    }
 }
-
 #[cfg(test)]
-mod scalar_reductions_tests {
-    use super::*;
+mod scalar_reduction_tests {
 
-    /// Every entry in [`SCALAR_REDUCTIONS`] must cause RY105 to fire when used
-    /// inside `length(f(x)) > 0`. A stale entry (a function that was removed
-    /// from the list or renamed) is a dead match arm: the rule silently
-    /// ignores it and the author never notices.
-    ///
-    /// This test does NOT verify the semantic claim ("returns length-1 for all
-    /// inputs") — that requires R runtime knowledge. Its value is making the
-    /// list visible and ensuring its mechanism works for every member, so a
-    /// careless addition or removal is at least noticed at test time.
+    /// Representative functions whose typeshed stub declares return length 1.
+    /// If the stubs are updated to change any of these, the test surfaces it.
     #[test]
-    fn every_scalar_reduction_fires_ry105() {
+    fn known_scalar_reductions_fire_ry105() {
         fn fires(src: &str, code: &str) -> bool {
             let mut parser = ry_core::RParser::new().expect("parser init");
             let file = parser.parse("t.R", src).expect("parse");
@@ -362,14 +353,11 @@ mod scalar_reductions_tests {
             checker.check(&file);
             checker.take_diagnostics().iter().any(|d| d.code == code)
         }
-        for &callee in SCALAR_REDUCTIONS {
-            let src = format!(
-                "f <- function(x) if (length({callee}(x)) > 0) 1
-"
-            );
+        for callee in ["sum", "any", "all", "length", "isTRUE", "identical"] {
+            let src = format!("f <- function(x) if (length({callee}(x)) > 0) 1\n");
             assert!(
                 fires(&src, "RY105"),
-                "`{callee}` is in SCALAR_REDUCTIONS but did not fire RY105"
+                "`{callee}` has return length 1 in the typeshed but RY105 did not fire"
             );
         }
     }

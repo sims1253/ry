@@ -102,10 +102,10 @@ pub struct Project {
 }
 
 #[derive(Clone)]
-struct CollectedFile {
-    fn_table: FnTable,
-    return_slots: ReturnSlots,
-    loaded: HashSet<String>,
+pub(crate) struct CollectedFile {
+    pub(crate) fn_table: FnTable,
+    pub(crate) return_slots: ReturnSlots,
+    pub(crate) loaded: HashSet<String>,
 }
 
 impl Default for Project {

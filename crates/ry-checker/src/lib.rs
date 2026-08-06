@@ -10,6 +10,7 @@
 
 #![allow(clippy::collapsible_if)]
 
+mod cache;
 mod collect;
 pub mod diagnostics;
 pub mod format;

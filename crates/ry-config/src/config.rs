@@ -32,7 +32,9 @@ pub const DEFAULT_MAX_SERIALIZED_BYTES: u64 = 2 * 1024 * 1024;
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentConfig {
     pub name: String,
+    #[serde(default)]
     pub bindings: Vec<String>,
+    #[serde(default)]
     pub paths: Vec<String>,
 }
 
@@ -453,6 +455,34 @@ paths = ["inst/shiny/**"]
     }
 
     #[test]
+    fn merge_cli_typeshed_and_baseline() {
+        let cfg = Config {
+            typeshed: vec![PathBuf::from("config-stubs")],
+            baseline: Some(PathBuf::from("config-baseline.json")),
+            ..Config::defaults()
+        };
+        let merged = cfg.merge_cli(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![PathBuf::from("cli-stubs")],
+            Some(PathBuf::from("cli-baseline.json")),
+            None,
+            None,
+            None,
+            0,
+            0,
+        );
+        // Typeshed appends config and CLI entries.
+        assert_eq!(
+            merged.typeshed,
+            vec![PathBuf::from("config-stubs"), PathBuf::from("cli-stubs")]
+        );
+        // CLI baseline takes precedence over config baseline.
+        assert_eq!(merged.baseline, Some(PathBuf::from("cli-baseline.json")));
+    }
+
+    #[test]
     fn merge_cli_lists_append() {
         let cfg = Config {
             error: vec!["RY001".to_string()],
@@ -618,10 +648,14 @@ paths = ["inst/shiny/**"]
 
     #[test]
     fn discover_returns_none_at_root() {
-        // The filesystem root has no ry.toml; discovery from "/" must
-        // terminate without looping and without erroring.
-        let found = Config::discover(Path::new("/")).unwrap();
-        assert!(found.is_none(), "expected no config at /, got {found:?}");
+        // Discovery must terminate at the filesystem root without
+        // looping and without erroring. Uses a TempDir so the test
+        // does not depend on the host filesystem state.
+        let tmp = TempDir::new().unwrap();
+        let nested = tmp.path().join("a").join("b");
+        fs::create_dir_all(&nested).unwrap();
+        let found = Config::discover(&nested).unwrap();
+        assert!(found.is_none(), "expected no config, got {found:?}");
     }
 
     #[test]
@@ -694,15 +728,16 @@ paths = ["inst/shiny/**"]
     }
 
     #[test]
-    fn excludes_literal_prefix_matches_descendants() {
-        // A bare directory pattern should match anything beneath it;
-        // the glob crate treats `tests/fixtures` as a literal, so we
-        // additionally document that `**` is the recommended form.
+    fn excludes_bare_directory_does_not_match_descendants() {
+        // The glob crate treats `tests/fixtures` as a literal path, so
+        // it does not exclude the directory's contents. `**` is the
+        // required form. This test records that constraint.
         let ex = Excludes::from_config(&Config {
-            exclude: vec!["tests/fixtures/**".to_string()],
+            exclude: vec!["tests/fixtures".to_string()],
             ..Config::defaults()
         });
-        assert!(ex.matches("tests/fixtures/a.R"));
+        assert!(ex.matches("tests/fixtures"));
+        assert!(!ex.matches("tests/fixtures/a.R"));
     }
 
     #[test]

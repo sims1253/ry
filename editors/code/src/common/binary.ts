@@ -55,7 +55,7 @@ export function findRyBinaryPath(
     }
 
     // 2. fromEnvironment: check PATH
-    if (settings.importStrategy !== "useBundled") {
+    if (settings.importStrategy === "fromEnvironment") {
         const onPath = findOnPath(RY_BINARY_NAME);
         if (onPath) {
             return onPath;
@@ -75,7 +75,9 @@ function resolveHomeDir(p: string): string {
 
 function findOnPath(binary: string): string | undefined {
     const sep = process.platform === "win32" ? ";" : ":";
-    const pathDirs = (process.env.PATH ?? "").split(sep);
+    const pathDirs = (process.env.PATH ?? "")
+        .split(sep)
+        .filter((dir) => dir.length > 0);
     for (const dir of pathDirs) {
         const candidate = path.join(dir, binary);
         if (fs.existsSync(candidate)) {
@@ -92,11 +94,15 @@ function findOnPath(binary: string): string | undefined {
  */
 export function getRyVersion(binaryPath: string): VersionInfo | undefined {
     try {
-        const output = cp.execSync(`"${binaryPath}" version --output-format json`, {
-            encoding: "utf-8",
-            timeout: 5000,
-            stdio: ["pipe", "pipe", "pipe"],
-        });
+        const output = cp.execFileSync(
+            binaryPath,
+            ["version", "--output-format", "json"],
+            {
+                encoding: "utf-8",
+                timeout: 5000,
+                stdio: ["pipe", "pipe", "pipe"],
+            },
+        );
         const parsed = JSON.parse(output);
         const version = parsed.version as string | undefined;
         if (!version) return undefined;

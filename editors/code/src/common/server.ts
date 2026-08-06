@@ -20,81 +20,20 @@ import {
 import { logger } from "./logger";
 import { getDocumentSelector } from "./utilities";
 import { getConfiguration } from "./vscodeapi";
+import {
+    type ISettings,
+    getExtensionSettings,
+    getGlobalSettings,
+} from "./settings";
 
 /**
- * Per-folder settings, mirroring the server's `FolderSettings`
- * (`crates/ry-lsp/src/settings.rs`).
- *
- * Every field is optional so that "unset" (fall back to `ry.toml` or the
- * built-in default) is distinguishable from "set to the default value".
- * This is the precedence rule from the plan: editor setting > `ry.toml`
- * > built-in default.
- *
- * Field names are camelCase to match the server's
- * `#[serde(rename_all = "camelCase")]`.
- */
-export type FolderSettings = {
-  configuration?: string;
-  lint?: {
-    select?: string[];
-    extendSelect?: string[];
-    ignore?: string[];
-    error?: string[];
-    warn?: string[];
-  };
-  minConfidence?: string;
-  baseline?: string;
-  checkTestFixtures?: boolean;
-  logLevel?: string;
-  enable?: boolean;
-  path?: string[];
-  importStrategy?: string;
-  addExecutableToTerminalPath?: boolean;
-};
-
-/**
- * The initialization options envelope sent to the server, matching
- * ruff-vscode's shape and the server's `ServerSettings`: an array of
- * per-workspace-folder settings plus a global fallback, all up-front at
- * `initialize`.
+ * The initialization options envelope sent to the server.
  */
 export type InitializationOptions = {
-  settings: FolderSettings[];
-  globalSettings: FolderSettings;
+  settings: ISettings[];
+  globalSettings: ISettings;
 };
 
-/**
- * Read a single folder's settings from the VS Code configuration.
- *
- * This is the E1 placeholder for E3's `settings.ts` `getWorkspaceSettings`:
- * it reads the global `ry.*` configuration and maps it into the
- * `FolderSettings` shape the server expects. Fields absent from
- * `contributes.configuration` are read as `undefined` and omitted, so
- * "unset" reaches the server untouched.
- */
-function readFolderSettings(namespace: string): FolderSettings {
-  const config = getConfiguration(namespace);
-  return {
-    configuration: config.get<string>("configuration"),
-    lint: {
-      select: config.get<string[]>("lint.select"),
-      extendSelect: config.get<string[]>("lint.extendSelect"),
-      ignore: config.get<string[]>("lint.ignore"),
-      error: config.get<string[]>("lint.error"),
-      warn: config.get<string[]>("lint.warn"),
-    },
-    minConfidence: config.get<string>("minConfidence"),
-    baseline: config.get<string>("baseline"),
-    checkTestFixtures: config.get<boolean>("checkTestFixtures"),
-    logLevel: config.get<string>("logLevel"),
-    enable: config.get<boolean>("enable"),
-    path: config.get<string[]>("path"),
-    importStrategy: config.get<string>("importStrategy"),
-    addExecutableToTerminalPath: config.get<boolean>(
-      "addExecutableToTerminalPath",
-    ),
-  };
-}
 
 /**
  * Build the `initializationOptions` to send at `initialize`.
@@ -106,7 +45,7 @@ function readFolderSettings(namespace: string): FolderSettings {
 export function getInitializationOptions(
   namespace: string,
 ): InitializationOptions {
-  const globalSettings = readFolderSettings(namespace);
+  const globalSettings = getGlobalSettings(namespace);
   return {
     settings: [globalSettings],
     globalSettings,
@@ -149,11 +88,13 @@ async function resolveBinary(namespace: string): Promise<string> {
   return RY_BINARY_NAME;
 }
 
+let _disposables: Disposable[] = [];
+
 export type ServerState = {
   client: LanguageClient;
 };
 
-let _disposables: Disposable[] = [];
+
 
 /**
  * Construct and start the language server client.
@@ -234,7 +175,7 @@ export async function startServer(
     await newLSClient.start();
   } catch (ex) {
     logger.error(`Server: Start failed: ${ex}`);
-    dispose();
+    dispose(newLSClient);
     return null;
   }
 
@@ -247,12 +188,13 @@ export async function startServer(
 export async function stopServer(lsClient: LanguageClient): Promise<void> {
   logger.info("Server: Stop requested");
   await lsClient.stop();
-  dispose();
+  dispose(lsClient);
 }
 
-function dispose(): void {
+function dispose(client?: LanguageClient): void {
   for (const disposable of _disposables) {
     disposable.dispose();
   }
   _disposables = [];
+  client?.dispose();
 }

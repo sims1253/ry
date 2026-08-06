@@ -14,7 +14,8 @@ on:
         type: boolean
         default: false
 
-permissions: {}
+permissions:
+  contents: read
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -85,9 +86,8 @@ jobs:
         if: ${{ inputs.pre-release }}
         working-directory: editors/code
         run: |
-          # Bump to a pre-release version using timestamp.
-          ts=$(date -u +%Y%m%d%H%M)
-          bunx npm-version --preid pre --preid-tag $ts prepatch
+          ts=$(date -u +%Y%m%d%H%M%S)
+          npm version prerelease --preid "dev.$ts" --no-git-tag-version
 
       - name: Package VSIX
         working-directory: editors/code

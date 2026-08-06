@@ -17,11 +17,17 @@ export function versionToString(v: VersionInfo): string {
 }
 
 export function versionFromString(s: string): VersionInfo | undefined {
-    const parts = s.split(".").map(Number);
-    if (parts.length < 3 || parts.some(isNaN)) {
+    // Accept pre-release and build-metadata suffixes by parsing only
+    // the numeric major.minor.patch prefix.
+    const match = /^\s*v?(\d+)\.(\d+)\.(\d+)/.exec(s);
+    if (!match) {
         return undefined;
     }
-    return { major: parts[0], minor: parts[1], patch: parts[2] };
+    return {
+        major: Number(match[1]),
+        minor: Number(match[2]),
+        patch: Number(match[3]),
+    };
 }
 
 export function versionGte(a: VersionInfo, b: VersionInfo): boolean {

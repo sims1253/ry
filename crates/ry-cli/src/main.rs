@@ -300,9 +300,11 @@ fn main() -> Result<ExitCode> {
             // subscriber was already installed earlier in this process,
             // this call is a no-op. We don't rely on that, but it means
             // we don't have to coordinate with `run_check`'s init.
+            let filter = tracing_subscriber::EnvFilter::try_new(&log_level)
+                .map_err(|e| miette::miette!("invalid --log-level '{log_level}': {e}"))?;
             tracing_subscriber::fmt()
                 .with_writer(std::io::stderr)
-                .with_env_filter(&log_level)
+                .with_env_filter(filter)
                 .try_init()
                 .ok();
             // The LSP server is async (tower-lsp is built on tokio), but

@@ -25,10 +25,10 @@ export function showServerLogsCommand(serverChannel: vscode.OutputChannel): void
     serverChannel.show();
 }
 
-export function debugInformationCommand(
+export async function debugInformationCommand(
     binary: ResolvedBinary | undefined,
     settings: ISettings | undefined,
-): void {
+): Promise<void> {
     const lines: string[] = [];
     lines.push("## ry debug information");
     lines.push("");
@@ -50,8 +50,8 @@ export function debugInformationCommand(
     }
 
     const output = lines.join("\n");
-    const doc = vscode.workspace.openTextDocument({ content: output, language: "markdown" });
-    doc.then((d) => vscode.window.showTextDocument(d));
+    const doc = await vscode.workspace.openTextDocument({ content: output, language: "markdown" });
+    await vscode.window.showTextDocument(doc);
 }
 
 export async function explainRuleCommand(binaryPath: string): Promise<void> {

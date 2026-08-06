@@ -115,7 +115,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - name: Build Zed extension
-        run: cargo build --manifest-path editors/zed/Cargo.toml
+      - name: Install Zed extension target
+        run: rustup target add wasm32-wasip2
+      - name: Build Zed extension (WASM)
+        run: cargo build --locked --manifest-path editors/zed/Cargo.toml --target wasm32-wasip2
       - name: Test Zed extension
-        run: cargo test --manifest-path editors/zed/Cargo.toml
+        run: cargo test --locked --manifest-path editors/zed/Cargo.toml

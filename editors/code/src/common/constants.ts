@@ -20,6 +20,11 @@ export const EXTENSION_ROOT_DIR =
 export const RY_EXTENSION_ID = "ry.ry";
 
 /**
+ * The VS Code settings namespace (`ry.*`).
+ */
+export const RY_SETTINGS_NAMESPACE = "ry";
+
+/**
  * The log channel name used for the extension's own log and for the
  * trace channel labels shown in the VS Code output panel.
  */

@@ -162,7 +162,7 @@ while IFS= read -r line; do
   case "$line" in *"=== full tier"*) continue ;; esac
   IFS=$'\t' read -r slug _ <<< "$line"
   [[ -z "${slug:-}" || "$slug" == \#* ]] && continue
-  for seen in "${all_names[@]}"; do
+  for seen in "${all_names[@]:0}"; do
     if [[ "$seen" == "$slug" ]]; then
       echo "ecosystem: duplicate package slug '$slug' in $packages_file; manifests must be collision-safe" >&2
       exit 1

@@ -28,7 +28,8 @@ for variant in "glue.txt" "glue.full.txt"; do
     fi
 
     cp "$path" "$path.bak"
-    trap 'cp "$path.bak" "$path" 2>/dev/null; rm -f "$path.bak"' EXIT INT TERM
+    trap 'cp "$path.bak" "$path" 2>/dev/null; rm -f "$path.bak"' EXIT
+    trap 'cp "$path.bak" "$path" 2>/dev/null; rm -f "$path.bak"; exit 130' INT TERM
 
     echo "DRIFT_DETECTED" >> "$path"
 

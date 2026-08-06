@@ -121,10 +121,22 @@ impl Checker {
             Expr::Ident { name, .. } | Expr::String(name, _) => name.as_str(),
             _ => return,
         };
-        let lookup_name = name.rsplit_once("::").map(|(_, bare)| bare).unwrap_or(name);
+        // A package-qualified callee (`pkg::c(...)`) targets a specific
+        // package's export, which may have ordinary call semantics even
+        // if it shares a name with a base container. Only match unqualified
+        // calls (which resolve through R's search path to base) or
+        // explicitly base-qualified calls (`base::c(...)`).
+        let lookup_name = if let Some((pkg, bare)) = name.rsplit_once("::") {
+            if !matches!(pkg.trim_end_matches(':'), "base") {
+                return;
+            }
+            bare
+        } else {
+            name
+        };
         if !NAME_CARRYING_CONTAINERS.contains(&lookup_name) {
             return;
-        }
+        };
         let builds_named_structure = args.iter().any(|argument| argument.name.is_some());
         for argument in args {
             if argument.name.is_some() {
@@ -295,13 +307,29 @@ impl Checker {
     /// hardcoded list — the stubs are the authoritative source and are
     /// maintained in one place.
     fn scalar_by_construction(&self, expr: &Expr, scope: &Scope) -> Option<String> {
-        if let Some(callee) = bare_callee(expr)
-            && !scope.is_lexical_function(callee)
-            && matches!(expr, Expr::Call { args, .. } if !args.is_empty())
-            && self.is_typeshed_scalar_reduction(callee)
-        {
-            return Some(format!("`{callee}()` always returns a single value"));
+        // Use the original callee (with pkg:: prefix preserved) for the
+        // typeshed lookup, so otherpkg::sum does not resolve to base::sum.
+        let Expr::Call { func, args, .. } = expr else {
+            // Fall through to the local-binding check below.
+            return self.scalar_by_construction_local(expr, scope);
+        };
+        let callee = match func.as_ref() {
+            Expr::Ident { name, .. } | Expr::String(name, _) => name.as_str(),
+            _ => return None,
+        };
+        // A user-defined function (lexical or project-level) with the same
+        // bare name shadows the base function and may not return a scalar.
+        let bare = callee.rsplit_once("::").map(|(_, b)| b).unwrap_or(callee);
+        if scope.is_lexical_function(bare) || self.fn_table.fns.contains_key(bare) {
+            return None;
         }
+        if !args.is_empty() && self.is_typeshed_scalar_reduction(callee) {
+            return Some(format!("`{bare}()` always returns a single value"));
+        }
+        None
+    }
+
+    fn scalar_by_construction_local(&self, expr: &Expr, scope: &Scope) -> Option<String> {
         let Expr::Ident { name, .. } = expr else {
             return None;
         };

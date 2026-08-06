@@ -1393,21 +1393,17 @@ impl Backend {
                 self.update_doc(path.to_string(), new_text, version).await;
 
                 // Build InputEdit and do incremental parse.
-                let input_edit = build_input_edit(&old_text, range, &change.text);
-                if let Some(edit) = input_edit {
-                    let mut tree_mut = old_tree;
-                    if let Some(ref mut tree) = tree_mut {
-                        tree.edit(&edit);
-                    }
-                    // Store the tree for next time. The actual SourceFile
-                    // will be produced lazily by parsed_file, but we store
-                    // the tree so the next parse is incremental.
-                    let mut state = self.state.lock().await;
-                    if let Some(tree) = tree_mut {
-                        state.trees.insert(path.to_string(), tree);
-                    } else {
-                        state.trees.remove(path);
-                    }
+                let edit = build_input_edit(&old_text, range, &change.text);
+                let mut tree_mut = old_tree;
+                if let Some(ref mut tree) = tree_mut {
+                    tree.edit(&edit);
+                }
+                // Store the tree for next time so the next parse is incremental.
+                let mut state = self.state.lock().await;
+                if let Some(tree) = tree_mut {
+                    state.trees.insert(path.to_string(), tree);
+                } else {
+                    state.trees.remove(path);
                 }
             } else {
                 // No old text — treat as full replacement.
@@ -1866,31 +1862,23 @@ fn apply_range_edit(old_text: &str, range: Range, new_text: &str) -> String {
 /// Build a tree-sitter `InputEdit` from an LSP range and replacement text.
 /// The InputEdit tells tree-sitter which byte range changed and the new
 /// positions, so it can reuse unchanged subtrees.
-fn build_input_edit(old_text: &str, range: Range, new_text: &str) -> Option<ry_core::InputEdit> {
+pub(crate) fn build_input_edit(old_text: &str, range: Range, new_text: &str) -> ry_core::InputEdit {
     let start_byte = position_to_byte(old_text, range.start);
     let old_end_byte = position_to_byte(old_text, range.end);
     let new_end_byte = start_byte + new_text.len();
 
-    // Compute the new end position by counting lines/chars in new_text.
-    let new_end_position = byte_offset_to_position(new_text, new_text.len());
+    let start_position = byte_offset_to_point(old_text, start_byte);
+    let old_end_position = byte_offset_to_point(old_text, old_end_byte);
+    let new_end_position = byte_offset_to_point_relative(start_byte, start_position, new_text);
 
-    Some(ry_core::InputEdit {
+    ry_core::InputEdit {
         start_byte,
         old_end_byte,
         new_end_byte,
-        start_position: ry_core::Point {
-            row: range.start.line as usize,
-            column: range.start.character as usize,
-        },
-        old_end_position: ry_core::Point {
-            row: range.end.line as usize,
-            column: range.end.character as usize,
-        },
-        new_end_position: ry_core::Point {
-            row: new_end_position.line as usize,
-            column: new_end_position.character as usize,
-        },
-    })
+        start_position,
+        old_end_position,
+        new_end_position,
+    }
 }
 
 /// Convert an LSP Position (0-based line, UTF-16 code unit column) to a
@@ -1926,27 +1914,40 @@ fn position_to_byte(text: &str, pos: Position) -> usize {
     line_start + line.len()
 }
 
-/// Convert a byte offset to an LSP Position (line, UTF-16 column).
-fn byte_offset_to_position(text: &str, byte_offset: usize) -> Position {
-    let mut line = 0u32;
+/// Convert a byte offset to a tree-sitter Point (row, byte column).
+fn byte_offset_to_point(text: &str, byte_offset: usize) -> ry_core::Point {
+    let offset = byte_offset.min(text.len());
+    let mut row = 0usize;
     let mut last_line_start = 0usize;
 
-    for (i, ch) in text.char_indices() {
-        if i >= byte_offset {
-            break;
-        }
+    for (i, ch) in text[..offset].char_indices() {
         if ch == '\n' {
-            line += 1;
+            row += 1;
             last_line_start = i + 1;
         }
     }
 
-    let column = text[last_line_start..byte_offset.min(text.len())]
-        .encode_utf16()
-        .count() as u32;
+    let column = offset - last_line_start;
+    ry_core::Point { row, column }
+}
 
-    Position {
-        line,
-        character: column,
+/// Compute the new end Point after inserting `new_text` at `start_byte`.
+fn byte_offset_to_point_relative(
+    _start_byte: usize,
+    start_position: ry_core::Point,
+    new_text: &str,
+) -> ry_core::Point {
+    let newlines = new_text.matches('\n').count();
+    if newlines == 0 {
+        ry_core::Point {
+            row: start_position.row,
+            column: start_position.column + new_text.len(),
+        }
+    } else {
+        let last_newline = new_text.rfind('\n').unwrap();
+        ry_core::Point {
+            row: start_position.row + newlines,
+            column: new_text.len() - last_newline - 1,
+        }
     }
 }

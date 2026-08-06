@@ -150,6 +150,7 @@ impl Project {
     /// the most recently sourced file's top-level bindings override
     /// earlier ones.
     pub fn add_file(&mut self, path: String, file: SourceFile) {
+        self.dirty_paths.insert(path.clone());
         self.files.push((path, Arc::new(file)));
     }
 
@@ -157,6 +158,7 @@ impl Project {
     /// already holds an `Arc<SourceFile>` (e.g. the LSP server, which
     /// shares parse results across features).
     pub fn add_file_arc(&mut self, path: String, file: Arc<SourceFile>) {
+        self.dirty_paths.insert(path.clone());
         self.files.push((path, file));
     }
 
@@ -198,15 +200,26 @@ impl Project {
 
     pub fn set_bare_loaded(&mut self, loaded: HashMap<String, HashSet<String>>) {
         self.bare_loaded = loaded;
+
+        self.mark_all_dirty();
     }
 
     /// Install runtime package stubs. User packages, including `base`,
     /// replace same-named embedded packages wholesale for this project.
+    /// Mark every file as dirty so the next incremental check re-emits all.
+    fn mark_all_dirty(&mut self) {
+        let paths: Vec<String> = self.files.iter().map(|(p, _)| p.clone()).collect();
+        for p in paths {
+            self.dirty_paths.insert(p);
+        }
+    }
+
     pub fn set_user_stubs(&mut self, stubs: Arc<BTreeMap<String, Typeshed>>) {
         if !Arc::ptr_eq(&self.user_stubs, &stubs) {
             self.collected_files.clear();
         }
         self.user_stubs = stubs;
+        self.mark_all_dirty();
     }
 
     /// Declare per-file names provided by project metadata, such as
@@ -214,14 +227,20 @@ impl Project {
     /// import in one checked package from leaking into an unrelated package.
     pub fn set_external_bindings(&mut self, bindings: HashMap<String, HashSet<String>>) {
         self.external_bindings = bindings;
+
+        self.mark_all_dirty();
     }
 
     pub fn set_imported_from(&mut self, imports: HashMap<String, HashMap<String, String>>) {
         self.imported_from = imports;
+
+        self.mark_all_dirty();
     }
 
     pub fn set_external_s3_methods(&mut self, methods: HashMap<String, HashSet<(String, String)>>) {
         self.external_s3_methods = methods;
+
+        self.mark_all_dirty();
     }
 
     pub fn set_load_bindings(
@@ -229,6 +248,8 @@ impl Project {
         bindings: HashMap<String, HashMap<usize, HashSet<String>>>,
     ) {
         self.load_bindings = bindings;
+
+        self.mark_all_dirty();
     }
 
     /// Run the three-pass check across all added files. Returns a map
@@ -356,14 +377,6 @@ impl Project {
         // Nothing changed → nothing to refine.
         if self.dirty_paths.is_empty() {
             return Some(HashSet::new());
-        }
-
-        // Build function-name → defining-file mapping.
-        let mut fn_to_file: HashMap<&str, &str> = HashMap::new();
-        for (path, collected) in &self.collected_files {
-            for fn_name in collected.fn_table.fns.keys() {
-                fn_to_file.insert(fn_name.as_str(), path.as_str());
-            }
         }
 
         // Functions defined in dirty files are the seed of the affected set.
@@ -513,8 +526,6 @@ impl Project {
             dirty
         };
 
-        self.emit_count = must_emit.len();
-
         // Pass 3: per-file diagnostic emission. Each file gets a fresh
         // Checker that SHARES the refined tables via an `Arc` handle --
         // pass 3 is read-only on the tables (every mutation site is in
@@ -543,6 +554,7 @@ impl Project {
             .filter(|(_, (path, _))| must_emit.contains(path.as_str()))
             .map(|(i, _)| i)
             .collect();
+        self.emit_count = emit_indices.len();
 
         let per_file: Vec<(usize, String, Vec<Diagnostic>)> = emit_indices
             .par_iter()

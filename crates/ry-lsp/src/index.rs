@@ -48,7 +48,7 @@ pub(crate) fn discover_r_files(root: &Path, excludes: &Excludes) -> Vec<(String,
                 continue;
             }
 
-            if path.is_dir() {
+            if path.is_dir() && !entry.file_type().is_ok_and(|ft| ft.is_symlink()) {
                 // Skip hidden directories (.git, .Rproj.user, etc).
                 if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                     if name.starts_with('.') {

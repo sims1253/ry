@@ -136,15 +136,15 @@ pub(crate) fn lookup(path: &str, content: &str, config_hash: u64) -> Option<Coll
         .get("loaded")?
         .as_array()?
         .iter()
-        .filter_map(|v| v.as_str().map(String::from))
-        .collect();
+        .map(|v| v.as_str().map(String::from))
+        .collect::<Option<HashSet<_>>>()?;
 
     let return_types: Vec<RType> = entry
         .get("return_slots")?
         .as_array()?
         .iter()
-        .filter_map(rtype_from_json)
-        .collect();
+        .map(rtype_from_json)
+        .collect::<Option<Vec<_>>>()?;
     let return_slots = ReturnSlots(return_types);
 
     let fn_table = fntable_from_json(entry.get("fn_table")?)?;
@@ -195,14 +195,14 @@ fn fntable_from_json(v: &serde_json::Value) -> Option<FnTable> {
         .get("known_vars")?
         .as_array()?
         .iter()
-        .filter_map(|v| v.as_str().map(String::from))
-        .collect();
+        .map(|v| v.as_str().map(String::from))
+        .collect::<Option<HashSet<_>>>()?;
     let callable_vars: HashSet<String> = v
         .get("callable_vars")?
         .as_array()?
         .iter()
-        .filter_map(|v| v.as_str().map(String::from))
-        .collect();
+        .map(|v| v.as_str().map(String::from))
+        .collect::<Option<HashSet<_>>>()?;
 
     Some(FnTable {
         known_vars,

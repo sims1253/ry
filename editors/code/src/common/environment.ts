@@ -1,7 +1,7 @@
 /**
  * Terminal PATH management — ensures `ry` in the integrated terminal is
- * the binary the editor is using. Ported from air's
- * `editors/code/src/environment.ts` (air's one borrowing from air).
+ * the binary the editor is using. Ported from posit-dev/air's
+ * `editors/code/src/environment.ts`.
  *
  * Use `applyAtShellIntegration: true`, NOT `applyAtProcessCreation`:
  * process-creation mutation runs before shell rc files and gets clobbered.
@@ -10,39 +10,38 @@
 import * as vscode from "vscode";
 import { Logger } from "./logger";
 
+// TODO: This is a placeholder. The real implementation requires a
+// `vscode.GlobalEnvironmentVariableCollection` passed through from the
+// extension activation context. It will be wired up when the extension
+// is first tested in a real editor host.
 export class PathEnvironmentVariableManager {
-    private readonly key = "PATH";
-    private readonly applyAtShellIntegration = true;
-
     constructor(
         private readonly logger: Logger,
         private readonly pathToAdd: string,
     ) {}
 
-    async ensureOnPath(): Promise<void> {
-        if (!this.applyAtShellIntegration) return;
-
-        // Check if the path is already on PATH via a terminal
-        const terminals = vscode.window.terminals;
-        for (const terminal of terminals) {
-            try {
-                await terminal.processId;
-            } catch {
-                // Terminal may have exited
-            }
+    async ensureOnPath(collection?: vscode.GlobalEnvironmentVariableCollection): Promise<void> {
+        if (!collection) {
+            this.logger.debug("No environment variable collection available; skipping PATH update");
+            return;
         }
 
-        // Apply via shell integration environment variable collection
-        const env = vscode.workspace
-            .getConfiguration("terminal")
-            .get("integrated.env.osx") as Record<string, string> | undefined;
+        const currentPath = collection.get("PATH")?.value ?? process.env.PATH ?? "";
+        if (currentPath.includes(this.pathToAdd)) {
+            this.logger.debug(`${this.pathToAdd} is already on PATH`);
+            return;
+        }
 
-        this.logger.debug(
-            `Ensuring ${this.pathToAdd} is on PATH for terminal sessions`,
+        const newPath = `${this.pathToAdd}${process.platform === "win32" ? ";" : ":"}${currentPath}`;
+        collection.prepend(
+            "PATH",
+            newPath,
+            { applyAtShellIntegration: true, applyAtProcessCreation: false },
         );
+        this.logger.info(`Prepended ${this.pathToAdd} to terminal PATH`);
     }
 
-    async dispose(): Promise<void> {
-        // Clean up any PATH modifications
+    async dispose(collection?: vscode.GlobalEnvironmentVariableCollection): Promise<void> {
+        collection?.delete("PATH");
     }
 }

@@ -227,6 +227,7 @@ impl State {
     /// editor provides an `ignore`/`error`/`warn` list, it replaces
     /// the `ry.toml` value; otherwise the `ry.toml` value (which may
     /// itself be the empty default) is used.
+    #[cfg(test)]
     pub(super) fn effective_filter(&self) -> ry_checker::SeverityFilter {
         let error = self
             .folder_settings
@@ -365,7 +366,7 @@ impl LanguageServer for Backend {
             .unwrap_or_default();
 
         // S4: Load per-folder configs for multi-root workspaces.
-        let ws_folders: Vec<(PathBuf, ry_config::Config)> = params
+        let mut ws_folders: Vec<(PathBuf, ry_config::Config)> = params
             .workspace_folders
             .as_ref()
             .map(|folders| {
@@ -390,6 +391,9 @@ impl LanguageServer for Backend {
         state.folder_settings = folder_settings;
         state.supports_workspace_configuration = supports_workspace_configuration;
         state.supports_did_change_watched_files = supports_did_change_watched_files;
+        // Longest-prefix matching in `folder_config_for_path` requires
+        // the most specific root first.
+        ws_folders.sort_by_key(|(p, _)| std::cmp::Reverse(p.as_os_str().len()));
         state.workspace_folders = ws_folders;
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
@@ -1491,7 +1495,7 @@ impl Backend {
         // Snapshot the open docs under the lock, then drop the lock
         // before running the checker so a slow check doesn't block
         // other LSP requests (e.g. didOpen of a second file).
-        let (path, docs, versions, user_stubs, project, _default_filter, baseline, config_root) = {
+        let (path, docs, versions, user_stubs, project, baseline, config_root) = {
             let state = self.state.lock().await;
             (
                 uri_to_path(&uri),
@@ -1499,7 +1503,6 @@ impl Backend {
                 state.versions.clone(),
                 Arc::clone(&state.user_stubs),
                 Arc::clone(&state.project),
-                state.effective_filter(), // fallback for non-multi-root
                 state.effective_baseline(),
                 state.root.clone(),
             )

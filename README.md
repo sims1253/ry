@@ -313,10 +313,13 @@ Connect manually by pointing your LSP client at `ry server`. For
 example, with Neovim's built-in LSP:
 
 ```lua
+local root_marker =
+  vim.fs.find({'ry.toml', 'DESCRIPTION', '.git'}, { upward = true })[1]
+
 vim.lsp.start({
   name = 'ry',
   cmd = {'ry', 'server'},
-  root_dir = vim.fs.dirname(vim.fs.find({'ry.toml', 'DESCRIPTION', '.git'}, { upward = true })[1]),
+  root_dir = root_marker and vim.fs.dirname(root_marker) or vim.fn.getcwd(),
 })
 ```
 

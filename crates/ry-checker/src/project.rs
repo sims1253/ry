@@ -196,6 +196,7 @@ impl Project {
     pub fn set_loaded(&mut self, loaded: std::collections::HashSet<String>) {
         self.declared_loaded = loaded.clone();
         self.loaded = loaded;
+        self.mark_all_dirty();
     }
 
     pub fn set_bare_loaded(&mut self, loaded: HashMap<String, HashSet<String>>) {

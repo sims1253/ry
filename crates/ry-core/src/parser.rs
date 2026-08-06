@@ -36,48 +36,8 @@ impl RParser {
     }
 
     pub fn parse(&mut self, path: &str, src: &str) -> Result<SourceFile, ParseError> {
-        let tree = self
-            .parser
-            .parse(src, None)
-            .ok_or_else(|| ParseError::TreeSitter {
-                line: 0,
-                col: 0,
-                message: "parser returned no tree".into(),
-            })?;
-        let root = tree.root_node();
-        let mut stmts = Vec::new();
-        let mut cursor = root.walk();
-        for child in root.named_children(&mut cursor) {
-            // A top-level `{ a <- 1; b <- 2 }` braced expression must
-            // splice ALL of its child statements into the surrounding
-            // statement list, not just the last one. The earlier
-            // `lower_braced_as_stmt` discarded earlier siblings.
-            if child.kind() == "braced_expression" {
-                let mut inner_cursor = child.walk();
-                for inner in child.named_children(&mut inner_cursor) {
-                    if let Some(stmt) = self.lower_stmt(inner, src) {
-                        stmts.push(stmt);
-                    }
-                }
-                continue;
-            }
-            if let Some(stmt) = self.lower_stmt(child, src) {
-                stmts.push(stmt);
-            }
-        }
-        // tree-sitter always returns a tree, even for broken input; it
-        // marks unrecoverable regions with `ERROR` nodes and missing
-        // tokens with `MISSING` nodes. Collect these so the checker can
-        // surface them as RY000 instead of silently checking a recovered
-        // (and possibly nonsense) tree.
-        let parse_errors = collect_parse_errors(root);
-        let comments = collect_comments(root, src);
-        Ok(SourceFile {
-            path: path.to_string(),
-            stmts,
-            parse_errors,
-            comments,
-        })
+        let (file, _) = self.parse_with_tree(path, src, None)?;
+        Ok(file)
     }
 
     /// Parse with an old tree-sitter `Tree` for incremental re-parsing
@@ -102,9 +62,7 @@ impl RParser {
                 message: "parser returned no tree".into(),
             })?;
         let root = tree.root_node();
-        // The lowering borrows `tree` immutably; clone it for the return
-        // value so the borrow ends before we move the original.
-        let tree_clone = tree.clone();
+        let tree = tree.clone(); // Clone for return value; root borrows the original.
         let mut stmts = Vec::new();
         let mut cursor = root.walk();
         for child in root.named_children(&mut cursor) {
@@ -130,7 +88,7 @@ impl RParser {
                 parse_errors,
                 comments,
             },
-            tree_clone,
+            tree,
         ))
     }
 

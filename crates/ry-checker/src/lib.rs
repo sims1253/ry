@@ -789,33 +789,7 @@ impl Checker {
     }
 
     pub(crate) fn run_fixpoint(&mut self) {
-        // Pass 2 runs the unified walker in discarding mode: types are
-        // computed (for return-slot refinement) but no diagnostics are
-        // recorded. Diagnostics are produced in pass 3 (emit_diagnostics)
-        // against the fully refined FnTable. Save/restore so a panic
-        // (unreachable in practice) does not leak the flag.
-        let prev_discarding = self.discarding;
-        self.discarding = true;
-        for _ in 0..MAX_FIXPOINT_DEPTH {
-            // Snapshot the *contents* (not the Arc handle) for the
-            // convergence check -- cloning the Arc would alias the same
-            // data and the comparison would always be equal.
-            let before = (*self.return_slots).clone();
-            let names: Vec<String> = self.fn_table.fns.keys().cloned().collect();
-            for name in names {
-                self.refine_fn_return(&name);
-            }
-            // A formal inherits quoting only when it is passed directly to a
-            // quoting formal of another user function.  Do this in the same
-            // bounded loop as return refinement so chains across files (and
-            // mutual recursion) converge before diagnostics are emitted.
-            let generic_quoting_changed = self.propagate_s3_generic_quoting();
-            let quoting_changed = self.propagate_forwarded_quoting();
-            if self.return_slots.0 == before.0 && !generic_quoting_changed && !quoting_changed {
-                break;
-            }
-        }
-        self.discarding = prev_discarding;
+        self.run_fixpoint_inner(None);
     }
 
     /// Run the fixpoint, but only refine functions in `scope`. Functions
@@ -829,21 +803,29 @@ impl Checker {
     /// function whose return type changes can still affect other scoped
     /// functions that call it.
     pub(crate) fn run_fixpoint_scoped(&mut self, scope: &HashSet<String>) {
-        if scope.is_empty() {
+        self.run_fixpoint_inner(Some(scope));
+    }
+
+    /// Shared fixpoint loop. When `scope` is `None`, refines all functions;
+    /// when `Some`, only functions in the scope set.
+    fn run_fixpoint_inner(&mut self, scope: Option<&HashSet<String>>) {
+        if scope.is_some_and(|s| s.is_empty()) {
             return;
         }
         let prev_discarding = self.discarding;
         self.discarding = true;
         for _ in 0..MAX_FIXPOINT_DEPTH {
             let before = (*self.return_slots).clone();
-            // Only refine functions in the scope.
-            let names: Vec<String> = self
-                .fn_table
-                .fns
-                .keys()
-                .filter(|name| scope.contains(*name))
-                .cloned()
-                .collect();
+            let names: Vec<String> = match scope {
+                Some(s) => self
+                    .fn_table
+                    .fns
+                    .keys()
+                    .filter(|name| s.contains(*name))
+                    .cloned()
+                    .collect(),
+                None => self.fn_table.fns.keys().cloned().collect(),
+            };
             for name in names {
                 self.refine_fn_return(&name);
             }

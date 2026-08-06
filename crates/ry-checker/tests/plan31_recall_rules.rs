@@ -356,6 +356,24 @@ fn ry105_stays_silent_for_non_scalar_reductions() {
     ));
 }
 
+#[test]
+fn ry105_respects_local_shadowing_of_scalar_reduction() {
+    // A locally redefined `sum` that returns a vector must not trigger
+    // RY105 on length(sum(x)) > 0. The base function's scalar property
+    // only holds when the name is not shadowed.
+    assert!(!fires(
+        "f <- function(v) { sum <- function(x) c(x, x); if (length(sum(v)) > 0) 1 }
+",
+        "RY105"
+    ));
+    // Same for `any`.
+    assert!(!fires(
+        "f <- function(v) { any <- function(x) c(TRUE, FALSE); if (length(any(v)) > 0) 1 }
+",
+        "RY105"
+    ));
+}
+
 // ---------------------------------------------------------------------------
 // `not-before-comparison` is deliberately NOT implemented
 // ---------------------------------------------------------------------------

@@ -43,3 +43,5 @@ jobs:
         run: ecosystem/run.sh --check
       - name: Drift detection integration test
         run: ecosystem/test-drift-detection.sh
+      - name: Reconciliation gating test
+        run: Rscript ecosystem/test-reconciliation.R

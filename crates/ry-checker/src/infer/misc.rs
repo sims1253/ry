@@ -32,11 +32,40 @@ pub(crate) fn equality_list_leaf_type(op: BinOpKind, value: &RType) -> Option<RT
     }
 }
 
-/// R's foreign-function-interface primitives. Their first argument is a
-/// native routine entry-point symbol (a bare identifier or backtick
-/// name), not a variable reference, so RY010 must not fire on it.
 pub(crate) fn is_ffi_primitive(name: &str) -> bool {
     crate::packages::FFI_PRIMITIVES.contains(&name)
+}
+
+#[cfg(test)]
+mod ffi_primitives_tests {
+    use super::*;
+
+    /// Every entry in [`FFI_PRIMITIVES`] must cause the checker to treat its
+    /// first argument as a native entry-point symbol (skip RY010), matching
+    /// the convention for .Call/.C/.Fortran/.External: the first argument is
+    /// a bare identifier or backtick name, not a variable reference.
+    ///
+    /// A function that does NOT follow this convention (e.g. .Internal, whose
+    /// first argument is a *call*) must not be in the list.
+    #[test]
+    fn every_ffi_primitive_is_recognized() {
+        for &primitive in crate::packages::FFI_PRIMITIVES {
+            assert!(
+                is_ffi_primitive(primitive),
+                "`{primitive}` is in FFI_PRIMITIVES but is_ffi_primitive returned false"
+            );
+        }
+    }
+
+    /// .Internal must NOT be in FFI_PRIMITIVES: its first argument is a
+    /// call expression, not a bare entry-point symbol.
+    #[test]
+    fn internal_is_not_an_ffi_primitive() {
+        assert!(
+            !is_ffi_primitive(".Internal"),
+            ".Internal takes a call, not a symbol; it must not be in FFI_PRIMITIVES"
+        );
+    }
 }
 
 /// Wrappers that forward their first argument to an FFI primitive, so it is

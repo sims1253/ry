@@ -438,32 +438,42 @@ pub(crate) struct FnTable {
 impl FnTable {
     fn append_collected(
         &mut self,
-        mut collected: FnTable,
+        collected: &FnTable,
         return_slots: &mut ReturnSlots,
-        collected_slots: ReturnSlots,
+        collected_slots: &ReturnSlots,
     ) {
         let slot_offset = return_slots.0.len();
-        for function in collected.fns.values_mut() {
-            function.return_slot += slot_offset;
-        }
-        for slot in collected.s3_methods.values_mut() {
-            *slot += slot_offset;
-        }
-        for slot in collected.s4_methods.values_mut() {
-            *slot += slot_offset;
-        }
-        return_slots.0.extend(collected_slots.0);
+        return_slots.0.extend_from_slice(&collected_slots.0);
 
-        self.fns.extend(collected.fns);
-        self.s3_methods.extend(collected.s3_methods);
-        self.s4_methods.extend(collected.s4_methods);
-        self.s4_classes.extend(collected.s4_classes);
-        self.known_vars.extend(collected.known_vars);
-        self.callable_vars.extend(collected.callable_vars);
-        for (name, sites) in collected.call_sites {
-            self.call_sites.entry(name).or_default().extend(sites);
+        self.fns.extend(collected.fns.iter().map(|(name, f)| {
+            let mut f = f.clone();
+            f.return_slot += slot_offset;
+            (name.clone(), f)
+        }));
+        self.s3_methods.extend(
+            collected
+                .s3_methods
+                .iter()
+                .map(|(k, &slot)| (k.clone(), slot + slot_offset)),
+        );
+        self.s4_methods.extend(
+            collected
+                .s4_methods
+                .iter()
+                .map(|(k, &slot)| (k.clone(), slot + slot_offset)),
+        );
+        self.s4_classes.extend(collected.s4_classes.clone());
+        self.known_vars.extend(collected.known_vars.iter().cloned());
+        self.callable_vars
+            .extend(collected.callable_vars.iter().cloned());
+        for (name, sites) in &collected.call_sites {
+            self.call_sites
+                .entry(name.clone())
+                .or_default()
+                .extend(sites.iter().cloned());
         }
-        self.forwarded_calls.extend(collected.forwarded_calls);
+        self.forwarded_calls
+            .extend(collected.forwarded_calls.iter().cloned());
     }
 }
 

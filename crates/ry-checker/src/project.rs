@@ -43,7 +43,7 @@ pub struct Project {
     return_slots: ReturnSlots,
     /// Per-file source, keyed by path. We keep these around so pass 3
     /// (diagnostic emission) has each file's AST in hand.
-    files: Vec<(String, SourceFile)>,
+    files: Vec<(String, Arc<SourceFile>)>,
     /// Cached per-file diagnostics from the most recent `check()` call.
     /// Kept so `apply_filter` can run after `check()` without re-parsing.
     diagnostics: Vec<(String, Vec<Diagnostic>)>,
@@ -121,13 +121,20 @@ impl Project {
     /// the most recently sourced file's top-level bindings override
     /// earlier ones.
     pub fn add_file(&mut self, path: String, file: SourceFile) {
+        self.files.push((path, Arc::new(file)));
+    }
+
+    /// Add a pre-parsed file without wrapping. Use when the caller
+    /// already holds an `Arc<SourceFile>` (e.g. the LSP server, which
+    /// shares parse results across features).
+    pub fn add_file_arc(&mut self, path: String, file: Arc<SourceFile>) {
         self.files.push((path, file));
     }
 
     /// Replace an existing parsed file while preserving project order, or
     /// append it when the path is new. Only that file's pass-1 cache entry is
     /// invalidated; `check_incremental` reuses every other file's collection.
-    pub fn update_file(&mut self, path: String, file: SourceFile) {
+    pub fn update_file(&mut self, path: String, file: Arc<SourceFile>) {
         self.collected_files.remove(&path);
         self.file_known_vars.remove(&path);
         if let Some((_, existing)) = self
@@ -235,7 +242,7 @@ impl Project {
             let (collected, slots) = collector.into_tables();
             self.file_known_vars
                 .insert(path.clone(), collected.known_vars.clone());
-            fn_table.append_collected(collected, &mut return_slots, slots);
+            fn_table.append_collected(&collected, &mut return_slots, &slots);
         }
         fn_table.known_vars = self.pooled_known_vars();
         self.fn_table = fn_table;
@@ -282,9 +289,9 @@ impl Project {
                 .expect("every project file has a pass-1 cache entry");
             loaded.extend(collected.loaded.iter().cloned());
             fn_table.append_collected(
-                collected.fn_table.clone(),
+                &collected.fn_table,
                 &mut return_slots,
-                collected.return_slots.clone(),
+                &collected.return_slots,
             );
         }
         fn_table.known_vars = self.pooled_known_vars();

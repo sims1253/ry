@@ -178,7 +178,7 @@ fn warm_edit_dependent(c: &mut Criterion) {
             let changed = parser
                 .parse(&edited_path, black_box(&edited_src))
                 .expect("reparse");
-            project.update_file(edited_path.clone(), changed);
+            project.update_file(edited_path.clone(), Arc::new(changed));
             black_box(project.check_incremental());
         });
     });
@@ -201,7 +201,7 @@ fn warm_edit_leaf(c: &mut Criterion) {
             let changed = parser
                 .parse(&edited_path, black_box(&edited_src))
                 .expect("reparse");
-            project.update_file(edited_path.clone(), changed);
+            project.update_file(edited_path.clone(), Arc::new(changed));
             black_box(project.check_incremental());
         });
     });
@@ -229,7 +229,7 @@ fn warm_edit_library(c: &mut Criterion) {
                 &without_library
             };
             let changed = parser.parse(&edited_path, black_box(src)).expect("reparse");
-            project.update_file(edited_path.clone(), changed);
+            project.update_file(edited_path.clone(), Arc::new(changed));
             black_box(project.check_incremental());
         });
     });
@@ -290,7 +290,7 @@ fn lsp_edit_sim(c: &mut Criterion) {
                 })
                 .collect();
             black_box(cached_files);
-            project.update_file(edited_path.clone(), changed.as_ref().clone());
+            project.update_file(edited_path.clone(), Arc::clone(&changed));
             black_box(project.check_incremental());
         });
     });

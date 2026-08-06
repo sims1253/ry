@@ -76,6 +76,24 @@ pub struct Project {
     /// Top-level bindings collected independently for each file, then pooled
     /// for project-wide diagnostic emission.
     file_known_vars: HashMap<String, HashSet<String>>,
+    /// Paths whose content changed since the last successful emit.
+    /// These must be re-emitted regardless of table changes.
+    dirty_paths: HashSet<String>,
+    /// The `loaded` set from the previous emit, used to detect project-wide
+    /// invalidation (a new `library()` call changes diagnostics everywhere).
+    prev_loaded: Option<HashSet<String>>,
+    /// Return-type slots from the previous emit, used to detect which
+    /// functions' inferred return types changed during pass 2 refinement.
+    prev_return_slots: Option<Vec<ry_core::RType>>,
+    /// Per-file set of function names called (from `call_sites`), cached
+    /// so the dirty-set computation in `refine_and_emit` can check whether
+    /// a file references any function whose return slot changed.
+    file_called_fns: HashMap<String, HashSet<String>>,
+    /// Test-visible counter: how many files were actually emitted (not
+    /// served from cache) in the most recent `refine_and_emit` call.
+    /// Asserted on in unit tests the same way `parse_count` is in backend.rs.
+    #[doc(hidden)]
+    pub emit_count: usize,
 }
 
 #[derive(Clone)]
@@ -109,6 +127,11 @@ impl Project {
             user_stubs: Arc::new(BTreeMap::new()),
             collected_files: HashMap::new(),
             file_known_vars: HashMap::new(),
+            dirty_paths: HashSet::new(),
+            prev_loaded: None,
+            prev_return_slots: None,
+            file_called_fns: HashMap::new(),
+            emit_count: 0,
         }
     }
 
@@ -137,6 +160,7 @@ impl Project {
     pub fn update_file(&mut self, path: String, file: Arc<SourceFile>) {
         self.collected_files.remove(&path);
         self.file_known_vars.remove(&path);
+        self.dirty_paths.insert(path.clone());
         if let Some((_, existing)) = self
             .files
             .iter_mut()
@@ -153,6 +177,7 @@ impl Project {
         self.files.retain(|(existing, _)| existing != path);
         self.collected_files.remove(path);
         self.file_known_vars.remove(path);
+        self.dirty_paths.insert(path.to_string());
     }
 
     /// Declare the project's loaded packages (from `ry.toml`'s
@@ -247,6 +272,11 @@ impl Project {
         fn_table.known_vars = self.pooled_known_vars();
         self.fn_table = fn_table;
         self.return_slots = return_slots;
+        // Cold check: every file must be emitted, and prior incremental
+        // state (if any) is discarded.
+        self.dirty_paths = self.files.iter().map(|(p, _)| p.clone()).collect();
+        self.prev_loaded = None;
+        self.prev_return_slots = None;
         self.refine_and_emit()
     }
 
@@ -293,6 +323,12 @@ impl Project {
                 &mut return_slots,
                 &collected.return_slots,
             );
+            // Cache the set of function names this file calls, for the
+            // dirty-set computation in refine_and_emit.
+            self.file_called_fns.insert(
+                path.clone(),
+                collected.fn_table.call_sites.keys().cloned().collect(),
+            );
         }
         fn_table.known_vars = self.pooled_known_vars();
         self.fn_table = fn_table;
@@ -316,17 +352,98 @@ impl Project {
         self.fn_table = fn_table;
         self.return_slots = return_slots;
 
+        // --- Dirty-set computation (Plan 33 W1) ---
+        //
+        // Determine which files' diagnostics can actually have changed,
+        // and re-emit only those. A file must be re-emitted when:
+        //
+        // 1. Its own content changed (tracked in `dirty_paths`).
+        // 2. The project-wide `loaded` set changed (a `library()` call
+        //    appearing/disappearing in any file invalidates everything).
+        // 3. Any function it calls had its inferred return type changed
+        //    by pass 2 refinement.
+        //
+        // On the first call (no previous state), every file is emitted.
+        let loaded_changed = self
+            .prev_loaded
+            .as_ref()
+            .is_none_or(|prev| prev != &self.loaded);
+
+        // Compute the set of return-slot indices whose type changed.
+        let changed_slots: HashSet<usize> = match &self.prev_return_slots {
+            None => (0..self.return_slots.0.len()).collect(),
+            Some(prev) => self
+                .return_slots
+                .0
+                .iter()
+                .enumerate()
+                .filter(|(i, t)| prev.get(*i) != Some(*t))
+                .map(|(i, _)| i)
+                .collect(),
+        };
+
+        // Build the set of function names whose return_slot is in the
+        // changed set. A file that calls any of these must be re-emitted.
+        let changed_fns: HashSet<&str> = self
+            .fn_table
+            .fns
+            .iter()
+            .filter(|(_, uf)| changed_slots.contains(&uf.return_slot))
+            .map(|(name, _)| name.as_str())
+            .collect();
+        // S3/S4 method slots are checked the same way.
+        let changed_s3: HashSet<usize> = self
+            .fn_table
+            .s3_methods
+            .values()
+            .chain(self.fn_table.s4_methods.values())
+            .filter(|slot| changed_slots.contains(slot))
+            .copied()
+            .collect();
+
+        // Combine: a file is dirty if it was content-changed, if loaded
+        // changed at all, or if it calls any function whose return slot
+        // changed. When loaded changes, every file is dirty.
+        // On the first call (prev_return_slots is None), every file must be
+        // emitted. Otherwise, use the incremental dirty set.
+        let first_call = self.prev_return_slots.is_none();
+        let must_emit: HashSet<&str> = if first_call || loaded_changed {
+            self.files.iter().map(|(p, _)| p.as_str()).collect()
+        } else {
+            let mut dirty: HashSet<&str> = self.dirty_paths.iter().map(|s| s.as_str()).collect();
+            for (path, _) in &self.files {
+                if dirty.contains(path.as_str()) {
+                    continue;
+                }
+                // Does this file call any function whose return type changed?
+                if let Some(called) = self.file_called_fns.get(path) {
+                    if called
+                        .iter()
+                        .any(|name| changed_fns.contains(name.as_str()))
+                    {
+                        dirty.insert(path.as_str());
+                    }
+                }
+                // Conservatively: if any S3/S4 method slot changed, emit
+                // this file. S3 dispatch is dynamic; we cannot cheaply
+                // determine which files trigger changed S3 methods.
+                if !changed_s3.is_empty() {
+                    dirty.insert(path.as_str());
+                }
+            }
+            dirty
+        };
+
+        self.emit_count = must_emit.len();
+
         // Pass 3: per-file diagnostic emission. Each file gets a fresh
         // Checker that SHARES the refined tables via an `Arc` handle --
         // pass 3 is read-only on the tables (every mutation site is in
         // passes 1/2), so only the refcount is bumped per file, not the
         // tables themselves.
         //
-        // The emission loop is embarrassingly parallel: each file's
-        // Checker is independent and the Arc-shared tables are read-
-        // only, so we rayon-`par_iter` it. Diagnostics
-        // come back in arbitrary thread order; we re-sort to match the
-        // input file order so callers see a stable, deterministic vec.
+        // W1 optimization: only emit files in the dirty set. Files not in
+        // the set keep their previously-emitted diagnostics unchanged.
         let fn_table = Arc::new(std::mem::take(&mut self.fn_table));
         let package_known_vars = Arc::new(fn_table.known_vars.clone());
         let return_slots = Arc::new(std::mem::take(&mut self.return_slots));
@@ -337,11 +454,21 @@ impl Project {
         let load_bindings = Arc::new(std::mem::take(&mut self.load_bindings));
         let bare_loaded = Arc::new(std::mem::take(&mut self.bare_loaded));
         let user_stubs = Arc::clone(&self.user_stubs);
-        let mut per_file: Vec<(usize, String, Vec<Diagnostic>)> = self
+
+        // Split files into those that need emission and those that can
+        // reuse cached diagnostics.
+        let emit_indices: Vec<usize> = self
             .files
-            .par_iter()
+            .iter()
             .enumerate()
-            .map(|(i, (path, file))| {
+            .filter(|(_, (path, _))| must_emit.contains(path.as_str()))
+            .map(|(i, _)| i)
+            .collect();
+
+        let per_file: Vec<(usize, String, Vec<Diagnostic>)> = emit_indices
+            .par_iter()
+            .map(|&i| {
+                let (path, file) = &self.files[i];
                 let mut emitter = Checker::with_shared_tables(
                     path,
                     Arc::clone(&fn_table),
@@ -371,6 +498,7 @@ impl Project {
                 (i, path.clone(), emitter.take_diagnostics())
             })
             .collect();
+
         // Restore the tables onto the Project for the next `check()` call.
         // Every emitter above has been dropped, so the Arc refcount is 1
         // and `unwrap_or_clone` returns the owned value without cloning.
@@ -382,13 +510,35 @@ impl Project {
         self.external_s3_methods = Arc::unwrap_or_clone(external_s3_methods);
         self.load_bindings = Arc::unwrap_or_clone(load_bindings);
         self.bare_loaded = Arc::unwrap_or_clone(bare_loaded);
-        // Re-sort to input file order and drop the sort index.
-        per_file.sort_by_key(|(i, _, _)| *i);
-        let per_file: Vec<(String, Vec<Diagnostic>)> =
-            per_file.into_iter().map(|(_, p, d)| (p, d)).collect();
 
-        self.diagnostics = per_file.clone();
-        per_file
+        // Merge newly-emitted diagnostics with cached diagnostics from
+        // files that were not in the dirty set.
+        let mut result: Vec<(String, Vec<Diagnostic>)> = Vec::with_capacity(self.files.len());
+
+        // Build a lookup from emitted results.
+        let mut emitted_map: HashMap<usize, (String, Vec<Diagnostic>)> =
+            per_file.into_iter().map(|(i, p, d)| (i, (p, d))).collect();
+
+        for (i, (path, _)) in self.files.iter().enumerate() {
+            if let Some((p, d)) = emitted_map.remove(&i) {
+                result.push((p, d));
+            } else if let Some(idx) = self.diagnostics.iter().position(|(dp, _)| dp == path) {
+                // Clone cached diagnostics (they're unchanged).
+                result.push(self.diagnostics[idx].clone());
+            } else {
+                // No cached diagnostics and not emitted (shouldn't happen
+                // after the first check, but handle gracefully).
+                result.push((path.clone(), Vec::new()));
+            }
+        }
+
+        // Record state for the next incremental check.
+        self.prev_loaded = Some(self.loaded.clone());
+        self.prev_return_slots = Some(self.return_slots.0.clone());
+        self.dirty_paths.clear();
+
+        self.diagnostics = result.clone();
+        result
     }
 
     fn pooled_known_vars(&self) -> HashSet<String> {

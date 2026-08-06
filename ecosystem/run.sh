@@ -435,19 +435,17 @@ fi
 
 drift=0
 for report_stem in "${processed_reports[@]}"; do
-  for suffix in "" ".full"; do
-    expected="$reports_dir/$report_stem$suffix.txt"
-    actual="$generated_dir/$report_stem$suffix.txt"
-    if [[ ! -f "$expected" ]] || ! cmp -s "$expected" "$actual"; then
-      echo "ecosystem: report drift for $report_stem$suffix" >&2
-      if [[ -f "$expected" ]]; then
-        diff -u "$expected" "$actual" || true
-      else
-        diff -u /dev/null "$actual" || true
-      fi
-      drift=1
+  expected="$reports_dir/$report_stem.txt"
+  actual="$generated_dir/$report_stem.txt"
+  if [[ ! -f "$expected" ]] || ! cmp -s "$expected" "$actual"; then
+    echo "ecosystem: report drift for $report_stem" >&2
+    if [[ -f "$expected" ]]; then
+      diff -u "$expected" "$actual" || true
+    else
+      diff -u /dev/null "$actual" || true
     fi
-  done
+    drift=1
+  fi
 done
 for summary_name in "${summary_names[@]}"; do
   expected="$reports_dir/$summary_name"

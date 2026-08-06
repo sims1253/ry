@@ -19,7 +19,9 @@ run_sh="$root/ecosystem/run.sh"
 fail=0
 tested=0
 
-for variant in "glue.txt" "glue.full.txt"; do
+# Only test .txt variants — .full.txt files are gitignored and never
+# committed, so there is no committed baseline to drift against.
+for variant in "glue.txt"; do
     path="$reports_dir/$variant"
     if [[ ! -f "$path" ]]; then
         echo "FAIL: expected report variant $variant does not exist"

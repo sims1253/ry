@@ -95,6 +95,28 @@ fn strip_negation(expr: &Expr) -> &Expr {
     inner
 }
 
+/// Extract the first positional argument expression from a call.
+fn call_argument(expr: &Expr) -> Option<&Expr> {
+    let Expr::Call { args, .. } = expr else {
+        return None;
+    };
+    args.first().map(|arg| &arg.value)
+}
+
+/// Render an expression back to a compact source string for diagnostic
+/// suggestions. Covers the common literal/identifier shapes; anything
+/// else degrades to a placeholder.
+fn expr_to_source(expr: &Expr) -> String {
+    match expr {
+        Expr::Ident { name, .. } => name.clone(),
+        Expr::String(s, _) => format!(r#""{s}""#),
+        Expr::Integer(n, _) => format!("{n}L"),
+        Expr::Double(n, _) => n.to_string(),
+        Expr::Logical(b, _) => b.to_string(),
+        _ => "...".to_string(),
+    }
+}
+
 impl Checker {
     /// RY102: `list("a" <- 1)` where `list("a" = 1)` was meant.
     ///
@@ -198,11 +220,21 @@ impl Checker {
         if !unary_call_to(lhs, "class") && !unary_call_to(rhs, "class") {
             return;
         }
-        let suggestion = if matches!(op, BinOpKind::Eq) {
-            "inherits(x, class)"
+        // Build the suggestion from the actual operands: the class() call's
+        // first argument becomes inherits()'s first argument, and the other
+        // side of the comparison becomes the class name.
+        let (class_arg, other_side) = if unary_call_to(lhs, "class") {
+            (&lhs, rhs)
         } else {
-            "!inherits(x, class)"
+            (&rhs, lhs)
         };
+        let Some(arg_expr) = call_argument(class_arg) else {
+            return;
+        };
+        let arg_src = expr_to_source(arg_expr);
+        let class_src = expr_to_source(other_side);
+        let prefix = if matches!(op, BinOpKind::Eq) { "" } else { "!" };
+        let suggestion = format!("{prefix}inherits({arg_src}, {class_src})");
         self.emit(
             Severity::Warning,
             *span,

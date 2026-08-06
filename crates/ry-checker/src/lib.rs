@@ -768,6 +768,25 @@ impl Checker {
     // the same return slot. Iterating `fns.keys()` therefore refines
     // S3 method bodies alongside regular functions; dispatch reads
     // the refined slot via the `s3_methods` map.
+    /// Overlay previously-refined return types onto the current return slots.
+    ///
+    /// Called before [`run_fixpoint`](Self::run_fixpoint) to seed the fixpoint
+    /// with the previous solution (Plan 33 W2). Functions whose definition
+    /// has not changed and whose callees' return types are unchanged will
+    /// keep their seeded value, reducing the number of fixpoint iterations
+    /// needed to re-stabilise.
+    ///
+    /// Only functions that exist in both the current table and the seed map
+    /// are updated. Functions new to the table (or absent from the seed)
+    /// keep their pass-1 collection value.
+    pub(crate) fn seed_return_types(&mut self, seed: &HashMap<String, ry_core::RType>) {
+        for (name, uf) in &self.fn_table.fns {
+            if let Some(t) = seed.get(name) {
+                Arc::make_mut(&mut self.return_slots).set(uf.return_slot, t.clone());
+            }
+        }
+    }
+
     pub(crate) fn run_fixpoint(&mut self) {
         // Pass 2 runs the unified walker in discarding mode: types are
         // computed (for return-slot refinement) but no diagnostics are
@@ -789,6 +808,44 @@ impl Checker {
             // quoting formal of another user function.  Do this in the same
             // bounded loop as return refinement so chains across files (and
             // mutual recursion) converge before diagnostics are emitted.
+            let generic_quoting_changed = self.propagate_s3_generic_quoting();
+            let quoting_changed = self.propagate_forwarded_quoting();
+            if self.return_slots.0 == before.0 && !generic_quoting_changed && !quoting_changed {
+                break;
+            }
+        }
+        self.discarding = prev_discarding;
+    }
+
+    /// Run the fixpoint, but only refine functions in `scope`. Functions
+    /// outside the scope keep their current (seeded) return type. Used by
+    /// `Project` for incremental checks where only a subset of functions
+    /// can have changed (Plan 33 W2).
+    ///
+    /// The set must include every function whose definition or callees
+    /// changed; functions outside the set are assumed stable. The fixpoint
+    /// still iterates until convergence *within the scope* — a scoped
+    /// function whose return type changes can still affect other scoped
+    /// functions that call it.
+    pub(crate) fn run_fixpoint_scoped(&mut self, scope: &HashSet<String>) {
+        if scope.is_empty() {
+            return;
+        }
+        let prev_discarding = self.discarding;
+        self.discarding = true;
+        for _ in 0..MAX_FIXPOINT_DEPTH {
+            let before = (*self.return_slots).clone();
+            // Only refine functions in the scope.
+            let names: Vec<String> = self
+                .fn_table
+                .fns
+                .keys()
+                .filter(|name| scope.contains(*name))
+                .cloned()
+                .collect();
+            for name in names {
+                self.refine_fn_return(&name);
+            }
             let generic_quoting_changed = self.propagate_s3_generic_quoting();
             let quoting_changed = self.propagate_forwarded_quoting();
             if self.return_slots.0 == before.0 && !generic_quoting_changed && !quoting_changed {

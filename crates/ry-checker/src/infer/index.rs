@@ -23,21 +23,7 @@ fn dollar_receiver_is_definitely_atomic(receiver: &RType) -> bool {
 fn dollar_receiver_mode_description(receiver: &RType) -> String {
     if receiver.mode == Mode::Union {
         if let Some(members) = &receiver.members {
-            let modes: Vec<&str> = members
-                .iter()
-                .map(|m| match m.mode {
-                    Mode::Integer => "integer",
-                    Mode::Double => "double",
-                    Mode::Character => "character",
-                    Mode::Logical => "logical",
-                    Mode::Complex => "complex",
-                    Mode::Raw => "raw",
-                    _ => "unknown",
-                })
-                .collect();
-            if modes.len() == 1 {
-                return modes[0].to_string();
-            }
+            let modes: Vec<String> = members.iter().map(|m| m.mode.to_string()).collect();
             return modes.join("` or `");
         }
     }

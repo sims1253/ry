@@ -463,16 +463,13 @@ impl Checker {
             BinOpKind::AndAnd => length_guard_parameter(lhs, scope),
             _ => None,
         };
-        let Some(parameter) =
-            guarded.filter(|parameter| vector_predicate_parameter(rhs, scope) == Some(*parameter))
-        else {
-            return false;
-        };
-        // The guard itself proves that this is still the unspecialized formal:
-        // Scope's parameter marker is cleared by assignment. Its vectorized
-        // predicate therefore has unknown length and is unsafe for `&&`/`||`
-        // even when no separate vector-intent call appears in the body.
-        scope.is_parameter(parameter)
+        // Both `guarded` and `vector_predicate_parameter` resolve through
+        // `direct_parameter`, which requires `scope.is_parameter`. So if the
+        // parameter were reassigned (clearing its marker) neither would
+        // return it, making the separate `is_parameter` check redundant.
+        guarded
+            .filter(|parameter| vector_predicate_parameter(rhs, scope) == Some(*parameter))
+            .is_some()
     }
 }
 

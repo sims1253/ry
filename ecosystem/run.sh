@@ -35,9 +35,9 @@ while (($#)); do
   case "$1" in
     --check) check=true ;;
     --local) local_only=true ;;
-    --manifest) packages_file="$2"; shift ;;
-    --ledger) audit_corpus="$2"; shift ;;
-    --tier) tier="$2"; shift ;;
+    --manifest) [[ $# -ge 2 ]] || { echo "ecosystem: --manifest requires a value" >&2; usage >&2; exit 2; }; packages_file="$2"; shift ;;
+    --ledger) [[ $# -ge 2 ]] || { echo "ecosystem: --ledger requires a value" >&2; usage >&2; exit 2; }; audit_corpus="$2"; shift ;;
+    --tier) [[ $# -ge 2 ]] || { echo "ecosystem: --tier requires a value" >&2; usage >&2; exit 2; }; tier="$2"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -46,6 +46,10 @@ done
 
 if [[ "$tier" != "fast" && "$tier" != "full" ]]; then
   echo "ecosystem: --tier must be 'fast' or 'full' (got: $tier)" >&2
+  exit 2
+fi
+if [[ ! -r "$packages_file" ]]; then
+  echo "ecosystem: manifest not found or not readable: $packages_file" >&2
   exit 2
 fi
 
@@ -151,6 +155,22 @@ run_suite() {
 processed_packages=()
 processed_reports=()
 root_packages=()
+all_names=()
+# Pre-validate the entire manifest for slug collisions, including entries
+# past the full-tier marker that --tier fast would skip.
+while IFS= read -r line; do
+  case "$line" in *"=== full tier"*) continue ;; esac
+  IFS=$'\t' read -r slug _ <<< "$line"
+  [[ -z "${slug:-}" || "$slug" == \#* ]] && continue
+  for seen in "${all_names[@]}"; do
+    if [[ "$seen" == "$slug" ]]; then
+      echo "ecosystem: duplicate package slug '$slug' in $packages_file; manifests must be collision-safe" >&2
+      exit 1
+    fi
+  done
+  all_names+=("$slug")
+done < "$packages_file"
+
 seen_names=()
 # Read the raw line first so we can honour the manifest's tier marker (a
 # `# === full tier` comment) and detect collisions before cloning anything.
@@ -179,14 +199,7 @@ while IFS= read -r raw || [[ -n "${raw:-}" ]]; do
     echo "ecosystem: manifest entry for '$name' pins '$pinned_ref'; a corpus entry needs a full 40-character commit ID, not a branch or tag" >&2
     exit 1
   fi
-  # Collision-safe manifest: a slug must not appear twice, otherwise two
-  # different upstream packages would share one clone/cache/report slot.
-  for seen in "${seen_names[@]}"; do
-    if [[ "$seen" == "$name" ]]; then
-      echo "ecosystem: duplicate package slug '$name' in $packages_file; manifests must be collision-safe" >&2
-      exit 1
-    fi
-  done
+  # Collision check is now in the pre-validation loop above.
   seen_names+=("$name")
 
   if $local_only; then
@@ -384,6 +397,10 @@ if (length(unowned)) {
   writeLines(c("ecosystem: unowned hermetic findings appeared:", paste0("  - ", unowned)), stderr())
 }
 if (length(missing) || length(unowned)) {
+  if (length(missing_required)) {
+    writeLines("ecosystem: a reviewed true_positive finding disappeared; this gates the build in every mode.", stderr())
+    quit(status = 1L)
+  }
   reconciliation_mode <- if (!is.null(corpus$reconciliation)) corpus$reconciliation[[1L]] else "hermetic"
   if (reconciliation_mode == "audit-transcript") {
     writeLines(c(

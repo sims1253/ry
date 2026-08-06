@@ -312,6 +312,7 @@ impl Checker {
     fn scalar_by_construction(&self, expr: &Expr, scope: &Scope) -> Option<String> {
         if let Some(callee) = bare_callee(expr)
             && SCALAR_REDUCTIONS.contains(&callee)
+            && !scope.is_lexical_function(callee)
             && matches!(expr, Expr::Call { args, .. } if !args.is_empty())
         {
             return Some(format!("`{callee}()` always returns a single value"));

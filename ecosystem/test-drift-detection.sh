@@ -17,16 +17,22 @@ run_sh="$root/ecosystem/run.sh"
 "$run_sh" --local --check 2>/dev/null
 
 fail=0
+tested=0
 
 for variant in "glue.txt" "glue.full.txt"; do
     path="$reports_dir/$variant"
-    [[ -f "$path" ]] || { echo "skip: $variant does not exist"; continue; }
+    if [[ ! -f "$path" ]]; then
+        echo "FAIL: expected report variant $variant does not exist"
+        fail=1
+        continue
+    fi
 
     cp "$path" "$path.bak"
-    trap 'cp "$path.bak" "$path" 2>/dev/null; rm -f "$path.bak"' EXIT
+    trap 'cp "$path.bak" "$path" 2>/dev/null; rm -f "$path.bak"' EXIT INT TERM
 
     echo "DRIFT_DETECTED" >> "$path"
 
+    tested=$((tested + 1))
     if "$run_sh" --local --check 2>/dev/null; then
         echo "FAIL: corrupted $variant was not detected"
         fail=1
@@ -36,7 +42,12 @@ for variant in "glue.txt" "glue.full.txt"; do
 
     cp "$path.bak" "$path"
     rm -f "$path.bak"
-    trap - EXIT
+    trap - EXIT INT TERM
 done
+
+if [[ $tested -eq 0 ]]; then
+    echo "FAIL: no report variants were tested"
+    fail=1
+fi
 
 exit $fail

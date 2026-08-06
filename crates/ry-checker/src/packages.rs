@@ -17,14 +17,7 @@ pub const NATIVE_ROUTINE_PREFIX_SENTINEL: &str = "\0useDynLib:";
 /// native routine entry-point symbol (a bare identifier or backtick name),
 /// not a variable reference. A bare name in that position is therefore
 /// evidence that the name is a registered native routine.
-pub const FFI_PRIMITIVES: &[&str] = &[
-    ".Call",
-    ".C",
-    ".Fortran",
-    ".External",
-    ".External2",
-    ".Internal",
-];
+pub const FFI_PRIMITIVES: &[&str] = &[".Call", ".C", ".Fortran", ".External", ".External2"];
 
 /// External-binding sentinel recording `useDynLib(..., .registration = TRUE)`.
 /// The registered entry points are declared in `src/`'s `R_registerRoutines`

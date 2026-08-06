@@ -36,7 +36,7 @@ from the audited artefacts every time. The generator lives with the audit data
 here: it reads a private audit checkout, and this repo carries only the
 resulting ledger.
 
-```
+```sh
 # from the audit checkout
 Rscript transcribe-corpus.R --ry-repo /path/to/ry           # write docs/corpus/posit-0.8.0.json
 Rscript transcribe-corpus.R --ry-repo /path/to/ry --check   # assert the committed file matches
@@ -58,7 +58,7 @@ The tidyverse ledger has no generator in this repo either.
 
 ## Running the corpora
 
-```
+```sh
 # tidyverse (default; strict hermetic reconciliation)
 ecosystem/run.sh --check
 

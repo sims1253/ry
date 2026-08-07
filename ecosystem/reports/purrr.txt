@@ -1,3 +1,1 @@
-R/map.R:224:23 RY010
-R/map2.R:108:23 RY010
-R/pmap.R:177:7 RY010
+R/deprec-prepend.R:34:7 RY032

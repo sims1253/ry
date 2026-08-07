@@ -11,4 +11,6 @@ R/import-standalone-types-check.R:498:9 RY031
 R/import-standalone-types-check.R:523:9 RY031
 R/parallel-taskq.R:137:13 RY001
 R/reporter-debug.R:61:7 RY001
+R/snapshot.R:313:7 RY032
 R/source.R:83:11 RY001
+R/utils.R:33:21 RY032

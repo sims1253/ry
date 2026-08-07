@@ -29,9 +29,21 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - id: version
+        env:
+          PRE_RELEASE: ${{ inputs.pre-release }}
         run: |
           ts=$(date -u +%Y%m%d%H%M%S)
-          echo "version=0.1.0-dev.$ts" >> "$GITHUB_OUTPUT"
+          if [[ "$PRE_RELEASE" == "true" ]]; then
+            # VS Code Marketplace requires strict major.minor.patch format.
+            # Use a timestamp-based patch number for pre-releases.
+            patch=$((ts % 1000000))
+            echo "version=0.1.${patch}" >> "$GITHUB_OUTPUT"
+          else
+            # Stable: always derive a unique version from the timestamp
+            # so --skip-duplicate doesn't block re-publishes.
+            patch=$((ts % 1000000))
+            echo "version=0.0.${patch}" >> "$GITHUB_OUTPUT"
+          fi
 
   build:
     name: Build ${{ matrix.target }}
@@ -95,8 +107,7 @@ jobs:
         working-directory: editors/code
         run: bun install --frozen-lockfile
 
-      - name: Set pre-release version
-        if: ${{ inputs.pre-release }}
+      - name: Set version
         working-directory: editors/code
         run: |
           npm version "${{ needs.version.outputs.version }}" --no-git-tag-version

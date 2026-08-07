@@ -446,33 +446,6 @@
     },
     {
       "package": "purrr",
-      "code": "RY010",
-      "path": "R/map.R",
-      "line": 224,
-      "column": 23,
-      "label": "false_positive",
-      "workstream": "P4d"
-    },
-    {
-      "package": "purrr",
-      "code": "RY010",
-      "path": "R/map2.R",
-      "line": 108,
-      "column": 23,
-      "label": "false_positive",
-      "workstream": "P4d"
-    },
-    {
-      "package": "purrr",
-      "code": "RY010",
-      "path": "R/pmap.R",
-      "line": 177,
-      "column": 7,
-      "label": "false_positive",
-      "workstream": "P4d"
-    },
-    {
-      "package": "purrr",
       "code": "RY080",
       "path": "tests/testthat/test-map.R",
       "line": 82,
@@ -488,15 +461,6 @@
       "column": 20,
       "label": "false_positive",
       "workstream": "P8"
-    },
-    {
-      "package": "lubridate",
-      "code": "RY003",
-      "path": "R/update.r",
-      "line": 136,
-      "column": 7,
-      "label": "false_positive",
-      "workstream": "P6b"
     },
     {
       "package": "googlesheets4",

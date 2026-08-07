@@ -5,6 +5,7 @@
 
 import * as path from "path";
 import * as vscode from "vscode";
+import { expect } from "chai";
 
 describe("E2E: ry extension", () => {
     it("Activates on .R file and produces expected diagnostics", async function () {

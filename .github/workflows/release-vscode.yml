@@ -148,6 +148,7 @@ jobs:
 
       - name: Publish to Marketplace
         run: |
+          set -euo pipefail
           for vsix in vsix/*.vsix; do
             npx @vscode/vsce publish --no-dependencies --skip-duplicate \
               ${{ inputs.pre-release && '--pre-release' || '' }} \
@@ -175,6 +176,7 @@ jobs:
 
       - name: Publish to Open VSX
         run: |
+          set -euo pipefail
           for vsix in vsix/*.vsix; do
             npx ovsx publish --skip-duplicate \
               ${{ inputs.pre-release && '--pre-release' || '' }} \

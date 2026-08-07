@@ -27,7 +27,7 @@ jobs:
         working-directory: .
         run: cargo build --release -p ry-cli
       - name: Add ry to PATH
-        run: echo "$(pwd)/../../target/release" >> $GITHUB_PATH
+        run: echo "$(pwd)/target/release" >> $GITHUB_PATH
         working-directory: .
       - run: bun install --frozen-lockfile
       - name: Run tests (xvfb)

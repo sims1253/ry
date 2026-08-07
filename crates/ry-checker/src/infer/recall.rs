@@ -111,7 +111,10 @@ fn call_argument(expr: &Expr) -> Option<&Expr> {
 fn expr_to_source(expr: &Expr) -> Option<String> {
     match expr {
         Expr::Ident { name, .. } => Some(name.clone()),
-        Expr::String(s, _) => Some(format!(r#""{s}""#)),
+        Expr::String(s, _) => Some(format!(
+            "\"{}\"",
+            s.replace("\\", "\\\\").replace("\"", "\\\"")
+        )),
         Expr::Integer(n, _) => Some(format!("{n}L")),
         Expr::Double(n, _) => Some(n.to_string()),
         Expr::Logical(b, _) => Some(b.to_string()),

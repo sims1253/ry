@@ -5,10 +5,16 @@ on:
     branches: [main]
     paths:
       - "editors/code/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - ".github/workflows/test-code.yml"
   pull_request:
     paths:
       - "editors/code/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - ".github/workflows/test-code.yml"
 
 defaults:

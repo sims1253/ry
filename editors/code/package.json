@@ -239,6 +239,7 @@
   },
   "devDependencies": {
     "@types/chai": "^5.2.3",
+    "chai": "^5.1.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.90.0",

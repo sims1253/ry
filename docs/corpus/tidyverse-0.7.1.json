@@ -1001,6 +1001,510 @@
       "column": 20,
       "label": "false_positive",
       "workstream": "P7a"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/facet-.R",
+      "line": 1074,
+      "column": 28,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/guide-axis-stack.R",
+      "line": 35,
+      "column": 25,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/guide-custom.R",
+      "line": 43,
+      "column": 22,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/guide-custom.R",
+      "line": 44,
+      "column": 23,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/guide-custom.R",
+      "line": 45,
+      "column": 24,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/plot-render.R",
+      "line": 297,
+      "column": 19,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/plot-render.R",
+      "line": 64,
+      "column": 12,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/plot-render.R",
+      "line": 65,
+      "column": 12,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/plot-render.R",
+      "line": 82,
+      "column": 46,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/plot-render.R",
+      "line": 83,
+      "column": 46,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-.R",
+      "line": 1015,
+      "column": 11,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-.R",
+      "line": 1017,
+      "column": 14,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-.R",
+      "line": 1018,
+      "column": 9,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-.R",
+      "line": 108,
+      "column": 75,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-.R",
+      "line": 109,
+      "column": 36,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-.R",
+      "line": 1493,
+      "column": 11,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-.R",
+      "line": 1495,
+      "column": 14,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-.R",
+      "line": 1496,
+      "column": 9,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-.R",
+      "line": 164,
+      "column": 13,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-.R",
+      "line": 269,
+      "column": 13,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-.R",
+      "line": 315,
+      "column": 37,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-.R",
+      "line": 315,
+      "column": 52,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-.R",
+      "line": 370,
+      "column": 13,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-.R",
+      "line": 474,
+      "column": 11,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-binned.R",
+      "line": 30,
+      "column": 53,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-binned.R",
+      "line": 50,
+      "column": 53,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-continuous.R",
+      "line": 112,
+      "column": 57,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-continuous.R",
+      "line": 85,
+      "column": 57,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-date.R",
+      "line": 115,
+      "column": 32,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-date.R",
+      "line": 153,
+      "column": 36,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-date.R",
+      "line": 193,
+      "column": 36,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-date.R",
+      "line": 233,
+      "column": 32,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-date.R",
+      "line": 272,
+      "column": 32,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-date.R",
+      "line": 78,
+      "column": 32,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-discrete-.R",
+      "line": 104,
+      "column": 17,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-discrete-.R",
+      "line": 87,
+      "column": 17,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-size.R",
+      "line": 135,
+      "column": 16,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/scale-size.R",
+      "line": 145,
+      "column": 16,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/stat-contour.R",
+      "line": 142,
+      "column": 17,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/utilities.R",
+      "line": 556,
+      "column": 53,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
+      "path": "R/utilities.R",
+      "line": 563,
+      "column": 53,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "lubridate",
+      "code": "RY010",
+      "path": "R/ops-compare.r",
+      "line": 20,
+      "column": 64,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "lubridate",
+      "code": "RY010",
+      "path": "R/ops-compare.r",
+      "line": 55,
+      "column": 14,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "lubridate",
+      "code": "RY010",
+      "path": "R/vctrs.R",
+      "line": 107,
+      "column": 3,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "lubridate",
+      "code": "RY010",
+      "path": "R/vctrs.R",
+      "line": 112,
+      "column": 3,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "lubridate",
+      "code": "RY010",
+      "path": "R/vctrs.R",
+      "line": 117,
+      "column": 3,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "lubridate",
+      "code": "RY010",
+      "path": "R/vctrs.R",
+      "line": 64,
+      "column": 3,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "purrr",
+      "code": "RY032",
+      "path": "R/deprec-prepend.R",
+      "line": 34,
+      "column": 7,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "tidyr",
+      "code": "RY010",
+      "path": "R/chop.R",
+      "line": 386,
+      "column": 27,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "tidyr",
+      "code": "RY010",
+      "path": "R/chop.R",
+      "line": 465,
+      "column": 7,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "tidyr",
+      "code": "RY010",
+      "path": "R/hoist.R",
+      "line": 155,
+      "column": 37,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "tidyr",
+      "code": "RY010",
+      "path": "R/hoist.R",
+      "line": 156,
+      "column": 55,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "tidyr",
+      "code": "RY010",
+      "path": "R/unnest-helper.R",
+      "line": 88,
+      "column": 40,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "tidyr",
+      "code": "RY010",
+      "path": "R/unnest-longer.R",
+      "line": 268,
+      "column": 23,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "tidyr",
+      "code": "RY010",
+      "path": "R/unnest-longer.R",
+      "line": 285,
+      "column": 45,
+      "label": "unowned",
+      "workstream": "plan-32-33"
+    },
+    {
+      "package": "tidyr",
+      "code": "RY010",
+      "path": "R/unnest-wider.R",
+      "line": 232,
+      "column": 17,
+      "label": "unowned",
+      "workstream": "plan-32-33"
     }
   ],
   "notes": [

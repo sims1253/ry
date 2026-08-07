@@ -30,7 +30,7 @@
 //! stays open rather than being traded for one.
 //!
 //! Every rule is asserted against the corpus reproduction committed at
-//! `docs/plans/repro/31/fn.R`, which 0.8.0 checked completely clean.
+//! `testdata/err_plan31_recall_repro.R`, which 0.8.0 checked completely clean.
 
 use ry_checker::Checker;
 use ry_core::RParser;
@@ -67,8 +67,8 @@ fn fires(src: &str, code: &str) -> bool {
 
 /// The plan's committed reproduction of the audit's false negatives.
 fn repro_source() -> String {
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/plans/repro/31/fn.R");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("testdata/err_plan31_recall_repro.R");
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"))
 }
 
@@ -429,9 +429,9 @@ fn corpus_repro_fires_every_shipped_rule() {
     let src = repro_source();
     let hits = code_lines(&src);
     let expected = [
-        ("RY102", 2, "pak R/pak-sitrep-data.R:41"),
-        ("RY103", 6, "sparklyr R/worker_apply.R:522"),
-        ("RY105", 10, "pak R/confirmation.R:42"),
+        ("RY102", 7, "pak R/pak-sitrep-data.R:41"),
+        ("RY103", 11, "sparklyr R/worker_apply.R:522"),
+        ("RY105", 31, "pak R/confirmation.R:42"),
     ];
     let mut missing = Vec::new();
     for (code, line, origin) in expected {

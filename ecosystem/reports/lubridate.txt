@@ -1,1 +1,6 @@
-R/update.r:136:7 RY003
+R/ops-compare.r:20:64 RY010
+R/ops-compare.r:55:14 RY010
+R/vctrs.R:107:3 RY010
+R/vctrs.R:112:3 RY010
+R/vctrs.R:117:3 RY010
+R/vctrs.R:64:3 RY010

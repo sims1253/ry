@@ -286,6 +286,12 @@ impl Checker {
         scope: &mut Scope,
         span: Span,
     ) -> RType {
+        // RY103: `&&` / `||` coerce each operand to `logical(1)`, so both
+        // sides are length-1 logical contexts. Scanning them here (rather
+        // than recursing from the enclosing `if`) reports each site exactly
+        // once no matter how the operators nest.
+        self.check_class_equality_operand(lhs);
+        self.check_class_equality_operand(rhs);
         let lt = self.infer(lhs, scope);
         let narrowing = self.extract_type_narrowing(lhs, scope);
         let (then_scope, else_scope, _) = apply_narrowing(scope, &narrowing, true);
@@ -457,14 +463,13 @@ impl Checker {
             BinOpKind::AndAnd => length_guard_parameter(lhs, scope),
             _ => None,
         };
-        let Some(parameter) =
-            guarded.filter(|parameter| vector_predicate_parameter(rhs, scope) == Some(*parameter))
-        else {
-            return false;
-        };
-        self.vector_intent_parameters
-            .last()
-            .is_some_and(|parameters| parameters.contains(parameter))
+        // Both `guarded` and `vector_predicate_parameter` resolve through
+        // `direct_parameter`, which requires `scope.is_parameter`. So if the
+        // parameter were reassigned (clearing its marker) neither would
+        // return it, making the separate `is_parameter` check redundant.
+        guarded
+            .filter(|parameter| vector_predicate_parameter(rhs, scope) == Some(*parameter))
+            .is_some()
     }
 }
 

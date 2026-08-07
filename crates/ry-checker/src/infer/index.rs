@@ -1,5 +1,35 @@
 use super::*;
 
+fn atomic_mode(member: &RType) -> bool {
+    matches!(
+        member.mode,
+        Mode::Integer | Mode::Double | Mode::Character | Mode::Logical | Mode::Complex | Mode::Raw
+    ) && member.columns.is_none()
+}
+
+fn dollar_receiver_is_definitely_atomic(receiver: &RType) -> bool {
+    match receiver.mode {
+        Mode::Union => receiver
+            .members
+            .as_ref()
+            .is_some_and(|members| !members.is_empty() && members.iter().all(atomic_mode)),
+        _ => atomic_mode(receiver),
+    }
+}
+
+/// A human-readable description of the receiver's mode(s) for the RY061
+/// message. For a single type this is just the mode name; for a union
+/// the member modes are listed so the user can see which types combined.
+fn dollar_receiver_mode_description(receiver: &RType) -> String {
+    if receiver.mode == Mode::Union {
+        if let Some(members) = &receiver.members {
+            let modes: Vec<String> = members.iter().map(|m| m.mode.to_string()).collect();
+            return modes.join("` or `");
+        }
+    }
+    receiver.mode.to_string()
+}
+
 impl Checker {
     pub(crate) fn infer_index(
         &mut self,
@@ -40,23 +70,14 @@ impl Checker {
                 // without a schema are fine -- the column might exist
                 // dynamically -- and atomic types *with* a schema are
                 // already covered by the schema lookup / RY060 below.
-                if matches!(
-                    bt.mode,
-                    Mode::Integer
-                        | Mode::Double
-                        | Mode::Character
-                        | Mode::Logical
-                        | Mode::Complex
-                        | Mode::Raw
-                ) && bt.columns.is_none()
-                {
+                if dollar_receiver_is_definitely_atomic(&bt) {
                     self.emit(
                         Severity::Error,
                         span,
                         "RY061",
                         format!(
                             "$ operator is invalid for atomic vectors of mode `{}`",
-                            bt.mode
+                            dollar_receiver_mode_description(&bt)
                         ),
                     );
                     return RType::unknown();

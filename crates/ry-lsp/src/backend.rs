@@ -1126,7 +1126,14 @@ impl Backend {
                 return;
             }
         }
-        for (diagnostic_path, diagnostics) in per_file {
+        for (diagnostic_path, mut diagnostics) in per_file {
+            // `Project::check` emits every rule, including the ones the
+            // default rule set leaves off (RY003). The CLI drops those in
+            // its `SeverityFilter`; the LSP has no user severity
+            // configuration to apply, so it enforces the same default here.
+            // Without this an opt-in rule shows up in the editor but not in
+            // `ry check`, which reads as ry contradicting itself.
+            ry_checker::filter_default_disabled(&mut diagnostics);
             let source_text = docs.get(&diagnostic_path).map(String::as_str);
             let file_comments = per_file_comments.get(&diagnostic_path);
             let (file_level, suppressions) = match file_comments {

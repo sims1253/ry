@@ -417,7 +417,11 @@ impl Checker {
             if let Some(bindings) = self.load_bindings.get(&span.start).cloned() {
                 for binding in bindings {
                     if binding == crate::SERIALIZED_BINDINGS_UNENUMERABLE {
-                        // An oversized workspace may introduce any binding.
+                        // Oversized workspaces now fall back to a file-stem
+                        // binding at scope-construction time (see
+                        // `serialized_inventory`), so this marker no longer
+                        // reaches `load_bindings`. Kept defensively: an
+                        // unenumerable workspace may introduce any binding.
                         scope.mark_search_path_unknown();
                     } else {
                         scope.insert(binding, RType::unknown());
@@ -440,7 +444,14 @@ impl Checker {
         // normally would fire a spurious RY010. Skip RY010 on a
         // bare-symbol first arg, infer the remaining args normally, and
         // return opaque (the return type depends on the native routine).
-        if is_ffi_primitive(&semantic_name) {
+        //
+        // Wrappers that forward to a primitive (`call_with_cleanup`) follow
+        // the same convention, but they are ordinary redefinable R
+        // functions, so they only get this treatment in a package that
+        // declares `useDynLib(..., .registration = TRUE)`.
+        if is_ffi_primitive(&semantic_name)
+            || (is_registered_ffi_wrapper(&semantic_name) && self.native_registration)
+        {
             for (i, a) in args.iter().enumerate() {
                 if i == 0 {
                     // The entry-point symbol: a bare identifier or
@@ -568,13 +579,22 @@ impl Checker {
         // function(...)`), whereas an infix call is looked up as `%as%`.
         // Match the normalized spelling as well so user-function metadata
         // (notably NSE/quoting parameters) reaches those calls.
-        let user_function = self.fn_table.fns.get(&lookup_name).cloned().or_else(|| {
-            self.fn_table
-                .fns
-                .iter()
-                .find(|(name, _)| semantic_argument_name(name) == lookup_name)
-                .map(|(_, function)| function.clone())
-        });
+        // A function value in the current lexical scope shadows the flat
+        // project function table. The table intentionally indexes by name and
+        // may contain a same-named nested/top-level definition from elsewhere;
+        // using that signature here produces bogus RY090/RY091 diagnostics.
+        let lexical_callable = !name.contains("::") && scope.is_lexical_function(&lookup_name);
+        let user_function = if lexical_callable {
+            None
+        } else {
+            self.fn_table.fns.get(&lookup_name).cloned().or_else(|| {
+                self.fn_table
+                    .fns
+                    .iter()
+                    .find(|(name, _)| semantic_argument_name(name) == lookup_name)
+                    .map(|(_, function)| function.clone())
+            })
+        };
         let user_argument_matches = user_function.as_ref().map(|function| {
             let names: Vec<&str> = function
                 .params
@@ -685,13 +705,19 @@ impl Checker {
         }
         // Validate ordinary R argument matching only for signatures whose
         // origin is known. A user definition shadows a same-named stub.
+        // A lexical function binding (a function literal defined inside an
+        // enclosing function body) shadows both the flat project table and
+        // the typeshed/base signature, so neither is consulted for it —
+        // checking `inherits("x")` against `base::inherits` is a lookup-order
+        // bug, not a missing argument (Plan 31 W7).
         if self.validate_user_call_arguments {
             if let Some(user_function) = user_function.as_ref() {
                 self.check_user_call_arguments(&lookup_name, user_function, args, span);
-            } else if let Some(signature) = resolved_sig.as_ref() {
+            } else if !lexical_callable && let Some(signature) = resolved_sig.as_ref() {
                 self.check_typeshed_call_arguments(&lookup_name, signature, args, &arg_types, span);
             }
-        } else if !self.fn_table.fns.contains_key(&lookup_name)
+        } else if !lexical_callable
+            && !self.fn_table.fns.contains_key(&lookup_name)
             && let Some(signature) = resolved_sig.as_ref()
         {
             self.check_typeshed_call_arguments(&lookup_name, signature, args, &arg_types, span);
@@ -1079,6 +1105,19 @@ impl Checker {
         }
         let params: Vec<&str> = signature.param_names().collect();
         let matches = match_arguments(&params, args);
+        // R6 has two evaluation models for method bodies. Under the default
+        // (`portable = TRUE`) a method is enclosed by a separate environment
+        // in which members are reachable only through `self$` / `private$`,
+        // so a bare member name is genuinely unbound. With
+        // `portable = FALSE` the object's own environment is the enclosure,
+        // so every public, private and active member -- fields and sibling
+        // methods alike -- is in scope as a bare name.
+        let member_bindings =
+            if lookup_name == "R6Class" && r6_call_is_non_portable(args, &params, &matches) {
+                self.r6_member_bindings(args, &params, &matches, scope)
+            } else {
+                Vec::new()
+            };
         let mut arg_types = Vec::with_capacity(args.len());
         for (index, argument) in args.iter().enumerate() {
             let parameter = matches.param_for_arg[index].and_then(|index| params.get(index));
@@ -1115,6 +1154,11 @@ impl Checker {
                 for binding in &spec.names {
                     child.insert(binding.clone(), RType::unknown());
                 }
+            }
+            // Non-empty for a non-portable `R6Class()` call only, and the
+            // injected params there are exactly the three member lists.
+            for (member, member_type) in &member_bindings {
+                child.insert(member.clone(), member_type.clone());
             }
             arg_types.push(
                 if injects_fixed_names
@@ -1193,6 +1237,88 @@ impl Checker {
         });
         let first = returns.next().unwrap_or_else(RType::unknown);
         Some(returns.fold(first, RType::join))
+    }
+
+    /// The names declared in the `public` / `private` / `active` lists of an
+    /// `R6Class()` call, paired with the type of their declared initialiser.
+    ///
+    /// Only a literal `list(...)` can be enumerated; a member list produced by
+    /// a helper call contributes nothing, so the injected set stays limited to
+    /// names R6 is known to define on the object.
+    fn r6_member_bindings(
+        &mut self,
+        args: &[Arg],
+        params: &[&str],
+        matches: &ArgumentMatch,
+        scope: &Scope,
+    ) -> Vec<(String, RType)> {
+        // `active` is kept separate: R6 turns each of its members into an
+        // active binding, so a sibling method reading the bare name gets the
+        // getter's *result*, not the function. Typing it `function` makes
+        // `total + n` an RY040 error on correct code.
+        let member_lists: Vec<(&Expr, bool)> = args
+            .iter()
+            .enumerate()
+            .filter_map(|(index, argument)| {
+                let parameter = matches.param_for_arg[index]
+                    .and_then(|index| params.get(index))
+                    .copied()?;
+                matches!(parameter, "public" | "private" | "active")
+                    .then_some((&argument.value, parameter == "active"))
+            })
+            .collect();
+        let only_lists: Vec<&Expr> = member_lists.iter().map(|(list, _)| *list).collect();
+        let rebound = r6_rebound_members(&only_lists);
+        let mut bindings = Vec::new();
+        for (list, is_active) in member_lists {
+            let Expr::Call {
+                func,
+                args: members,
+                ..
+            } = list
+            else {
+                continue;
+            };
+            if ident_name(func) != Some("list") {
+                continue;
+            }
+            for member in members {
+                let Some(name) = member.name.as_deref() else {
+                    continue;
+                };
+                let member_type = if rebound.contains(name) || is_active {
+                    // An active member's type is whatever its getter returns.
+                    // Return-type inference through an R6 active binding is
+                    // not modelled, so stay unknown rather than claim it is
+                    // the function itself.
+                    RType::unknown()
+                } else {
+                    self.r6_member_type(&member.value, scope)
+                };
+                bindings.push((name.to_string(), member_type));
+            }
+        }
+        bindings
+    }
+
+    /// The type a declared R6 member contributes to sibling method bodies.
+    ///
+    /// A literal initialiser carries the field's mode (`character(0)` is a
+    /// character field). `NULL` is the conventional placeholder for a field
+    /// that `initialize()` fills in later, so it declares nothing about the
+    /// eventual value and stays unknown.
+    fn r6_member_type(&mut self, initialiser: &Expr, scope: &Scope) -> RType {
+        match initialiser {
+            Expr::Function { .. } => RType::scalar(Mode::Function),
+            Expr::Null(_) => RType::unknown(),
+            other => {
+                // Inferred against a throwaway scope and in discarding mode:
+                // the member list is walked again for diagnostics below, and
+                // this probe must not emit them twice.
+                let mut probe = scope.clone();
+                self.infer_discarding(other, &mut probe)
+            }
+        }
     }
 
     fn infer_injected_expr(&mut self, expr: &Expr, scope: &mut Scope) -> RType {
@@ -1290,6 +1416,149 @@ impl Checker {
     //
     // The augmented scope is local to this call: column bindings must
     // NOT leak back into the enclosing scope (we operate on a clone).
+}
+
+/// Whether an `R6Class()` call opts out of R6's portable evaluation model.
+///
+/// Only a literal `portable = FALSE` counts. R6's default is portable, and a
+/// computed value cannot be resolved here, so anything else keeps the strict
+/// reading in which bare member names do not resolve.
+fn r6_call_is_non_portable(args: &[Arg], params: &[&str], matches: &ArgumentMatch) -> bool {
+    args.iter().enumerate().any(|(index, argument)| {
+        matches.param_for_arg[index]
+            .and_then(|index| params.get(index))
+            .is_some_and(|parameter| *parameter == "portable")
+            && matches!(argument.value, Expr::Logical(false, _))
+    })
+}
+
+/// The member names an R6 class body assigns to after declaring them.
+///
+/// A declared initialiser only describes the member while the declaration
+/// holds. R6 classes routinely declare a placeholder that `initialize()`
+/// overwrites with the real object -- shiny's `msg = "<MessageLogger>"` names
+/// the eventual class rather than storing a string -- so a member that the
+/// body assigns to (`x <<- v`, `self$x <- v`, `private$x <- v`, `x[[i]] <- v`)
+/// contributes no type. Over-approximating costs precision, never soundness:
+/// the member is still bound, just untyped.
+fn r6_rebound_members(member_lists: &[&Expr]) -> HashSet<String> {
+    fn record_target(target: &Expr, names: &mut HashSet<String>) {
+        match target {
+            Expr::Ident { name, .. } => {
+                names.insert(name.clone());
+            }
+            Expr::Index {
+                base, kind, args, ..
+            } => {
+                // `self$x <- v` / `private$x <- v` rebind the member itself;
+                // any other subscripted target rebinds its base.
+                if *kind == IndexKind::Dollar
+                    && matches!(ident_name(base), Some("self" | "private"))
+                    && let Some(field) = args.first()
+                {
+                    match &field.value {
+                        Expr::Ident { name, .. } | Expr::String(name, _) => {
+                            names.insert(name.clone());
+                        }
+                        _ => {}
+                    }
+                }
+                record_target(base, names);
+            }
+            // `class(x) <- v`, `names(x) <- v`, `attr(x, "k") <- v`:
+            // a replacement-function assignment rebinds its first argument.
+            Expr::Call { args, .. } => {
+                if let Some(first) = args.first() {
+                    record_target(&first.value, names);
+                }
+            }
+            _ => {}
+        }
+    }
+    fn visit_stmt(statement: &Stmt, names: &mut HashSet<String>) {
+        match statement {
+            Stmt::Assign { target, value, .. } => {
+                record_target(target, names);
+                visit_expr(value, names);
+            }
+            Stmt::Expr(expr) => visit_expr(expr, names),
+            Stmt::If {
+                cond, then, else_, ..
+            } => {
+                visit_expr(cond, names);
+                for statement in then.iter().chain(else_.iter().flatten()) {
+                    visit_stmt(statement, names);
+                }
+            }
+            Stmt::For { iter, body, .. } => {
+                visit_expr(iter, names);
+                for statement in body {
+                    visit_stmt(statement, names);
+                }
+            }
+            Stmt::While { cond, body, .. } => {
+                visit_expr(cond, names);
+                for statement in body {
+                    visit_stmt(statement, names);
+                }
+            }
+            Stmt::FunctionDef { body, .. } => {
+                for statement in body {
+                    visit_stmt(statement, names);
+                }
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(value) = value {
+                    visit_expr(value, names);
+                }
+            }
+        }
+    }
+    fn visit_expr(expr: &Expr, names: &mut HashSet<String>) {
+        match expr {
+            Expr::BinOp { op, lhs, rhs, .. } => {
+                if matches!(op, BinOpKind::Assign | BinOpKind::SuperAssign) {
+                    record_target(lhs, names);
+                } else {
+                    visit_expr(lhs, names);
+                }
+                visit_expr(rhs, names);
+            }
+            Expr::Call { func, args, .. } => {
+                visit_expr(func, names);
+                for argument in args {
+                    visit_expr(&argument.value, names);
+                }
+            }
+            Expr::Index { base, args, .. } => {
+                visit_expr(base, names);
+                for argument in args {
+                    visit_expr(&argument.value, names);
+                }
+            }
+            Expr::UnaryOp { expr, .. } => visit_expr(expr, names),
+            Expr::Function { body, .. } | Expr::Block { body, .. } => {
+                for statement in body {
+                    visit_stmt(statement, names);
+                }
+            }
+            Expr::If {
+                cond, then, else_, ..
+            } => {
+                visit_expr(cond, names);
+                visit_expr(then, names);
+                if let Some(else_) = else_ {
+                    visit_expr(else_, names);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut names = HashSet::new();
+    for list in member_lists {
+        visit_expr(list, &mut names);
+    }
+    names
 }
 
 fn is_user_infix_name(name: &str) -> bool {

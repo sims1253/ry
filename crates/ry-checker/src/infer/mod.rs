@@ -8,6 +8,7 @@ pub(crate) mod construct;
 pub(crate) mod index;
 pub(crate) mod misc;
 pub(crate) mod pipe;
+pub(crate) mod recall;
 
 /// The diagnostic family appropriate for a known condition type. Opaque
 /// conditions deliberately remain silent: the runtime value may be logical.
@@ -244,6 +245,11 @@ impl Checker {
                         if value_has_list_origin {
                             scope.mark_list_origin(name.to_string());
                         }
+                        if matches!(value, Expr::Function { .. })
+                            && !self.enclosing_formals.is_empty()
+                        {
+                            scope.mark_lexical_function(name.to_string());
+                        }
                         if let Some(alias) = function_alias {
                             scope.set_function_alias(name.to_string(), alias);
                         }
@@ -336,6 +342,9 @@ impl Checker {
                             if let Some(r) = returns {
                                 r.push(t);
                             }
+                            if name == "return" {
+                                scope.unreachable = true;
+                            }
                             return;
                         }
                     }
@@ -345,6 +354,8 @@ impl Checker {
             Stmt::If {
                 cond, then, else_, ..
             } => {
+                // RY103: an `if` condition is a length-1 logical context.
+                self.check_class_equality_operand(cond);
                 let diagnostic_start = self.diagnostics.len();
                 let ct = self.infer(cond, scope);
                 let has_ry100 = self.diagnostics[diagnostic_start..]
@@ -456,6 +467,8 @@ impl Checker {
                 }
             }
             Stmt::While { cond, body, .. } => {
+                // RY103: a loop condition is a length-1 logical context.
+                self.check_class_equality_operand(cond);
                 let diagnostic_start = self.diagnostics.len();
                 let ct = self.infer(cond, scope);
                 let has_ry100 = self.diagnostics[diagnostic_start..]
@@ -565,6 +578,7 @@ impl Checker {
                 } else if let Some(r) = returns {
                     r.push(RType::new(Mode::Null, Length::Zero));
                 }
+                scope.unreachable = true;
             }
         }
     }
@@ -640,6 +654,28 @@ impl Checker {
         has_else: bool,
         narrowed: &HashSet<String>,
     ) {
+        // A diverging branch contributes no state to the continuation. Treat
+        // its live sibling as the only arm, while retaining the parent path
+        // for a one-arm `if` whose then branch can continue.
+        let then_reaches = !then_scope.unreachable;
+        let else_reaches = has_else && !else_scope.unreachable;
+        if has_else && then_reaches != else_reaches {
+            let continuation = if then_reaches {
+                &then_scope
+            } else {
+                &else_scope
+            };
+            for (name, ty) in &continuation.bindings {
+                if narrowed.contains(name) && continuation.narrowed_bindings.contains(name) {
+                    continue;
+                }
+                if scope.get(name) != Some(ty) {
+                    scope.insert(name.clone(), ty.clone());
+                }
+            }
+            return;
+        }
+
         // Collect the candidate names (only those that differ from the
         // parent) without holding a borrow of `scope` while we mutate it.
         let mut branch_types: HashMap<String, (Option<RType>, Option<RType>)> =
@@ -953,6 +989,12 @@ impl Checker {
         scope: &mut Scope,
         depth: usize,
     ) -> Option<RType> {
+        // `walk_stmt` marks paths after an unconditional return/throw as
+        // unreachable. Such a syntactic tail is not an implicit return and
+        // must not be joined into the function's result.
+        if scope.unreachable {
+            return None;
+        }
         let last = body.last()?;
         match last {
             Stmt::Expr(e) => {
@@ -967,6 +1009,22 @@ impl Checker {
                 // return value. Build it as a function literal so the
                 // signature is attached.
                 Some(self.function_value_from_literal(params, body, scope, depth))
+            }
+            Stmt::If { then, else_, .. } => {
+                // An `if` statement as the trailing element is the implicit
+                // return value: the join of its branches' tail types.
+                // Without an `else`, R returns NULL on the FALSE arm.
+                let then_t = self.trailing_return_type(then, &mut scope.clone(), depth);
+                let else_t = match else_ {
+                    Some(block) => self.trailing_return_type(block, &mut scope.clone(), depth),
+                    None => Some(RType::new(Mode::Null, Length::Zero)),
+                };
+                match (then_t, else_t) {
+                    (Some(a), Some(b)) => Some(a.join(b)),
+                    (Some(a), None) => Some(a),
+                    (None, Some(b)) => Some(b),
+                    (None, None) => None,
+                }
             }
             _ => None,
         }
@@ -1421,10 +1479,12 @@ impl Checker {
                         return RType::unknown();
                     }
                     if self.external_bindings.iter().any(|binding| {
-                        binding.strip_prefix("\0useDynLib:").is_some_and(|prefix| {
-                            name.strip_prefix(prefix)
-                                .is_some_and(|rest| !rest.is_empty())
-                        })
+                        binding
+                            .strip_prefix(crate::packages::NATIVE_ROUTINE_PREFIX_SENTINEL)
+                            .is_some_and(|prefix| {
+                                name.strip_prefix(prefix)
+                                    .is_some_and(|rest| !rest.is_empty())
+                            })
                     }) {
                         return RType::unknown();
                     }
@@ -1595,6 +1655,9 @@ impl Checker {
                         "comparison with `NA` always produces `NA`; use `is.na()` instead",
                     );
                 }
+                // Plan 31 W18 shape rules. Both read the operand syntax, so
+                // they run before `infer` collapses the operands to types.
+                self.check_constant_length_comparison(*op, lhs, rhs, *span, scope);
                 let lt = self.infer(lhs, scope);
                 let rt = self.infer(rhs, scope);
                 self.infer_binop(
@@ -1680,7 +1743,14 @@ impl Checker {
                     }
                 }
             }
-            Expr::Call { func, args, span } => self.infer_call(func, args, scope, *span),
+            Expr::Call { func, args, span } => {
+                // RY102 is decided by the call's own syntax, so it runs here
+                // rather than inside `infer_call`, where several container
+                // constructors take an early return before the shared
+                // diagnostic block.
+                self.check_named_element_arrow(func, args);
+                self.infer_call(func, args, scope, *span)
+            }
             Expr::Index {
                 base,
                 kind,

@@ -65,6 +65,10 @@ pub struct Config {
     pub ignore: Vec<String>,
     /// Exclude patterns (gitignore-style). Default: empty.
     pub exclude: Vec<String>,
+    /// Check R fixture data nested under a package's `tests/` tree.
+    /// Default: false.
+    #[serde(alias = "check-test-fixtures")]
+    pub check_test_fixtures: bool,
     /// Output format. Default: "full".
     #[serde(alias = "output-format", default = "default_output_format")]
     pub output_format: String,
@@ -125,6 +129,7 @@ impl Config {
             warn: Vec::new(),
             ignore: Vec::new(),
             exclude: Vec::new(),
+            check_test_fixtures: false,
             output_format: DEFAULT_OUTPUT_FORMAT.to_string(),
             verbose: 0,
             quiet: 0,
@@ -265,6 +270,7 @@ impl Config {
             warn: warns,
             ignore: ignores,
             exclude: self.exclude,
+            check_test_fixtures: self.check_test_fixtures,
             output_format,
             // Saturating add so a config value of 255 plus a CLI flag
             // stays within u8 rather than panicking on overflow.
@@ -361,6 +367,7 @@ mod tests {
         assert!(d.warn.is_empty());
         assert!(d.ignore.is_empty());
         assert!(d.exclude.is_empty());
+        assert!(!d.check_test_fixtures);
         assert_eq!(d.output_format, DEFAULT_OUTPUT_FORMAT);
         assert_eq!(d.verbose, 0);
         assert_eq!(d.quiet, 0);
@@ -389,6 +396,7 @@ error = ["RY001", "RY002"]
 warn = ["invalid-arithmetic"]
 ignore = ["RY010"]
 exclude = ["tests/fixtures/**", "**/_snapshots/**"]
+check-test-fixtures = true
 output-format = "json"
 verbose = 1
 quiet = 2
@@ -405,6 +413,7 @@ baseline = "diagnostics.json"
         assert_eq!(cfg.warn, vec!["invalid-arithmetic"]);
         assert_eq!(cfg.ignore, vec!["RY010"]);
         assert_eq!(cfg.exclude, vec!["tests/fixtures/**", "**/_snapshots/**"]);
+        assert!(cfg.check_test_fixtures);
         assert_eq!(cfg.output_format, "json");
         assert_eq!(cfg.verbose, 1);
         assert_eq!(cfg.quiet, 2);

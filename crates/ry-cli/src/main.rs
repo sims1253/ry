@@ -693,7 +693,7 @@ fn run_check(
         paths
     };
     for root in &search_roots {
-        collect_r_files(root, &mut all_paths);
+        collect_r_files(root, &mut all_paths, cfg.check_test_fixtures);
     }
     sort_and_deduplicate_paths(&mut all_paths);
 
@@ -770,7 +770,7 @@ fn run_check(
         // Re-scan for new/deleted files.
         let mut current_paths = Vec::new();
         for root in &search_roots {
-            collect_r_files(root, &mut current_paths);
+            collect_r_files(root, &mut current_paths, cfg.check_test_fixtures);
         }
         sort_and_deduplicate_paths(&mut current_paths);
         if let Some(root) = config_root.as_ref() {
@@ -842,6 +842,13 @@ struct CheckResult {
     diagnostics: Vec<ry_checker::Diagnostic>,
     file_count: usize,
     parse_errors: usize,
+    /// Serialized R data files (`.rda`/`.rdata`) that exceeded the byte cap
+    /// and were reduced to a file-stem binding, so unbound-variable (RY010)
+    /// analysis for their scope is less precise than usual. Each entry is a
+    /// human-readable `path (reason)` string. Surfaced in the summary line
+    /// and `--statistics` rather than as a diagnostic so the JSON/diagnostic
+    /// stream (consumed by the ecosystem harness) stays stable.
+    degraded: Vec<String>,
 }
 
 /// Whether parser recovery indicates that a file is probably not R source.
@@ -892,6 +899,7 @@ impl CheckResult {
                 self.file_count,
                 self.diagnostics.len()
             );
+            self.print_degraded();
             return;
         }
         let errors = self
@@ -908,6 +916,26 @@ impl CheckResult {
             "ry: checked {} file(s), {} error(s), {} warning(s)",
             self.file_count, errors, warnings
         );
+        self.print_degraded();
+    }
+
+    /// Surface scopes whose RY010 (unbound-variable) precision dropped
+    /// because a serialized data file exceeded the byte cap and was reduced
+    /// to a file-stem binding. Printed to stderr (never the stdout
+    /// diagnostic stream) so it is visible in both the human summary and
+    /// `--statistics` without disturbing machine-readable output.
+    fn print_degraded(&self) {
+        if self.degraded.is_empty() {
+            return;
+        }
+        eprintln!(
+            "ry: {} degraded scope(s) — serialized data file(s) over the byte cap fell back to file stems; RY010 precision reduced:",
+            self.degraded.len()
+        );
+        for note in &self.degraded {
+            eprintln!("  - {note}");
+        }
+        eprintln!("ry: raise `max-serialized-bytes` in ry.toml to enumerate them precisely");
     }
 
     fn exit_code(&self, cfg: &config::Config) -> ExitCode {
@@ -952,6 +980,9 @@ fn run_check_once(
     let mut parse_errors = 0usize;
     let mut file_count = 0usize;
     let mut not_r_diagnostics = Vec::new();
+    // Degraded scopes (serialized data over the byte cap), deduplicated and
+    // sorted for a stable summary. Keyed on the formatted `path (reason)`.
+    let mut degraded: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     // Parallel file parsing. tree-sitter parsers are
     // NOT `Send`, so each rayon thread keeps its own `RParser` in a
@@ -1054,6 +1085,9 @@ fn run_check_once(
         project.set_external_s3_methods(package_scope.s3_methods);
         project.set_load_bindings(package_scope.load_bindings);
         per_file_diagnostics.extend(project.check());
+        for (path, reason) in package_scope.degraded {
+            degraded.insert(format!("{} ({})", path.display(), reason));
+        }
     }
 
     // Apply inline suppression comments (`# ry: ignore`, `# noqa`,
@@ -1098,6 +1132,7 @@ fn run_check_once(
         diagnostics: all_diagnostics,
         file_count,
         parse_errors,
+        degraded: degraded.into_iter().collect(),
     })
 }
 
@@ -1308,7 +1343,7 @@ fn enclosing_package_root(path: &std::path::Path) -> Option<PathBuf> {
         .map(std::path::Path::to_path_buf)
 }
 
-fn collect_r_files(path: &std::path::Path, out: &mut Vec<PathBuf>) {
+fn collect_r_files(path: &std::path::Path, out: &mut Vec<PathBuf>, check_test_fixtures: bool) {
     if path.is_file() {
         out.push(path.to_path_buf());
         return;
@@ -1321,7 +1356,7 @@ fn collect_r_files(path: &std::path::Path, out: &mut Vec<PathBuf>) {
         .as_deref()
         .map(read_rbuildignore)
         .unwrap_or_default();
-    collect_r_files_recursive(path, out, package_root, &buildignore);
+    collect_r_files_recursive(path, out, package_root, &buildignore, check_test_fixtures);
 }
 
 fn collect_r_files_recursive(
@@ -1329,6 +1364,7 @@ fn collect_r_files_recursive(
     out: &mut Vec<PathBuf>,
     package_root: Option<PathBuf>,
     buildignore: &[glob::Pattern],
+    check_test_fixtures: bool,
 ) {
     let Ok(entries) = std::fs::read_dir(path) else {
         return;
@@ -1371,11 +1407,20 @@ fn collect_r_files_recursive(
             } else {
                 (package_root.clone(), buildignore.to_vec())
             };
-            collect_r_files_recursive(&p, out, nested_package_root, &nested_buildignore);
+            collect_r_files_recursive(
+                &p,
+                out,
+                nested_package_root,
+                &nested_buildignore,
+                check_test_fixtures,
+            );
         } else if matches!(
             p.extension().and_then(|e| e.to_str()),
             Some("R") | Some("r") | Some("S") | Some("s") | Some("q")
-        ) {
+        ) && (check_test_fixtures
+            || ry_checker::project::package_file_kind(&p)
+                != ry_checker::project::PackageFileKind::TestFixture)
+        {
             out.push(p);
         }
     }
@@ -1616,7 +1661,7 @@ mod tests {
         std::fs::write(second.join("R/second.R"), "value <- only_in_first\n").unwrap();
 
         let mut paths = Vec::new();
-        collect_r_files(temp.path(), &mut paths);
+        collect_r_files(temp.path(), &mut paths, false);
         paths.sort();
         let result = run_check_once(
             &paths,
@@ -1639,14 +1684,16 @@ mod tests {
     }
 
     #[test]
-    fn package_scan_excludes_non_package_r_sources() {
+    fn package_scan_skips_test_fixtures_but_keeps_executable_test_code() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
         std::fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
         for directory in [
             "R",
             "tests/testthat",
+            "tests/testthat/fixtures",
             "tests/testthat/_snaps",
+            "tests/manual",
             "revdep/other/R",
             "src/ratfor",
         ] {
@@ -1654,8 +1701,15 @@ mod tests {
         }
         for file in [
             "R/package.R",
+            "tests/testthat.R",
             "tests/testthat/test-package.R",
+            "tests/testthat/helper-package.R",
+            "tests/testthat/setup-package.R",
+            "tests/testthat/teardown-package.R",
+            "tests/testthat/fixtures/input.R",
+            "tests/testthat/data.R",
             "tests/testthat/_snaps/output.R",
+            "tests/manual/example.R",
             "revdep/other/R/other.R",
             "src/ratfor/program.r",
         ] {
@@ -1663,16 +1717,50 @@ mod tests {
         }
 
         let mut paths = Vec::new();
-        collect_r_files(root, &mut paths);
+        collect_r_files(root, &mut paths, false);
         paths.sort();
 
         assert_eq!(
             paths,
             vec![
                 root.join("R/package.R"),
-                root.join("tests/testthat/test-package.R")
+                root.join("tests/testthat/helper-package.R"),
+                root.join("tests/testthat/setup-package.R"),
+                root.join("tests/testthat/teardown-package.R"),
+                root.join("tests/testthat/test-package.R"),
+                root.join("tests/testthat.R"),
             ]
         );
+    }
+
+    #[test]
+    fn package_scan_can_opt_into_test_fixtures() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
+        std::fs::create_dir_all(root.join("tests/testthat/fixtures")).unwrap();
+        let fixture = root.join("tests/testthat/fixtures/input.R");
+        std::fs::write(&fixture, "missing_name\n").unwrap();
+
+        let mut paths = Vec::new();
+        collect_r_files(root, &mut paths, true);
+
+        assert_eq!(paths, vec![fixture]);
+    }
+
+    #[test]
+    fn package_scan_keeps_inst_sources() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
+        std::fs::create_dir_all(root.join("inst/resources")).unwrap();
+        let installed = root.join("inst/resources/activate.R");
+        std::fs::write(&installed, "missing_name\n").unwrap();
+
+        let mut paths = Vec::new();
+        collect_r_files(root, &mut paths, false);
+
+        assert_eq!(paths, vec![installed]);
     }
 
     #[test]
@@ -1687,7 +1775,7 @@ mod tests {
         std::fs::write(root.join("renv/activate.R"), "bootstrap_missing\n").unwrap();
 
         let mut paths = Vec::new();
-        collect_r_files(root, &mut paths);
+        collect_r_files(root, &mut paths, false);
 
         assert_eq!(paths, vec![source]);
     }
@@ -1702,7 +1790,7 @@ mod tests {
         std::fs::write(root.join("example.Rcheck/R/copied.R"), "copied_missing\n").unwrap();
 
         let mut paths = Vec::new();
-        collect_r_files(root, &mut paths);
+        collect_r_files(root, &mut paths, false);
 
         assert_eq!(paths, vec![source.clone()]);
 
@@ -1743,7 +1831,7 @@ mod tests {
         std::fs::write(root.join("source.txt"), "not R\n").unwrap();
 
         let mut paths = Vec::new();
-        collect_r_files(root, &mut paths);
+        collect_r_files(root, &mut paths, false);
         paths.sort();
 
         let mut expected = ["R", "r", "S", "s", "q"]
@@ -1764,7 +1852,7 @@ mod tests {
         std::fs::write(&file, "").unwrap();
 
         let mut paths = Vec::new();
-        collect_r_files(&file, &mut paths);
+        collect_r_files(&file, &mut paths, false);
 
         assert_eq!(paths, vec![file]);
     }
@@ -1776,7 +1864,7 @@ mod tests {
         std::fs::write(&file, "value <- 1L\n").unwrap();
 
         let mut paths = Vec::new();
-        collect_r_files(&file, &mut paths);
+        collect_r_files(&file, &mut paths, false);
 
         assert_eq!(paths, vec![file]);
     }
@@ -1799,7 +1887,7 @@ mod tests {
         }
 
         let mut paths = Vec::new();
-        collect_r_files(root, &mut paths);
+        collect_r_files(root, &mut paths, false);
         paths.sort();
         assert_eq!(
             paths,
@@ -1841,7 +1929,7 @@ mod tests {
         std::fs::write(root.join("data-raw/build.R"), "Surv\n").unwrap();
 
         let mut paths = Vec::new();
-        collect_r_files(root, &mut paths);
+        collect_r_files(root, &mut paths, false);
         paths.sort();
         let result = run_check_once(
             &paths,
@@ -1890,7 +1978,7 @@ mod tests {
         .unwrap();
 
         let mut paths = Vec::new();
-        collect_r_files(root, &mut paths);
+        collect_r_files(root, &mut paths, false);
         paths.sort();
         let result = run_check_once(
             &paths,

@@ -30,8 +30,8 @@ pub use project::Project;
 // `ry_checker::{Severity, Diagnostic, ...}` directly).
 pub use diagnostics::{
     Confidence, Diagnostic, Severity, SeverityFilter, Suppression, apply_filter_to_diagnostics,
-    filter_suppressed, filter_suppressed_with_comments, has_file_suppression,
-    has_file_suppression_from_comments, is_suppressed, parse_suppressions,
+    filter_default_disabled, filter_suppressed, filter_suppressed_with_comments,
+    has_file_suppression, has_file_suppression_from_comments, is_suppressed, parse_suppressions,
     parse_suppressions_from_comments,
 };
 
@@ -253,6 +253,9 @@ pub struct Scope {
     /// Bare-identifier function aliases, keyed by the local binding name.
     /// The value is the ultimate semantic callee name used by call inference.
     pub function_aliases: HashMap<String, String>,
+    /// Function literals defined in a nested lexical environment. These must
+    /// not be resolved through the project-wide, name-only function table.
+    pub(crate) lexical_functions: HashSet<String>,
     pub data_mask_unknown: bool,
     pub search_path_unknown: bool,
     /// Execution cannot continue in this block because a preceding operation
@@ -268,6 +271,7 @@ impl Scope {
     pub fn insert(&mut self, name: impl Into<String>, t: RType) {
         let name = name.into();
         self.function_aliases.remove(&name);
+        self.lexical_functions.remove(&name);
         self.list_origin_bindings.remove(&name);
         self.parameter_bindings.remove(&name);
         self.default_parameter_bindings.remove(&name);
@@ -322,6 +326,14 @@ impl Scope {
 
     pub(crate) fn set_function_alias(&mut self, name: impl Into<String>, target: String) {
         self.function_aliases.insert(name.into(), target);
+    }
+
+    pub(crate) fn mark_lexical_function(&mut self, name: impl Into<String>) {
+        self.lexical_functions.insert(name.into());
+    }
+
+    pub(crate) fn is_lexical_function(&self, name: &str) -> bool {
+        self.lexical_functions.contains(name)
     }
 
     pub(crate) fn function_alias(&self, name: &str) -> Option<&str> {
@@ -544,6 +556,9 @@ pub struct Checker {
     // package cannot suppress RY010 in an unrelated package checked in the
     // same invocation.
     external_bindings: HashSet<String>,
+    // Whether this file's package declares `useDynLib(..., .registration =
+    // TRUE)`. Derived from `external_bindings` in `set_external_bindings`.
+    pub(crate) native_registration: bool,
     imported_from: HashMap<String, String>,
     external_s3_methods: HashSet<(String, String)>,
     load_bindings: HashMap<usize, HashSet<String>>,
@@ -675,6 +690,7 @@ impl Checker {
             loaded: Arc::new(HashSet::new()),
             bare_loaded: Arc::new(HashSet::new()),
             external_bindings: HashSet::new(),
+            native_registration: false,
             imported_from: HashMap::new(),
             external_s3_methods: HashSet::new(),
             load_bindings: HashMap::new(),
@@ -1097,6 +1113,7 @@ impl Checker {
 
     // Seed opaque bindings established by metadata for this source file.
     pub fn set_external_bindings(&mut self, bindings: HashSet<String>) {
+        self.native_registration = bindings.contains(crate::packages::NATIVE_REGISTRATION_SENTINEL);
         self.external_bindings = bindings;
     }
 

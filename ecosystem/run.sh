@@ -6,16 +6,28 @@ ecosystem_dir="$root/ecosystem"
 cache_dir="$ecosystem_dir/.cache"
 reports_dir="$ecosystem_dir/reports"
 packages_file="$ecosystem_dir/packages.txt"
-audit_corpus="$root/docs/corpus/tidyverse-0.7.1.json"
+audit_corpus=""
 check=false
 local_only=false
+tier=full
 
 usage() {
   cat <<'EOF'
-Usage: ecosystem/run.sh [--check] [--local]
+Usage: ecosystem/run.sh [--check] [--local] [--manifest FILE]
+                        [--ledger FILE] [--tier {fast,full}]
 
-  --check  Compare generated reports with committed snapshots.
-  --local  Check only the locally vendored glue R/ sources; do not clone.
+  --check        Compare generated reports with committed snapshots.
+  --local        Check only the locally vendored glue R/ sources; do not clone.
+  --manifest F   Package manifest to use (default: ecosystem/packages.txt).
+  --ledger F     Corpus ledger to reconcile against. Defaults to the manifest's
+                 `# ledger:` directive, then docs/corpus/tidyverse-0.7.1.json.
+  --tier T       fast = only the manifest's fast-tier (signal-dense) packages;
+                 full = every package in the manifest (default).
+
+A manifest may carry a `# ledger: <path-relative-to-repo>` directive selecting
+the corpus its hermetic root reports reconcile against, and a `# === full tier`
+marker separating the fast-tier packages from the rest. Multiple ledgers
+(tidyverse-0.7.1, posit-0.8.0) coexist via their own manifests.
 EOF
 }
 
@@ -23,11 +35,36 @@ while (($#)); do
   case "$1" in
     --check) check=true ;;
     --local) local_only=true ;;
+    --manifest) [[ $# -ge 2 ]] || { echo "ecosystem: --manifest requires a value" >&2; usage >&2; exit 2; }; packages_file="$2"; shift ;;
+    --ledger) [[ $# -ge 2 ]] || { echo "ecosystem: --ledger requires a value" >&2; usage >&2; exit 2; }; audit_corpus="$2"; shift ;;
+    --tier) [[ $# -ge 2 ]] || { echo "ecosystem: --tier requires a value" >&2; usage >&2; exit 2; }; tier="$2"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
   shift
 done
+
+if [[ "$tier" != "fast" && "$tier" != "full" ]]; then
+  echo "ecosystem: --tier must be 'fast' or 'full' (got: $tier)" >&2
+  exit 2
+fi
+if [[ ! -r "$packages_file" ]]; then
+  echo "ecosystem: manifest not found or not readable: $packages_file" >&2
+  exit 2
+fi
+
+# Resolve the ledger: an explicit --ledger wins; otherwise a manifest may
+# declare its ledger with `# ledger: <relative-path>`; else default to the
+# tidyverse ledger for backward compatibility.
+if [[ -z "$audit_corpus" ]]; then
+  directive="$(grep -m1 '^# ledger:[[:space:]]' "$packages_file" 2>/dev/null \
+    | sed 's/^# ledger:[[:space:]]*//; s/[[:space:]]*$//' || true)"
+  if [[ -n "$directive" ]]; then
+    audit_corpus="$root/$directive"
+  else
+    audit_corpus="$root/docs/corpus/tidyverse-0.7.1.json"
+  fi
+fi
 
 for command in cargo git Rscript; do
   command -v "$command" >/dev/null 2>&1 || {
@@ -118,12 +155,52 @@ run_suite() {
 processed_packages=()
 processed_reports=()
 root_packages=()
-while IFS=$'\t' read -r name url pinned_ref; do
+all_names=()
+# Pre-validate the entire manifest for slug collisions, including entries
+# past the full-tier marker that --tier fast would skip.
+while IFS= read -r line; do
+  case "$line" in *"=== full tier"*) continue ;; esac
+  IFS=$'\t' read -r slug _ <<< "$line"
+  [[ -z "${slug:-}" || "$slug" == \#* ]] && continue
+  for seen in "${all_names[@]:0}"; do
+    if [[ "$seen" == "$slug" ]]; then
+      echo "ecosystem: duplicate package slug '$slug' in $packages_file; manifests must be collision-safe" >&2
+      exit 1
+    fi
+  done
+  all_names+=("$slug")
+done < "$packages_file"
+
+seen_names=()
+# Read the raw line first so we can honour the manifest's tier marker (a
+# `# === full tier` comment) and detect collisions before cloning anything.
+while IFS= read -r raw || [[ -n "${raw:-}" ]]; do
+  case "$raw" in
+    *"=== full tier"*)
+      # Everything after this marker is the full tier only.
+      if [[ "$tier" == "fast" ]]; then
+        break
+      fi
+      continue
+      ;;
+  esac
+  # Inline trailing comments (tier/star notes) live in a 4th tab column.
+  IFS=$'\t' read -r name url pinned_ref _ <<< "$raw"
   [[ -z "${name:-}" || "$name" == \#* ]] && continue
   if [[ -z "${url:-}" || -z "${pinned_ref:-}" ]]; then
     echo "ecosystem: manifest entry for '$name' needs a URL and a pinned ref" >&2
     exit 1
   fi
+  # The corpus is a regression benchmark: a ledger reconciles diagnostic
+  # identities against the exact source that produced them. A branch name
+  # or tag can move upstream, which would silently re-point the benchmark
+  # and make a ledger delta unattributable. Only a full commit ID pins.
+  if ! [[ "$pinned_ref" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "ecosystem: manifest entry for '$name' pins '$pinned_ref'; a corpus entry needs a full 40-character commit ID, not a branch or tag" >&2
+    exit 1
+  fi
+  # Collision check is now in the pre-validation loop above.
+  seen_names+=("$name")
 
   if $local_only; then
     if [[ "$name" != "glue" ]]; then
@@ -236,13 +313,16 @@ if ! $local_only; then
     "Package-root suite: production, tests, and other checked R sources."
 fi
 
-# The reviewed ledger pins every diagnostic identity in the audited packages'
-# hermetic root reports rather than an aggregate count, so removing one finding
-# cannot be mistaken for removing another. It contains the original audit
-# identities plus reviewed findings caused by disabling installed-library
-# resolution. Exact reconciliation prevents either class from becoming an
-# unowned snapshot baseline. Findings labelled `true_positive` are also
-# checked explicitly for a focused failure.
+# Each ledger pins every diagnostic identity in the audited packages' hermetic
+# root reports rather than an aggregate count, so removing one finding cannot
+# be mistaken for removing another. The tidyverse ledger is a strict hermetic
+# baseline (`reconciliation: hermetic`, the default when the field is absent):
+# any missing/unowned identity fails the build. The posit ledger is an audit
+# transcript of an installed-library run (`reconciliation: audit-transcript`):
+# the hermetic-vs-audit delta is reported for visibility but does not gate the
+# build, since RY_NO_INSTALLED_LIBRARIES=1 legitimately differs from the
+# installed-library audit. In both modes findings labelled `true_positive` are
+# checked explicitly so a real bug disappearing is always surfaced.
 if ! $local_only; then
   [[ -f "$audit_corpus" ]] || {
     echo "ecosystem: audit corpus not found: $audit_corpus" >&2
@@ -317,8 +397,21 @@ if (length(unowned)) {
   writeLines(c("ecosystem: unowned hermetic findings appeared:", paste0("  - ", unowned)), stderr())
 }
 if (length(missing) || length(unowned)) {
-  writeLines("ecosystem: update docs/corpus/tidyverse-0.7.1.json with the reviewed workstream delta", stderr())
-  quit(status = 1L)
+  if (length(missing_required)) {
+    writeLines("ecosystem: a reviewed true_positive finding disappeared; this gates the build in every mode.", stderr())
+    quit(status = 1L)
+  }
+  reconciliation_mode <- if (!is.null(corpus$reconciliation)) corpus$reconciliation[[1L]] else "hermetic"
+  if (reconciliation_mode == "audit-transcript") {
+    writeLines(c(
+      sprintf("ecosystem: %s is an audit transcript of an installed-library run;", corpus_path),
+      "ecosystem: the hermetic-vs-audit delta above is reported for visibility and does not gate this build.",
+      sprintf("ecosystem: to update the ledger, re-audit the %s corpus and regenerate it from the audit results (see docs/corpus/README.md).", corpus$corpus[[1L]])
+    ), stderr())
+  } else {
+    writeLines(sprintf("ecosystem: update %s with the reviewed workstream delta", corpus_path), stderr())
+    quit(status = 1L)
+  }
 }
 RS
 fi

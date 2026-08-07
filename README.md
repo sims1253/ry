@@ -120,12 +120,15 @@ recipes, mirai, and others. Packages attached outside the checked
 sources can be declared in `ry.toml`.
 
 When checking a package source tree, files are checked in their
-evaluation context: `tests/testthat/` and `inst/tinytest/` files see
+evaluation context: executable `tests/testthat/` and `inst/tinytest/` files see
 the package’s own namespace, the test framework, DESCRIPTION
 `Depends` / `Suggests`, and bindings plus `library()` calls from
 `helper*` / `setup*` files; `data-raw/`, `demo/`, and `vignettes/`
 attach `Depends`. `revdep/`, `src/`, snapshot data, and
-`.Rbuildignore` matches (never `R/` or `tests/`) are skipped.
+`.Rbuildignore` matches (never `R/` or `tests/`) are skipped. R files nested
+under `tests/` are treated as fixture data unless they are runners at
+`tests/` root or `test*`, `helper*`, `setup*`, or `teardown*` files directly
+under `tests/testthat/`; set `check-test-fixtures = true` to check fixture data.
 
 Parallel purrr code checks like sequential code, and the typed map
 family is checked against its callback:
@@ -205,6 +208,9 @@ output-format    = "full"     # full | concise | json | github | gitlab | junit
 
 # gitignore-style patterns, relative to this ry.toml's directory.
 exclude = ["renv", "tests/snaps/**"]
+
+# Include R fixture data nested under package tests/ directories.
+check-test-fixtures = false
 ```
 
 CLI flags override the config only when passed explicitly.

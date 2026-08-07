@@ -8,7 +8,7 @@ use ry_checker::SERIALIZED_BINDINGS_UNENUMERABLE;
 use ry_checker::packages::NamespaceMetadata;
 use ry_core::SourceFile;
 use ry_core::ast::{Expr, Stmt};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -49,6 +49,46 @@ pub(crate) struct PackageScope {
     pub(crate) imported_from: HashMap<String, HashMap<String, String>>,
     pub(crate) s3_methods: HashMap<String, HashSet<(String, String)>>,
     pub(crate) load_bindings: HashMap<String, HashMap<usize, HashSet<String>>>,
+    /// Serialized R data files (`.rda`/`.rdata`) whose decoded payload
+    /// exceeded the byte cap and were reduced to a single file-stem
+    /// binding instead of having their object names enumerated. Each
+    /// entry pairs the offending path with a short reason. Surfaced so
+    /// the CLI can report that RY010 (unbound-variable) analysis is less
+    /// precise for the affected scope than usual.
+    pub(crate) degraded: Vec<(PathBuf, &'static str)>,
+}
+
+/// Inventory of a serialized R data file (`.rda`/`.rdata`). `bindings`
+/// are the enumerated object names, or a single file-stem fallback when
+/// the decoded payload exceeds the byte cap. `degraded` is true when
+/// enumeration was skipped, which means the binding set is an
+/// approximation rather than the real object names.
+#[derive(Clone)]
+struct SerializedInventory {
+    bindings: HashSet<String>,
+    degraded: bool,
+}
+
+/// Inventory of a directory of data files (`data/`, `R/sysdata.rda`).
+/// `bindings` aggregates the per-file object names (or file-stem
+/// fallbacks); `degraded` lists files that exceeded the byte cap.
+#[derive(Clone, Default)]
+struct DataInventory {
+    bindings: HashSet<String>,
+    degraded: Vec<PathBuf>,
+}
+
+/// A single file-stem binding, used as the conservative fallback when a
+/// serialized workspace cannot be enumerated. A package's `sysdata.rda`
+/// over the byte cap used to disable RY010 for every file in the package
+/// (via [`SERIALIZED_BINDINGS_UNENUMERABLE`]); reducing it to its stem
+/// (`sysdata`) keeps unbound-variable analysis live and only masks the
+/// single colliding name.
+fn file_stem_binding(path: &Path) -> HashSet<String> {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(|stem| HashSet::from([stem.to_string()]))
+        .unwrap_or_default()
 }
 
 struct LibraryRoot {
@@ -84,15 +124,19 @@ pub(crate) fn resolve<'a>(
     let preferred_version = current_r_minor_version(&library_roots);
     let mut namespace_cache: HashMap<PathBuf, NamespaceMetadata> = HashMap::new();
     let mut export_cache: HashMap<String, HashSet<String>> = HashMap::new();
-    let mut dataset_cache: HashMap<PathBuf, HashSet<String>> = HashMap::new();
-    let mut serialized_cache: HashMap<PathBuf, HashSet<String>> = HashMap::new();
-    let mut source_binding_cache: HashMap<PathBuf, HashSet<String>> = HashMap::new();
+    let mut dataset_cache: HashMap<PathBuf, DataInventory> = HashMap::new();
+    let mut serialized_cache: HashMap<PathBuf, SerializedInventory> = HashMap::new();
+    let mut source_binding_cache: HashMap<PathBuf, SourceBindings> = HashMap::new();
     let mut attached = HashSet::new();
     let mut bare_attached = HashMap::new();
     let mut bindings = HashMap::new();
     let mut imported_from = HashMap::new();
     let mut s3_methods = HashMap::new();
     let mut load_bindings = HashMap::new();
+    // A package root is visited once per file in it, so a single oversized
+    // dataset would otherwise be reported once per file. Deduplicate on the
+    // (path, reason) pair; the CLI prints one line per entry.
+    let mut degraded: BTreeSet<(PathBuf, &'static str)> = BTreeSet::new();
     let project_attached: HashSet<String> = configured_packages
         .iter()
         .cloned()
@@ -125,13 +169,11 @@ pub(crate) fn resolve<'a>(
             }
         }
         if let Some(root) = r_package_root(Path::new(&file.path)) {
-            file_bindings.extend(
-                source_binding_cache
-                    .entry(root.clone())
-                    .or_insert_with(|| source_package_namespace_bindings(&root))
-                    .iter()
-                    .cloned(),
-            );
+            let source_bindings = source_binding_cache
+                .entry(root.clone())
+                .or_insert_with(|| source_package_namespace_bindings(&root))
+                .clone();
+            file_bindings.extend(source_bindings.bindings.iter().cloned());
             if let Some(package) = source_package_name(&root) {
                 file_attached.insert(package.clone());
                 source_package = Some(package);
@@ -139,15 +181,29 @@ pub(crate) fn resolve<'a>(
             let metadata = namespace_cache
                 .entry(root.clone())
                 .or_insert_with(|| read_namespace(&root.join("NAMESPACE")));
+            // `useDynLib(pkg, .registration = TRUE)` binds every routine in
+            // the package's `R_registerRoutines` table into the namespace.
+            // ry does not read `src/`, so the witness set collected above --
+            // names this package itself passes as an FFI entry point -- is
+            // the evidence that a name is one of them. Without the
+            // declaration the same names are ordinary unbound reads.
+            if metadata.native_registration {
+                file_bindings.extend(source_bindings.native_symbols.iter().cloned());
+            }
             file_bindings.extend(metadata.imported_bindings.iter().cloned());
             file_imported_from.extend(metadata.imported_from.clone());
             file_bindings.extend(metadata.s3_generics.iter().cloned());
-            file_bindings.extend(
-                metadata
-                    .native_routine_prefixes
-                    .iter()
-                    .map(|prefix| format!("\0useDynLib:{prefix}")),
-            );
+            file_bindings.extend(metadata.native_routines.iter().cloned());
+            file_bindings.extend(metadata.native_routine_prefixes.iter().map(|prefix| {
+                format!(
+                    "{}{prefix}",
+                    ry_checker::packages::NATIVE_ROUTINE_PREFIX_SENTINEL
+                )
+            }));
+            if metadata.native_registration {
+                file_bindings
+                    .insert(ry_checker::packages::NATIVE_REGISTRATION_SENTINEL.to_string());
+            }
             file_s3_methods.extend(metadata.s3_methods.iter().cloned());
             // `import(pkg)` puts pkg's exports in the package namespace,
             // not on the search path used to run its tests and examples.
@@ -163,40 +219,40 @@ pub(crate) fn resolve<'a>(
                 file_attached.extend(read_description_packages(&root).depends);
             }
             if source_package_lazy_data(&root) {
-                file_bindings.extend(
-                    dataset_cache
-                        .entry(root.clone())
-                        .or_insert_with(|| {
-                            source_package_datasets(
-                                &root,
-                                MAX_SERIALIZED_BYTES.load(Ordering::Relaxed),
-                            )
-                        })
-                        .iter()
-                        .cloned(),
-                );
+                let datasets = dataset_cache
+                    .entry(root.clone())
+                    .or_insert_with(|| {
+                        source_package_datasets(&root, MAX_SERIALIZED_BYTES.load(Ordering::Relaxed))
+                    })
+                    .clone();
+                file_bindings.extend(datasets.bindings.iter().cloned());
+                for path in &datasets.degraded {
+                    degraded.insert((path.clone(), "oversized dataset in data/"));
+                }
             }
             let sysdata = root.join("R/sysdata.rda");
-            file_bindings.extend(
-                serialized_cache
-                    .entry(sysdata.clone())
-                    .or_insert_with(|| {
-                        serialized_bindings(&sysdata, MAX_SERIALIZED_BYTES.load(Ordering::Relaxed))
-                    })
-                    .iter()
-                    .cloned(),
+            let sysdata_inventory = serialized_cache
+                .entry(sysdata.clone())
+                .or_insert_with(|| {
+                    serialized_inventory(&sysdata, MAX_SERIALIZED_BYTES.load(Ordering::Relaxed))
+                })
+                .clone();
+            file_bindings.extend(sysdata_inventory.bindings.iter().cloned());
+            if sysdata_inventory.degraded {
+                degraded.insert((sysdata, "oversized R/sysdata.rda"));
+            }
+            let loaded = loaded_serialized_bindings(
+                file,
+                &root,
+                &project_attached,
+                user_stubs,
+                MAX_SERIALIZED_BYTES.load(Ordering::Relaxed),
+                &mut serialized_cache,
             );
-            load_bindings.insert(
-                file.path.clone(),
-                loaded_serialized_bindings(
-                    file,
-                    &root,
-                    &project_attached,
-                    user_stubs,
-                    MAX_SERIALIZED_BYTES.load(Ordering::Relaxed),
-                    &mut serialized_cache,
-                ),
-            );
+            for path in &loaded.degraded {
+                degraded.insert((path.clone(), "oversized load() target"));
+            }
+            load_bindings.insert(file.path.clone(), loaded.per_span);
 
             if relative.is_some_and(is_test_or_script_file) {
                 // Loading the package under test also attaches its Depends;
@@ -265,6 +321,7 @@ pub(crate) fn resolve<'a>(
         imported_from,
         s3_methods,
         load_bindings,
+        degraded: degraded.into_iter().collect(),
     }
 }
 
@@ -291,20 +348,33 @@ fn is_test_or_script_file(path: &Path) -> bool {
 /// the files being checked: package load hooks commonly call a helper defined
 /// in a different file. We never evaluate source, and only retain literal
 /// names, so an unknown dynamic name cannot mask an unresolved variable.
-fn source_package_namespace_bindings(root: &Path) -> HashSet<String> {
-    // R creates this binding while loading every package namespace. It is
-    // present even when the DESCRIPTION omits a Package field.
-    let mut bindings = source_package_dynamic_bindings(root);
-    bindings.insert(".packageName".to_string());
-    bindings
+/// What a scan of a package's own `R/` sources establishes.
+#[derive(Default, Clone)]
+struct SourceBindings {
+    /// Names bound dynamically (`assign`, `delayedAssign`,
+    /// `makeActiveBinding`) into the package namespace.
+    bindings: HashSet<String>,
+    /// Names used as the entry-point argument of an FFI primitive somewhere
+    /// in the package, which proves they are native routines rather than
+    /// ordinary variables. Only meaningful when the NAMESPACE declares
+    /// `useDynLib(..., .registration = TRUE)`; see [`resolve`].
+    native_symbols: HashSet<String>,
 }
 
-fn source_package_dynamic_bindings(root: &Path) -> HashSet<String> {
-    let mut bindings = HashSet::new();
+fn source_package_namespace_bindings(root: &Path) -> SourceBindings {
+    // R creates this binding while loading every package namespace. It is
+    // present even when the DESCRIPTION omits a Package field.
+    let mut found = source_package_dynamic_bindings(root);
+    found.bindings.insert(".packageName".to_string());
+    found
+}
+
+fn source_package_dynamic_bindings(root: &Path) -> SourceBindings {
+    let mut found = SourceBindings::default();
     let mut paths = Vec::new();
     collect_r_source_files(&root.join("R"), &mut paths);
     let Ok(mut parser) = ry_core::RParser::new() else {
-        return bindings;
+        return found;
     };
     for path in paths {
         let Ok(source) = std::fs::read_to_string(&path) else {
@@ -314,10 +384,10 @@ fn source_package_dynamic_bindings(root: &Path) -> HashSet<String> {
             continue;
         };
         for statement in &file.stmts {
-            collect_dynamic_bindings_stmt(statement, 0, &mut bindings);
+            collect_dynamic_bindings_stmt(statement, 0, &mut found);
         }
     }
-    bindings
+    found
 }
 
 fn collect_r_source_files(directory: &Path, paths: &mut Vec<PathBuf>) {
@@ -344,60 +414,69 @@ fn collect_r_source_files(directory: &Path, paths: &mut Vec<PathBuf>) {
 fn collect_dynamic_bindings_stmt(
     statement: &Stmt,
     function_depth: usize,
-    bindings: &mut HashSet<String>,
+    found: &mut SourceBindings,
 ) {
     match statement {
         Stmt::Assign { target, value, .. } => {
-            collect_dynamic_bindings_expr(target, function_depth, bindings);
-            collect_dynamic_bindings_expr(value, function_depth, bindings);
+            collect_dynamic_bindings_expr(target, function_depth, found);
+            collect_dynamic_bindings_expr(value, function_depth, found);
         }
-        Stmt::Expr(expr) => collect_dynamic_bindings_expr(expr, function_depth, bindings),
+        Stmt::Expr(expr) => collect_dynamic_bindings_expr(expr, function_depth, found),
         Stmt::If {
             cond, then, else_, ..
         } => {
-            collect_dynamic_bindings_expr(cond, function_depth, bindings);
+            collect_dynamic_bindings_expr(cond, function_depth, found);
             for statement in then {
-                collect_dynamic_bindings_stmt(statement, function_depth, bindings);
+                collect_dynamic_bindings_stmt(statement, function_depth, found);
             }
             if let Some(else_) = else_ {
                 for statement in else_ {
-                    collect_dynamic_bindings_stmt(statement, function_depth, bindings);
+                    collect_dynamic_bindings_stmt(statement, function_depth, found);
                 }
             }
         }
         Stmt::For { iter, body, .. } => {
-            collect_dynamic_bindings_expr(iter, function_depth, bindings);
+            collect_dynamic_bindings_expr(iter, function_depth, found);
             for statement in body {
-                collect_dynamic_bindings_stmt(statement, function_depth, bindings);
+                collect_dynamic_bindings_stmt(statement, function_depth, found);
             }
         }
         Stmt::While { cond, body, .. } => {
-            collect_dynamic_bindings_expr(cond, function_depth, bindings);
+            collect_dynamic_bindings_expr(cond, function_depth, found);
             for statement in body {
-                collect_dynamic_bindings_stmt(statement, function_depth, bindings);
+                collect_dynamic_bindings_stmt(statement, function_depth, found);
             }
         }
         Stmt::FunctionDef { body, .. } => {
             for statement in body {
-                collect_dynamic_bindings_stmt(statement, function_depth + 1, bindings);
+                collect_dynamic_bindings_stmt(statement, function_depth + 1, found);
             }
         }
         Stmt::Return { value, .. } => {
             if let Some(value) = value {
-                collect_dynamic_bindings_expr(value, function_depth, bindings);
+                collect_dynamic_bindings_expr(value, function_depth, found);
             }
         }
     }
 }
 
-fn collect_dynamic_bindings_expr(
-    expr: &Expr,
-    function_depth: usize,
-    bindings: &mut HashSet<String>,
-) {
+fn collect_dynamic_bindings_expr(expr: &Expr, function_depth: usize, found: &mut SourceBindings) {
     match expr {
         Expr::Call { func, args, .. } => {
             if let Expr::Ident { name, .. } = func.as_ref() {
+                // `.Call(ffi_enquo, ...)` proves `ffi_enquo` names a native
+                // routine, not a variable. rlang then passes the same symbol
+                // as an ordinary value (`capture_arg = ffi_enquo`), which the
+                // call-position rule alone cannot see. Record the witness so
+                // every later use of the name resolves.
+                if ry_checker::packages::FFI_PRIMITIVES.contains(&name.as_str())
+                    && let Some(Expr::Ident { name: symbol, .. }) = args
+                        .first()
+                        .filter(|arg| arg.name.is_none())
+                        .map(|arg| &arg.value)
+                {
+                    found.native_symbols.insert(symbol.clone());
+                }
                 let has_named_environment = args.iter().any(|argument| {
                     matches!(
                         argument.name.as_deref(),
@@ -424,39 +503,39 @@ fn collect_dynamic_bindings_expr(
                     && let Some(Expr::String(binding, _)) =
                         args.first().map(|argument| &argument.value)
                 {
-                    bindings.insert(binding.clone());
+                    found.bindings.insert(binding.clone());
                 }
             }
-            collect_dynamic_bindings_expr(func, function_depth, bindings);
+            collect_dynamic_bindings_expr(func, function_depth, found);
             for argument in args {
-                collect_dynamic_bindings_expr(&argument.value, function_depth, bindings);
+                collect_dynamic_bindings_expr(&argument.value, function_depth, found);
             }
         }
         Expr::BinOp { lhs, rhs, .. } => {
-            collect_dynamic_bindings_expr(lhs, function_depth, bindings);
-            collect_dynamic_bindings_expr(rhs, function_depth, bindings);
+            collect_dynamic_bindings_expr(lhs, function_depth, found);
+            collect_dynamic_bindings_expr(rhs, function_depth, found);
         }
-        Expr::UnaryOp { expr, .. } => collect_dynamic_bindings_expr(expr, function_depth, bindings),
+        Expr::UnaryOp { expr, .. } => collect_dynamic_bindings_expr(expr, function_depth, found),
         Expr::Index { base, args, .. } => {
-            collect_dynamic_bindings_expr(base, function_depth, bindings);
+            collect_dynamic_bindings_expr(base, function_depth, found);
             for argument in args {
-                collect_dynamic_bindings_expr(&argument.value, function_depth, bindings);
+                collect_dynamic_bindings_expr(&argument.value, function_depth, found);
             }
         }
         Expr::Function { body, .. } | Expr::Block { body, .. } => {
             let function_depth =
                 function_depth + usize::from(matches!(expr, Expr::Function { .. }));
             for statement in body {
-                collect_dynamic_bindings_stmt(statement, function_depth, bindings);
+                collect_dynamic_bindings_stmt(statement, function_depth, found);
             }
         }
         Expr::If {
             cond, then, else_, ..
         } => {
-            collect_dynamic_bindings_expr(cond, function_depth, bindings);
-            collect_dynamic_bindings_expr(then, function_depth, bindings);
+            collect_dynamic_bindings_expr(cond, function_depth, found);
+            collect_dynamic_bindings_expr(then, function_depth, found);
             if let Some(else_) = else_ {
-                collect_dynamic_bindings_expr(else_, function_depth, bindings);
+                collect_dynamic_bindings_expr(else_, function_depth, found);
             }
         }
         Expr::Logical(_, _)
@@ -590,11 +669,11 @@ fn source_package_lazy_data(root: &Path) -> bool {
 /// binding (`data/example.rda` -> `example`). This inventory is static,
 /// bounded to one directory, and cached indirectly by the per-run package
 /// scope construction.
-fn source_package_datasets(root: &Path, max_serialized_bytes: u64) -> HashSet<String> {
+fn source_package_datasets(root: &Path, max_serialized_bytes: u64) -> DataInventory {
     let Ok(entries) = std::fs::read_dir(root.join("data")) else {
-        return HashSet::new();
+        return DataInventory::default();
     };
-    let mut bindings = HashSet::new();
+    let mut out = DataInventory::default();
     for entry in entries.flatten() {
         let path = entry.path();
         let Some(extension) = path
@@ -606,18 +685,21 @@ fn source_package_datasets(root: &Path, max_serialized_bytes: u64) -> HashSet<St
         };
         match extension.as_str() {
             "rda" | "rdata" => {
-                let serialized = serialized_bindings(&path, max_serialized_bytes);
-                if serialized.is_empty() {
+                let inventory = serialized_inventory(&path, max_serialized_bytes);
+                if inventory.bindings.is_empty() {
                     if let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) {
-                        bindings.insert(stem.to_string());
+                        out.bindings.insert(stem.to_string());
                     }
                 } else {
-                    bindings.extend(serialized);
+                    out.bindings.extend(inventory.bindings);
+                }
+                if inventory.degraded {
+                    out.degraded.push(path);
                 }
             }
             "rds" => {
                 if let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) {
-                    bindings.insert(stem.to_string());
+                    out.bindings.insert(stem.to_string());
                 }
             }
             "r" => {
@@ -630,30 +712,45 @@ fn source_package_datasets(root: &Path, max_serialized_bytes: u64) -> HashSet<St
                 let Ok(file) = parser.parse(&path.to_string_lossy(), &source) else {
                     continue;
                 };
-                bindings.extend(file.stmts.iter().filter_map(|statement| match statement {
-                    Stmt::Assign {
-                        target: Expr::Ident { name, .. },
-                        ..
-                    } => Some(name.clone()),
-                    _ => None,
-                }));
+                out.bindings
+                    .extend(file.stmts.iter().filter_map(|statement| match statement {
+                        Stmt::Assign {
+                            target: Expr::Ident { name, .. },
+                            ..
+                        } => Some(name.clone()),
+                        _ => None,
+                    }));
             }
             _ => {}
         }
     }
-    bindings
+    out
 }
 
 /// Read only the top-level tags from an R serialization stream. `.rda`
 /// workspaces are serialized pairlists whose tags are the binding names. The
 /// parser's lazy mode skips vector payload allocation, and bzip2 streams are
 /// decompressed in-process; no R runtime or project code is executed.
-fn serialized_bindings(path: &Path, cap: u64) -> HashSet<String> {
-    type CacheKey = (PathBuf, u64, u128);
-    static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<CacheKey, HashSet<String>>>> =
-        std::sync::OnceLock::new();
+///
+/// Returns the enumerated object names plus a `degraded` flag. When the
+/// decoded payload exceeds the byte cap, enumeration is skipped and the
+/// binding set is reduced to a single file-stem fallback ([`file_stem_binding`])
+/// so unbound-variable analysis (RY010) stays live instead of being disabled
+/// package-wide (the previous behavior via [`SERIALIZED_BINDINGS_UNENUMERABLE`]).
+fn serialized_inventory(path: &Path, cap: u64) -> SerializedInventory {
+    /// What the cached inventory was derived from. A mismatch on any field
+    /// means the entry is stale. `cap` is part of it because raising
+    /// `max-serialized-bytes` must re-enumerate a file that was previously
+    /// reduced to its stem.
+    type Stamp = (u64, u128, u64);
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<HashMap<PathBuf, (Stamp, SerializedInventory)>>,
+    > = std::sync::OnceLock::new();
     let Ok(metadata) = std::fs::metadata(path) else {
-        return HashSet::new();
+        return SerializedInventory {
+            bindings: HashSet::new(),
+            degraded: false,
+        };
     };
     let modified = metadata
         .modified()
@@ -661,60 +758,85 @@ fn serialized_bindings(path: &Path, cap: u64) -> HashSet<String> {
         .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
-    let key = (path.to_path_buf(), metadata.len(), modified);
+    let stamp: Stamp = (metadata.len(), modified, cap);
     let cache = CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
-    if let Some(bindings) = cache.lock().expect("serialized cache poisoned").get(&key) {
-        return bindings.clone();
+    if let Some(inventory) = cache
+        .lock()
+        .expect("serialized cache poisoned")
+        .get(path)
+        .filter(|(cached, _)| *cached == stamp)
+        .map(|(_, inventory)| inventory.clone())
+    {
+        return inventory;
     }
-    let bindings = serialized_bindings_uncached(path, cap);
+    let inventory = serialized_inventory_uncached(path, cap);
+    // Keyed on the path, not on (path, stamp): a long-lived LSP session
+    // re-checks the same data files after every edit, and keying on the
+    // stamp would retain one binding set per historical version forever.
+    // Replacing the entry bounds the cache by the number of distinct files.
     cache
         .lock()
         .expect("serialized cache poisoned")
-        .insert(key, bindings.clone());
-    bindings
+        .insert(path.to_path_buf(), (stamp, inventory.clone()));
+    inventory
 }
 
-fn serialized_bindings_uncached(path: &Path, cap: u64) -> HashSet<String> {
-    fn unenumerable() -> HashSet<String> {
-        HashSet::from([SERIALIZED_BINDINGS_UNENUMERABLE.to_string()])
-    }
+fn serialized_inventory_uncached(path: &Path, cap: u64) -> SerializedInventory {
+    // Decoded payload exceeded the byte cap: rather than disabling
+    // unbound-variable analysis package-wide (the former
+    // `SERIALIZED_BINDINGS_UNENUMERABLE` path), fall back to the file
+    // stem as a single conservative binding. Callers flag the scope as
+    // degraded so the user knows RY010 precision dropped for that file.
+    let degraded = |path: &Path| SerializedInventory {
+        bindings: file_stem_binding(path),
+        degraded: true,
+    };
+    let empty = || SerializedInventory {
+        bindings: HashSet::new(),
+        degraded: false,
+    };
 
-    let Ok(bytes) = std::fs::read(path) else {
-        return HashSet::new();
+    let read_cap = cap.saturating_add(1);
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(_) => return empty(),
     };
     let bytes = if bytes.starts_with(b"BZh") {
         let mut decoded = Vec::new();
         let decoder = bzip2::read::BzDecoder::new(bytes.as_slice());
-        if decoder.take(cap + 1).read_to_end(&mut decoded).is_err() {
-            return HashSet::new();
+        if decoder.take(read_cap).read_to_end(&mut decoded).is_err() {
+            return empty();
         }
         if decoded.len() as u64 > cap {
-            return unenumerable();
+            return degraded(path);
         }
         decoded
     } else if bytes.starts_with(&[0x1f, 0x8b]) {
         let mut decoded = Vec::new();
         let decoder = flate2::read::GzDecoder::new(bytes.as_slice());
-        if decoder.take(cap + 1).read_to_end(&mut decoded).is_err() {
-            return HashSet::new();
+        if decoder.take(read_cap).read_to_end(&mut decoded).is_err() {
+            return empty();
         }
         if decoded.len() as u64 > cap {
-            return unenumerable();
+            return degraded(path);
         }
         decoded
     } else if bytes.starts_with(&[0xfd, b'7', b'z', b'X', b'Z', 0x00]) {
         let mut decoded = Vec::new();
         let decoder = xz2::read::XzDecoder::new(bytes.as_slice());
-        if decoder.take(cap + 1).read_to_end(&mut decoded).is_err() {
-            return HashSet::new();
+        if decoder.take(read_cap).read_to_end(&mut decoded).is_err() {
+            return empty();
         }
         if decoded.len() as u64 > cap {
-            return unenumerable();
+            return degraded(path);
         }
         decoded
     } else {
+        // An uncompressed file already has a known size from `metadata.len()`
+        // checked in the cached wrapper. Short-circuit before parsing if it
+        // exceeds the cap — no need to read the whole payload.
         if bytes.len() as u64 > cap {
-            return unenumerable();
+            return degraded(path);
         }
         bytes
     };
@@ -723,15 +845,27 @@ fn serialized_bindings_uncached(path: &Path, cap: u64) -> HashSet<String> {
         .or_else(|| bytes.strip_prefix(b"RDX3\n"))
         .unwrap_or(&bytes);
     let Ok(parsed) = rds2rust::read_rds_lazy(payload) else {
-        return HashSet::new();
+        return empty();
     };
-    match parsed.object.into_concrete() {
+    let bindings = match parsed.object.into_concrete() {
         rds2rust::RObject::Pairlist(elements) => elements
             .into_iter()
             .filter_map(|element| element.tag.map(|tag| tag.to_string()))
             .collect(),
         _ => HashSet::new(),
+    };
+    SerializedInventory {
+        bindings,
+        degraded: false,
     }
+}
+
+/// Per-file `load()` resolution result. `per_span` maps each `load()`
+/// call's start span to the bindings it introduces; `degraded` lists any
+/// target workspaces that exceeded the byte cap.
+struct LoadedInventory {
+    per_span: HashMap<usize, HashSet<String>>,
+    degraded: Vec<PathBuf>,
 }
 
 fn loaded_serialized_bindings(
@@ -740,8 +874,8 @@ fn loaded_serialized_bindings(
     attached_packages: &HashSet<String>,
     user_stubs: &std::collections::BTreeMap<String, ry_typeshed::Typeshed>,
     max_serialized_bytes: u64,
-    cache: &mut HashMap<PathBuf, HashSet<String>>,
-) -> HashMap<usize, HashSet<String>> {
+    cache: &mut HashMap<PathBuf, SerializedInventory>,
+) -> LoadedInventory {
     fn resolve_path(
         expr: &Expr,
         file: &SourceFile,
@@ -792,7 +926,10 @@ fn loaded_serialized_bindings(
             Some(package_root.join(raw))
         }
     }
-    let mut bindings = HashMap::new();
+    let mut out = LoadedInventory {
+        per_span: HashMap::new(),
+        degraded: Vec::new(),
+    };
     for statement in &file.stmts {
         let Stmt::Expr(Expr::Call {
             func, args, span, ..
@@ -812,14 +949,17 @@ fn loaded_serialized_bindings(
                 user_stubs,
             )
         }) {
-            let loaded = cache
+            let inventory = cache
                 .entry(path.clone())
-                .or_insert_with(|| serialized_bindings(&path, max_serialized_bytes))
+                .or_insert_with(|| serialized_inventory(&path, max_serialized_bytes))
                 .clone();
-            bindings.insert(span.start, loaded);
+            if inventory.degraded {
+                out.degraded.push(path);
+            }
+            out.per_span.insert(span.start, inventory.bindings);
         }
     }
-    bindings
+    out
 }
 
 /// Parse an R NAMESPACE file with the regular R parser. This handles quoted
@@ -1140,7 +1280,11 @@ mod tests {
     fn injects_package_name_only_for_package_roots() {
         let package = tempfile::tempdir().unwrap();
         std::fs::write(package.path().join("DESCRIPTION"), "Package: fixture\n").unwrap();
-        assert!(source_package_namespace_bindings(package.path()).contains(".packageName"));
+        assert!(
+            source_package_namespace_bindings(package.path())
+                .bindings
+                .contains(".packageName")
+        );
 
         assert!(
             r_package_root(Path::new("/nonexistent-ry-script-root/script.R")).is_none(),
@@ -1180,36 +1324,45 @@ mod tests {
             std::fs::write(&path, compressed).unwrap();
 
             assert_eq!(
-                serialized_bindings(&path, 2 * 1024 * 1024),
+                serialized_inventory(&path, 2 * 1024 * 1024).bindings,
                 HashSet::from(["alpha".to_string(), "beta".to_string()])
             );
         }
     }
 
     #[test]
-    fn oversized_serialized_workspace_is_unenumerable() {
+    fn oversized_serialized_workspace_falls_back_to_file_stem() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("oversized.rda");
         write_oversized_rdata(&path);
 
+        // Over-cap workspaces no longer emit the package-global
+        // `SERIALIZED_BINDINGS_UNENUMERABLE` marker (which disabled RY010
+        // project-wide). They degrade to the file stem, matching the
+        // `.rds` and empty-`.rda` fallbacks, and flag the scope degraded.
         assert_eq!(
-            serialized_bindings(&path, 2 * 1024 * 1024),
-            HashSet::from([SERIALIZED_BINDINGS_UNENUMERABLE.to_string()])
+            serialized_inventory(&path, 2 * 1024 * 1024).bindings,
+            HashSet::from(["oversized".to_string()])
         );
+        assert!(serialized_inventory(&path, 2 * 1024 * 1024).degraded);
     }
 
     #[test]
-    fn oversized_sysdata_opens_the_package_file_scope() {
+    fn oversized_sysdata_falls_back_to_file_stem_not_global_disable() {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("DESCRIPTION"), "Package: fixture\n").unwrap();
         let source_path = root.path().join("R/use.R");
         std::fs::create_dir_all(source_path.parent().unwrap()).unwrap();
-        std::fs::write(&source_path, "arbitrary_sysdata_name\n").unwrap();
         write_oversized_rdata(&root.path().join("R/sysdata.rda"));
 
+        // `sysdata` resolves via the file-stem fallback; `real_missing` is
+        // genuinely unbound. Previously the oversized sysdata disabled RY010
+        // for the whole file (both stayed silent); now only the stem binding
+        // is masked and the real miss is reported.
+        let source = "ok <- sysdata\nbad <- real_missing\n";
         let mut parser = ry_core::RParser::new().unwrap();
         let file = parser
-            .parse(&source_path.to_string_lossy(), "arbitrary_sysdata_name\n")
+            .parse(&source_path.to_string_lossy(), source)
             .unwrap();
         let scope = resolve(
             std::slice::from_ref(&source_path),
@@ -1218,17 +1371,31 @@ mod tests {
             &std::collections::BTreeMap::new(),
             [&file],
         );
+        assert!(
+            scope
+                .degraded
+                .iter()
+                .any(|(path, _)| path.ends_with("sysdata.rda")),
+            "oversized sysdata should flag the scope degraded: {:?}",
+            scope.degraded
+        );
         let mut project = ry_checker::Project::new();
         project.add_file(source_path.to_string_lossy().to_string(), file);
         project.set_external_bindings(scope.bindings);
-        let diagnostics = project.check();
-
+        let diagnostics: Vec<_> = project
+            .check()
+            .into_iter()
+            .flat_map(|(_, diagnostics)| diagnostics)
+            .collect();
+        let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
         assert!(
-            diagnostics[0]
-                .1
-                .iter()
-                .all(|diagnostic| diagnostic.code != "RY010"),
-            "oversized sysdata should open the file scope: {diagnostics:?}"
+            codes.contains(&"RY010"),
+            "oversized sysdata must not globally disable RY010; the real miss should fire: {diagnostics:?}"
+        );
+        assert_eq!(
+            codes.iter().filter(|&&c| c == "RY010").count(),
+            1,
+            "only the genuinely unbound name should fire RY010: {diagnostics:?}"
         );
     }
 
@@ -1271,9 +1438,13 @@ mod tests {
             &mut HashMap::new(),
         );
         assert_eq!(
-            bindings.len(),
+            bindings.per_span.len(),
             1,
             "custom signature should resolve the path"
+        );
+        assert!(
+            bindings.degraded.is_empty(),
+            "an invalid (non-serialized) fixture should not be flagged degraded"
         );
     }
 }

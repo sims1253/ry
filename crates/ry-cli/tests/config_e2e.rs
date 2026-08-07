@@ -266,6 +266,66 @@ fn ry_toml_exclude_patterns_skip_matched_files() {
 }
 
 #[test]
+fn package_test_fixtures_are_skipped_by_default() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(
+        tmp.path().join("DESCRIPTION"),
+        "Package: fixturepkg\nVersion: 0.0.0.9000\n",
+    )
+    .unwrap();
+    fs::create_dir_all(tmp.path().join("R")).unwrap();
+    fs::create_dir_all(tmp.path().join("tests/testthat/fixtures")).unwrap();
+    fs::write(tmp.path().join("R/good.R"), "value <- 1L\n").unwrap();
+    fs::write(
+        tmp.path().join("tests/testthat/test-live.R"),
+        "live_missing_name\n",
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("tests/testthat/fixtures/bad.R"),
+        "fixture_missing_name\n",
+    )
+    .unwrap();
+
+    let output = ry_check(tmp.path());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("live_missing_name"),
+        "test code was skipped: {stdout}"
+    );
+    assert!(
+        !stdout.contains("fixture_missing_name"),
+        "fixture data must be skipped by default: {stdout}"
+    );
+}
+
+#[test]
+fn check_test_fixtures_config_opts_back_in() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(
+        tmp.path().join("DESCRIPTION"),
+        "Package: fixturepkg\nVersion: 0.0.0.9000\n",
+    )
+    .unwrap();
+    fs::write(tmp.path().join("ry.toml"), "check-test-fixtures = true\n").unwrap();
+    fs::create_dir_all(tmp.path().join("R")).unwrap();
+    fs::create_dir_all(tmp.path().join("tests/testthat/fixtures")).unwrap();
+    fs::write(tmp.path().join("R/good.R"), "value <- 1L\n").unwrap();
+    fs::write(
+        tmp.path().join("tests/testthat/fixtures/bad.R"),
+        "fixture_missing_name\n",
+    )
+    .unwrap();
+
+    let output = ry_check(tmp.path());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("fixture_missing_name"),
+        "configured fixture data must be checked: {stdout}"
+    );
+}
+
+#[test]
 fn ry_toml_output_format_json() {
     let tmp = tempfile::tempdir().unwrap();
     fs::write(
@@ -961,5 +1021,176 @@ fn full_output_reports_argument_type_mismatch_with_types() {
     assert!(
         stdout.contains("argument `x` to `mean` is `character`, expected numeric"),
         "{stdout}"
+    );
+}
+
+#[test]
+fn oversized_sysdata_surfaces_degraded_scope_without_global_ry010_disable() {
+    // W20/W21d end-to-end: an over-cap serialized data file must (1) fall
+    // back to its file-stem binding instead of disabling RY010 project-wide,
+    // (2) keep RY010 live for genuinely unbound names, and (3) surface the
+    // degraded scope on stderr (never stdout) so the JSON diagnostic stream
+    // consumed by the ecosystem harness stays stable. We shrink the byte cap
+    // via `ry.toml` so a tiny `sysdata.rda` triggers the cap without writing
+    // a real 2 MB serialization.
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path();
+    fs::write(pkg.join("DESCRIPTION"), "Package: fixture\n").unwrap();
+    fs::write(pkg.join("ry.toml"), "max-serialized-bytes = 1\n").unwrap();
+    fs::create_dir_all(pkg.join("R")).unwrap();
+    // `sysdata` resolves via the file-stem fallback; `genuinely_missing` is
+    // a real miss that must fire RY010.
+    fs::write(
+        pkg.join("R/use.R"),
+        "ok <- sysdata\nbad <- genuinely_missing\n",
+    )
+    .unwrap();
+    fs::write(pkg.join("R/sysdata.rda"), "over-cap-bytes").unwrap();
+
+    // Human format: degraded note on stderr, RY010 on stdout.
+    let human = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .args(["check", pkg.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let human_stdout = String::from_utf8_lossy(&human.stdout);
+    let human_stderr = String::from_utf8_lossy(&human.stderr);
+    assert!(
+        human_stdout.contains("RY010") && human_stdout.contains("genuinely_missing"),
+        "RY010 must stay live for the real miss (no global disable): {human_stdout}"
+    );
+    // The previous form of this assertion was
+    // `!contains("sysdata") || contains("RY010")`, which is vacuous: the
+    // `genuinely_missing` diagnostic above guarantees "RY010" is present, so
+    // the second disjunct always held. Match the specific message instead.
+    assert!(
+        !human_stdout.contains("variable `sysdata` is not bound in this scope"),
+        "the file-stem binding must not itself fire RY010: {human_stdout}"
+    );
+    assert!(
+        human_stderr.contains("degraded scope"),
+        "the degraded scope must be reported on stderr: {human_stderr}"
+    );
+    assert!(
+        human_stderr.contains("sysdata.rda"),
+        "the degraded report must name the offending file: {human_stderr}"
+    );
+    assert!(
+        !human_stdout.contains("degraded scope"),
+        "the degraded note must never reach the stdout diagnostic stream: {human_stdout}"
+    );
+
+    // Machine format: degraded note suppressed, JSON stays clean.
+    let json = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .args([
+            "check",
+            pkg.to_str().unwrap(),
+            "--output-format",
+            "json",
+            "--exit-zero",
+        ])
+        .output()
+        .unwrap();
+    let json_stdout = String::from_utf8_lossy(&json.stdout);
+    let json_stderr = String::from_utf8_lossy(&json.stderr);
+    assert!(
+        json_stdout.contains("RY010"),
+        "JSON must still carry the RY010 finding: {json_stdout}"
+    );
+    assert!(
+        json_stderr.is_empty(),
+        "JSON output must not emit the human degraded note on stderr: {json_stderr}"
+    );
+    assert!(
+        !json_stdout.contains("degraded"),
+        "the degraded note must not leak into JSON diagnostics: {json_stdout}"
+    );
+}
+
+/// A package root is re-resolved once per file in it, so an oversized
+/// dataset used to be pushed onto the degraded list once per file and
+/// printed that many times. The report is per file, not per reader.
+#[test]
+fn degraded_scope_is_reported_once_per_file_not_per_reader() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path();
+    fs::write(pkg.join("DESCRIPTION"), "Package: fixture\n").unwrap();
+    fs::write(pkg.join("ry.toml"), "max-serialized-bytes = 1\n").unwrap();
+    fs::create_dir_all(pkg.join("R")).unwrap();
+    fs::write(pkg.join("R/sysdata.rda"), "over-cap-bytes").unwrap();
+    // Three files in the same package: one resolve pass each.
+    for name in ["a", "b", "c"] {
+        fs::write(pkg.join(format!("R/{name}.R")), "x <- sysdata\n").unwrap();
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .args(["check", pkg.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr
+            .lines()
+            .filter(|line| line.trim_start().starts_with("- "))
+            .count(),
+        1,
+        "one oversized file must produce one degraded line: {stderr}"
+    );
+    assert!(
+        stderr.contains("1 degraded scope(s)"),
+        "the count must match the number of distinct offending files: {stderr}"
+    );
+}
+
+/// Plan 31 W6. `useDynLib(pkg, .registration = TRUE)` binds every routine in
+/// the package's `R_registerRoutines` table into the namespace. ry does not
+/// read `src/`, so a name the package itself passes as an FFI entry point is
+/// the evidence that it is one of them — which is what lets rlang's
+/// `capture_arg = ffi_enquo` resolve, eight `R/nse-defuse.R` findings that
+/// the call-position rule alone cannot reach.
+#[test]
+fn registered_native_symbols_resolve_in_value_position() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path();
+    fs::write(pkg.join("DESCRIPTION"), "Package: ffi\n").unwrap();
+    fs::create_dir_all(pkg.join("R")).unwrap();
+    fs::write(
+        pkg.join("R/defuse.R"),
+        "enquo <- function(arg) .Call(ffi_enquo, substitute(arg))\n\
+         enquos <- function(...) endots(capture_arg = ffi_enquo)\n\
+         bad <- function() genuinely_missing_xyz\n",
+    )
+    .unwrap();
+
+    fs::write(
+        pkg.join("NAMESPACE"),
+        "useDynLib(ffi, .registration = TRUE)\n",
+    )
+    .unwrap();
+    let declared = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .args(["check", pkg.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let declared_stdout = String::from_utf8_lossy(&declared.stdout);
+    assert!(
+        !declared_stdout.contains("ffi_enquo"),
+        "a symbol proven native by .Call must resolve in value position too: {declared_stdout}"
+    );
+    assert!(
+        declared_stdout.contains("genuinely_missing_xyz"),
+        "the witness set must not disable RY010 generally: {declared_stdout}"
+    );
+
+    // Negative control: without the declaration the value-position use is an
+    // ordinary unbound read again. (The `.Call` entry-point argument stays
+    // suppressed either way — that is the long-standing call-position rule.)
+    fs::write(pkg.join("NAMESPACE"), "export(enquo)\n").unwrap();
+    let undeclared = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .args(["check", pkg.to_str().unwrap(), "--exit-zero"])
+        .output()
+        .unwrap();
+    let undeclared_stdout = String::from_utf8_lossy(&undeclared.stdout);
+    assert!(
+        undeclared_stdout.contains("ffi_enquo"),
+        "without .registration the symbol is not proven bound: {undeclared_stdout}"
     );
 }

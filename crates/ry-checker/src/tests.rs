@@ -3901,12 +3901,342 @@ fn dynlib_prefix_resolves_only_with_nonempty_remainder() {
     assert!(checker.take_diagnostics().iter().any(|d| d.code == "RY010"));
 }
 
+/// Plan 31 W6. `call_with_cleanup(native_symbol, ...)` is the cleancall
+/// wrapper purrr, cli and rlang vendor; its first argument is a registered
+/// native routine, not a variable. It is an ordinary R function, so the
+/// suppression is licensed by `useDynLib(..., .registration = TRUE)` and
+/// must not apply without it.
+#[test]
+fn call_with_cleanup_symbol_needs_declared_registration() {
+    let src = "f <- function(x) call_with_cleanup(map_impl, environment(), x)\n";
+
+    let mut parser = RParser::new().unwrap();
+    let file = parser.parse("test.R", src).unwrap();
+    let mut checker = Checker::new("test.R");
+    checker.set_external_bindings(HashSet::from([
+        crate::packages::NATIVE_REGISTRATION_SENTINEL.to_string(),
+        "call_with_cleanup".to_string(),
+    ]));
+    checker.check(&file);
+    let diags = checker.take_diagnostics();
+    assert!(
+        !diags.iter().any(|d| d.message.contains("map_impl")),
+        "registered native symbol must not be reported unbound: {diags:?}"
+    );
+
+    // Negative control: the same call in a package that never declared
+    // `.registration = TRUE` keeps reporting the unbound symbol.
+    let mut parser = RParser::new().unwrap();
+    let file = parser.parse("test.R", src).unwrap();
+    let mut checker = Checker::new("test.R");
+    checker.set_external_bindings(HashSet::from(["call_with_cleanup".to_string()]));
+    checker.check(&file);
+    assert!(
+        checker
+            .take_diagnostics()
+            .iter()
+            .any(|d| d.code == "RY010" && d.message.contains("map_impl")),
+        "without .registration the symbol is an ordinary unbound read"
+    );
+}
+
+/// The registration gate licenses the native-symbol position only. Other
+/// arguments of the same call are still ordinary reads.
+#[test]
+fn call_with_cleanup_still_checks_non_symbol_arguments() {
+    let mut parser = RParser::new().unwrap();
+    let file = parser
+        .parse(
+            "test.R",
+            "f <- function() call_with_cleanup(map_impl, undefined_thing_xyz)\n",
+        )
+        .unwrap();
+    let mut checker = Checker::new("test.R");
+    checker.set_external_bindings(HashSet::from([
+        crate::packages::NATIVE_REGISTRATION_SENTINEL.to_string(),
+        "call_with_cleanup".to_string(),
+    ]));
+    checker.check(&file);
+    assert!(
+        checker
+            .take_diagnostics()
+            .iter()
+            .any(|d| d.code == "RY010" && d.message.contains("undefined_thing_xyz")),
+        "only the first argument is a native symbol"
+    );
+}
+
 #[test]
 fn r6_and_s7_class_body_pronouns_are_bound() {
     let diags = check(include_str!("../testdata/ok_r6_class_body_bindings.R"));
     assert!(
         diags.is_empty(),
         "class-body fixture should be clean: {diags:?}"
+    );
+}
+
+#[test]
+fn r6_non_portable_public_field_binds_in_sibling_method() {
+    // `portable = FALSE` makes the object's own environment the enclosure
+    // of every method, so `.dir` resolves without a `self$` prefix.
+    let diags = check(
+        r#"FileUploadOperation <- R6Class(
+  "FileUploadOperation",
+  portable = FALSE,
+  class = FALSE,
+  public = list(
+    .dir = character(0),
+    initialize = function(dir) {
+      .dir <<- dir
+    },
+    fileBegin = function() {
+      file.path(.dir, "x")
+    }
+  )
+)
+"#,
+    );
+    assert!(
+        diags.iter().all(|d| d.code != "RY010"),
+        "non-portable R6 fields should be bound in sibling methods, got {diags:?}"
+    );
+}
+
+#[test]
+fn r6_non_portable_binds_private_and_active_members() {
+    // All three member lists share one environment, so a public method may
+    // name a private field and vice versa.
+    let diags = check(
+        r#"Thing <- R6::R6Class(
+  "Thing",
+  portable = FALSE,
+  public = list(
+    show = function() {
+      cat(secret, computed_size)
+    }
+  ),
+  private = list(
+    secret = "s",
+    peek = function() {
+      show()
+    }
+  ),
+  active = list(
+    computed_size = function() {
+      nchar(secret)
+    }
+  )
+)
+"#,
+    );
+    assert!(
+        diags.iter().all(|d| d.code != "RY010"),
+        "public, private and active members should all be bound, got {diags:?}"
+    );
+}
+
+#[test]
+fn r6_non_portable_field_type_comes_from_literal_initialiser() {
+    // `.dir = character(0)` declares the field's mode, so a comparison
+    // against a number is still caught inside the method body.
+    let diags = check(
+        r#"Thing <- R6Class(
+  "Thing",
+  portable = FALSE,
+  public = list(
+    .dir = character(0),
+    bad = function() {
+      .dir < 42
+    }
+  )
+)
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == "RY033"),
+        "field type should come from the declared initialiser, got {diags:?}"
+    );
+}
+
+#[test]
+fn r6_non_portable_placeholder_field_is_untyped_once_reassigned() {
+    // shiny's convention: the declared value names the class the field will
+    // hold rather than storing a string, and `initialize()` overwrites it.
+    // Taking the declaration at face value would make every method call on
+    // the field a `$`-on-atomic error.
+    let diags = check(
+        r#"Logger <- R6Class(
+  "Logger",
+  portable = FALSE,
+  public = list(
+    msg = "<MessageLogger>",
+    initialize = function(logger) {
+      self$msg <- logger
+    },
+    emit = function() {
+      msg$log("x")
+    }
+  )
+)
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "a reassigned placeholder field carries no type: {diags:?}"
+    );
+}
+
+#[test]
+fn r6_non_portable_superassigned_field_is_untyped() {
+    // `.dir <<- dir` replaces the declared `character(0)` with whatever the
+    // caller passed, so the declaration no longer describes the field.
+    let diags = check(
+        r#"Thing <- R6Class(
+  "Thing",
+  portable = FALSE,
+  public = list(
+    .dir = character(0),
+    initialize = function(dir) {
+      .dir <<- dir
+    },
+    compare = function() {
+      .dir < 42
+    }
+  )
+)
+"#,
+    );
+    assert!(
+        diags.iter().all(|d| d.code != "RY033"),
+        "a superassigned field must not keep its declared mode, got {diags:?}"
+    );
+}
+
+/// `r6_rebound_members` must handle replacement-function assignment targets
+/// (`class(x) <- v`) inside a non-portable R6 class body. The target is an
+/// `Expr::Call`, not an `Expr::Ident` or `Expr::Index`, and the unhandled
+/// catch-all arm silently dropped it — the field kept its declared type even
+/// though the replacement overwrites it.
+#[test]
+fn r6_non_portable_replacement_function_assignment_rebinds_field() {
+    let diags = check(
+        r#"Thing <- R6Class(
+  "Thing",
+  portable = FALSE,
+  public = list(
+    kind = "default",
+    upgrade = function() {
+      class(kind) <- "upgraded"
+    },
+    show = function() {
+      kind$render()
+    }
+  )
+)
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "class(kind) <- v should rebind `kind` to unknown,          preventing RY033/RY061 on the later `$`: {diags:?}"
+    );
+}
+
+#[test]
+fn r6_non_portable_still_reports_undeclared_names() {
+    // Injecting the member names must not blanket-suppress RY010 inside
+    // the class body.
+    let diags = check(
+        r#"Thing <- R6Class(
+  "Thing",
+  portable = FALSE,
+  public = list(
+    .dir = character(0),
+    bad = function() {
+      file.path(.no_such_field_xyz, "x")
+    }
+  )
+)
+"#,
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == "RY010" && d.message.contains(".no_such_field_xyz")),
+        "a name that is not a declared member is still unbound, got {diags:?}"
+    );
+}
+
+/// R6 turns every `active` member into an active binding, so reading the
+/// bare name yields the getter's *result*, not the function. Typing it
+/// `function` made ordinary arithmetic on an active field an RY040 error.
+#[test]
+fn r6_non_portable_active_member_is_a_value_not_a_function() {
+    let diags = check(
+        r#"Counter <- R6::R6Class(
+  "Counter",
+  portable = FALSE,
+  public = list(
+    n = 1,
+    use = function() total + n
+  ),
+  active = list(
+    total = function() 2
+  )
+)
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "an active binding reads as its getter's result: {diags:?}"
+    );
+}
+
+#[test]
+fn r6_portable_default_leaves_bare_field_unbound() {
+    // Negative control (W19 recall guard). R6 defaults to `portable = TRUE`,
+    // where method enclosures do not contain the members: a bare `.dir`
+    // genuinely fails at runtime and must still be reported.
+    let diags = check(
+        r#"Thing <- R6Class(
+  "Thing",
+  public = list(
+    .dir = character(0),
+    fileBegin = function() {
+      file.path(.dir, "x")
+    }
+  )
+)
+"#,
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == "RY010" && d.message.contains(".dir")),
+        "portable (default) R6 must still report the bare field, got {diags:?}"
+    );
+}
+
+#[test]
+fn r6_explicit_portable_true_leaves_bare_field_unbound() {
+    // Negative control (W19 recall guard), explicit spelling.
+    let diags = check(
+        r#"Thing <- R6::R6Class(
+  "Thing",
+  portable = TRUE,
+  public = list(
+    .dir = character(0),
+    fileBegin = function() {
+      file.path(.dir, "x")
+    }
+  )
+)
+"#,
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == "RY010" && d.message.contains(".dir")),
+        "explicit `portable = TRUE` must still report the bare field, got {diags:?}"
     );
 }
 
@@ -6176,6 +6506,116 @@ fn dollar_on_opaque_no_warning() {
     assert!(diags.iter().all(|d| d.code != "RY061"), "got {:?}", diags);
 }
 
+#[test]
+fn dollar_on_all_atomic_union_emits_ry061() {
+    let diags = check("x <- if (runif(1) > 0.5) 1L else \"x\"\nx$field\n");
+    assert!(diags.iter().any(|d| d.code == "RY061"), "got {diags:?}");
+
+    let mixed = check("x <- if (runif(1) > 0.5) 1L else list(field = 1)\nx$field\n");
+    assert!(mixed.iter().all(|d| d.code != "RY061"), "got {mixed:?}");
+}
+
+#[test]
+fn lexical_nested_function_shadows_same_named_project_function_signature() {
+    let diags = check(
+        "helper <- function(required) required\n\nouter <- function() {\n  helper <- function() 1L\n  helper()\n}\nouter()\n",
+    );
+    assert!(diags.iter().all(|d| d.code != "RY091"), "got {diags:?}");
+}
+
+#[test]
+fn lexical_function_shadows_base_signature() {
+    // W7: a function literal defined inside an enclosing body shadows
+    // the typeshed/base signature, so RY090/RY091 must not fire against
+    // base::inherits' parameters.
+    let diags = check(
+        "f <- function(topics) {\n  inherits <- function(type) function(x) x$inherits_from(type)\n  topics$apply(inherits(\"return\"))\n}\n",
+    );
+    assert!(
+        diags.iter().all(|d| d.code != "RY090" && d.code != "RY091"),
+        "got {diags:?}"
+    );
+}
+
+#[test]
+fn lexical_function_shadows_base_eval() {
+    // Same lookup-order bug with a different base name (base::eval).
+    let diags =
+        check("g <- function(quo) {\n  eval <- function() .Call(\"x\", quo)\n  eval()\n}\n");
+    assert!(
+        diags.iter().all(|d| d.code != "RY090" && d.code != "RY091"),
+        "got {diags:?}"
+    );
+}
+
+#[test]
+fn early_return_joins_trailing_if_tail_type() {
+    // W8: an early `return()` must join, not replace, the trailing
+    // `if`-expression type. When the union contains a non-atomic member
+    // (here the opaque `fromJSON` result), `$` must not fire RY061.
+    let diags = check(
+        "process <- function(req, raw = FALSE) {\n  if (req == 204) return(TRUE)\n  if (raw) req else jsonlite::fromJSON(\"x\")\n}\nuse <- function(x) process(x)$config\n",
+    );
+    assert!(diags.iter().all(|d| d.code != "RY061"), "got {diags:?}");
+}
+
+#[test]
+fn early_return_with_all_atomic_trailing_if_still_reports() {
+    // W8 correctness guard: when every branch of the joined union IS
+    // atomic, `$` is a real runtime error and RY061 must still fire.
+    let diags = check(
+        "a <- function(req, raw) {\n  if (req == 204) return(TRUE)\n  if (raw) 1 else 2\n}\nb <- function(x) a(x, FALSE)$k\n",
+    );
+    assert!(diags.iter().any(|d| d.code == "RY061"), "got {diags:?}");
+}
+
+#[test]
+fn diverging_branch_and_unreachable_tail_do_not_pollute_return_join() {
+    let (diags, scope) = check_with_scope(
+        "f <- function(x) {\n  if (is.null(x)) return(list(field = 1L))\n  x <- list(field = 2L)\n  x\n}\ny <- f(NULL)$field\n",
+    );
+    assert!(diags.iter().all(|d| d.code != "RY061"), "got {diags:?}");
+    assert_eq!(scope.get("y").map(|ty| ty.mode), Some(Mode::Integer));
+
+    let tail = check("g <- function() { return(list(field = 1L)); 1L }\ng()$field\n");
+    assert!(tail.iter().all(|d| d.code != "RY061"), "got {tail:?}");
+}
+
+#[test]
+fn ry003_is_default_off_but_explicitly_selectable() {
+    let mut diagnostics = check("if (1L) print(1)\n");
+    assert!(diagnostics.iter().any(|d| d.code == "RY003"));
+
+    apply_filter_to_diagnostics(&mut diagnostics, &SeverityFilter::default());
+    assert!(diagnostics.iter().all(|d| d.code != "RY003"));
+
+    let mut diagnostics = check("if (1L) print(1)\n");
+    let mut filter = SeverityFilter::default();
+    filter.add_warn("RY003");
+    apply_filter_to_diagnostics(&mut diagnostics, &filter);
+    assert!(diagnostics.iter().any(|d| d.code == "RY003"));
+}
+
+#[test]
+fn guarded_unknown_parameter_vector_emits_ry032_without_other_vector_intent() {
+    for source in [
+        "f <- function(x) is.null(x) || is.na(x)\n",
+        "f <- function(x) length(x) && x == 1L\n",
+    ] {
+        let diags = check(source);
+        assert!(
+            diags.iter().any(|d| d.code == "RY032"),
+            "{source}: {diags:?}"
+        );
+    }
+
+    let reassigned = check("f <- function(x) { x <- TRUE; is.null(x) || is.na(x) }\n");
+    assert!(
+        reassigned.iter().all(|d| d.code != "RY032"),
+        "got {reassigned:?}"
+    );
+}
+
 /// Idempotence: running the checker twice on the same
 /// input must yield identical diagnostics. The fixpoint/refinement
 /// machinery walks function tables whose iteration order is not
@@ -6428,5 +6868,84 @@ fn public_check_with_scope_surfaces_ry000_on_broken_file() {
         diags.iter().any(|d| d.code == "RY000"),
         "check_with_scope must surface RY000 on a broken file, got {:?}",
         diags
+    );
+}
+
+// ===== search-path-unknown audit (W20/W21d) =====
+//
+// `mark_search_path_unknown()` suppresses RY010 (unbound-variable) for the
+// rest of a scope. It is a conservative open-search-path flag set whenever a
+// construct can introduce arbitrary bindings. These tests pin every call site
+// so the suppression stays intentional and scoped, and so an accidental
+// widening — e.g. re-introducing the package-global disabling the W20 fix
+// removed for oversized serialized data — is caught immediately.
+
+#[test]
+fn plain_unbound_reference_fires_ry010() {
+    // Negative control for the whole audit block: with no search-path-opening
+    // construct, a real miss must still fire RY010. This is the invariant the
+    // W20 fix restored (oversized sysdata used to suppress this project-wide).
+    let diags = check("x <- genuinely_unbound_name\n");
+    assert!(
+        diags.iter().any(|d| d.code == "RY010"),
+        "a plain unbound reference must fire RY010: {diags:?}"
+    );
+}
+
+#[test]
+fn external_unenumerable_marker_suppresses_ry010_for_its_file() {
+    // The `SERIALIZED_BINDINGS_UNENUMERABLE` marker still flows from the
+    // unstubbed-attached-package path (tests/examples with unstubbed
+    // Suggests). It must suppress RY010 for THAT file only — never
+    // project-wide. The W20 fix removed the package-global sysdata route;
+    // this is the remaining legitimate, file-local open search path.
+    let mut p = RParser::new().unwrap();
+    let f = p.parse("test.R", "x <- genuinely_unbound_name\n").unwrap();
+    let mut c = Checker::new("test.R");
+    c.set_external_bindings(HashSet::from(
+        [SERIALIZED_BINDINGS_UNENUMERABLE.to_string()],
+    ));
+    c.check(&f);
+    let diags = c.take_diagnostics();
+    assert!(
+        diags.iter().all(|d| d.code != "RY010"),
+        "the unenumerable marker should suppress RY010 for its file: {diags:?}"
+    );
+}
+
+#[test]
+fn library_of_unknown_package_opens_search_path() {
+    let diags = check("library(definitely_not_a_real_pkg_xyz)\nx <- some_unbound_value\n");
+    assert!(
+        diags.iter().all(|d| d.code != "RY010"),
+        "library() of an unstubbed package opens the search path: {diags:?}"
+    );
+}
+
+#[test]
+fn library_character_only_without_literal_opens_search_path() {
+    let diags = check("pkg <- \"x\"\nlibrary(pkg, character.only = TRUE)\ny <- still_unbound\n");
+    assert!(
+        diags.iter().all(|d| d.code != "RY010"),
+        "library(character.only=TRUE) without a literal name opens the search path: {diags:?}"
+    );
+}
+
+#[test]
+fn data_and_load_calls_open_search_path() {
+    let diags = check("data(some_dataset)\nload(\"workspace.rda\")\nz <- unbound_after_load\n");
+    assert!(
+        diags.iter().all(|d| d.code != "RY010"),
+        "data()/load() open the search path: {diags:?}"
+    );
+}
+
+#[test]
+fn attach_opens_search_path_via_unknown_bindings_scope_effect() {
+    // `attach()` is the canonical `ScopeEffect::UnknownBindings` loader.
+    let diags = check("attach(list(a = 1))\nw <- unbound_after_attach\n");
+    assert!(
+        diags.iter().all(|d| d.code != "RY010"),
+        "attach() opens the search path: {diags:?}"
     );
 }

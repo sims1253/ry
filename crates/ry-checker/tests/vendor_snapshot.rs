@@ -114,6 +114,7 @@ fn check_vendor(vendor_subdir: &str) -> Vec<String> {
     let mut parser = RParser::new().expect("parser init");
     let mut project = Project::new();
     let mut srcs: HashMap<String, String> = HashMap::new();
+    let mut paths: Vec<String> = Vec::new();
     for entry in &entries {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("R") {
@@ -132,11 +133,78 @@ fn check_vendor(vendor_subdir: &str) -> Vec<String> {
             }
         };
         project.add_file(rel.clone(), file);
-        srcs.insert(rel, src);
+        srcs.insert(rel.clone(), src);
+        paths.push(rel);
+    }
+
+    // Apply the package's own NAMESPACE the way the CLI does, so the net
+    // measures what a user running `ry check` on the package sees rather
+    // than what checking a bare directory of `.R` files sees. Vendored
+    // packages without a NAMESPACE keep the plain behaviour.
+    if let Some(metadata) = vendor_namespace(&mut parser, &vendor_root) {
+        let bindings = namespace_bindings(&metadata);
+        let imported_from: HashMap<String, String> = metadata.imported_from.clone();
+        project.set_external_bindings(
+            paths
+                .iter()
+                .map(|p| (p.clone(), bindings.clone()))
+                .collect(),
+        );
+        project.set_imported_from(
+            paths
+                .iter()
+                .map(|p| (p.clone(), imported_from.clone()))
+                .collect(),
+        );
+        project.set_external_s3_methods(
+            paths
+                .iter()
+                .map(|p| (p.clone(), metadata.s3_methods.clone()))
+                .collect(),
+        );
     }
 
     let per_file = project.check();
     render_diags(&per_file, &srcs)
+}
+
+/// Parse `<vendor_root>/../NAMESPACE`, if the vendored package ships one.
+fn vendor_namespace(
+    parser: &mut RParser,
+    vendor_root: &std::path::Path,
+) -> Option<ry_checker::packages::NamespaceMetadata> {
+    let namespace = vendor_root.parent()?.join("NAMESPACE");
+    let src = std::fs::read_to_string(&namespace).ok()?;
+    let file = parser
+        .parse(&namespace.to_string_lossy(), &src)
+        .expect("parse vendored NAMESPACE");
+    Some(ry_checker::packages::namespace_metadata(&file))
+}
+
+/// The opaque binding set a NAMESPACE contributes, mirroring
+/// `ry-cli`'s `package_metadata`.
+fn namespace_bindings(
+    metadata: &ry_checker::packages::NamespaceMetadata,
+) -> std::collections::HashSet<String> {
+    use ry_checker::packages::{NATIVE_REGISTRATION_SENTINEL, NATIVE_ROUTINE_PREFIX_SENTINEL};
+
+    let mut bindings: std::collections::HashSet<String> = metadata
+        .imported_bindings
+        .iter()
+        .chain(metadata.s3_generics.iter())
+        .chain(metadata.native_routines.iter())
+        .cloned()
+        .collect();
+    bindings.extend(
+        metadata
+            .native_routine_prefixes
+            .iter()
+            .map(|prefix| format!("{NATIVE_ROUTINE_PREFIX_SENTINEL}{prefix}")),
+    );
+    if metadata.native_registration {
+        bindings.insert(NATIVE_REGISTRATION_SENTINEL.to_string());
+    }
+    bindings
 }
 
 #[test]
@@ -146,22 +214,30 @@ fn purrr_vendor_snapshot() {
     // vendor net alongside glue; purrr is the flagship tidyverse
     // functional-programming package.
     //
-    // Snapshot entries are RY010 function and constant names that are not yet
-    // modeled, including cross-package symbols and purrr's internal helpers.
-    // The `caller_env = caller_env()` default is deliberately not reported
-    // because its force is conditional on the progress-bar path.
+    // purrr ships a NAMESPACE, so this runs with the same metadata the
+    // CLI applies: `importFrom` bindings, S3 registrations, and
+    // `useDynLib(purrr, .registration = TRUE)`.
     //
-    //   * rlang functions: quo_get_expr, eval_tidy, is_bare_list,
-    //     is_bare_formula, as_quosure, is_quosure, obj_is_list, is_zap.
+    // Snapshot entries are RY010 function and constant names that are not yet
+    // modeled, all of them cross-package symbols purrr reaches without an
+    // `importFrom`. The `caller_env = caller_env()` default is deliberately
+    // not reported because its force is conditional on the progress-bar path.
+    //
+    //   * rlang functions used via `::`-free internal calls: quo_get_expr,
+    //     eval_tidy, is_bare_formula, as_quosure, is_quosure, obj_is_list,
+    //     is_zap.
     //   * rlang-compat constants na_chr / na_dbl / na_int, referenced in
     //     compat-types-check.R -- these are defined in a non-vendored rlang
     //     compat file, so they read as unbound here.
     //   * vctrs functions: vec_set_union.
-    //   * purrr's own C-backed entry points: map_impl, map2_impl,
-    //     pmap_impl.
     //
-    // These resolve once the package typeshed covers rlang and vctrs
-    // and purrr's internal helpers are registered.
+    // These resolve once the package typeshed covers rlang and vctrs.
+    //
+    // purrr's own C-backed entry points (map_impl, map2_impl, pmap_impl)
+    // are NOT in the snapshot and must stay out: they are passed as bare
+    // symbols to `call_with_cleanup`, which the `.registration = TRUE`
+    // declaration licenses (plan 31 W6). Dropping the NAMESPACE, or the
+    // registration gate, makes all three reappear.
     // -----------------------------------------------------------------
 
     let rendered = check_vendor("testdata/vendor/purrr/R");

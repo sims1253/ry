@@ -1,5 +1,6 @@
 # name<TAB>git_url<TAB>pinned_ref
 # Sources are checked only; no package code is distributed or executed.
+# ledger: docs/corpus/tidyverse-0.7.1.json
 # The tidyverse packages are pinned to the commits audited with ry 0.7.1.
 tidyverse	https://github.com/tidyverse/tidyverse.git	0231aafbc56914ee5371dd6c7b60677f168d7154
 ggplot2	https://github.com/tidyverse/ggplot2.git	6870419aa6e106c3580c45c81d5b688cb31758bd

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Integration test: the ecosystem drift detector must catch a corrupted
-# snapshot in BOTH the standard (.txt) and full (.full.txt) report variants.
+# snapshot in the committed .txt report variant.
 #
-# Previously the drift loop only compared $stem.txt, so a drifted
-# $stem.full.txt would pass --check silently. This test corrupts each
-# variant in turn and asserts --check exits non-zero.
+# Only .txt files are committed and tracked; .full.txt variants are
+# gitignored and generated at runtime. This test corrupts the committed
+# .txt report and asserts --check exits non-zero.
 #
 # Requires: a built release binary, Rscript + jsonlite (same deps as run.sh).
 set -euo pipefail

@@ -104,16 +104,18 @@ fn call_argument(expr: &Expr) -> Option<&Expr> {
 }
 
 /// Render an expression back to a compact source string for diagnostic
-/// suggestions. Covers the common literal/identifier shapes; anything
-/// else degrades to a placeholder.
-fn expr_to_source(expr: &Expr) -> String {
+/// suggestions. Covers the common literal/identifier shapes; returns
+/// `None` for expressions that cannot be rendered without losing meaning,
+/// so the caller can omit the concrete suggestion rather than emit a
+/// broken one like `inherits(..., "widget")`.
+fn expr_to_source(expr: &Expr) -> Option<String> {
     match expr {
-        Expr::Ident { name, .. } => name.clone(),
-        Expr::String(s, _) => format!(r#""{s}""#),
-        Expr::Integer(n, _) => format!("{n}L"),
-        Expr::Double(n, _) => n.to_string(),
-        Expr::Logical(b, _) => b.to_string(),
-        _ => "...".to_string(),
+        Expr::Ident { name, .. } => Some(name.clone()),
+        Expr::String(s, _) => Some(format!(r#""{s}""#)),
+        Expr::Integer(n, _) => Some(format!("{n}L")),
+        Expr::Double(n, _) => Some(n.to_string()),
+        Expr::Logical(b, _) => Some(b.to_string()),
+        _ => None,
     }
 }
 
@@ -154,11 +156,17 @@ impl Checker {
             }
             bare
         } else {
+            // An unqualified name is shadowed if the lexical scope or the
+            // project function table defines it — in that case the call
+            // targets the user's function, not the base container.
+            if self.fn_table.fns.contains_key(name) {
+                return;
+            }
             name
         };
         if !NAME_CARRYING_CONTAINERS.contains(&lookup_name) {
             return;
-        };
+        }
         let builds_named_structure = args.iter().any(|argument| argument.name.is_some());
         for argument in args {
             if argument.name.is_some() {
@@ -231,18 +239,15 @@ impl Checker {
         let Some(arg_expr) = call_argument(class_arg) else {
             return;
         };
-        let arg_src = expr_to_source(arg_expr);
-        let class_src = expr_to_source(other_side);
         let prefix = if matches!(op, BinOpKind::Eq) { "" } else { "!" };
-        let suggestion = format!("{prefix}inherits({arg_src}, {class_src})");
-        self.emit(
-            Severity::Warning,
-            *span,
-            "RY103",
-            format!(
-                "`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `{suggestion}`"
-            ),
-        );
+        let message = match (expr_to_source(arg_expr), expr_to_source(other_side)) {
+            (Some(arg_src), Some(class_src)) => {
+                let suggestion = format!("{prefix}inherits({arg_src}, {class_src})");
+                format!("`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `{suggestion}`")
+            }
+            _ => "`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `inherits()`".to_string(),
+        };
+        self.emit(Severity::Warning, *span, "RY103", message);
     }
 
     /// RY105: `length(x) <op> 0` where `x` is length 1 by construction, as in
@@ -350,9 +355,12 @@ impl Checker {
             _ => return None,
         };
         // A user-defined function (lexical or project-level) with the same
-        // bare name shadows the base function and may not return a scalar.
+        // name shadows the base function for unqualified calls only. A
+        // base::sum() call explicitly resolves to base and is trusted.
         let bare = callee.rsplit_once("::").map(|(_, b)| b).unwrap_or(callee);
-        if scope.is_lexical_function(bare) || self.fn_table.fns.contains_key(bare) {
+        if !callee.contains("::")
+            && (scope.is_lexical_function(bare) || self.fn_table.fns.contains_key(bare))
+        {
             return None;
         }
         if !args.is_empty() && self.is_typeshed_scalar_reduction(callee) {

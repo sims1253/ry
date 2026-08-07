@@ -490,3 +490,141 @@ fn incremental_matches_cold_after_edits() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Plan 33: Cold-vs-incremental equivalence property test
+//
+// The single most important invariant: after ANY sequence of add/update/remove
+// operations, incremental diagnostics must match a fresh cold check.
+//
+// Uses a seeded PRNG so failures are reproducible. Each iteration generates
+// a random edit sequence, applies it to an incremental Project, builds a
+// fresh cold Project from the same final state, and compares diagnostics.
+// ---------------------------------------------------------------------------
+
+/// Simple seeded LCG for reproducible randomness in tests.
+struct Rng(u64);
+
+impl Rng {
+    fn new(seed: u64) -> Self {
+        Rng(seed)
+    }
+    fn next(&mut self) -> u64 {
+        // Numerical Recipes LCG constants.
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        self.0
+    }
+    fn range(&mut self, n: usize) -> usize {
+        (self.next() % n as u64) as usize
+    }
+    fn pick<'a, T>(&mut self, items: &'a [T]) -> &'a T {
+        &items[self.range(items.len())]
+    }
+}
+
+/// Pool of R source snippets. Each defines zero or more functions and/or
+/// top-level bindings, with cross-file call patterns.
+const SOURCES: &[&str] = &[
+    "f1 <- function(x) x + 1\ny <- f1(2L)\n",
+    "f2 <- function(x) f1(x) * 2\n",
+    "f3 <- function() \"hello\"\nz <- f3() + 1L\n",
+    "g1 <- function(x) x * x\nw <- g1(f1(3L))\n",
+    "v <- 42L\n",
+    "f4 <- function(a, b) a + b\n",
+    "f5 <- function(x) f4(x, 1L) + f2(x)\n",
+    "\n", // empty file
+    "h <- function(x) x\nresult <- h(f3()) + 1L\n",
+    "f1 <- function(x) \"str\"\n", // redefines f1 with different return type
+    "f6 <- function() 1L\nq <- f6() + \"x\"\n",
+    "new_var <- 99L\nother <- new_var\n",
+];
+
+const FILE_NAMES: &[&str] = &["a.R", "b.R", "c.R", "d.R", "e.R", "f.R"];
+
+#[test]
+fn incremental_matches_cold_property() {
+    let mut parser = RParser::new().unwrap();
+
+    for seed in 0..200 {
+        let mut rng = Rng::new(seed * 7919 + 1);
+        let mut inc_project = Project::new();
+        let mut current_files: Vec<(String, String)> = Vec::new();
+
+        // Apply 1-8 random operations before each comparison.
+        let num_ops = 1 + rng.range(8);
+        for _ in 0..num_ops {
+            let op = rng.range(3);
+            match op {
+                0 => {
+                    // Add or update a file.
+                    let path = rng.pick(FILE_NAMES).to_string();
+                    let src = rng.pick(SOURCES).to_string();
+                    let file = parser.parse(&path, &src).unwrap();
+                    inc_project.update_file(path.clone(), Arc::new(file));
+                    // Track current state for cold comparison.
+                    if let Some(slot) = current_files.iter().position(|(p, _)| p == &path) {
+                        current_files[slot].1 = src;
+                    } else {
+                        current_files.push((path, src));
+                    }
+                }
+                1 => {
+                    // Remove a file (if any exist).
+                    if !current_files.is_empty() {
+                        let idx = rng.range(current_files.len());
+                        let (path, _) = current_files.remove(idx);
+                        inc_project.remove_file(&path);
+                    }
+                }
+                _ => {
+                    // Update an existing file with different content.
+                    if !current_files.is_empty() {
+                        let idx = rng.range(current_files.len());
+                        let path = current_files[idx].0.clone();
+                        let src = rng.pick(SOURCES).to_string();
+                        let file = parser.parse(&path, &src).unwrap();
+                        inc_project.update_file(path.clone(), Arc::new(file));
+                        current_files[idx].1 = src;
+                    }
+                }
+            }
+        }
+
+        if current_files.is_empty() {
+            continue;
+        }
+
+        // Run incremental check.
+        let inc_result = inc_project.check_incremental();
+
+        // Build a fresh cold project from the same final state.
+        let mut cold_project = Project::new();
+        for (path, src) in &current_files {
+            cold_project.add_file(path.clone(), parser.parse(path, src).unwrap());
+        }
+        let cold_result = cold_project.check();
+
+        // Compare: every file's diagnostic codes must match.
+        assert_eq!(
+            inc_result.len(),
+            cold_result.len(),
+            "[seed {seed}] file count mismatch: inc={} cold={}",
+            inc_result.len(),
+            cold_result.len()
+        );
+        for ((inc_path, inc_diags), (cold_path, cold_diags)) in
+            inc_result.iter().zip(cold_result.iter())
+        {
+            let inc_codes: Vec<_> = inc_diags.iter().map(|d| d.code).collect();
+            let cold_codes: Vec<_> = cold_diags.iter().map(|d| d.code).collect();
+            assert_eq!(inc_path, cold_path, "[seed {seed}] path order mismatch");
+            assert_eq!(
+                inc_codes, cold_codes,
+                "[seed {seed}] diagnostics mismatch for {inc_path}:\n  incremental: {inc_codes:?}\n  cold:        {cold_codes:?}"
+            );
+        }
+    }
+}

@@ -11,6 +11,9 @@ on:
       - "editors/code/**"
       - ".github/workflows/build-vscode.yml"
 
+permissions:
+  contents: read
+
 defaults:
   run:
     working-directory: editors/code
@@ -20,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
       - run: bun install --frozen-lockfile
       - name: Typecheck
         run: bun run tsc
@@ -31,7 +34,7 @@ jobs:
       - name: Package VSIX
         run: bunx @vscode/vsce package --no-dependencies
       - name: Upload VSIX artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ry-vscode-vsix
           path: editors/code/*.vsix

@@ -67,8 +67,8 @@ fn fires(src: &str, code: &str) -> bool {
 
 /// The plan's committed reproduction of the audit's false negatives.
 fn repro_source() -> String {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("testdata/err_plan31_recall_repro.R");
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/err_plan31_recall_repro.R");
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"))
 }
 

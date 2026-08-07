@@ -22,9 +22,22 @@ jobs:
   # Build: one job per platform, downloading the matching cargo-dist binary
   # and packaging a platform-specific VSIX.
   # ---------------------------------------------------------------------------
+  version:
+    name: Compute version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - id: version
+        run: |
+          ts=$(date -u +%Y%m%d%H%M%S)
+          echo "version=0.1.0-dev.$ts" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build ${{ matrix.target }}
+    needs: version
     runs-on: ubuntu-latest
+    needs: version
     strategy:
       fail-fast: false
       matrix:
@@ -86,8 +99,7 @@ jobs:
         if: ${{ inputs.pre-release }}
         working-directory: editors/code
         run: |
-          ts=$(date -u +%Y%m%d%H%M%S)
-          npm version prerelease --preid "dev.$ts" --no-git-tag-version
+          npm version "${{ needs.version.outputs.version }}" --no-git-tag-version
 
       - name: Package VSIX
         working-directory: editors/code

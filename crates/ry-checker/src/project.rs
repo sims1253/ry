@@ -94,6 +94,9 @@ pub struct Project {
     /// entries start from their refined value rather than re-converging
     /// from scratch (Plan 33 W2).
     prev_fn_returns: HashMap<String, ry_core::RType>,
+    /// Previous pooled known_vars set, used to detect when non-function
+    /// bindings changed across files (affects RY010 diagnostics).
+    prev_known_vars: HashSet<String>,
     /// Test-visible counter: how many files were actually emitted (not
     /// served from cache) in the most recent `refine_and_emit` call.
     /// Asserted on in unit tests the same way `parse_count` is in backend.rs.
@@ -137,6 +140,7 @@ impl Project {
             prev_return_slots: None,
             file_called_fns: HashMap::new(),
             prev_fn_returns: HashMap::new(),
+            prev_known_vars: HashSet::new(),
             emit_count: 0,
         }
     }
@@ -185,7 +189,10 @@ impl Project {
         self.files.retain(|(existing, _)| existing != path);
         self.collected_files.remove(path);
         self.file_known_vars.remove(path);
-        self.dirty_paths.insert(path.to_string());
+        // Removing a file changes the shared function table and pooled
+        // known_vars. Conservatively mark all remaining files dirty so
+        // callers of the removed file's functions are re-emitted.
+        self.mark_all_dirty();
     }
 
     /// Declare the project's loaded packages (from `ry.toml`'s
@@ -306,6 +313,7 @@ impl Project {
         self.prev_loaded = None;
         self.prev_return_slots = None;
         self.prev_fn_returns.clear();
+        self.prev_known_vars.clear();
         self.refine_and_emit()
     }
 
@@ -375,6 +383,16 @@ impl Project {
     fn compute_fixpoint_scope(&self) -> Option<HashSet<String>> {
         // First call → refine everything.
         self.prev_return_slots.as_ref()?;
+        // If loaded changed (library() calls appeared/disappeared), the stub
+        // environment changed — full refinement is needed because package
+        // signatures affect return types.
+        if self
+            .prev_loaded
+            .as_ref()
+            .is_some_and(|prev| prev != &self.loaded)
+        {
+            return None;
+        }
         // Nothing changed → nothing to refine.
         if self.dirty_paths.is_empty() {
             return Some(HashSet::new());
@@ -499,8 +517,9 @@ impl Project {
         // changed. When loaded changes, every file is dirty.
         // On the first call (prev_return_slots is None), every file must be
         // emitted. Otherwise, use the incremental dirty set.
+        let known_vars_changed = self.prev_known_vars != self.fn_table.known_vars;
         let first_call = self.prev_return_slots.is_none();
-        let must_emit: HashSet<&str> = if first_call || loaded_changed {
+        let must_emit: HashSet<&str> = if first_call || loaded_changed || known_vars_changed {
             self.files.iter().map(|(p, _)| p.as_str()).collect()
         } else {
             let mut dirty: HashSet<&str> = self.dirty_paths.iter().map(|s| s.as_str()).collect();
@@ -629,6 +648,7 @@ impl Project {
         self.prev_return_slots = Some(self.return_slots.0.clone());
         // Save refined return types keyed by function name for the next
         // fixpoint seeding (W2).
+        self.prev_known_vars = self.fn_table.known_vars.clone();
         self.prev_fn_returns = self
             .fn_table
             .fns

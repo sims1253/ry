@@ -1493,7 +1493,13 @@ impl Backend {
                 }
                 Arc::new(parsed)
             } else {
-                Arc::new(parser.parse(path, &text).ok()?)
+                // Full parse: also store the tree so subsequent edits can be incremental.
+                let (parsed, new_tree) = parser.parse_with_tree(path, &text, None).ok()?;
+                {
+                    let mut state = self.state.lock().await;
+                    state.trees.insert(path.to_string(), new_tree);
+                }
+                Arc::new(parsed)
             };
             let mut state = self.state.lock().await;
             // If an edit landed while parsing, retry against the new version
@@ -1751,11 +1757,7 @@ impl Backend {
                     let mut state = state_clone.lock().await;
                     state.disk_files = all_disk_files;
                 }
-                // Trigger a diagnostic refresh by bumping the generation
-                // so open documents re-check with the new disk files.
-                let mut state = state_clone.lock().await;
-                state.diag_generation = state.diag_generation.wrapping_add(1);
-                tracing::info!("W4 background index complete, diagnostics refreshed");
+                tracing::info!("W4 background index complete");
             });
         });
     }

@@ -480,37 +480,33 @@ impl Project {
             .as_ref()
             .is_none_or(|prev| prev != &self.loaded);
 
-        // Compute the set of return-slot indices whose type changed.
-        let changed_slots: HashSet<usize> = match &self.prev_return_slots {
-            None => (0..self.return_slots.0.len()).collect(),
-            Some(prev) => self
-                .return_slots
-                .0
-                .iter()
-                .enumerate()
-                .filter(|(i, t)| prev.get(*i) != Some(*t))
-                .map(|(i, _)| i)
-                .collect(),
-        };
-
-        // Build the set of function names whose return_slot is in the
-        // changed set. A file that calls any of these must be re-emitted.
+        // Compute the set of function names whose refined return type changed
+        // since the last emit. Uses name-keyed comparison via prev_fn_returns
+        // (not slot indices, which shift when functions are added/removed).
         let changed_fns: HashSet<&str> = self
             .fn_table
             .fns
             .iter()
-            .filter(|(_, uf)| changed_slots.contains(&uf.return_slot))
-            .map(|(name, _)| name.as_str())
+            .filter_map(|(name, uf)| {
+                let current = &self.return_slots.0.get(uf.return_slot);
+                let previous = self.prev_fn_returns.get(name);
+                match (current, previous) {
+                    (Some(cur), Some(prev)) if **cur == *prev => None,
+                    _ => Some(name.as_str()),
+                }
+            })
             .collect();
-        // S3/S4 method slots are checked the same way.
-        let changed_s3: HashSet<usize> = self
-            .fn_table
-            .s3_methods
-            .values()
-            .chain(self.fn_table.s4_methods.values())
-            .filter(|slot| changed_slots.contains(slot))
-            .copied()
-            .collect();
+        // S3/S4 methods: conservatively re-emit all when any return type changed.
+        let changed_s3: HashSet<usize> = if changed_fns.is_empty() {
+            HashSet::new()
+        } else {
+            self.fn_table
+                .s3_methods
+                .values()
+                .chain(self.fn_table.s4_methods.values())
+                .copied()
+                .collect()
+        };
 
         // Combine: a file is dirty if it was content-changed, if loaded
         // changed at all, or if it calls any function whose return slot

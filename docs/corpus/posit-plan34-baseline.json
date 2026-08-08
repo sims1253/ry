@@ -2,7 +2,7 @@
   "schema_version": 1,
   "corpus": "posit",
   "ry_version": "pre-0.9.0-plan34",
-  "source": "ecosystem/reports/*.root.txt",
+  "source": "ecosystem/reports/posit.*.root.txt",
   "source_sha256": "602fe749c12cfb2217d96fdb82a93634907a4f1d4f9507a27abb51d5209fb7e7",
   "ry_commit": "a2430489a9bbf65215b8d5fbe739345bd34d1b15",
   "reconciliation": "hermetic",

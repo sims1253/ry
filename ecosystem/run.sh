@@ -53,6 +53,18 @@ if [[ ! -r "$packages_file" ]]; then
   exit 2
 fi
 
+# Reports from different manifests must coexist: several corpora contain the
+# same package at different pinned commits. The default packages.txt keeps the
+# historical unqualified names; every other manifest gets a stable prefix.
+manifest_stem="$(basename "$packages_file" .txt)"
+report_prefix=""
+summary_prefix="SUMMARY"
+if [[ "$manifest_stem" != "packages" ]]; then
+  corpus_slug="${manifest_stem%-packages}"
+  report_prefix="$corpus_slug."
+  summary_prefix="SUMMARY.$corpus_slug"
+fi
+
 # Resolve the ledger: an explicit --ledger wins; otherwise a manifest may
 # declare its ledger with `# ledger: <relative-path>`; else default to the
 # tidyverse ledger for backward compatibility.
@@ -228,9 +240,9 @@ while IFS= read -r raw || [[ -n "${raw:-}" ]]; do
     exit 1
   fi
 
-  run_suite "$name" "$package_dir" "$package_dir/R" "$name" "R/"
+  run_suite "$name" "$package_dir" "$package_dir/R" "$report_prefix$name" "R/"
   if ! $local_only; then
-    run_suite "$name" "$package_dir" "$package_dir" "$name.root" "package root"
+    run_suite "$name" "$package_dir" "$package_dir" "$report_prefix$name.root" "package root"
     root_packages+=("$name")
   fi
   processed_packages+=("$name")
@@ -254,13 +266,14 @@ generate_summary() {
     cp "$generated_dir/$report_stem.txt" "$summary_input/$report_stem.txt"
   done
 
-  Rscript - "$packages_file" "$summary_input" "$generated_dir/$output_name" "$suffix" "$scope_description" <<'RS'
+  Rscript - "$packages_file" "$summary_input" "$generated_dir/$output_name" "$suffix" "$scope_description" "$report_prefix" <<'RS'
 args <- commandArgs(trailingOnly = TRUE)
 packages_file <- args[[1]]
 reports_dir <- args[[2]]
 output_path <- args[[3]]
 suffix <- args[[4]]
 scope_description <- args[[5]]
+report_prefix <- args[[6]]
 
 raw <- readLines(packages_file, encoding = "UTF-8", warn = FALSE)
 raw <- raw[nzchar(raw) & !startsWith(raw, "#")]
@@ -268,7 +281,7 @@ package_order <- vapply(strsplit(raw, "\t", fixed = TRUE), `[[`, character(1), 1
 
 counts <- list()
 for (package in package_order) {
-  report <- file.path(reports_dir, paste0(package, suffix, ".txt"))
+  report <- file.path(reports_dir, paste0(report_prefix, package, suffix, ".txt"))
   if (!file.exists(report)) next
   entries <- readLines(report, encoding = "UTF-8", warn = FALSE)
   entries <- entries[nzchar(entries)]
@@ -306,10 +319,10 @@ close(handle)
 RS
 }
 
-generate_summary "" "SUMMARY.md" \
+generate_summary "" "$summary_prefix.md" \
   "Production-source suite: each package's \`R/\` directory only."
 if ! $local_only; then
-  generate_summary ".root" "SUMMARY.root.md" \
+  generate_summary ".root" "$summary_prefix.root.md" \
     "Package-root suite: production, tests, and other checked R sources."
 fi
 
@@ -325,11 +338,12 @@ if ! $local_only; then
     echo "ecosystem: audit corpus not found: $audit_corpus" >&2
     exit 1
   }
-  Rscript - "$audit_corpus" "$generated_dir" "${root_packages[@]}" <<'RS'
+  Rscript - "$audit_corpus" "$generated_dir" "$report_prefix" "${root_packages[@]}" <<'RS'
 args <- commandArgs(trailingOnly = TRUE)
 corpus_path <- args[[1]]
 reports_dir <- args[[2]]
-processed <- args[-c(1, 2)]
+report_prefix <- args[[3]]
+processed <- args[-c(1, 2, 3)]
 corpus <- jsonlite::fromJSON(corpus_path, simplifyDataFrame = TRUE)
 audited <- intersect(processed, corpus$packages$name)
 
@@ -347,7 +361,7 @@ expected <- identity(
 
 actual <- character(0)
 for (package in audited) {
-  report <- file.path(reports_dir, paste0(package, ".root.txt"))
+  report <- file.path(reports_dir, paste0(report_prefix, package, ".root.txt"))
   lines <- readLines(report, encoding = "UTF-8", warn = FALSE)
   lines <- lines[nzchar(lines)]
   for (entry in lines) {
@@ -413,9 +427,9 @@ if (length(missing) || length(unowned)) {
 RS
 fi
 
-summary_names=("SUMMARY.md")
+summary_names=("$summary_prefix.md")
 if ! $local_only; then
-  summary_names+=("SUMMARY.root.md")
+  summary_names+=("$summary_prefix.root.md")
 fi
 
 if ! $check; then

@@ -85,4 +85,6 @@ ecosystem/run.sh --check --manifest ecosystem/posit-packages.txt --tier full
 Manifests are collision-safe: each package is keyed by a unique slug and
 `run.sh` aborts if a slug appears twice. A `# ledger:` directive in each
 manifest selects its corpus, and a `# === full tier` marker separates the
-fast-tier packages from the rest.
+fast-tier packages from the rest. Non-default manifests also namespace their
+committed reports (for example `posit.glue.root.txt`) so packages pinned at
+different commits never overwrite another corpus's baseline.

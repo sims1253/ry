@@ -790,31 +790,44 @@ impl LanguageServer for Backend {
             return;
         }
 
-        // Reload the full ry.toml config, retaining the previous good
-        // config on parse error (per S3 done-when criterion).
+        // Reload each changed root independently. The state vectors are kept
+        // in longest-prefix order, so replacing a config does not alter routing.
         let root = {
             let state = self.state.lock().await;
             state.root.clone()
         };
         if config_changed {
-            if let Some(root) = root.as_deref() {
-                match ry_config::Config::load_from_dir(root) {
-                    Ok(Some(new_config)) => {
-                        tracing::info!("ry.toml changed; reloading config");
+            for directory in params.changes.iter().filter_map(|change| {
+                change
+                    .uri
+                    .path()
+                    .ends_with("ry.toml")
+                    .then(|| change.uri.to_file_path().ok())
+                    .flatten()
+                    .and_then(|path| path.parent().map(PathBuf::from))
+            }) {
+                let loaded = ry_config::Config::load_from_dir(&directory);
+                match loaded {
+                    Ok(config) => {
+                        let config = config.unwrap_or_default();
                         let mut state = self.state.lock().await;
-                        state.file_config = new_config;
+                        if state.root.as_deref() == Some(directory.as_path()) {
+                            state.file_config = config.clone();
+                        }
+                        if let Some((_, folder_config)) = state
+                            .workspace_folders
+                            .iter_mut()
+                            .find(|(folder_root, _)| folder_root == &directory)
+                        {
+                            *folder_config = config;
+                        }
+                        tracing::info!(root = %directory.display(), "workspace config reloaded");
                     }
-                    Ok(None) => {
-                        // ry.toml was deleted; fall back to defaults.
-                        tracing::info!("ry.toml removed; falling back to defaults");
-                        let mut state = self.state.lock().await;
-                        state.file_config = ry_config::Config::default();
-                    }
-                    Err(e) => {
-                        // Malformed ry.toml: log warning and retain previous
-                        // good config rather than falling back to defaults.
-                        tracing::warn!("failed to reload ry.toml, retaining previous config: {e}");
-                    }
+                    Err(error) => tracing::warn!(
+                        root = %directory.display(),
+                        %error,
+                        "failed to reload workspace config; retaining previous config"
+                    ),
                 }
             }
         }

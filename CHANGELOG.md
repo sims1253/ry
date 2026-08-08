@@ -13,10 +13,12 @@ All notable changes to ry are documented in this file.
 - **Zed extension** (`editors/zed/`): downloads the `ry` binary from
   GitHub releases on first use, with path construction unit-tested for
   all six cargo-dist targets.
-- **Shared filtering primitives**: `ry check` and the editor both use
-  `ry-config` for `ignore`, `error`, `warn`, `exclude`, and `baseline`.
-  End-to-end cross-mode filtering parity remains pending the Plan 35 protocol
-  differential.
+- **CLI/editor diagnostic parity**: `ignore`, `select`, `extend-select`,
+  `error`, `warn`, `exclude`, `baseline`, `min-confidence`, default-disabled
+  rules, package metadata, and Unicode positions produce the same published
+  codes, severities, messages, and locations in `ry check` and the editor for
+  a single workspace root. This claim is gated by
+  `cargo test -p ry-lsp --test protocol`.
 - **`ry.toml` hot-reload**: editing `ry.toml` updates diagnostics
   without restarting the language server.
 - **Multi-root workspaces**: per-folder `ry.toml` configs are honoured.

@@ -26,6 +26,7 @@ use ry_core::{RParser, SourceFile};
 pub(crate) fn discover_r_files(root: &Path, config: &Config) -> Vec<(String, String)> {
     let mut results = Vec::new();
     let mut queue = vec![root.to_path_buf()];
+    let excludes = ry_config::Excludes::from_config(config);
 
     while let Some(dir) = queue.pop() {
         let entries = match std::fs::read_dir(&dir) {
@@ -37,7 +38,7 @@ pub(crate) fn discover_r_files(root: &Path, config: &Config) -> Vec<(String, Str
             let path = entry.path();
 
             // Check excludes before descending.
-            if !ry_workspace::is_file_eligible(&path, root, config) {
+            if !ry_workspace::is_file_eligible_with_excludes(&path, root, &excludes) {
                 continue;
             }
 

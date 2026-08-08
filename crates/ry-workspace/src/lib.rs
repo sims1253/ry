@@ -1173,15 +1173,23 @@ fn current_r_minor_version(roots: &[LibraryRoot]) -> Option<String> {
 /// publication different exclude semantics.
 pub fn is_file_eligible(path: &Path, root: &Path, config: &ry_config::Config) -> bool {
     let excludes = ry_config::Excludes::from_config(config);
+    is_file_eligible_with_excludes(path, root, &excludes)
+}
+
+/// Check file eligibility with an already-compiled exclude matcher.
+/// Directory walkers should build this once per owning configuration.
+pub fn is_file_eligible_with_excludes(
+    path: &Path,
+    root: &Path,
+    excludes: &ry_config::Excludes,
+) -> bool {
     if excludes.is_empty() {
         return true;
     }
-    let canonical_path = std::fs::canonicalize(path).ok();
-    let canonical_root = std::fs::canonicalize(root).ok();
-    let relative = match (canonical_path.as_deref(), canonical_root.as_deref()) {
-        (Some(path), Some(root)) => path.strip_prefix(root).unwrap_or(path),
-        _ => path.strip_prefix(root).unwrap_or(path),
-    };
+    // Match the workspace entry name, not a canonicalized symlink target: an
+    // explicit exclude for `linked.R` must exclude that entry regardless of
+    // where it points.
+    let relative = path.strip_prefix(root).unwrap_or(path);
     !excludes.matches(&relative.to_string_lossy().replace('\\', "/"))
 }
 
@@ -1205,5 +1213,24 @@ mod shared_tests {
             dir.path(),
             &config
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn eligibility_matches_a_symlink_entry_name_not_its_target() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("real.R");
+        let link = dir.path().join("linked.R");
+        std::fs::write(&target, "x <- 1\n").unwrap();
+        symlink(&target, &link).unwrap();
+        let config = ry_config::Config {
+            exclude: vec!["linked.R".into()],
+            ..Default::default()
+        };
+
+        assert!(!is_file_eligible(&link, dir.path(), &config));
+        assert!(is_file_eligible(&target, dir.path(), &config));
     }
 }

@@ -25,18 +25,20 @@ impl JsonRpcProcess {
 
     /// Attach to a spawned child whose stdin and stdout were piped.
     pub fn from_child(mut child: Child) -> io::Result<Self> {
-        let writer = child.stdin.take().ok_or_else(|| {
-            io::Error::new(
+        let Some(writer) = child.stdin.take() else {
+            kill_and_wait(&mut child);
+            return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "server child stdin is not piped",
-            )
-        })?;
-        let stdout = child.stdout.take().ok_or_else(|| {
-            io::Error::new(
+            ));
+        };
+        let Some(stdout) = child.stdout.take() else {
+            kill_and_wait(&mut child);
+            return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "server child stdout is not piped",
-            )
-        })?;
+            ));
+        };
         Ok(Self {
             child,
             reader: BufReader::new(stdout),
@@ -99,11 +101,13 @@ impl JsonRpcProcess {
 
 impl Drop for JsonRpcProcess {
     fn drop(&mut self) {
-        if self.child.try_wait().ok().flatten().is_none() {
-            let _ = self.child.kill();
-        }
-        let _ = self.child.wait();
+        kill_and_wait(&mut self.child);
     }
+}
+
+fn kill_and_wait(child: &mut Child) {
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 /// A framed JSON-RPC client over arbitrary async streams, used with
@@ -186,14 +190,22 @@ fn encode(message: &Value) -> io::Result<Vec<u8>> {
 
 fn decode_blocking(reader: &mut impl BufRead) -> io::Result<Value> {
     let mut content_length = None;
+    let mut header_bytes = 0;
     loop {
         let mut header = String::new();
-        if reader.read_line(&mut header)? == 0 {
+        let remaining = MAX_MESSAGE_BYTES - header_bytes;
+        let mut limited = std::io::Read::take(&mut *reader, (remaining + 1) as u64);
+        let bytes_read = limited.read_line(&mut header)?;
+        if bytes_read > remaining {
+            return Err(headers_too_large());
+        }
+        if bytes_read == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
                 "server stdout closed",
             ));
         }
+        header_bytes += bytes_read;
         if header == "\r\n" || header == "\n" {
             break;
         }
@@ -233,6 +245,13 @@ where
     serde_json::from_slice(&body).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
+fn headers_too_large() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("JSON-RPC headers exceed {MAX_MESSAGE_BYTES} bytes"),
+    )
+}
+
 fn parse_content_length(header: &str) -> io::Result<Option<usize>> {
     let Some((name, value)) = header.trim_end().split_once(':') else {
         return Err(io::Error::new(
@@ -267,6 +286,50 @@ fn checked_length(content_length: Option<usize>) -> io::Result<usize> {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn from_child_reaps_child_when_stdin_is_missing() {
+        let child = Command::new("sh")
+            .args(["-c", "sleep 30"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+
+        let error = match JsonRpcProcess::from_child(child) {
+            Ok(_) => panic!("child without piped stdin was accepted"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert!(
+            !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+            "invalid child {pid} was not reaped"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn from_child_reaps_child_when_stdout_is_missing() {
+        let child = Command::new("sh")
+            .args(["-c", "sleep 30"])
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+
+        let error = match JsonRpcProcess::from_child(child) {
+            Ok(_) => panic!("child without piped stdout was accepted"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert!(
+            !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+            "invalid child {pid} was not reaped"
+        );
+    }
+
     #[test]
     fn blocking_decoder_accepts_additional_headers() {
         let bytes = b"Content-Type: application/vscode-jsonrpc; charset=utf-8\r\nContent-Length: 7\r\n\r\n{\"x\":1}";
@@ -279,5 +342,19 @@ mod tests {
         let bytes = b"log output\nContent-Length: 2\r\n\r\n{}";
         let mut reader = BufReader::new(&bytes[..]);
         assert!(decode_blocking(&mut reader).is_err());
+    }
+
+    #[test]
+    fn blocking_decoder_rejects_oversized_headers() {
+        let bytes = vec![b'x'; MAX_MESSAGE_BYTES + 1];
+        let mut reader = BufReader::new(bytes.as_slice());
+
+        let error = decode_blocking(&mut reader).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            error.to_string(),
+            format!("JSON-RPC headers exceed {MAX_MESSAGE_BYTES} bytes")
+        );
     }
 }

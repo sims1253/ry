@@ -26,4 +26,46 @@ do
   }
 done
 
-echo "PASS: default and Posit manifest snapshots coexist"
+# Same-basename custom manifests must not fall into the built-in namespace or
+# each other's namespace. Exercise the content-hash fallback end to end and
+# remove its temporary snapshots on every exit.
+work_dir="$(mktemp -d "${TMPDIR:-/tmp}/ry-manifest-isolation.XXXXXX")"
+generated=()
+cleanup() {
+  rm -rf "$work_dir"
+  if ((${#generated[@]})); then
+    rm -f "${generated[@]}"
+  fi
+}
+trap cleanup EXIT INT TERM
+
+glue_entry="$(grep -m1 $'^glue\t' "$root/ecosystem/posit-packages.txt")"
+prefixes=()
+for variant in alpha beta; do
+  manifest_dir="$work_dir/$variant"
+  mkdir -p "$manifest_dir"
+  manifest="$manifest_dir/packages.txt"
+  printf '# distinct manifest %s\n%s\n' "$variant" "$glue_entry" > "$manifest"
+  if command -v sha256sum >/dev/null 2>&1; then
+    digest="$(sha256sum "$manifest" | awk '{print $1}')"
+  else
+    digest="$(shasum -a 256 "$manifest" | awk '{print $1}')"
+  fi
+  prefix="manifest-${digest:0:12}"
+  prefixes+=("$prefix")
+  generated+=(
+    "$root/ecosystem/reports/$prefix.glue.txt"
+    "$root/ecosystem/reports/$prefix.glue.full.txt"
+    "$root/ecosystem/reports/SUMMARY.$prefix.md"
+  )
+  "$run_sh" --local --manifest "$manifest"
+  test -f "$root/ecosystem/reports/$prefix.glue.txt"
+  test -f "$root/ecosystem/reports/SUMMARY.$prefix.md"
+done
+
+if [[ "${prefixes[0]}" == "${prefixes[1]}" ]]; then
+  echo "FAIL: distinct same-basename manifests shared a report namespace" >&2
+  exit 1
+fi
+
+echo "PASS: default, Posit, and same-basename custom manifests coexist"

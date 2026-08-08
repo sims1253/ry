@@ -54,13 +54,28 @@ if [[ ! -r "$packages_file" ]]; then
 fi
 
 # Reports from different manifests must coexist: several corpora contain the
-# same package at different pinned commits. The default packages.txt keeps the
-# historical unqualified names; every other manifest gets a stable prefix.
-manifest_stem="$(basename "$packages_file" .txt)"
+# same package at different pinned commits. Only the built-in packages.txt uses
+# historical unqualified names. Other manifests may declare a stable namespace;
+# otherwise their content hash supplies a portable collision-safe identity.
+manifest_path="$(cd "$(dirname "$packages_file")" && pwd -P)/$(basename "$packages_file")"
+default_manifest="$(cd "$ecosystem_dir" && pwd -P)/packages.txt"
 report_prefix=""
 summary_prefix="SUMMARY"
-if [[ "$manifest_stem" != "packages" ]]; then
-  corpus_slug="${manifest_stem%-packages}"
+if [[ "$manifest_path" != "$default_manifest" ]]; then
+  corpus_slug="$(grep -m1 '^# namespace:[[:space:]]' "$packages_file" 2>/dev/null \
+    | sed 's/^# namespace:[[:space:]]*//; s/[[:space:]]*$//' || true)"
+  if [[ -z "$corpus_slug" ]]; then
+    if command -v sha256sum >/dev/null 2>&1; then
+      manifest_hash="$(sha256sum "$packages_file" | awk '{print $1}')"
+    else
+      manifest_hash="$(shasum -a 256 "$packages_file" | awk '{print $1}')"
+    fi
+    corpus_slug="manifest-${manifest_hash:0:12}"
+  fi
+  if ! [[ "$corpus_slug" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    echo "ecosystem: invalid manifest namespace '$corpus_slug'" >&2
+    exit 2
+  fi
   report_prefix="$corpus_slug."
   summary_prefix="SUMMARY.$corpus_slug"
 fi
@@ -289,7 +304,8 @@ for (package in package_order) {
   counts[[package]] <- table(codes)
 }
 
-all_codes <- sort(unique(unlist(lapply(counts, names), use.names = FALSE)), method = "radix")
+all_codes <- unique(unlist(lapply(counts, names), use.names = FALSE))
+if (length(all_codes)) all_codes <- sort(all_codes, method = "radix")
 packages <- names(counts)
 lines <- c(
   "# Ecosystem diagnostic summary",

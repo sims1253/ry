@@ -1,6 +1,27 @@
 use super::*;
 use crate::higher_order::s3_group_generic;
 
+fn comparison_outside_call_fix(
+    checker: &Checker,
+    call_span: Span,
+    argument_span: Span,
+    lhs: &Expr,
+    rhs: &Expr,
+    op: BinOpKind,
+) -> Option<Fix> {
+    let call = checker.source_text(call_span)?;
+    let lhs_source = checker.source_text(span_of(lhs))?;
+    let rhs_source = checker.source_text(span_of(rhs))?;
+    let relative_start = argument_span.start.checked_sub(call_span.start)?;
+    let relative_end = argument_span.end.checked_sub(call_span.start)?;
+    let before = call.get(..relative_start)?;
+    let after = call.get(relative_end..)?;
+    checker.fix(
+        call_span,
+        format!("{before}{lhs_source}{after} {} {rhs_source}", op_symbol(op)),
+    )
+}
+
 impl Checker {
     pub(crate) fn infer_call(
         &mut self,
@@ -171,7 +192,12 @@ impl Checker {
         // `sum(x > 0)` is the idiomatic R way to count matches, so `sum`
         // is deliberately excluded from this mis-parenthesization family.
         if matches!(lookup_name.as_str(), "length" | "nchar")
-            && let Some(Expr::BinOp { op, span, .. }) = args.first().map(|arg| &arg.value)
+            && let Some(Expr::BinOp {
+                op,
+                lhs,
+                rhs,
+                span: comparison_span,
+            }) = args.first().map(|arg| &arg.value)
             && matches!(
                 op,
                 BinOpKind::Lt
@@ -182,14 +208,15 @@ impl Checker {
                     | BinOpKind::Ne
             )
         {
-            self.emit(
-                Severity::Warning,
-                *span,
-                "RY093",
-                format!(
-                    "comparison is inside `{lookup_name}()`; compare `{lookup_name}(x)` instead"
-                ),
+            let message = format!(
+                "comparison is inside `{lookup_name}()`; compare `{lookup_name}(x)` instead"
             );
+            let fix = comparison_outside_call_fix(self, span, *comparison_span, lhs, rhs, *op);
+            if let Some(fix) = fix {
+                self.emit_with_fix(Severity::Warning, *comparison_span, "RY093", message, fix);
+            } else {
+                self.emit(Severity::Warning, *comparison_span, "RY093", message);
+            }
         }
 
         // Numeric math functions coerce logical comparisons to 0/1, which is
@@ -209,7 +236,12 @@ impl Checker {
                 | "ceiling"
                 | "round"
                 | "trunc"
-        ) && let Some(Expr::BinOp { op, span, .. }) = args.first().map(|arg| &arg.value)
+        ) && let Some(Expr::BinOp {
+            op,
+            lhs,
+            rhs,
+            span: comparison_span,
+        }) = args.first().map(|arg| &arg.value)
             && matches!(
                 op,
                 BinOpKind::Lt
@@ -220,12 +252,13 @@ impl Checker {
                     | BinOpKind::Ne
             )
         {
-            self.emit(
-                Severity::Warning,
-                *span,
-                "RY100",
-                "comparison directly inside a numeric math function is usually a parenthesization mistake; compare the math result instead",
-            );
+            let message = "comparison directly inside a numeric math function is usually a parenthesization mistake; compare the math result instead";
+            let fix = comparison_outside_call_fix(self, span, *comparison_span, lhs, rhs, *op);
+            if let Some(fix) = fix {
+                self.emit_with_fix(Severity::Warning, *comparison_span, "RY100", message, fix);
+            } else {
+                self.emit(Severity::Warning, *comparison_span, "RY100", message);
+            }
         }
 
         // `x["name"]` preserves a list container, whereas `x[["name"]]`
@@ -255,18 +288,22 @@ impl Checker {
                             | Expr::String(_, _)
                     )
             })
-            && let Expr::Index { base, .. } = &indexed.value
+            && let Expr::Index { base, args: index_args, .. } = &indexed.value
         {
             let base_type = self.infer(base, scope);
             let list_origin = matches!(base_type.mode, Mode::List)
                 || matches!(base.as_ref(), Expr::Ident { name, .. } if list_binding_origin(name, scope));
             if list_origin {
-                self.emit(
-                    Severity::Warning,
-                    indexed.span,
-                    "RY101",
-                    "single-bracket list subset remains a list, so `identical()` with an atomic scalar is always FALSE; use `[[` to extract the element",
-                );
+                let message = "single-bracket list subset remains a list, so `identical()` with an atomic scalar is always FALSE; use `[[` to extract the element";
+                let replacement = self
+                    .source_text(span_of(base))
+                    .zip(index_args.first().and_then(|argument| self.source_text(argument.span)))
+                    .map(|(base, argument)| format!("{base}[[{argument}]]"));
+                if let Some(fix) = replacement.and_then(|replacement| self.fix(indexed.span, replacement)) {
+                    self.emit_with_fix(Severity::Warning, indexed.span, "RY101", message, fix);
+                } else {
+                    self.emit(Severity::Warning, indexed.span, "RY101", message);
+                }
             }
         }
 

@@ -101,7 +101,7 @@ fn load_fixtures() -> Vec<Fixture> {
     out
 }
 
-fn run(name: &str, src: &str) -> Vec<(String, Severity)> {
+fn run_diagnostics(name: &str, src: &str) -> Vec<ry_checker::Diagnostic> {
     let mut parser = RParser::new().expect("parser init");
     let file = parser
         .parse(name, src)
@@ -113,9 +113,11 @@ fn run(name: &str, src: &str) -> Vec<(String, Severity)> {
     // feature behave the same way the CLI / LSP do. Use the lexical
     // (comment-based) filter so a `#` inside a string literal is not
     // mistaken for a suppression directive.
-    let diags =
-        ry_checker::filter_suppressed_with_comments(c.take_diagnostics(), &file.comments, src);
-    diags
+    ry_checker::filter_suppressed_with_comments(c.take_diagnostics(), &file.comments, src)
+}
+
+fn run(name: &str, src: &str) -> Vec<(String, Severity)> {
+    run_diagnostics(name, src)
         .into_iter()
         .map(|d| (d.code.to_string(), d.severity))
         .collect()
@@ -195,6 +197,46 @@ fn corpus_check_each_fixture() {
             failures.join("\n  - ")
         );
     }
+}
+
+/// Reviewable message/fix gate for every checker fixture. This deliberately
+/// stores normalized fields rather than a digest or the ignored ecosystem
+/// `.full.txt` reports, so wording and replacement drift appears as a normal
+/// snapshot diff.
+#[test]
+fn checker_fixture_diagnostics_are_readable_snapshots() {
+    let snapshots = load_fixtures()
+        .into_iter()
+        .map(|fixture| {
+            let diagnostics = run_diagnostics(&fixture.name, &fixture.src)
+                .into_iter()
+                .map(|diagnostic| {
+                    serde_json::json!({
+                        "code": diagnostic.code,
+                        "severity": diagnostic.severity.as_str(),
+                        "span": {
+                            "start": diagnostic.span.start,
+                            "end": diagnostic.span.end,
+                            "line": diagnostic.span.line,
+                            "column": diagnostic.span.col,
+                        },
+                        "message": diagnostic.message,
+                        "fix": diagnostic.fix.map(|fix| serde_json::json!({
+                            "span": {
+                                "start": fix.span.start,
+                                "end": fix.span.end,
+                                "line": fix.span.line,
+                                "column": fix.span.col,
+                            },
+                            "replacement": fix.replacement,
+                        })),
+                    })
+                })
+                .collect::<Vec<_>>();
+            serde_json::json!({"fixture": fixture.name, "diagnostics": diagnostics})
+        })
+        .collect::<Vec<_>>();
+    insta::assert_yaml_snapshot!("checker_fixture_diagnostics", snapshots);
 }
 
 /// For visibility: list every fixture and what it currently emits. This

@@ -70,13 +70,9 @@ fn numeric_literal(expr: &Expr) -> Option<f64> {
 /// been typed instead. Only a bare identifier or a string literal qualifies:
 /// `list(x[[1]] <- 2)` and `list(names(y) <- z)` are replacement functions,
 /// not mistyped names.
-fn mistyped_element_name(target: &Expr) -> Option<(&str, String)> {
+fn mistyped_element_name(target: &Expr) -> Option<&str> {
     match target {
-        Expr::Ident { name, .. } => Some((name.as_str(), name.clone())),
-        // A string LHS keeps its quotes in the suggestion: `github-ref` is
-        // not a syntactic name, so `"github-ref" = ...` is the only fix that
-        // parses.
-        Expr::String(name, _) => Some((name.as_str(), format!("\"{name}\""))),
+        Expr::Ident { name, .. } | Expr::String(name, _) => Some(name.as_str()),
         _ => None,
     }
 }
@@ -101,33 +97,6 @@ fn call_argument(expr: &Expr) -> Option<&Expr> {
         return None;
     };
     args.first().map(|arg| &arg.value)
-}
-
-/// Render an expression back to a compact source string for diagnostic
-/// suggestions. Covers the common literal/identifier shapes; returns
-/// `None` for expressions that cannot be rendered without losing meaning,
-/// so the caller can omit the concrete suggestion rather than emit a
-/// broken one like `inherits(..., "widget")`.
-fn expr_to_source(expr: &Expr) -> Option<String> {
-    match expr {
-        Expr::Ident { name, .. } => Some(name.clone()),
-        Expr::String(s, _) => {
-            if s.contains('\0') {
-                return None;
-            }
-            let escaped = s
-                .replace('\\', "\\\\")
-                .replace('"', "\\\"")
-                .replace('\n', "\\n")
-                .replace('\r', "\\r")
-                .replace('\t', "\\t");
-            Some(format!("\"{}\"", escaped))
-        }
-        Expr::Integer(n, _) => Some(format!("{n}L")),
-        Expr::Double(n, _) => Some(n.to_string()),
-        Expr::Logical(b, _) => Some(b.to_string()),
-        _ => None,
-    }
 }
 
 impl Checker {
@@ -186,26 +155,32 @@ impl Checker {
             let Expr::BinOp {
                 op: BinOpKind::Assign,
                 lhs,
+                rhs,
                 span,
-                ..
             } = &argument.value
             else {
                 continue;
             };
-            let Some((name, spelling)) = mistyped_element_name(lhs) else {
+            let Some(name) = mistyped_element_name(lhs) else {
                 continue;
             };
             if matches!(lhs.as_ref(), Expr::Ident { .. }) && !builds_named_structure {
                 continue;
             }
-            self.emit(
-                Severity::Warning,
-                *span,
-                "RY102",
-                format!(
-                    "`<-` inside `{lookup_name}()` assigns `{name}` and leaves the element unnamed; write `{spelling} = ...` to name it"
-                ),
+            let lhs_source = self.source_text(span_of(lhs)).map(str::to_string);
+            let replacement = lhs_source
+                .as_deref()
+                .zip(self.source_text(span_of(rhs)))
+                .map(|(lhs, rhs)| format!("{lhs} = {rhs}"));
+            let spelling = lhs_source.unwrap_or_else(|| name.to_string());
+            let message = format!(
+                "`<-` inside `{lookup_name}()` assigns `{name}` and leaves the element unnamed; write `{spelling} = ...` to name it"
             );
+            if let Some(fix) = replacement.and_then(|replacement| self.fix(*span, replacement)) {
+                self.emit_with_fix(Severity::Warning, *span, "RY102", message, fix);
+            } else {
+                self.emit(Severity::Warning, *span, "RY102", message);
+            }
         }
     }
 
@@ -251,14 +226,19 @@ impl Checker {
             return;
         };
         let prefix = if matches!(op, BinOpKind::Eq) { "" } else { "!" };
-        let message = match (expr_to_source(arg_expr), expr_to_source(other_side)) {
-            (Some(arg_src), Some(class_src)) => {
-                let suggestion = format!("{prefix}inherits({arg_src}, {class_src})");
-                format!("`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `{suggestion}`")
-            }
-            _ => "`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `inherits()`".to_string(),
-        };
-        self.emit(Severity::Warning, *span, "RY103", message);
+        let suggestion = self
+            .source_text(span_of(arg_expr))
+            .zip(self.source_text(span_of(other_side)))
+            .map(|(arg, class)| format!("{prefix}inherits({arg}, {class})"));
+        let message = suggestion.as_ref().map_or_else(
+            || "`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `inherits()`".to_string(),
+            |suggestion| format!("`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `{suggestion}`"),
+        );
+        if let Some(fix) = suggestion.and_then(|replacement| self.fix(*span, replacement)) {
+            self.emit_with_fix(Severity::Warning, *span, "RY103", message, fix);
+        } else {
+            self.emit(Severity::Warning, *span, "RY103", message);
+        }
     }
 
     /// RY105: `length(x) <op> 0` where `x` is length 1 by construction, as in

@@ -1496,12 +1496,17 @@ impl Checker {
             let hint = suggestion
                 .map(|name| format!("; did you mean `{name}`?"))
                 .unwrap_or_default();
-            self.emit(
-                Severity::Warning,
-                argument.span,
-                "RY090",
-                format!("unknown argument `{argument_name}` to `{function_name}`{hint}"),
-            );
+            let message = format!("unknown argument `{argument_name}` to `{function_name}`{hint}");
+            let fix = suggestion.and_then(|name| {
+                self.source_text(span_of(&argument.value))
+                    .map(|value| format!("{name} = {value}"))
+                    .and_then(|replacement| self.fix(argument.span, replacement))
+            });
+            if let Some(fix) = fix {
+                self.emit_with_fix(Severity::Warning, argument.span, "RY090", message, fix);
+            } else {
+                self.emit(Severity::Warning, argument.span, "RY090", message);
+            }
         }
     }
 

@@ -75,6 +75,12 @@ impl std::fmt::Display for Severity {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fix {
+    pub span: Span,
+    pub replacement: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
     pub severity: Severity,
     pub span: Span,
@@ -82,6 +88,7 @@ pub struct Diagnostic {
     pub code: &'static str,
     pub message: String,
     pub confidence: Confidence,
+    pub fix: Option<Fix>,
 }
 
 impl Diagnostic {
@@ -103,11 +110,17 @@ impl Diagnostic {
             } else {
                 Confidence::default_for(code)
             },
+            fix: None,
         }
     }
 
     pub fn with_confidence(mut self, confidence: Confidence) -> Self {
         self.confidence = confidence;
+        self
+    }
+
+    pub fn with_fix(mut self, fix: Fix) -> Self {
+        self.fix = Some(fix);
         self
     }
 

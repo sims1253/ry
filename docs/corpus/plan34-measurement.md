@@ -34,8 +34,8 @@ after its suppression work. The measured tree instead emits 729 diagnostics
 at 5.08% overall precision and 547 `R/` diagnostics at
 4.20% precision. The projection therefore did not materialize under the
 hermetic corpus. Most of the difference is visible rather than hidden: hermetic
-dependency bindings produce 314 new RY010 identities, while the current RY032
-parameter heuristic produces 47 policy-invalid identities.
+dependency bindings produce 314 new RY010 identities, while the targeted RY032
+parameter-vector heuristic accounts for 47 newly emitted identities.
 
 ## Original true-positive retention
 
@@ -150,6 +150,13 @@ The immutable refs below are the exact refs in the measured manifest.
 
 ## P34-W2 before/after
 
-Pending the P34-W2 implementation. The expected full/fast corpus identity delta
-is zero after removing the misleading dead arm and the policy-invalid parameter
-heuristic.
+P34-W2 removed the unused `unknown_is_actionable` parameter and unreachable
+`Length::Unknown` emission arm. It retained the narrower, separately implemented
+parameter-pattern heuristic; the claim fixture and checker regression establish
+that a bare unknown-length parameter remains quiet, while a known length greater
+than one diagnoses.
+
+Both the fast (35-package) and full (62-package) hermetic corpus runs reconciled
+against `posit-plan34-baseline.json` after the fix. The before/after diagnostic
+identity delta is exactly zero: 729 diagnostics overall, with every baseline
+identity retained and no unowned identity.

@@ -41,6 +41,12 @@ pub struct ObservedRange {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObservedFix {
+    pub range: ObservedRange,
+    pub replacement: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObservedDiagnostic {
     pub path: String,
     pub code: String,
@@ -49,6 +55,8 @@ pub struct ObservedDiagnostic {
     pub range: ObservedRange,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub confidence: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fix: Option<ObservedFix>,
 }
 
 /// Make an observed path stable without resolving symlinks or requiring it to exist.

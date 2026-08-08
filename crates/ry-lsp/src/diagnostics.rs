@@ -22,6 +22,22 @@ use crate::util::byte_offset_to_position;
 /// as a fallback (tests, missing source text); the production
 /// diagnostics path uses [`diagnostic_to_lsp_with_source`].
 pub(super) fn diagnostic_to_lsp(d: RyDiagnostic) -> LspDiagnostic {
+    let data = d.fix.as_ref().map(|fix| {
+        let fix_start = Position {
+            line: fix.span.line as u32,
+            character: fix.span.col as u32,
+        };
+        let fix_end = Position {
+            line: fix.span.line as u32,
+            character: (fix.span.col + fix.span.end.saturating_sub(fix.span.start)) as u32,
+        };
+        serde_json::json!({
+            "fix": {
+                "range": {"start": fix_start, "end": fix_end},
+                "replacement": fix.replacement,
+            }
+        })
+    });
     let start = Position {
         line: d.span.line as u32,
         character: d.span.col as u32,
@@ -41,6 +57,7 @@ pub(super) fn diagnostic_to_lsp(d: RyDiagnostic) -> LspDiagnostic {
         code: Some(NumberOrString::String(d.code.to_string())),
         source: Some("ry".to_string()),
         message: d.message,
+        data,
         ..Default::default()
     }
 }
@@ -52,6 +69,16 @@ pub(super) fn diagnostic_to_lsp(d: RyDiagnostic) -> LspDiagnostic {
 /// token. Zero-width spans are extended by one character so the squiggle
 /// is still visible.
 pub(super) fn diagnostic_to_lsp_with_source(d: &RyDiagnostic, text: &str) -> LspDiagnostic {
+    let data = d.fix.as_ref().map(|fix| {
+        let start = byte_offset_to_position(text, fix.span.start);
+        let end = byte_offset_to_position(text, fix.span.end);
+        serde_json::json!({
+            "fix": {
+                "range": {"start": start, "end": end},
+                "replacement": fix.replacement,
+            }
+        })
+    });
     let start = byte_offset_to_position(text, d.span.start);
     let end = byte_offset_to_position(text, d.span.end);
     let end = if start == end {
@@ -73,6 +100,7 @@ pub(super) fn diagnostic_to_lsp_with_source(d: &RyDiagnostic, text: &str) -> Lsp
         code: Some(NumberOrString::String(d.code.to_string())),
         source: Some("ry".to_string()),
         message: d.message.clone(),
+        data,
         ..Default::default()
     }
 }

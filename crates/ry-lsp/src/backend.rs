@@ -277,13 +277,16 @@ impl State {
             .clone()
             .unwrap_or_else(|| file_config.ignore.clone());
         let mut filter = ry_config::build_filter(&error, &warn, &ignore);
-        let select = lint.select.as_ref().unwrap_or(&file_config.select);
+        let select = lint.select.as_ref().or(file_config.select.as_ref());
         let extend_select = lint
             .extend_select
             .as_ref()
             .unwrap_or(&file_config.extend_select);
-        for rule in select {
-            filter.add_select(rule);
+        if let Some(select) = select {
+            filter.begin_selection();
+            for rule in select {
+                filter.add_select(rule);
+            }
         }
         for rule in extend_select {
             filter.add_extend_select(rule);

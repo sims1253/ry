@@ -2255,6 +2255,18 @@ fn effective_filter_empty_when_nothing_configured() {
 }
 
 #[test]
+fn effective_filter_explicit_empty_editor_select_disables_default_rules() {
+    let mut state = State::default();
+    state.file_config_mut().select = Some(vec!["RY010".into()]);
+    state.folder_settings_mut().lint.select = Some(Vec::new());
+    let filter = state.effective_filter();
+    assert_eq!(
+        filter.effective("RY010", ry_checker::Severity::Warning),
+        None
+    );
+}
+
+#[test]
 fn server_settings_deserialize_from_initialization_options() {
     // Verify the initializationOptions shape that the plan specifies:
     // { settings: [{ lint: { ignore: [...] } }], globalSettings: { ... } }

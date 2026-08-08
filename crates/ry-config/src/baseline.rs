@@ -36,8 +36,11 @@ pub fn build_filter(
 /// [`Config`].
 pub fn filter_from_config(cfg: &Config) -> ry_checker::SeverityFilter {
     let mut filter = build_filter(&cfg.error, &cfg.warn, &cfg.ignore);
-    for rule in &cfg.select {
-        filter.add_select(rule);
+    if let Some(select) = &cfg.select {
+        filter.begin_selection();
+        for rule in select {
+            filter.add_select(rule);
+        }
     }
     for rule in &cfg.extend_select {
         filter.add_extend_select(rule);
@@ -153,4 +156,29 @@ pub fn subtract_baseline(
             _ => true,
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ry_checker::Severity;
+
+    #[test]
+    fn explicit_empty_select_disables_default_rules() {
+        let config = Config {
+            select: Some(Vec::new()),
+            ..Config::default()
+        };
+        let filter = filter_from_config(&config);
+        assert_eq!(filter.effective("RY010", Severity::Warning), None);
+    }
+
+    #[test]
+    fn omitted_select_keeps_default_rules() {
+        let filter = filter_from_config(&Config::default());
+        assert_eq!(
+            filter.effective("RY010", Severity::Warning),
+            Some(Severity::Warning)
+        );
+    }
 }

@@ -284,6 +284,23 @@ fn default_disabled_rules_are_absent_in_both_modes() {
 }
 
 #[test]
+fn explicit_empty_select_disables_default_rules_in_both_modes() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture.write_file("ry.toml", "select = []\n").unwrap();
+    fixture
+        .write_file("diagnostic.R", "x <- missing_name\n")
+        .unwrap();
+    let cli = cli_diagnostics(&fixture, &[]);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let lsp = runtime.block_on(run_with_diagnostics(&fixture, "diagnostic.R", json!({})));
+    assert_eq!(lsp, cli);
+    assert!(lsp.is_empty());
+}
+
+#[test]
 fn package_import_from_value_position_is_clean_in_both_modes() {
     let fixture = FixtureProject::from_fixture("complete-package").unwrap();
     let cli = cli_diagnostics(&fixture, &[]);

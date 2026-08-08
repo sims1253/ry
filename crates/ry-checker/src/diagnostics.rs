@@ -500,9 +500,15 @@ impl SeverityFilter {
         self.expanded_ignores.extend(Self::expand(token));
     }
     /// Replace the default-enabled set with an explicit selection.
+    /// Calling this with no subsequent tokens intentionally selects no rules.
+    pub fn begin_selection(&mut self) {
+        self.selected.get_or_insert_with(Vec::new);
+    }
     pub fn add_select(&mut self, token: &str) {
+        self.begin_selection();
         self.selected
-            .get_or_insert_with(Vec::new)
+            .as_mut()
+            .expect("selection initialized above")
             .extend(Self::expand(token));
     }
     /// Enable a rule in addition to the default or explicit selection.

@@ -2117,6 +2117,7 @@ fn is_suppressed_matches_line_and_code() {
         code: "RY010",
         message: "test".into(),
         confidence: Confidence::Medium,
+        fix: None,
     };
     let diag_wrong_line = Diagnostic {
         span: Span {
@@ -2152,6 +2153,7 @@ fn is_suppressed_empty_rules_matches_any_code() {
         code: "RY999",
         message: "test".into(),
         confidence: Confidence::Medium,
+        fix: None,
     };
     assert!(is_suppressed(&diag, &supps));
 }

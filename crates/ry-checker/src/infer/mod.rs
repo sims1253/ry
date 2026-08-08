@@ -1648,12 +1648,23 @@ impl Checker {
                 if matches!(op, BinOpKind::Eq | BinOpKind::Ne)
                     && (is_na_literal(lhs) || is_na_literal(rhs))
                 {
-                    self.emit(
-                        Severity::Warning,
-                        *span,
-                        "RY034",
-                        "comparison with `NA` always produces `NA`; use `is.na()` instead",
-                    );
+                    let operand = if is_na_literal(lhs) { rhs } else { lhs };
+                    let replacement = self.source_text(span_of(operand)).map(|operand| {
+                        if matches!(op, BinOpKind::Ne) {
+                            format!("!is.na({operand})")
+                        } else {
+                            format!("is.na({operand})")
+                        }
+                    });
+                    let message =
+                        "comparison with `NA` always produces `NA`; use `is.na()` instead";
+                    if let Some(fix) =
+                        replacement.and_then(|replacement| self.fix(*span, replacement))
+                    {
+                        self.emit_with_fix(Severity::Warning, *span, "RY034", message, fix);
+                    } else {
+                        self.emit(Severity::Warning, *span, "RY034", message);
+                    }
                 }
                 // Plan 31 W18 shape rules. Both read the operand syntax, so
                 // they run before `infer` collapses the operands to types.
@@ -1667,6 +1678,7 @@ impl Checker {
                     *span,
                     known_null_arithmetic_operand(lhs, scope)
                         || known_null_arithmetic_operand(rhs, scope),
+                    None,
                 )
             }
             Expr::UnaryOp { op, expr, span } => {

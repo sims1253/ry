@@ -8,6 +8,7 @@ impl Checker {
         rt: RType,
         span: Span,
         known_null_is_actionable: bool,
+        scalar_logical_fix: Option<Fix>,
     ) -> RType {
         // `:` sequence operator. Always produces a vector; mode depends
         // on operand modes per R's coercion (int:int -> int, otherwise
@@ -127,8 +128,8 @@ impl Checker {
                 lt.length.binary(rt.length)
             };
             if matches!(op, BinOpKind::AndAnd | BinOpKind::OrOr) {
-                self.emit_scalar_logical_length(op, lt.length, span);
-                self.emit_scalar_logical_length(op, rt.length, span);
+                self.emit_scalar_logical_length(op, lt.length, span, scalar_logical_fix.as_ref());
+                self.emit_scalar_logical_length(op, rt.length, span, scalar_logical_fix.as_ref());
             }
             return RType::new(Mode::Logical, length);
         }
@@ -311,6 +312,7 @@ impl Checker {
             }
             _ => self.infer(rhs, scope),
         };
+        let scalar_logical_fix = self.scalar_logical_operator_fix(op, lhs, rhs);
         let before = self.diagnostics.len();
         let result = self.infer_binop(
             op,
@@ -318,40 +320,63 @@ impl Checker {
             rt,
             span,
             known_null_arithmetic_operand(lhs, scope) || known_null_arithmetic_operand(rhs, scope),
+            scalar_logical_fix.clone(),
         );
         if rhs_parameter_vector
             && !self.diagnostics[before..]
                 .iter()
                 .any(|diagnostic| diagnostic.code == "RY032")
         {
-            self.emit(
-                Severity::Warning,
-                span,
-                "RY032",
-                format!(
-                    "`{}` operand depends on a parameter whose length is not known to be 1; current R errors for vectors",
-                    op_symbol(op)
-                ),
+            let message = format!(
+                "`{}` operand depends on a parameter whose length is not known to be 1; current R errors for vectors",
+                op_symbol(op)
             );
+            if let Some(fix) = scalar_logical_fix {
+                self.emit_with_fix(Severity::Warning, span, "RY032", message, fix);
+            } else {
+                self.emit(Severity::Warning, span, "RY032", message);
+            }
         }
         result
     }
 
-    fn emit_scalar_logical_length(&mut self, op: BinOpKind, length: Length, span: Span) {
+    fn emit_scalar_logical_length(
+        &mut self,
+        op: BinOpKind,
+        length: Length,
+        span: Span,
+        fix: Option<&Fix>,
+    ) {
         if let Length::Known(n) = length
             && n > 1
         {
-            self.emit(
-                Severity::Warning,
-                span,
-                "RY032",
-                format!(
-                    "`{}` applied to a length-{} operand; only the first element is used",
-                    op_symbol(op),
-                    n
-                ),
+            let message = format!(
+                "`{}` applied to a length-{} operand; only the first element is used",
+                op_symbol(op),
+                n
             );
+            if let Some(fix) = fix {
+                self.emit_with_fix(Severity::Warning, span, "RY032", message, fix.clone());
+            } else {
+                self.emit(Severity::Warning, span, "RY032", message);
+            }
         }
+    }
+
+    fn scalar_logical_operator_fix(&self, op: BinOpKind, lhs: &Expr, rhs: &Expr) -> Option<Fix> {
+        let replacement = match op {
+            BinOpKind::AndAnd => "&",
+            BinOpKind::OrOr => "|",
+            _ => return None,
+        };
+        let lhs_end = span_of(lhs).end;
+        let rhs_start = span_of(rhs).start;
+        let between = self.source.get(lhs_end..rhs_start)?;
+        let relative = between.find(op_symbol(op))?;
+        let start = lhs_end + relative;
+        let end = start + op_symbol(op).len();
+        let span = self.source_span(start, end)?;
+        self.fix(span, replacement)
     }
 
     // Desugar `lhs %>% rhs` (and `lhs |> rhs`, `lhs %<>% rhs`) into a

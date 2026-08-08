@@ -1,0 +1,22 @@
+[package]
+name = "ry-workspace"
+description = "Filesystem-backed workspace and package resolution for ry."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+ry-core = { path = "../ry-core" }
+ry-checker = { path = "../ry-checker" }
+ry-typeshed = { path = "../ry-typeshed" }
+ry-config = { path = "../ry-config" }
+thiserror = { workspace = true }
+rds2rust = { workspace = true }
+bzip2 = { workspace = true }
+flate2 = { workspace = true }
+xz2 = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

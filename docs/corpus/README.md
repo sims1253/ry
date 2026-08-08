@@ -13,6 +13,14 @@ removing one finding can never be silently mistaken for removing another.
 | [`posit-plan34-baseline.json`](posit-plan34-baseline.json) | pre-0.9 | 62 | 729 | 37 / 692 / 0 | hermetic (measured starting tree) |
 | [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 729 | 37 / 692 / 0 | hermetic (strict CI gate) |
 
+
+## Parser invariant evidence
+
+[`parser-option-audit-0.9.md`](parser-option-audit-0.9.md) records the complete
+P35-W4 audit of parser `?`, `.ok()?`, and `None` propagation. Its executable R1
+and R6 gates live in `crates/ry-checker/tests/invariants.rs` and cover all
+checker fixtures plus a deterministic sample of the vendored ecosystem sources.
+
 ## Reconciliation modes
 
 `ecosystem/run.sh` reconciles the hermetic root reports it generates

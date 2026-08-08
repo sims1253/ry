@@ -1185,20 +1185,18 @@ dependencies = [
 name = "ry-cli"
 version = "0.8.0"
 dependencies = [
- "bzip2",
  "clap",
  "clap_complete",
- "flate2",
  "glob",
  "miette",
  "rayon",
- "rds2rust",
  "ry-checker",
  "ry-config",
  "ry-core",
  "ry-lsp",
  "ry-testkit",
  "ry-typeshed",
+ "ry-workspace",
  "serde",
  "serde_json",
  "tempfile",
@@ -1207,7 +1205,6 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
- "xz2",
 ]
 
 [[package]]
@@ -1244,6 +1241,7 @@ dependencies = [
  "ry-core",
  "ry-testkit",
  "ry-typeshed",
+ "ry-workspace",
  "serde",
  "serde_json",
  "tokio",
@@ -1270,6 +1268,22 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror",
+]
+
+[[package]]
+name = "ry-workspace"
+version = "0.8.0"
+dependencies = [
+ "bzip2",
+ "flate2",
+ "rds2rust",
+ "ry-checker",
+ "ry-config",
+ "ry-core",
+ "ry-typeshed",
+ "tempfile",
+ "thiserror",
+ "xz2",
 ]
 
 [[package]]

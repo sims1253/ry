@@ -35,7 +35,14 @@ pub fn build_filter(
 /// Convenience: build a [`ry_checker::SeverityFilter`] directly from a
 /// [`Config`].
 pub fn filter_from_config(cfg: &Config) -> ry_checker::SeverityFilter {
-    build_filter(&cfg.error, &cfg.warn, &cfg.ignore)
+    let mut filter = build_filter(&cfg.error, &cfg.warn, &cfg.ignore);
+    for rule in &cfg.select {
+        filter.add_select(rule);
+    }
+    for rule in &cfg.extend_select {
+        filter.add_extend_select(rule);
+    }
+    filter
 }
 
 #[derive(Debug, Serialize, Deserialize)]

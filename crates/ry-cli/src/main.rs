@@ -12,8 +12,6 @@ use clap::{
 };
 use miette::{IntoDiagnostic, Result};
 
-mod package_metadata;
-
 use ry_config as config;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -532,8 +530,6 @@ fn run_check(
         cli_verbose,
         cli_quiet,
     );
-    package_metadata::set_max_serialized_bytes(cfg.max_serialized_bytes);
-    package_metadata::set_environments(&cfg.environments);
 
     let baseline = match cfg.baseline.as_deref() {
         Some(path) => match config::load_baseline(path) {
@@ -561,7 +557,7 @@ fn run_check(
         )
     })?;
     let color = color.enabled(format);
-    let filter = config::build_filter(&cfg.error, &cfg.warn, &cfg.ignore);
+    let filter = config::filter_from_config(&cfg);
     let excludes = config::Excludes::from_config(&cfg);
     let user_stubs = load_user_stubs(&cfg.typeshed);
 
@@ -583,14 +579,12 @@ fn run_check(
     // separators to match the glob crate's expectations.
     if let Some(root) = config_root.as_ref() {
         if !excludes.is_empty() {
-            all_paths.retain(|p| {
-                let rel = relative_path_for_exclude(p, root);
-                if excludes.matches(&rel) {
-                    tracing::debug!(path = %p.display(), "excluded by ry.toml");
-                    false
-                } else {
-                    true
+            all_paths.retain(|path| {
+                let eligible = ry_workspace::is_file_eligible(path, root, &cfg);
+                if !eligible {
+                    tracing::debug!(path = %path.display(), "excluded by ry.toml");
                 }
+                eligible
             });
         }
     }
@@ -605,8 +599,7 @@ fn run_check(
         &all_paths,
         &filter,
         format,
-        &cfg.packages,
-        &cfg.globals,
+        &cfg,
         Arc::clone(&user_stubs),
         color,
         baseline.as_ref(),
@@ -702,8 +695,7 @@ fn run_check(
                 &all_paths,
                 &filter,
                 format,
-                &cfg.packages,
-                &cfg.globals,
+                &cfg,
                 Arc::clone(&user_stubs),
                 color,
                 baseline.as_ref(),
@@ -846,8 +838,7 @@ fn run_check_once(
     all_paths: &[PathBuf],
     filter: &ry_checker::SeverityFilter,
     format: ry_checker::format::OutputFormat,
-    packages: &[String],
-    globals: &[String],
+    resolution_config: &config::Config,
     user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
     color: bool,
     baseline: Option<&config::Baseline>,
@@ -939,33 +930,35 @@ fn run_check_once(
     }
 
     let mut per_file_diagnostics = Vec::new();
-    for indices in groups.values() {
-        let group_paths: Vec<PathBuf> = indices
-            .iter()
-            .map(|index| PathBuf::from(&parsed[*index].1))
-            .collect();
-        let package_scope = package_metadata::resolve(
-            &group_paths,
-            packages,
-            globals,
-            &user_stubs,
-            indices.iter().map(|index| &parsed[*index].3),
-        );
+    for (group_root, indices) in &groups {
+        let resolution_root = group_root
+            .clone()
+            .or_else(|| repo_root.map(PathBuf::from))
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        let package_scope = ry_workspace::resolve_workspace_context(
+            &resolution_root,
+            resolution_config,
+            ry_workspace::ResolutionEnvironment {
+                files: indices.iter().map(|index| &parsed[*index].3).collect(),
+                user_stubs: &user_stubs,
+            },
+        )
+        .map_err(|error| miette::miette!(error))?;
         let mut project = ry_checker::Project::new();
         for index in indices {
             let (_, path, _, file) = &parsed[*index];
             project.add_file(path.clone(), file.clone());
             comments.insert(path.clone(), file.comments.clone());
         }
-        project.set_loaded(package_scope.attached);
-        project.set_bare_loaded(package_scope.bare_attached);
+        project.set_loaded(package_scope.attached_packages);
+        project.set_bare_loaded(package_scope.bare_bindings);
         project.set_user_stubs(Arc::clone(&user_stubs));
-        project.set_external_bindings(package_scope.bindings);
-        project.set_imported_from(package_scope.imported_from);
+        project.set_external_bindings(package_scope.external_bindings);
+        project.set_imported_from(package_scope.imported_bindings);
         project.set_external_s3_methods(package_scope.s3_methods);
         project.set_load_bindings(package_scope.load_bindings);
         per_file_diagnostics.extend(project.check());
-        for (path, reason) in package_scope.degraded {
+        for (path, reason) in package_scope.degraded_scopes {
             degraded.insert(format!("{} ({})", path.display(), reason));
         }
     }
@@ -1549,8 +1542,7 @@ mod tests {
             &paths,
             &ry_checker::SeverityFilter::default(),
             OutputFormat::Json,
-            &[],
-            &[],
+            &ry_config::Config::defaults(),
             std::sync::Arc::new(std::collections::BTreeMap::new()),
             false,
             None,
@@ -1680,8 +1672,7 @@ mod tests {
             &paths,
             &ry_checker::SeverityFilter::default(),
             OutputFormat::Json,
-            &[],
-            &[],
+            &ry_config::Config::defaults(),
             std::sync::Arc::new(std::collections::BTreeMap::new()),
             false,
             None,
@@ -1817,8 +1808,7 @@ mod tests {
             &paths,
             &ry_checker::SeverityFilter::default(),
             OutputFormat::Json,
-            &[],
-            &[],
+            &ry_config::Config::defaults(),
             std::sync::Arc::new(std::collections::BTreeMap::new()),
             false,
             None,
@@ -1866,8 +1856,7 @@ mod tests {
             &paths,
             &ry_checker::SeverityFilter::default(),
             OutputFormat::Json,
-            &[],
-            &[],
+            &ry_config::Config::defaults(),
             std::sync::Arc::new(std::collections::BTreeMap::new()),
             false,
             None,
@@ -1897,8 +1886,7 @@ mod tests {
             &[file],
             &ry_checker::SeverityFilter::default(),
             OutputFormat::Json,
-            &[],
-            &[],
+            &ry_config::Config::defaults(),
             std::sync::Arc::new(std::collections::BTreeMap::new()),
             false,
             None,
@@ -1925,8 +1913,7 @@ mod tests {
             &[file],
             &ry_checker::SeverityFilter::default(),
             OutputFormat::Json,
-            &[],
-            &[],
+            &ry_config::Config::defaults(),
             std::sync::Arc::new(std::collections::BTreeMap::new()),
             false,
             None,
@@ -1952,8 +1939,7 @@ mod tests {
             &[file],
             &ry_checker::SeverityFilter::default(),
             OutputFormat::Json,
-            &[],
-            &[],
+            &ry_config::Config::defaults(),
             std::sync::Arc::new(std::collections::BTreeMap::new()),
             false,
             None,
@@ -1975,8 +1961,7 @@ mod tests {
             &[file],
             &ry_checker::SeverityFilter::default(),
             OutputFormat::Json,
-            &[],
-            &[],
+            &ry_config::Config::defaults(),
             std::sync::Arc::new(std::collections::BTreeMap::new()),
             false,
             None,
@@ -2007,8 +1992,7 @@ mod tests {
             &[file],
             &ry_checker::SeverityFilter::default(),
             OutputFormat::Json,
-            &[],
-            &[],
+            &ry_config::Config::defaults(),
             std::sync::Arc::new(std::collections::BTreeMap::new()),
             false,
             None,
@@ -2040,8 +2024,7 @@ mod tests {
             &[file],
             &ry_checker::SeverityFilter::default(),
             OutputFormat::Json,
-            &[],
-            &[],
+            &ry_config::Config::defaults(),
             std::sync::Arc::new(std::collections::BTreeMap::new()),
             false,
             None,

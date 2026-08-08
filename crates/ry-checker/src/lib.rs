@@ -935,7 +935,7 @@ impl Checker {
             let mut method_slots = std::collections::HashSet::new();
             let prefix = format!("{dispatch_name}.");
             for (method_name, method) in &self.fn_table.fns {
-                if method_name
+                if semantic_argument_name(method_name)
                     .strip_prefix(&prefix)
                     .is_some_and(|class| !class.is_empty())
                 {

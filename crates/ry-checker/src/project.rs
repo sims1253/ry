@@ -443,7 +443,7 @@ impl Project {
                 affected
                     .iter()
                     .any(|method| {
-                        method
+                        semantic_argument_name(method)
                             .strip_prefix(&prefix)
                             .is_some_and(|class| !class.is_empty())
                     })

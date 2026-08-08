@@ -1052,6 +1052,71 @@ fn s3_method_quoting_change_matches_cold() {
     assert_eq!(incremental, cold);
 }
 
+/// Macroscope review follow-up: S3 method keys may retain source backticks.
+/// Their semantic name must still connect to the UseMethod generic.
+#[test]
+fn quoted_s3_method_quoting_change_matches_cold() {
+    let mut project = Project::new();
+    project.add_file(
+        "generic.R".to_string(),
+        parse(
+            "generic.R",
+            "tabyl <- function(data, ...) UseMethod(\"tabyl\")\n",
+        ),
+    );
+    project.add_file(
+        "method.R".to_string(),
+        parse(
+            "method.R",
+            "`tabyl.data.frame` <- function(data, ...) rlang::ensyms(...)\n",
+        ),
+    );
+    project.add_file(
+        "caller.R".to_string(),
+        parse("caller.R", "data <- data.frame()\ntabyl(data, not_bound)\n"),
+    );
+    let before = project.check_incremental();
+    assert!(
+        before
+            .iter()
+            .flat_map(|(_, diagnostics)| diagnostics)
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "the initially quoted argument should not be evaluated: {before:?}",
+    );
+
+    project.update_file(
+        "method.R".to_string(),
+        Arc::new(parse(
+            "method.R",
+            "`tabyl.data.frame` <- function(data, ...) print(...)\n",
+        )),
+    );
+    let incremental = project.check_incremental();
+
+    let mut cold = Project::new();
+    cold.add_file(
+        "generic.R".to_string(),
+        parse(
+            "generic.R",
+            "tabyl <- function(data, ...) UseMethod(\"tabyl\")\n",
+        ),
+    );
+    cold.add_file(
+        "method.R".to_string(),
+        parse(
+            "method.R",
+            "`tabyl.data.frame` <- function(data, ...) print(...)\n",
+        ),
+    );
+    cold.add_file(
+        "caller.R".to_string(),
+        parse("caller.R", "data <- data.frame()\ntabyl(data, not_bound)\n"),
+    );
+    let cold = cold.check();
+
+    assert_eq!(incremental, cold);
+}
+
 /// Macroscope 3741748512: removing a function must re-emit files that called
 /// it even though the removed name is absent from the new function table.
 #[test]

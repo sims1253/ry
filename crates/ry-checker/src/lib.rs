@@ -380,6 +380,63 @@ pub(crate) struct UserParam {
     pub(crate) quoting: bool,
 }
 
+/// The complete portion of a user-defined function signature that can affect
+/// how a caller is analyzed. Keep this snapshot separate from return slots:
+/// callers depend on argument matching and evaluation semantics even when a
+/// function's inferred return type is unchanged.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CallerVisibleSignature {
+    parameters: Vec<CallerVisibleParameter>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct CallerVisibleParameter {
+    name: String,
+    type_: RType,
+    required: bool,
+    defused: bool,
+    quoting: bool,
+}
+
+impl UserFn {
+    pub(crate) fn caller_visible_signature(&self) -> CallerVisibleSignature {
+        CallerVisibleSignature {
+            parameters: self
+                .params
+                .iter()
+                .map(|parameter| CallerVisibleParameter {
+                    name: parameter.name.clone(),
+                    type_: parameter.type_.clone(),
+                    required: parameter.required,
+                    defused: parameter.defused,
+                    quoting: parameter.quoting,
+                })
+                .collect(),
+        }
+    }
+
+    fn seed_caller_visible_signature(&mut self, signature: &CallerVisibleSignature) {
+        // A function outside the incremental fixpoint scope has an unchanged
+        // definition. Still guard the identity shape so a bad scope can never
+        // copy metadata onto different formals.
+        if self.params.len() != signature.parameters.len()
+            || self
+                .params
+                .iter()
+                .zip(&signature.parameters)
+                .any(|(current, previous)| current.name != previous.name)
+        {
+            return;
+        }
+        for (current, previous) in self.params.iter_mut().zip(&signature.parameters) {
+            current.type_ = previous.type_.clone();
+            current.required = previous.required;
+            current.defused = previous.defused;
+            current.quoting = previous.quoting;
+        }
+    }
+}
+
 /// Side-table of inferred return types, indexed by `UserFn::return_slot`.
 /// Stored separately so we can clone the table cheaply when entering a
 /// nested inference pass without deep-cloning the function bodies.
@@ -784,6 +841,26 @@ impl Checker {
         for (name, uf) in &self.fn_table.fns {
             if let Some(t) = seed.get(name) {
                 Arc::make_mut(&mut self.return_slots).set(uf.return_slot, t.clone());
+            }
+        }
+    }
+
+    /// Restore propagated caller-visible metadata for functions outside the
+    /// current fixpoint scope. Pass-1 caches contain definition-local flags;
+    /// without this seed, an unrelated incremental edit would silently drop
+    /// quoting/defusing propagated from another function.
+    pub(crate) fn seed_caller_visible_signatures(
+        &mut self,
+        seed: &HashMap<String, CallerVisibleSignature>,
+        scope: Option<&HashSet<String>>,
+    ) {
+        let table = Arc::make_mut(&mut self.fn_table);
+        for (name, function) in &mut table.fns {
+            if scope.is_some_and(|scope| scope.contains(name)) {
+                continue;
+            }
+            if let Some(signature) = seed.get(name) {
+                function.seed_caller_visible_signature(signature);
             }
         }
     }

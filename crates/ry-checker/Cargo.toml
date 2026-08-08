@@ -20,6 +20,7 @@ rayon = { workspace = true }
 ry-testkit = { path = "../ry-testkit" }
 criterion = "0.8"
 insta = { workspace = true }
+proptest = { workspace = true }
 tempfile = { workspace = true }
 
 [[bench]]

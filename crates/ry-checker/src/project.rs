@@ -17,7 +17,8 @@
 //! tests rely on this).
 
 use crate::{
-    Checker, Diagnostic, FnTable, ReturnSlots, SeverityFilter, apply_filter_to_diagnostics,
+    CallerVisibleSignature, Checker, Diagnostic, FnTable, ReturnSlots, SeverityFilter,
+    apply_filter_to_diagnostics,
 };
 use rayon::prelude::*;
 use ry_core::SourceFile;
@@ -79,6 +80,10 @@ pub struct Project {
     /// Paths whose content changed since the last successful emit.
     /// These must be re-emitted regardless of table changes.
     dirty_paths: HashSet<String>,
+    /// Function names from invalidated pass-1 cache entries. Retaining these
+    /// names lets the reverse call graph reach callers when an update removes
+    /// or renames a function.
+    invalidated_fns: HashSet<String>,
     /// The `loaded` set from the previous emit, used to detect project-wide
     /// invalidation (a new `library()` call changes diagnostics everywhere).
     prev_loaded: Option<HashSet<String>>,
@@ -94,6 +99,10 @@ pub struct Project {
     /// entries start from their refined value rather than re-converging
     /// from scratch (Plan 33 W2).
     prev_fn_returns: HashMap<String, ry_core::RType>,
+    /// Previous caller-visible parameter signatures, keyed by function name.
+    /// Return slots alone are insufficient: argument names, order, required
+    /// status, evaluation semantics, and parameter types all affect callers.
+    prev_fn_signatures: HashMap<String, CallerVisibleSignature>,
     /// Previous pooled known_vars set, used to detect when non-function
     /// bindings changed across files (affects RY010 diagnostics).
     prev_known_vars: HashSet<String>,
@@ -136,10 +145,12 @@ impl Project {
             collected_files: HashMap::new(),
             file_known_vars: HashMap::new(),
             dirty_paths: HashSet::new(),
+            invalidated_fns: HashSet::new(),
             prev_loaded: None,
             prev_return_slots: None,
             file_called_fns: HashMap::new(),
             prev_fn_returns: HashMap::new(),
+            prev_fn_signatures: HashMap::new(),
             prev_known_vars: HashSet::new(),
             emit_count: 0,
         }
@@ -170,7 +181,10 @@ impl Project {
     /// append it when the path is new. Only that file's pass-1 cache entry is
     /// invalidated; `check_incremental` reuses every other file's collection.
     pub fn update_file(&mut self, path: String, file: Arc<SourceFile>) {
-        self.collected_files.remove(&path);
+        if let Some(previous) = self.collected_files.remove(&path) {
+            self.invalidated_fns
+                .extend(previous.fn_table.fns.keys().cloned());
+        }
         self.file_known_vars.remove(&path);
         self.dirty_paths.insert(path.clone());
         if let Some((_, existing)) = self
@@ -187,7 +201,10 @@ impl Project {
     /// Remove a file and its cached pass-1 collection from the project.
     pub fn remove_file(&mut self, path: &str) {
         self.files.retain(|(existing, _)| existing != path);
-        self.collected_files.remove(path);
+        if let Some(previous) = self.collected_files.remove(path) {
+            self.invalidated_fns
+                .extend(previous.fn_table.fns.keys().cloned());
+        }
         self.file_known_vars.remove(path);
         // Removing a file changes the shared function table and pooled
         // known_vars. Conservatively mark all remaining files dirty so
@@ -313,7 +330,9 @@ impl Project {
         self.prev_loaded = None;
         self.prev_return_slots = None;
         self.prev_fn_returns.clear();
+        self.prev_fn_signatures.clear();
         self.prev_known_vars.clear();
+        self.invalidated_fns.clear();
         self.refine_and_emit()
     }
 
@@ -398,13 +417,12 @@ impl Project {
             return Some(HashSet::new());
         }
 
-        // Functions defined in dirty files are the seed of the affected set.
-        let mut affected: HashSet<&str> = HashSet::new();
+        // Functions defined in dirty files, plus definitions removed or
+        // renamed by those edits, seed the affected set.
+        let mut affected = self.invalidated_fns.clone();
         for dirty_path in &self.dirty_paths {
             if let Some(collected) = self.collected_files.get(dirty_path) {
-                for fn_name in collected.fn_table.fns.keys() {
-                    affected.insert(fn_name.as_str());
-                }
+                affected.extend(collected.fn_table.fns.keys().cloned());
             }
         }
 
@@ -418,19 +436,40 @@ impl Project {
                     continue;
                 };
                 // Does this file call any affected function?
-                if !calls.iter().any(|name| affected.contains(name.as_str())) {
+                if !calls.iter().any(|name| affected.contains(name)) {
                     continue;
                 }
                 // All functions defined in this file are potential callers.
                 for fn_name in collected.fn_table.fns.keys() {
-                    if affected.insert(fn_name.as_str()) {
-                        changed = true;
-                    }
+                    changed |= affected.insert(fn_name.clone());
                 }
             }
         }
 
-        Some(affected.iter().map(|s| s.to_string()).collect())
+        Some(affected)
+    }
+
+    /// Expand a set of changed callees through the cached reverse call graph.
+    /// `FnTable::call_sites` is collected per file, so every function defined
+    /// in a file that calls an affected function is a conservative caller.
+    /// Repeating to a fixpoint reaches callers in other files transitively.
+    fn with_transitive_callers(&self, mut affected: HashSet<String>) -> HashSet<String> {
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for (path, collected) in &self.collected_files {
+                let Some(calls) = self.file_called_fns.get(path) else {
+                    continue;
+                };
+                if !calls.iter().any(|callee| affected.contains(callee)) {
+                    continue;
+                }
+                for caller in collected.fn_table.fns.keys() {
+                    changed |= affected.insert(caller.clone());
+                }
+            }
+        }
+        affected
     }
 
     fn refine_and_emit(&mut self) -> Vec<(String, Vec<Diagnostic>)> {
@@ -454,6 +493,7 @@ impl Project {
         // changed, rather than the entire project. On the first call or
         // when `loaded` changed, fall back to refining everything.
         let fixpoint_scope = self.compute_fixpoint_scope();
+        refiner.seed_caller_visible_signatures(&self.prev_fn_signatures, fixpoint_scope.as_ref());
         if let Some(ref scope) = fixpoint_scope {
             refiner.run_fixpoint_scoped(scope);
         } else {
@@ -480,23 +520,30 @@ impl Project {
             .as_ref()
             .is_none_or(|prev| prev != &self.loaded);
 
-        // Compute the set of function names whose refined return type changed
-        // since the last emit. Uses name-keyed comparison via prev_fn_returns
-        // (not slot indices, which shift when functions are added/removed).
-        let changed_fns: HashSet<&str> = self
+        // Compute functions whose return type or complete caller-visible
+        // parameter signature changed. Name-keyed snapshots avoid the historic
+        // slot-index defect when functions are inserted or removed.
+        let directly_changed_fns: HashSet<String> = self
             .fn_table
             .fns
             .iter()
-            .filter_map(|(name, uf)| {
-                let current = &self.return_slots.0.get(uf.return_slot);
-                let previous = self.prev_fn_returns.get(name);
-                match (current, previous) {
-                    (Some(cur), Some(prev)) if **cur == *prev => None,
-                    _ => Some(name.as_str()),
-                }
+            .filter_map(|(name, function)| {
+                let current_return = self.return_slots.0.get(function.return_slot);
+                let return_changed = self
+                    .prev_fn_returns
+                    .get(name)
+                    .is_none_or(|previous| current_return != Some(previous));
+                let current_signature = function.caller_visible_signature();
+                let signature_changed = self
+                    .prev_fn_signatures
+                    .get(name)
+                    .is_none_or(|previous| previous != &current_signature);
+                (return_changed || signature_changed).then(|| name.clone())
             })
             .collect();
-        // S3/S4 methods: conservatively re-emit all when any return type changed.
+        let changed_fns = self.with_transitive_callers(directly_changed_fns);
+
+        // S3/S4 methods: conservatively re-emit all when any callable state changed.
         let changed_s3: HashSet<usize> = if changed_fns.is_empty() {
             HashSet::new()
         } else {
@@ -651,7 +698,14 @@ impl Project {
             .iter()
             .map(|(name, uf)| (name.clone(), self.return_slots.get(uf.return_slot)))
             .collect();
+        self.prev_fn_signatures = self
+            .fn_table
+            .fns
+            .iter()
+            .map(|(name, function)| (name.clone(), function.caller_visible_signature()))
+            .collect();
         self.dirty_paths.clear();
+        self.invalidated_fns.clear();
 
         self.diagnostics = result.clone();
         result

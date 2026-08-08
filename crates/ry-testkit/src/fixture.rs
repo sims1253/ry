@@ -229,6 +229,10 @@ mod tests {
                 > 128
         );
 
+        let excluded = FixtureProject::from_fixture("excluded-influence").unwrap();
+        assert!(excluded.path("excluded.R").is_file());
+        assert!(excluded.path("kept.R").is_file());
+
         let unicode = FixtureProject::from_fixture("unicode").unwrap();
         let source = fs::read_to_string(unicode.path("R/non_ascii.R")).unwrap();
         assert!(source.contains('é') && source.contains('😀') && source.contains("e\u{301}"));

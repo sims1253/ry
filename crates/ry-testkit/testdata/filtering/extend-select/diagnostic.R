@@ -1,1 +1,1 @@
-if (c(TRUE, FALSE)) print(1)
+if (1L) print(1)

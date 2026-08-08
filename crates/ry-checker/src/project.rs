@@ -16,9 +16,10 @@
 //! single-file use cases (the corpus harness and the existing unit
 //! tests rely on this).
 
+use crate::infer::semantic_argument_name;
 use crate::{
     CallerVisibleSignature, Checker, Diagnostic, FnTable, ReturnSlots, SeverityFilter,
-    apply_filter_to_diagnostics,
+    apply_filter_to_diagnostics, usemethod_generic_name,
 };
 use rayon::prelude::*;
 use ry_core::SourceFile;
@@ -426,6 +427,31 @@ impl Project {
             }
         }
 
+        // S3 dispatch is not an ordinary call-graph edge: a method change can
+        // change the generic's propagated quoting metadata. Include matching
+        // UseMethod generics before walking their ordinary callers.
+        let affected_generics: Vec<String> = self
+            .fn_table
+            .fns
+            .iter()
+            .filter_map(|(name, function)| {
+                let dispatch = usemethod_generic_name(&function.body)?;
+                if semantic_argument_name(name) != dispatch {
+                    return None;
+                }
+                let prefix = format!("{dispatch}.");
+                affected
+                    .iter()
+                    .any(|method| {
+                        method
+                            .strip_prefix(&prefix)
+                            .is_some_and(|class| !class.is_empty())
+                    })
+                    .then(|| name.clone())
+            })
+            .collect();
+        affected.extend(affected_generics);
+
         // Transitive closure: if function G's defining file calls function F,
         // and F is affected, then G is also affected. Iterate until fixpoint.
         let mut changed = true;
@@ -481,6 +507,9 @@ impl Project {
         // refined return types (keyed by function name). Already-converged
         // entries keep their refined value, so the loop needs fewer
         // iterations to re-stabilize after a small edit.
+        // Compute scope before moving the current tables into the refiner;
+        // S3 generic-to-method dependencies are recorded in `fn_table`.
+        let fixpoint_scope = self.compute_fixpoint_scope();
         let mut refiner = Checker::with_tables(
             "__project_pass2__",
             std::mem::take(&mut self.fn_table),
@@ -492,7 +521,6 @@ impl Project {
         // W2 scoping: refine only functions whose return type can have
         // changed, rather than the entire project. On the first call or
         // when `loaded` changed, fall back to refining everything.
-        let fixpoint_scope = self.compute_fixpoint_scope();
         refiner.seed_caller_visible_signatures(&self.prev_fn_signatures, fixpoint_scope.as_ref());
         if let Some(ref scope) = fixpoint_scope {
             refiner.run_fixpoint_scoped(scope);
@@ -541,7 +569,12 @@ impl Project {
                 (return_changed || signature_changed).then(|| name.clone())
             })
             .collect();
-        let changed_fns = self.with_transitive_callers(directly_changed_fns);
+        let changed_fns = self.with_transitive_callers(
+            directly_changed_fns
+                .into_iter()
+                .chain(self.invalidated_fns.iter().cloned())
+                .collect(),
+        );
 
         // S3/S4 methods: conservatively re-emit all when any callable state changed.
         let changed_s3: HashSet<usize> = if changed_fns.is_empty() {

@@ -986,3 +986,110 @@ fn parameter_signature_change_reemits_transitive_callers() {
 
     assert_eq!(incremental, cold);
 }
+
+/// Macroscope 3741748510: changing an S3 method from quoting to eager must
+/// clear the generic's propagated quoting metadata during an incremental check.
+#[test]
+fn s3_method_quoting_change_matches_cold() {
+    let mut project = Project::new();
+    project.add_file(
+        "generic.R".to_string(),
+        parse(
+            "generic.R",
+            "tabyl <- function(data, ...) UseMethod(\"tabyl\")\n",
+        ),
+    );
+    project.add_file(
+        "method.R".to_string(),
+        parse(
+            "method.R",
+            "tabyl.data.frame <- function(data, ...) rlang::ensyms(...)\n",
+        ),
+    );
+    project.add_file(
+        "caller.R".to_string(),
+        parse("caller.R", "data <- data.frame()\ntabyl(data, not_bound)\n"),
+    );
+    let before = project.check_incremental();
+    assert!(
+        before
+            .iter()
+            .flat_map(|(_, diagnostics)| diagnostics)
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "the initially quoted argument should not be evaluated: {before:?}",
+    );
+
+    project.update_file(
+        "method.R".to_string(),
+        Arc::new(parse(
+            "method.R",
+            "tabyl.data.frame <- function(data, ...) print(...)\n",
+        )),
+    );
+    let incremental = project.check_incremental();
+
+    let mut cold = Project::new();
+    cold.add_file(
+        "generic.R".to_string(),
+        parse(
+            "generic.R",
+            "tabyl <- function(data, ...) UseMethod(\"tabyl\")\n",
+        ),
+    );
+    cold.add_file(
+        "method.R".to_string(),
+        parse(
+            "method.R",
+            "tabyl.data.frame <- function(data, ...) print(...)\n",
+        ),
+    );
+    cold.add_file(
+        "caller.R".to_string(),
+        parse("caller.R", "data <- data.frame()\ntabyl(data, not_bound)\n"),
+    );
+    let cold = cold.check();
+
+    assert_eq!(incremental, cold);
+}
+
+/// Macroscope 3741748512: removing a function must re-emit files that called
+/// it even though the removed name is absent from the new function table.
+#[test]
+fn removed_function_matches_cold() {
+    let mut project = Project::new();
+    project.add_file(
+        "definition.R".to_string(),
+        parse("definition.R", "target <- function() 1L\n"),
+    );
+    project.add_file(
+        "caller.R".to_string(),
+        parse("caller.R", "target() + \"text\"\n"),
+    );
+    let before = project.check_incremental();
+    assert!(
+        before
+            .iter()
+            .flat_map(|(_, diagnostics)| diagnostics)
+            .any(|diagnostic| diagnostic.code == "RY040"),
+        "the function return type should produce the cached diagnostic: {before:?}",
+    );
+
+    project.update_file(
+        "definition.R".to_string(),
+        Arc::new(parse("definition.R", "target <- 1L\n")),
+    );
+    let incremental = project.check_incremental();
+
+    let mut cold = Project::new();
+    cold.add_file(
+        "definition.R".to_string(),
+        parse("definition.R", "target <- 1L\n"),
+    );
+    cold.add_file(
+        "caller.R".to_string(),
+        parse("caller.R", "target() + \"text\"\n"),
+    );
+    let cold = cold.check();
+
+    assert_eq!(incremental, cold);
+}

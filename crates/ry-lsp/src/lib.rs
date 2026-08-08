@@ -56,14 +56,25 @@ use tower_lsp::{LspService, Server};
 /// output on stdout will corrupt the JSON-RPC stream and break the
 /// client. See `crates/ry-cli/src/main.rs`'s `Cmd::Server` arm.
 pub async fn run() -> LspResult<()> {
-    let stdin = tokio::io::stdin();
-    let stdout = tokio::io::stdout();
+    run_with(tokio::io::stdin(), tokio::io::stdout()).await
+}
+
+/// Run the language server over caller-provided streams.
+///
+/// Production uses stdio through [`run`]. Integration tests use this seam with
+/// in-memory duplex streams so large protocol matrices exercise the same
+/// [`LspService`] without paying subprocess startup costs.
+pub async fn run_with<R, W>(reader: R, writer: W) -> LspResult<()>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
     let (service, socket) = LspService::build(|client| Backend {
         client,
         state: Arc::new(Mutex::new(State::default())),
     })
     .finish();
-    Server::new(stdin, stdout, socket).serve(service).await;
+    Server::new(reader, writer, socket).serve(service).await;
     Ok(())
 }
 

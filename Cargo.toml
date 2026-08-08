@@ -7,6 +7,7 @@ members = [
     "crates/ry-config",
     "crates/ry-cli",
     "crates/ry-lsp",
+    "crates/ry-testkit",
 ]
 # The Zed extension (editors/zed) is a standalone WASM cdylib kept out of the
 # workspace on purpose: zed_extension_api and its transitive dependencies are

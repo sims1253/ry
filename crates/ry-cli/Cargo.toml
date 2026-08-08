@@ -44,4 +44,5 @@ flate2 = { workspace = true }
 xz2 = { workspace = true }
 
 [dev-dependencies]
+ry-testkit = { path = "../ry-testkit" }
 tempfile = { workspace = true }

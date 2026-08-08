@@ -1,0 +1,2 @@
+ignore = ["RY040"]
+typeshed = ["stubs"]

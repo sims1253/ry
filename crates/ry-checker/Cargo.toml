@@ -17,6 +17,7 @@ serde_json = { workspace = true }
 rayon = { workspace = true }
 
 [dev-dependencies]
+ry-testkit = { path = "../ry-testkit" }
 criterion = "0.8"
 insta = { workspace = true }
 tempfile = { workspace = true }

@@ -1,0 +1,5 @@
+Package: completepkg
+Type: Package
+Title: Shared Testkit Complete Package
+Version: 0.0.1
+Imports: fixturedep

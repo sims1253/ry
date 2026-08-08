@@ -18,3 +18,6 @@ tracing = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
+
+[dev-dependencies]
+ry-testkit = { path = "../ry-testkit" }

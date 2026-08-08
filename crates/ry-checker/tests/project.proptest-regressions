@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc a782b1d119f7feacd23f4c38e8d56752b1b4e42c78231b2cc676dcbf49bd2d17 # shrinks to operations = [Add { file: 0, source: QuotingParameter }, Update { file: 1, source: ForwardingCaller }, Update { file: 2, source: TransitiveCaller }]
+cc 821a064fba6022fa6775e64cc9d82ce6307e91f4f8cacd9dce16c85ae716d956 # shrinks to operations = [Add { file: 0, source: QuotingParameter }, Add { file: 1, source: ForwardingCaller }, Add { file: 2, source: TransitiveCaller }, Update { file: 0, source: RequiredParameter }]
+cc c3eef9afa470132872019c77262649f73f8f4539b55252ee196d8b25875a118e # shrinks to operations = [Add { file: 0, source: UnrelatedInteger }, Add { file: 1, source: CharacterReturn }, Add { file: 2, source: DirectCaller }, BatchUpdateTwo { first: 0, first_source: UnrelatedValue, second: 1, second_source: IntegerReturn }]

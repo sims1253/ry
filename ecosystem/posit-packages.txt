@@ -2,7 +2,7 @@
 # Posit open-source R corpus (>=500 stars on
 # https://opensource.posit.co/software/?sort=stars), audited with ry 0.8.0.
 # Sources are checked only; no package code is distributed or executed.
-# ledger: docs/corpus/posit-0.8.0.json
+# ledger: docs/corpus/posit-0.9.0.json
 #
 # Collision-safe: each package is keyed by a unique slug (column 1);
 # ecosystem/run.sh aborts if a slug appears twice in a manifest.

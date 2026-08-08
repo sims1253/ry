@@ -9,7 +9,9 @@ removing one finding can never be silently mistaken for removing another.
 | Ledger | `ry` | Packages | Diagnostics | TP / FP / Unc | Reconciliation |
 | :-- | :-- | :-- | ---: | :-- | :-- |
 | [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.7.1 | 24 | 100 | 4 / 96 / 0 | hermetic (strict CI gate) |
-| [`posit-0.8.0.json`](posit-0.8.0.json) | 0.8.0 | 62 | 1142 | 34 / 1108 / 0 | audit-transcript (informational) |
+| [`posit-0.8.0.json`](posit-0.8.0.json) | 0.8.0 | 62 | 1142 | 34 / 1108 / 0 | audit-transcript (historical) |
+| [`posit-plan34-baseline.json`](posit-plan34-baseline.json) | pre-0.9 | 62 | 729 | 37 / 692 / 0 | hermetic (measured starting tree) |
+| [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 729 | 37 / 692 / 0 | hermetic (strict CI gate) |
 
 ## Reconciliation modes
 
@@ -56,15 +58,28 @@ against the committed file byte for byte.
 
 The tidyverse ledger has no generator in this repo either.
 
+## The moving 0.9 ledger
+
+Plan 34 rebuilt `ry` from the audited starting commit and generated hermetic
+message-free root reports for all 62 pinned packages. The complete pre-change
+measurement is retained in `posit-plan34-baseline.json`; after the RY032 cleanup
+produced a zero identity delta, that exact full run seeded `posit-0.9.0.json`.
+Unlike the historical 0.8 audit transcript, the 0.9 ledger is a strict gate.
+
+Plans 35 and 36 may change diagnostics intentionally. Any such change must
+regenerate the reports, update `posit-0.9.0.json` in the same change, preserve
+or manually review every new identity's label, and explain all missing/unowned
+identities. Never weaken `reconciliation: hermetic` to accept a delta.
+
 ## Running the corpora
 
 ```sh
 # tidyverse (default; strict hermetic reconciliation)
 ecosystem/run.sh --check
 
-# posit corpus — fast tier (35 signal-dense packages) or full (all 62)
-ecosystem/run.sh --manifest ecosystem/posit-packages.txt --tier fast
-ecosystem/run.sh --manifest ecosystem/posit-packages.txt --tier full
+# posit corpus — strict 0.9 gate; fast tier (35 packages) or full (all 62)
+ecosystem/run.sh --check --manifest ecosystem/posit-packages.txt --tier fast
+ecosystem/run.sh --check --manifest ecosystem/posit-packages.txt --tier full
 ```
 
 Manifests are collision-safe: each package is keyed by a unique slug and

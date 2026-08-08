@@ -1,0 +1,11 @@
+R/get_source_expressions.R:583:7 RY032
+R/utils.R:183:7 RY032
+inst/example/bad.R:11:1 RY000
+tests/testthat/dummy_packages/RConfig/tests/testthat.R:5:18 RY010
+tests/testthat/dummy_packages/RConfigInvalid/lintr_test_config.R:3:1 RY000
+tests/testthat/dummy_packages/RConfigInvalid/lintr_test_config.R:3:1 RY010
+tests/testthat/dummy_packages/package/R/default_linter_testcode.R:25:73 RY034
+tests/testthat/dummy_packages/package/data-raw/default_linter_testcode.R:25:73 RY034
+tests/testthat/dummy_packages/package/inst/data-raw/default_linter_testcode.R:25:73 RY034
+tests/testthat/test-linter_tags.R:172:24 RY060
+tests/testthat/test-linter_tags.R:178:15 RY060

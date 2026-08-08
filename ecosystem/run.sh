@@ -26,8 +26,8 @@ Usage: ecosystem/run.sh [--check] [--local] [--manifest FILE]
 
 A manifest may carry a `# ledger: <path-relative-to-repo>` directive selecting
 the corpus its hermetic root reports reconcile against, and a `# === full tier`
-marker separating the fast-tier packages from the rest. Multiple ledgers
-(tidyverse-0.7.1, posit-0.8.0) coexist via their own manifests.
+marker separating the fast-tier packages from the rest. Multiple ledgers (including the historical posit-0.8.0 transcript and the
+strict posit-0.9.0 gate) coexist and are selected explicitly by manifests.
 EOF
 }
 
@@ -315,14 +315,11 @@ fi
 
 # Each ledger pins every diagnostic identity in the audited packages' hermetic
 # root reports rather than an aggregate count, so removing one finding cannot
-# be mistaken for removing another. The tidyverse ledger is a strict hermetic
-# baseline (`reconciliation: hermetic`, the default when the field is absent):
-# any missing/unowned identity fails the build. The posit ledger is an audit
-# transcript of an installed-library run (`reconciliation: audit-transcript`):
-# the hermetic-vs-audit delta is reported for visibility but does not gate the
-# build, since RY_NO_INSTALLED_LIBRARIES=1 legitimately differs from the
-# installed-library audit. In both modes findings labelled `true_positive` are
-# checked explicitly so a real bug disappearing is always surfaced.
+# be mistaken for removing another. `reconciliation: hermetic` (the default)
+# makes missing and unowned identities fail; `audit-transcript` exists only for
+# historical installed-library ledgers whose environment cannot be reproduced.
+# In both modes findings labelled `true_positive` are checked explicitly so a
+# real bug disappearing is always surfaced.
 if ! $local_only; then
   [[ -f "$audit_corpus" ]] || {
     echo "ecosystem: audit corpus not found: $audit_corpus" >&2

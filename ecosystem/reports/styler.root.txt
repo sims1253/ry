@@ -1,0 +1,7 @@
+R/roxygen-examples-add-remove.R:57:25 RY033
+R/rules-line-breaks.R:364:9 RY033
+tests/testthat/public-api/renvpkg/tests/testthat/test-package-xyz.R:2:18 RY010
+tests/testthat/public-api/xyzpackage-qmd/tests/testthat/test-package-xyz.R:2:18 RY010
+tests/testthat/public-api/xyzpackage-rmd/tests/testthat/test-package-xyz.R:2:18 RY010
+tests/testthat/public-api/xyzpackage-rnw/tests/testthat/test-package-xyz.R:2:18 RY010
+tests/testthat/public-api/xyzpackage/tests/testthat/test-package-xyz.R:2:18 RY010

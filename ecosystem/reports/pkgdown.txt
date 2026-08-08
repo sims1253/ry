@@ -1,0 +1,6 @@
+R/config.R:171:7 RY010
+R/package.R:18:29 RY061
+R/package.R:18:5 RY061
+R/render.R:219:7 RY105
+R/templates.R:57:5 RY070
+R/topics.R:271:16 RY091

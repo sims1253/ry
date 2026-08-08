@@ -1,0 +1,7 @@
+R/codegen-utils.R:12:21 RY010
+R/distributions-categorical.R:56:50 RY010
+R/distributions-constraints.R:220:27 RY010
+R/distributions-constraints.R:272:8 RY010
+R/install.R:699:4 RY033
+R/package.R:42:37 RY033
+R/package.R:88:15 RY033

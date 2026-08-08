@@ -1,0 +1,7 @@
+R/config.R:375:9 RY001
+R/connection.R:273:7 RY032
+R/connection_livy.R:187:28 RY010
+R/ml_utils.R:181:13 RY001
+R/spark_submit.R:34:7 RY032
+R/tidiers_utils.R:74:11 RY033
+R/worker_apply.R:522:40 RY103

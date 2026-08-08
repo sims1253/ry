@@ -1,0 +1,4 @@
+R/html_dependencies.R:245:9 RY105
+R/jupyter.R:109:7 RY105
+R/pandoc.R:210:38 RY032
+R/pandoc.R:653:33 RY032

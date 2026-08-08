@@ -21,6 +21,19 @@ P35-W4 audit of parser `?`, `.ok()?`, and `None` propagation. Its executable R1
 and R6 gates live in `crates/ry-checker/tests/invariants.rs` and cover all
 checker fixtures plus a deterministic sample of the vendored ecosystem sources.
 
+## Readable message and fix ledger
+
+[`posit-messages-0.9.json`](posit-messages-0.9.json) records the message,
+severity, and optional structured fix for all 729 reviewed Posit diagnostics.
+Each entry is keyed by the same stable `(package, code, path, line, column)`
+identity as `posit-0.9.0.json`; it is intentionally readable JSON rather than a
+digest or an ignored `.full.txt` report.
+
+`ecosystem/run.sh` regenerates this companion from the production
+`ry check --output-format json` results. Posit `--check` runs compare the
+processed tier against the committed entries and print a unified diff for any
+message or replacement drift. A full non-check run updates all entries.
+
 ## Reconciliation modes
 
 `ecosystem/run.sh` reconciles the hermetic root reports it generates

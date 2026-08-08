@@ -443,6 +443,24 @@ if (length(missing) || length(unowned)) {
 RS
 fi
 
+# The identity ledger intentionally omits prose. The companion Posit message
+# ledger is regenerated from the same production JSON diagnostics and keyed by
+# those reviewed identities, making message/fix drift a readable review diff.
+if ! $local_only && [[ "$(basename "$audit_corpus")" == "posit-0.9.0.json" ]]; then
+  command -v python3 >/dev/null 2>&1 || {
+    echo "ecosystem: required command not found: python3" >&2
+    exit 2
+  }
+  message_mode=update
+  $check && message_mode=check
+  python3 "$ecosystem_dir/posit_messages.py" "$message_mode" \
+    --ledger "$audit_corpus" \
+    --messages "$root/docs/corpus/posit-messages-0.9.json" \
+    --json-dir "$work_dir" \
+    --report-prefix "$report_prefix" \
+    "${root_packages[@]}"
+fi
+
 summary_names=("$summary_prefix.md")
 if ! $local_only; then
   summary_names+=("$summary_prefix.root.md")

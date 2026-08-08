@@ -1,6 +1,6 @@
 use ry_testkit::{
-    AsyncJsonRpcClient, Driver, DriverError, FixtureProject, ObservedDiagnostic, ObservedPosition,
-    ObservedRange, PositionEncoding, normalize_path,
+    AsyncJsonRpcClient, Driver, DriverError, FixtureProject, ObservedDiagnostic, ObservedFix,
+    ObservedPosition, ObservedRange, PositionEncoding, normalize_path,
 };
 use serde_json::{Value, json};
 use std::path::Path;
@@ -127,9 +127,28 @@ fn lsp_diagnostics(
                     end: Some(lsp_position(end)?),
                 },
                 confidence: None,
+                fix: lsp_fix(value)?,
             })
         })
         .collect()
+}
+
+fn lsp_fix(value: &Value) -> Result<Option<ObservedFix>, DriverError> {
+    value
+        .pointer("/data/fix")
+        .map(|fix| {
+            Ok(ObservedFix {
+                range: ObservedRange {
+                    start: lsp_position(&fix["range"]["start"])?,
+                    end: Some(lsp_position(&fix["range"]["end"])?),
+                },
+                replacement: fix["replacement"]
+                    .as_str()
+                    .ok_or("fix replacement is not a string")?
+                    .to_string(),
+            })
+        })
+        .transpose()
 }
 
 fn lsp_position(value: &Value) -> Result<ObservedPosition, DriverError> {

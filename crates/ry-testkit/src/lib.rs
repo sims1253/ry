@@ -11,7 +11,7 @@ mod process;
 pub use fixture::FixtureProject;
 pub use json_rpc::{AsyncJsonRpcClient, JsonRpcProcess};
 pub use observed::{
-    Driver, DriverError, ObservedDiagnostic, ObservedPosition, ObservedRange, PositionEncoding,
-    normalize_path, normalize_position,
+    Driver, DriverError, ObservedDiagnostic, ObservedFix, ObservedPosition, ObservedRange,
+    PositionEncoding, normalize_path, normalize_position,
 };
 pub use process::CliProcess;

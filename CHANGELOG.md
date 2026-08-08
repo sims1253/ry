@@ -24,6 +24,8 @@ All notable changes to ry are documented in this file.
 
 ### Changed
 
+- Measured the pinned 62-package Posit corpus before rule governance begins.
+  This is the pre-governance Plan 34 baseline, not the final 0.9 rule set.
 - Extracted `Config`, `Baseline`, and diagnostic-filter types into a
   new `ry-config` library crate, shared between `ry-cli` and `ry-lsp`.
 

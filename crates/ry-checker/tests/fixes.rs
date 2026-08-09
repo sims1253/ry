@@ -145,6 +145,34 @@ fn ry032_does_not_offer_vectorizing_fix_in_scalar_conditions() {
 }
 
 #[test]
+fn ry032_guard_warning_does_not_offer_an_eager_evaluation_fix() {
+    let source = "f <- function(x) is.null(x) || x == \"a\"\n";
+    let diagnostics = check(source);
+    let diagnostic = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "RY032")
+        .unwrap_or_else(|| panic!("guarded parameter did not emit RY032: {diagnostics:?}"));
+    assert!(
+        diagnostic.fix.is_none(),
+        "a guard-based short circuit must not be rewritten to eager evaluation: {diagnostic:?}"
+    );
+}
+
+#[test]
+fn ry103_rhs_fix_uses_scope_after_short_circuit_lhs() {
+    let source = "custom <- function(x) \"widget\"\nf <- function(x) (class <- custom) && class(x) == \"widget\"\n";
+    let diagnostics = check(source);
+    let diagnostic = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "RY103")
+        .unwrap_or_else(|| panic!("RHS class comparison did not emit RY103: {diagnostics:?}"));
+    assert!(
+        diagnostic.fix.is_none(),
+        "the LHS rebinds class before the RHS executes: {diagnostic:?}"
+    );
+}
+
+#[test]
 fn ry032_fix_targets_the_syntax_operator_not_comment_text() {
     for (source, expected) in [
         (

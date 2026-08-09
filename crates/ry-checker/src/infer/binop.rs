@@ -292,27 +292,38 @@ impl Checker {
         // than recursing from the enclosing `if`) reports each site exactly
         // once no matter how the operators nest.
         self.check_class_equality_operand(lhs, scope);
-        self.check_class_equality_operand(rhs, scope);
         let lt = self.infer(lhs, scope);
         let narrowing = self.extract_type_narrowing(lhs, scope);
         let (then_scope, else_scope, _) = apply_narrowing(scope, &narrowing, true);
         let rhs_parameter_vector = self.short_circuit_parameter_vector(op, lhs, rhs, scope);
         let rt = match op {
             BinOpKind::AndAnd => {
+                self.check_class_equality_operand(rhs, &then_scope);
                 let mut rhs_scope = then_scope;
                 let rt = self.infer(rhs, &mut rhs_scope);
                 merge_condition_assignments(scope, &rhs_scope, rhs);
                 rt
             }
             BinOpKind::OrOr => {
+                self.check_class_equality_operand(rhs, &else_scope);
                 let mut rhs_scope = else_scope;
                 let rt = self.infer(rhs, &mut rhs_scope);
                 merge_condition_assignments(scope, &rhs_scope, rhs);
                 rt
             }
-            _ => self.infer(rhs, scope),
+            _ => {
+                self.check_class_equality_operand(rhs, scope);
+                self.infer(rhs, scope)
+            }
         };
-        let scalar_logical_fix = self.scalar_logical_operator_fix(op, lhs, rhs);
+        // A parameter guard relies on lazy short-circuit evaluation. Replacing
+        // it with `&` / `|` can eagerly evaluate an invalid RHS and change a
+        // valid result (for example `is.null(x) || x == "a"` for `x = NULL`).
+        let scalar_logical_fix = if rhs_parameter_vector {
+            None
+        } else {
+            self.scalar_logical_operator_fix(op, lhs, rhs)
+        };
         let before = self.diagnostics.len();
         let result = self.infer_binop(
             op,
@@ -331,11 +342,7 @@ impl Checker {
                 "`{}` operand depends on a parameter whose length is not known to be 1; current R errors for vectors",
                 op_symbol(op)
             );
-            if let Some(fix) = scalar_logical_fix {
-                self.emit_with_fix(Severity::Warning, span, "RY032", message, fix);
-            } else {
-                self.emit(Severity::Warning, span, "RY032", message);
-            }
+            self.emit(Severity::Warning, span, "RY032", message);
         }
         result
     }

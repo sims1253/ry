@@ -255,33 +255,6 @@ expression: snapshots
         end: 189
         line: 4
         start: 187
-    - code: RY000
-      fix: ~
-      message: "syntax error: unparseable region (recovered tree may be unreliable)"
-      severity: error
-      span:
-        column: 15
-        end: 170
-        line: 3
-        start: 169
-    - code: RY000
-      fix: ~
-      message: "syntax error: unparseable region (recovered tree may be unreliable)"
-      severity: error
-      span:
-        column: 8
-        end: 179
-        line: 4
-        start: 179
-    - code: RY000
-      fix: ~
-      message: "syntax error: unparseable region (recovered tree may be unreliable)"
-      severity: error
-      span:
-        column: 16
-        end: 189
-        line: 4
-        start: 187
     - code: RY010
       fix: ~
       message: "variable `syntax` is not bound in this scope"
@@ -472,10 +445,10 @@ expression: snapshots
 - diagnostics:
     - code: RY090
       fix:
-        replacement: x = 1L
+        replacement: x
         span:
           column: 7
-          end: 37
+          end: 32
           line: 1
           start: 30
       message: "unknown argument `xx` to `length`; did you mean `x`?"

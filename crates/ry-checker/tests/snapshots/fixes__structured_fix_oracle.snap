@@ -38,10 +38,10 @@ expression: snapshots
   before:
     - code: RY090
       fix:
-        replacement: x = 1L
+        replacement: x
         span:
           - 7
-          - 14
+          - 9
       message: "unknown argument `xx` to `length`; did you mean `x`?"
       severity: warning
       span:

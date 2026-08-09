@@ -669,12 +669,6 @@ impl Checker {
         // run's diagnostics on top of the re-collected tables.
         self.diagnostics.clear();
 
-        // Parse errors first: a syntax error means the recovered tree is
-        // unreliable, so RY000 is the primary signal for broken input. We
-        // still run the checker on the recovered tree (downstream
-        // diagnostics may be noise, but ty takes the same approach).
-        self.emit_parse_errors(file);
-
         // Pass 1: collect function definitions into the FnTable. We don't
         // emit diagnostics yet - the body's `return` types depend on the
         // table being fully populated.

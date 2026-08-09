@@ -151,3 +151,37 @@ fn fix_is_minimal_public_data() {
     assert_eq!(fix.span.start, 1);
     assert_eq!(fix.replacement, "x");
 }
+
+#[test]
+fn ry090_tied_nearest_parameters_warn_without_a_structured_fix() {
+    let diagnostics = check("f <- function(cat, car) 1L\nf(cap = 1L)\n");
+    let diagnostic = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "RY090")
+        .expect("RY090 warning for unmatched named argument");
+
+    assert!(
+        diagnostic.fix.is_none(),
+        "tied suggestion must not be fixed: {diagnostic:?}"
+    );
+}
+
+#[test]
+fn ry090_unique_parameter_fix_replaces_only_the_argument_name() {
+    let source = "f <- function(length) 1L\nf(lenght # keep\n = 1L)\n";
+    let diagnostics = check(source);
+    let diagnostic = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "RY090")
+        .expect("RY090 warning for unmatched named argument");
+    let fix = diagnostic
+        .fix
+        .as_ref()
+        .expect("unique suggestion must be fixed");
+
+    assert_eq!(&source[fix.span.start..fix.span.end], "lenght");
+    assert_eq!(
+        apply(source, fix),
+        "f <- function(length) 1L\nf(length # keep\n = 1L)\n"
+    );
+}

@@ -6879,6 +6879,25 @@ fn public_check_with_scope_surfaces_ry000_on_broken_file() {
     );
 }
 
+#[test]
+fn public_check_emits_each_parse_error_once() {
+    let mut parser = RParser::new().unwrap();
+    let file = parser.parse("test.R", "f <- function( { 1 }\n").unwrap();
+    let expected = file.parse_errors.len();
+    assert!(expected > 0, "fixture must contain a parse error");
+    let mut checker = Checker::new("test.R");
+    let actual = checker
+        .check(&file)
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "RY000")
+        .count();
+
+    assert_eq!(
+        actual, expected,
+        "each parser error must produce exactly one RY000"
+    );
+}
+
 // ===== search-path-unknown audit (W20/W21d) =====
 //
 // `mark_search_path_unknown()` suppresses RY010 (unbound-variable) for the

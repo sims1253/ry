@@ -752,7 +752,23 @@ fn unquote_r_string(raw: &str) -> String {
     if bytes.len() < 2 {
         return raw.to_string();
     }
-    let inner = &raw[1..raw.len() - 1];
+    // The text should be surrounded by quotes, but a malformed or
+    // unterminated literal (discovered by fuzzing: input `n"ÿ`) can
+    // leave the last byte inside a multi-byte character. Slice only to
+    // the final char boundary before the nominal end so the operation
+    // never panics on a non-boundary.
+    let end = raw.len() - 1;
+    let end = if end > 0 && raw.is_char_boundary(end) {
+        end
+    } else {
+        // Walk back to the nearest char boundary before `end`.
+        let mut boundary = end;
+        while boundary > 1 && !raw.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
+        boundary
+    };
+    let inner = &raw[1..end];
     process_r_escapes(inner)
 }
 

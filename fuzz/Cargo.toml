@@ -1,0 +1,27 @@
+[package]
+name = "ry-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+ry-core = { path = "../crates/ry-core" }
+ry-checker = { path = "../crates/ry-checker" }
+
+[[bin]]
+name = "parse"
+path = "fuzz_targets/parse.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "parse-and-check"
+path = "fuzz_targets/parse_and_check.rs"
+test = false
+doc = false
+
+[workspace]

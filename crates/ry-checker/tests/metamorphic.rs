@@ -185,6 +185,74 @@ fn r2_incremental_repeated_output_is_identical() {
     }
 }
 
+// ── P35-W11: Fallible orchestration gates ────────────────────────────────
+
+/// Parallel-mode falsification (P35-W11).
+///
+/// `Project::check()` distributes pass-3 diagnostic emission across rayon
+/// workers via `par_iter().collect()`. If any emitter mutated shared state,
+/// or if the collect ordering broke, diagnostics would differ between a
+/// single-threaded (serial) pool and a multi-threaded (parallel) pool.
+///
+/// This test installs custom rayon thread pools with 1 and 4 threads and
+/// compares the full diagnostic multiset. It protects the parallel emission
+/// seam: a regression that makes parallel non-deterministic is caught here,
+/// not only in a flaky CI run.
+#[test]
+fn parallel_project_check_matches_serial_across_thread_counts() {
+    let fixtures = checker_fixtures();
+    assert!(fixtures.len() >= CHECKER_FIXTURE_FLOOR);
+    let mut parser = RParser::new().expect("parser init");
+
+    // Use enough files to exercise parallel work distribution.
+    let sample: Vec<PathBuf> = fixtures.into_iter().step_by(3).collect();
+    let mut parsed: Vec<(String, ry_core::SourceFile)> = Vec::new();
+    for path in &sample {
+        let src =
+            fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        let name = path.to_string_lossy().to_string();
+        let file = parser
+            .parse(&name, &src)
+            .unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
+        parsed.push((name, file));
+    }
+
+    // Snapshot a normalized diagnostic multiset for a given thread count.
+    type FileDiags = Vec<(String, Vec<(String, Span, String)>)>;
+    let snapshot = |threads: usize| -> FileDiags {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .expect("build rayon pool");
+        pool.install(|| {
+            let mut project = Project::new();
+            for (name, file) in &parsed {
+                project.add_file(name.clone(), file.clone());
+            }
+            let results = project.check();
+            results
+                .into_iter()
+                .map(|(path, diags)| {
+                    let normalized: Vec<(String, Span, String)> = diags
+                        .into_iter()
+                        .map(|d| (d.code.to_string(), d.span, d.message))
+                        .collect();
+                    (path, normalized)
+                })
+                .collect()
+        })
+    };
+
+    let serial = snapshot(1);
+    for threads in [2, 4, 8] {
+        let parallel = snapshot(threads);
+        assert_eq!(
+            serial, parallel,
+            "P35-W11: project check diverged between 1-thread (serial) and              {threads}-thread (parallel) pools",
+        );
+    }
+}
+
 // ════════════════════════════════════════════════════════════════════════
 // R3 — Inert blank/comment insertion (GATE)
 // ════════════════════════════════════════════════════════════════════════

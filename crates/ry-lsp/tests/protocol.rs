@@ -548,3 +548,83 @@ fn package_import_from_value_position_is_clean_in_both_modes() {
             .any(|d| d.code == "RY010" && d.message.contains("imported_helper"))
     );
 }
+
+/// P35-W11: cross-mode subprocess framing is correct over a multi-message
+/// exchange with the real `ry server` process.
+///
+/// The existing `actual_ry_server_stdio_is_clean_json_rpc` test proves the
+/// initialize response is framed. This test extends that to a full
+/// request/notification/response/exit cycle and verifies every message
+/// survives Content-Length framing without truncation, merging, or
+/// leftover stdout noise. A regression that interleaves a log line or
+/// uses a wrong Content-Length would fail here, not only in an editor
+/// integration.
+#[test]
+fn cross_mode_subprocess_framing_survives_multi_round_exchange() {
+    let fixture = FixtureProject::from_fixture("shared").unwrap();
+    let mut command = Command::new(ry_binary());
+    command.arg("server").current_dir(fixture.root());
+    let mut client = JsonRpcProcess::spawn(&mut command).unwrap();
+    let root_uri = file_uri(fixture.root());
+
+    // Round 1: initialize request → response.
+    let init_id = client
+        .request(
+            "initialize",
+            json!({
+                "processId": null,
+                "rootUri": root_uri,
+                "capabilities": {},
+                "initializationOptions": {
+                    "settings": [{}],
+                    "globalSettings": {}
+                },
+            }),
+        )
+        .unwrap();
+    let init_response = client
+        .receive_until(|m| m.get("id") == Some(&json!(init_id)), 8)
+        .unwrap();
+    assert_eq!(
+        init_response.pointer("/result/serverInfo/name"),
+        Some(&json!("ry")),
+    );
+
+    // Round 2: initialized notification (no response expected), then
+    // didOpen → publishDiagnostics notification.
+    client.notify("initialized", json!({})).unwrap();
+    let path = fixture.path("R/diagnostic.R");
+    let uri = file_uri(&path);
+    let text = std::fs::read_to_string(&path).unwrap();
+    client
+        .notify(
+            "textDocument/didOpen",
+            json!({"textDocument": {
+                "uri": uri, "languageId": "r", "version": 1, "text": text
+            }}),
+        )
+        .unwrap();
+    let publish = client
+        .receive_until(
+            |m| {
+                m.get("method") == Some(&json!("textDocument/publishDiagnostics"))
+                    && m.pointer("/params/uri") == Some(&json!(uri))
+            },
+            64,
+        )
+        .unwrap();
+    // The diagnostics array must be present and well-formed (framing
+    // correctness implies the full array survived intact).
+    assert!(
+        publish.pointer("/params/diagnostics").is_some(),
+        "publishDiagnostics notification missing diagnostics array",
+    );
+
+    // Round 3: shutdown request → response, then exit notification.
+    let shutdown_id = client.request("shutdown", Value::Null).unwrap();
+    let shutdown_response = client
+        .receive_until(|m| m.get("id") == Some(&json!(shutdown_id)), 8)
+        .unwrap();
+    assert_eq!(shutdown_response["result"], Value::Null);
+    client.notify("exit", Value::Null).unwrap();
+}

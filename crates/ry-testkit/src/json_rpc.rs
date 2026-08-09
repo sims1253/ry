@@ -369,4 +369,91 @@ mod tests {
             format!("JSON-RPC headers exceed {MAX_MESSAGE_BYTES} bytes")
         );
     }
+
+    // ── P35-W11: cross-mode subprocess framing ──────────────────────────
+
+    /// P35-W11: encode/decode round-trip preserves the message exactly.
+    ///
+    /// Protects the framing seam: if `encode` wrote a wrong Content-Length
+    /// or a malformed header terminator, the decoder would produce a
+    /// different message or fail. This catches a framing mismatch between
+    /// what the testkit client sends and what it expects to receive.
+    #[test]
+    fn encode_decode_round_trip_preserves_message() {
+        let messages = [
+            json!({"jsonrpc": "2.0", "id": 1, "result": {"capabilities": {}}}),
+            json!({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {"uri": "file:///x.R", "diagnostics": []}}),
+            json!({"jsonrpc": "2.0", "id": 2, "method": "shutdown", "params": null}),
+        ];
+        for message in &messages {
+            let frame = encode(message).expect("encode");
+            let mut reader = BufReader::new(frame.as_slice());
+            let decoded = decode_blocking(&mut reader).expect("decode");
+            assert_eq!(&decoded, message);
+        }
+    }
+
+    /// P35-W11: the Content-Length header matches the body byte length
+    /// exactly, and the header/body separator is the correct CRLFCRLF.
+    /// A wrong separator or miscounted length silently truncates or
+    /// merges messages across the subprocess boundary.
+    #[test]
+    fn encoded_frame_has_exact_content_length_and_separator() {
+        let message = json!({"jsonrpc": "2.0", "id": 42, "result": "ok"});
+        let frame = encode(&message).expect("encode");
+
+        // Search for the CRLFCRLF separator at the byte level to avoid
+        // string-escape ambiguity in the test source.
+        let separator = b"\r\n\r\n";
+        let header_end = frame
+            .windows(4)
+            .position(|w| w == separator)
+            .expect("header separator");
+        let header = std::str::from_utf8(&frame[..header_end]).expect("header is ASCII");
+        let header = header.trim_end_matches(['\r', '\n']);
+        let body = &frame[header_end + separator.len()..];
+
+        assert!(
+            header.starts_with("Content-Length: "),
+            "frame must start with Content-Length header, got: {header:?}",
+        );
+        let declared: usize = header["Content-Length: ".len()..]
+            .parse()
+            .expect("Content-Length is an integer");
+        assert_eq!(
+            declared,
+            body.len(),
+            "Content-Length {declared} does not match actual body {} bytes",
+            body.len(),
+        );
+
+        let decoded: Value = serde_json::from_slice(body).expect("body is valid JSON");
+        assert_eq!(decoded, message);
+    }
+
+    /// P35-W11: multiple framed messages in one buffer decode in sequence.
+    ///
+    /// The subprocess can write several JSON-RPC messages back-to-back on
+    /// stdout (e.g., a log-message notification followed by a response).
+    /// The decoder must handle them one at a time without merging or
+    /// skipping.
+    #[test]
+    fn decoder_handles_multiple_back_to_back_messages() {
+        let first =
+            json!({"jsonrpc": "2.0", "method": "window/logMessage", "params": {"message": "hi"}});
+        let second = json!({"jsonrpc": "2.0", "id": 1, "result": {"serverInfo": {"name": "ry"}}});
+
+        let mut buffer = encode(&first).expect("encode first");
+        buffer.extend(encode(&second).expect("encode second"));
+
+        let mut reader = BufReader::new(buffer.as_slice());
+        let decoded_first = decode_blocking(&mut reader).expect("decode first");
+        let decoded_second = decode_blocking(&mut reader).expect("decode second");
+        // After two messages, the buffer should be fully consumed.
+        let trailing = decode_blocking(&mut reader);
+        assert!(trailing.is_err(), "unexpected third message: {trailing:?}");
+
+        assert_eq!(decoded_first, first);
+        assert_eq!(decoded_second, second);
+    }
 }

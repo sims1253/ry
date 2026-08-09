@@ -355,9 +355,9 @@ impl Checker {
                 cond, then, else_, ..
             } => {
                 // RY103: an `if` condition is a length-1 logical context.
-                self.check_class_equality_operand(cond);
+                self.check_class_equality_operand(cond, scope);
                 let diagnostic_start = self.diagnostics.len();
-                let ct = self.infer(cond, scope);
+                let ct = self.infer_scalar_condition(cond, scope);
                 let has_ry100 = self.diagnostics[diagnostic_start..]
                     .iter()
                     .any(|diagnostic| diagnostic.code == "RY100");
@@ -468,9 +468,9 @@ impl Checker {
             }
             Stmt::While { cond, body, .. } => {
                 // RY103: a loop condition is a length-1 logical context.
-                self.check_class_equality_operand(cond);
+                self.check_class_equality_operand(cond, scope);
                 let diagnostic_start = self.diagnostics.len();
-                let ct = self.infer(cond, scope);
+                let ct = self.infer_scalar_condition(cond, scope);
                 let has_ry100 = self.diagnostics[diagnostic_start..]
                     .iter()
                     .any(|diagnostic| diagnostic.code == "RY100");
@@ -1436,6 +1436,21 @@ impl Checker {
                 RType::unknown()
             }
         }
+    }
+
+    /// Infer a scalar control-flow condition without advertising fixes that
+    /// vectorize its short-circuit operators. The RY032 warning remains valid,
+    /// but replacing `&&` / `||` with `&` / `|` can make `if` or `while`
+    /// receive a vector and fail for a different reason.
+    pub(crate) fn infer_scalar_condition(&mut self, e: &Expr, scope: &mut Scope) -> RType {
+        let diagnostic_start = self.diagnostics.len();
+        let ty = self.infer(e, scope);
+        for diagnostic in &mut self.diagnostics[diagnostic_start..] {
+            if diagnostic.code == "RY032" {
+                diagnostic.fix = None;
+            }
+        }
+        ty
     }
 
     /// Infer the type of an expression, emitting diagnostics for misuse.

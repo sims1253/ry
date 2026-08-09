@@ -126,6 +126,163 @@ fn every_concrete_suggestion_is_a_structured_parse_clean_fix() {
 }
 
 #[test]
+fn ry032_does_not_offer_vectorizing_fix_in_scalar_conditions() {
+    for source in [
+        "f <- function(x) if (x && c(TRUE, FALSE)) 1L else 2L\n",
+        "f <- function(x) while (x || c(TRUE, FALSE)) break\n",
+        "f <- function(x) if (!(x && c(TRUE, FALSE))) 1L else 2L\n",
+    ] {
+        let diagnostics = check(source);
+        let diagnostic = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "RY032")
+            .unwrap_or_else(|| panic!("RY032 did not fire: {diagnostics:?}"));
+        assert!(
+            diagnostic.fix.is_none(),
+            "scalar condition must keep the warning but not offer a vectorizing fix: {diagnostic:?}"
+        );
+    }
+}
+
+#[test]
+fn ry032_fix_targets_the_syntax_operator_not_comment_text() {
+    for (source, expected) in [
+        (
+            "f <- function(x) (x # misleading &&\n  && c(TRUE, FALSE))\n",
+            "f <- function(x) (x # misleading &&\n  & c(TRUE, FALSE))\n",
+        ),
+        (
+            "f <- function(x) (x # misleading ||\n  || c(TRUE, FALSE))\n",
+            "f <- function(x) (x # misleading ||\n  | c(TRUE, FALSE))\n",
+        ),
+    ] {
+        let diagnostics = check(source);
+        let fix = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "RY032")
+            .and_then(|diagnostic| diagnostic.fix.as_ref())
+            .unwrap_or_else(|| panic!("RY032 did not offer a fix: {diagnostics:?}"));
+        assert_eq!(apply(source, fix), expected);
+    }
+}
+
+#[test]
+fn comparison_fixes_preserve_inter_operand_comments() {
+    for (code, source, expected) in [
+        (
+            "RY093",
+            "length(c(1L, 2L) # why compare here\n > 0L)\n",
+            "length(c(1L, 2L) # why compare here\n ) > 0L\n",
+        ),
+        (
+            "RY100",
+            "f <- function(x) abs(x > # threshold\n 0L)\n",
+            "f <- function(x) abs(x) > # threshold\n 0L\n",
+        ),
+    ] {
+        let diagnostics = check(source);
+        let fix = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == code)
+            .and_then(|diagnostic| diagnostic.fix.as_ref())
+            .unwrap_or_else(|| panic!("{code} did not offer a fix: {diagnostics:?}"));
+        assert_eq!(apply(source, fix), expected);
+    }
+}
+
+#[test]
+fn parenthesized_comparison_fixes_are_parse_clean() {
+    for (code, source) in [
+        ("RY093", "length((c(1L, 2L) > 0L))\n"),
+        ("RY100", "f <- function(x) abs(((x) > (0L)))\n"),
+    ] {
+        let diagnostics = check(source);
+        let fix = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == code)
+            .and_then(|diagnostic| diagnostic.fix.as_ref())
+            .unwrap_or_else(|| panic!("{code} did not offer a fix: {diagnostics:?}"));
+        let edited = apply(source, fix);
+        let mut parser = RParser::new().expect("parser init");
+        let parsed = parser
+            .parse("fixed.R", &edited)
+            .expect("parse fixed source");
+        assert!(
+            parsed.parse_errors.is_empty(),
+            "{code} produced invalid parenthesized output: {edited}"
+        );
+        assert!(
+            !check(&edited)
+                .iter()
+                .any(|diagnostic| diagnostic.code == code),
+            "{code} still fires after applying fix: {edited}"
+        );
+    }
+}
+
+#[test]
+fn ry102_fix_only_replaces_the_assignment_operator() {
+    let source = "list(\"a\" <- # keep this explanation\n  1L)\n";
+    let diagnostics = check(source);
+    let fix = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "RY102")
+        .and_then(|diagnostic| diagnostic.fix.as_ref())
+        .unwrap_or_else(|| panic!("RY102 did not offer a fix: {diagnostics:?}"));
+    assert_eq!(
+        apply(source, fix),
+        "list(\"a\" = # keep this explanation\n  1L)\n"
+    );
+    assert_eq!(&source[fix.span.start..fix.span.end], "<-");
+}
+
+#[test]
+fn ry103_only_fixes_calls_known_to_be_base_class() {
+    for source in [
+        "f <- function(x) if (otherpkg::class(x) == \"widget\") 1L else 2L\n",
+        "class <- function(x) \"widget\"\nf <- function(x) if (class(x) == \"widget\") 1L else 2L\n",
+        "f <- function(x, class) if (class(x) == \"widget\") 1L else 2L\n",
+        "library(otherpkg)\nf <- function(x) if (class(x) == \"widget\") 1L else 2L\n",
+    ] {
+        let diagnostics = check(source);
+        let diagnostic = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "RY103")
+            .unwrap_or_else(|| panic!("RY103 did not fire: {diagnostics:?}"));
+        assert!(
+            diagnostic.fix.is_none(),
+            "unsafe class callee must retain the warning without a fix: {diagnostic:?}"
+        );
+    }
+
+    let source = "f <- function(x) if (base::class(x) == \"widget\") 1L else 2L\n";
+    let diagnostics = check(source);
+    let fix = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "RY103")
+        .and_then(|diagnostic| diagnostic.fix.as_ref())
+        .unwrap_or_else(|| panic!("base::class should have a safe RY103 fix: {diagnostics:?}"));
+    assert_eq!(
+        apply(source, fix),
+        "f <- function(x) if (inherits(x, \"widget\")) 1L else 2L\n"
+    );
+}
+
+#[test]
+fn ry103_does_not_fix_a_comparison_between_two_class_calls() {
+    let source = "f <- function(x, y) if (class(x) == class(y)) 1L else 2L\n";
+    let diagnostics = check(source);
+    let diagnostic = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "RY103")
+        .unwrap_or_else(|| panic!("RY103 did not fire: {diagnostics:?}"));
+    assert!(
+        diagnostic.fix.is_none(),
+        "there is no single class name operand for inherits(): {diagnostic:?}"
+    );
+}
+
+#[test]
 fn ry103_escaped_string_fix_is_not_reconstructed_from_unescaped_ast_value() {
     let source = r#"f <- function(x) if (class(x) == "quote: \" slash: \\") 1L else 2L
 "#;

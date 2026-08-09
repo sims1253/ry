@@ -167,16 +167,11 @@ impl Checker {
             if matches!(lhs.as_ref(), Expr::Ident { .. }) && !builds_named_structure {
                 continue;
             }
-            let lhs_source = self.source_text(span_of(lhs)).map(str::to_string);
-            let replacement = lhs_source
-                .as_deref()
-                .zip(self.source_text(span_of(rhs)))
-                .map(|(lhs, rhs)| format!("{lhs} = {rhs}"));
-            let spelling = lhs_source.unwrap_or_else(|| name.to_string());
+            let spelling = self.source_text(span_of(lhs)).unwrap_or(name).to_string();
             let message = format!(
                 "`<-` inside `{lookup_name}()` assigns `{name}` and leaves the element unnamed; write `{spelling} = ...` to name it"
             );
-            if let Some(fix) = replacement.and_then(|replacement| self.fix(*span, replacement)) {
+            if let Some(fix) = self.binary_operator_fix(lhs, rhs, "<-", "=") {
                 self.emit_with_fix(Severity::Warning, *span, "RY102", message, fix);
             } else {
                 self.emit(Severity::Warning, *span, "RY102", message);
@@ -201,7 +196,7 @@ impl Checker {
     /// Silent for `class(x)[1] == "y"` (an `Index`, not a `Call`, and
     /// explicitly length-1) and for any use outside a scalar logical context,
     /// where a vector result is the point.
-    pub(crate) fn check_class_equality_operand(&mut self, expr: &Expr) {
+    pub(crate) fn check_class_equality_operand(&mut self, expr: &Expr, scope: &Scope) {
         let Expr::BinOp {
             op: op @ (BinOpKind::Eq | BinOpKind::Ne),
             lhs,
@@ -211,25 +206,31 @@ impl Checker {
         else {
             return;
         };
-        if !unary_call_to(lhs, "class") && !unary_call_to(rhs, "class") {
+        let lhs_is_class = unary_call_to(lhs, "class");
+        let rhs_is_class = unary_call_to(rhs, "class");
+        if !lhs_is_class && !rhs_is_class {
             return;
         }
-        // Build the suggestion from the actual operands: the class() call's
-        // first argument becomes inherits()'s first argument, and the other
-        // side of the comparison becomes the class name.
-        let (class_arg, other_side) = if unary_call_to(lhs, "class") {
-            (&lhs, rhs)
-        } else {
-            (&rhs, lhs)
-        };
-        let Some(arg_expr) = call_argument(class_arg) else {
-            return;
+
+        // The warning describes the risky comparison shape, but an automated
+        // rewrite additionally requires exactly one class() operand and proof
+        // that its callee is base::class rather than a qualified or shadowed
+        // function with unrelated semantics.
+        let fix_operands = match (lhs_is_class, rhs_is_class) {
+            (true, false) if self.is_base_class_call(lhs, scope) => Some((lhs, rhs)),
+            (false, true) if self.is_base_class_call(rhs, scope) => Some((rhs, lhs)),
+            _ => None,
         };
         let prefix = if matches!(op, BinOpKind::Eq) { "" } else { "!" };
-        let suggestion = self
-            .source_text(span_of(arg_expr))
-            .zip(self.source_text(span_of(other_side)))
-            .map(|(arg, class)| format!("{prefix}inherits({arg}, {class})"));
+        let suggestion = fix_operands
+            .and_then(|(class_call, other_side)| {
+                call_argument(class_call).map(|argument| (argument, other_side))
+            })
+            .and_then(|(argument, other_side)| {
+                self.source_text(span_of(argument))
+                    .zip(self.source_text(span_of(other_side)))
+            })
+            .map(|(argument, class)| format!("{prefix}inherits({argument}, {class})"));
         let message = suggestion.as_ref().map_or_else(
             || "`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `inherits()`".to_string(),
             |suggestion| format!("`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `{suggestion}`"),
@@ -238,6 +239,32 @@ impl Checker {
             self.emit_with_fix(Severity::Warning, *span, "RY103", message, fix);
         } else {
             self.emit(Severity::Warning, *span, "RY103", message);
+        }
+    }
+
+    fn is_base_class_call(&self, expr: &Expr, scope: &Scope) -> bool {
+        let Expr::Call { func, .. } = expr else {
+            return false;
+        };
+        let Some(name) = ident_name(func) else {
+            return false;
+        };
+        match name {
+            "base::class" | "base:::class" => true,
+            "class" => {
+                let lexically_unshadowed =
+                    scope.get("class").is_none() && !self.fn_table.fns.contains_key("class");
+                let imported_from_base = self
+                    .imported_from
+                    .get("class")
+                    .is_some_and(|package| package == "base");
+                lexically_unshadowed
+                    && (imported_from_base
+                        || (!self.external_bindings.contains("class")
+                            && self.bare_loaded.is_empty()
+                            && !scope.search_path_unknown))
+            }
+            _ => false,
         }
     }
 

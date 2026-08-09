@@ -4,21 +4,38 @@ use crate::higher_order::s3_group_generic;
 fn comparison_outside_call_fix(
     checker: &Checker,
     call_span: Span,
-    argument_span: Span,
+    comparison_span: Span,
     lhs: &Expr,
     rhs: &Expr,
     op: BinOpKind,
 ) -> Option<Fix> {
-    let call = checker.source_text(call_span)?;
-    let lhs_source = checker.source_text(span_of(lhs))?;
-    let rhs_source = checker.source_text(span_of(rhs))?;
-    let relative_start = argument_span.start.checked_sub(call_span.start)?;
-    let relative_end = argument_span.end.checked_sub(call_span.start)?;
-    let before = call.get(..relative_start)?;
-    let after = call.get(relative_end..)?;
+    let operator_span = checker.binary_operator_span(lhs, rhs, op_symbol(op))?;
+    let lhs_end = span_of(lhs).end;
+    if !(lhs_end <= operator_span.start
+        && operator_span.start < comparison_span.end
+        && comparison_span.end <= call_span.end)
+    {
+        return None;
+    }
+
+    // Rotate the original source slices rather than rebuilding either
+    // operand. Trivia before the comparison stays inside the call, while the
+    // exact operator/RHS spelling moves after its closing delimiters. This is
+    // valid for parenthesized arguments and retains all intervening comments.
+    let before_operator = checker.source.get(lhs_end..operator_span.start)?;
+    let call_tail = checker.source.get(comparison_span.end..call_span.end)?;
+    let comparison_tail = checker
+        .source
+        .get(operator_span.start..comparison_span.end)?;
+    let inside_trivia = if before_operator.trim().is_empty() {
+        ""
+    } else {
+        before_operator
+    };
+    let edit_span = checker.source_span(lhs_end, call_span.end)?;
     checker.fix(
-        call_span,
-        format!("{before}{lhs_source}{after} {} {rhs_source}", op_symbol(op)),
+        edit_span,
+        format!("{inside_trivia}{call_tail} {comparison_tail}"),
     )
 }
 

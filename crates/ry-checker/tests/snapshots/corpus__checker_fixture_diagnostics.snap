@@ -306,12 +306,12 @@ expression: snapshots
 - diagnostics:
     - code: RY102
       fix:
-        replacement: "\"github-ref\" = \"b\""
+        replacement: "="
         span:
-          column: 21
-          end: 377
+          column: 34
+          end: 373
           line: 6
-          start: 358
+          start: 371
       message: "`<-` inside `list()` assigns `github-ref` and leaves the element unnamed; write `\"github-ref\" = ...` to name it"
       severity: warning
       span:

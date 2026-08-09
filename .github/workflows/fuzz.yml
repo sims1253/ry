@@ -20,7 +20,9 @@ jobs:
         run: cargo +nightly install cargo-fuzz
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
-          workspaces: ".;fuzz"
+          workspaces: |
+            .
+            fuzz
       - name: Fuzz parse (5 min)
         run: cargo +nightly fuzz run parse -- -max_total_time=300 -max_len=4096
       - name: Fuzz parse-and-check (5 min)

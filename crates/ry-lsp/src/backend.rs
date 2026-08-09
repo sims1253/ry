@@ -1536,12 +1536,22 @@ impl Backend {
                 // astral surrogate pair) cannot describe a byte splice.
                 // Ignore the malformed event rather than clamping it and
                 // corrupting the document.
-                let Some(new_text) = apply_range_edit(&old_text, range, &change.text) else {
-                    tracing::warn!(?range, "ignoring document change with invalid UTF-16 range");
+                let Some((start_byte, end_byte)) = range_byte_span(&old_text, range) else {
+                    tracing::error!(
+                        ?range,
+                        "dropping document change with invalid UTF-16 range; server and client text will desynchronize until a full sync is received"
+                    );
                     return;
                 };
-                let edit = build_input_edit(&old_text, range, &change.text)
-                    .expect("validated document-change range");
+                let new_text = {
+                    let mut result = String::with_capacity(old_text.len() + change.text.len());
+                    result.push_str(&old_text[..start_byte]);
+                    result.push_str(&change.text);
+                    result.push_str(&old_text[end_byte..]);
+                    result
+                };
+                let edit =
+                    build_input_edit_from_span(&old_text, start_byte, end_byte, &change.text);
                 self.update_doc(path.to_string(), new_text, version).await;
 
                 // Build InputEdit and do incremental parse.
@@ -2042,46 +2052,52 @@ pub(crate) fn uri_to_path(uri: &Url) -> String {
 /// Apply an LSP range-based edit to the old source text, producing the
 /// new text. LSP positions are 0-based line/character (UTF-16 code units).
 /// We convert to byte offsets for the splice.
-fn apply_range_edit(old_text: &str, range: Range, new_text: &str) -> Option<String> {
+fn range_byte_span(old_text: &str, range: Range) -> Option<(usize, usize)> {
     let start_byte = position_to_byte_offset_pos(old_text, range.start)?;
     let end_byte = position_to_byte_offset_pos(old_text, range.end)?;
-    if start_byte > end_byte {
-        return None;
-    }
-    let mut result = String::with_capacity(old_text.len() + new_text.len());
-    result.push_str(&old_text[..start_byte]);
-    result.push_str(new_text);
-    result.push_str(&old_text[end_byte..]);
-    Some(result)
+    (start_byte <= end_byte).then_some((start_byte, end_byte))
 }
+
+
 
 /// Build a tree-sitter `InputEdit` from an LSP range and replacement text.
 /// The InputEdit tells tree-sitter which byte range changed and the new
 /// positions, so it can reuse unchanged subtrees.
+#[cfg(test)]
 pub(crate) fn build_input_edit(
     old_text: &str,
     range: Range,
     new_text: &str,
 ) -> Option<ry_core::InputEdit> {
-    let start_byte = position_to_byte_offset_pos(old_text, range.start)?;
-    let old_end_byte = position_to_byte_offset_pos(old_text, range.end)?;
-    if start_byte > old_end_byte {
-        return None;
-    }
+    let (start_byte, old_end_byte) = range_byte_span(old_text, range)?;
+    Some(build_input_edit_from_span(
+        old_text,
+        start_byte,
+        old_end_byte,
+        new_text,
+    ))
+}
+
+fn build_input_edit_from_span(
+    old_text: &str,
+    start_byte: usize,
+    old_end_byte: usize,
+    new_text: &str,
+) -> ry_core::InputEdit {
     let new_end_byte = start_byte + new_text.len();
 
     let start_position = byte_offset_to_point(old_text, start_byte);
     let old_end_position = byte_offset_to_point(old_text, old_end_byte);
     let new_end_position = byte_offset_to_point_relative(start_byte, start_position, new_text);
 
-    Some(ry_core::InputEdit {
+    ry_core::InputEdit {
         start_byte,
         old_end_byte,
         new_end_byte,
         start_position,
         old_end_position,
         new_end_position,
-    })
+    }
 }
 
 /// Convert a byte offset to a tree-sitter Point (row, byte column).

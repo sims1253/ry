@@ -13,4 +13,4 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "time"] }
-url = "2"
+url = { workspace = true }

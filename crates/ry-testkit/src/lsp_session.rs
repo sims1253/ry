@@ -58,7 +58,9 @@ where
 
     async fn response(&mut self, method: &str, id: u64) -> io::Result<Value> {
         let response = self
-            .receive_matching(0, |message| message.get("id") == Some(&json!(id)))
+            .receive_matching(0, |message| {
+                message.get("id") == Some(&json!(id)) && message.get("method").is_none()
+            })
             .await?;
         if let Some(error) = response.get("error") {
             return Err(io::Error::other(format!("{method} failed: {error}")));
@@ -94,6 +96,15 @@ where
     /// Mark the currently routed transcript. Pair with
     /// `published_diagnostics_after` to require a publication caused by a
     /// later action rather than reusing an already-routed one.
+    /// Mark the currently routed transcript. Pair with
+    /// `published_diagnostics_after` to require a publication caused by a
+    /// later action rather than reusing an already-routed one.
+    ///
+    /// This counts read order, not server-side arrival order. A message
+    /// already written by the server but not yet read receives a sequence
+    /// after this mark. Callers that need a hard barrier should issue a
+    /// request/response round-trip between the mark and the action, or
+    /// ensure prior publications have already been consumed.
     pub fn publication_mark(&self) -> u64 {
         self.sequence
     }
@@ -126,13 +137,13 @@ where
         {
             return Ok(self.pending.remove(index).unwrap().value);
         }
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
-            let value =
-                tokio::time::timeout(std::time::Duration::from_secs(5), self.client.receive())
-                    .await
-                    .map_err(|_| {
-                        io::Error::new(io::ErrorKind::TimedOut, "JSON-RPC receive timed out")
-                    })??;
+            let value = tokio::time::timeout_at(deadline, self.client.receive())
+                .await
+                .map_err(|_| {
+                    io::Error::new(io::ErrorKind::TimedOut, "JSON-RPC receive timed out")
+                })??;
             self.sequence = self.sequence.wrapping_add(1);
             let sequence = self.sequence;
             if sequence >= minimum_sequence && predicate(&value) {

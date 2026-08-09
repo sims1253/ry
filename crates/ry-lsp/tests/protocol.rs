@@ -379,6 +379,125 @@ list(ok = 1L, "wi\"dget" <- 2L)
 }
 
 #[test]
+fn indexed_unopened_diagnostics_use_the_checked_source_for_utf16_ranges_and_fixes() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture
+        .write_file("disk.R", "emoji <- \"😀\"; length(xx = 1L)\r\n")
+        .unwrap();
+    fixture.write_file("trigger.R", "ok <- 1L\n").unwrap();
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
+        let (client_reader, client_writer) = tokio::io::split(client_stream);
+        let (server_reader, server_writer) = tokio::io::split(server_stream);
+        let server =
+            tokio::spawn(async move { ry_lsp::run_with(server_reader, server_writer).await });
+        let mut client = AsyncJsonRpcClient::new(client_reader, client_writer);
+        let root_uri = file_uri(fixture.root());
+        let initialize_id = client
+            .request(
+                "initialize",
+                json!({
+                    "processId": null,
+                    "rootUri": root_uri,
+                    "capabilities": {},
+                    "workspaceFolders": [{"uri": root_uri, "name": "fixture"}]
+                }),
+            )
+            .await
+            .unwrap();
+        client
+            .receive_until(
+                |message| message.get("id") == Some(&json!(initialize_id)),
+                16,
+            )
+            .await
+            .unwrap();
+        client.notify("initialized", json!({})).await.unwrap();
+
+        let trigger_path = fixture.path("trigger.R");
+        let trigger_uri = file_uri(&trigger_path);
+        let trigger_text = std::fs::read_to_string(&trigger_path).unwrap();
+        client
+            .notify(
+                "textDocument/didOpen",
+                json!({"textDocument": {
+                    "uri": trigger_uri,
+                    "languageId": "r",
+                    "version": 1,
+                    "text": trigger_text
+                }}),
+            )
+            .await
+            .unwrap();
+
+        let disk_uri = file_uri(&fixture.path("disk.R"));
+        let publication = client
+            .receive_until(
+                |message| {
+                    message.get("method") == Some(&json!("textDocument/publishDiagnostics"))
+                        && message.pointer("/params/uri") == Some(&json!(disk_uri))
+                },
+                64,
+            )
+            .await
+            .unwrap();
+        let diagnostics = publication["params"]["diagnostics"].as_array().unwrap();
+        let diagnostic = |code: &str| {
+            diagnostics
+                .iter()
+                .find(|diagnostic| diagnostic["code"] == code)
+                .unwrap_or_else(|| panic!("missing {code} in {diagnostics:?}"))
+        };
+
+        let unknown_argument = diagnostic("RY090");
+        assert_eq!(
+            unknown_argument["range"],
+            json!({
+                "start": {"line": 0, "character": 22},
+                "end": {"line": 0, "character": 29}
+            })
+        );
+        assert_eq!(
+            unknown_argument["data"]["fix"],
+            json!({
+                "range": {
+                    "start": {"line": 0, "character": 22},
+                    "end": {"line": 0, "character": 24}
+                },
+                "replacement": "x"
+            })
+        );
+
+        let missing_argument = diagnostic("RY091");
+        assert_eq!(
+            missing_argument["range"],
+            json!({
+                "start": {"line": 0, "character": 15},
+                "end": {"line": 0, "character": 30}
+            })
+        );
+
+        let shutdown_id = client.request("shutdown", Value::Null).await.unwrap();
+        client
+            .receive_until(|message| message.get("id") == Some(&json!(shutdown_id)), 16)
+            .await
+            .unwrap();
+        client.notify("exit", Value::Null).await.unwrap();
+        drop(client);
+        tokio::time::timeout(std::time::Duration::from_secs(3), server)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+    });
+}
+
+#[test]
 fn default_disabled_rules_are_absent_in_both_modes() {
     let fixture = FixtureProject::empty().unwrap();
     fixture

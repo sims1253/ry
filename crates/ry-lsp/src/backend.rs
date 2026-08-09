@@ -120,7 +120,17 @@ pub(super) struct State {
 #[derive(Default)]
 pub(super) struct ProjectCache {
     project: Project,
-    versions: HashMap<String, i32>,
+    /// Snapshot identity for every file currently installed in `project`.
+    /// The LSP version is sufficient for open documents, but indexed files
+    /// use version zero, so `Arc` identity also participates in freshness.
+    files: HashMap<String, (i32, Arc<SourceFile>)>,
+}
+
+pub(super) struct ProjectCheckResult {
+    diagnostics: Vec<(String, Vec<ry_checker::Diagnostic>)>,
+    /// The exact parsed snapshots supplied to this check. Publication uses
+    /// their owned source and comments, never a separately-read document.
+    files: HashMap<String, Arc<SourceFile>>,
 }
 
 impl ProjectCache {
@@ -131,6 +141,7 @@ impl ProjectCache {
         user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
     ) -> Vec<(String, Vec<ry_checker::Diagnostic>)> {
         self.check_with_workspace(files, user_stubs, None)
+            .diagnostics
     }
 
     pub(super) fn check_with_workspace(
@@ -138,18 +149,22 @@ impl ProjectCache {
         files: Vec<(String, i32, Arc<SourceFile>)>,
         user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
         workspace: Option<&ry_workspace::WorkspaceContext>,
-    ) -> Vec<(String, Vec<ry_checker::Diagnostic>)> {
+    ) -> ProjectCheckResult {
+        let checked_files = files
+            .iter()
+            .map(|(path, _, file)| (path.clone(), Arc::clone(file)))
+            .collect();
         let current_paths: std::collections::HashSet<&str> =
             files.iter().map(|(path, _, _)| path.as_str()).collect();
         let removed: Vec<String> = self
-            .versions
+            .files
             .keys()
             .filter(|path| !current_paths.contains(path.as_str()))
             .cloned()
             .collect();
         for path in removed {
             self.project.remove_file(&path);
-            self.versions.remove(&path);
+            self.files.remove(&path);
         }
 
         self.project.set_user_stubs(user_stubs);
@@ -167,12 +182,21 @@ impl ProjectCache {
         self.project
             .set_load_bindings(workspace.load_bindings.clone());
         for (path, version, file) in files {
-            if self.versions.get(&path).copied() != Some(version) {
+            let changed = self
+                .files
+                .get(&path)
+                .is_none_or(|(cached_version, cached)| {
+                    *cached_version != version || !Arc::ptr_eq(cached, &file)
+                });
+            if changed {
                 self.project.update_file(path.clone(), Arc::clone(&file));
-                self.versions.insert(path, version);
+                self.files.insert(path, (version, file));
             }
         }
-        self.project.check_incremental()
+        ProjectCheckResult {
+            diagnostics: self.project.check_incremental(),
+            files: checked_files,
+        }
     }
 }
 
@@ -445,6 +469,9 @@ impl LanguageServer for Backend {
         state.workspace_folders = ws_folders;
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
+                // All position conversion in this server is UTF-16. Advertise
+                // it explicitly instead of relying on the protocol default.
+                position_encoding: Some(PositionEncodingKind::UTF16),
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     // Incremental sync (Plan 33 W6): the client sends
                     // only the edited range, which we use to build a
@@ -668,8 +695,18 @@ impl LanguageServer for Backend {
         // Incremental sync (W6): process each change event, applying
         // range-based edits to the old text and building a tree-sitter
         // InputEdit for incremental reparse.
+        //
+        // If any change has an invalid UTF-16 range, abort the remaining
+        // batch: subsequent changes' ranges are relative to the client
+        // text after the dropped edit, so applying them to the server's
+        // (pre-dropped-edit) text would splice wrong bytes.
         for change in params.content_changes {
-            self.apply_incremental_change(&path, change, version).await;
+            if !self.apply_incremental_change(&path, change, version).await {
+                tracing::error!(
+                    "aborting remaining changes in didChange batch for {path};                      server and client text will desynchronize until a full sync is received"
+                );
+                break;
+            }
         }
         // Debounced: a burst of keystrokes coalesces into a single
         // diagnostic publish.
@@ -879,7 +916,7 @@ impl LanguageServer for Backend {
             };
             let mut project = project.lock().await;
             project.project.remove_file(&path);
-            project.versions.remove(&path);
+            project.files.remove(&path);
         }
         // Clear diagnostics for the closed document so stale squiggles
         // don't linger after the user closes the file.
@@ -1495,7 +1532,7 @@ impl Backend {
         path: &str,
         change: TextDocumentContentChangeEvent,
         version: i32,
-    ) {
+    ) -> bool {
         if let Some(range) = change.range {
             // Incremental: apply the range edit to the old text.
             let (old_text, old_tree) = {
@@ -1505,11 +1542,29 @@ impl Backend {
             };
 
             if let Some(old_text) = old_text {
-                let new_text = apply_range_edit(&old_text, range, &change.text);
+                // Invalid UTF-16 endpoints (including a position inside an
+                // astral surrogate pair) cannot describe a byte splice.
+                // Ignore the malformed event rather than clamping it and
+                // corrupting the document.
+                let Some((start_byte, end_byte)) = range_byte_span(&old_text, range) else {
+                    tracing::error!(
+                        ?range,
+                        "invalid UTF-16 range in document change; server and client text will desynchronize until a full sync is received"
+                    );
+                    return false;
+                };
+                let new_text = {
+                    let mut result = String::with_capacity(old_text.len() + change.text.len());
+                    result.push_str(&old_text[..start_byte]);
+                    result.push_str(&change.text);
+                    result.push_str(&old_text[end_byte..]);
+                    result
+                };
+                let edit =
+                    build_input_edit_from_span(&old_text, start_byte, end_byte, &change.text);
                 self.update_doc(path.to_string(), new_text, version).await;
 
                 // Build InputEdit and do incremental parse.
-                let edit = build_input_edit(&old_text, range, &change.text);
                 let mut tree_mut = old_tree;
                 if let Some(ref mut tree) = tree_mut {
                     tree.edit(&edit);
@@ -1530,6 +1585,7 @@ impl Backend {
                 self.update_doc(path.to_string(), change.text, version)
                     .await;
             }
+            true
         } else {
             // Full text change (no range). Clear stale tree.
             {
@@ -1538,6 +1594,7 @@ impl Backend {
             }
             self.update_doc(path.to_string(), change.text, version)
                 .await;
+            true
         }
     }
 
@@ -1711,10 +1768,8 @@ impl Backend {
         // Update the persistent multi-file Project from every open document
         // so cross-file calls resolve. Cached parses avoid re-parsing
         // unchanged documents, and ProjectCache forwards only changed
-        // versions to Project::update_file so pass-1 collection is reused.
+        // snapshots to Project::update_file so pass-1 collection is reused.
         let mut project_files = Vec::with_capacity(doc_paths.len());
-        let mut per_file_comments: HashMap<String, Vec<ry_core::ast::Comment>> = HashMap::new();
-        let mut per_file_source: HashMap<String, String> = HashMap::new();
         // Cached parses: `parsed_file` reuses the
         // per-document `SourceFile` cached in `State` and only re-parses
         // documents whose version changed since the last request.
@@ -1722,17 +1777,6 @@ impl Backend {
             let Some((file, _)) = self.parsed_file(doc_path).await else {
                 continue;
             };
-            per_file_comments.insert(doc_path.clone(), file.comments.clone());
-            // Snapshot source text for this document only (used later for
-            // comment-based suppression filtering and source-aware LSP
-            // diagnostic formatting). This avoids cloning the entire docs
-            // map up front.
-            {
-                let state = self.state.lock().await;
-                if let Some(text) = state.docs.get(doc_path) {
-                    per_file_source.insert(doc_path.clone(), text.clone());
-                }
-            }
             let Some(version) = versions.get(doc_path).copied() else {
                 continue;
             };
@@ -1763,7 +1807,7 @@ impl Backend {
             state.workspace_context_for_path(&path).cloned()
         };
         let mut project = project.lock().await;
-        let per_file =
+        let checked =
             project.check_with_workspace(project_files, user_stubs, workspace_context.as_ref());
         // An edit that arrived while parsing/checking invalidates this whole
         // project result because every open document is republished below.
@@ -1773,6 +1817,10 @@ impl Backend {
                 return;
             }
         }
+        let ProjectCheckResult {
+            diagnostics: per_file,
+            files: checked_files,
+        } = checked;
         for (diagnostic_path, mut diagnostics) in per_file {
             // `Project::check` emits every rule, including the ones the
             // default rule set leaves off (RY003). The CLI drops those in
@@ -1822,15 +1870,16 @@ impl Backend {
                 ry_config::subtract_baseline(&mut diagnostics, baseline, config_root.as_deref());
             }
 
-            let source_text = per_file_source.get(&diagnostic_path).map(String::as_str);
-            let file_comments = per_file_comments.get(&diagnostic_path);
-            let (file_level, suppressions) = match file_comments {
-                Some(comments) => (
-                    ry_checker::has_file_suppression_from_comments(comments),
-                    ry_checker::parse_suppressions_from_comments(
-                        comments,
-                        source_text.unwrap_or(""),
-                    ),
+            // Source, comments, spans, and fixes all come from the same
+            // `SourceFile` snapshot passed through `ProjectCache` for this
+            // check. This includes unopened indexed files and avoids both a
+            // disk reread race and an open-buffer/check snapshot mismatch.
+            let checked_file = checked_files.get(&diagnostic_path);
+            let source_text = checked_file.map(|file| file.source.as_str());
+            let (file_level, suppressions) = match checked_file {
+                Some(file) => (
+                    ry_checker::has_file_suppression_from_comments(&file.comments),
+                    ry_checker::parse_suppressions_from_comments(&file.comments, &file.source),
                 ),
                 None => (false, Vec::new()),
             };
@@ -2015,22 +2064,36 @@ pub(crate) fn uri_to_path(uri: &Url) -> String {
 /// Apply an LSP range-based edit to the old source text, producing the
 /// new text. LSP positions are 0-based line/character (UTF-16 code units).
 /// We convert to byte offsets for the splice.
-fn apply_range_edit(old_text: &str, range: Range, new_text: &str) -> String {
-    let start_byte = position_to_byte(old_text, range.start);
-    let end_byte = position_to_byte(old_text, range.end);
-    let mut result = String::with_capacity(old_text.len() + new_text.len());
-    result.push_str(&old_text[..start_byte]);
-    result.push_str(new_text);
-    result.push_str(&old_text[end_byte..]);
-    result
+fn range_byte_span(old_text: &str, range: Range) -> Option<(usize, usize)> {
+    let start_byte = position_to_byte_offset_pos(old_text, range.start)?;
+    let end_byte = position_to_byte_offset_pos(old_text, range.end)?;
+    (start_byte <= end_byte).then_some((start_byte, end_byte))
 }
 
 /// Build a tree-sitter `InputEdit` from an LSP range and replacement text.
 /// The InputEdit tells tree-sitter which byte range changed and the new
 /// positions, so it can reuse unchanged subtrees.
-pub(crate) fn build_input_edit(old_text: &str, range: Range, new_text: &str) -> ry_core::InputEdit {
-    let start_byte = position_to_byte(old_text, range.start);
-    let old_end_byte = position_to_byte(old_text, range.end);
+#[cfg(test)]
+pub(crate) fn build_input_edit(
+    old_text: &str,
+    range: Range,
+    new_text: &str,
+) -> Option<ry_core::InputEdit> {
+    let (start_byte, old_end_byte) = range_byte_span(old_text, range)?;
+    Some(build_input_edit_from_span(
+        old_text,
+        start_byte,
+        old_end_byte,
+        new_text,
+    ))
+}
+
+fn build_input_edit_from_span(
+    old_text: &str,
+    start_byte: usize,
+    old_end_byte: usize,
+    new_text: &str,
+) -> ry_core::InputEdit {
     let new_end_byte = start_byte + new_text.len();
 
     let start_position = byte_offset_to_point(old_text, start_byte);
@@ -2045,39 +2108,6 @@ pub(crate) fn build_input_edit(old_text: &str, range: Range, new_text: &str) -> 
         old_end_position,
         new_end_position,
     }
-}
-
-/// Convert an LSP Position (0-based line, UTF-16 code unit column) to a
-/// byte offset in the source text.
-fn position_to_byte(text: &str, pos: Position) -> usize {
-    let mut line_start = 0;
-    let mut current_line = 0;
-
-    // Find the start of the target line.
-    while current_line < pos.line {
-        if let Some(nl) = text[line_start..].find('\n') {
-            line_start += nl + 1;
-            current_line += 1;
-        } else {
-            return text.len();
-        }
-    }
-
-    // Find the byte offset within the line corresponding to the UTF-16 column.
-    let line = &text[line_start..];
-    let line_end = line.find('\n').unwrap_or(line.len());
-    let line = &line[..line_end];
-
-    let mut utf16_col = 0u32;
-    for (byte_off, ch) in line.char_indices() {
-        if utf16_col >= pos.character {
-            return line_start + byte_off;
-        }
-        utf16_col += ch.len_utf16() as u32;
-    }
-
-    // Position at or beyond end of line.
-    line_start + line.len()
 }
 
 /// Convert a byte offset to a tree-sitter Point (row, byte column).

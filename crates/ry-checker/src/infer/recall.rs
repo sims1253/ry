@@ -308,8 +308,10 @@ impl Checker {
         // The outer `length()` call must resolve to base::length; a
         // shadowed or qualified `length` (e.g. `other::length(...)`) may
         // have unrelated semantics.
-        let length_callee = bare_callee(length_call).unwrap_or("length");
-        let length_name = ident_name(length_call).unwrap_or(length_callee);
+        let length_name = match length_call {
+            Expr::Call { func, .. } => ident_name(func).unwrap_or("length"),
+            _ => "length",
+        };
         if !self.resolves_to_base(length_name, scope) {
             return;
         }

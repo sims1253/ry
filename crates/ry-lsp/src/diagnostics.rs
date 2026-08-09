@@ -22,22 +22,6 @@ use crate::util::byte_offset_to_position;
 /// as a fallback (tests, missing source text); the production
 /// diagnostics path uses [`diagnostic_to_lsp_with_source`].
 pub(super) fn diagnostic_to_lsp(d: RyDiagnostic) -> LspDiagnostic {
-    let data = d.fix.as_ref().map(|fix| {
-        let fix_start = Position {
-            line: fix.span.line as u32,
-            character: fix.span.col as u32,
-        };
-        let fix_end = Position {
-            line: fix.span.line as u32,
-            character: (fix.span.col + fix.span.end.saturating_sub(fix.span.start)) as u32,
-        };
-        serde_json::json!({
-            "fix": {
-                "range": {"start": fix_start, "end": fix_end},
-                "replacement": fix.replacement,
-            }
-        })
-    });
     let start = Position {
         line: d.span.line as u32,
         character: d.span.col as u32,
@@ -57,7 +41,9 @@ pub(super) fn diagnostic_to_lsp(d: RyDiagnostic) -> LspDiagnostic {
         code: Some(NumberOrString::String(d.code.to_string())),
         source: Some("ry".to_string()),
         message: d.message,
-        data,
+        // A fix span contains byte offsets. Without source text they cannot be
+        // converted safely to LSP UTF-16 positions (or across line breaks).
+        data: None,
         ..Default::default()
     }
 }

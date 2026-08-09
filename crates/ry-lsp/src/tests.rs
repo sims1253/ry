@@ -15,7 +15,7 @@ use crate::navigation::{
 use crate::selection::{build_selection_range, find_identifier_range_at_position};
 use crate::symbols::{collect_symbols, flatten_symbols_to_symbol_info};
 use crate::util::*;
-use ry_checker::{Diagnostic, Severity};
+use ry_checker::{Diagnostic, Fix, Severity};
 use ry_core::{RParser, SourceFile, Span};
 use tower_lsp::lsp_types::Diagnostic as LspDiagnostic;
 use tower_lsp::lsp_types::*;
@@ -41,6 +41,24 @@ fn converts_error_diagnostic() {
         Some(NumberOrString::String(s)) => assert_eq!(s, "RY040"),
         other => panic!("expected String code, got {:?}", other),
     }
+}
+
+#[test]
+fn no_source_diagnostic_omits_fix_data() {
+    let d = Diagnostic::new(
+        Severity::Warning,
+        Span::new(7, 8, 0, 7),
+        "test.R",
+        "RY032",
+        "test",
+    )
+    .with_fix(Fix {
+        // A multiline byte span cannot be reconstructed from line/column alone.
+        span: Span::new(7, 15, 0, 7),
+        replacement: "replacement".to_string(),
+    });
+    let lsp = diagnostic_to_lsp(d);
+    assert_eq!(lsp.data, None);
 }
 
 #[test]

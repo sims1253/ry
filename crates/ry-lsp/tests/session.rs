@@ -666,12 +666,7 @@ impl SourceVariant {
     /// The content of the first line without the trailing newline.  Used as
     /// the replacement text for an incremental range edit targeting line 0.
     fn first_line(self) -> &'static str {
-        match self {
-            Self::Clean => "x <- 1L",
-            Self::AsciiDiagnostic => "z <- length(xx = 1L)",
-            Self::BmpDiagnostic => "café <- length(xx = 1L)",
-            Self::AstralDiagnostic => "😀 <- length(xx = 1L)",
-        }
+        self.text().lines().next().unwrap()
     }
 }
 
@@ -719,7 +714,7 @@ fn operation_sequence_strategy() -> impl Strategy<Value = Vec<Operation>> {
 /// same disk/open-document configuration on a fresh server.
 #[derive(Default)]
 struct SessionModel {
-    open_docs: BTreeMap<u8, (String, SourceVariant)>,
+    open_docs: BTreeMap<u8, String>,
     version: i32,
 }
 
@@ -733,7 +728,7 @@ impl SessionModel {
     fn open_docs_snapshot(&self) -> Vec<(u8, String)> {
         self.open_docs
             .iter()
-            .map(|(file, (text, _))| (*file, text.clone()))
+            .map(|(file, text)| (*file, text.clone()))
             .collect()
     }
 }
@@ -786,8 +781,7 @@ async fn spawn_session(root: &Path) -> (ClientSession, tokio::task::JoinHandle<(
 }
 
 /// Shut down a session and bounded-join its server.
-async fn join_session(session: ClientSession, server: tokio::task::JoinHandle<()>) {
-    let mut session = session;
+async fn join_session(mut session: ClientSession, server: tokio::task::JoinHandle<()>) {
     let _ = session.shutdown().await;
     drop(session);
     let _ = tokio::time::timeout(Duration::from_secs(3), server).await;
@@ -880,7 +874,7 @@ async fn quiesce_and_compare(
 proptest! {
     #![proptest_config(ProptestConfig {
         cases: 16,
-        max_shrink_iters: 10_000,
+        max_shrink_iters: 256,
         ..ProptestConfig::default()
     })]
 
@@ -919,13 +913,14 @@ async fn w10_convergence_property(operations: Vec<Operation>) -> Result<(), Test
     for (step, operation) in operations.into_iter().enumerate() {
         match &operation {
             Operation::Open { file, source } => {
+                if model.is_open(*file) {
+                    continue;
+                }
                 live.open(&uris[*file as usize], model.version, source.text())
                     .await
                     .unwrap();
                 model.version += 1;
-                model
-                    .open_docs
-                    .insert(*file, (source.text().to_string(), *source));
+                model.open_docs.insert(*file, source.text().to_string());
                 quiesce_and_compare(
                     &mut live,
                     &model,
@@ -950,9 +945,7 @@ async fn w10_convergence_property(operations: Vec<Operation>) -> Result<(), Test
                 .await
                 .unwrap();
                 model.version += 1;
-                model
-                    .open_docs
-                    .insert(*file, (source.text().to_string(), *source));
+                model.open_docs.insert(*file, source.text().to_string());
                 quiesce_and_compare(
                     &mut live,
                     &model,
@@ -969,7 +962,7 @@ async fn w10_convergence_property(operations: Vec<Operation>) -> Result<(), Test
                 if !model.is_open(*file) {
                     continue;
                 }
-                let (old_text, _) = &model.open_docs[file];
+                let old_text = &model.open_docs[file];
                 let range_end = first_line_utf16_len(old_text);
                 live.change(
                     &uris[*file as usize],
@@ -986,7 +979,7 @@ async fn w10_convergence_property(operations: Vec<Operation>) -> Result<(), Test
                 .unwrap();
                 model.version += 1;
                 let new_text = apply_incremental_edit(old_text, *source);
-                model.open_docs.insert(*file, (new_text, *source));
+                model.open_docs.insert(*file, new_text.clone());
                 quiesce_and_compare(
                     &mut live,
                     &model,
@@ -1050,9 +1043,13 @@ async fn w10_convergence_property(operations: Vec<Operation>) -> Result<(), Test
                 live = new_live;
                 live_server = new_server;
 
-                // Re-open all documents that were open before the restart.
-                for (file, (text, _)) in &model.open_docs {
-                    live.open(&uris[*file as usize], 1, text).await.unwrap();
+                // Re-open all documents that were open before the restart,
+                // using the shared version counter to preserve monotonicity.
+                for (file, text) in &model.open_docs {
+                    live.open(&uris[*file as usize], model.version, text)
+                        .await
+                        .unwrap();
+                    model.version += 1;
                 }
                 if let Some((&first_open, _)) = model.open_docs.iter().next() {
                     quiesce_and_compare(

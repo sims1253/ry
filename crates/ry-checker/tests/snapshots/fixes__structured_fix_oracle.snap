@@ -61,9 +61,9 @@ expression: snapshots
   before:
     - code: RY093
       fix:
-        replacement: "length(c(1L, 2L)) > 0L"
+        replacement: ) > 0L
         span:
-          - 0
+          - 16
           - 22
       message: "comparison is inside `length()`; compare `length(x)` instead"
       severity: warning
@@ -77,9 +77,9 @@ expression: snapshots
   before:
     - code: RY100
       fix:
-        replacement: abs(x) > 0L
+        replacement: ) > 0L
         span:
-          - 17
+          - 22
           - 28
       message: comparison directly inside a numeric math function is usually a parenthesization mistake; compare the math result instead
       severity: warning
@@ -109,10 +109,10 @@ expression: snapshots
   before:
     - code: RY102
       fix:
-        replacement: "\"wi\\\"dget\" = 2L"
+        replacement: "="
         span:
-          - 14
-          - 30
+          - 25
+          - 27
       message: "`<-` inside `list()` assigns `wi\"dget` and leaves the element unnamed; write `\"wi\\\"dget\" = ...` to name it"
       severity: warning
       span:

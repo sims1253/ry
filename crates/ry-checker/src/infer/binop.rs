@@ -291,8 +291,8 @@ impl Checker {
         // sides are length-1 logical contexts. Scanning them here (rather
         // than recursing from the enclosing `if`) reports each site exactly
         // once no matter how the operators nest.
-        self.check_class_equality_operand(lhs);
-        self.check_class_equality_operand(rhs);
+        self.check_class_equality_operand(lhs, scope);
+        self.check_class_equality_operand(rhs, scope);
         let lt = self.infer(lhs, scope);
         let narrowing = self.extract_type_narrowing(lhs, scope);
         let (then_scope, else_scope, _) = apply_narrowing(scope, &narrowing, true);
@@ -369,14 +369,36 @@ impl Checker {
             BinOpKind::OrOr => "|",
             _ => return None,
         };
+        self.binary_operator_fix(lhs, rhs, op_symbol(op), replacement)
+    }
+
+    /// Build a narrow edit for the operator token between two parsed operands.
+    /// Only lexical trivia may precede the token, so prose in comments cannot
+    /// accidentally become the edit target.
+    pub(crate) fn binary_operator_fix(
+        &self,
+        lhs: &Expr,
+        rhs: &Expr,
+        operator: &str,
+        replacement: &str,
+    ) -> Option<Fix> {
+        self.binary_operator_span(lhs, rhs, operator)
+            .and_then(|span| self.fix(span, replacement))
+    }
+
+    pub(crate) fn binary_operator_span(
+        &self,
+        lhs: &Expr,
+        rhs: &Expr,
+        operator: &str,
+    ) -> Option<Span> {
         let lhs_end = span_of(lhs).end;
         let rhs_start = span_of(rhs).start;
         let between = self.source.get(lhs_end..rhs_start)?;
-        let relative = between.find(op_symbol(op))?;
+        let relative = skip_r_trivia(between);
+        between.get(relative..)?.strip_prefix(operator)?;
         let start = lhs_end + relative;
-        let end = start + op_symbol(op).len();
-        let span = self.source_span(start, end)?;
-        self.fix(span, replacement)
+        self.source_span(start, start + operator.len())
     }
 
     // Desugar `lhs %>% rhs` (and `lhs |> rhs`, `lhs %<>% rhs`) into a
@@ -399,6 +421,34 @@ impl Checker {
     // when it appears in an `Assign` statement; for a bare binop we
     // cannot reassign without a target expression, so we leave that to
     // a future pass.
+}
+
+/// Skip whitespace, R comments, and closing parentheses erased by AST
+/// lowering between an operand span and its binary operator. The next syntax
+/// token must be the operator represented by the AST; comment prose is never
+/// eligible as an edit target.
+fn skip_r_trivia(source: &str) -> usize {
+    let mut offset = 0;
+    loop {
+        let rest = &source[offset..];
+        let trimmed = rest.trim_start_matches(char::is_whitespace);
+        offset += rest.len() - trimmed.len();
+        let rest = &source[offset..];
+        if rest.starts_with(')') {
+            // Parenthesized expressions are transparent in the compact AST,
+            // so their closing delimiter can sit between an operand span and
+            // the binary operator token.
+            offset += 1;
+            continue;
+        }
+        if !rest.starts_with('#') {
+            return offset;
+        }
+        let Some(newline) = rest.find('\n') else {
+            return source.len();
+        };
+        offset += newline + 1;
+    }
 }
 
 /// Recognize the high-confidence parameter guard patterns found in package

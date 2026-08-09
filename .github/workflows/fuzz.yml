@@ -12,24 +12,22 @@ jobs:
   fuzz:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@7c8d7d138f5c09cef361f8214cf96882cd029cdb # nightly
       - name: Install cargo-fuzz
         run: cargo +nightly install cargo-fuzz
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: ".;fuzz"
       - name: Fuzz parse (5 min)
         run: cargo +nightly fuzz run parse -- -max_total_time=300 -max_len=4096
-        working-directory: ${{ github.workspace }}
       - name: Fuzz parse-and-check (5 min)
         run: cargo +nightly fuzz run parse-and-check -- -max_total_time=300 -max_len=4096
-        working-directory: ${{ github.workspace }}
       - name: Upload crash artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: fuzz-crash-artifacts
           path: fuzz/artifacts/

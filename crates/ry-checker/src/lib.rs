@@ -665,8 +665,14 @@ impl Checker {
 
         // Clear diagnostics FIRST so a second `check` on the same
         // instance starts fresh rather than accumulating the previous
-        // run's diagnostics on top of the re-collected tables.
+        // run's diagnostics. Also reset the function table and return
+        // slots: `collect_fns` appends to the table, so without a reset
+        // a reused Checker leaks functions and known-vars from the
+        // previous file into the current check (P35-W9 accumulated-
+        // diagnostics defect).
         self.diagnostics.clear();
+        self.fn_table = Arc::new(FnTable::default());
+        self.return_slots = Arc::new(ReturnSlots::default());
 
         // Pass 1: collect function definitions into the FnTable. We don't
         // emit diagnostics yet - the body's `return` types depend on the
@@ -697,6 +703,8 @@ impl Checker {
         // them with `clear()`, so this API path never surfaced syntax
         // errors.
         self.diagnostics.clear();
+        self.fn_table = Arc::new(FnTable::default());
+        self.return_slots = Arc::new(ReturnSlots::default());
         self.emit_parse_errors(file);
         self.collect_fns(&file.stmts);
         self.run_fixpoint();

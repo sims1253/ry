@@ -31,6 +31,14 @@ All notable changes to ry are documented in this file.
 - Extracted `Config`, `Baseline`, and diagnostic-filter types into a
   new `ry-config` library crate, shared between `ry-cli` and `ry-lsp`.
 
+### Fixed
+
+- `Checker::check` now resets the function table and return slots before each
+  run, so a reused single-file `Checker` no longer leaks inference state
+  (functions, known-vars) from a previous file into the current check. This
+  accumulated-diagnostics defect is gated by the P35-W9 reset/non-interference
+  property tests.
+
 ## [0.8.0] - 2026-08-04
 
 This release focuses on checker precision, higher-order R semantics, and editor

@@ -331,14 +331,13 @@ fn structured_fixes_have_cli_and_lsp_publication_parity() {
     fixture
         .write_file(
             "fixes.R",
-            r#"emoji <- "😀"
+            r#"emoji <- "😀"; length(xx = 1L)
 f <- function(x) {
   a <- x && c(TRUE, FALSE)
   b <- x == NA
   c <- abs(x > 0L)
   if (class(x) == "wi\"dget") 1L else 2L
 }
-length(xx = 1L)
 length(c(1L, 2L) > 0L)
 args <- list(font = "mono")
 identical(args["font"], "mono")
@@ -353,6 +352,17 @@ list(ok = 1L, "wi\"dget" <- 2L)
         .unwrap();
     let lsp = runtime.block_on(run_with_diagnostics(&fixture, "fixes.R", json!({})));
     assert_eq!(lsp, cli);
+
+    // RY090's fix follows an astral character on the same line. Its byte
+    // column (24) differs from its LSP UTF-16 column (22), so parity here
+    // exercises the conversion rather than merely crossing a prior line.
+    let astral_fix = cli
+        .iter()
+        .find(|diagnostic| diagnostic.code == "RY090")
+        .and_then(|diagnostic| diagnostic.fix.as_ref())
+        .expect("RY090 after the astral character should publish a fix");
+    assert_eq!(astral_fix.start_line, 0);
+    assert_eq!(astral_fix.start_byte_column, 24);
 
     let fixed_codes = cli
         .iter()

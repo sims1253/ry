@@ -95,6 +95,12 @@ def main() -> int:
             "findings": {},
         }
     candidate = copy.deepcopy(committed)
+    selected_packages = set(args.packages)
+    candidate["findings"] = {
+        key: value
+        for key, value in committed["findings"].items()
+        if value["package"] not in selected_packages
+    }
     candidate["findings"].update(observed)
     candidate["findings"] = dict(sorted(candidate["findings"].items()))
 
@@ -105,13 +111,14 @@ def main() -> int:
         )
         return 0
 
-    missing = [key for key in observed if key not in committed["findings"]]
-    stale = [
+    committed_findings = committed["findings"]
+    candidate_findings = candidate["findings"]
+    drifted = {
         key
-        for key, value in observed.items()
-        if committed["findings"].get(key) != value
-    ]
-    if not missing and not stale:
+        for key in committed_findings.keys() | candidate_findings.keys()
+        if committed_findings.get(key) != candidate_findings.get(key)
+    }
+    if not drifted:
         print(f"posit messages: {len(observed)} readable identities match")
         return 0
 
@@ -127,7 +134,7 @@ def main() -> int:
         )
     )
     print(
-        f"posit messages: drift in {len(set(missing + stale))} stable identities",
+        f"posit messages: drift in {len(drifted)} stable identities",
         file=sys.stderr,
     )
     return 1

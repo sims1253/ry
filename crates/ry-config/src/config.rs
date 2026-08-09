@@ -65,6 +65,12 @@ pub struct Config {
     pub warn: Vec<String>,
     /// Rules to suppress. Default: empty.
     pub ignore: Vec<String>,
+    /// Replace the default-enabled rule set. `Some([])` disables every rule;
+    /// `None` retains the default-enabled set.
+    pub select: Option<Vec<String>>,
+    /// Add rules to the default or selected rule set.
+    #[serde(alias = "extend-select")]
+    pub extend_select: Vec<String>,
     /// Exclude patterns (gitignore-style). Default: empty.
     pub exclude: Vec<String>,
     /// Check R fixture data nested under a package's `tests/` tree.
@@ -130,6 +136,8 @@ impl Config {
             error: Vec::new(),
             warn: Vec::new(),
             ignore: Vec::new(),
+            select: None,
+            extend_select: Vec::new(),
             exclude: Vec::new(),
             check_test_fixtures: false,
             output_format: DEFAULT_OUTPUT_FORMAT.to_string(),
@@ -271,6 +279,8 @@ impl Config {
             error: errors,
             warn: warns,
             ignore: ignores,
+            select: self.select,
+            extend_select: self.extend_select,
             exclude: self.exclude,
             check_test_fixtures: self.check_test_fixtures,
             output_format,
@@ -383,6 +393,8 @@ mod tests {
         assert!(d.error.is_empty());
         assert!(d.warn.is_empty());
         assert!(d.ignore.is_empty());
+        assert!(d.select.is_none());
+        assert!(d.extend_select.is_empty());
         assert!(d.exclude.is_empty());
         assert!(!d.check_test_fixtures);
         assert_eq!(d.output_format, DEFAULT_OUTPUT_FORMAT);
@@ -412,6 +424,8 @@ exit-zero = true
 error = ["RY001", "RY002"]
 warn = ["invalid-arithmetic"]
 ignore = ["RY010"]
+select = ["RY002"]
+extend-select = ["RY003"]
 exclude = ["tests/fixtures/**", "**/_snapshots/**"]
 check-test-fixtures = true
 output-format = "json"
@@ -429,6 +443,8 @@ baseline = "diagnostics.json"
         assert_eq!(cfg.error, vec!["RY001", "RY002"]);
         assert_eq!(cfg.warn, vec!["invalid-arithmetic"]);
         assert_eq!(cfg.ignore, vec!["RY010"]);
+        assert_eq!(cfg.select, Some(vec!["RY002".into()]));
+        assert_eq!(cfg.extend_select, vec!["RY003"]);
         assert_eq!(cfg.exclude, vec!["tests/fixtures/**", "**/_snapshots/**"]);
         assert!(cfg.check_test_fixtures);
         assert_eq!(cfg.output_format, "json");
@@ -781,5 +797,13 @@ paths = ["inst/shiny/**"]
         let ex = Excludes::default();
         assert!(ex.is_empty());
         assert!(!ex.matches("anything.R"));
+    }
+
+    #[test]
+    fn explicit_empty_select_is_distinct_from_omitted_select() {
+        let omitted: Config = toml::from_str("").unwrap();
+        let empty: Config = toml::from_str("select = []\n").unwrap();
+        assert_eq!(omitted.select, None);
+        assert_eq!(empty.select, Some(Vec::new()));
     }
 }

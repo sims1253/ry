@@ -1,4 +1,4 @@
-//! Filesystem-backed R package scope discovery for CLI checks.
+//! Filesystem-backed R package/workspace scope discovery shared by CLI and LSP.
 //!
 //! Package code is never loaded or evaluated. We parse project and installed
 //! NAMESPACE files as R syntax, then turn proven imports/exports into opaque
@@ -11,51 +11,31 @@ use ry_core::ast::{Expr, Stmt};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
 
-static MAX_SERIALIZED_BYTES: AtomicU64 = AtomicU64::new(2 * 1024 * 1024);
-
-pub(crate) fn set_max_serialized_bytes(cap: u64) {
-    MAX_SERIALIZED_BYTES.store(cap, Ordering::Relaxed);
+/// Inputs which describe the analysis environment without evaluating R code.
+pub struct ResolutionEnvironment<'a> {
+    pub files: Vec<&'a SourceFile>,
+    pub user_stubs: &'a std::collections::BTreeMap<String, ry_typeshed::Typeshed>,
 }
 
-/// A user-declared environment profile from `ry.toml` `[[environments]]`:
-/// ambient bindings injected into files whose path matches.
-struct EnvironmentBindings {
-    bindings: Vec<String>,
-    paths: Vec<String>,
+/// Filesystem-derived state applied to a checker `Project`.
+#[derive(Clone, Debug, Default)]
+pub struct WorkspaceContext {
+    pub attached_packages: HashSet<String>,
+    pub bare_bindings: HashMap<String, HashSet<String>>,
+    pub external_bindings: HashMap<String, HashSet<String>>,
+    pub imported_bindings: HashMap<String, HashMap<String, String>>,
+    /// Per-file native routine names proven by `useDynLib` metadata.
+    pub native_registrations: HashMap<String, HashSet<String>>,
+    pub s3_methods: HashMap<String, HashSet<(String, String)>>,
+    pub load_bindings: HashMap<String, HashMap<usize, HashSet<String>>>,
+    pub degraded_scopes: Vec<(PathBuf, &'static str)>,
 }
 
-static ENVIRONMENTS: OnceLock<Mutex<Vec<EnvironmentBindings>>> = OnceLock::new();
-pub(crate) fn set_environments(profiles: &[crate::config::EnvironmentConfig]) {
-    let profiles = profiles
-        .iter()
-        .map(|p| EnvironmentBindings {
-            bindings: p.bindings.clone(),
-            paths: p.paths.clone(),
-        })
-        .collect();
-    *ENVIRONMENTS
-        .get_or_init(|| Mutex::new(Vec::new()))
-        .lock()
-        .unwrap() = profiles;
-}
-
-pub(crate) struct PackageScope {
-    pub(crate) attached: HashSet<String>,
-    pub(crate) bare_attached: HashMap<String, HashSet<String>>,
-    pub(crate) bindings: HashMap<String, HashSet<String>>,
-    pub(crate) imported_from: HashMap<String, HashMap<String, String>>,
-    pub(crate) s3_methods: HashMap<String, HashSet<(String, String)>>,
-    pub(crate) load_bindings: HashMap<String, HashMap<usize, HashSet<String>>>,
-    /// Serialized R data files (`.rda`/`.rdata`) whose decoded payload
-    /// exceeded the byte cap and were reduced to a single file-stem
-    /// binding instead of having their object names enumerated. Each
-    /// entry pairs the offending path with a short reason. Surfaced so
-    /// the CLI can report that RY010 (unbound-variable) analysis is less
-    /// precise for the affected scope than usual.
-    pub(crate) degraded: Vec<(PathBuf, &'static str)>,
+#[derive(Debug, thiserror::Error)]
+pub enum ResolveError {
+    #[error("workspace root is not a directory: {0}")]
+    InvalidRoot(PathBuf),
 }
 
 /// Inventory of a serialized R data file (`.rda`/`.rdata`). `bindings`
@@ -112,15 +92,21 @@ impl LibraryRoot {
     }
 }
 
-pub(crate) fn resolve<'a>(
-    all_paths: &[PathBuf],
-    configured_packages: &[String],
-    configured_globals: &[String],
-    user_stubs: &std::collections::BTreeMap<String, ry_typeshed::Typeshed>,
-    files: impl IntoIterator<Item = &'a SourceFile>,
-) -> PackageScope {
-    let files: Vec<&SourceFile> = files.into_iter().collect();
-    let library_roots = r_library_roots(all_paths);
+pub fn resolve_workspace_context<'a>(
+    root: &Path,
+    config: &ry_config::Config,
+    environment: ResolutionEnvironment<'a>,
+) -> Result<WorkspaceContext, ResolveError> {
+    if !root.is_dir() {
+        return Err(ResolveError::InvalidRoot(root.to_path_buf()));
+    }
+    let files = environment.files;
+    let user_stubs = environment.user_stubs;
+    let all_paths: Vec<PathBuf> = files.iter().map(|file| PathBuf::from(&file.path)).collect();
+    let configured_packages = &config.packages;
+    let configured_globals = &config.globals;
+    let max_serialized_bytes = config.max_serialized_bytes;
+    let library_roots = r_library_roots(&all_paths);
     let preferred_version = current_r_minor_version(&library_roots);
     let mut namespace_cache: HashMap<PathBuf, NamespaceMetadata> = HashMap::new();
     let mut export_cache: HashMap<String, HashSet<String>> = HashMap::new();
@@ -131,6 +117,7 @@ pub(crate) fn resolve<'a>(
     let mut bare_attached = HashMap::new();
     let mut bindings = HashMap::new();
     let mut imported_from = HashMap::new();
+    let mut native_registrations = HashMap::new();
     let mut s3_methods = HashMap::new();
     let mut load_bindings = HashMap::new();
     // A package root is visited once per file in it, so a single oversized
@@ -151,15 +138,11 @@ pub(crate) fn resolve<'a>(
         let mut file_attached: HashSet<String> = configured_packages.iter().cloned().collect();
         let mut file_bindings = HashSet::new();
         let mut file_s3_methods = HashSet::new();
+        let mut file_native_registrations = HashSet::new();
         let mut file_imported_from = HashMap::new();
         let mut source_package = None;
         file_bindings.extend(configured_globals.iter().cloned());
-        for profile in ENVIRONMENTS
-            .get_or_init(|| Mutex::new(Vec::new()))
-            .lock()
-            .unwrap()
-            .iter()
-        {
+        for profile in &config.environments {
             if profile.paths.iter().any(|pattern| {
                 file.path
                     .replace('\\', "/")
@@ -188,7 +171,9 @@ pub(crate) fn resolve<'a>(
             // the evidence that a name is one of them. Without the
             // declaration the same names are ordinary unbound reads.
             if metadata.native_registration {
-                file_bindings.extend(source_bindings.native_symbols.iter().cloned());
+                file_native_registrations.extend(source_bindings.native_symbols.iter().cloned());
+                file_native_registrations.extend(metadata.native_routines.iter().cloned());
+                file_bindings.extend(file_native_registrations.iter().cloned());
             }
             file_bindings.extend(metadata.imported_bindings.iter().cloned());
             file_imported_from.extend(metadata.imported_from.clone());
@@ -221,9 +206,7 @@ pub(crate) fn resolve<'a>(
             if source_package_lazy_data(&root) {
                 let datasets = dataset_cache
                     .entry(root.clone())
-                    .or_insert_with(|| {
-                        source_package_datasets(&root, MAX_SERIALIZED_BYTES.load(Ordering::Relaxed))
-                    })
+                    .or_insert_with(|| source_package_datasets(&root, max_serialized_bytes))
                     .clone();
                 file_bindings.extend(datasets.bindings.iter().cloned());
                 for path in &datasets.degraded {
@@ -233,9 +216,7 @@ pub(crate) fn resolve<'a>(
             let sysdata = root.join("R/sysdata.rda");
             let sysdata_inventory = serialized_cache
                 .entry(sysdata.clone())
-                .or_insert_with(|| {
-                    serialized_inventory(&sysdata, MAX_SERIALIZED_BYTES.load(Ordering::Relaxed))
-                })
+                .or_insert_with(|| serialized_inventory(&sysdata, max_serialized_bytes))
                 .clone();
             file_bindings.extend(sysdata_inventory.bindings.iter().cloned());
             if sysdata_inventory.degraded {
@@ -246,7 +227,7 @@ pub(crate) fn resolve<'a>(
                 &root,
                 &project_attached,
                 user_stubs,
-                MAX_SERIALIZED_BYTES.load(Ordering::Relaxed),
+                max_serialized_bytes,
                 &mut serialized_cache,
             );
             for path in &loaded.degraded {
@@ -312,17 +293,19 @@ pub(crate) fn resolve<'a>(
         bare_attached.insert(file.path.clone(), file_attached);
         bindings.insert(file.path.clone(), file_bindings);
         imported_from.insert(file.path.clone(), file_imported_from);
+        native_registrations.insert(file.path.clone(), file_native_registrations);
         s3_methods.insert(file.path.clone(), file_s3_methods);
     }
-    PackageScope {
-        attached,
-        bare_attached,
-        bindings,
-        imported_from,
+    Ok(WorkspaceContext {
+        attached_packages: attached,
+        bare_bindings: bare_attached,
+        external_bindings: bindings,
+        imported_bindings: imported_from,
+        native_registrations,
         s3_methods,
         load_bindings,
-        degraded: degraded.into_iter().collect(),
-    }
+        degraded_scopes: degraded.into_iter().collect(),
+    })
 }
 
 /// Whether a path relative to a package root is source code in `R/`.
@@ -1010,10 +993,9 @@ fn r_library_roots(all_paths: &[PathBuf]) -> Vec<LibraryRoot> {
             .ancestors()
             .map(|ancestor| ancestor.join("renv/library"))
             .find(|candidate| candidate.is_dir())
+            && seen_renv.insert(renv.clone())
         {
-            if seen_renv.insert(renv.clone()) {
-                roots.push(LibraryRoot::nested(renv, 3));
-            }
+            roots.push(LibraryRoot::nested(renv, 3));
         }
     }
     for key in ["R_LIBS", "R_LIBS_USER", "R_LIBS_SITE"] {
@@ -1139,12 +1121,11 @@ fn find_package_namespace(
             .then_with(|| b_name.cmp(a_name))
     });
     for path in directories {
-        if path.is_dir() {
-            if let Some(found) =
+        if path.is_dir()
+            && let Some(found) =
                 find_package_namespace(&path, package, depth - 1, preferred_version)
-            {
-                return Some(found);
-            }
+        {
+            return Some(found);
         }
     }
     None
@@ -1185,266 +1166,71 @@ fn current_r_minor_version(roots: &[LibraryRoot]) -> Option<String> {
     Some(format!("{}.{}", parts.next()?, parts.next()?))
 }
 
+/// Return whether `path` is eligible to participate in analysis under `config`.
+///
+/// Matching is always rooted at the configuration/workspace root and uses
+/// forward slashes, so callers cannot accidentally give indexing and
+/// publication different exclude semantics.
+pub fn is_file_eligible(path: &Path, root: &Path, config: &ry_config::Config) -> bool {
+    let excludes = ry_config::Excludes::from_config(config);
+    is_file_eligible_with_excludes(path, root, &excludes)
+}
+
+/// Check file eligibility with an already-compiled exclude matcher.
+/// Directory walkers should build this once per owning configuration.
+pub fn is_file_eligible_with_excludes(
+    path: &Path,
+    root: &Path,
+    excludes: &ry_config::Excludes,
+) -> bool {
+    if excludes.is_empty() {
+        return true;
+    }
+    // Match the workspace entry name, not a canonicalized symlink target: an
+    // explicit exclude for `linked.R` must exclude that entry regardless of
+    // where it points.
+    let relative = path.strip_prefix(root).unwrap_or(path);
+    !excludes.matches(&relative.to_string_lossy().replace('\\', "/"))
+}
+
 #[cfg(test)]
-mod tests {
+mod shared_tests {
     use super::*;
-    use std::io::Write;
-    use std::sync::Arc;
-
-    fn write_oversized_rdata(path: &Path) {
-        let object = rds2rust::RObject::Pairlist(vec![rds2rust::PairlistElement {
-            tag: Some(Arc::from("small_tag")),
-            value: rds2rust::RObject::Null,
-            tag_object: None,
-        }]);
-        let gzip = rds2rust::write_rds(&object).unwrap();
-        let mut serialization = Vec::new();
-        flate2::read::GzDecoder::new(gzip.as_slice())
-            .read_to_end(&mut serialization)
-            .unwrap();
-        let mut rdata = b"RDX2\n".to_vec();
-        rdata.extend_from_slice(&serialization);
-        rdata.resize(2 * 1024 * 1024 + 1, 0);
-        let mut encoder = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::best());
-        encoder.write_all(&rdata).unwrap();
-        std::fs::write(path, encoder.finish().unwrap()).unwrap();
-    }
-
-    fn package_bindings(root: &Path, source: &str) -> HashSet<String> {
-        let path = root.join("R/use.R");
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, source).unwrap();
-        let mut parser = ry_core::RParser::new().unwrap();
-        let file = parser.parse(&path.to_string_lossy(), source).unwrap();
-        resolve(
-            std::slice::from_ref(&path),
-            &[],
-            &[],
-            &std::collections::BTreeMap::new(),
-            [&file],
-        )
-        .bindings
-        .remove(&path.to_string_lossy().to_string())
-        .unwrap_or_default()
-    }
 
     #[test]
-    fn collects_literal_assign_with_environment_at_function_depth() {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::write(root.path().join("DESCRIPTION"), "Package: fixture\n").unwrap();
-        let bindings = package_bindings(
-            root.path(),
-            "setup <- function(env) { assign(\"from_helper\", 1, envir = env) }\nuse <- from_helper\n",
-        );
-        assert!(bindings.contains("from_helper"));
-    }
-
-    #[test]
-    fn ignores_dynamic_assign_names_and_function_local_assigns() {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::write(root.path().join("DESCRIPTION"), "Package: fixture\n").unwrap();
-        let bindings = package_bindings(
-            root.path(),
-            "setup <- function(env, names) { assign(names[[1]], 1, envir = env); assign(\"local_only\", 1) }\n",
-        );
-        assert!(!bindings.contains("local_only"));
-        assert!(!bindings.contains("names"));
-    }
-
-    #[test]
-    fn collects_active_and_delayed_literal_bindings() {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::write(root.path().join("DESCRIPTION"), "Package: fixture\n").unwrap();
-        let bindings = package_bindings(
-            root.path(),
-            "setup <- function(env) { makeActiveBinding(\"active\", function() 1, envir = env); delayedAssign(\"delayed\", 1, assign.env = env) }\n",
-        );
-        assert!(bindings.contains("active"));
-        assert!(bindings.contains("delayed"));
-    }
-
-    #[test]
-    fn collects_literal_bindings_with_positional_environment() {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::write(root.path().join("DESCRIPTION"), "Package: fixture\n").unwrap();
-        let bindings = package_bindings(
-            root.path(),
-            "setup <- function(env) { assign(\"assigned\", 1, env); makeActiveBinding(\"active\", function() 1, env); delayedAssign(\"delayed\", 1, parent.frame(), env) }\n",
-        );
-        assert!(bindings.contains("assigned"));
-        assert!(bindings.contains("active"));
-        assert!(bindings.contains("delayed"));
-    }
-
-    #[test]
-    fn injects_package_name_only_for_package_roots() {
-        let package = tempfile::tempdir().unwrap();
-        std::fs::write(package.path().join("DESCRIPTION"), "Package: fixture\n").unwrap();
-        assert!(
-            source_package_namespace_bindings(package.path())
-                .bindings
-                .contains(".packageName")
-        );
-
-        assert!(
-            r_package_root(Path::new("/nonexistent-ry-script-root/script.R")).is_none(),
-            "a directory without DESCRIPTION must not receive package bindings"
-        );
-    }
-
-    #[test]
-    fn inventories_rdx2_and_rdx3_pairlist_tags() {
-        let object = rds2rust::RObject::Pairlist(vec![
-            rds2rust::PairlistElement {
-                tag: Some(Arc::from("alpha")),
-                value: rds2rust::RObject::Null,
-                tag_object: None,
-            },
-            rds2rust::PairlistElement {
-                tag: Some(Arc::from("beta")),
-                value: rds2rust::RObject::Null,
-                tag_object: None,
-            },
-        ]);
-        let gzip = rds2rust::write_rds(&object).unwrap();
-        let mut serialization = Vec::new();
-        flate2::read::GzDecoder::new(gzip.as_slice())
-            .read_to_end(&mut serialization)
-            .unwrap();
+    fn eligibility_is_rooted_and_separator_independent() {
         let dir = tempfile::tempdir().unwrap();
-        for header in [b"RDX2\n".as_slice(), b"RDX3\n".as_slice()] {
-            let mut rdata = header.to_vec();
-            rdata.extend_from_slice(&serialization);
-            let mut encoder = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::best());
-            encoder.write_all(&rdata).unwrap();
-            let compressed = encoder.finish().unwrap();
-            let path = dir
-                .path()
-                .join(format!("objects-{}.rda", header[3] as char));
-            std::fs::write(&path, compressed).unwrap();
-
-            assert_eq!(
-                serialized_inventory(&path, 2 * 1024 * 1024).bindings,
-                HashSet::from(["alpha".to_string(), "beta".to_string()])
-            );
-        }
-    }
-
-    #[test]
-    fn oversized_serialized_workspace_falls_back_to_file_stem() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("oversized.rda");
-        write_oversized_rdata(&path);
-
-        // Over-cap workspaces no longer emit the package-global
-        // `SERIALIZED_BINDINGS_UNENUMERABLE` marker (which disabled RY010
-        // project-wide). They degrade to the file stem, matching the
-        // `.rds` and empty-`.rda` fallbacks, and flag the scope degraded.
-        assert_eq!(
-            serialized_inventory(&path, 2 * 1024 * 1024).bindings,
-            HashSet::from(["oversized".to_string()])
-        );
-        assert!(serialized_inventory(&path, 2 * 1024 * 1024).degraded);
-    }
-
-    #[test]
-    fn oversized_sysdata_falls_back_to_file_stem_not_global_disable() {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::write(root.path().join("DESCRIPTION"), "Package: fixture\n").unwrap();
-        let source_path = root.path().join("R/use.R");
-        std::fs::create_dir_all(source_path.parent().unwrap()).unwrap();
-        write_oversized_rdata(&root.path().join("R/sysdata.rda"));
-
-        // `sysdata` resolves via the file-stem fallback; `real_missing` is
-        // genuinely unbound. Previously the oversized sysdata disabled RY010
-        // for the whole file (both stayed silent); now only the stem binding
-        // is masked and the real miss is reported.
-        let source = "ok <- sysdata\nbad <- real_missing\n";
-        let mut parser = ry_core::RParser::new().unwrap();
-        let file = parser
-            .parse(&source_path.to_string_lossy(), source)
-            .unwrap();
-        let scope = resolve(
-            std::slice::from_ref(&source_path),
-            &[],
-            &[],
-            &std::collections::BTreeMap::new(),
-            [&file],
-        );
-        assert!(
-            scope
-                .degraded
-                .iter()
-                .any(|(path, _)| path.ends_with("sysdata.rda")),
-            "oversized sysdata should flag the scope degraded: {:?}",
-            scope.degraded
-        );
-        let mut project = ry_checker::Project::new();
-        project.add_file(source_path.to_string_lossy().to_string(), file);
-        project.set_external_bindings(scope.bindings);
-        let diagnostics: Vec<_> = project
-            .check()
-            .into_iter()
-            .flat_map(|(_, diagnostics)| diagnostics)
-            .collect();
-        let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
-        assert!(
-            codes.contains(&"RY010"),
-            "oversized sysdata must not globally disable RY010; the real miss should fire: {diagnostics:?}"
-        );
-        assert_eq!(
-            codes.iter().filter(|&&c| c == "RY010").count(),
-            1,
-            "only the genuinely unbound name should fire RY010: {diagnostics:?}"
-        );
-    }
-
-    #[test]
-    fn user_stub_override_drives_source_relative_load_resolution() {
-        let dir = tempfile::tempdir().unwrap();
-        let source_path = dir.path().join("script.R");
-        let data_path = dir.path().join("objects.rda");
-        std::fs::write(&data_path, "invalid fixture is enough for path resolution").unwrap();
-        std::fs::write(
-            dir.path().join("custom.json"),
-            r#"{
-                "schema_version": "1",
-                "package": "custom",
-                "version": "test",
-                "functions": {
-                    "fixture": {
-                        "params": ["path"],
-                        "return": {"mode": "character", "length": "1"},
-                        "source_relative_path_arg": 0
-                    }
-                }
-            }"#,
-        )
-        .unwrap();
-        let user_stubs = ry_typeshed::load_stub_dir(dir.path()).unwrap();
-        let mut parser = ry_core::RParser::new().unwrap();
-        let file = parser
-            .parse(
-                &source_path.to_string_lossy(),
-                "load(custom::fixture(\"objects.rda\"))\n",
-            )
-            .unwrap();
-        let bindings = loaded_serialized_bindings(
-            &file,
+        let file = dir.path().join("vendor").join("influence.R");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "x <- 1\n").unwrap();
+        let config = ry_config::Config {
+            exclude: vec!["vendor/**".into()],
+            ..Default::default()
+        };
+        assert!(!is_file_eligible(&file, dir.path(), &config));
+        assert!(is_file_eligible(
+            &dir.path().join("keep.R"),
             dir.path(),
-            &HashSet::new(),
-            &user_stubs,
-            2 * 1024 * 1024,
-            &mut HashMap::new(),
-        );
-        assert_eq!(
-            bindings.per_span.len(),
-            1,
-            "custom signature should resolve the path"
-        );
-        assert!(
-            bindings.degraded.is_empty(),
-            "an invalid (non-serialized) fixture should not be flagged degraded"
-        );
+            &config
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn eligibility_matches_a_symlink_entry_name_not_its_target() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("real.R");
+        let link = dir.path().join("linked.R");
+        std::fs::write(&target, "x <- 1\n").unwrap();
+        symlink(&target, &link).unwrap();
+        let config = ry_config::Config {
+            exclude: vec!["linked.R".into()],
+            ..Default::default()
+        };
+
+        assert!(!is_file_eligible(&link, dir.path(), &config));
+        assert!(is_file_eligible(&target, dir.path(), &config));
     }
 }

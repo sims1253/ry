@@ -32,6 +32,27 @@ export interface ILintSettings {
     warn?: string[];
 }
 
+
+function getExplicitValue<T>(
+    config: vscode.WorkspaceConfiguration,
+    key: string,
+): T | undefined {
+    const inspected = config.inspect<T>(key);
+    if (!inspected) return undefined;
+    // Preserve an explicitly configured empty array while omitting the schema
+    // default. Sending the default `[]` would mean "select no rules" to the
+    // server and would suppress diagnostics in an otherwise unconfigured
+    // workspace.
+    return (
+        inspected.workspaceFolderLanguageValue ??
+        inspected.workspaceLanguageValue ??
+        inspected.globalLanguageValue ??
+        inspected.workspaceFolderValue ??
+        inspected.workspaceValue ??
+        inspected.globalValue
+    );
+}
+
 export function getWorkspaceSettings(
     namespace: string,
     folder: vscode.WorkspaceFolder,
@@ -46,11 +67,11 @@ export function getWorkspaceSettings(
             "fromEnvironment",
         ),
         lint: {
-            select: config.get<string[]>("lint.select"),
-            extendSelect: config.get<string[]>("lint.extendSelect"),
-            ignore: config.get<string[]>("lint.ignore"),
-            error: config.get<string[]>("lint.error"),
-            warn: config.get<string[]>("lint.warn"),
+            select: getExplicitValue<string[]>(config, "lint.select"),
+            extendSelect: getExplicitValue<string[]>(config, "lint.extendSelect"),
+            ignore: getExplicitValue<string[]>(config, "lint.ignore"),
+            error: getExplicitValue<string[]>(config, "lint.error"),
+            warn: getExplicitValue<string[]>(config, "lint.warn"),
         },
         minConfidence: config.get<"low" | "medium" | "high">("minConfidence"),
         baseline: config.get<string>("baseline"),
@@ -74,11 +95,11 @@ export function getGlobalSettings(namespace: string): ISettings {
             "fromEnvironment",
         ),
         lint: {
-            select: config.get<string[]>("lint.select"),
-            extendSelect: config.get<string[]>("lint.extendSelect"),
-            ignore: config.get<string[]>("lint.ignore"),
-            error: config.get<string[]>("lint.error"),
-            warn: config.get<string[]>("lint.warn"),
+            select: getExplicitValue<string[]>(config, "lint.select"),
+            extendSelect: getExplicitValue<string[]>(config, "lint.extendSelect"),
+            ignore: getExplicitValue<string[]>(config, "lint.ignore"),
+            error: getExplicitValue<string[]>(config, "lint.error"),
+            warn: getExplicitValue<string[]>(config, "lint.warn"),
         },
         minConfidence: config.get<"low" | "medium" | "high">("minConfidence"),
         baseline: config.get<string>("baseline"),

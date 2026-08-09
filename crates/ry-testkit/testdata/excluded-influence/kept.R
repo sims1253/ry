@@ -1,0 +1,1 @@
+result <- hidden_binding

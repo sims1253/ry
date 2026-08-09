@@ -1,0 +1,2 @@
+typeshed = ["typesheds"]
+max-serialized-bytes = 128

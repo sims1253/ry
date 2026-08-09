@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use ry_config::Excludes;
+use ry_config::Config;
 use ry_core::{RParser, SourceFile};
 
 /// Walk a workspace root, discovering all `.R`/`.r` files that are not
@@ -23,9 +23,10 @@ use ry_core::{RParser, SourceFile};
 /// Paths are returned as absolute strings (matching the LSP's `uri_to_path`
 /// convention). The walk is breadth-first and skips excluded directories
 /// early to avoid descending into `node_modules`, `.git`, etc.
-pub(crate) fn discover_r_files(root: &Path, excludes: &Excludes) -> Vec<(String, String)> {
+pub(crate) fn discover_r_files(root: &Path, config: &Config) -> Vec<(String, String)> {
     let mut results = Vec::new();
     let mut queue = vec![root.to_path_buf()];
+    let excludes = ry_config::Excludes::from_config(config);
 
     while let Some(dir) = queue.pop() {
         let entries = match std::fs::read_dir(&dir) {
@@ -36,15 +37,8 @@ pub(crate) fn discover_r_files(root: &Path, excludes: &Excludes) -> Vec<(String,
         for entry in entries.flatten() {
             let path = entry.path();
 
-            // Compute a relative path for exclude matching.
-            let rel = path
-                .strip_prefix(root)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .replace('\\', "/");
-
             // Check excludes before descending.
-            if excludes.matches(&rel) {
+            if !ry_workspace::is_file_eligible_with_excludes(&path, root, &excludes) {
                 continue;
             }
 
@@ -94,11 +88,8 @@ pub(crate) fn parse_disk_files(files: &[(String, String)]) -> HashMap<String, Ar
 
 /// Discover and parse all `.R`/`.r` files under `root`, honouring `excludes`.
 /// Convenience wrapper combining `discover_r_files` + `parse_disk_files`.
-pub(crate) fn index_workspace(
-    root: &Path,
-    excludes: &Excludes,
-) -> HashMap<String, Arc<SourceFile>> {
-    let discovered = discover_r_files(root, excludes);
+pub(crate) fn index_workspace(root: &Path, config: &Config) -> HashMap<String, Arc<SourceFile>> {
+    let discovered = discover_r_files(root, config);
     parse_disk_files(&discovered)
 }
 
@@ -126,8 +117,8 @@ mod tests {
         std::fs::create_dir_all(&hidden).unwrap();
         std::fs::write(hidden.join("e.R"), "hidden <- TRUE\n").unwrap();
 
-        let excludes = Excludes::default();
-        let discovered = discover_r_files(&dir, &excludes);
+        let config = Config::default();
+        let discovered = discover_r_files(&dir, &config);
 
         let paths: Vec<&str> = discovered.iter().map(|(p, _)| p.as_str()).collect();
         assert!(paths.iter().any(|p| p.ends_with("a.R")), "a.R found");
@@ -161,9 +152,7 @@ mod tests {
             exclude: vec!["vendor".to_string()],
             ..Default::default()
         };
-        let excludes = Excludes::from_config(&cfg);
-
-        let discovered = discover_r_files(&dir, &excludes);
+        let discovered = discover_r_files(&dir, &cfg);
         let paths: Vec<&str> = discovered.iter().map(|(p, _)| p.as_str()).collect();
 
         assert!(paths.iter().any(|p| p.ends_with("keep.R")), "keep.R found");
@@ -183,8 +172,8 @@ mod tests {
         std::fs::write(dir.join("a.R"), "f <- function(x) x + 1\n").unwrap();
         std::fs::write(dir.join("b.R"), "g <- function() f(2)\n").unwrap();
 
-        let excludes = Excludes::default();
-        let parsed = index_workspace(&dir, &excludes);
+        let config = Config::default();
+        let parsed = index_workspace(&dir, &config);
 
         assert_eq!(parsed.len(), 2, "two files parsed");
         assert!(parsed.keys().any(|p| p.ends_with("a.R")));

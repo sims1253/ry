@@ -1,0 +1,10 @@
+R/cnd-abort.R:548:7 RY001
+R/cnd-abort.R:855:10 RY010
+R/env-special.R:220:16 RY010
+R/import-standalone-defer.R:91:23 RY010
+R/standalone-sizes.R:14:19 RY010
+R/standalone-sizes.R:15:17 RY010
+R/standalone-sizes.R:16:13 RY010
+R/trace.R:1125:8 RY010
+R/trace.R:1137:16 RY010
+R/trace.R:1139:16 RY010

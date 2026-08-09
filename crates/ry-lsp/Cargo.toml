@@ -12,9 +12,13 @@ ry-core = { path = "../ry-core" }
 ry-checker = { path = "../ry-checker" }
 ry-typeshed = { path = "../ry-typeshed" }
 ry-config = { path = "../ry-config" }
+ry-workspace = { path = "../ry-workspace" }
 tower-lsp = "0.20"
 tokio = { workspace = true, features = ["rt", "io-std", "sync", "time"] }
 tracing = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
+
+[dev-dependencies]
+ry-testkit = { path = "../ry-testkit" }

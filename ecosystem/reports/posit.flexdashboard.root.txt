@@ -1,0 +1,6 @@
+R/bslib.R:34:24 RY010
+R/flex_dashboard.R:173:7 RY033
+R/flex_dashboard.R:381:11 RY001
+R/flex_dashboard.R:401:13 RY001
+R/flex_dashboard.R:633:9 RY105
+R/valuebox.R:58:10 RY010

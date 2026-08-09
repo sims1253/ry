@@ -1,0 +1,8 @@
+R/parallel-taskq.R:205:13 RY001
+tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R:5:1 RY010
+tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R:5:13 RY010
+tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R:5:15 RY010
+tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R:5:22 RY010
+tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R:5:5 RY010
+tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R:6:1 RY000
+tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R:6:1 RY010

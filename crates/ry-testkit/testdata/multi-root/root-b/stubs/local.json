@@ -1,0 +1,14 @@
+{
+  "schema_version": "1",
+  "package": "local",
+  "version": "test",
+  "functions": {
+    "root_value": {
+      "params": [],
+      "return": {
+        "mode": "character",
+        "length": "1"
+      }
+    }
+  }
+}

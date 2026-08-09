@@ -13,7 +13,9 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 reports_dir="$root/ecosystem/reports"
 run_sh="$root/ecosystem/run.sh"
 
-# Use the local (vendored glue) path: no git cloning, fast, hermetic.
+# Use the local (vendored glue) path: no git cloning, fast, hermetic. This
+# intentionally tests report drift only: --local skips ledger reconciliation;
+# test-posit-drift-detection.sh covers the real non-local ledger path.
 "$run_sh" --local --check 2>/dev/null
 
 fail=0

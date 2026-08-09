@@ -10,15 +10,23 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 ```
 
-If R is installed, also run the oracle (CI always does):
+The default oracle gate checks semantic-claim completeness and, when R is
+installed, executes every registered claim fixture:
+
+```sh
+cargo test -p ry-checker --test oracle
+```
+
+Run the complete checker-vs-R matrix as well when R is installed (CI always
+does):
 
 ```sh
 cargo test -p ry-checker --test oracle -- --ignored
 ```
 
-The oracle uses a parallel R driver (`scripts/oracle_driver.R`, purrr +
-mirai) when those packages are available and falls back to one
-`Rscript` process per fixture otherwise.
+The complete oracle uses a parallel R driver (`scripts/oracle_driver.R`, purrr
++ mirai) when those packages are available and falls back to one `Rscript`
+process per fixture otherwise.
 
 ## Fixture conventions
 
@@ -31,6 +39,11 @@ mirai) when those packages are available and falls back to one
   `# oracle: known-gap <one-line reason>`. A `must-warn` fixture uses
   R-side assertions to establish the behavior and requires that ry emit
   the named warning. R executes these files; keep them side-effect-free.
+- Every active entry in `ry_checker::rules::RULES` must have at least one
+  fixture containing `# oracle-claim: RYxxx`. The R code must demonstrate the
+  premise stated by that diagnostic with an error, warning, `quote()` shape,
+  or explicit assertion. A `known-gap` fixture cannot count as a claim. Adding
+  a rule without a registered claim fixture fails the default oracle test.
 - Vendored packages live in `testdata/vendor/<pkg>/` with their
   LICENSE. Snapshots are updated with
   `INSTA_UPDATE=always cargo test -p ry-checker --test vendor_snapshot`

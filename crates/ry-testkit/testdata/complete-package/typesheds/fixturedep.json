@@ -1,0 +1,14 @@
+{
+  "schema_version": "1",
+  "package": "fixturedep",
+  "version": "test",
+  "functions": {
+    "imported_helper": {
+      "params": [],
+      "return": {
+        "mode": "integer",
+        "length": "1"
+      }
+    }
+  }
+}

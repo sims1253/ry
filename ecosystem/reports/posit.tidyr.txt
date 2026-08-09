@@ -1,0 +1,8 @@
+R/chop.R:386:27 RY010
+R/chop.R:465:7 RY010
+R/hoist.R:155:37 RY010
+R/hoist.R:156:55 RY010
+R/unnest-helper.R:88:40 RY010
+R/unnest-longer.R:268:23 RY010
+R/unnest-longer.R:285:45 RY010
+R/unnest-wider.R:232:17 RY010

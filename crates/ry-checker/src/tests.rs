@@ -6589,6 +6589,12 @@ fn ry003_is_default_off_but_explicitly_selectable() {
     apply_filter_to_diagnostics(&mut diagnostics, &SeverityFilter::default());
     assert!(diagnostics.iter().all(|d| d.code != "RY003"));
 
+    let mut selected = check("if (1L) print(1)\n");
+    let mut selection = SeverityFilter::default();
+    selection.add_select("RY003");
+    apply_filter_to_diagnostics(&mut selected, &selection);
+    assert!(selected.iter().any(|d| d.code == "RY003"));
+
     let mut diagnostics = check("if (1L) print(1)\n");
     let mut filter = SeverityFilter::default();
     filter.add_warn("RY003");

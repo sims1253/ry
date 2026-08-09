@@ -1,8 +1,9 @@
 //! R oracle harness.
 //!
-//! `#[ignore]`'d by default; run with
+//! The complete fixture matrix is `#[ignore]`'d by default; run it with
 //! `cargo test -p ry-checker --test oracle -- --ignored --nocapture`
-//! (or `scripts/oracle.sh`).
+//! (or `scripts/oracle.sh`). Registered `# oracle-claim: RYxxx` fixtures run
+//! in the default test gate, and their registry coverage is always checked.
 //!
 //! For each fixture in `testdata/oracle/`, if `Rscript` is on PATH, runs
 //! `Rscript --vanilla <file>`, records whether R errored, runs the checker,
@@ -62,6 +63,36 @@ fn tag_of(src: &str) -> Option<Tag> {
             None
         }
     }
+}
+
+/// Rule codes whose R semantics are demonstrated by this fixture.
+///
+/// Claim registration is deliberately separate from the outcome marker: the
+/// marker describes the checker/R agreement shape, while `oracle-claim` says
+/// which registry premise the R-side error, warning, or assertion establishes.
+fn claim_codes(src: &str) -> Result<Vec<String>, String> {
+    let mut claims = Vec::new();
+    for line in src.lines() {
+        let trimmed = line
+            .trim_start_matches([' ', '\t'])
+            .trim_start_matches('#')
+            .trim();
+        let prefix = "oracle-claim:";
+        if !trimmed.to_ascii_lowercase().starts_with(prefix) {
+            continue;
+        }
+        let code = trimmed[prefix.len()..].trim().to_ascii_uppercase();
+        if code.is_empty() || code.split_whitespace().count() != 1 {
+            return Err(format!(
+                "`# oracle-claim:` must name exactly one rule code, got {code:?}"
+            ));
+        }
+        if claims.contains(&code) {
+            return Err(format!("duplicate oracle claim {code}"));
+        }
+        claims.push(code);
+    }
+    Ok(claims)
 }
 
 fn rscript_on_path() -> bool {
@@ -497,6 +528,167 @@ fn tag_of_known_gap_tolerates_leading_whitespace() {
     match tag_of("  # oracle: known-gap spaced\n") {
         Some(Tag::KnownGap(reason)) => assert_eq!(reason, "spaced"),
         other => panic!("expected KnownGap, got {other:?}"),
+    }
+}
+
+#[test]
+fn claim_codes_parse_registration() {
+    assert_eq!(
+        claim_codes("# oracle: must-pass\n# oracle-claim: ry003\nif (1) 1\n").unwrap(),
+        vec!["RY003"]
+    );
+    assert!(claim_codes("# oracle-claim:\n").is_err());
+    assert!(claim_codes("# oracle-claim: RY001 RY002\n").is_err());
+    assert!(claim_codes("# oracle-claim: RY001\n# oracle-claim: RY001\n").is_err());
+}
+
+/// Completeness is a normal (non-ignored) test so adding a registry entry
+/// without an R-backed semantic premise cannot silently bypass the oracle on
+/// machines that do not have R installed.
+#[test]
+fn every_rule_has_a_claim_fixture() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/oracle");
+    let mut claims: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut failures = Vec::new();
+
+    for entry in fs::read_dir(&dir).expect("read oracle fixture directory") {
+        let path = entry.expect("read oracle fixture entry").path();
+        if path.extension().and_then(|e| e.to_str()) != Some("R") {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let src = fs::read_to_string(&path).expect("read oracle fixture");
+        let fixture_claims = match claim_codes(&src) {
+            Ok(codes) => codes,
+            Err(error) => {
+                failures.push(format!("{name}: {error}"));
+                continue;
+            }
+        };
+        if !fixture_claims.is_empty() && matches!(tag_of(&src), Some(Tag::KnownGap(_))) {
+            failures.push(format!(
+                "{name}: known-gap fixtures cannot satisfy semantic-claim coverage"
+            ));
+        }
+        for code in fixture_claims {
+            if !ry_checker::rules::RULES
+                .iter()
+                .any(|rule| rule.code == code)
+            {
+                failures.push(format!(
+                    "{name}: oracle claim names unknown or retired rule {code}"
+                ));
+            }
+            claims.entry(code).or_default().push(name.clone());
+        }
+    }
+
+    for rule in ry_checker::rules::RULES {
+        if !claims.contains_key(rule.code) {
+            failures.push(format!(
+                "{} ({}): missing `# oracle-claim: {}` fixture",
+                rule.code, rule.name, rule.code
+            ));
+        }
+    }
+
+    if !failures.is_empty() {
+        panic!(
+            "oracle semantic-claim coverage broken:\n  - {}\n",
+            failures.join("\n  - ")
+        );
+    }
+}
+
+/// Execute only registered semantic claims in the default test gate. The full
+/// checker-vs-R fixture matrix remains ignored because it includes slower CRAN
+/// package scenarios; claim fixtures are small and are the release premise
+/// gate. Missing R or a non-base package skips locally, as the full oracle does.
+#[test]
+fn claim_fixtures_demonstrate_their_r_premise() {
+    if !rscript_on_path() {
+        eprintln!("Rscript not on PATH; skipping semantic-claim execution.");
+        return;
+    }
+
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/oracle");
+    let mut entries: Vec<_> = fs::read_dir(&dir)
+        .expect("read oracle fixture directory")
+        .flatten()
+        .collect();
+    entries.sort_by_key(|entry| entry.path());
+
+    let mut failures = Vec::new();
+    let mut pkg_cache = HashMap::new();
+    for entry in entries {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("R") {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let src = fs::read_to_string(&path).expect("read oracle fixture");
+        let claims = match claim_codes(&src) {
+            Ok(claims) if claims.is_empty() => continue,
+            Ok(claims) => claims,
+            Err(error) => {
+                failures.push(format!("{name}: {error}"));
+                continue;
+            }
+        };
+        let Some(tag) = tag_of(&src) else {
+            failures.push(format!(
+                "{name}: claim fixture has no oracle outcome marker"
+            ));
+            continue;
+        };
+        if matches!(tag, Tag::KnownGap(_)) {
+            failures.push(format!(
+                "{name}: known-gap cannot demonstrate claims {}",
+                claims.join(", ")
+            ));
+            continue;
+        }
+
+        let missing: Vec<String> = fixture_packages(&src)
+            .into_iter()
+            .filter(|pkg| !r_package_available(pkg, &mut pkg_cache))
+            .collect();
+        if !missing.is_empty() {
+            eprintln!(
+                "oracle: SKIP claim fixture {name} (missing R package(s): {})",
+                missing.join(", ")
+            );
+            continue;
+        }
+
+        let (r_errored, r_message) = r_errors(&path);
+        let demonstrated = match tag {
+            Tag::MustFlag => r_errored,
+            Tag::MustPass | Tag::MustWarn(_) => !r_errored,
+            Tag::KnownGap(_) => unreachable!("handled above"),
+        };
+        if !demonstrated {
+            failures.push(format!(
+                "{name}: R did not demonstrate {} under {} (R said: {r_message})",
+                claims.join(", "),
+                tag_label(&tag)
+            ));
+        }
+    }
+
+    if !failures.is_empty() {
+        panic!(
+            "oracle semantic claims failed:\n  - {}\n",
+            failures.join("\n  - ")
+        );
     }
 }
 

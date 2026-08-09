@@ -74,7 +74,7 @@ impl std::fmt::Display for Severity {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
     pub severity: Severity,
     pub span: Span,
@@ -468,6 +468,8 @@ pub struct SeverityFilter {
     expanded_errors: Vec<&'static str>,
     expanded_warns: Vec<&'static str>,
     expanded_ignores: Vec<&'static str>,
+    selected: Option<Vec<&'static str>>,
+    extended_selection: Vec<&'static str>,
 }
 
 impl SeverityFilter {
@@ -497,6 +499,22 @@ impl SeverityFilter {
         self.ignores.push(token.to_string());
         self.expanded_ignores.extend(Self::expand(token));
     }
+    /// Replace the default-enabled set with an explicit selection.
+    /// Calling this with no subsequent tokens intentionally selects no rules.
+    pub fn begin_selection(&mut self) {
+        self.selected.get_or_insert_with(Vec::new);
+    }
+    pub fn add_select(&mut self, token: &str) {
+        self.begin_selection();
+        self.selected
+            .as_mut()
+            .expect("selection initialized above")
+            .extend(Self::expand(token));
+    }
+    /// Enable a rule in addition to the default or explicit selection.
+    pub fn add_extend_select(&mut self, token: &str) {
+        self.extended_selection.extend(Self::expand(token));
+    }
 
     /// Returns the effective severity for a code, or None to suppress it.
     /// Precedence (highest to lowest): ignore > error > warn > default.
@@ -510,7 +528,11 @@ impl SeverityFilter {
         if self.expanded_warns.contains(&code) {
             return Some(Severity::Warning);
         }
-        rules::enabled_by_default(code).then_some(default)
+        let selected = self.selected.as_ref().map_or_else(
+            || rules::enabled_by_default(code),
+            |selected| selected.contains(&code),
+        ) || self.extended_selection.contains(&code);
+        selected.then_some(default)
     }
 }
 

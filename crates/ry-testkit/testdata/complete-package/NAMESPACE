@@ -1,0 +1,3 @@
+importFrom(fixturedep, imported_helper)
+useDynLib(completepkg, native_entry, .registration = TRUE)
+export(package_value)

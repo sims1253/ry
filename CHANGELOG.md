@@ -13,9 +13,12 @@ All notable changes to ry are documented in this file.
 - **Zed extension** (`editors/zed/`): downloads the `ry` binary from
   GitHub releases on first use, with path construction unit-tested for
   all six cargo-dist targets.
-- **Editor configuration channel**: `ignore`, `error`, `warn`, `exclude`,
-  and `baseline` from `ry.toml` now produce identical filtering in
-  `ry check` and in the editor over the same open file.
+- **CLI/editor diagnostic parity**: `ignore`, `select`, `extend-select`,
+  `error`, `warn`, `exclude`, `baseline`, `min-confidence`, default-disabled
+  rules, package metadata, and Unicode positions produce the same published
+  codes, severities, messages, and locations in `ry check` and the editor for
+  a single workspace root. This claim is gated by
+  `cargo test -p ry-lsp --test protocol`.
 - **`ry.toml` hot-reload**: editing `ry.toml` updates diagnostics
   without restarting the language server.
 - **Multi-root workspaces**: per-folder `ry.toml` configs are honoured.
@@ -23,6 +26,8 @@ All notable changes to ry are documented in this file.
 
 ### Changed
 
+- Measured the pinned 62-package Posit corpus before rule governance begins.
+  This is the pre-governance Plan 34 baseline, not the final 0.9 rule set.
 - Extracted `Config`, `Baseline`, and diagnostic-filter types into a
   new `ry-config` library crate, shared between `ry-cli` and `ry-lsp`.
 

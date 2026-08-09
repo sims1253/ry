@@ -26,8 +26,8 @@ Usage: ecosystem/run.sh [--check] [--local] [--manifest FILE]
 
 A manifest may carry a `# ledger: <path-relative-to-repo>` directive selecting
 the corpus its hermetic root reports reconcile against, and a `# === full tier`
-marker separating the fast-tier packages from the rest. Multiple ledgers
-(tidyverse-0.7.1, posit-0.8.0) coexist via their own manifests.
+marker separating the fast-tier packages from the rest. Multiple ledgers (including the historical posit-0.8.0 transcript and the
+strict posit-0.9.0 gate) coexist and are selected explicitly by manifests.
 EOF
 }
 
@@ -51,6 +51,33 @@ fi
 if [[ ! -r "$packages_file" ]]; then
   echo "ecosystem: manifest not found or not readable: $packages_file" >&2
   exit 2
+fi
+
+# Reports from different manifests must coexist: several corpora contain the
+# same package at different pinned commits. Only the built-in packages.txt uses
+# historical unqualified names. Other manifests may declare a stable namespace;
+# otherwise their content hash supplies a portable collision-safe identity.
+manifest_path="$(cd "$(dirname "$packages_file")" && pwd -P)/$(basename "$packages_file")"
+default_manifest="$(cd "$ecosystem_dir" && pwd -P)/packages.txt"
+report_prefix=""
+summary_prefix="SUMMARY"
+if [[ "$manifest_path" != "$default_manifest" ]]; then
+  corpus_slug="$(grep -m1 '^# namespace:[[:space:]]' "$packages_file" 2>/dev/null \
+    | sed 's/^# namespace:[[:space:]]*//; s/[[:space:]]*$//' || true)"
+  if [[ -z "$corpus_slug" ]]; then
+    if command -v sha256sum >/dev/null 2>&1; then
+      manifest_hash="$(sha256sum "$packages_file" | awk '{print $1}')"
+    else
+      manifest_hash="$(shasum -a 256 "$packages_file" | awk '{print $1}')"
+    fi
+    corpus_slug="manifest-${manifest_hash:0:12}"
+  fi
+  if ! [[ "$corpus_slug" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    echo "ecosystem: invalid manifest namespace '$corpus_slug'" >&2
+    exit 2
+  fi
+  report_prefix="$corpus_slug."
+  summary_prefix="SUMMARY.$corpus_slug"
 fi
 
 # Resolve the ledger: an explicit --ledger wins; otherwise a manifest may
@@ -228,9 +255,9 @@ while IFS= read -r raw || [[ -n "${raw:-}" ]]; do
     exit 1
   fi
 
-  run_suite "$name" "$package_dir" "$package_dir/R" "$name" "R/"
+  run_suite "$name" "$package_dir" "$package_dir/R" "$report_prefix$name" "R/"
   if ! $local_only; then
-    run_suite "$name" "$package_dir" "$package_dir" "$name.root" "package root"
+    run_suite "$name" "$package_dir" "$package_dir" "$report_prefix$name.root" "package root"
     root_packages+=("$name")
   fi
   processed_packages+=("$name")
@@ -254,13 +281,14 @@ generate_summary() {
     cp "$generated_dir/$report_stem.txt" "$summary_input/$report_stem.txt"
   done
 
-  Rscript - "$packages_file" "$summary_input" "$generated_dir/$output_name" "$suffix" "$scope_description" <<'RS'
+  Rscript - "$packages_file" "$summary_input" "$generated_dir/$output_name" "$suffix" "$scope_description" "$report_prefix" <<'RS'
 args <- commandArgs(trailingOnly = TRUE)
 packages_file <- args[[1]]
 reports_dir <- args[[2]]
 output_path <- args[[3]]
 suffix <- args[[4]]
 scope_description <- args[[5]]
+report_prefix <- args[[6]]
 
 raw <- readLines(packages_file, encoding = "UTF-8", warn = FALSE)
 raw <- raw[nzchar(raw) & !startsWith(raw, "#")]
@@ -268,7 +296,7 @@ package_order <- vapply(strsplit(raw, "\t", fixed = TRUE), `[[`, character(1), 1
 
 counts <- list()
 for (package in package_order) {
-  report <- file.path(reports_dir, paste0(package, suffix, ".txt"))
+  report <- file.path(reports_dir, paste0(report_prefix, package, suffix, ".txt"))
   if (!file.exists(report)) next
   entries <- readLines(report, encoding = "UTF-8", warn = FALSE)
   entries <- entries[nzchar(entries)]
@@ -276,7 +304,8 @@ for (package in package_order) {
   counts[[package]] <- table(codes)
 }
 
-all_codes <- sort(unique(unlist(lapply(counts, names), use.names = FALSE)), method = "radix")
+all_codes <- unique(unlist(lapply(counts, names), use.names = FALSE))
+if (length(all_codes)) all_codes <- sort(all_codes, method = "radix")
 packages <- names(counts)
 lines <- c(
   "# Ecosystem diagnostic summary",
@@ -306,33 +335,31 @@ close(handle)
 RS
 }
 
-generate_summary "" "SUMMARY.md" \
+generate_summary "" "$summary_prefix.md" \
   "Production-source suite: each package's \`R/\` directory only."
 if ! $local_only; then
-  generate_summary ".root" "SUMMARY.root.md" \
+  generate_summary ".root" "$summary_prefix.root.md" \
     "Package-root suite: production, tests, and other checked R sources."
 fi
 
 # Each ledger pins every diagnostic identity in the audited packages' hermetic
 # root reports rather than an aggregate count, so removing one finding cannot
-# be mistaken for removing another. The tidyverse ledger is a strict hermetic
-# baseline (`reconciliation: hermetic`, the default when the field is absent):
-# any missing/unowned identity fails the build. The posit ledger is an audit
-# transcript of an installed-library run (`reconciliation: audit-transcript`):
-# the hermetic-vs-audit delta is reported for visibility but does not gate the
-# build, since RY_NO_INSTALLED_LIBRARIES=1 legitimately differs from the
-# installed-library audit. In both modes findings labelled `true_positive` are
-# checked explicitly so a real bug disappearing is always surfaced.
+# be mistaken for removing another. `reconciliation: hermetic` (the default)
+# makes missing and unowned identities fail; `audit-transcript` exists only for
+# historical installed-library ledgers whose environment cannot be reproduced.
+# In both modes findings labelled `true_positive` are checked explicitly so a
+# real bug disappearing is always surfaced.
 if ! $local_only; then
   [[ -f "$audit_corpus" ]] || {
     echo "ecosystem: audit corpus not found: $audit_corpus" >&2
     exit 1
   }
-  Rscript - "$audit_corpus" "$generated_dir" "${root_packages[@]}" <<'RS'
+  Rscript - "$audit_corpus" "$generated_dir" "$report_prefix" "${root_packages[@]}" <<'RS'
 args <- commandArgs(trailingOnly = TRUE)
 corpus_path <- args[[1]]
 reports_dir <- args[[2]]
-processed <- args[-c(1, 2)]
+report_prefix <- args[[3]]
+processed <- args[-c(1, 2, 3)]
 corpus <- jsonlite::fromJSON(corpus_path, simplifyDataFrame = TRUE)
 audited <- intersect(processed, corpus$packages$name)
 
@@ -350,7 +377,7 @@ expected <- identity(
 
 actual <- character(0)
 for (package in audited) {
-  report <- file.path(reports_dir, paste0(package, ".root.txt"))
+  report <- file.path(reports_dir, paste0(report_prefix, package, ".root.txt"))
   lines <- readLines(report, encoding = "UTF-8", warn = FALSE)
   lines <- lines[nzchar(lines)]
   for (entry in lines) {
@@ -416,9 +443,9 @@ if (length(missing) || length(unowned)) {
 RS
 fi
 
-summary_names=("SUMMARY.md")
+summary_names=("$summary_prefix.md")
 if ! $local_only; then
-  summary_names+=("SUMMARY.root.md")
+  summary_names+=("$summary_prefix.root.md")
 fi
 
 if ! $check; then

@@ -1,0 +1,3 @@
+{
+  "lint": {"extendSelect": ["RY003"]}
+}

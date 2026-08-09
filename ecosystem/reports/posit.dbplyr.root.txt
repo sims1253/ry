@@ -1,0 +1,4 @@
+tests/testthat/test-query-set-op.R:7:37 RY090
+tests/testthat/test-verb-set-ops.R:106:30 RY090
+tests/testthat/test-verb-set-ops.R:114:30 RY090
+tests/testthat/test-verb-summarise.R:258:30 RY092

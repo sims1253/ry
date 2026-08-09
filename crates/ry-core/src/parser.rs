@@ -129,7 +129,7 @@ impl RParser {
             "for_statement" => self.lower_for(n, src),
             "while_statement" => Some(self.lower_while(n, src, false)),
             "repeat_statement" => Some(self.lower_repeat(n, src)),
-            "braced_expression" => self.lower_braced_as_stmt(n, src),
+            "braced_expression" => Some(self.lower_braced_as_stmt(n, src)),
             "function_definition" => self.lower_function_def_as_stmt(n, src),
             _ => {
                 // Fallback: any expression node (string, integer, float,
@@ -273,20 +273,17 @@ impl RParser {
         }
     }
 
-    /// A braced expression used as a statement. Only the last child's value
-    /// is kept as the statement; earlier siblings are dropped. This is a
-    /// v1 limitation that only bites when a braced block appears in a
-    /// nested statement position (e.g. as a function-body branch). At
-    /// *top* level, `RParser::parse` splices all children directly into
-    /// the statement list (see that function), so `{ a <- 1; b <- 2 }`
-    /// at the top of a file preserves both statements.
-    fn lower_braced_as_stmt(&self, n: Node, src: &str) -> Option<Stmt> {
-        let mut cur = n.walk();
-        let mut last: Option<Stmt> = None;
-        for ch in n.named_children(&mut cur) {
-            last = self.lower_stmt(ch, src);
-        }
-        last
+    /// Preserve a brace used in statement position as one block expression.
+    ///
+    /// Keeping only the last lowered child used to delete all earlier statements;
+    /// assigning each lowering result directly to `last` could also turn an
+    /// already-preserved child back into `None`. A block carries every represented
+    /// child, while malformed children remain owned by `SourceFile::parse_errors`.
+    fn lower_braced_as_stmt(&self, n: Node, src: &str) -> Stmt {
+        Stmt::Expr(Expr::Block {
+            body: self.lower_block(n, src),
+            span: self.span(n, src),
+        })
     }
 
     fn lower_block(&self, n: Node, src: &str) -> Vec<Stmt> {

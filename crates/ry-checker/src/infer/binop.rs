@@ -127,8 +127,8 @@ impl Checker {
                 lt.length.binary(rt.length)
             };
             if matches!(op, BinOpKind::AndAnd | BinOpKind::OrOr) {
-                self.emit_scalar_logical_length(op, lt.length, span, false);
-                self.emit_scalar_logical_length(op, rt.length, span, false);
+                self.emit_scalar_logical_length(op, lt.length, span);
+                self.emit_scalar_logical_length(op, rt.length, span);
             }
             return RType::new(Mode::Logical, length);
         }
@@ -337,15 +337,11 @@ impl Checker {
         result
     }
 
-    fn emit_scalar_logical_length(
-        &mut self,
-        op: BinOpKind,
-        length: Length,
-        span: Span,
-        unknown_is_actionable: bool,
-    ) {
-        match length {
-            Length::Known(n) if n > 1 => self.emit(
+    fn emit_scalar_logical_length(&mut self, op: BinOpKind, length: Length, span: Span) {
+        if let Length::Known(n) = length
+            && n > 1
+        {
+            self.emit(
                 Severity::Warning,
                 span,
                 "RY032",
@@ -354,17 +350,7 @@ impl Checker {
                     op_symbol(op),
                     n
                 ),
-            ),
-            Length::Unknown if unknown_is_actionable => self.emit(
-                Severity::Warning,
-                span,
-                "RY032",
-                format!(
-                    "`{}` operand length is not known to be 1; current R errors for vectors",
-                    op_symbol(op)
-                ),
-            ),
-            _ => {}
+            );
         }
     }
 

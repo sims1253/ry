@@ -1,0 +1,15 @@
+R/available-packages.R:685:7 RY032
+R/bootstrap.R:800:7 RY001
+R/bootstrap.R:981:7 RY032
+R/cache.R:538:7 RY001
+R/json-write.R:60:12 RY032
+R/package.R:367:12 RY070
+R/package.R:370:25 RY070
+R/parse.R:3:7 RY001
+R/sandbox.R:244:11 RY031
+R/sandbox.R:255:11 RY031
+R/snapshot.R:1153:7 RY001
+R/snapshot.R:1158:7 RY001
+R/type.R:5:7 RY032
+R/utils.R:24:7 RY032
+R/utils.R:90:9 RY001

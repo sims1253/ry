@@ -3,6 +3,8 @@ name: Ecosystem regression
 on:
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
 
 permissions:
   contents: read
@@ -12,29 +14,29 @@ jobs:
     # Stacked changes may intentionally defer regenerated snapshots to a
     # dedicated follow-up PR. Label only those intermediate PRs; the snapshot
     # PR itself stays unlabelled and must pass this check.
-    if: ${{ github.event_name != 'pull_request' || !contains(github.event.pull_request.labels.*.name, 'ecosystem-deferred') }}
+    if: ${{ github.event_name != 'schedule' && (github.event_name != 'pull_request' || !contains(github.event.pull_request.labels.*.name, 'ecosystem-deferred')) }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
       # run.sh writes reports and validates the reviewed identity ledger with
       # Rscript/jsonlite. Both R/-only and package-root snapshots are hermetic
       # via RY_NO_INSTALLED_LIBRARIES, so no package sources are executed.
-      - uses: r-lib/actions/setup-r@v2
+      - uses: r-lib/actions/setup-r@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
         with:
           use-public-rspm: true
       - name: Install R packages (report writer)
-        uses: r-lib/actions/setup-r-dependencies@v2
+        uses: r-lib/actions/setup-r-dependencies@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
         with:
           packages: any::jsonlite
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ecosystem/.cache
             target
-          key: ecosystem-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'ecosystem/packages.txt') }}
+          key: ecosystem-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'ecosystem/packages.txt', 'ecosystem/posit-packages.txt') }}
           restore-keys: |
             ecosystem-${{ runner.os }}-
       - name: Build release binary
@@ -45,7 +47,46 @@ jobs:
           RY_REPO_ROOT: .
       - name: Drift detection integration test
         run: ecosystem/test-drift-detection.sh
+      - name: Manifest isolation integration test
+        run: ecosystem/test-manifest-isolation.sh
       - name: Reconciliation gating test
         run: Rscript ecosystem/test-reconciliation.R
         env:
           RY_REPO_ROOT: .
+
+  posit:
+    # Pull requests exercise the signal-dense tier. Scheduled and manually
+    # dispatched runs exercise all pinned packages.
+    if: ${{ github.event_name != 'pull_request' || !contains(github.event.pull_request.labels.*.name, 'ecosystem-deferred') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+      - uses: r-lib/actions/setup-r@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
+        with:
+          use-public-rspm: true
+      - name: Install R packages (report writer)
+        uses: r-lib/actions/setup-r-dependencies@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
+        with:
+          packages: any::jsonlite
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ecosystem/.cache
+            target
+          key: ecosystem-posit-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'ecosystem/packages.txt', 'ecosystem/posit-packages.txt') }}
+          restore-keys: |
+            ecosystem-posit-${{ runner.os }}-
+            ecosystem-${{ runner.os }}-
+      - name: Build release binary
+        run: cargo build --release --locked -p ry-cli --bin ry
+      - name: Check Posit corpus
+        run: >-
+          ecosystem/run.sh --check
+          --manifest ecosystem/posit-packages.txt
+          --ledger docs/corpus/posit-0.9.0.json
+          --tier ${{ github.event_name == 'pull_request' && 'fast' || 'full' }}
+      - name: Posit ledger drift detection integration test
+        run: ecosystem/test-posit-drift-detection.sh

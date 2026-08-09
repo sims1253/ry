@@ -492,139 +492,669 @@ fn incremental_matches_cold_after_edits() {
 }
 
 // ---------------------------------------------------------------------------
-// Plan 33: Cold-vs-incremental equivalence property test
-//
-// The single most important invariant: after ANY sequence of add/update/remove
-// operations, incremental diagnostics must match a fresh cold check.
-//
-// Uses a seeded PRNG so failures are reproducible. Each iteration generates
-// a random edit sequence, applies it to an incremental Project, builds a
-// fresh cold Project from the same final state, and compares diagnostics.
+// Plan 35 W3: shrinkable cold-vs-incremental equivalence
 // ---------------------------------------------------------------------------
 
-/// Simple seeded LCG for reproducible randomness in tests.
-struct Rng(u64);
+use proptest::prelude::*;
+use ry_checker::Diagnostic;
+use ry_typeshed::{Typeshed, load_package};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
-impl Rng {
-    fn new(seed: u64) -> Self {
-        Rng(seed)
-    }
-    fn next(&mut self) -> u64 {
-        // Numerical Recipes LCG constants.
-        self.0 = self
-            .0
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        self.0
-    }
-    fn range(&mut self, n: usize) -> usize {
-        (self.next() % n as u64) as usize
-    }
-    fn pick<'a, T>(&mut self, items: &'a [T]) -> &'a T {
-        &items[self.range(items.len())]
+#[derive(Clone, Debug)]
+enum SourceModel {
+    UnrelatedInteger,
+    UnrelatedValue,
+    IntegerReturn,
+    CharacterReturn,
+    RequiredParameter,
+    DefaultedParameter,
+    RenamedParameter,
+    QuotingParameter,
+    DefusedParameter,
+    DirectCaller,
+    ForwardingCaller,
+    TransitiveCaller,
+    S3Definition,
+    S3Dispatch,
+    S4Definition,
+    S4Dispatch,
+    MetadataBindings,
+    LoadedPackage,
+    Unicode,
+    Empty,
+}
+
+impl SourceModel {
+    fn source(&self) -> &'static str {
+        match self {
+            Self::UnrelatedInteger => "unrelated <- function() 1L\n",
+            Self::UnrelatedValue => "unrelated <- 1L\n",
+            Self::IntegerReturn => "target <- function(value) 1L\n",
+            Self::CharacterReturn => "target <- function(value) \"text\"\n",
+            Self::RequiredParameter => "target <- function(value) value\n",
+            Self::DefaultedParameter => "target <- function(value = 1L) value\n",
+            Self::RenamedParameter => "target <- function(renamed = 1L) renamed\n",
+            Self::QuotingParameter => "target <- function(value) substitute(value)\n",
+            Self::DefusedParameter => "target <- function(value) rlang::enquo(value)\n",
+            Self::DirectCaller => "result <- target(not_bound) + 1L\n",
+            Self::ForwardingCaller => "forward <- function(value) target(value)\n",
+            Self::TransitiveCaller => "forward(not_bound)\n",
+            Self::S3Definition => "value.foo <- function(x, ...) \"s3\"\n",
+            Self::S3Dispatch => {
+                "object <- structure(list(), class = \"foo\")\nresult <- value(object) + 1L\n"
+            }
+            Self::S4Definition => {
+                "setClass(\"Widget\", slots = c(value = \"numeric\"))\nsetMethod(\"labels\", signature(\"Widget\"), function(object) c(label = \"ok\"))\n"
+            }
+            Self::S4Dispatch => "object <- new(\"Widget\")\nlabels(object)[[\"missing\"]]\n",
+            Self::MetadataBindings => {
+                "load(\"objects.rda\")\nloaded_name\nexternal_name\nimported_helper()\n"
+            }
+            Self::LoadedPackage => "mutate(data.frame(x = 1L), y = unknown_column)\n",
+            Self::Unicode => "unicode <- function(名 = \"😀\") 名\nunicode(不存在)\n",
+            Self::Empty => "\n",
+        }
     }
 }
 
-/// Pool of R source snippets. Each defines zero or more functions and/or
-/// top-level bindings, with cross-file call patterns.
-const SOURCES: &[&str] = &[
-    "f1 <- function(x) x + 1\ny <- f1(2L)\n",
-    "f2 <- function(x) f1(x) * 2\n",
-    "f3 <- function() \"hello\"\nz <- f3() + 1L\n",
-    "g1 <- function(x) x * x\nw <- g1(f1(3L))\n",
-    "v <- 42L\n",
-    "f4 <- function(a, b) a + b\n",
-    "f5 <- function(x) f4(x, 1L) + f2(x)\n",
-    "\n", // empty file
-    "h <- function(x) x\nresult <- h(f3()) + 1L\n",
-    "f1 <- function(x) \"str\"\n", // redefines f1 with different return type
-    "f6 <- function() 1L\nq <- f6() + \"x\"\n",
-    "new_var <- 99L\nother <- new_var\n",
-];
+#[derive(Clone, Debug)]
+enum Operation {
+    Add {
+        file: u8,
+        source: SourceModel,
+    },
+    Update {
+        file: u8,
+        source: SourceModel,
+    },
+    Remove {
+        file: u8,
+    },
+    RemoveThenReadd {
+        file: u8,
+        source: SourceModel,
+    },
+    RepeatedUpdate {
+        file: u8,
+        first: SourceModel,
+        second: SourceModel,
+    },
+    BatchRemoveAndUpdate {
+        remove: u8,
+        update: u8,
+        source: SourceModel,
+    },
+    BatchUpdateTwo {
+        first: u8,
+        first_source: SourceModel,
+        second: u8,
+        second_source: SourceModel,
+    },
+    SetLoaded(bool),
+    SetUserStubs(bool),
+    SetExternalBinding {
+        file: u8,
+        enabled: bool,
+    },
+    SetImportedBinding {
+        file: u8,
+        enabled: bool,
+    },
+    SetLoadBinding {
+        file: u8,
+        enabled: bool,
+    },
+}
 
-const FILE_NAMES: &[&str] = &["a.R", "b.R", "c.R", "d.R", "e.R", "f.R"];
+fn source_strategy() -> impl Strategy<Value = SourceModel> {
+    prop_oneof![
+        Just(SourceModel::UnrelatedInteger),
+        Just(SourceModel::UnrelatedValue),
+        Just(SourceModel::IntegerReturn),
+        Just(SourceModel::CharacterReturn),
+        Just(SourceModel::RequiredParameter),
+        Just(SourceModel::DefaultedParameter),
+        Just(SourceModel::RenamedParameter),
+        Just(SourceModel::QuotingParameter),
+        Just(SourceModel::DefusedParameter),
+        Just(SourceModel::DirectCaller),
+        Just(SourceModel::ForwardingCaller),
+        Just(SourceModel::TransitiveCaller),
+        Just(SourceModel::S3Definition),
+        Just(SourceModel::S3Dispatch),
+        Just(SourceModel::S4Definition),
+        Just(SourceModel::S4Dispatch),
+        Just(SourceModel::MetadataBindings),
+        Just(SourceModel::LoadedPackage),
+        Just(SourceModel::Unicode),
+        Just(SourceModel::Empty),
+    ]
+}
 
-#[test]
-fn incremental_matches_cold_property() {
-    let mut parser = RParser::new().unwrap();
-
-    for seed in 0..200 {
-        let mut rng = Rng::new(seed * 7919 + 1);
-        let mut inc_project = Project::new();
-        let mut current_files: Vec<(String, String)> = Vec::new();
-
-        // Apply 1-8 random operations before each comparison.
-        let num_ops = 1 + rng.range(8);
-        for _ in 0..num_ops {
-            let op = rng.range(3);
-            match op {
-                0 => {
-                    // Add or update a file.
-                    let path = rng.pick(FILE_NAMES).to_string();
-                    let src = rng.pick(SOURCES).to_string();
-                    let file = parser.parse(&path, &src).unwrap();
-                    inc_project.update_file(path.clone(), Arc::new(file));
-                    // Track current state for cold comparison.
-                    if let Some(slot) = current_files.iter().position(|(p, _)| p == &path) {
-                        current_files[slot].1 = src;
-                    } else {
-                        current_files.push((path, src));
-                    }
-                }
-                1 => {
-                    // Remove a file (if any exist).
-                    if !current_files.is_empty() {
-                        let idx = rng.range(current_files.len());
-                        let (path, _) = current_files.remove(idx);
-                        inc_project.remove_file(&path);
-                    }
-                }
-                _ => {
-                    // Update an existing file with different content.
-                    if !current_files.is_empty() {
-                        let idx = rng.range(current_files.len());
-                        let path = current_files[idx].0.clone();
-                        let src = rng.pick(SOURCES).to_string();
-                        let file = parser.parse(&path, &src).unwrap();
-                        inc_project.update_file(path.clone(), Arc::new(file));
-                        current_files[idx].1 = src;
-                    }
-                }
+fn operation_strategy() -> impl Strategy<Value = Operation> {
+    let file = 0u8..6;
+    prop_oneof![
+        5 => (file.clone(), source_strategy())
+            .prop_map(|(file, source)| Operation::Add { file, source }),
+        7 => (file.clone(), source_strategy())
+            .prop_map(|(file, source)| Operation::Update { file, source }),
+        2 => file.clone().prop_map(|file| Operation::Remove { file }),
+        2 => (file.clone(), source_strategy())
+            .prop_map(|(file, source)| Operation::RemoveThenReadd { file, source }),
+        2 => (file.clone(), source_strategy(), source_strategy()).prop_map(
+            |(file, first, second)| Operation::RepeatedUpdate { file, first, second }
+        ),
+        1 => (file.clone(), file.clone(), source_strategy()).prop_map(
+            |(remove, update, source)| Operation::BatchRemoveAndUpdate {
+                remove,
+                update,
+                source,
             }
-        }
+        ),
+        1 => (file.clone(), source_strategy(), file.clone(), source_strategy()).prop_map(
+            |(first, first_source, second, second_source)| Operation::BatchUpdateTwo {
+                first,
+                first_source,
+                second,
+                second_source,
+            }
+        ),
+        1 => any::<bool>().prop_map(Operation::SetLoaded),
+        1 => any::<bool>().prop_map(Operation::SetUserStubs),
+        1 => (file.clone(), any::<bool>()).prop_map(|(file, enabled)| {
+            Operation::SetExternalBinding { file, enabled }
+        }),
+        1 => (file.clone(), any::<bool>()).prop_map(|(file, enabled)| {
+            Operation::SetImportedBinding { file, enabled }
+        }),
+        1 => (file, any::<bool>()).prop_map(|(file, enabled)| {
+            Operation::SetLoadBinding { file, enabled }
+        }),
+    ]
+}
 
-        if current_files.is_empty() {
-            continue;
-        }
+fn operation_sequence_strategy() -> impl Strategy<Value = Vec<Operation>> {
+    // Keep issue #52 in the generated alphabet as a first-class shrink target,
+    // not only as an example test. The final edit changes only caller-visible
+    // evaluation metadata while leaving the return type effectively opaque.
+    let caller_invalidation = Just(vec![
+        Operation::Add {
+            file: 0,
+            source: SourceModel::QuotingParameter,
+        },
+        Operation::Add {
+            file: 1,
+            source: SourceModel::ForwardingCaller,
+        },
+        Operation::Add {
+            file: 2,
+            source: SourceModel::TransitiveCaller,
+        },
+        Operation::Update {
+            file: 0,
+            source: SourceModel::RequiredParameter,
+        },
+    ]);
 
-        // Run incremental check.
-        let inc_result = inc_project.check_incremental();
+    // This batch shifts return-slot indices while changing `target` to the
+    // type formerly stored in the vacated slot. Index-keyed invalidation sees
+    // a false equality; name-keyed snapshots correctly re-emit the caller.
+    let shifted_return_slot = Just(vec![
+        Operation::Add {
+            file: 0,
+            source: SourceModel::UnrelatedInteger,
+        },
+        Operation::Add {
+            file: 1,
+            source: SourceModel::CharacterReturn,
+        },
+        Operation::Add {
+            file: 2,
+            source: SourceModel::DirectCaller,
+        },
+        Operation::BatchUpdateTwo {
+            first: 0,
+            first_source: SourceModel::UnrelatedValue,
+            second: 1,
+            second_source: SourceModel::IntegerReturn,
+        },
+    ]);
 
-        // Build a fresh cold project from the same final state.
-        let mut cold_project = Project::new();
-        for (path, src) in &current_files {
-            cold_project.add_file(path.clone(), parser.parse(path, src).unwrap());
-        }
-        let cold_result = cold_project.check();
+    prop_oneof![
+        1 => caller_invalidation,
+        1 => shifted_return_slot,
+        5 => prop::collection::vec(operation_strategy(), 1..16),
+    ]
+}
 
-        // Compare: every file's diagnostic codes must match.
-        assert_eq!(
-            inc_result.len(),
-            cold_result.len(),
-            "[seed {seed}] file count mismatch: inc={} cold={}",
-            inc_result.len(),
-            cold_result.len()
+#[derive(Default)]
+struct ProjectState {
+    files: Vec<(u8, SourceModel)>,
+    loaded: HashSet<String>,
+    user_stubs: bool,
+    external_bindings: HashMap<String, HashSet<String>>,
+    imported_from: HashMap<String, HashMap<String, String>>,
+    load_bindings: HashMap<String, HashMap<usize, HashSet<String>>>,
+}
+
+fn path(file: u8) -> String {
+    format!("generated-{file}.R")
+}
+
+fn update_state_file(state: &mut ProjectState, file: u8, source: SourceModel) {
+    if let Some((_, existing)) = state.files.iter_mut().find(|(id, _)| *id == file) {
+        *existing = source;
+    } else {
+        state.files.push((file, source));
+    }
+}
+
+fn generated_user_stubs(enabled: bool) -> Arc<BTreeMap<String, Typeshed>> {
+    let mut stubs = BTreeMap::new();
+    if enabled {
+        stubs.insert(
+            "dplyr".to_string(),
+            load_package("dplyr")
+                .expect("embedded dplyr typeshed")
+                .clone(),
         );
-        for ((inc_path, inc_diags), (cold_path, cold_diags)) in
-            inc_result.iter().zip(cold_result.iter())
-        {
-            let inc_codes: Vec<_> = inc_diags.iter().map(|d| d.code).collect();
-            let cold_codes: Vec<_> = cold_diags.iter().map(|d| d.code).collect();
-            assert_eq!(inc_path, cold_path, "[seed {seed}] path order mismatch");
-            assert_eq!(
-                inc_codes, cold_codes,
-                "[seed {seed}] diagnostics mismatch for {inc_path}:\n  incremental: {inc_codes:?}\n  cold:        {cold_codes:?}"
+    }
+    Arc::new(stubs)
+}
+
+fn apply_operation(project: &mut Project, state: &mut ProjectState, operation: Operation) {
+    match operation {
+        Operation::Add { file, source } | Operation::Update { file, source } => {
+            let file_path = path(file);
+            project.update_file(
+                file_path.clone(),
+                Arc::new(parse(&file_path, source.source())),
+            );
+            update_state_file(state, file, source);
+        }
+        Operation::Remove { file } => {
+            project.remove_file(&path(file));
+            state.files.retain(|(id, _)| *id != file);
+        }
+        Operation::RemoveThenReadd { file, source } => {
+            let file_path = path(file);
+            project.remove_file(&file_path);
+            state.files.retain(|(id, _)| *id != file);
+            project.update_file(
+                file_path.clone(),
+                Arc::new(parse(&file_path, source.source())),
+            );
+            state.files.push((file, source));
+        }
+        Operation::RepeatedUpdate {
+            file,
+            first,
+            second,
+        } => {
+            let file_path = path(file);
+            project.update_file(
+                file_path.clone(),
+                Arc::new(parse(&file_path, first.source())),
+            );
+            update_state_file(state, file, first);
+            project.update_file(
+                file_path.clone(),
+                Arc::new(parse(&file_path, second.source())),
+            );
+            update_state_file(state, file, second);
+        }
+        Operation::BatchRemoveAndUpdate {
+            remove,
+            update,
+            source,
+        } => {
+            let removed_path = path(remove);
+            project.remove_file(&removed_path);
+            state.files.retain(|(id, _)| *id != remove);
+
+            let updated_path = path(update);
+            project.update_file(
+                updated_path.clone(),
+                Arc::new(parse(&updated_path, source.source())),
+            );
+            update_state_file(state, update, source);
+        }
+        Operation::BatchUpdateTwo {
+            first,
+            first_source,
+            second,
+            second_source,
+        } => {
+            let first_path = path(first);
+            project.update_file(
+                first_path.clone(),
+                Arc::new(parse(&first_path, first_source.source())),
+            );
+            update_state_file(state, first, first_source);
+
+            let second_path = path(second);
+            project.update_file(
+                second_path.clone(),
+                Arc::new(parse(&second_path, second_source.source())),
+            );
+            update_state_file(state, second, second_source);
+        }
+        Operation::SetLoaded(enabled) => {
+            state.loaded = if enabled {
+                HashSet::from(["dplyr".to_string()])
+            } else {
+                HashSet::new()
+            };
+            project.set_loaded(state.loaded.clone());
+        }
+        Operation::SetUserStubs(enabled) => {
+            state.user_stubs = enabled;
+            project.set_user_stubs(generated_user_stubs(enabled));
+        }
+        Operation::SetExternalBinding { file, enabled } => {
+            let file_path = path(file);
+            if enabled {
+                state
+                    .external_bindings
+                    .insert(file_path, HashSet::from(["external_name".to_string()]));
+            } else {
+                state.external_bindings.remove(&file_path);
+            }
+            project.set_external_bindings(state.external_bindings.clone());
+        }
+        Operation::SetImportedBinding { file, enabled } => {
+            let file_path = path(file);
+            if enabled {
+                state.imported_from.insert(
+                    file_path,
+                    HashMap::from([("imported_helper".to_string(), "fixture".to_string())]),
+                );
+            } else {
+                state.imported_from.remove(&file_path);
+            }
+            project.set_imported_from(state.imported_from.clone());
+        }
+        Operation::SetLoadBinding { file, enabled } => {
+            let file_path = path(file);
+            if enabled {
+                state.load_bindings.insert(
+                    file_path,
+                    HashMap::from([(0, HashSet::from(["loaded_name".to_string()]))]),
+                );
+            } else {
+                state.load_bindings.remove(&file_path);
+            }
+            project.set_load_bindings(state.load_bindings.clone());
+        }
+    }
+}
+
+fn cold_check(state: &ProjectState) -> Vec<(String, Vec<Diagnostic>)> {
+    let mut project = Project::new();
+    for (file, source) in &state.files {
+        let file_path = path(*file);
+        project.add_file(file_path.clone(), parse(&file_path, source.source()));
+    }
+    project.set_loaded(state.loaded.clone());
+    project.set_user_stubs(generated_user_stubs(state.user_stubs));
+    project.set_external_bindings(state.external_bindings.clone());
+    project.set_imported_from(state.imported_from.clone());
+    project.set_load_bindings(state.load_bindings.clone());
+    project.check()
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig {
+        cases: 64,
+        max_shrink_iters: 10_000,
+        .. ProptestConfig::default()
+    })]
+
+    /// Every generated operation is a checkpoint. Direct equality compares
+    /// the complete Diagnostic value: path, code, severity, confidence, span,
+    /// message, and any future structured fix field added to Diagnostic.
+    #[test]
+    fn incremental_matches_cold_property(
+        operations in operation_sequence_strategy(),
+    ) {
+        let mut incremental_project = Project::new();
+        let mut state = ProjectState::default();
+
+        for (step, operation) in operations.into_iter().enumerate() {
+            let operation_debug = format!("{operation:?}");
+            apply_operation(&mut incremental_project, &mut state, operation);
+            let incremental = incremental_project.check_incremental();
+            let cold = cold_check(&state);
+            prop_assert_eq!(
+                &incremental,
+                &cold,
+                "cold/incremental mismatch after step {}: {}",
+                step,
+                operation_debug,
             );
         }
     }
+}
+
+/// Issue #52: changing a callee from quoting to evaluating a parameter must
+/// invalidate callers even when the callee's return type stays unchanged.
+#[test]
+fn parameter_signature_change_reemits_transitive_callers() {
+    let mut project = Project::new();
+    project.add_file(
+        "callee.R".to_string(),
+        parse("callee.R", "capture <- function(value) substitute(value)\n"),
+    );
+    project.add_file(
+        "wrapper.R".to_string(),
+        parse("wrapper.R", "forward <- function(value) capture(value)\n"),
+    );
+    project.add_file(
+        "caller.R".to_string(),
+        parse("caller.R", "forward(not_bound)\n"),
+    );
+
+    let before = project.check_incremental();
+    assert!(
+        before
+            .iter()
+            .flat_map(|(_, diagnostics)| diagnostics)
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "the initially quoted argument should not be evaluated: {before:?}",
+    );
+
+    project.update_file(
+        "callee.R".to_string(),
+        Arc::new(parse("callee.R", "capture <- function(value) value\n")),
+    );
+    let incremental = project.check_incremental();
+
+    let mut cold = Project::new();
+    cold.add_file(
+        "callee.R".to_string(),
+        parse("callee.R", "capture <- function(value) value\n"),
+    );
+    cold.add_file(
+        "wrapper.R".to_string(),
+        parse("wrapper.R", "forward <- function(value) capture(value)\n"),
+    );
+    cold.add_file(
+        "caller.R".to_string(),
+        parse("caller.R", "forward(not_bound)\n"),
+    );
+    let cold = cold.check();
+
+    assert_eq!(incremental, cold);
+}
+
+/// Macroscope 3741748510: changing an S3 method from quoting to eager must
+/// clear the generic's propagated quoting metadata during an incremental check.
+#[test]
+fn s3_method_quoting_change_matches_cold() {
+    let mut project = Project::new();
+    project.add_file(
+        "generic.R".to_string(),
+        parse(
+            "generic.R",
+            "tabyl <- function(data, ...) UseMethod(\"tabyl\")\n",
+        ),
+    );
+    project.add_file(
+        "method.R".to_string(),
+        parse(
+            "method.R",
+            "tabyl.data.frame <- function(data, ...) rlang::ensyms(...)\n",
+        ),
+    );
+    project.add_file(
+        "caller.R".to_string(),
+        parse("caller.R", "data <- data.frame()\ntabyl(data, not_bound)\n"),
+    );
+    let before = project.check_incremental();
+    assert!(
+        before
+            .iter()
+            .flat_map(|(_, diagnostics)| diagnostics)
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "the initially quoted argument should not be evaluated: {before:?}",
+    );
+
+    project.update_file(
+        "method.R".to_string(),
+        Arc::new(parse(
+            "method.R",
+            "tabyl.data.frame <- function(data, ...) print(...)\n",
+        )),
+    );
+    let incremental = project.check_incremental();
+
+    let mut cold = Project::new();
+    cold.add_file(
+        "generic.R".to_string(),
+        parse(
+            "generic.R",
+            "tabyl <- function(data, ...) UseMethod(\"tabyl\")\n",
+        ),
+    );
+    cold.add_file(
+        "method.R".to_string(),
+        parse(
+            "method.R",
+            "tabyl.data.frame <- function(data, ...) print(...)\n",
+        ),
+    );
+    cold.add_file(
+        "caller.R".to_string(),
+        parse("caller.R", "data <- data.frame()\ntabyl(data, not_bound)\n"),
+    );
+    let cold = cold.check();
+
+    assert_eq!(incremental, cold);
+}
+
+/// Macroscope review follow-up: S3 method keys may retain source backticks.
+/// Their semantic name must still connect to the UseMethod generic.
+#[test]
+fn quoted_s3_method_quoting_change_matches_cold() {
+    let mut project = Project::new();
+    project.add_file(
+        "generic.R".to_string(),
+        parse(
+            "generic.R",
+            "tabyl <- function(data, ...) UseMethod(\"tabyl\")\n",
+        ),
+    );
+    project.add_file(
+        "method.R".to_string(),
+        parse(
+            "method.R",
+            "`tabyl.data.frame` <- function(data, ...) rlang::ensyms(...)\n",
+        ),
+    );
+    project.add_file(
+        "caller.R".to_string(),
+        parse("caller.R", "data <- data.frame()\ntabyl(data, not_bound)\n"),
+    );
+    let before = project.check_incremental();
+    assert!(
+        before
+            .iter()
+            .flat_map(|(_, diagnostics)| diagnostics)
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "the initially quoted argument should not be evaluated: {before:?}",
+    );
+
+    project.update_file(
+        "method.R".to_string(),
+        Arc::new(parse(
+            "method.R",
+            "`tabyl.data.frame` <- function(data, ...) print(...)\n",
+        )),
+    );
+    let incremental = project.check_incremental();
+
+    let mut cold = Project::new();
+    cold.add_file(
+        "generic.R".to_string(),
+        parse(
+            "generic.R",
+            "tabyl <- function(data, ...) UseMethod(\"tabyl\")\n",
+        ),
+    );
+    cold.add_file(
+        "method.R".to_string(),
+        parse(
+            "method.R",
+            "`tabyl.data.frame` <- function(data, ...) print(...)\n",
+        ),
+    );
+    cold.add_file(
+        "caller.R".to_string(),
+        parse("caller.R", "data <- data.frame()\ntabyl(data, not_bound)\n"),
+    );
+    let cold = cold.check();
+
+    assert_eq!(incremental, cold);
+}
+
+/// Macroscope 3741748512: removing a function must re-emit files that called
+/// it even though the removed name is absent from the new function table.
+#[test]
+fn removed_function_matches_cold() {
+    let mut project = Project::new();
+    project.add_file(
+        "definition.R".to_string(),
+        parse("definition.R", "target <- function() 1L\n"),
+    );
+    project.add_file(
+        "caller.R".to_string(),
+        parse("caller.R", "target() + \"text\"\n"),
+    );
+    let before = project.check_incremental();
+    assert!(
+        before
+            .iter()
+            .flat_map(|(_, diagnostics)| diagnostics)
+            .any(|diagnostic| diagnostic.code == "RY040"),
+        "the function return type should produce the cached diagnostic: {before:?}",
+    );
+
+    project.update_file(
+        "definition.R".to_string(),
+        Arc::new(parse("definition.R", "target <- 1L\n")),
+    );
+    let incremental = project.check_incremental();
+
+    let mut cold = Project::new();
+    cold.add_file(
+        "definition.R".to_string(),
+        parse("definition.R", "target <- 1L\n"),
+    );
+    cold.add_file(
+        "caller.R".to_string(),
+        parse("caller.R", "target() + \"text\"\n"),
+    );
+    let cold = cold.check();
+
+    assert_eq!(incremental, cold);
 }

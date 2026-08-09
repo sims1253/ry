@@ -1,0 +1,8 @@
+R/course.R:532:5 RY010
+R/git-default-branch.R:675:13 RY010
+R/lifecycle.R:37:28 RY010
+R/use_standalone.R:171:22 RY032
+R/use_standalone.R:79:50 RY010
+R/utils-github.R:131:20 RY092
+R/utils.R:64:3 RY032
+R/vscode.R:7:44 RY010

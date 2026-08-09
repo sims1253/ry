@@ -1,4 +1,5 @@
 # oracle: must-warn RY042
+# oracle-claim: RY042
 warned <- FALSE
 result <- withCallingHandlers(
   factor(c("a", "b")) + 1,

@@ -106,6 +106,8 @@ pub(super) struct State {
     /// (folder_root, file_config), ordered by root path length descending
     /// so that longest-prefix matching finds the most specific folder first.
     workspace_folders: Vec<(PathBuf, ry_config::Config)>,
+    /// Filesystem-derived resolution state, ordered by longest root prefix.
+    workspace_contexts: Vec<(PathBuf, ry_workspace::WorkspaceContext)>,
     /// On-disk `.R`/`.r` files discovered by the background indexer
     /// (Plan 33 W4). Keyed by absolute path. Open documents shadow
     /// these — when a path exists in both `docs` and `disk_files`,
@@ -122,10 +124,20 @@ pub(super) struct ProjectCache {
 }
 
 impl ProjectCache {
+    #[cfg(test)]
     pub(super) fn check(
         &mut self,
         files: Vec<(String, i32, Arc<SourceFile>)>,
         user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
+    ) -> Vec<(String, Vec<ry_checker::Diagnostic>)> {
+        self.check_with_workspace(files, user_stubs, None)
+    }
+
+    pub(super) fn check_with_workspace(
+        &mut self,
+        files: Vec<(String, i32, Arc<SourceFile>)>,
+        user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
+        workspace: Option<&ry_workspace::WorkspaceContext>,
     ) -> Vec<(String, Vec<ry_checker::Diagnostic>)> {
         let current_paths: std::collections::HashSet<&str> =
             files.iter().map(|(path, _, _)| path.as_str()).collect();
@@ -141,6 +153,19 @@ impl ProjectCache {
         }
 
         self.project.set_user_stubs(user_stubs);
+        let empty_workspace = ry_workspace::WorkspaceContext::default();
+        let workspace = workspace.unwrap_or(&empty_workspace);
+        self.project.set_loaded(workspace.attached_packages.clone());
+        self.project
+            .set_bare_loaded(workspace.bare_bindings.clone());
+        self.project
+            .set_external_bindings(workspace.external_bindings.clone());
+        self.project
+            .set_imported_from(workspace.imported_bindings.clone());
+        self.project
+            .set_external_s3_methods(workspace.s3_methods.clone());
+        self.project
+            .set_load_bindings(workspace.load_bindings.clone());
         for (path, version, file) in files {
             if self.versions.get(&path).copied() != Some(version) {
                 self.project.update_file(path.clone(), Arc::clone(&file));
@@ -251,7 +276,22 @@ impl State {
             .ignore
             .clone()
             .unwrap_or_else(|| file_config.ignore.clone());
-        ry_config::build_filter(&error, &warn, &ignore)
+        let mut filter = ry_config::build_filter(&error, &warn, &ignore);
+        let select = lint.select.as_ref().or(file_config.select.as_ref());
+        let extend_select = lint
+            .extend_select
+            .as_ref()
+            .unwrap_or(&file_config.extend_select);
+        if let Some(select) = select {
+            filter.begin_selection();
+            for rule in select {
+                filter.add_select(rule);
+            }
+        }
+        for rule in extend_select {
+            filter.add_extend_select(rule);
+        }
+        filter
     }
 
     /// Test helper: compute the effective `SeverityFilter` from editor
@@ -272,6 +312,31 @@ impl State {
             }
         }
         None
+    }
+
+    fn workspace_context_for_path(
+        &self,
+        doc_path: &str,
+    ) -> Option<&ry_workspace::WorkspaceContext> {
+        let path = std::path::Path::new(doc_path);
+        self.workspace_contexts
+            .iter()
+            .find_map(|(root, context)| path.starts_with(root).then_some(context))
+    }
+
+    fn eligibility_for_path(&self, doc_path: &str) -> bool {
+        let path = std::path::Path::new(doc_path);
+        if let Some((root, config)) = self
+            .workspace_folders
+            .iter()
+            .find(|(root, _)| path.starts_with(root))
+        {
+            return ry_workspace::is_file_eligible(path, root, config);
+        }
+        match &self.root {
+            Some(root) => ry_workspace::is_file_eligible(path, root, &self.file_config),
+            None => true,
+        }
     }
 
     /// Load and return the effective baseline, if any. Editor setting
@@ -546,8 +611,8 @@ impl LanguageServer for Backend {
             }
         }
 
-        // S3: Register a file watcher for `**/ry.toml` so editing the
-        // config file reloads diagnostics without a server restart.
+        // Register workspace-resolution watchers so configuration, package
+        // metadata, serialized data, and local stubs refresh without restart.
         // Gated on the client's dynamic-registration capability.
         let supports_watchers = {
             // Read from the stored capabilities (set in initialize).
@@ -557,10 +622,15 @@ impl LanguageServer for Backend {
         };
         if supports_watchers {
             let watcher_registration = Registration {
-                id: "ry-toml-watcher".to_string(),
+                id: "ry-workspace-watcher".to_string(),
                 method: "workspace/didChangeWatchedFiles".into(),
                 register_options: Some(serde_json::json!({
-                    "watchers": [{"globPattern": "**/ry.toml"}]
+                    "watchers": [
+                        {"globPattern": "**/ry.toml"},
+                        {"globPattern": "**/DESCRIPTION"},
+                        {"globPattern": "**/NAMESPACE"},
+                        {"globPattern": "**/*.{rda,RData,rdata,json}"}
+                    ]
                 })),
             };
             if let Err(e) = self
@@ -568,7 +638,7 @@ impl LanguageServer for Backend {
                 .register_capability(vec![watcher_registration])
                 .await
             {
-                tracing::warn!("failed to register ry.toml watcher: {e}");
+                tracing::warn!("failed to register workspace watcher: {e}");
             }
         }
 
@@ -646,6 +716,8 @@ impl LanguageServer for Backend {
             }
         }
 
+        self.spawn_background_index().await;
+
         // Republish diagnostics for every open document so the new
         // settings take effect immediately.
         let open_uris: Vec<Url> = {
@@ -688,6 +760,8 @@ impl LanguageServer for Backend {
                 .sort_by_key(|(path, _)| std::cmp::Reverse(path.as_os_str().len()));
         }
 
+        self.spawn_background_index().await;
+
         // Republish diagnostics for all open documents.
         let open_uris: Vec<Url> = {
             let state = self.state.lock().await;
@@ -699,43 +773,78 @@ impl LanguageServer for Backend {
     }
 
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
-        // S3: Reload config when `ry.toml` changes on disk. Only
-        // `ry.toml` is watched (registered in `initialized`), but the
-        // client may forward other file changes too.
+        // Refresh configuration and filesystem-backed resolution when any
+        // registered package metadata, data, stub, or config file changes.
         let config_changed = params
             .changes
             .iter()
             .any(|change| change.uri.path().ends_with("ry.toml"));
-        if !config_changed {
+        let resolution_changed = params.changes.iter().any(|change| {
+            let path = change.uri.path();
+            path.ends_with("DESCRIPTION")
+                || path.ends_with("NAMESPACE")
+                || path.ends_with("ry.toml")
+                || path.ends_with(".rda")
+                || path.ends_with(".RData")
+                || path.ends_with(".rdata")
+                || path.ends_with(".json")
+        });
+        if !resolution_changed {
             return;
         }
 
-        // Reload the full ry.toml config, retaining the previous good
-        // config on parse error (per S3 done-when criterion).
+        // Reload each changed root independently. The state vectors are kept
+        // in longest-prefix order, so replacing a config does not alter routing.
         let root = {
             let state = self.state.lock().await;
             state.root.clone()
         };
-        if let Some(root) = root.as_deref() {
-            match ry_config::Config::load_from_dir(root) {
-                Ok(Some(new_config)) => {
-                    tracing::info!("ry.toml changed; reloading config");
-                    let mut state = self.state.lock().await;
-                    state.file_config = new_config;
-                }
-                Ok(None) => {
-                    // ry.toml was deleted; fall back to defaults.
-                    tracing::info!("ry.toml removed; falling back to defaults");
-                    let mut state = self.state.lock().await;
-                    state.file_config = ry_config::Config::default();
-                }
-                Err(e) => {
-                    // Malformed ry.toml: log warning and retain previous
-                    // good config rather than falling back to defaults.
-                    tracing::warn!("failed to reload ry.toml, retaining previous config: {e}");
+        if config_changed {
+            for directory in params.changes.iter().filter_map(|change| {
+                change
+                    .uri
+                    .path()
+                    .ends_with("ry.toml")
+                    .then(|| change.uri.to_file_path().ok())
+                    .flatten()
+                    .and_then(|path| path.parent().map(PathBuf::from))
+            }) {
+                let loaded = ry_config::Config::load_from_dir(&directory);
+                match loaded {
+                    Ok(config) => {
+                        let config = config.unwrap_or_default();
+                        let mut state = self.state.lock().await;
+                        if state.root.as_deref() == Some(directory.as_path()) {
+                            state.file_config = config.clone();
+                        }
+                        if let Some((_, folder_config)) = state
+                            .workspace_folders
+                            .iter_mut()
+                            .find(|(folder_root, _)| folder_root == &directory)
+                        {
+                            *folder_config = config;
+                        }
+                        tracing::info!(root = %directory.display(), "workspace config reloaded");
+                    }
+                    Err(error) => tracing::warn!(
+                        root = %directory.display(),
+                        %error,
+                        "failed to reload workspace config; retaining previous config"
+                    ),
                 }
             }
         }
+
+        // Typeshed and configuration changes alter both package resolution
+        // and the distinct user-stub analysis channel.
+        if let Some(root) = root.clone()
+            && let Ok(stubs) =
+                tokio::task::spawn_blocking(move || load_workspace_stubs(Some(&root))).await
+        {
+            let mut state = self.state.lock().await;
+            state.user_stubs = stubs;
+        }
+        self.spawn_background_index().await;
 
         // Republish diagnostics for every open document so the new
         // config takes effect immediately.
@@ -774,7 +883,9 @@ impl LanguageServer for Backend {
         }
         // Clear diagnostics for the closed document so stale squiggles
         // don't linger after the user closes the file.
-        self.client.publish_diagnostics(uri, Vec::new(), None).await;
+        self.client
+            .publish_diagnostics(uri.clone(), Vec::new(), None)
+            .await;
         // Closing a document can change diagnostics in the REMAINING open
         // documents (a name that was defined in the closed file may now
         // be unresolved, or a locally suppressed diagnostic may surface),
@@ -1574,7 +1685,12 @@ impl Backend {
             let state = self.state.lock().await;
             (
                 uri_to_path(&uri),
-                state.docs.keys().cloned().collect::<Vec<_>>(),
+                state
+                    .docs
+                    .keys()
+                    .filter(|path| state.eligibility_for_path(path))
+                    .cloned()
+                    .collect::<Vec<_>>(),
                 state.versions.clone(),
                 Arc::clone(&state.user_stubs),
                 Arc::clone(&state.project),
@@ -1582,6 +1698,15 @@ impl Backend {
                 state.root.clone(),
             )
         };
+        let requested_is_eligible = {
+            let state = self.state.lock().await;
+            state.eligibility_for_path(&path)
+        };
+        if !requested_is_eligible {
+            self.client
+                .publish_diagnostics(uri.clone(), Vec::new(), None)
+                .await;
+        }
 
         // Update the persistent multi-file Project from every open document
         // so cross-file calls resolve. Cached parses avoid re-parsing
@@ -1633,8 +1758,13 @@ impl Backend {
         // Hold the project lock through publication. A newer generation may
         // queue while this loop is awaiting the client, but it cannot
         // interleave publications and will therefore publish last.
+        let workspace_context = {
+            let state = self.state.lock().await;
+            state.workspace_context_for_path(&path).cloned()
+        };
         let mut project = project.lock().await;
-        let per_file = project.check(project_files, user_stubs);
+        let per_file =
+            project.check_with_workspace(project_files, user_stubs, workspace_context.as_ref());
         // An edit that arrived while parsing/checking invalidates this whole
         // project result because every open document is republished below.
         {
@@ -1650,8 +1780,6 @@ impl Backend {
             // configuration to apply, so it enforces the same default here.
             // Without this an opt-in rule shows up in the editor but not in
             // `ry check`, which reads as ry contradicting itself.
-            ry_checker::filter_default_disabled(&mut diagnostics);
-
             // S2/S4: Apply the effective severity filter. For multi-root
             // workspaces, each document uses its owning folder's config.
             let (filter, min_confidence, excludes) =
@@ -1732,42 +1860,57 @@ impl Backend {
     /// diagnostic refresh is triggered so cross-file calls into unopened
     /// files resolve on the next check.
     async fn spawn_background_index(&self) {
-        let roots_with_config = {
+        let (roots_with_config, user_stubs) = {
             let state = self.state.lock().await;
-            if !state.workspace_folders.is_empty() {
+            let roots = if !state.workspace_folders.is_empty() {
                 state.workspace_folders.clone()
             } else if let Some(root) = &state.root {
                 vec![(root.clone(), state.file_config.clone())]
             } else {
                 Vec::new()
-            }
+            };
+            (roots, Arc::clone(&state.user_stubs))
         };
-
         if roots_with_config.is_empty() {
             return;
         }
 
-        let state_arc = Arc::clone(&self.state);
-        tokio::task::spawn_blocking(move || {
+        let indexed = tokio::task::spawn_blocking(move || {
             let mut all_disk_files: HashMap<String, Arc<SourceFile>> = HashMap::new();
+            let mut contexts = Vec::new();
             for (root, config) in &roots_with_config {
-                let excludes = ry_config::Excludes::from_config(config);
-                let indexed = crate::index::index_workspace(root, &excludes);
-                all_disk_files.extend(indexed);
-            }
-            tracing::info!(
-                "W4 background index: discovered {} disk files",
-                all_disk_files.len()
-            );
-            let state_clone = Arc::clone(&state_arc);
-            tokio::spawn(async move {
-                {
-                    let mut state = state_clone.lock().await;
-                    state.disk_files = all_disk_files;
+                let files_for_root = crate::index::index_workspace(root, config);
+                let files: Vec<&SourceFile> = files_for_root.values().map(AsRef::as_ref).collect();
+                match ry_workspace::resolve_workspace_context(
+                    root,
+                    config,
+                    ry_workspace::ResolutionEnvironment {
+                        files,
+                        user_stubs: &user_stubs,
+                    },
+                ) {
+                    Ok(context) => contexts.push((root.clone(), context)),
+                    Err(error) => tracing::warn!(%error, "workspace resolution degraded"),
                 }
-                tracing::info!("W4 background index complete");
-            });
-        });
+                all_disk_files.extend(files_for_root);
+            }
+            contexts.sort_by_key(|(root, _)| std::cmp::Reverse(root.as_os_str().len()));
+            (all_disk_files, contexts)
+        })
+        .await;
+
+        match indexed {
+            Ok((disk_files, contexts)) => {
+                tracing::info!(
+                    files = disk_files.len(),
+                    "background workspace index complete"
+                );
+                let mut state = self.state.lock().await;
+                state.disk_files = disk_files;
+                state.workspace_contexts = contexts;
+            }
+            Err(error) => tracing::warn!(%error, "background workspace index failed"),
+        }
     }
 
     /// Debounce diagnostics for `uri`: bump the workspace generation counter

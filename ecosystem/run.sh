@@ -110,9 +110,18 @@ trap 'rm -rf "$work_dir"' EXIT
 generated_dir="$work_dir/reports"
 mkdir -p "$generated_dir"
 
-binary="${RY_BINARY:-$root/target/release/ry}"
-if [[ ! -x "$binary" ]]; then
+if [[ -n "${RY_BINARY:-}" ]]; then
+  binary="$RY_BINARY"
+  if [[ ! -x "$binary" ]]; then
+    echo "ecosystem: RY_BINARY is not executable: $binary" >&2
+    exit 2
+  fi
+else
+  # Always ask Cargo for the current release binary. Checking only whether the
+  # path exists can silently run an executable built from an older checkout,
+  # then regenerate reviewed reports that disagree with clean CI.
   cargo build --release --locked -p ry-cli --bin ry --manifest-path "$root/Cargo.toml"
+  binary="$root/target/release/ry"
 fi
 
 write_report() {

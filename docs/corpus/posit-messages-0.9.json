@@ -1277,7 +1277,7 @@
       "line": 60,
       "column": 25,
       "severity": "warning",
-      "message": "unknown argument `z` to `intersect`; did you mean `x`?"
+      "message": "unknown argument `z` to `intersect`"
     },
     "dplyr::RY091::R/data-mask.R:112:7": {
       "package": "dplyr",
@@ -2348,7 +2348,12 @@
       "line": 36,
       "column": 23,
       "severity": "warning",
-      "message": "comparison directly inside a numeric math function is usually a parenthesization mistake; compare the math result instead"
+      "message": "comparison directly inside a numeric math function is usually a parenthesization mistake; compare the math result instead",
+      "fix": {
+        "start": 1239,
+        "end": 1245,
+        "replacement": ") <= 1"
+      }
     },
     "ggplot2::RY100::tests/testthat/test-axis-secondary.R:37:23": {
       "package": "ggplot2",
@@ -2357,7 +2362,12 @@
       "line": 37,
       "column": 23,
       "severity": "warning",
-      "message": "comparison directly inside a numeric math function is usually a parenthesization mistake; compare the math result instead"
+      "message": "comparison directly inside a numeric math function is usually a parenthesization mistake; compare the math result instead",
+      "fix": {
+        "start": 1322,
+        "end": 1328,
+        "replacement": ") <= 1"
+      }
     },
     "ggplot2::RY100::tests/testthat/test-axis-secondary.R:56:23": {
       "package": "ggplot2",
@@ -2366,7 +2376,12 @@
       "line": 56,
       "column": 23,
       "severity": "warning",
-      "message": "comparison directly inside a numeric math function is usually a parenthesization mistake; compare the math result instead"
+      "message": "comparison directly inside a numeric math function is usually a parenthesization mistake; compare the math result instead",
+      "fix": {
+        "start": 2050,
+        "end": 2056,
+        "replacement": ") <= 1"
+      }
     },
     "ggplot2::RY100::tests/testthat/test-axis-secondary.R:57:23": {
       "package": "ggplot2",
@@ -2375,7 +2390,12 @@
       "line": 57,
       "column": 23,
       "severity": "warning",
-      "message": "comparison directly inside a numeric math function is usually a parenthesization mistake; compare the math result instead"
+      "message": "comparison directly inside a numeric math function is usually a parenthesization mistake; compare the math result instead",
+      "fix": {
+        "start": 2133,
+        "end": 2139,
+        "replacement": ") <= 1"
+      }
     },
     "glue::RY040::tests/testthat/test-glue.R:595:20": {
       "package": "glue",
@@ -3635,7 +3655,12 @@
       "line": 25,
       "column": 73,
       "severity": "warning",
-      "message": "comparison with `NA` always produces `NA`; use `is.na()` instead"
+      "message": "comparison with `NA` always produces `NA`; use `is.na()` instead",
+      "fix": {
+        "start": 502,
+        "end": 509,
+        "replacement": "is.na(x)"
+      }
     },
     "lintr::RY034::tests/testthat/dummy_packages/package/data-raw/default_linter_testcode.R:25:73": {
       "package": "lintr",
@@ -3644,7 +3669,12 @@
       "line": 25,
       "column": 73,
       "severity": "warning",
-      "message": "comparison with `NA` always produces `NA`; use `is.na()` instead"
+      "message": "comparison with `NA` always produces `NA`; use `is.na()` instead",
+      "fix": {
+        "start": 502,
+        "end": 509,
+        "replacement": "is.na(x)"
+      }
     },
     "lintr::RY034::tests/testthat/dummy_packages/package/inst/data-raw/default_linter_testcode.R:25:73": {
       "package": "lintr",
@@ -3653,7 +3683,12 @@
       "line": 25,
       "column": 73,
       "severity": "warning",
-      "message": "comparison with `NA` always produces `NA`; use `is.na()` instead"
+      "message": "comparison with `NA` always produces `NA`; use `is.na()` instead",
+      "fix": {
+        "start": 502,
+        "end": 509,
+        "replacement": "is.na(x)"
+      }
     },
     "lintr::RY060::tests/testthat/test-linter_tags.R:172:24": {
       "package": "lintr",
@@ -4004,7 +4039,12 @@
       "line": 30,
       "column": 20,
       "severity": "warning",
-      "message": "comparison is inside `length()`; compare `length(x)` instead"
+      "message": "comparison is inside `length()`; compare `length(x)` instead",
+      "fix": {
+        "start": 1083,
+        "end": 1089,
+        "replacement": ") == 1"
+      }
     },
     "pak::RY093::R/package.R:176:20": {
       "package": "pak",
@@ -4013,7 +4053,12 @@
       "line": 176,
       "column": 20,
       "severity": "warning",
-      "message": "comparison is inside `length()`; compare `length(x)` instead"
+      "message": "comparison is inside `length()`; compare `length(x)` instead",
+      "fix": {
+        "start": 5520,
+        "end": 5526,
+        "replacement": ") == 1"
+      }
     },
     "pak::RY093::R/package.R:293:20": {
       "package": "pak",
@@ -4022,7 +4067,12 @@
       "line": 293,
       "column": 20,
       "severity": "warning",
-      "message": "comparison is inside `length()`; compare `length(x)` instead"
+      "message": "comparison is inside `length()`; compare `length(x)` instead",
+      "fix": {
+        "start": 8536,
+        "end": 8542,
+        "replacement": ") == 1"
+      }
     },
     "pak::RY102::R/pak-sitrep-data.R:41:5": {
       "package": "pak",
@@ -4031,7 +4081,12 @@
       "line": 41,
       "column": 5,
       "severity": "warning",
-      "message": "`<-` inside `list()` assigns `github-ref` and leaves the element unnamed; write `\"github-ref\" = ...` to name it"
+      "message": "`<-` inside `list()` assigns `github-ref` and leaves the element unnamed; write `\"github-ref\" = ...` to name it",
+      "fix": {
+        "start": 1225,
+        "end": 1227,
+        "replacement": "="
+      }
     },
     "pak::RY105::R/confirmation.R:42:14": {
       "package": "pak",
@@ -5678,7 +5733,12 @@
       "line": 138,
       "column": 18,
       "severity": "warning",
-      "message": "comparison is inside `length()`; compare `length(x)` instead"
+      "message": "comparison is inside `length()`; compare `length(x)` instead",
+      "fix": {
+        "start": 4304,
+        "end": 4310,
+        "replacement": ") != 0"
+      }
     },
     "shiny-r::RY105::tests/testthat/test-non-blocking.R:127:15": {
       "package": "shiny-r",

@@ -84,13 +84,7 @@ impl Checker {
         // Filter out non-column named arguments first. Positional args
         // are kept (they become columns); known metadata args are dropped
         // so they don't pollute the schema.
-        const METADATA_ARGS: &[&str] = &[
-            "row.names",
-            "check.rows",
-            "check.names",
-            "stringsAsFactors",
-            "fix.empty.names",
-        ];
+        use crate::semantic_lists::METADATA_ARGS;
         let mut filtered_types: Vec<RType> = Vec::with_capacity(arg_types.len());
         let mut filtered_args: Vec<Arg> = Vec::with_capacity(args.len());
         for (i, a) in args.iter().enumerate() {

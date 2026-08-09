@@ -33,7 +33,10 @@ use super::*;
 /// this family on purpose: `local(x <- 1)`, `suppressWarnings(x <- f())`
 /// and every user function take an ordinary assignment as an argument
 /// without losing anything.
-const NAME_CARRYING_CONTAINERS: &[&str] = &["list", "c", "data.frame", "structure"];
+///
+/// The list is maintained in [`crate::semantic_lists`] and validated by an
+/// R-oracle coherence test.
+use crate::semantic_lists::NAME_CARRYING_CONTAINERS;
 
 /// The callee of a direct call, with any `pkg::` / `pkg:::` prefix removed.
 /// Indirect callees (an index expression, a call returning a function) have
@@ -46,7 +49,7 @@ fn bare_callee(expr: &Expr) -> Option<&str> {
         Expr::Ident { name, .. } | Expr::String(name, _) => name.as_str(),
         _ => return None,
     };
-    Some(name.rsplit_once("::").map(|(_, bare)| bare).unwrap_or(name))
+    Some(crate::semantic_lists::bare_name(name))
 }
 
 /// A call to `f(x)` with exactly one positional argument.
@@ -120,30 +123,18 @@ impl Checker {
     /// helper list, markdown, mclust, psych, and pak's original report).
     /// A string literal on the left needs no such corroboration: `"a" <- 1`
     /// is not an idiom anyone writes on purpose.
-    pub(crate) fn check_named_element_arrow(&mut self, func: &Expr, args: &[Arg]) {
+    pub(crate) fn check_named_element_arrow(&mut self, func: &Expr, args: &[Arg], scope: &Scope) {
         let name = match func {
             Expr::Ident { name, .. } | Expr::String(name, _) => name.as_str(),
             _ => return,
         };
-        // A package-qualified callee (`pkg::c(...)`) targets a specific
-        // package's export, which may have ordinary call semantics even
-        // if it shares a name with a base container. Only match unqualified
-        // calls (which resolve through R's search path to base) or
-        // explicitly base-qualified calls (`base::c(...)`).
-        let lookup_name = if let Some((pkg, bare)) = name.rsplit_once("::") {
-            if !matches!(pkg.trim_end_matches(':'), "base") {
-                return;
-            }
-            bare
-        } else {
-            // An unqualified name is shadowed if the lexical scope or the
-            // project function table defines it — in that case the call
-            // targets the user's function, not the base container.
-            if self.fn_table.fns.contains_key(name) {
-                return;
-            }
-            name
-        };
+        // Only base:: versions of these containers carry the name-dropping
+        // semantic. Delegate to the canonical base-call resolution operation
+        // so the shadowing order lives in one place (Plan 35 W7).
+        let lookup_name = crate::semantic_lists::bare_name(name);
+        if !self.resolves_to_base(name, scope) {
+            return;
+        }
         if !NAME_CARRYING_CONTAINERS.contains(&lookup_name) {
             return;
         }
@@ -249,23 +240,10 @@ impl Checker {
         let Some(name) = ident_name(func) else {
             return false;
         };
-        match name {
-            "base::class" | "base:::class" => true,
-            "class" => {
-                let lexically_unshadowed =
-                    scope.get("class").is_none() && !self.fn_table.fns.contains_key("class");
-                let imported_from_base = self
-                    .imported_from
-                    .get("class")
-                    .is_some_and(|package| package == "base");
-                lexically_unshadowed
-                    && (imported_from_base
-                        || (!self.external_bindings.contains("class")
-                            && self.bare_loaded.is_empty()
-                            && !scope.search_path_unknown))
-            }
-            _ => false,
-        }
+        // The callee must be `class` (or `base::class`). Delegate to the
+        // canonical base-call resolution operation so the shadowing order
+        // lives in one place (Plan 35 W7).
+        crate::semantic_lists::bare_name(name) == "class" && self.resolves_to_base(name, scope)
     }
 
     /// RY105: `length(x) <op> 0` where `x` is length 1 by construction, as in
@@ -372,13 +350,11 @@ impl Checker {
             Expr::Ident { name, .. } | Expr::String(name, _) => name.as_str(),
             _ => return None,
         };
-        // A user-defined function (lexical or project-level) with the same
-        // name shadows the base function for unqualified calls only. A
-        // base::sum() call explicitly resolves to base and is trusted.
-        let bare = callee.rsplit_once("::").map(|(_, b)| b).unwrap_or(callee);
-        if !callee.contains("::")
-            && (scope.is_lexical_function(bare) || self.fn_table.fns.contains_key(bare))
-        {
+        // Use the canonical base-call resolution: if the call does not
+        // resolve to base, the user's function may have entirely different
+        // semantics and the typeshed claim does not apply (Plan 35 W7).
+        let bare = crate::semantic_lists::bare_name(callee);
+        if !self.resolves_to_base(callee, scope) {
             return None;
         }
         if !args.is_empty() && self.is_typeshed_scalar_reduction(callee) {

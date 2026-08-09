@@ -1775,7 +1775,7 @@ impl Checker {
                 // rather than inside `infer_call`, where several container
                 // constructors take an early return before the shared
                 // diagnostic block.
-                self.check_named_element_arrow(func, args);
+                self.check_named_element_arrow(func, args, scope);
                 self.infer_call(func, args, scope, *span)
             }
             Expr::Index {

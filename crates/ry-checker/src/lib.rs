@@ -20,6 +20,7 @@ mod nse;
 pub mod packages;
 pub mod project;
 pub mod rules;
+pub mod semantic_lists;
 mod suppress;
 
 // Re-export `Project` at the crate root so callers (the CLI, integration
@@ -186,9 +187,7 @@ fn usemethod_generic_name(body: &[Stmt]) -> Option<String> {
 /// Split operator-specific S3 methods such as `+.widget`. These cannot use
 /// the dotted-generic helper because the generic itself is punctuation.
 fn split_s3_operator_method_name(name: &str) -> Option<(&'static str, String)> {
-    const OPERATORS: &[&str] = &[
-        "+", "-", "*", "/", "^", "%%", "%/%", "==", "!=", "<", "<=", ">", ">=",
-    ];
+    use crate::semantic_lists::OPERATORS;
     OPERATORS.iter().find_map(|operator| {
         name.strip_prefix(operator)
             .and_then(|rest| rest.strip_prefix('.'))
@@ -206,7 +205,7 @@ struct EnvironmentProfile {
 // (named, path-glob-triggered) come from `ry.toml` `[[environments]]` and are
 // threaded through the CLI config instead.
 const BUILTIN_ENVIRONMENTS: &[EnvironmentProfile] = &[EnvironmentProfile {
-    bindings: &["input", "output", "session"],
+    bindings: crate::semantic_lists::BUILTIN_ENVIRONMENT_BINDINGS,
     path_trigger: is_shiny_app_fragment_path,
 }];
 

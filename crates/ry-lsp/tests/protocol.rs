@@ -7,6 +7,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct PublishedFix {
+    start_line: u32,
+    start_byte_column: u32,
+    end_line: u32,
+    end_byte_column: u32,
+    replacement: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct Published {
     path: String,
     code: String,
@@ -14,6 +23,7 @@ struct Published {
     message: String,
     line: u32,
     byte_column: u32,
+    fix: Option<PublishedFix>,
 }
 
 fn workspace_root() -> PathBuf {
@@ -67,6 +77,17 @@ fn cli_diagnostics(fixture: &FixtureProject, extra: &[&str]) -> Vec<Published> {
                 encoding: PositionEncoding::UnicodeScalar,
             };
             let position = normalize_position(&source, &scalar).unwrap();
+            let fix = value.get("fix").map(|fix| {
+                let start = byte_offset_position(&source, fix["start"].as_u64().unwrap() as usize);
+                let end = byte_offset_position(&source, fix["end"].as_u64().unwrap() as usize);
+                PublishedFix {
+                    start_line: start.0,
+                    start_byte_column: start.1,
+                    end_line: end.0,
+                    end_byte_column: end.1,
+                    replacement: fix["replacement"].as_str().unwrap().to_string(),
+                }
+            });
             Published {
                 path: relative,
                 code: value["code"].as_str().unwrap().to_string(),
@@ -74,11 +95,20 @@ fn cli_diagnostics(fixture: &FixtureProject, extra: &[&str]) -> Vec<Published> {
                 message: value["message"].as_str().unwrap().to_string(),
                 line: position.line,
                 byte_column: position.character,
+                fix,
             }
         })
         .collect();
     diagnostics.sort();
     diagnostics
+}
+
+fn byte_offset_position(source: &str, offset: usize) -> (u32, u32) {
+    assert!(offset <= source.len() && source.is_char_boundary(offset));
+    let prefix = &source[..offset];
+    let line = prefix.bytes().filter(|byte| *byte == b'\n').count() as u32;
+    let line_start = prefix.rfind('\n').map_or(0, |position| position + 1);
+    (line, (offset - line_start) as u32)
 }
 
 fn file_uri(path: &Path) -> String {
@@ -178,6 +208,33 @@ fn published_from_lsp(message: &Value, path: &Path, root: &Path) -> Vec<Publishe
                 },
             )
             .unwrap();
+            let fix = value.pointer("/data/fix").map(|fix| {
+                let start = normalize_position(
+                    &source,
+                    &ObservedPosition {
+                        line: fix["range"]["start"]["line"].as_u64().unwrap() as u32,
+                        character: fix["range"]["start"]["character"].as_u64().unwrap() as u32,
+                        encoding: PositionEncoding::Utf16,
+                    },
+                )
+                .unwrap();
+                let end = normalize_position(
+                    &source,
+                    &ObservedPosition {
+                        line: fix["range"]["end"]["line"].as_u64().unwrap() as u32,
+                        character: fix["range"]["end"]["character"].as_u64().unwrap() as u32,
+                        encoding: PositionEncoding::Utf16,
+                    },
+                )
+                .unwrap();
+                PublishedFix {
+                    start_line: start.line,
+                    start_byte_column: start.character,
+                    end_line: end.line,
+                    end_byte_column: end.character,
+                    replacement: fix["replacement"].as_str().unwrap().to_string(),
+                }
+            });
             Published {
                 path: relative.clone(),
                 code: value["code"].as_str().unwrap().to_string(),
@@ -192,6 +249,7 @@ fn published_from_lsp(message: &Value, path: &Path, root: &Path) -> Vec<Publishe
                 message: value["message"].as_str().unwrap().to_string(),
                 line: position.line,
                 byte_column: position.character,
+                fix,
             }
         })
         .collect()
@@ -265,6 +323,59 @@ fn cli_and_run_with_publish_the_same_single_root_matrix() {
         let lsp = runtime.block_on(run_with_diagnostics(&fixture, target, settings));
         assert_eq!(lsp, cli, "published diagnostics differ for {fixture_name}");
     }
+}
+
+#[test]
+fn structured_fixes_have_cli_and_lsp_publication_parity() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture
+        .write_file(
+            "fixes.R",
+            r#"emoji <- "😀"; length(xx = 1L)
+f <- function(x) {
+  a <- x && c(TRUE, FALSE)
+  b <- x == NA
+  c <- abs(x > 0L)
+  if (class(x) == "wi\"dget") 1L else 2L
+}
+length(c(1L, 2L) > 0L)
+args <- list(font = "mono")
+identical(args["font"], "mono")
+list(ok = 1L, "wi\"dget" <- 2L)
+"#,
+        )
+        .unwrap();
+    let cli = cli_diagnostics(&fixture, &[]);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let lsp = runtime.block_on(run_with_diagnostics(&fixture, "fixes.R", json!({})));
+    assert_eq!(lsp, cli);
+
+    // RY090's fix follows an astral character on the same line. Its byte
+    // column (24) differs from its LSP UTF-16 column (22), so parity here
+    // exercises the conversion rather than merely crossing a prior line.
+    let astral_fix = cli
+        .iter()
+        .find(|diagnostic| diagnostic.code == "RY090")
+        .and_then(|diagnostic| diagnostic.fix.as_ref())
+        .expect("RY090 after the astral character should publish a fix");
+    assert_eq!(astral_fix.start_line, 0);
+    assert_eq!(astral_fix.start_byte_column, 24);
+
+    let fixed_codes = cli
+        .iter()
+        .filter_map(|diagnostic| diagnostic.fix.as_ref().map(|_| diagnostic.code.as_str()))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        fixed_codes,
+        [
+            "RY032", "RY034", "RY090", "RY093", "RY100", "RY101", "RY102", "RY103"
+        ]
+        .into_iter()
+        .collect()
+    );
 }
 
 #[test]

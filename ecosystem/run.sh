@@ -93,12 +93,17 @@ if [[ -z "$audit_corpus" ]]; then
   fi
 fi
 
-for command in cargo git Rscript; do
-  command -v "$command" >/dev/null 2>&1 || {
-    echo "ecosystem: required command not found: $command" >&2
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "ecosystem: required command not found: $1" >&2
     exit 2
   }
-done
+}
+
+require_command Rscript
+if ! $local_only; then
+  require_command git
+fi
 
 # Snapshots must not depend on which R packages are installed on the
 # machine that generates them: disable ry's installed-library resolution.
@@ -110,9 +115,50 @@ trap 'rm -rf "$work_dir"' EXIT
 generated_dir="$work_dir/reports"
 mkdir -p "$generated_dir"
 
-binary="${RY_BINARY:-$root/target/release/ry}"
-if [[ ! -x "$binary" ]]; then
-  cargo build --release --locked -p ry-cli --bin ry --manifest-path "$root/Cargo.toml"
+if [[ -n "${RY_BINARY:-}" ]]; then
+  binary="$RY_BINARY"
+  if [[ ! -x "$binary" ]]; then
+    echo "ecosystem: RY_BINARY is not executable: $binary" >&2
+    exit 2
+  fi
+else
+  require_command cargo
+  require_command python3
+  # Always ask Cargo for the current release binary. Checking only whether the
+  # path exists can silently run an executable built from an older checkout,
+  # then regenerate reviewed reports that disagree with clean CI. Resolve the
+  # executable from Cargo's artifact stream so CARGO_TARGET_DIR, configured
+  # target directories, and explicit build targets cannot redirect it behind
+  # this script's back.
+  binary="$(
+    cargo build --release --locked -p ry-cli --bin ry \
+      --manifest-path "$root/Cargo.toml" \
+      --message-format=json-render-diagnostics |
+      python3 -c '
+import json
+import sys
+
+executable = None
+for line in sys.stdin:
+    message = json.loads(line)
+    if message.get("reason") == "compiler-message":
+        rendered = message.get("message", {}).get("rendered")
+        if rendered:
+            sys.stderr.write(rendered)
+    target = message.get("target", {})
+    if (
+        message.get("reason") == "compiler-artifact"
+        and target.get("name") == "ry"
+        and "bin" in target.get("kind", [])
+        and message.get("executable")
+    ):
+        executable = message["executable"]
+if executable is None:
+    sys.stderr.write("ecosystem: Cargo did not report the ry executable\n")
+    raise SystemExit(1)
+print(executable)
+'
+  )"
 fi
 
 write_report() {
@@ -441,6 +487,28 @@ if (length(missing) || length(unowned)) {
   }
 }
 RS
+fi
+
+# The identity ledger intentionally omits prose. The companion Posit message
+# ledger is regenerated from the same production JSON diagnostics and keyed by
+# those reviewed identities, making message/fix drift a readable review diff.
+# Compare normalized full paths: a different ledger with the same basename must
+# never update or check the canonical Posit message ledger.
+if ! $local_only; then
+  posit_corpus="$root/docs/corpus/posit-0.9.0.json"
+  audit_corpus_path="$(cd "$(dirname "$audit_corpus")" && pwd -P)/$(basename "$audit_corpus")"
+  posit_corpus_path="$(cd "$(dirname "$posit_corpus")" && pwd -P)/$(basename "$posit_corpus")"
+  if [[ "$audit_corpus_path" == "$posit_corpus_path" ]]; then
+    require_command python3
+    message_mode=update
+    $check && message_mode=check
+    python3 "$ecosystem_dir/posit_messages.py" "$message_mode" \
+      --ledger "$audit_corpus" \
+      --messages "$root/docs/corpus/posit-messages-0.9.json" \
+      --json-dir "$work_dir" \
+      --report-prefix "$report_prefix" \
+      "${root_packages[@]}"
+  fi
 fi
 
 summary_names=("$summary_prefix.md")

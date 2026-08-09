@@ -264,9 +264,9 @@ impl Checker {
     ) -> RType {
         // RY103: an `if` used in expression position still requires a
         // length-1 logical condition.
-        self.check_class_equality_operand(cond);
+        self.check_class_equality_operand(cond, scope);
         let diagnostic_start = self.diagnostics.len();
-        let ct = self.infer(cond, scope);
+        let ct = self.infer_scalar_condition(cond, scope);
         let has_ry100 = self.diagnostics[diagnostic_start..]
             .iter()
             .any(|diagnostic| diagnostic.code == "RY100");

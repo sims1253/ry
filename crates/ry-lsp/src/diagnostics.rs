@@ -41,6 +41,9 @@ pub(super) fn diagnostic_to_lsp(d: RyDiagnostic) -> LspDiagnostic {
         code: Some(NumberOrString::String(d.code.to_string())),
         source: Some("ry".to_string()),
         message: d.message,
+        // A fix span contains byte offsets. Without source text they cannot be
+        // converted safely to LSP UTF-16 positions (or across line breaks).
+        data: None,
         ..Default::default()
     }
 }
@@ -52,6 +55,16 @@ pub(super) fn diagnostic_to_lsp(d: RyDiagnostic) -> LspDiagnostic {
 /// token. Zero-width spans are extended by one character so the squiggle
 /// is still visible.
 pub(super) fn diagnostic_to_lsp_with_source(d: &RyDiagnostic, text: &str) -> LspDiagnostic {
+    let data = d.fix.as_ref().map(|fix| {
+        let start = byte_offset_to_position(text, fix.span.start);
+        let end = byte_offset_to_position(text, fix.span.end);
+        serde_json::json!({
+            "fix": {
+                "range": {"start": start, "end": end},
+                "replacement": fix.replacement,
+            }
+        })
+    });
     let start = byte_offset_to_position(text, d.span.start);
     let end = byte_offset_to_position(text, d.span.end);
     let end = if start == end {
@@ -73,6 +86,7 @@ pub(super) fn diagnostic_to_lsp_with_source(d: &RyDiagnostic, text: &str) -> Lsp
         code: Some(NumberOrString::String(d.code.to_string())),
         source: Some("ry".to_string()),
         message: d.message.clone(),
+        data,
         ..Default::default()
     }
 }

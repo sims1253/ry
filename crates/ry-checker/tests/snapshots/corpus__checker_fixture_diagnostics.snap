@@ -1,0 +1,1101 @@
+---
+source: crates/ry-checker/tests/corpus.rs
+expression: snapshots
+---
+- diagnostics:
+    - code: RY090
+      fix: ~
+      message: "unknown argument `al` to `choose`"
+      severity: warning
+      span:
+        column: 7
+        end: 77
+        line: 2
+        start: 70
+    - code: RY091
+      fix: ~
+      message: "missing required argument `alpha` in call to `choose`"
+      severity: warning
+      span:
+        column: 0
+        end: 78
+        line: 2
+        start: 63
+  fixture: err_ambiguous_partial_argument.R
+- diagnostics:
+    - code: RY092
+      fix: ~
+      message: "argument `x` to `mean` is `list`, expected numeric"
+      severity: error
+      span:
+        column: 5
+        end: 29
+        line: 1
+        start: 21
+  fixture: err_argument_list_type_mismatch.R
+- diagnostics:
+    - code: RY092
+      fix: ~
+      message: "argument `x` to `mean` is `character`, expected numeric"
+      severity: error
+      span:
+        column: 5
+        end: 34
+        line: 1
+        start: 21
+  fixture: err_argument_type_mismatch.R
+- diagnostics:
+    - code: RY070
+      fix: ~
+      message: "cannot call a value of mode `double`"
+      severity: error
+      span:
+        column: 5
+        end: 112
+        line: 2
+        start: 108
+    - code: RY070
+      fix: ~
+      message: "cannot call a value of mode `logical`"
+      severity: error
+      span:
+        column: 5
+        end: 124
+        line: 3
+        start: 118
+    - code: RY070
+      fix: ~
+      message: "cannot call a value of mode `NULL`"
+      severity: error
+      span:
+        column: 5
+        end: 136
+        line: 4
+        start: 130
+  fixture: err_call_literal.R
+- diagnostics:
+    - code: RY070
+      fix: ~
+      message: "`x` is `double`, not a function; cannot call it"
+      severity: error
+      span:
+        column: 5
+        end: 87
+        line: 3
+        start: 82
+  fixture: err_call_non_function.R
+- diagnostics:
+    - code: RY033
+      fix: ~
+      message: "comparing `character` with `double`; R coerces the numeric value to character and compares lexicographically, which is rarely intended"
+      severity: warning
+      span:
+        column: 7
+        end: 95
+        line: 2
+        start: 83
+  fixture: err_compare_mode_mismatch.R
+- diagnostics:
+    - code: RY061
+      fix: ~
+      message: "$ operator is invalid for atomic vectors of mode `character`"
+      severity: error
+      span:
+        column: 0
+        end: 39
+        line: 2
+        start: 34
+  fixture: err_dollar_assign_atomic.R
+- diagnostics:
+    - code: RY061
+      fix: ~
+      message: "$ operator is invalid for atomic vectors of mode `integer`"
+      severity: error
+      span:
+        column: 7
+        end: 98
+        line: 3
+        start: 90
+  fixture: err_dollar_on_atomic.R
+- diagnostics:
+    - code: RY040
+      fix: ~
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 23
+        end: 186
+        line: 3
+        start: 175
+  fixture: err_fnbody_arith.R
+- diagnostics:
+    - code: RY040
+      fix: ~
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 9
+        end: 203
+        line: 5
+        start: 192
+  fixture: err_fnbody_nested_if.R
+- diagnostics:
+    - code: RY010
+      fix: ~
+      message: "variable `undefined_variable_xyz` is not bound in this scope"
+      severity: warning
+      span:
+        column: 23
+        end: 148
+        line: 3
+        start: 126
+  fixture: err_fnbody_unbound.R
+- diagnostics:
+    - code: RY010
+      fix: ~
+      message: "variable `undefined_var` is not bound in this scope"
+      severity: warning
+      span:
+        column: 36
+        end: 199
+        line: 3
+        start: 186
+  fixture: err_ho_callback_unbound.R
+- diagnostics:
+    - code: RY040
+      fix: ~
+      message: "cannot apply arithmetic op to `integer` and `character`"
+      severity: error
+      span:
+        column: 7
+        end: 288
+        line: 5
+        start: 277
+  fixture: err_ho_sapply_infers_type.R
+- diagnostics:
+    - code: RY040
+      fix: ~
+      message: "cannot apply arithmetic op to `union` and `double`"
+      severity: error
+      span:
+        column: 7
+        end: 375
+        line: 7
+        start: 370
+  fixture: err_if_expr_join.R
+- diagnostics:
+    - code: RY092
+      fix: ~
+      message: "argument `value` to `check_string` is `character<len=2>`, expected character"
+      severity: error
+      span:
+        column: 13
+        end: 55
+        line: 2
+        start: 50
+  fixture: err_impossible_standalone_guard.R
+- diagnostics:
+    - code: RY070
+      fix: ~
+      message: "`x` is `NULL`, not a function; cannot call it"
+      severity: error
+      span:
+        column: 2
+        end: 296
+        line: 11
+        start: 292
+  fixture: err_is_null_narrowing_no_leak.R
+- diagnostics:
+    - code: RY040
+      fix: ~
+      message: "cannot apply arithmetic op to `integer` and `character`"
+      severity: error
+      span:
+        column: 7
+        end: 281
+        line: 6
+        start: 270
+  fixture: err_lapply_double_bracket.R
+- diagnostics:
+    - code: RY091
+      fix: ~
+      message: "missing required argument `x` in call to `length`"
+      severity: warning
+      span:
+        column: 0
+        end: 24
+        line: 1
+        start: 16
+  fixture: err_missing_required_argument.R
+- diagnostics:
+    - code: RY000
+      fix: ~
+      message: "syntax error: unparseable region (recovered tree may be unreliable)"
+      severity: error
+      span:
+        column: 15
+        end: 170
+        line: 3
+        start: 169
+    - code: RY000
+      fix: ~
+      message: "syntax error: unparseable region (recovered tree may be unreliable)"
+      severity: error
+      span:
+        column: 8
+        end: 179
+        line: 4
+        start: 179
+    - code: RY000
+      fix: ~
+      message: "syntax error: unparseable region (recovered tree may be unreliable)"
+      severity: error
+      span:
+        column: 16
+        end: 189
+        line: 4
+        start: 187
+    - code: RY010
+      fix: ~
+      message: "variable `syntax` is not bound in this scope"
+      severity: warning
+      span:
+        column: 9
+        end: 186
+        line: 4
+        start: 180
+  fixture: err_parse_error.R
+- diagnostics:
+    - code: RY060
+      fix: ~
+      message: "column `x` not found in data frame schema; available columns: y, x_x"
+      severity: error
+      span:
+        column: 0
+        end: 62
+        line: 2
+        start: 54
+  fixture: err_partial_column_indexed_assignment.R
+- diagnostics:
+    - code: RY102
+      fix:
+        replacement: "="
+        span:
+          column: 34
+          end: 373
+          line: 6
+          start: 371
+      message: "`<-` inside `list()` assigns `github-ref` and leaves the element unnamed; write `\"github-ref\" = ...` to name it"
+      severity: warning
+      span:
+        column: 21
+        end: 377
+        line: 6
+        start: 358
+    - code: RY103
+      fix:
+        replacement: "!inherits(df[[1]], t)"
+        span:
+          column: 21
+          end: 605
+          line: 10
+          start: 586
+      message: "`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `!inherits(df[[1]], t)`"
+      severity: warning
+      span:
+        column: 21
+        end: 605
+        line: 10
+        start: 586
+    - code: RY105
+      fix: ~
+      message: "`u_dl` is a length-1 double, so `length(...)` is 1 here and this zero-length guard is always TRUE"
+      severity: warning
+      span:
+        column: 13
+        end: 1430
+        line: 30
+        start: 1414
+  fixture: err_plan31_recall_repro.R
+- diagnostics:
+    - code: RY080
+      fix: ~
+      message: "`map_dbl` expects `double` returns but the callback returns `character`; R will coerce silently"
+      severity: warning
+      span:
+        column: 6
+        end: 275
+        line: 5
+        start: 236
+  fixture: err_purrr_map_dbl_type_mismatch.R
+- diagnostics:
+    - code: RY098
+      fix: ~
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 18
+        end: 114
+        line: 2
+        start: 113
+  fixture: err_recursive_default_forced_call.R
+- diagnostics:
+    - code: RY098
+      fix: ~
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 18
+        end: 108
+        line: 2
+        start: 107
+  fixture: err_recursive_default_literal_branch.R
+- diagnostics:
+    - code: RY098
+      fix: ~
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 18
+        end: 134
+        line: 3
+        start: 133
+  fixture: err_recursive_default_literal_false_block.R
+- diagnostics:
+    - code: RY098
+      fix: ~
+      message: "parameter `copy` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 29
+        end: 55
+        line: 1
+        start: 51
+    - code: RY098
+      fix: ~
+      message: "parameter `j` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 28
+        end: 91
+        line: 2
+        start: 90
+  fixture: err_recursive_parameter_default.R
+- diagnostics:
+    - code: RY070
+      fix: ~
+      message: "`x` is `integer`, not a function; cannot call it"
+      severity: error
+      span:
+        column: 0
+        end: 117
+        line: 4
+        start: 114
+  fixture: err_s7_callable_future_assignment.R
+- diagnostics:
+    - code: RY070
+      fix: ~
+      message: "`x` is `integer`, not a function; cannot call it"
+      severity: error
+      span:
+        column: 0
+        end: 121
+        line: 4
+        start: 118
+  fixture: err_s7_callable_reassigned.R
+- diagnostics:
+    - code: RY032
+      fix:
+        replacement: "&"
+        span:
+          column: 9
+          end: 113
+          line: 3
+          start: 111
+      message: "`&&` applied to a length-3 operand; only the first element is used"
+      severity: warning
+      span:
+        column: 7
+        end: 118
+        line: 3
+        start: 109
+  fixture: err_scalar_logical.R
+- diagnostics:
+    - code: RY040
+      fix: ~
+      message: "cannot apply arithmetic op to `union` and `double`"
+      severity: error
+      span:
+        column: 7
+        end: 335
+        line: 6
+        start: 330
+  fixture: err_switch_mixed.R
+- diagnostics:
+    - code: RY040
+      fix: ~
+      message: "cannot apply arithmetic op to `union` and `double`"
+      severity: error
+      span:
+        column: 5
+        end: 334
+        line: 7
+        start: 329
+  fixture: err_union_all_invalid.R
+- diagnostics:
+    - code: RY090
+      fix:
+        replacement: x
+        span:
+          column: 7
+          end: 32
+          line: 1
+          start: 30
+      message: "unknown argument `xx` to `length`; did you mean `x`?"
+      severity: warning
+      span:
+        column: 7
+        end: 37
+        line: 1
+        start: 30
+    - code: RY091
+      fix: ~
+      message: "missing required argument `x` in call to `length`"
+      severity: warning
+      span:
+        column: 0
+        end: 38
+        line: 1
+        start: 23
+  fixture: err_unknown_argument.R
+- diagnostics:
+    - code: RY091
+      fix: ~
+      message: "missing required argument `x` in call to `required`"
+      severity: warning
+      span:
+        column: 0
+        end: 67
+        line: 2
+        start: 57
+  fixture: err_user_fn_missing_required.R
+- diagnostics: []
+  fixture: ok_ambient_globals.R
+- diagnostics: []
+  fixture: ok_anon_lapply.R
+- diagnostics: []
+  fixture: ok_argument_diagnostics_suppressed.R
+- diagnostics: []
+  fixture: ok_argument_numeric_coercion.R
+- diagnostics: []
+  fixture: ok_argument_union_overlap.R
+- diagnostics: []
+  fixture: ok_arith.R
+- diagnostics: []
+  fixture: ok_assertion_refinement.R
+- diagnostics: []
+  fixture: ok_assign_literal.R
+- diagnostics: []
+  fixture: ok_block_expr_scope.R
+- diagnostics: []
+  fixture: ok_bound_var.R
+- diagnostics: []
+  fixture: ok_branch_binding_merge.R
+- diagnostics: []
+  fixture: ok_c_concat.R
+- diagnostics: []
+  fixture: ok_call_function.R
+- diagnostics: []
+  fixture: ok_call_skips_nonfunction_shadow.R
+- diagnostics: []
+  fixture: ok_closure_capture.R
+- diagnostics: []
+  fixture: ok_closure_factory.R
+- diagnostics: []
+  fixture: ok_compare.R
+- diagnostics: []
+  fixture: ok_compare_na_idiom.R
+- diagnostics: []
+  fixture: ok_compare_same_mode.R
+- diagnostics: []
+  fixture: ok_compare_union_no_mode_mismatch.R
+- diagnostics: []
+  fixture: ok_data_frame_constructor.R
+- diagnostics: []
+  fixture: ok_data_frame_derived_names.R
+- diagnostics: []
+  fixture: ok_dataset_iris.R
+- diagnostics: []
+  fixture: ok_dataset_mtcars.R
+- diagnostics: []
+  fixture: ok_df_bracket_string.R
+- diagnostics: []
+  fixture: ok_df_column_access.R
+- diagnostics: []
+  fixture: ok_df_column_assignment.R
+- diagnostics: []
+  fixture: ok_divisible_recycling.R
+- diagnostics: []
+  fixture: ok_dollar_missing_list.R
+- diagnostics: []
+  fixture: ok_dots_absorb_unknown_argument.R
+- diagnostics: []
+  fixture: ok_dplyr_join_schema.R
+- diagnostics: []
+  fixture: ok_dplyr_sequential_columns.R
+- diagnostics: []
+  fixture: ok_dplyr_unknown_schema_data_mask.R
+- diagnostics: []
+  fixture: ok_dynamic_data_frame_extract.R
+- diagnostics: []
+  fixture: ok_dynamic_field_write.R
+- diagnostics: []
+  fixture: ok_dynamic_list_extract.R
+- diagnostics: []
+  fixture: ok_exact_then_partial_argument_match.R
+- diagnostics: []
+  fixture: ok_factor_character_compare.R
+- diagnostics: []
+  fixture: ok_factor_class.R
+- diagnostics: []
+  fixture: ok_factor_comparison.R
+- diagnostics: []
+  fixture: ok_ffi_call_first_arg.R
+- diagnostics: []
+  fixture: ok_fn_explicit_return.R
+- diagnostics: []
+  fixture: ok_fnbody_sequential.R
+- diagnostics: []
+  fixture: ok_fractional_numeric_index_length.R
+- diagnostics: []
+  fixture: ok_function_def.R
+- diagnostics: []
+  fixture: ok_global_variables_declaration.R
+- diagnostics: []
+  fixture: ok_ho_filter_find.R
+- diagnostics: []
+  fixture: ok_ho_map.R
+- diagnostics: []
+  fixture: ok_ho_named_arg_binding.R
+- diagnostics: []
+  fixture: ok_ho_named_callback.R
+- diagnostics: []
+  fixture: ok_ho_reduce.R
+- diagnostics: []
+  fixture: ok_ho_sapply.R
+- diagnostics: []
+  fixture: ok_ho_typeshed_callback.R
+- diagnostics: []
+  fixture: ok_ho_vapply.R
+- diagnostics: []
+  fixture: ok_if_else_join.R
+- diagnostics: []
+  fixture: ok_if_expr.R
+- diagnostics: []
+  fixture: ok_if_expr_nested.R
+- diagnostics: []
+  fixture: ok_if_expr_no_else.R
+- diagnostics: []
+  fixture: ok_if_length_idiom.R
+- diagnostics: []
+  fixture: ok_if_logical.R
+- diagnostics: []
+  fixture: ok_if_unknown_length_condition.R
+- diagnostics: []
+  fixture: ok_ifelse_mode.R
+- diagnostics: []
+  fixture: ok_ignore_comment.R
+- diagnostics: []
+  fixture: ok_iife.R
+- diagnostics: []
+  fixture: ok_iife_with_args.R
+- diagnostics: []
+  fixture: ok_in_operator_length.R
+- diagnostics: []
+  fixture: ok_index_length_from_index.R
+- diagnostics: []
+  fixture: ok_is_function_guard.R
+- diagnostics: []
+  fixture: ok_is_null_guard_narrowing.R
+- diagnostics: []
+  fixture: ok_lapply_list_arith.R
+- diagnostics: []
+  fixture: ok_lazy_default_reachability.R
+- diagnostics: []
+  fixture: ok_list_atomic_equality.R
+- diagnostics: []
+  fixture: ok_list_named_columns.R
+- diagnostics: []
+  fixture: ok_local_standalone_errors.R
+- diagnostics: []
+  fixture: ok_logical_mask_length.R
+- diagnostics: []
+  fixture: ok_logical_op.R
+- diagnostics: []
+  fixture: ok_loops.R
+- diagnostics: []
+  fixture: ok_mirai_minimal.R
+- diagnostics: []
+  fixture: ok_multi_assign.R
+- diagnostics: []
+  fixture: ok_named_args_match.R
+- diagnostics: []
+  fixture: ok_named_args_mixed.R
+- diagnostics: []
+  fixture: ok_narrow_is_character.R
+- diagnostics: []
+  fixture: ok_narrow_is_numeric.R
+- diagnostics: []
+  fixture: ok_narrow_not_is_null.R
+- diagnostics: []
+  fixture: ok_nested_return.R
+- diagnostics: []
+  fixture: ok_no_s3_collision.R
+- diagnostics: []
+  fixture: ok_nse_dplyr_arrange_groupby.R
+- diagnostics: []
+  fixture: ok_nse_dplyr_filter.R
+- diagnostics: []
+  fixture: ok_nse_dplyr_mutate.R
+- diagnostics: []
+  fixture: ok_nse_dplyr_pipe_chain.R
+- diagnostics: []
+  fixture: ok_nse_dplyr_summarise.R
+- diagnostics: []
+  fixture: ok_nse_dplyr_summarize_alias.R
+- diagnostics: []
+  fixture: ok_nse_embrace.R
+- diagnostics: []
+  fixture: ok_nse_function_alias.R
+- diagnostics: []
+  fixture: ok_nse_pipe_subset.R
+- diagnostics: []
+  fixture: ok_nse_subset.R
+- diagnostics: []
+  fixture: ok_nse_transform.R
+- diagnostics: []
+  fixture: ok_nse_with.R
+- diagnostics: []
+  fixture: ok_nse_within.R
+- diagnostics: []
+  fixture: ok_null_default_always_supplied.R
+- diagnostics: []
+  fixture: ok_null_default_callback_rebind.R
+- diagnostics: []
+  fixture: ok_package_qualified_resolution.R
+- diagnostics: []
+  fixture: ok_parameter_default_other_formal.R
+- diagnostics: []
+  fixture: ok_parameter_default_quoted_self.R
+- diagnostics: []
+  fixture: ok_partial_argument_match.R
+- diagnostics: []
+  fixture: ok_paste_length.R
+- diagnostics: []
+  fixture: ok_pipe_assign_rebinds.R
+- diagnostics: []
+  fixture: ok_pipe_bare_fn.R
+- diagnostics: []
+  fixture: ok_pipe_base.R
+- diagnostics: []
+  fixture: ok_pipe_chain.R
+- diagnostics: []
+  fixture: ok_pipe_magrittr.R
+- diagnostics: []
+  fixture: ok_pipe_placeholder.R
+- diagnostics: []
+  fixture: ok_plan31_recall_negative_controls.R
+- diagnostics: []
+  fixture: ok_purrr_in_parallel.R
+- diagnostics: []
+  fixture: ok_purrr_map_dbl.R
+- diagnostics: []
+  fixture: ok_qualified_call_not_shadowed.R
+- diagnostics: []
+  fixture: ok_qualified_nse_aes.R
+- diagnostics: []
+  fixture: ok_quoted_formula_symbols.R
+- diagnostics: []
+  fixture: ok_r6_class_body_bindings.R
+- diagnostics: []
+  fixture: ok_raw_operations.R
+- diagnostics: []
+  fixture: ok_recursion.R
+- diagnostics: []
+  fixture: ok_recursive_default_captured.R
+- diagnostics: []
+  fixture: ok_recursive_default_conditional_return.R
+- diagnostics: []
+  fixture: ok_recursive_default_lazy_call.R
+- diagnostics: []
+  fixture: ok_recursive_default_missing.R
+- diagnostics: []
+  fixture: ok_recursive_default_qualified_defuser.R
+- diagnostics: []
+  fixture: ok_recursive_default_replaced.R
+- diagnostics: []
+  fixture: ok_recursive_default_shadowed_defuser.R
+- diagnostics: []
+  fixture: ok_recursive_default_shadowed_strict.R
+- diagnostics: []
+  fixture: ok_recursive_default_short_circuit.R
+- diagnostics: []
+  fixture: ok_recursive_default_unforced_branch.R
+- diagnostics: []
+  fixture: ok_recursive_default_unreachable_block.R
+- diagnostics: []
+  fixture: ok_recursive_default_user_defuser.R
+- diagnostics: []
+  fixture: ok_s3_data_frame.R
+- diagnostics: []
+  fixture: ok_s3_dispatch.R
+- diagnostics: []
+  fixture: ok_s4_terra_named_vector.R
+- diagnostics: []
+  fixture: ok_s7_class_callable.R
+- diagnostics: []
+  fixture: ok_sapply_unknown_callback_arithmetic.R
+- diagnostics: []
+  fixture: ok_scalar_logical.R
+- diagnostics: []
+  fixture: ok_scalar_single_bracket_index.R
+- diagnostics: []
+  fixture: ok_seq_for_loop.R
+- diagnostics: []
+  fixture: ok_short_circuit_narrowing.R
+- diagnostics: []
+  fixture: ok_standalone_guard_uncertain_and_collisions.R
+- diagnostics:
+    - code: RY040
+      fix: ~
+      message: "cannot apply arithmetic op to `double` and `character`"
+      severity: error
+      span:
+        column: 29
+        end: 344
+        line: 6
+        start: 337
+  fixture: ok_string_containing_hash_noqa.R
+- diagnostics: []
+  fixture: ok_subsetting.R
+- diagnostics: []
+  fixture: ok_survfit_quantile_fields.R
+- diagnostics: []
+  fixture: ok_switch_integer.R
+- diagnostics: []
+  fixture: ok_t6_append_and_null_guard.R
+- diagnostics: []
+  fixture: ok_t6_length_inference.R
+- diagnostics: []
+  fixture: ok_testthat_block_scope.R
+- diagnostics: []
+  fixture: ok_tidyselect_negative_string.R
+- diagnostics: []
+  fixture: ok_trycatch.R
+- diagnostics: []
+  fixture: ok_typeshed_coercion.R
+- diagnostics: []
+  fixture: ok_typeshed_cumulative.R
+- diagnostics: []
+  fixture: ok_typeshed_datasets_expanded.R
+- diagnostics: []
+  fixture: ok_typeshed_math.R
+- diagnostics: []
+  fixture: ok_typeshed_predicates.R
+- diagnostics: []
+  fixture: ok_typeshed_sets.R
+- diagnostics: []
+  fixture: ok_typeshed_stats.R
+- diagnostics: []
+  fixture: ok_typeshed_string.R
+- diagnostics: []
+  fixture: ok_unary_minus.R
+- diagnostics: []
+  fixture: ok_unary_not.R
+- diagnostics: []
+  fixture: ok_union_element_condition.R
+- diagnostics: []
+  fixture: ok_union_if_arith.R
+- diagnostics: []
+  fixture: ok_unknown_argument_type.R
+- diagnostics: []
+  fixture: ok_user_fn_argument_matching.R
+- diagnostics: []
+  fixture: ok_user_fn_missing_lazy_formal.R
+- diagnostics: []
+  fixture: ok_user_fn_return.R
+- diagnostics: []
+  fixture: ok_vector_constructors.R
+- diagnostics: []
+  fixture: ok_vector_mode_literal.R
+- diagnostics: []
+  fixture: ok_walrus_bind.R
+- diagnostics: []
+  fixture: ok_with_unknown_object.R
+- diagnostics:
+    - code: RY001
+      fix: ~
+      message: "`if` condition is `character<len=1>`, expected length-1 logical"
+      severity: error
+      span:
+        column: 4
+        end: 126
+        line: 3
+        start: 123
+  fixture: ry001_if_condition.R
+- diagnostics:
+    - code: RY003
+      fix: ~
+      message: "`if` condition is `integer`; R coerces nonzero to TRUE"
+      severity: info
+      span:
+        column: 4
+        end: 330
+        line: 6
+        start: 328
+  fixture: ry001_numeric_condition.R
+- diagnostics:
+    - code: RY002
+      fix: ~
+      message: "`if` condition has length 2; R requires a length-1 condition"
+      severity: warning
+      span:
+        column: 4
+        end: 110
+        line: 2
+        start: 96
+  fixture: ry002_if_length.R
+- diagnostics:
+    - code: RY010
+      fix: ~
+      message: "variable `undefined_thing` is not bound in this scope"
+      severity: warning
+      span:
+        column: 5
+        end: 92
+        line: 2
+        start: 77
+  fixture: ry010_unbound.R
+- diagnostics:
+    - code: RY020
+      fix: ~
+      message: "cannot apply unary `-` to `raw`"
+      severity: error
+      span:
+        column: 0
+        end: 23
+        line: 1
+        start: 16
+  fixture: ry020_raw_unary.R
+- diagnostics:
+    - code: RY020
+      fix: ~
+      message: "cannot apply unary `-` to `character`"
+      severity: error
+      span:
+        column: 5
+        end: 82
+        line: 2
+        start: 74
+  fixture: ry020_unary_minus.R
+- diagnostics:
+    - code: RY021
+      fix: ~
+      message: "cannot apply `!` to `character`"
+      severity: error
+      span:
+        column: 5
+        end: 87
+        line: 2
+        start: 79
+  fixture: ry021_unary_not.R
+- diagnostics: []
+  fixture: ry030_compare.R
+- diagnostics:
+    - code: RY031
+      fix: ~
+      message: "logical op applied to `character` and `logical`"
+      severity: error
+      span:
+        column: 5
+        end: 99
+        line: 2
+        start: 89
+  fixture: ry031_logical_op.R
+- diagnostics:
+    - code: RY034
+      fix:
+        replacement: is.na(x)
+        span:
+          column: 0
+          end: 44
+          line: 2
+          start: 37
+      message: "comparison with `NA` always produces `NA`; use `is.na()` instead"
+      severity: warning
+      span:
+        column: 0
+        end: 44
+        line: 2
+        start: 37
+    - code: RY034
+      fix:
+        replacement: "!is.na(x)"
+        span:
+          column: 0
+          end: 58
+          line: 3
+          start: 45
+      message: "comparison with `NA` always produces `NA`; use `is.na()` instead"
+      severity: warning
+      span:
+        column: 0
+        end: 58
+        line: 3
+        start: 45
+  fixture: ry034_compare_na.R
+- diagnostics:
+    - code: RY040
+      fix: ~
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 5
+        end: 92
+        line: 2
+        start: 84
+  fixture: ry040_arith.R
+- diagnostics:
+    - code: RY040
+      fix: ~
+      message: "cannot apply arithmetic op to `raw` and `raw`"
+      severity: error
+      span:
+        column: 0
+        end: 38
+        line: 1
+        start: 23
+    - code: RY040
+      fix: ~
+      message: "cannot apply arithmetic op to `raw` and `integer`"
+      severity: error
+      span:
+        column: 0
+        end: 53
+        line: 2
+        start: 39
+  fixture: ry040_raw_arithmetic.R
+- diagnostics:
+    - code: RY040
+      fix: ~
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 5
+        end: 202
+        line: 6
+        start: 191
+  fixture: ry040_user_fn_return.R
+- diagnostics:
+    - code: RY041
+      fix: ~
+      message: vector lengths 3 and 2 do not divide evenly; R will recycle with a warning
+      severity: warning
+      span:
+        column: 0
+        end: 38
+        line: 1
+        start: 16
+  fixture: ry041_non_divisible_recycling.R
+- diagnostics:
+    - code: RY042
+      fix: ~
+      message: "arithmetic on a factor produces `NA`; operate on its levels or convert it explicitly"
+      severity: warning
+      span:
+        column: 0
+        end: 39
+        line: 1
+        start: 16
+  fixture: ry042_factor_arithmetic.R
+- diagnostics:
+    - code: RY050
+      fix: ~
+      message: "S3 generic `Summary` called on value with classes [undefined] but no matching method is defined"
+      severity: warning
+      span:
+        column: 0
+        end: 331
+        line: 6
+        start: 321
+  fixture: ry050_missing_method.R
+- diagnostics:
+    - code: RY060
+      fix: ~
+      message: "column `nonexistent` not found in data frame schema; available columns: am, carb, cyl, disp, drat, ..."
+      severity: error
+      span:
+        column: 7
+        end: 189
+        line: 4
+        start: 175
+  fixture: ry060_undefined_column.R
+- diagnostics: []
+  fixture: ry095_ry096_real_shapes.R
+- diagnostics:
+    - code: RY096
+      fix: ~
+      message: "`hasArg(threshold)` names a parameter that is not a formal; it is always FALSE"
+      severity: warning
+      span:
+        column: 6
+        end: 207
+        line: 4
+        start: 190
+  fixture: ry096_hasarg_no_dots.R
+- diagnostics: []
+  fixture: ry098_default_forced_before_assignment.R
+- diagnostics:
+    - code: RY001
+      fix: ~
+      message: "`if` condition is `NULL<len=0>`, expected length-1 logical"
+      severity: error
+      span:
+        column: 6
+        end: 61
+        line: 2
+        start: 57
+  fixture: warn_forwarded_null_default_condition.R
+- diagnostics:
+    - code: RY001
+      fix: ~
+      message: "`if` condition is `NULL<len=0>`, expected length-1 logical"
+      severity: error
+      span:
+        column: 6
+        end: 74
+        line: 2
+        start: 68
+  fixture: warn_null_default_condition.R
+- diagnostics:
+    - code: RY003
+      fix: ~
+      message: "`if` condition is `double`; R coerces nonzero to TRUE"
+      severity: info
+      span:
+        column: 4
+        end: 32
+        line: 1
+        start: 20
+  fixture: warn_numeric_min_condition.R
+- diagnostics:
+    - code: RY002
+      fix: ~
+      message: "`if` condition has length 2; R requires a length-1 condition"
+      severity: warning
+      span:
+        column: 4
+        end: 48
+        line: 2
+        start: 39
+  fixture: warn_t6_negative_subscript.R

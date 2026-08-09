@@ -1496,12 +1496,23 @@ impl Checker {
             let hint = suggestion
                 .map(|name| format!("; did you mean `{name}`?"))
                 .unwrap_or_default();
-            self.emit(
-                Severity::Warning,
-                argument.span,
-                "RY090",
-                format!("unknown argument `{argument_name}` to `{function_name}`{hint}"),
-            );
+            let message = format!("unknown argument `{argument_name}` to `{function_name}`{hint}");
+            let fix = suggestion.and_then(|name| {
+                let name_span = Span::new(
+                    argument.span.start,
+                    argument.span.start + argument_name.len(),
+                    argument.span.line,
+                    argument.span.col,
+                );
+                self.source_text(name_span)
+                    .filter(|source_name| *source_name == argument_name)
+                    .and_then(|_| self.fix(name_span, name.to_string()))
+            });
+            if let Some(fix) = fix {
+                self.emit_with_fix(Severity::Warning, argument.span, "RY090", message, fix);
+            } else {
+                self.emit(Severity::Warning, argument.span, "RY090", message);
+            }
         }
     }
 
@@ -1530,14 +1541,27 @@ impl Checker {
 }
 
 fn closest_parameter<'a>(argument: &str, parameters: &'a [&str]) -> Option<&'a str> {
-    parameters
-        .iter()
-        .copied()
-        .filter(|parameter| *parameter != "...")
-        .map(|parameter| (edit_distance(argument, parameter), parameter))
-        .filter(|(distance, _)| *distance <= 2)
-        .min_by_key(|(distance, parameter)| (*distance, *parameter))
-        .map(|(_, parameter)| parameter)
+    let mut closest = None;
+    let mut minimum_distance = usize::MAX;
+    let mut minimum_is_tied = false;
+
+    for parameter in parameters.iter().copied().filter(|name| *name != "...") {
+        let distance = edit_distance(argument, parameter);
+        if distance > 2 {
+            continue;
+        }
+        match distance.cmp(&minimum_distance) {
+            std::cmp::Ordering::Less => {
+                closest = Some(parameter);
+                minimum_distance = distance;
+                minimum_is_tied = false;
+            }
+            std::cmp::Ordering::Equal => minimum_is_tied = true,
+            std::cmp::Ordering::Greater => {}
+        }
+    }
+
+    if minimum_is_tied { None } else { closest }
 }
 
 fn edit_distance(left: &str, right: &str) -> usize {

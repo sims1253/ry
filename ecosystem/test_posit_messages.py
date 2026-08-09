@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+import json
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+
+class PositMessagesGateTest(unittest.TestCase):
+    def test_one_word_message_change_has_readable_unified_diff(self):
+        root = Path(__file__).resolve().parents[1]
+        script = root / "ecosystem/posit_messages.py"
+        with tempfile.TemporaryDirectory() as directory:
+            temp = Path(directory)
+            ledger = temp / "ledger.json"
+            messages = temp / "messages.json"
+            report = temp / "posit.demo.root.json"
+            ledger.write_text(json.dumps({
+                "findings": [{
+                    "package": "demo", "code": "RY010", "path": "R/x.R",
+                    "line": 1, "column": 1,
+                }]
+            }))
+            report.write_text(json.dumps([{
+                "path": "/cache/demo/R/x.R", "code": "RY010",
+                "line": 1, "column": 1, "severity": "warning",
+                "message": "variable `old` is not bound",
+            }]))
+            base = [
+                str(script), "update", "--ledger", str(ledger),
+                "--messages", str(messages), "--json-dir", str(temp),
+                "--report-prefix", "posit.", "demo",
+            ]
+            subprocess.run(base, check=True, capture_output=True, text=True)
+            document = json.loads(messages.read_text())
+            entry = next(iter(document["findings"].values()))
+            entry["message"] = "variable `new` is not bound"
+            messages.write_text(json.dumps(document, indent=2) + "\n")
+
+            result = subprocess.run(
+                [base[0], "check", *base[2:]],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('-      "message": "variable `new` is not bound"', result.stderr)
+            self.assertIn('+      "message": "variable `old` is not bound"', result.stderr)
+            self.assertIn("demo::RY010::R/x.R:1:1", result.stderr)
+
+    def test_selected_packages_are_replaced_without_pruning_unselected_packages(self):
+        root = Path(__file__).resolve().parents[1]
+        script = root / "ecosystem/posit_messages.py"
+        with tempfile.TemporaryDirectory() as directory:
+            temp = Path(directory)
+            ledger = temp / "ledger.json"
+            messages = temp / "messages.json"
+            report = temp / "posit.demo.root.json"
+            ledger.write_text(json.dumps({
+                "findings": [{
+                    "package": "demo", "code": "RY010", "path": "R/x.R",
+                    "line": 1, "column": 1,
+                }]
+            }))
+            report.write_text(json.dumps([{
+                "path": "/cache/demo/R/x.R", "code": "RY010",
+                "line": 1, "column": 1, "severity": "warning",
+                "message": "current",
+            }]))
+            base = [
+                str(script), "update", "--ledger", str(ledger),
+                "--messages", str(messages), "--json-dir", str(temp),
+                "--report-prefix", "posit.", "demo",
+            ]
+            subprocess.run(base, check=True, capture_output=True, text=True)
+            document = json.loads(messages.read_text())
+            obsolete_demo = "demo::RY010::R/obsolete.R:2:1"
+            unselected = "other::RY010::R/preserved.R:3:1"
+            document["findings"][obsolete_demo] = {
+                "package": "demo", "code": "RY010", "path": "R/obsolete.R",
+                "line": 2, "column": 1, "severity": "warning",
+                "message": "obsolete",
+            }
+            document["findings"][unselected] = {
+                "package": "other", "code": "RY010", "path": "R/preserved.R",
+                "line": 3, "column": 1, "severity": "warning",
+                "message": "preserved",
+            }
+            messages.write_text(json.dumps(document, indent=2) + "\n")
+
+            check = subprocess.run(
+                [base[0], "check", *base[2:]],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(check.returncode, 0)
+            self.assertIn(f'-    "{obsolete_demo}"', check.stderr)
+            self.assertNotIn(f'-    "{unselected}"', check.stderr)
+
+            subprocess.run(base, check=True, capture_output=True, text=True)
+            updated = json.loads(messages.read_text())
+            self.assertNotIn(obsolete_demo, updated["findings"])
+            self.assertIn(unselected, updated["findings"])
+
+
+if __name__ == "__main__":
+    unittest.main()

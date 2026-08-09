@@ -1,6 +1,6 @@
 use ry_testkit::{
-    CliProcess, Driver, DriverError, FixtureProject, ObservedDiagnostic, ObservedPosition,
-    ObservedRange, PositionEncoding, normalize_path,
+    CliProcess, Driver, DriverError, FixtureProject, ObservedDiagnostic, ObservedFix,
+    ObservedPosition, ObservedRange, PositionEncoding, normalize_path,
 };
 use serde_json::Value;
 use std::path::Path;
@@ -37,8 +37,31 @@ impl Driver for CliDriver {
 fn cli_diagnostic(value: Value, root: &Path) -> Result<ObservedDiagnostic, DriverError> {
     let line = required_u64(&value, "line")? as u32;
     let column = required_u64(&value, "column")? as u32;
+    let path = required_str(&value, "path")?;
+    let source_path = Path::new(path);
+    let source_path = if source_path.is_absolute() {
+        source_path.to_path_buf()
+    } else {
+        root.join(source_path)
+    };
+    let source = std::fs::read_to_string(source_path)?;
+    let fix = value
+        .get("fix")
+        .map(|fix| -> Result<ObservedFix, DriverError> {
+            Ok(ObservedFix {
+                range: ObservedRange {
+                    start: byte_offset_position(&source, required_u64(fix, "start")? as usize)?,
+                    end: Some(byte_offset_position(
+                        &source,
+                        required_u64(fix, "end")? as usize,
+                    )?),
+                },
+                replacement: required_str(fix, "replacement")?.to_string(),
+            })
+        })
+        .transpose()?;
     Ok(ObservedDiagnostic {
-        path: normalize_path(required_str(&value, "path")?, root),
+        path: normalize_path(path, root),
         code: required_str(&value, "code")?.to_string(),
         severity: required_str(&value, "severity")?.to_string(),
         message: required_str(&value, "message")?.to_string(),
@@ -54,6 +77,21 @@ fn cli_diagnostic(value: Value, root: &Path) -> Result<ObservedDiagnostic, Drive
             .get("confidence")
             .and_then(Value::as_str)
             .map(str::to_string),
+        fix,
+    })
+}
+
+fn byte_offset_position(source: &str, offset: usize) -> Result<ObservedPosition, DriverError> {
+    if offset > source.len() || !source.is_char_boundary(offset) {
+        return Err(format!("fix byte offset {offset} is not a source boundary").into());
+    }
+    let prefix = &source[..offset];
+    let line = prefix.bytes().filter(|byte| *byte == b'\n').count() as u32;
+    let line_start = prefix.rfind('\n').map_or(0, |position| position + 1);
+    Ok(ObservedPosition {
+        line,
+        character: (offset - line_start) as u32,
+        encoding: PositionEncoding::Utf8Byte,
     })
 }
 

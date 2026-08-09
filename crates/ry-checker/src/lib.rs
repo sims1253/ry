@@ -30,10 +30,10 @@ pub use project::Project;
 // crate root for back-compat (callers and tests reference
 // `ry_checker::{Severity, Diagnostic, ...}` directly).
 pub use diagnostics::{
-    Confidence, Diagnostic, Severity, SeverityFilter, Suppression, apply_filter_to_diagnostics,
-    filter_default_disabled, filter_suppressed, filter_suppressed_with_comments,
-    has_file_suppression, has_file_suppression_from_comments, is_suppressed, parse_suppressions,
-    parse_suppressions_from_comments,
+    Confidence, Diagnostic, Fix, Severity, SeverityFilter, Suppression,
+    apply_filter_to_diagnostics, filter_default_disabled, filter_suppressed,
+    filter_suppressed_with_comments, has_file_suppression, has_file_suppression_from_comments,
+    is_suppressed, parse_suppressions, parse_suppressions_from_comments,
 };
 
 use crate::infer::semantic_argument_name;
@@ -583,6 +583,9 @@ pub struct Checker {
     user_stubs: Arc<BTreeMap<String, Typeshed>>,
     pub(crate) diagnostics: Vec<Diagnostic>,
     pub(crate) path: String,
+    /// Source text corresponding to `path`, set at every production check seam.
+    /// Structured fixes slice this exact text by parser spans.
+    pub(crate) source: String,
     // When true, `emit` is a no-op. Set during pass-2 (fixpoint) return-
     // type refinement and closure-signature building so the single
     // inference engine can be used for both the pure and the diagnostic
@@ -659,17 +662,12 @@ impl Checker {
 
     pub fn check(&mut self, file: &SourceFile) -> &[Diagnostic] {
         self.path = file.path.clone();
+        self.source.clone_from(&file.source);
 
         // Clear diagnostics FIRST so a second `check` on the same
         // instance starts fresh rather than accumulating the previous
         // run's diagnostics on top of the re-collected tables.
         self.diagnostics.clear();
-
-        // Parse errors first: a syntax error means the recovered tree is
-        // unreliable, so RY000 is the primary signal for broken input. We
-        // still run the checker on the recovered tree (downstream
-        // diagnostics may be noise, but ty takes the same approach).
-        self.emit_parse_errors(file);
 
         // Pass 1: collect function definitions into the FnTable. We don't
         // emit diagnostics yet - the body's `return` types depend on the
@@ -693,6 +691,7 @@ impl Checker {
     // variable shows its type.
     pub fn check_with_scope(&mut self, file: &SourceFile) -> (Vec<Diagnostic>, Scope) {
         self.path = file.path.clone();
+        self.source.clone_from(&file.source);
         // Clear diagnostics FIRST so we start fresh (the caller may call
         // this multiple times on the same checker instance), THEN emit
         // parse errors. The previous order emitted RY000s and then wiped
@@ -749,6 +748,7 @@ impl Checker {
             user_stubs: Arc::new(BTreeMap::new()),
             diagnostics: Vec::new(),
             path: path.to_string(),
+            source: String::new(),
             discarding: false,
             validate_user_call_arguments: true,
             fn_table,
@@ -1146,6 +1146,7 @@ impl Checker {
     // first if you want only this file's diagnostics.
     pub(crate) fn emit_diagnostics(&mut self, file: &SourceFile) {
         self.path = file.path.clone();
+        self.source.clone_from(&file.source);
         self.emit_parse_errors(file);
         let mut scope = self.top_level_scope();
         for s in &file.stmts {

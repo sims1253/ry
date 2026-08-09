@@ -2117,6 +2117,7 @@ fn is_suppressed_matches_line_and_code() {
         code: "RY010",
         message: "test".into(),
         confidence: Confidence::Medium,
+        fix: None,
     };
     let diag_wrong_line = Diagnostic {
         span: Span {
@@ -2152,6 +2153,7 @@ fn is_suppressed_empty_rules_matches_any_code() {
         code: "RY999",
         message: "test".into(),
         confidence: Confidence::Medium,
+        fix: None,
     };
     assert!(is_suppressed(&diag, &supps));
 }
@@ -6874,6 +6876,25 @@ fn public_check_with_scope_surfaces_ry000_on_broken_file() {
         diags.iter().any(|d| d.code == "RY000"),
         "check_with_scope must surface RY000 on a broken file, got {:?}",
         diags
+    );
+}
+
+#[test]
+fn public_check_emits_each_parse_error_once() {
+    let mut parser = RParser::new().unwrap();
+    let file = parser.parse("test.R", "f <- function( { 1 }\n").unwrap();
+    let expected = file.parse_errors.len();
+    assert!(expected > 0, "fixture must contain a parse error");
+    let mut checker = Checker::new("test.R");
+    let actual = checker
+        .check(&file)
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "RY000")
+        .count();
+
+    assert_eq!(
+        actual, expected,
+        "each parser error must produce exactly one RY000"
     );
 }
 

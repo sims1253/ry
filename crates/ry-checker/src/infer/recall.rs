@@ -70,13 +70,9 @@ fn numeric_literal(expr: &Expr) -> Option<f64> {
 /// been typed instead. Only a bare identifier or a string literal qualifies:
 /// `list(x[[1]] <- 2)` and `list(names(y) <- z)` are replacement functions,
 /// not mistyped names.
-fn mistyped_element_name(target: &Expr) -> Option<(&str, String)> {
+fn mistyped_element_name(target: &Expr) -> Option<&str> {
     match target {
-        Expr::Ident { name, .. } => Some((name.as_str(), name.clone())),
-        // A string LHS keeps its quotes in the suggestion: `github-ref` is
-        // not a syntactic name, so `"github-ref" = ...` is the only fix that
-        // parses.
-        Expr::String(name, _) => Some((name.as_str(), format!("\"{name}\""))),
+        Expr::Ident { name, .. } | Expr::String(name, _) => Some(name.as_str()),
         _ => None,
     }
 }
@@ -101,33 +97,6 @@ fn call_argument(expr: &Expr) -> Option<&Expr> {
         return None;
     };
     args.first().map(|arg| &arg.value)
-}
-
-/// Render an expression back to a compact source string for diagnostic
-/// suggestions. Covers the common literal/identifier shapes; returns
-/// `None` for expressions that cannot be rendered without losing meaning,
-/// so the caller can omit the concrete suggestion rather than emit a
-/// broken one like `inherits(..., "widget")`.
-fn expr_to_source(expr: &Expr) -> Option<String> {
-    match expr {
-        Expr::Ident { name, .. } => Some(name.clone()),
-        Expr::String(s, _) => {
-            if s.contains('\0') {
-                return None;
-            }
-            let escaped = s
-                .replace('\\', "\\\\")
-                .replace('"', "\\\"")
-                .replace('\n', "\\n")
-                .replace('\r', "\\r")
-                .replace('\t', "\\t");
-            Some(format!("\"{}\"", escaped))
-        }
-        Expr::Integer(n, _) => Some(format!("{n}L")),
-        Expr::Double(n, _) => Some(n.to_string()),
-        Expr::Logical(b, _) => Some(b.to_string()),
-        _ => None,
-    }
 }
 
 impl Checker {
@@ -186,26 +155,27 @@ impl Checker {
             let Expr::BinOp {
                 op: BinOpKind::Assign,
                 lhs,
+                rhs,
                 span,
-                ..
             } = &argument.value
             else {
                 continue;
             };
-            let Some((name, spelling)) = mistyped_element_name(lhs) else {
+            let Some(name) = mistyped_element_name(lhs) else {
                 continue;
             };
             if matches!(lhs.as_ref(), Expr::Ident { .. }) && !builds_named_structure {
                 continue;
             }
-            self.emit(
-                Severity::Warning,
-                *span,
-                "RY102",
-                format!(
-                    "`<-` inside `{lookup_name}()` assigns `{name}` and leaves the element unnamed; write `{spelling} = ...` to name it"
-                ),
+            let spelling = self.source_text(span_of(lhs)).unwrap_or(name).to_string();
+            let message = format!(
+                "`<-` inside `{lookup_name}()` assigns `{name}` and leaves the element unnamed; write `{spelling} = ...` to name it"
             );
+            if let Some(fix) = self.binary_operator_fix(lhs, rhs, "<-", "=") {
+                self.emit_with_fix(Severity::Warning, *span, "RY102", message, fix);
+            } else {
+                self.emit(Severity::Warning, *span, "RY102", message);
+            }
         }
     }
 
@@ -226,7 +196,7 @@ impl Checker {
     /// Silent for `class(x)[1] == "y"` (an `Index`, not a `Call`, and
     /// explicitly length-1) and for any use outside a scalar logical context,
     /// where a vector result is the point.
-    pub(crate) fn check_class_equality_operand(&mut self, expr: &Expr) {
+    pub(crate) fn check_class_equality_operand(&mut self, expr: &Expr, scope: &Scope) {
         let Expr::BinOp {
             op: op @ (BinOpKind::Eq | BinOpKind::Ne),
             lhs,
@@ -236,29 +206,66 @@ impl Checker {
         else {
             return;
         };
-        if !unary_call_to(lhs, "class") && !unary_call_to(rhs, "class") {
+        let lhs_is_class = unary_call_to(lhs, "class");
+        let rhs_is_class = unary_call_to(rhs, "class");
+        if !lhs_is_class && !rhs_is_class {
             return;
         }
-        // Build the suggestion from the actual operands: the class() call's
-        // first argument becomes inherits()'s first argument, and the other
-        // side of the comparison becomes the class name.
-        let (class_arg, other_side) = if unary_call_to(lhs, "class") {
-            (&lhs, rhs)
-        } else {
-            (&rhs, lhs)
-        };
-        let Some(arg_expr) = call_argument(class_arg) else {
-            return;
+
+        // The warning describes the risky comparison shape, but an automated
+        // rewrite additionally requires exactly one class() operand and proof
+        // that its callee is base::class rather than a qualified or shadowed
+        // function with unrelated semantics.
+        let fix_operands = match (lhs_is_class, rhs_is_class) {
+            (true, false) if self.is_base_class_call(lhs, scope) => Some((lhs, rhs)),
+            (false, true) if self.is_base_class_call(rhs, scope) => Some((rhs, lhs)),
+            _ => None,
         };
         let prefix = if matches!(op, BinOpKind::Eq) { "" } else { "!" };
-        let message = match (expr_to_source(arg_expr), expr_to_source(other_side)) {
-            (Some(arg_src), Some(class_src)) => {
-                let suggestion = format!("{prefix}inherits({arg_src}, {class_src})");
-                format!("`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `{suggestion}`")
-            }
-            _ => "`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `inherits()`".to_string(),
+        let suggestion = fix_operands
+            .and_then(|(class_call, other_side)| {
+                call_argument(class_call).map(|argument| (argument, other_side))
+            })
+            .and_then(|(argument, other_side)| {
+                self.source_text(span_of(argument))
+                    .zip(self.source_text(span_of(other_side)))
+            })
+            .map(|(argument, class)| format!("{prefix}inherits({argument}, {class})"));
+        let message = suggestion.as_ref().map_or_else(
+            || "`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `inherits()`".to_string(),
+            |suggestion| format!("`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `{suggestion}`"),
+        );
+        if let Some(fix) = suggestion.and_then(|replacement| self.fix(*span, replacement)) {
+            self.emit_with_fix(Severity::Warning, *span, "RY103", message, fix);
+        } else {
+            self.emit(Severity::Warning, *span, "RY103", message);
+        }
+    }
+
+    fn is_base_class_call(&self, expr: &Expr, scope: &Scope) -> bool {
+        let Expr::Call { func, .. } = expr else {
+            return false;
         };
-        self.emit(Severity::Warning, *span, "RY103", message);
+        let Some(name) = ident_name(func) else {
+            return false;
+        };
+        match name {
+            "base::class" | "base:::class" => true,
+            "class" => {
+                let lexically_unshadowed =
+                    scope.get("class").is_none() && !self.fn_table.fns.contains_key("class");
+                let imported_from_base = self
+                    .imported_from
+                    .get("class")
+                    .is_some_and(|package| package == "base");
+                lexically_unshadowed
+                    && (imported_from_base
+                        || (!self.external_bindings.contains("class")
+                            && self.bare_loaded.is_empty()
+                            && !scope.search_path_unknown))
+            }
+            _ => false,
+        }
     }
 
     /// RY105: `length(x) <op> 0` where `x` is length 1 by construction, as in

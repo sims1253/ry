@@ -21,9 +21,10 @@ import { logger } from "./logger";
 import { getDocumentSelector } from "./utilities";
 import { getConfiguration } from "./vscodeapi";
 import {
-    type ISettings,
-    getExtensionSettings,
-    getGlobalSettings,
+  type ISettings,
+  getExtensionSettings,
+  getGlobalSettings,
+  getWorkspaceSettings,
 } from "./settings";
 
 /**
@@ -134,6 +135,23 @@ export async function startServer(
     traceOutputChannel,
     revealOutputChannelOn: RevealOutputChannelOn.Never,
     initializationOptions,
+    middleware: {
+      workspace: {
+        configuration: async (params, token, next) => {
+          const values = await next(params, token);
+          if (!Array.isArray(values)) return values;
+          return params.items.map((item, index) => {
+            if (item.section !== namespace) return values[index];
+            const folder = item.scopeUri
+              ? vscode.workspace.getWorkspaceFolder(vscode.Uri.parse(item.scopeUri))
+              : undefined;
+            return folder
+              ? getWorkspaceSettings(namespace, folder)
+              : getGlobalSettings(namespace);
+          });
+        },
+      },
+    },
   };
 
   const newLSClient = new LanguageClient(

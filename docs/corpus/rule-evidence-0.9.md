@@ -17,7 +17,7 @@ The mutation pilot covers RY032, RY040, RY093, and RY103.
 
 The R7 relation tests whether a rule fires identically when the triggering
 value is a literal call argument (`f(literal)`) versus a parameter default
-(`f()` with `function(x = literal)`). Three classifications:
+(`f()` with `function(x = literal)`). Four classifications:
 
 - **lift-reachable**: the rule fires on the default form but not the
   call form. The checker does not propagate call-site argument types into

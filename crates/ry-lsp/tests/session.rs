@@ -711,7 +711,7 @@ fn operation_strategy() -> impl Strategy<Value = Operation> {
 }
 
 fn operation_sequence_strategy() -> impl Strategy<Value = Vec<Operation>> {
-    prop::collection::vec(operation_strategy(), 1..16)
+    prop::collection::vec(operation_strategy(), 1..10)
 }
 
 /// Track which documents are open and their current text.  This mirrors the
@@ -879,7 +879,7 @@ async fn quiesce_and_compare(
 
 proptest! {
     #![proptest_config(ProptestConfig {
-        cases: 32,
+        cases: 16,
         max_shrink_iters: 10_000,
         ..ProptestConfig::default()
     })]

@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 6903c2840667b43227e80615a43a55f3167221feb8ca7c4dc8ab545ef338fb81 # shrinks to operations = [Open { file: 0, source: BmpDiagnostic }, Open { file: 1, source: Clean }, Open { file: 0, source: Clean }]
+cc 09706e2e6d8b1b3ecfceed28e1559649e992223acdc2334e86a224615b5a1a4d # shrinks to operations = [Open { file: 2, source: Clean }, Open { file: 2, source: Clean }, Close { file: 2 }, Open { file: 2, source: AsciiDiagnostic }]

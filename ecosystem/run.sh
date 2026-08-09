@@ -93,12 +93,17 @@ if [[ -z "$audit_corpus" ]]; then
   fi
 fi
 
-for command in cargo git python3 Rscript; do
-  command -v "$command" >/dev/null 2>&1 || {
-    echo "ecosystem: required command not found: $command" >&2
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "ecosystem: required command not found: $1" >&2
     exit 2
   }
-done
+}
+
+require_command Rscript
+if ! $local_only; then
+  require_command git
+fi
 
 # Snapshots must not depend on which R packages are installed on the
 # machine that generates them: disable ry's installed-library resolution.
@@ -117,6 +122,8 @@ if [[ -n "${RY_BINARY:-}" ]]; then
     exit 2
   fi
 else
+  require_command cargo
+  require_command python3
   # Always ask Cargo for the current release binary. Checking only whether the
   # path exists can silently run an executable built from an older checkout,
   # then regenerate reviewed reports that disagree with clean CI. Resolve the
@@ -492,10 +499,7 @@ if ! $local_only; then
   audit_corpus_path="$(cd "$(dirname "$audit_corpus")" && pwd -P)/$(basename "$audit_corpus")"
   posit_corpus_path="$(cd "$(dirname "$posit_corpus")" && pwd -P)/$(basename "$posit_corpus")"
   if [[ "$audit_corpus_path" == "$posit_corpus_path" ]]; then
-    command -v python3 >/dev/null 2>&1 || {
-      echo "ecosystem: required command not found: python3" >&2
-      exit 2
-    }
+    require_command python3
     message_mode=update
     $check && message_mode=check
     python3 "$ecosystem_dir/posit_messages.py" "$message_mode" \

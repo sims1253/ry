@@ -146,7 +146,9 @@ pub(super) fn collect_completions(
             // index; resolve it to a byte offset before slicing so a
             // line with a non-ASCII character before the cursor cannot
             // panic (or truncate) the slice.
-            let until = utf16_col_to_byte(line, position.character).unwrap_or(line.len());
+            let Some(until) = utf16_col_to_byte(line, position.character) else {
+                return Vec::new();
+            };
             let before_cursor = &line[..until];
             // Strip the trailing `$` (and any whitespace between the
             // identifier and it) so `extract_last_identifier` lands
@@ -338,9 +340,9 @@ pub(super) fn find_enclosing_call(text: &str, line: usize, col: usize) -> Option
     // `col` is a UTF-16 code-unit column from the LSP request.
     // Resolve it to a byte offset before slicing, so a line with a
     // non-ASCII character before the cursor cannot panic the slice.
-    // A cursor past the last character (a common transient state
-    // right after typing `(`) is clamped to the line end.
-    let until = utf16_col_to_byte(line_str, col as u32).unwrap_or(line_str.len());
+    // Positions past the line or inside an astral surrogate pair are invalid
+    // LSP positions and must not alias the end of the line.
+    let until = utf16_col_to_byte(line_str, col as u32)?;
     let before_cursor = &line_str[..until];
 
     // Walk backward to find the last unmatched `(`. We track depth so

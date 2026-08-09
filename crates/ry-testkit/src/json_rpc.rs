@@ -144,6 +144,18 @@ where
         Ok(id)
     }
 
+    pub async fn request_without_params(&mut self, method: &str) -> io::Result<u64> {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.send(&json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+        }))
+        .await?;
+        Ok(id)
+    }
+
     pub async fn notify(&mut self, method: &str, params: Value) -> io::Result<()> {
         self.send(&json!({
             "jsonrpc": "2.0",

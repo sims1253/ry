@@ -57,8 +57,16 @@ pub(crate) fn position_to_byte_offset(text: &str, line: u32, utf16_col: u32) -> 
     let mut cur_line = 0u32;
     let mut cur_col = 0u32;
     for (b, ch) in text.char_indices() {
-        if cur_line == line && cur_col >= utf16_col {
-            return Some(b);
+        if cur_line == line {
+            if cur_col == utf16_col {
+                return Some(b);
+            }
+            // No byte boundary exists inside an astral scalar's UTF-16
+            // surrogate pair. Reject that position instead of snapping it
+            // forward to the next scalar.
+            if cur_col > utf16_col {
+                return None;
+            }
         }
         match ch {
             '\r' if text.as_bytes().get(b + 1) == Some(&b'\n') => {
@@ -72,7 +80,7 @@ pub(crate) fn position_to_byte_offset(text: &str, line: u32, utf16_col: u32) -> 
             _ => cur_col += utf16_len(ch) as u32,
         }
     }
-    if cur_line == line && cur_col >= utf16_col {
+    if cur_line == line && cur_col == utf16_col {
         Some(text.len())
     } else {
         None

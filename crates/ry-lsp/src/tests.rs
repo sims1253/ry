@@ -2559,7 +2559,7 @@ fn build_input_edit_uses_byte_offsets_for_non_ascii() {
     };
     let new_text = "X";
 
-    let edit = crate::backend::build_input_edit(text, range, new_text);
+    let edit = crate::backend::build_input_edit(text, range, new_text).unwrap();
 
     // start_byte should be 2 (ASCII bytes), not 2 UTF-16 units.
     assert_eq!(edit.start_byte, 2);
@@ -2589,7 +2589,7 @@ fn build_input_edit_multiline_replacement() {
     };
     let new_text = "00\nextra";
 
-    let edit = crate::backend::build_input_edit(text, range, new_text);
+    let edit = crate::backend::build_input_edit(text, range, new_text).unwrap();
 
     // start_byte: "x <- " = 5 bytes, so position (0,5) = byte 5.
     assert_eq!(edit.start_byte, 5);

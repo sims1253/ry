@@ -313,6 +313,33 @@ impl Checker {
     /// 8. A non-empty search path (`bare_loaded` or `search_path_unknown`)
     ///    → cannot prove base resolution.
     /// 9. Otherwise the bare name falls through to base.
+    pub(crate) fn resolves_to_base_lenient(&self, name: &str, scope: &Scope) -> bool {
+        // Same as resolves_to_base but the search_path_unknown / bare_loaded
+        // guard is relaxed. A loaded package rarely redefines `list` or
+        // `length`, and the old code only checked fn_table shadowing.
+        if name.rsplit_once("::").is_some() {
+            return crate::semantic_lists::is_base_qualified(name);
+        }
+        if scope.is_lexical_function(name) {
+            return false;
+        }
+        if let Some(ty) = scope.get(name) {
+            if matches!(ty.mode, ry_core::types::Mode::Function) || scope.is_parameter(name) {
+                return false;
+            }
+        }
+        if self.fn_table.fns.contains_key(name) {
+            return false;
+        }
+        if let Some(pkg) = self.imported_from.get(name) {
+            return pkg == "base";
+        }
+        if self.external_bindings.contains(name) {
+            return false;
+        }
+        true
+    }
+
     pub(crate) fn resolves_to_base(&self, name: &str, scope: &Scope) -> bool {
         // (a) Explicit base:: qualification.
         if name.rsplit_once("::").is_some() {

@@ -132,7 +132,7 @@ impl Checker {
         // semantic. Delegate to the canonical base-call resolution operation
         // so the shadowing order lives in one place (Plan 35 W7).
         let lookup_name = crate::semantic_lists::bare_name(name);
-        if !self.resolves_to_base(name, scope) {
+        if !self.resolves_to_base_lenient(name, scope) {
             return;
         }
         if !NAME_CARRYING_CONTAINERS.contains(&lookup_name) {
@@ -312,7 +312,7 @@ impl Checker {
             Expr::Call { func, .. } => ident_name(func).unwrap_or("length"),
             _ => "length",
         };
-        if !self.resolves_to_base(length_name, scope) {
+        if !self.resolves_to_base_lenient(length_name, scope) {
             return;
         }
         let Some(reason) = self.scalar_by_construction(measured, scope) else {
@@ -369,7 +369,7 @@ impl Checker {
         // resolve to base, the user's function may have entirely different
         // semantics and the typeshed claim does not apply (Plan 35 W7).
         let bare = crate::semantic_lists::bare_name(callee);
-        if !self.resolves_to_base(callee, scope) {
+        if !self.resolves_to_base_lenient(callee, scope) {
             return None;
         }
         if !args.is_empty() && self.is_typeshed_scalar_reduction(callee) {

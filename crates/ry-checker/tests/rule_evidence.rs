@@ -193,6 +193,7 @@ fn r7_literal_lift_report_over_rule_families() {
     let mut lift_reachable = Vec::new();
     let mut param_unreachable = Vec::new();
     let mut consistent = Vec::new();
+    let mut call_only = Vec::new();
 
     for case in R7_CASES {
         let lit_codes = check_codes(case.literal_src);
@@ -206,6 +207,8 @@ fn r7_literal_lift_report_over_rule_families() {
             consistent.push(case.rule);
         } else if def_fires && !lit_fires {
             lift_reachable.push(case.rule);
+        } else if lit_fires && !def_fires {
+            call_only.push(case.rule);
         } else {
             param_unreachable.push(case.rule);
         }
@@ -217,7 +220,7 @@ fn r7_literal_lift_report_over_rule_families() {
     }
 
     eprintln!(
-        "R7 report: {total} rule families checked\n  lift-reachable (default-only): {lift_reachable:?}\n  parameter-unreachable: {param_unreachable:?}\n  consistent: {consistent:?}\n  n/a (syntactic): {R7_NA_RULES:?}",
+        "R7 report: {total} rule families checked\n  lift-reachable (default-only): {lift_reachable:?}\n  call-only: {call_only:?}\n  parameter-unreachable: {param_unreachable:?}\n  consistent: {consistent:?}\n  n/a (syntactic): {R7_NA_RULES:?}",
     );
 
     let covered: BTreeSet<&str> = R7_CASES.iter().map(|c| c.rule).collect();
@@ -264,6 +267,7 @@ fn r7_literal_lift_fixture_scan() {
             continue;
         }
 
+        let orig_codes = check_codes(&src);
         for (fn_name, param_name, has_default) in &fn_defs {
             if *has_default {
                 continue; // parameter already has a default
@@ -274,7 +278,6 @@ fn r7_literal_lift_fixture_scan() {
                 }
                 let lifted = construct_lifted_source(&src, fn_name, param_name, lit_text);
                 if let Some(lifted) = lifted {
-                    let orig_codes = check_codes(&src);
                     let lifted_codes = check_codes(&lifted);
                     total_lifts += 1;
                     if orig_codes != lifted_codes {
@@ -348,7 +351,10 @@ fn literal_text(expr: &Expr) -> Option<String> {
         Expr::Logical(v, _) => Some(if *v { "TRUE" } else { "FALSE" }.to_string()),
         Expr::Integer(v, _) => Some(format!("{v}L")),
         Expr::Double(v, _) => Some(v.to_string()),
-        Expr::String(s, _) => Some(format!("\"{s}\"")),
+        Expr::String(s, _) => {
+            let escaped = s.replace("\\", "\\\\").replace("\"", "\\\"");
+            Some(format!("\"{escaped}\""))
+        }
         Expr::Null(_) => Some("NULL".to_string()),
         _ => None,
     }

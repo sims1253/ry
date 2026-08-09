@@ -131,10 +131,7 @@ impl Checker {
             // Do not split the `::` embedded in its operator spelling.
             semantic_name.clone()
         } else {
-            semantic_name
-                .rsplit_once("::")
-                .map(|(_, n)| n.to_string())
-                .unwrap_or_else(|| semantic_name.clone())
+            crate::semantic_lists::bare_name(&semantic_name).to_string()
         };
 
         // `foreach(iter = xs, ...) %op% { ... }` evaluates the RHS with

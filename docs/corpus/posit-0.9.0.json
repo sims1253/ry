@@ -6114,15 +6114,6 @@
       "workstream": "upstream-package"
     },
     {
-      "package": "shiny-r",
-      "code": "RY105",
-      "path": "tests/testthat/test-non-blocking.R",
-      "line": 127,
-      "column": 15,
-      "label": "false_positive",
-      "workstream": "P34-W1-manual-audit"
-    },
-    {
       "package": "shinydashboard",
       "code": "RY010",
       "path": "R/boxes.R",

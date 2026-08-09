@@ -5740,15 +5740,6 @@
         "replacement": ") != 0"
       }
     },
-    "shiny-r::RY105::tests/testthat/test-non-blocking.R:127:15": {
-      "package": "shiny-r",
-      "code": "RY105",
-      "path": "tests/testthat/test-non-blocking.R",
-      "line": 127,
-      "column": 15,
-      "severity": "warning",
-      "message": "`generations_seen` is a length-1 integer, so `length(...)` is 1 here and this zero-length guard is always TRUE"
-    },
     "shinydashboard::RY010::R/boxes.R:301:7": {
       "package": "shinydashboard",
       "code": "RY010",

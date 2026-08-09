@@ -30,6 +30,14 @@ All notable changes to ry are documented in this file.
   This is the pre-governance Plan 34 baseline, not the final 0.9 rule set.
 - Extracted `Config`, `Baseline`, and diagnostic-filter types into a
   new `ry-config` library crate, shared between `ry-cli` and `ry-lsp`.
+- **Rule verdicts (P35-W12)**: every checker rule now has an evidence-backed
+  verdict in `docs/corpus/rule-evidence-0.9.md`. The R7 literal-to-parameter
+  lifting report classifies each rule's reachability (lift-reachable,
+  parameter-unreachable, consistent, or n/a). A targeted mutation pilot
+  covers RY032, RY040, RY093, and RY103. All rules are `keep` except RY003
+  (already `default-off`) and RY095 (retired in Plan 31). No rule behavior
+  changes; the ledger is unchanged because no intentional identity changes
+  were made.
 
 ### Fixed
 

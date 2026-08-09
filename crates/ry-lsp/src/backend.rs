@@ -695,8 +695,18 @@ impl LanguageServer for Backend {
         // Incremental sync (W6): process each change event, applying
         // range-based edits to the old text and building a tree-sitter
         // InputEdit for incremental reparse.
+        //
+        // If any change has an invalid UTF-16 range, abort the remaining
+        // batch: subsequent changes' ranges are relative to the client
+        // text after the dropped edit, so applying them to the server's
+        // (pre-dropped-edit) text would splice wrong bytes.
         for change in params.content_changes {
-            self.apply_incremental_change(&path, change, version).await;
+            if !self.apply_incremental_change(&path, change, version).await {
+                tracing::error!(
+                    "aborting remaining changes in didChange batch for {path};                      server and client text will desynchronize until a full sync is received"
+                );
+                break;
+            }
         }
         // Debounced: a burst of keystrokes coalesces into a single
         // diagnostic publish.
@@ -1522,7 +1532,7 @@ impl Backend {
         path: &str,
         change: TextDocumentContentChangeEvent,
         version: i32,
-    ) {
+    ) -> bool {
         if let Some(range) = change.range {
             // Incremental: apply the range edit to the old text.
             let (old_text, old_tree) = {
@@ -1539,9 +1549,9 @@ impl Backend {
                 let Some((start_byte, end_byte)) = range_byte_span(&old_text, range) else {
                     tracing::error!(
                         ?range,
-                        "dropping document change with invalid UTF-16 range; server and client text will desynchronize until a full sync is received"
+                        "invalid UTF-16 range in document change; server and client text will desynchronize until a full sync is received"
                     );
-                    return;
+                    return false;
                 };
                 let new_text = {
                     let mut result = String::with_capacity(old_text.len() + change.text.len());
@@ -1575,6 +1585,7 @@ impl Backend {
                 self.update_doc(path.to_string(), change.text, version)
                     .await;
             }
+            true
         } else {
             // Full text change (no range). Clear stale tree.
             {
@@ -1583,6 +1594,7 @@ impl Backend {
             }
             self.update_doc(path.to_string(), change.text, version)
                 .await;
+            true
         }
     }
 
@@ -2057,8 +2069,6 @@ fn range_byte_span(old_text: &str, range: Range) -> Option<(usize, usize)> {
     let end_byte = position_to_byte_offset_pos(old_text, range.end)?;
     (start_byte <= end_byte).then_some((start_byte, end_byte))
 }
-
-
 
 /// Build a tree-sitter `InputEdit` from an LSP range and replacement text.
 /// The InputEdit tells tree-sitter which byte range changed and the new

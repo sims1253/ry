@@ -295,11 +295,24 @@ impl Checker {
                 _ => None,
             }
         }
-        let (measured, measured_on_left) = match (length_operand(lhs), length_operand(rhs)) {
-            (Some(measured), None) if numeric_literal(rhs) == Some(0.0) => (measured, true),
-            (None, Some(measured)) if numeric_literal(lhs) == Some(0.0) => (measured, false),
-            _ => return,
-        };
+        let (measured, measured_on_left, length_call) =
+            match (length_operand(lhs), length_operand(rhs)) {
+                (Some(measured), None) if numeric_literal(rhs) == Some(0.0) => {
+                    (measured, true, lhs)
+                }
+                (None, Some(measured)) if numeric_literal(lhs) == Some(0.0) => {
+                    (measured, false, rhs)
+                }
+                _ => return,
+            };
+        // The outer `length()` call must resolve to base::length; a
+        // shadowed or qualified `length` (e.g. `other::length(...)`) may
+        // have unrelated semantics.
+        let length_callee = bare_callee(length_call).unwrap_or("length");
+        let length_name = ident_name(length_call).unwrap_or(length_callee);
+        if !self.resolves_to_base(length_name, scope) {
+            return;
+        }
         let Some(reason) = self.scalar_by_construction(measured, scope) else {
             return;
         };

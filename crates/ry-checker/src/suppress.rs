@@ -319,12 +319,19 @@ impl Checker {
             return crate::semantic_lists::is_base_qualified(name);
         }
 
-        // (b) Lexical shadowing: data binding or function binding.
-        if scope.get(name).is_some() {
-            return false;
-        }
+        // (b) Lexical shadowing: only callable or parameter bindings shadow
+        // a base function at a call site. R's call-position lookup would
+        // error on a non-function parameter, but the checker conservatively
+        // treats parameters as potentially callable. A non-parameter data
+        // binding does not shadow — `c <- 1L; c(a = 1)` still calls base::c
+        // (mirrors infer_call's existing skip-non-function-binding rule).
         if scope.is_lexical_function(name) {
             return false;
+        }
+        if let Some(ty) = scope.get(name) {
+            if matches!(ty.mode, ry_core::types::Mode::Function) || scope.is_parameter(name) {
+                return false;
+            }
         }
 
         // (c) fn_table shadowing.

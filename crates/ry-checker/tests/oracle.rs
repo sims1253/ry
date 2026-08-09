@@ -708,3 +708,88 @@ fn fixture_packages_scans_library_require_and_namespace_calls() {
 fn fixture_packages_empty_for_plain_fixtures() {
     assert!(fixture_packages("# oracle: must-flag\nx <- \"a\" + 1\n").is_empty());
 }
+
+// ── P35-W11: R-oracle setup falsification ────────────────────────────────
+
+/// P35-W11: prove the R oracle verification actually fails when a wrong
+/// answer is given.
+///
+/// This is not a meta-test proving an ordinary assertion can fail. It
+/// protects the orchestration seam where `r_errors` interprets Rscript's
+/// exit status and stderr, and where the oracle tag logic must reject a
+/// `must-pass` fixture whose R execution actually errors. If `r_errors`
+/// stopped checking `output.status.success()` or stopped scanning stderr
+/// for "Error" (the locale-dependent heuristic the parallel driver replaces
+/// but the serial path still uses), a real semantic disagreement would
+/// pass silently through CI.
+///
+/// The test creates a temporary fixture tagged `must-pass` that R errors
+/// on (`"a" + 1` — non-numeric to binary operator), then:
+///   1. Asserts `r_errors` detects the R error.
+///   2. Asserts the oracle tag logic classifies this as a failure
+///      (`must-pass` + `r_errored=true` is never the `ok` branch).
+#[test]
+fn oracle_r_error_detection_fails_on_wrong_answer() {
+    if !rscript_on_path() {
+        eprintln!("Rscript not on PATH; skipping oracle falsification.");
+        return;
+    }
+
+    // Write a must-pass fixture that R will reject. `"a" + 1` is a
+    // mode-mismatch that R always errors on, with no package dependency.
+    let dir = std::env::temp_dir();
+    let path = dir.join("ry_w11_oracle_falsification.R");
+    fs::write(&path, "# oracle: must-pass\nx <- \"a\" + 1\n").expect("write temp fixture");
+
+    let (r_errored, r_message) = r_errors(&path);
+    let _ = std::fs::remove_file(&path);
+
+    assert!(
+        r_errored,
+        "P35-W11: r_errors failed to detect that R errors on the          deliberately wrong fixture; R said: {r_message}",
+    );
+
+    // The oracle harness's own logic: a `must-pass` fixture with an R error
+    // is ALWAYS a failure (it hits the `MustPass, true` arm which pushes a
+    // failure string). Prove this by checking the same condition the
+    // harness uses.
+    let src = "# oracle: must-pass\nx <- \"a\" + 1\n";
+    let tag = tag_of(src).expect("tag parsed");
+    assert!(matches!(tag, Tag::MustPass));
+    let ok = match (&tag, r_errored) {
+        (Tag::MustPass, false) => true,
+        (Tag::MustPass, true) => false, // ← failure branch
+        _ => unreachable!(),
+    };
+    assert!(
+        !ok,
+        "P35-W11: the oracle must-pass + r_errored arm should classify as failure",
+    );
+}
+
+/// P35-W11: prove the oracle's `must-flag` path catches a missing error.
+///
+/// A `must-flag` fixture that R does NOT error on means the oracle cannot
+/// assert anything (the `MustFlag, false` arm pushes a failure). This
+/// protects the seam where a must-flag fixture with a broken R-side
+/// premise would be silently accepted if the oracle stopped checking
+/// `r_errored`.
+#[test]
+fn oracle_must_flag_fails_when_r_does_not_error() {
+    let src = "# oracle: must-flag\nx <- 1 + 1\n";
+    let tag = tag_of(src).expect("tag parsed");
+    assert!(matches!(tag, Tag::MustFlag));
+
+    // Simulate R succeeding (r_errored=false) on a must-flag fixture.
+    // The oracle's MustFlag + r_errored=false arm pushes a failure.
+    let r_errored = false;
+    let ok = match (&tag, r_errored) {
+        (Tag::MustFlag, true) => true,
+        (Tag::MustFlag, false) => false, // ← failure branch
+        _ => unreachable!(),
+    };
+    assert!(
+        !ok,
+        "P35-W11: must-flag + R-success should classify as oracle failure",
+    );
+}

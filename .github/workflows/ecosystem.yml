@@ -92,3 +92,5 @@ jobs:
         run: python3 ecosystem/test_posit_messages.py
       - name: Posit ledger drift detection integration test
         run: ecosystem/test-posit-drift-detection.sh
+      - name: Posit label falsification integration test
+        run: ecosystem/test-posit-label-falsification.sh

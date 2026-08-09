@@ -1,0 +1,36 @@
+name: Nightly fuzz
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install cargo-fuzz
+        run: cargo +nightly install cargo-fuzz
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ".;fuzz"
+      - name: Fuzz parse (5 min)
+        run: cargo +nightly fuzz run parse -- -max_total_time=300 -max_len=4096
+        working-directory: ${{ github.workspace }}
+      - name: Fuzz parse-and-check (5 min)
+        run: cargo +nightly fuzz run parse-and-check -- -max_total_time=300 -max_len=4096
+        working-directory: ${{ github.workspace }}
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crash-artifacts
+          path: fuzz/artifacts/
+          if-no-files-found: ignore

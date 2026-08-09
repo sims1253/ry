@@ -277,3 +277,30 @@ fn r6_parseable_statements_from_checker_and_ecosystem_corpora_survive_insertion(
         assert_statement_survives_at_every_k(&candidate);
     }
 }
+
+// ── P35-W11: fuzz-found parser regressions ──────────────────────────────
+
+/// Regression fixture promoted from the `parse` cargo-fuzz target.
+///
+/// The minimized crash input `n"\xff` (3 bytes) caused the parser to panic
+/// in `unquote_r_string`: slicing `&raw[1..raw.len() - 1]` landed inside
+/// the U+FFFD replacement character when a malformed string literal ended
+/// on a multi-byte char boundary. The fix walks back to the nearest char
+/// boundary before slicing. This test locks in the fix.
+#[test]
+fn fuzz_regression_unquote_does_not_panic_on_non_char_boundary() {
+    // The raw fuzz bytes: b'n"\xff' -- invalid UTF-8 that from_utf8_lossy
+    // turns into `n"<replacement char>`.
+    let bytes: &[u8] = b"n\"\xff";
+    let src = String::from_utf8_lossy(bytes);
+    let mut parser = RParser::new().expect("parser init");
+    // Must not panic.
+    let file = parser.parse("fuzz_regression.R", &src).expect("parse");
+    // R1: every parse-error span is valid even on malformed input.
+    for span in &file.parse_errors {
+        assert!(span.start <= span.end);
+        assert!(span.end <= src.len());
+        assert!(src.is_char_boundary(span.start));
+        assert!(src.is_char_boundary(span.end));
+    }
+}

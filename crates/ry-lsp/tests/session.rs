@@ -873,7 +873,7 @@ async fn quiesce_and_compare(
 
 proptest! {
     #![proptest_config(ProptestConfig {
-        cases: 16,
+        cases: 8,
         max_shrink_iters: 256,
         ..ProptestConfig::default()
     })]

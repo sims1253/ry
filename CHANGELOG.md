@@ -4,6 +4,37 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Added — LSP state-machine property (P36-W8)
+
+- **Complete session convergence property**: after every quiescent LSP
+  operation (open, edit, close, save, restart, add/remove workspace folder,
+  edit config/baseline/discovery caps, create/delete/rename on-disk R file,
+  controlled parse races), every published diagnostic and the observable
+  discovered-file set equal a fresh server on the same final workspace.
+  Gated by `cargo test -p ry-lsp --test w8_session`.
+- **Deterministic seeds**: 16 fixed seeds on PRs, 1000 fixed seeds nightly
+  (`#[ignore]`). No random proptest RNG, no sleeps. Proptest shrinking is
+  preserved through `TestRunner::new_with_rng` with fixed ChaCha seeds.
+  Gated by `w8_pr_session_seeds` and `w8_nightly_session_seeds`.
+- **Historical bug coverage**: every P36 historical bug (#44, #45, #48, #53,
+  #55, #56) is caught by a deterministic regression case.
+  Gated by `w8_catches_*` tests.
+- **Shrinking quality**: an injected stale-state defect is shrunk to 3
+  operations (< 10). Gated by
+  `w8_property_shrinks_injected_defect_to_under_ten_ops`.
+
+### Added — Final corpus and 0.9 evidence (P36-W9)
+
+- **Release evidence**: `docs/corpus/0.9-release-evidence.md` documents
+  final precision (37 TP / 728 findings = 5.08%), TP retention (31/34 =
+  91.18%), per-rule verdict counts, cross-mode matrix status, LSP session
+  seed count, cap behavior, and remaining gaps. Every metric traces to a
+  committed gate.
+- **Ledger reconciliation**: the full 62-package Posit corpus is current —
+  728 identities match the committed ledger. Gated by
+  `ecosystem/run.sh --check --manifest ecosystem/posit-packages.txt
+  --ledger docs/corpus/posit-0.9.0.json --tier full`.
+
 ### Added — Shared, bounded discovery (P36-W7, #48)
 
 - **Shared directory discovery**: CLI (`ry check`) and LSP now use the

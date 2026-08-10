@@ -117,6 +117,87 @@ where
         .await
     }
 
+    /// P36-W8: wait for the target URI's `publishDiagnostics` after `mark`,
+    /// then drain every other `publishDiagnostics` that arrives within
+    /// `idle_timeout` of the previous message. Returns a `BTreeMap` of
+    /// URI → diagnostic array. The initial wait is the quiescence signal
+    /// (the notification arrives after the server's debounce); the drain
+    /// captures multi-URI broadcasts. No sleep: the idle timeout detects
+    /// end-of-stream, it does not wait for computation.
+    pub async fn quiesce_diagnostics(
+        &mut self,
+        target_uri: &str,
+        mark: u64,
+        idle_timeout: std::time::Duration,
+    ) -> io::Result<std::collections::BTreeMap<String, Vec<Value>>> {
+        let target = self.published_diagnostics_after(target_uri, mark).await?;
+        let mut result: std::collections::BTreeMap<String, Vec<Value>> =
+            std::collections::BTreeMap::new();
+        let collect = |msg: &Value, result: &mut std::collections::BTreeMap<String, Vec<Value>>| {
+            if msg.get("method") == Some(&json!("textDocument/publishDiagnostics"))
+                && let Some(uri) = msg.pointer("/params/uri").and_then(Value::as_str)
+            {
+                let diags = msg
+                    .pointer("/params/diagnostics")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                result.insert(uri.to_string(), diags);
+            }
+        };
+        collect(&target, &mut result);
+
+        // Drain pending publications that arrived AFTER the mark (arrived
+        // while waiting for the target). Older publications from prior
+        // steps are left in the queue and ignored.
+        let min_seq = mark.saturating_add(1);
+        let pending_diags: Vec<Value> = self
+            .pending
+            .iter()
+            .filter(|m| {
+                m.sequence >= min_seq
+                    && m.value.get("method") == Some(&json!("textDocument/publishDiagnostics"))
+            })
+            .map(|m| m.value.clone())
+            .collect();
+        for msg in &pending_diags {
+            collect(msg, &mut result);
+        }
+        self.pending.retain(|m| {
+            !(m.sequence >= min_seq
+                && m.value.get("method") == Some(&json!("textDocument/publishDiagnostics")))
+        });
+
+        // Drain the stream with an idle timeout: keep reading while messages
+        // arrive within `idle_timeout` of each other; stop on the first gap.
+        let hard_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+        let mut last_received = tokio::time::Instant::now();
+        loop {
+            let next_deadline = (last_received + idle_timeout).min(hard_deadline);
+            match tokio::time::timeout_at(next_deadline, self.client.receive()).await {
+                Ok(Ok(value)) => {
+                    self.sequence = self.sequence.wrapping_add(1);
+                    last_received = tokio::time::Instant::now();
+                    if value.get("method") == Some(&json!("textDocument/publishDiagnostics")) {
+                        collect(&value, &mut result);
+                    } else {
+                        self.pending.push_back(RoutedMessage {
+                            sequence: self.sequence,
+                            value,
+                        });
+                    }
+                }
+                Ok(Err(e)) => {
+                    return Err(io::Error::other(format!(
+                        "receive error during quiesce drain: {e}"
+                    )));
+                }
+                Err(_) => break,
+            }
+        }
+        Ok(result)
+    }
+
     /// Complete the protocol shutdown. The owning adapter remains
     /// responsible for dropping this session and bounded-joining its server.
     pub async fn shutdown(&mut self) -> io::Result<()> {

@@ -124,7 +124,7 @@ fn published_from_cli_value(value: &Value, root: &Path) -> Published {
         encoding: PositionEncoding::UnicodeScalar,
     };
     let position = normalize_position(&source, &scalar).unwrap();
-    let fix = value.get("fix").map(|fix| {
+    let fix = value.get("fix").filter(|f| f.is_object()).map(|fix| {
         let start = byte_offset_position(&source, fix["start"].as_u64().unwrap() as usize);
         let end = byte_offset_position(&source, fix["end"].as_u64().unwrap() as usize);
         PublishedFix {
@@ -174,11 +174,7 @@ fn published_from_lsp(message: &Value, path: &Path, root: &Path) -> Vec<Publishe
                     encoding: PositionEncoding::Utf16,
                 },
             )
-            .unwrap_or(ObservedPosition {
-                line: 0,
-                character: 0,
-                encoding: PositionEncoding::Utf8Byte,
-            });
+            .expect("diagnostic start position must normalize");
             let fix = value.pointer("/data/fix").map(|fix| {
                 let start = normalize_position(
                     &source,
@@ -188,11 +184,7 @@ fn published_from_lsp(message: &Value, path: &Path, root: &Path) -> Vec<Publishe
                         encoding: PositionEncoding::Utf16,
                     },
                 )
-                .unwrap_or(ObservedPosition {
-                    line: 0,
-                    character: 0,
-                    encoding: PositionEncoding::Utf8Byte,
-                });
+                .expect("diagnostic start position must normalize");
                 let end = normalize_position(
                     &source,
                     &ObservedPosition {
@@ -201,11 +193,7 @@ fn published_from_lsp(message: &Value, path: &Path, root: &Path) -> Vec<Publishe
                         encoding: PositionEncoding::Utf16,
                     },
                 )
-                .unwrap_or(ObservedPosition {
-                    line: 0,
-                    character: 0,
-                    encoding: PositionEncoding::Utf8Byte,
-                });
+                .expect("fix start position must normalize");
                 PublishedFix {
                     start_line: start.line,
                     start_byte_column: start.character,
@@ -701,7 +689,6 @@ fn p36_w3_workspace_folder_add_remove_convergence() {
     let root_b_uri = file_uri(&root_b);
     let main_a_uri = file_uri(&root_a.join("R/main.R"));
     let main_b_uri = file_uri(&root_b.join("R/main.R"));
-    let _main_a_text = "length(xx = 1L)\n".to_string();
     let main_b_text = "length(xx = 1L)\n".to_string();
 
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -795,15 +782,19 @@ fn p36_w3_workspace_folder_add_remove_convergence() {
         // After removing root-b, the server must clear diagnostics for files
         // owned by root-b (empty publish or no publish at all).
         // Currently disk_files from root-b persist, so diagnostics remain.
-        if let Ok(Ok(publish)) = republish {
-            let diags = publish
-                .pointer("/params/diagnostics")
-                .and_then(Value::as_array);
-            assert!(
-                diags.is_none_or(|d| d.is_empty()),
-                "root-b diagnostics must be cleared after removal; got: {:?}",
-                publish.pointer("/params/diagnostics")
-            );
+        match republish {
+            Ok(Ok(publish)) => {
+                let diags = publish
+                    .pointer("/params/diagnostics")
+                    .and_then(Value::as_array);
+                assert!(
+                    diags.is_none_or(|d| d.is_empty()),
+                    "root-b diagnostics must be cleared after removal; got: {:?}",
+                    publish.pointer("/params/diagnostics")
+                );
+            }
+            Ok(Err(e)) => panic!("transport error during republish: {e}"),
+            Err(_) => { /* timeout: server quiesced, diagnostics may already be cleared */ }
         }
     });
 }
@@ -846,7 +837,10 @@ fn p36_w4_version_stamped_tree_cache_rejects_stale_parse() {
         // Open version 1.
         let mark1 = live.publication_mark();
         live.open(&main_uri, 1, source_v1).await.unwrap();
-        let publish_v1 = live.published_diagnostics_after(&main_uri, mark1).await.unwrap();
+        let publish_v1 = live
+            .published_diagnostics_after(&main_uri, mark1)
+            .await
+            .unwrap();
         let v1_codes: Vec<&str> = publish_v1["params"]["diagnostics"]
             .as_array()
             .unwrap()
@@ -857,8 +851,13 @@ fn p36_w4_version_stamped_tree_cache_rejects_stale_parse() {
 
         // Edit to version 2 (introduces RY090).
         let mark2 = live.publication_mark();
-        live.change(&main_uri, 2, json!([{"text": source_v2}])).await.unwrap();
-        let publish_v2 = live.published_diagnostics_after(&main_uri, mark2).await.unwrap();
+        live.change(&main_uri, 2, json!([{"text": source_v2}]))
+            .await
+            .unwrap();
+        let publish_v2 = live
+            .published_diagnostics_after(&main_uri, mark2)
+            .await
+            .unwrap();
 
         // P36-W4 adds the scheduler seam to force:
         //   parse(v1) start → didChange(v2) → parse(v1) finish → stale rejected.
@@ -886,7 +885,8 @@ fn p36_w4_version_stamped_tree_cache_rejects_stale_parse() {
         drop(live);
         let _ = tokio::time::timeout(std::time::Duration::from_secs(3), server).await;
         panic!(
-            "P36-W4: scheduler barrier seam required for deterministic              interleaving; this sentinel is removed when W4 provides the seam"
+            "P36-W4: scheduler barrier seam required for deterministic \
+             interleaving; this sentinel is removed when W4 provides the seam"
         );
     });
 }
@@ -1094,6 +1094,10 @@ fn p36_w6_many_files_flat_filter_construction() {
         // Diagnostics must be identical except for the file path.
         // P36-W6 will assert that filter/glob construction count is flat
         // as file count grows; this correctness baseline must hold.
+        assert!(
+            last_diags.iter().any(|d| d.code == "RY090"),
+            "file_31 must produce RY090"
+        );
         assert_eq!(
             first_diags.len(),
             last_diags.len(),
@@ -1213,7 +1217,8 @@ fn p36_w7_cli_lsp_discovery_set_equality() {
                             lsp_uris.insert(rel);
                         }
                 }
-                _ => break, // timeout: server has quiesced
+                Ok(Err(e)) => panic!("transport error during drain: {e}"),
+                Err(_) => break, // timeout: server has quiesced
             }
         }
 

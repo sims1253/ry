@@ -663,11 +663,7 @@ fn p36_w2c_per_folder_custom_config_path() {
 /// final diagnostics must equal a fresh server initialized on the same final
 /// roots. Removed roots must leave no reachable state.
 ///
-/// Currently, removing root-b does not clear `disk_files` for root-b, so the
-/// removed root's indexed files continue to produce diagnostics. The
-/// convergence assertion against a fresh server on only root-a fails.
 #[test]
-#[ignore = "P36-W3: workspace-folder mutation converges to cold state (#55) — fix pending"]
 fn p36_w3_workspace_folder_add_remove_convergence() {
     use ry_testkit::LspSession;
 

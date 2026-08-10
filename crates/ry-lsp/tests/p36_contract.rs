@@ -897,11 +897,17 @@ fn p36_w4_version_stamped_tree_cache_rejects_stale_parse() {
 // ──────────────────────────────────────────────────────────────────────────
 // P36-W5 — Cache baseline/config state outside the hot lock (#45)
 //
-// `effective_baseline()` reads from disk inside the state lock in
-// `publish_diagnostics`. The fix loads baseline/config into a per-folder
-// context during initialize, reloads outside the write lock on watch
-// events, and retains the last valid context on reload failure.
+// The baseline and effective config are loaded into each
+// `FolderAnalysisContext` during initialize; the publish/hover/completion
+// path reads the cached value and performs no disk access. Watch events
+// rebuild the context outside the write lock and swap it atomically; a
+// failed reload retains the last valid context and emits a visible error.
+//
+// `ry_lsp::baseline_disk_reads()` is a process-global counter. Only the W5
+// tests configure a baseline, so they serialize on this guard so the
+// no-I/O assertion sees only its own server's reads.
 // ──────────────────────────────────────────────────────────────────────────
+static BASELINE_IO_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// P36-W5 (#45): a failed baseline reload must retain the last valid
 /// context, not silently clear the baseline. The test:
@@ -910,13 +916,15 @@ fn p36_w4_version_stamped_tree_cache_rejects_stale_parse() {
 ///   3. Corrupts the baseline file and triggers a watched-files event.
 ///   4. Asserts RY002 is STILL suppressed (last valid context retained).
 ///
-/// Currently `effective_baseline()` reads from disk on every publish. When
-/// the file is corrupted, `load_baseline` fails → baseline is None → RY002
-/// reappears. The test fails because the reload does not retain context.
+/// The baseline is cached in the owning `FolderAnalysisContext` during
+/// initialize and reloaded outside the write lock on watch events; when the
+/// reload fails (`load_baseline` → error), the last valid baseline is kept.
 #[test]
-#[ignore = "P36-W5: cache baseline/config state outside the hot lock (#45) — fix pending"]
 fn p36_w5_baseline_reload_retains_context_on_corruption() {
     use ry_testkit::LspSession;
+    // Serialize against the other W5 tests so the global baseline-read
+    // counter is not polluted by a concurrently-running server.
+    let _io_guard = BASELINE_IO_TEST_GUARD.lock().unwrap();
 
     let fixture = FixtureProject::empty().unwrap();
     fixture
@@ -989,10 +997,259 @@ fn p36_w5_baseline_reload_retains_context_on_corruption() {
         let _ = tokio::time::timeout(std::time::Duration::from_secs(3), server).await;
 
         // W5 contract: a failed reload retains the last valid context.
-        // Currently effective_baseline() re-reads disk → fails → clears baseline.
+        // The cached baseline is kept when the corrupt file fails to reload.
         assert!(
             !codes3.contains(&"RY002"),
             "phase 3: RY002 must still be suppressed (last valid baseline retained); got: {codes3:?}"
+        );
+    });
+}
+
+/// P36-W5 (#45): a *successful* baseline reload must converge to the new
+/// value, matching a cold server started fresh against the same files.
+///
+/// The test:
+///   1. Sets up a baseline that suppresses RY002 (count 1).
+///   2. Verifies the LSP suppresses RY002.
+///   3. Overwrites the baseline with a valid EMPTY baseline.
+///   4. Triggers the watch path and quiesces.
+///   5. Republishes: RY002 must now APPEAR (reload converged).
+///   6. Spawns a FRESH server against the same fixture and asserts both
+///      servers publish identical diagnostics.
+#[test]
+fn p36_w5_baseline_reload_converges_to_new_value() {
+    use ry_testkit::LspSession;
+    // Serialize against the other W5 tests so the global baseline-read
+    // counter is not polluted by a concurrently-running server.
+    let _io_guard = BASELINE_IO_TEST_GUARD.lock().unwrap();
+
+    let fixture = FixtureProject::empty().unwrap();
+    fixture
+        .write_file("ry.toml", "baseline = \"baseline.json\"\n")
+        .unwrap();
+    fixture.write_file(
+        "baseline.json",
+        r#"{"version": 1, "entries": [{"path": "main.R", "code": "RY002", "message": "`if` condition has length 2; R requires a length-1 condition", "count": 1}]}"#,
+    ).unwrap();
+    fixture
+        .write_file("main.R", "if (c(TRUE, FALSE)) print(1)\n")
+        .unwrap();
+
+    let main_uri = file_uri(&fixture.path("main.R"));
+
+    fn diagnostic_codes(value: &Value) -> Vec<String> {
+        value["params"]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| d["code"].as_str().unwrap_or("").to_string())
+            .collect()
+    }
+
+    // Run a single LSP server to completion and return the codes published
+    // for `main.R` after opening it. Reused for the live (reloaded) server
+    // and the fresh (cold) comparison server.
+    fn codes_for_fresh_server(fixture: &FixtureProject, main_uri: &str) -> Vec<String> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (cs, ss) = tokio::io::duplex(128 * 1024);
+            let (cr, cw) = tokio::io::split(cs);
+            let (sr, sw) = tokio::io::split(ss);
+            let server = tokio::spawn(async move { ry_lsp::run_with(sr, sw).await });
+            let mut live = LspSession::new(cr, cw);
+            live.initialize(fixture.root()).await.unwrap();
+            let mark = live.publication_mark();
+            live.open(main_uri, 1, "if (c(TRUE, FALSE)) print(1)\n")
+                .await
+                .unwrap();
+            let publish = live
+                .published_diagnostics_after(main_uri, mark)
+                .await
+                .unwrap();
+            let codes = diagnostic_codes(&publish);
+            let _ = live.shutdown().await;
+            drop(live);
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(3), server).await;
+            codes
+        })
+    }
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let reloaded_codes = runtime.block_on(async {
+        let (cs, ss) = tokio::io::duplex(128 * 1024);
+        let (cr, cw) = tokio::io::split(cs);
+        let (sr, sw) = tokio::io::split(ss);
+        let server = tokio::spawn(async move { ry_lsp::run_with(sr, sw).await });
+        let mut live = LspSession::new(cr, cw);
+        live.initialize(fixture.root()).await.unwrap();
+
+        // Phase 1: RY002 should be suppressed by the valid baseline.
+        let mark1 = live.publication_mark();
+        live.open(&main_uri, 1, "if (c(TRUE, FALSE)) print(1)\n")
+            .await
+            .unwrap();
+        let publish1 = live
+            .published_diagnostics_after(&main_uri, mark1)
+            .await
+            .unwrap();
+        let codes1 = diagnostic_codes(&publish1);
+        assert!(
+            !codes1.contains(&"RY002".to_string()),
+            "phase 1: RY002 must be suppressed by valid baseline; got: {codes1:?}"
+        );
+
+        // Phase 2: overwrite the baseline with a valid EMPTY baseline and
+        // trigger the watch path, then quiesce.
+        std::fs::write(
+            fixture.path("baseline.json"),
+            r#"{"version": 1, "entries": []}"#,
+        )
+        .unwrap();
+        let baseline_uri = file_uri(&fixture.path("baseline.json"));
+        live.notify(
+            "workspace/didChangeWatchedFiles",
+            json!({
+                "changes": [{"uri": baseline_uri, "type": 2}]
+            }),
+        )
+        .await
+        .unwrap();
+        // Sync barrier: the hover response guarantees the watch notification
+        // (and its outside-the-lock context rebuild) has been processed.
+        live.request(
+            "textDocument/hover",
+            json!({
+                "textDocument": {"uri": main_uri},
+                "position": {"line": 0, "character": 0}
+            }),
+        )
+        .await
+        .ok();
+
+        // Phase 3: republish. RY002 must now APPEAR (empty baseline does not
+        // suppress it) — the reload converged.
+        let mark3 = live.publication_mark();
+        live.change(
+            &main_uri,
+            2,
+            json!([{"text": "if (c(TRUE, FALSE)) print(1)\n"}]),
+        )
+        .await
+        .unwrap();
+        let publish3 = live
+            .published_diagnostics_after(&main_uri, mark3)
+            .await
+            .unwrap();
+        let codes3 = diagnostic_codes(&publish3);
+
+        let _ = live.shutdown().await;
+        drop(live);
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(3), server).await;
+        codes3
+    });
+
+    // Phase 4: the reloaded live server must match a cold server started
+    // fresh against the now-current (empty) baseline.
+    let fresh_codes = codes_for_fresh_server(&fixture, &main_uri);
+    assert_eq!(
+        reloaded_codes, fresh_codes,
+        "reload must converge to cold state; reloaded: {reloaded_codes:?}, fresh: {fresh_codes:?}"
+    );
+    assert!(
+        reloaded_codes.contains(&"RY002".to_string()),
+        "phase 3: RY002 must reappear after the baseline reload converged; got: {reloaded_codes:?}"
+    );
+}
+
+/// P36-W5 (#45): the publish/hover/completion hot path performs ZERO
+/// baseline file reads. `baseline_disk_reads()` counts every disk read by
+/// the context loader; a publish that touches it betrays a regression.
+#[test]
+fn p36_w5_publish_path_performs_no_baseline_disk_io() {
+    use ry_testkit::LspSession;
+    // Serialize against the other W5 tests so the global baseline-read
+    // counter is not polluted by a concurrently-running server.
+    let _io_guard = BASELINE_IO_TEST_GUARD.lock().unwrap();
+
+    let fixture = FixtureProject::empty().unwrap();
+    fixture
+        .write_file("ry.toml", "baseline = \"baseline.json\"\n")
+        .unwrap();
+    fixture.write_file(
+        "baseline.json",
+        r#"{"version": 1, "entries": [{"path": "main.R", "code": "RY002", "message": "`if` condition has length 2; R requires a length-1 condition", "count": 1}]}"#,
+    ).unwrap();
+    fixture
+        .write_file("main.R", "if (c(TRUE, FALSE)) print(1)\n")
+        .unwrap();
+
+    let main_uri = file_uri(&fixture.path("main.R"));
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let (cs, ss) = tokio::io::duplex(128 * 1024);
+        let (cr, cw) = tokio::io::split(cs);
+        let (sr, sw) = tokio::io::split(ss);
+        let server = tokio::spawn(async move { ry_lsp::run_with(sr, sw).await });
+        let mut live = LspSession::new(cr, cw);
+        live.initialize(fixture.root()).await.unwrap();
+
+        // Snapshot AFTER initialize: the baseline is loaded once into the
+        // per-folder context during initialize and must not be re-read by
+        // any subsequent request.
+        let reads_before = ry_lsp::baseline_disk_reads();
+
+        // Exercise hover (read path) and publish (diagnostic path).
+        live.request(
+            "textDocument/hover",
+            json!({
+                "textDocument": {"uri": main_uri},
+                "position": {"line": 0, "character": 0}
+            }),
+        )
+        .await
+        .ok();
+        let mark = live.publication_mark();
+        live.open(&main_uri, 1, "if (c(TRUE, FALSE)) print(1)\n")
+            .await
+            .unwrap();
+        let _ = live
+            .published_diagnostics_after(&main_uri, mark)
+            .await
+            .unwrap();
+        // A second republish (didChange) to be thorough.
+        let mark2 = live.publication_mark();
+        live.change(
+            &main_uri,
+            2,
+            json!([{"text": "if (c(TRUE, FALSE)) print(1)\n"}]),
+        )
+        .await
+        .unwrap();
+        let _ = live
+            .published_diagnostics_after(&main_uri, mark2)
+            .await
+            .unwrap();
+
+        let reads_after = ry_lsp::baseline_disk_reads();
+        let _ = live.shutdown().await;
+        drop(live);
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(3), server).await;
+
+        assert_eq!(
+            reads_before,
+            reads_after,
+            "publish/hover path must perform zero baseline disk reads; got {} extra read(s)",
+            reads_after.saturating_sub(reads_before)
         );
     });
 }
@@ -1147,7 +1404,6 @@ fn p36_w6_many_files_flat_filter_construction() {
 /// Currently the CLI and LSP discovery sets differ (CLI excludes
 /// `target/`, LSP includes it). The equality assertion fails.
 #[test]
-#[ignore = "P36-W7: shared bounded discovery CLI/LSP equality (#48) — fix pending"]
 fn p36_w7_cli_lsp_discovery_set_equality() {
     let fixture = FixtureProject::empty().unwrap();
     // Normal file with a diagnostic.

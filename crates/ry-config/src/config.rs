@@ -28,6 +28,53 @@ pub const DEFAULT_OUTPUT_FORMAT: &str = "full";
 pub const CONFIG_FILENAME: &str = "ry.toml";
 pub const DEFAULT_MAX_SERIALIZED_BYTES: u64 = 2 * 1024 * 1024;
 
+/// Defaults for bounded directory discovery (P36-W7 / issue #48).
+pub const DEFAULT_INDEX_MAX_FILES: u64 = 20_000;
+pub const DEFAULT_INDEX_MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
+pub const DEFAULT_INDEX_MAX_DEPTH: u64 = 64;
+
+/// Bounded directory discovery limits. Applies to both CLI directory
+/// discovery and LSP background indexing so the two modes discover
+/// exactly the same file set.
+///
+/// Each key accepts a positive integer; zero is a configuration error
+/// rather than an undocumented "unlimited" sentinel ([`Config::validate`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct IndexConfig {
+    /// Maximum number of R source files discovered per root. Default: 20,000.
+    #[serde(alias = "max-files", default = "default_index_max_files")]
+    pub max_files: u64,
+    /// Maximum size in bytes of a single R file to include. Default: 2 MiB.
+    #[serde(alias = "max-file-bytes", default = "default_index_max_file_bytes")]
+    pub max_file_bytes: u64,
+    /// Maximum directory depth to descend from each root. Default: 64.
+    #[serde(alias = "max-depth", default = "default_index_max_depth")]
+    pub max_depth: u64,
+}
+
+fn default_index_max_files() -> u64 {
+    DEFAULT_INDEX_MAX_FILES
+}
+
+fn default_index_max_file_bytes() -> u64 {
+    DEFAULT_INDEX_MAX_FILE_BYTES
+}
+
+fn default_index_max_depth() -> u64 {
+    DEFAULT_INDEX_MAX_DEPTH
+}
+
+impl Default for IndexConfig {
+    fn default() -> Self {
+        Self {
+            max_files: DEFAULT_INDEX_MAX_FILES,
+            max_file_bytes: DEFAULT_INDEX_MAX_FILE_BYTES,
+            max_depth: DEFAULT_INDEX_MAX_DEPTH,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentConfig {
@@ -104,6 +151,8 @@ pub struct Config {
     pub typeshed: Vec<PathBuf>,
     /// Baseline file. Relative paths are anchored at the config directory.
     pub baseline: Option<PathBuf>,
+    /// Bounded directory discovery limits (P36-W7 / issue #48).
+    pub index: IndexConfig,
 }
 
 impl Default for Config {
@@ -150,6 +199,7 @@ impl Config {
             environments: Vec::new(),
             typeshed: Vec::new(),
             baseline: None,
+            index: IndexConfig::default(),
         }
     }
 
@@ -190,7 +240,28 @@ impl Config {
                 *baseline = root.join(&*baseline);
             }
         }
+        cfg.validate().map_err(|field| ConfigError::InvalidIndex {
+            path: path.to_path_buf(),
+            field,
+        })?;
         Ok(cfg)
+    }
+
+    /// Validate that bounded discovery limits are positive integers.
+    /// Zero is a configuration error rather than an undocumented
+    /// "unlimited" sentinel (P36-W7 / issue #48). Returns the offending
+    /// field name on failure.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.index.max_files == 0 {
+            return Err("index.max-files");
+        }
+        if self.index.max_file_bytes == 0 {
+            return Err("index.max-file-bytes");
+        }
+        if self.index.max_depth == 0 {
+            return Err("index.max-depth");
+        }
+        Ok(())
     }
 
     /// Walk up from `start` looking for a `ry.toml`. Stops at the first
@@ -296,6 +367,7 @@ impl Config {
             environments: self.environments,
             typeshed,
             baseline,
+            index: self.index,
         }
     }
 }
@@ -377,6 +449,12 @@ pub enum ConfigError {
         path: PathBuf,
         source: toml::de::Error,
     },
+    /// A bounded discovery limit was set to zero, which is a
+    /// configuration error (P36-W7 / issue #48).
+    #[error(
+        "config file {path} has invalid value for {field}:              bounded discovery limits must be positive integers,              zero is not permitted"
+    )]
+    InvalidIndex { path: PathBuf, field: &'static str },
 }
 
 #[cfg(test)]
@@ -805,5 +883,60 @@ paths = ["inst/shiny/**"]
         let empty: Config = toml::from_str("select = []\n").unwrap();
         assert_eq!(omitted.select, None);
         assert_eq!(empty.select, Some(Vec::new()));
+    }
+
+    #[test]
+    fn index_defaults_match_spec() {
+        let cfg = Config::default();
+        assert_eq!(cfg.index.max_files, 20_000);
+        assert_eq!(cfg.index.max_file_bytes, 2 * 1024 * 1024);
+        assert_eq!(cfg.index.max_depth, 64);
+    }
+
+    #[test]
+    fn index_config_parses_from_toml() {
+        let cfg: Config =
+            toml::from_str("[index]\nmax-files = 100\nmax-file-bytes = 4096\nmax-depth = 10\n")
+                .unwrap();
+        assert_eq!(cfg.index.max_files, 100);
+        assert_eq!(cfg.index.max_file_bytes, 4096);
+        assert_eq!(cfg.index.max_depth, 10);
+    }
+
+    #[test]
+    fn index_zero_max_files_is_config_error() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join(CONFIG_FILENAME), "[index]\nmax-files = 0\n").unwrap();
+        let err = Config::load_from_dir(tmp.path()).unwrap_err();
+        assert!(
+            matches!(err, ConfigError::InvalidIndex { field, .. } if field == "index.max-files"),
+            "expected InvalidIndex for max-files=0, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn index_zero_max_file_bytes_is_config_error() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(
+            tmp.path().join(CONFIG_FILENAME),
+            "[index]\nmax-file-bytes = 0\n",
+        )
+        .unwrap();
+        let err = Config::load_from_dir(tmp.path()).unwrap_err();
+        assert!(
+            matches!(err, ConfigError::InvalidIndex { field, .. } if field == "index.max-file-bytes"),
+            "expected InvalidIndex for max-file-bytes=0, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn index_zero_max_depth_is_config_error() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join(CONFIG_FILENAME), "[index]\nmax-depth = 0\n").unwrap();
+        let err = Config::load_from_dir(tmp.path()).unwrap_err();
+        assert!(
+            matches!(err, ConfigError::InvalidIndex { field, .. } if field == "index.max-depth"),
+            "expected InvalidIndex for max-depth=0, got {err:?}"
+        );
     }
 }

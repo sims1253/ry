@@ -33,6 +33,20 @@ use tower_lsp::lsp_types::Diagnostic as LspDiagnostic;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
+/// P36-W5 (#45): counts baseline file reads performed by `load_folder_baseline`
+/// (the only baseline disk-read site in the LSP). Reads of publish/hover/
+/// completion state use the cached [`FolderAnalysisContext`] and never touch
+/// this counter. Exposed via [`baseline_disk_reads`] so integration tests can
+/// assert hot-path I/O is absent rather than infer it from timing.
+static BASELINE_DISK_READS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// P36-W5 (#45): number of baseline file reads since process start. A
+/// publish/hover/completion that does not change this value performs zero
+/// baseline disk I/O.
+pub fn baseline_disk_reads() -> usize {
+    BASELINE_DISK_READS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 #[derive(Clone)]
 pub(super) struct Backend {
     pub(super) client: Client,
@@ -93,6 +107,10 @@ pub(super) struct State {
     /// workspace root. Stored so the severity filter and baseline can
     /// be applied in `publish_diagnostics` without re-reading the file.
     file_config: ry_config::Config,
+    /// P36-W5 (#45): Root-level baseline cached at initialize so the
+    /// fallback publish path (documents outside every folder root) performs
+    /// no disk access. Reloaded alongside the root config on watch events.
+    root_baseline: Option<ry_config::Baseline>,
     /// Editor-supplied per-folder settings, received via
     /// `initializationOptions`, `workspace/configuration`, or
     /// `didChangeConfiguration`.
@@ -163,6 +181,12 @@ pub(super) struct FolderAnalysisContext {
     pub stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
     /// Plan 35 workspace resolution context for package metadata.
     pub workspace_context: Option<ry_workspace::WorkspaceContext>,
+    /// P36-W5 (#45): The baseline loaded from `ry.toml`/editor settings,
+    /// cached during context construction so the publish path performs no
+    /// disk access. Reloaded outside the state lock on watch events; a
+    /// failed reload retains the last valid value (see
+    /// `rebuild_folder_context`).
+    pub baseline: Option<ry_config::Baseline>,
 }
 
 #[derive(Default)]
@@ -477,34 +501,23 @@ impl State {
         }
     }
 
-    /// Load and return the effective baseline for a document path.
-    /// Editor setting takes precedence over `ry.toml`; both are resolved
-    /// relative to the owning folder root (P36-W2).
+    /// Return the cached effective baseline for a document path.
+    ///
+    /// P36-W5 (#45): this is a pure cache read — it performs no disk access.
+    /// The baseline is loaded into each [`FolderAnalysisContext`] (and the
+    /// root-level fallback) during [`initialize`](Backend::initialize) and
+    /// reloaded *outside* the state lock on watch events by
+    /// [`rebuild_folder_contexts`]. Editor setting takes precedence over
+    /// `ry.toml`; both were resolved relative to the owning folder root at
+    /// load time (P36-W2).
     pub(super) fn effective_baseline_for_path(
         &self,
         doc_path: &str,
     ) -> Option<ry_config::Baseline> {
-        let (settings, config, folder_root) =
-            if let Some(ctx) = self.folder_context_for_path(doc_path) {
-                (&ctx.folder_settings, &ctx.config, Some(ctx.root.as_path()))
-            } else {
-                (
-                    &self.folder_settings,
-                    &self.file_config,
-                    self.root.as_deref(),
-                )
-            };
-        let baseline_path = settings
-            .baseline
-            .as_ref()
-            .map(PathBuf::from)
-            .or_else(|| config.baseline.clone())?;
-        let resolved = if baseline_path.is_relative() {
-            folder_root.map(|r| r.join(&baseline_path))?
-        } else {
-            baseline_path
-        };
-        ry_config::load_baseline(&resolved).ok()
+        if let Some(ctx) = self.folder_context_for_path(doc_path) {
+            return ctx.baseline.clone();
+        }
+        self.root_baseline.clone()
     }
 }
 
@@ -586,6 +599,18 @@ impl LanguageServer for Backend {
             .and_then(|r| ry_config::Config::load_from_dir(r).ok().flatten())
             .unwrap_or_default();
 
+        // P36-W5 (#45): Cache the root-level baseline so the fallback publish
+        // path (documents outside every folder root) performs no disk access.
+        // Built outside the lock alongside `file_config`.
+        let root_baseline =
+            match load_folder_baseline(&folder_settings, &file_config, root.as_deref()) {
+                Ok(opt) => opt,
+                Err(error) => {
+                    tracing::warn!(%error, "failed to load root baseline; no baseline cached");
+                    None
+                }
+            };
+
         // S4: Extract per-folder configs from folder_contexts for the
         // legacy workspace_folders field (still used as fallback).
         let ws_folders: Vec<(PathBuf, ry_config::Config)> = folder_contexts
@@ -608,6 +633,7 @@ impl LanguageServer for Backend {
         state.user_stubs = user_stubs;
         state.root = root;
         state.file_config = file_config;
+        state.root_baseline = root_baseline;
         state.folder_settings = folder_settings;
         state.server_settings = server_settings;
         state.supports_workspace_configuration = supports_workspace_configuration;
@@ -1100,10 +1126,10 @@ impl LanguageServer for Backend {
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
         // Refresh configuration and filesystem-backed resolution when any
         // registered package metadata, data, stub, or config file changes.
-        let config_changed = params
-            .changes
-            .iter()
-            .any(|change| change.uri.path().ends_with("ry.toml"));
+        let config_or_baseline_changed = params.changes.iter().any(|change| {
+            let path = change.uri.path();
+            path.ends_with("ry.toml") || path.ends_with(".json")
+        });
         let resolution_changed = params.changes.iter().any(|change| {
             let path = change.uri.path();
             path.ends_with("DESCRIPTION")
@@ -1118,77 +1144,67 @@ impl LanguageServer for Backend {
             return;
         }
 
-        // Reload each changed root independently. The state vectors are kept
-        // in longest-prefix order, so replacing a config does not alter routing.
-        let root = {
-            let state = self.state.lock().await;
-            state.root.clone()
-        };
-        if config_changed {
-            for directory in params.changes.iter().filter_map(|change| {
-                change
-                    .uri
-                    .path()
-                    .ends_with("ry.toml")
-                    .then(|| change.uri.to_file_path().ok())
-                    .flatten()
-                    .and_then(|path| path.parent().map(PathBuf::from))
-            }) {
-                let loaded = ry_config::Config::load_from_dir(&directory);
-                match loaded {
-                    Ok(config) => {
-                        let config = config.unwrap_or_default();
-                        let mut state = self.state.lock().await;
-                        if state.root.as_deref() == Some(directory.as_path()) {
-                            state.file_config = config.clone();
-                        }
-                        // P36-W3 / PR #69 review: Refresh per-folder context
-                        // configs so watched ry.toml changes propagate to
-                        // folder_contexts (finding: ctx.config never refreshed).
-                        if let Some(ctx) = state
-                            .folder_contexts
-                            .iter_mut()
-                            .find(|ctx| ctx.root == directory)
-                        {
-                            ctx.config = config.clone();
-                            ctx.stubs = load_stubs_from_config(&config);
-                        }
-                        // Legacy workspace_folders sync.
-                        if let Some((_, folder_config)) = state
-                            .workspace_folders
-                            .iter_mut()
-                            .find(|(folder_root, _)| folder_root == &directory)
-                        {
-                            *folder_config = config;
-                        }
-                        tracing::info!(root = %directory.display(), "workspace config reloaded");
-                    }
-                    Err(error) => tracing::warn!(
-                        root = %directory.display(),
-                        %error,
-                        "failed to reload workspace config; retaining previous config"
-                    ),
+        // P36-W5 (#45): A config (`ry.toml`) or baseline (`.json`) change
+        // requires rebuilding each folder's effective config + baseline.
+        // The new contexts are built OUTSIDE the write lock (all disk I/O
+        // happens in `rebuild_folder_contexts`), then atomically swapped in.
+        // A failed reload retains the last valid value for each field and
+        // emits a visible warning; it never silently clears the baseline.
+        if config_or_baseline_changed {
+            let (old_contexts, root) = {
+                let state = self.state.lock().await;
+                (state.folder_contexts.clone(), state.root.clone())
+            };
+            let old_contexts_for_task = old_contexts.clone();
+            // spawn_blocking keeps every disk read off the async runtime.
+            let new_contexts = match tokio::task::spawn_blocking(move || {
+                rebuild_folder_contexts(&old_contexts_for_task)
+            })
+            .await
+            {
+                Ok(new_contexts) => new_contexts,
+                Err(error) => {
+                    tracing::warn!(%error, "folder context reload task failed; retaining previous contexts");
+                    old_contexts
                 }
+            };
+            {
+                let mut state = self.state.lock().await;
+                state.folder_contexts = new_contexts.clone();
+                // Sync the root-level fallback state and the legacy vectors
+                // from the rebuilt contexts so the fallback paths see the new
+                // config/baseline (P36-W3 / PR #69 review).
+                for ctx in &new_contexts {
+                    if state.root.as_deref() == Some(ctx.root.as_path()) {
+                        state.file_config = ctx.config.clone();
+                        state.root_baseline = ctx.baseline.clone();
+                    }
+                    if let Some((_, folder_config)) = state
+                        .workspace_folders
+                        .iter_mut()
+                        .find(|(folder_root, _)| folder_root == &ctx.root)
+                    {
+                        *folder_config = ctx.config.clone();
+                    }
+                }
+                tracing::info!("workspace config/baseline reloaded");
+            }
+
+            // Root-level typesheds feed the distinct user-stub analysis
+            // channel; reload them off the async runtime too.
+            if let Some(root) = root
+                && let Ok(stubs) =
+                    tokio::task::spawn_blocking(move || load_workspace_stubs(Some(&root))).await
+            {
+                let mut state = self.state.lock().await;
+                state.user_stubs = stubs;
             }
         }
 
-        // Typeshed and configuration changes alter both package resolution
-        // and the distinct user-stub analysis channel.
-        if let Some(root) = root.clone()
-            && let Ok(stubs) =
-                tokio::task::spawn_blocking(move || load_workspace_stubs(Some(&root))).await
-        {
-            let mut state = self.state.lock().await;
-            state.user_stubs = stubs;
-            // P36-W2: Reload per-folder stubs from each folder's config (#54).
-            for ctx in &mut state.folder_contexts {
-                ctx.stubs = load_stubs_from_config(&ctx.config);
-            }
-        }
         self.spawn_background_index().await;
 
         // Republish diagnostics for every open document so the new
-        // config takes effect immediately.
+        // config/baseline takes effect immediately.
         let open_uris: Vec<Url> = {
             let state = self.state.lock().await;
             state.docs.keys().map(|p| path_to_uri(p)).collect()
@@ -2325,9 +2341,15 @@ impl Backend {
         let indexed = tokio::task::spawn_blocking(move || {
             let mut all_disk_files: HashMap<String, Arc<SourceFile>> = HashMap::new();
             let mut contexts = Vec::new();
+            let mut all_truncated: Vec<(PathBuf, ry_workspace::TruncationReport)> = Vec::new();
             for (root, config, stubs) in &roots_with_config {
-                let files_for_root = crate::index::index_workspace(root, config);
-                let files: Vec<&SourceFile> = files_for_root.values().map(AsRef::as_ref).collect();
+                let outcome = crate::index::index_workspace(root, config);
+                if outcome.truncated.iter().any(|t| t.any_hit()) {
+                    for report in &outcome.truncated {
+                        all_truncated.push((root.clone(), report.clone()));
+                    }
+                }
+                let files: Vec<&SourceFile> = outcome.files.values().map(AsRef::as_ref).collect();
                 match ry_workspace::resolve_workspace_context(
                     root,
                     config,
@@ -2339,19 +2361,50 @@ impl Backend {
                     Ok(context) => contexts.push((root.clone(), context)),
                     Err(error) => tracing::warn!(%error, "workspace resolution degraded"),
                 }
-                all_disk_files.extend(files_for_root);
+                all_disk_files.extend(outcome.files);
             }
             contexts.sort_by_key(|(root, _)| std::cmp::Reverse(root.as_os_str().len()));
-            (all_disk_files, contexts)
+            (all_disk_files, contexts, all_truncated)
         })
         .await;
 
         match indexed {
-            Ok((disk_files, contexts)) => {
+            Ok((disk_files, contexts, truncated)) => {
                 tracing::info!(
                     files = disk_files.len(),
                     "background workspace index complete"
                 );
+                // P36-W7 (#48): emit a structured tracing event and one
+                // user-visible LSP warning per scan generation when a cap
+                // is hit. A cap hit is never silent.
+                for (root, report) in &truncated {
+                    if report.max_files_hit {
+                        tracing::warn!(
+                            root = %root.display(),
+                            cap = "index.max-files",
+                            omitted = report.omitted_count(),
+                            "discovery file-count cap reached; additional R files were not indexed"
+                        );
+                    }
+                    for (path, size) in &report.oversized_files {
+                        tracing::warn!(
+                            root = %root.display(),
+                            path = %path.display(),
+                            size,
+                            cap = "index.max-file-bytes",
+                            "file exceeds per-file size cap and was not indexed"
+                        );
+                    }
+                    for dir in &report.depth_pruned_dirs {
+                        tracing::warn!(
+                            root = %root.display(),
+                            pruned = %dir.display(),
+                            cap = "index.max-depth",
+                            "directory depth cap reached; files below were not indexed"
+                        );
+                    }
+                }
+                let cap_hit = !truncated.is_empty();
                 let mut state = self.state.lock().await;
                 // P36-W3 (#55) step 5: Discard results from an index generation
                 // belonging to the old folder set.
@@ -2371,6 +2424,16 @@ impl Backend {
                     if let Some((_, wc)) = contexts.iter().find(|(root, _)| root == &ctx.root) {
                         ctx.workspace_context = Some(wc.clone());
                     }
+                }
+                // P36-W7 (#48): one user-visible warning per scan generation.
+                if cap_hit {
+                    let _ = self
+                        .client
+                        .log_message(
+                            tower_lsp::lsp_types::MessageType::WARNING,
+                            "ry: discovery cap reached; some R files were not indexed.                              See server logs for details (index.max-files /                              index.max-file-bytes / index.max-depth).",
+                        )
+                        .await;
                 }
             }
             Err(error) => tracing::warn!(%error, "background workspace index failed"),
@@ -2478,13 +2541,92 @@ fn load_stubs_from_config(
     Arc::new(merged)
 }
 
+/// P36-W2c (#56): Discover the effective `ry.toml` config for a folder.
+///
+/// When the editor supplies a `configuration` override it is resolved
+/// relative to `folder_root` (unless absolute) and loaded directly; on
+/// failure the code falls back to directory discovery. Returns
+/// `Ok(default)` when no `ry.toml` is found, and `Err` only when discovery
+/// itself fails (I/O or parse error) so callers can decide whether to
+/// retain a previous config. Disk I/O happens here — callers MUST run this
+/// outside the state lock (P36-W5 #45).
+fn discover_folder_config(
+    folder_settings: &FolderSettings,
+    folder_root: &std::path::Path,
+) -> std::result::Result<ry_config::Config, ry_config::ConfigError> {
+    if let Some(config_rel) = &folder_settings.configuration {
+        let config_path = if PathBuf::from(config_rel).is_absolute() {
+            PathBuf::from(config_rel)
+        } else {
+            folder_root.join(config_rel)
+        };
+        match ry_config::Config::load_file(&config_path) {
+            Ok(cfg) => return Ok(cfg),
+            Err(error) => {
+                tracing::warn!(
+                    path = %config_path.display(),
+                    %error,
+                    "failed to load configuration override; falling back to discovery"
+                );
+                // Fall back to directory discovery (walks up the tree).
+                return Ok(ry_config::Config::discover(folder_root)
+                    .ok()
+                    .flatten()
+                    .map(|(_, c)| c)
+                    .unwrap_or_default());
+            }
+        }
+    }
+    match ry_config::Config::load_from_dir(folder_root) {
+        Ok(Some(cfg)) => Ok(cfg),
+        Ok(None) => Ok(ry_config::Config::default()),
+        Err(error) => Err(error),
+    }
+}
+
+/// P36-W5 (#45): Resolve the baseline path from editor settings / `ry.toml`
+/// and load it from disk.
+///
+/// Returns `Ok(None)` when no baseline is configured. `Err` signals a
+/// configured-but-unloadable baseline (missing file, corrupt JSON, wrong
+/// version) so reload callers can retain the last valid value rather than
+/// silently clearing it. Disk I/O happens here — callers MUST run this
+/// outside the state lock.
+fn load_folder_baseline(
+    settings: &FolderSettings,
+    config: &ry_config::Config,
+    folder_root: Option<&std::path::Path>,
+) -> std::result::Result<Option<ry_config::Baseline>, String> {
+    let baseline_path = match settings
+        .baseline
+        .as_ref()
+        .map(PathBuf::from)
+        .or_else(|| config.baseline.clone())
+    {
+        Some(p) => p,
+        None => return Ok(None),
+    };
+    let resolved = if baseline_path.is_relative() {
+        match folder_root.map(|r| r.join(&baseline_path)) {
+            Some(r) => r,
+            None => return Ok(None),
+        }
+    } else {
+        baseline_path
+    };
+    BASELINE_DISK_READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    ry_config::load_baseline(&resolved)
+        .map(Some)
+        .map_err(|e| format!("{e}"))
+}
+
 /// P36-W2: Build per-folder analysis contexts for every workspace root.
 ///
 /// Each context holds the effective `ry.toml` config (from directory
 /// discovery or the editor `configuration` override, #56), the matching
-/// editor [`FolderSettings`] (#44), and local typesheds loaded from that
-/// folder's config (#54). When `workspace_folders` is empty, `root_uri`
-/// becomes the single folder.
+/// editor [`FolderSettings`] (#44), local typesheds loaded from that
+/// folder's config (#54), and the cached baseline (P36-W5 #45). When
+/// `workspace_folders` is empty, `root_uri` becomes the single folder.
 fn build_folder_contexts(
     root: Option<&std::path::Path>,
     workspace_folders: &[(usize, PathBuf)],
@@ -2508,35 +2650,28 @@ fn build_folder_contexts(
             .cloned()
             .unwrap_or_else(|| server_settings.global_settings.clone());
 
-        // P36-W2c (#56): Honor the `configuration` override. Resolve it
-        // relative to the workspace root unless absolute; load that file
-        // instead of directory discovery.
-        let config = if let Some(config_rel) = &folder_settings.configuration {
-            let config_path = if PathBuf::from(config_rel).is_absolute() {
-                PathBuf::from(config_rel)
-            } else {
-                folder_root.join(config_rel)
-            };
-            match ry_config::Config::load_file(&config_path) {
-                Ok(cfg) => cfg,
-                Err(error) => {
-                    tracing::warn!(
-                        path = %config_path.display(),
-                        %error,
-                        "failed to load configuration override; falling back to discovery"
-                    );
-                    ry_config::Config::discover(folder_root)
-                        .ok()
-                        .flatten()
-                        .map(|(_, c)| c)
-                        .unwrap_or_default()
-                }
+        // P36-W2c/W5 (#56/#45): Discover config (defaulting on failure) and
+        // load the baseline once into the context so the publish path never
+        // touches disk.
+        let config =
+            discover_folder_config(&folder_settings, folder_root).unwrap_or_else(|error| {
+                tracing::warn!(
+                    root = %folder_root.display(),
+                    %error,
+                    "failed to load folder config; using default config"
+                );
+                ry_config::Config::default()
+            });
+        let baseline = match load_folder_baseline(&folder_settings, &config, Some(folder_root)) {
+            Ok(opt) => opt,
+            Err(error) => {
+                tracing::warn!(
+                    root = %folder_root.display(),
+                    %error,
+                    "failed to load baseline; no baseline cached for this folder"
+                );
+                None
             }
-        } else {
-            ry_config::Config::load_from_dir(folder_root)
-                .ok()
-                .flatten()
-                .unwrap_or_default()
         };
 
         // P36-W2b (#54): Load stubs from this folder's config so two roots
@@ -2549,12 +2684,68 @@ fn build_folder_contexts(
             folder_settings,
             stubs,
             workspace_context: None,
+            baseline,
         });
     }
 
     // Longest-prefix ownership: sort by root path length descending.
     contexts.sort_by_key(|ctx| std::cmp::Reverse(ctx.root.as_os_str().len()));
     contexts
+}
+
+/// P36-W5 (#45): Rebuild a single folder's analysis context from disk.
+///
+/// Each field is reloaded independently. On any sub-failure (config parse,
+/// baseline parse) the **last valid value for that field is retained** and a
+/// visible warning emitted — a corrupt reload never silently clears the
+/// baseline. `folder_settings` and `workspace_context` are not reloaded by
+/// file-watch events (they come from editor push / the background indexer
+/// respectively) and are carried over unchanged. Disk I/O happens here;
+/// callers MUST run this outside the state lock.
+fn rebuild_folder_context(old: &FolderAnalysisContext) -> FolderAnalysisContext {
+    // Reload config; on failure retain the previous config.
+    let config = match discover_folder_config(&old.folder_settings, &old.root) {
+        Ok(cfg) => cfg,
+        Err(error) => {
+            tracing::warn!(
+                root = %old.root.display(),
+                %error,
+                "failed to reload folder config; retaining previous config"
+            );
+            old.config.clone()
+        }
+    };
+    // Reload stubs from the (possibly retained) config.
+    let stubs = load_stubs_from_config(&config);
+    // Reload baseline; on failure retain the last valid baseline (#45).
+    let baseline = match load_folder_baseline(&old.folder_settings, &config, Some(&old.root)) {
+        Ok(opt) => opt,
+        Err(error) => {
+            tracing::warn!(
+                root = %old.root.display(),
+                %error,
+                "failed to reload baseline; retaining last valid baseline"
+            );
+            old.baseline.clone()
+        }
+    };
+    FolderAnalysisContext {
+        root: old.root.clone(),
+        config,
+        folder_settings: old.folder_settings.clone(),
+        stubs,
+        workspace_context: old.workspace_context.clone(),
+        baseline,
+    }
+}
+
+/// P36-W5 (#45): Rebuild every folder's analysis context from disk,
+/// returning a replacement `Vec` in the same order as `old`. Used by the
+/// watched-files handler to rebuild outside the write lock and then swap
+/// atomically. Each context is rebuilt independently; a single folder's
+/// reload failure does not affect the others.
+fn rebuild_folder_contexts(old: &[FolderAnalysisContext]) -> Vec<FolderAnalysisContext> {
+    old.iter().map(rebuild_folder_context).collect()
 }
 
 /// Convert a document's path string (the key used in `State::docs`)

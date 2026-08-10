@@ -17,6 +17,7 @@ rds2rust = { workspace = true }
 bzip2 = { workspace = true }
 flate2 = { workspace = true }
 xz2 = { workspace = true }
+glob = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

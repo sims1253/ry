@@ -800,11 +800,11 @@ fn p36_w3_workspace_folder_add_remove_convergence() {
 ///   4. stale result is rejected;
 ///   5. diagnostics equal a fresh parse of N+1.
 ///
-/// The scheduler/barrier seam to force this ordering does not exist yet
-/// (P36-W4 adds it). The test compiles and documents the contract; the
-/// forced-interleaving assertions will be completed in P36-W4.
+/// The test-only scheduler/barrier seam (`ry_lsp::test_seam`) forces this
+/// ordering without any sleeps. The seam controls scheduling only; cache
+/// policy (version-stamped tree rejection) is production code in
+/// `backend::parsed_file` and `State::store_tree`/`State::tree_for`.
 #[test]
-#[ignore = "P36-W4: version-stamped tree cache with forced interleaving (#53) — seam pending"]
 fn p36_w4_version_stamped_tree_cache_rejects_stale_parse() {
     use ry_testkit::LspSession;
 
@@ -827,36 +827,55 @@ fn p36_w4_version_stamped_tree_cache_rejects_stale_parse() {
         let mut live = LspSession::new(cr, cw);
         live.initialize(fixture.root()).await.unwrap();
 
-        // Open version 1.
-        let mark1 = live.publication_mark();
-        live.open(&main_uri, 1, source_v1).await.unwrap();
-        let publish_v1 = live
-            .published_diagnostics_after(&main_uri, mark1)
-            .await
-            .unwrap();
-        let v1_codes: Vec<&str> = publish_v1["params"]["diagnostics"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|d| d["code"].as_str().unwrap())
-            .collect();
-        assert!(v1_codes.is_empty(), "source v1 should be clean");
+        // ── Force the interleaving (#53): ──
+        //   1. parse version N=1 starts
+        //   2. didChange installs N+1=2
+        //   3. parse N=1 finishes
+        //   4. stale result is rejected by the version-stamped tree cache
+        //   5. diagnostics equal a fresh parse of N+1=2
 
-        // Edit to version 2 (introduces RY090).
-        let mark2 = live.publication_mark();
+        // Arm the test-only scheduler barrier. The next `parsed_file` cache
+        // miss pauses after reading the document text/version/tree but before
+        // parsing. The barrier also arms a didChange-processed notification
+        // so the test can confirm the new version is installed before
+        // releasing the paused parse.
+        ry_lsp::test_seam::arm();
+
+        // Open version 1. `schedule_diagnostics` debounces 180 ms, then
+        // `publish_diagnostics` calls `parsed_file` → barrier pauses.
+        live.open(&main_uri, 1, source_v1).await.unwrap();
+
+        // Wait for the parse of version 1 to start (step 1): `parsed_file`
+        // has read the v1 text/version/tree and is now paused.
+        ry_lsp::test_seam::wait_arrived().await;
+
+        // Install version 2 while the version-1 parse is paused (step 2).
         live.change(&main_uri, 2, json!([{"text": source_v2}]))
             .await
             .unwrap();
+
+        // Wait for didChange to be fully processed: document updated,
+        // version bumped, diagnostics re-scheduled. This sync point is
+        // necessary because tower-lsp dispatches handlers concurrently —
+        // without it the barrier release could race ahead of the document
+        // update and the stale parse would not be detected.
+        ry_lsp::test_seam::wait_did_change().await;
+
+        // Release the barrier: the version-1 parse finishes (step 3). Its
+        // tree is rejected by `store_tree` (version 1 ≠ current version 2)
+        // and its `SourceFile` is rejected by `record_parse` (step 4). The
+        // retry loop then parses version 2 fresh.
+        ry_lsp::test_seam::release_barrier();
+
+        // Collect diagnostics for version 2 (step 5). The didChange
+        // triggered `schedule_diagnostics(gen=2)`, which publishes after
+        // the debounce.
+        let mark = live.publication_mark();
         let publish_v2 = live
-            .published_diagnostics_after(&main_uri, mark2)
+            .published_diagnostics_after(&main_uri, mark)
             .await
             .unwrap();
 
-        // P36-W4 adds the scheduler seam to force:
-        //   parse(v1) start → didChange(v2) → parse(v1) finish → stale rejected.
-        // Without the seam, this best-effort check confirms that v2's
-        // diagnostics reflect the new source. The seam makes the rejection
-        // assertion deterministic.
         let v2_codes: Vec<&str> = publish_v2["params"]["diagnostics"]
             .as_array()
             .unwrap()
@@ -865,22 +884,13 @@ fn p36_w4_version_stamped_tree_cache_rejects_stale_parse() {
             .collect();
         assert!(
             v2_codes.contains(&"RY090"),
-            "version 2 must produce RY090; got: {v2_codes:?}"
+            "version 2 must produce RY090 after the stale parse is rejected; got: {v2_codes:?}"
         );
 
-        // P36-W4 adds a test-only scheduler barrier seam to force:
-        //   parse(v1) start → didChange(v2) → parse(v1) finish → stale rejected.
-        // Until the seam exists the stale-cache race cannot be triggered
-        // deterministically without sleeps (which the plan forbids).
-        // This sentinel marks the test RED; P36-W4 replaces it with the
-        // forced-interleaving sequence.
+        // Cleanup.
         let _ = live.shutdown().await;
         drop(live);
         let _ = tokio::time::timeout(std::time::Duration::from_secs(3), server).await;
-        panic!(
-            "P36-W4: scheduler barrier seam required for deterministic \
-             interleaving; this sentinel is removed when W4 provides the seam"
-        );
     });
 }
 

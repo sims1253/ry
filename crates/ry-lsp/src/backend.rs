@@ -133,8 +133,14 @@ pub(super) struct State {
     /// these — when a path exists in both `docs` and `disk_files`,
     /// the open document's content is authoritative.
     disk_files: HashMap<String, Arc<SourceFile>>,
-    /// Tree-sitter trees for incremental parsing (Plan 33 W6).
-    trees: HashMap<String, ry_core::Tree>,
+    /// P36-W4 (#53): Version-stamped tree-sitter trees for incremental
+    /// parsing (Plan 33 W6). Each entry stores the document version
+    /// (generation) the tree was produced from. A parse result may
+    /// replace the cache only if its version still matches the current
+    /// document version; a cache read returns the tree only under the
+    /// same invariant, so no cached tree can ever be served for a
+    /// different document generation.
+    trees: HashMap<String, (i32, ry_core::Tree)>,
 }
 
 /// P36-W2: One per-folder analysis context (#44/#54/#56).
@@ -293,6 +299,33 @@ impl State {
     #[cfg(test)]
     pub(super) fn parse_count(&self) -> usize {
         self.parse_count.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// P36-W4 (#53): Return the cached tree-sitter `Tree` for `path`
+    /// only when its recorded generation matches the current document
+    /// version. A stale tree from a superseded generation is never
+    /// served — the cache read enforces the same invariant as the
+    /// write (`store_tree`).
+    fn tree_for(&self, path: &str) -> Option<ry_core::Tree> {
+        let current_version = self.versions.get(path).copied()?;
+        let (tree_version, tree) = self.trees.get(path)?;
+        if *tree_version == current_version {
+            Some(tree.clone())
+        } else {
+            None
+        }
+    }
+
+    /// P36-W4 (#53): Store a tree-sitter `Tree` for `path`, tagged with
+    /// `version`. The tree replaces the cache entry only if `version`
+    /// still matches the current document version. A stale parse whose
+    /// version was superseded by a concurrent edit is dropped rather
+    /// than overwriting the current tree, so no cached tree can ever
+    /// be served for a different document generation.
+    fn store_tree(&mut self, path: &str, version: i32, tree: ry_core::Tree) {
+        if self.versions.get(path).copied() == Some(version) {
+            self.trees.insert(path.to_string(), (version, tree));
+        }
     }
 
     /// Drop the cached parse and scope for `path`, mirroring the
@@ -831,6 +864,12 @@ impl LanguageServer for Backend {
         // Debounced: a burst of keystrokes coalesces into a single
         // diagnostic publish.
         self.schedule_diagnostics(uri).await;
+        // P36-W4 (#53): test-only scheduling seam. Signals that the
+        // document version has been bumped and diagnostics re-scheduled,
+        // so a waiting test can release the parse barrier knowing the
+        // version-stamped cache will reject the stale parse. When no test
+        // is waiting this is a single atomic swap — effectively free.
+        crate::test_seam::note_did_change();
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
@@ -1819,7 +1858,7 @@ impl Backend {
             let (old_text, old_tree) = {
                 let state = self.state.lock().await;
                 let old = state.docs.get(path).cloned();
-                (old, state.trees.get(path).cloned())
+                (old, state.tree_for(path))
             };
 
             if let Some(old_text) = old_text {
@@ -1853,7 +1892,7 @@ impl Backend {
                 // Store the tree for next time so the next parse is incremental.
                 let mut state = self.state.lock().await;
                 if let Some(tree) = tree_mut {
-                    state.trees.insert(path.to_string(), tree);
+                    state.store_tree(path, version, tree);
                 } else {
                     state.trees.remove(path);
                 }
@@ -1928,17 +1967,33 @@ impl Backend {
                 _ => return None,
             };
             // W6: Use incremental parse when we have an old tree.
+            // P36-W4 (#53): tree_for returns the cached tree only when its
+            // recorded generation matches the current document version.
             let old_tree = {
                 let state = self.state.lock().await;
-                state.trees.get(path).cloned()
+                state.tree_for(path)
             };
+            // P36-W4 (#53): test-only scheduling barrier. When armed, the
+            // parse pauses here — after reading the document text, version,
+            // and old tree, but before the expensive parse — so the test can
+            // force the interleaving:
+            //   1. parse version N starts (we are here)
+            //   2. didChange installs N+1
+            //   3. parse N finishes (test releases the barrier)
+            //   4. stale result is rejected by store_tree / record_parse
+            //   5. the retry loop parses the current version N+1 fresh
+            // The seam controls scheduling only; cache policy is production
+            // code. When not armed this is a single relaxed atomic load.
+            crate::test_seam::maybe_pause().await;
             let mut parser = RParser::new().ok()?;
             let file = if let Some(tree) = old_tree {
                 let (parsed, new_tree) = parser.parse_with_tree(path, &text, Some(&tree)).ok()?;
-                // Store the new tree for the next incremental parse.
+                // P36-W4 (#53): Store the tree only if the version still
+                // matches. A parse whose version was superseded by a
+                // concurrent edit must not overwrite the current tree.
                 {
                     let mut state = self.state.lock().await;
-                    state.trees.insert(path.to_string(), new_tree);
+                    state.store_tree(path, version, new_tree);
                 }
                 Arc::new(parsed)
             } else {
@@ -1946,7 +2001,7 @@ impl Backend {
                 let (parsed, new_tree) = parser.parse_with_tree(path, &text, None).ok()?;
                 {
                     let mut state = self.state.lock().await;
-                    state.trees.insert(path.to_string(), new_tree);
+                    state.store_tree(path, version, new_tree);
                 }
                 Arc::new(parsed)
             };

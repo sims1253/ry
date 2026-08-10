@@ -2301,9 +2301,10 @@ fn build_folder_contexts(
                         %error,
                         "failed to load configuration override; falling back to discovery"
                     );
-                    ry_config::Config::load_from_dir(folder_root)
+                    ry_config::Config::discover(folder_root)
                         .ok()
                         .flatten()
+                        .map(|(_, c)| c)
                         .unwrap_or_default()
                 }
             }

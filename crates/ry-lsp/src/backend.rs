@@ -859,13 +859,10 @@ impl LanguageServer for Backend {
                     if let Ok(settings) = serde_json::from_value::<FolderSettings>(value) {
                         let mut state = self.state.lock().await;
                         state.folder_settings = settings.clone();
-                        // P36-W3 / PR #69 review: Propagate configuration
-                        // changes to every folder context (finding:
-                        // didChangeConfiguration doesn't propagate to
-                        // folder_contexts).
-                        for ctx in &mut state.folder_contexts {
-                            ctx.folder_settings = settings.clone();
-                        }
+                        // P36-W3: Update the global settings fallback only.
+                        // Per-folder settings (set at initialize via scoped
+                        // workspace/configuration) are not overwritten to
+                        // avoid clobbering each folder's editor settings.
                         state.server_settings.global_settings = settings;
                     }
                 }
@@ -983,7 +980,14 @@ impl LanguageServer for Backend {
             let new_contexts = if !added_paths_ref.is_empty() {
                 let server_settings = state.server_settings.clone();
                 tokio::task::spawn_blocking(move || {
-                    build_folder_contexts(None, &added_paths_ref, &server_settings)
+                    build_folder_contexts(
+                        None,
+                        &added_paths_ref
+                            .iter()
+                            .map(|(_, path)| (usize::MAX, path.clone()))
+                            .collect::<Vec<_>>(),
+                        &server_settings,
+                    )
                 })
                 .await
                 .unwrap_or_default()
@@ -1033,8 +1037,12 @@ impl LanguageServer for Backend {
         }
 
         // P36-W3 (#55) step 2: Load contexts and start indexing for the new
-        // folder set.
-        self.spawn_background_index().await;
+        // folder set. Skip when no folder contexts remain (all removed)
+        // so state.root does not re-index a removed directory.
+        let has_contexts = !self.state.lock().await.folder_contexts.is_empty();
+        if has_contexts {
+            self.spawn_background_index().await;
+        }
 
         // P36-W3 (#55) step 3 continued: Clear diagnostics for documents owned
         // by removed roots.

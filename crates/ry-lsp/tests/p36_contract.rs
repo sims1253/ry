@@ -245,7 +245,6 @@ fn published_from_lsp(message: &Value, path: &Path, root: &Path) -> Vec<Publishe
 /// root B's editor ignore list incorrectly suppresses RY002. This fails
 /// against `ry check` run independently in root B.
 #[test]
-#[ignore = "P36-W2a: per-folder editor settings (#44) — fix pending"]
 fn p36_w2a_two_roots_different_editor_settings_differential() {
     let fixture = FixtureProject::empty().unwrap();
     // Root A: ry.toml ignores RY002.
@@ -340,7 +339,7 @@ fn p36_w2a_two_roots_different_editor_settings_differential() {
             )
             .await
             .unwrap();
-        let lsp_a = published_from_lsp(&publish_a, &path_a, fixture.root());
+        let lsp_a = published_from_lsp(&publish_a, &path_a, &root_a);
 
         // Open root B's file and collect its diagnostics.
         let path_b = fixture.path("root-b/R/main.R");
@@ -365,7 +364,7 @@ fn p36_w2a_two_roots_different_editor_settings_differential() {
             )
             .await
             .unwrap();
-        let lsp_b = published_from_lsp(&publish_b, &path_b, fixture.root());
+        let lsp_b = published_from_lsp(&publish_b, &path_b, &root_b);
 
         // Shutdown.
         let shutdown_id = client.request("shutdown", Value::Null).await.unwrap();
@@ -406,7 +405,6 @@ fn p36_w2a_two_roots_different_editor_settings_differential() {
 /// `my_func` has an unknown return type and neither root produces RY001.
 /// Root B diverges from its CLI run.
 #[test]
-#[ignore = "P36-W2b: per-folder typeshed isolation (#54) — fix pending"]
 fn p36_w2b_colliding_local_stubs_isolation() {
     let fixture = FixtureProject::empty().unwrap();
 
@@ -517,7 +515,7 @@ fn p36_w2b_colliding_local_stubs_isolation() {
                 )
                 .await
                 .unwrap();
-            let diags = published_from_lsp(&publish, &path, fixture.root());
+            let diags = published_from_lsp(&publish, &path, root_dir);
             lsp_results.push((label.to_string(), diags));
         }
 
@@ -561,7 +559,6 @@ fn p36_w2b_colliding_local_stubs_isolation() {
 /// directory discovery (no `ry.toml` at root) and RY002 appears. The test
 /// asserts RY002 is absent — it fails against current code.
 #[test]
-#[ignore = "P36-W2c: honor configuration override (#56) — fix pending"]
 fn p36_w2c_per_folder_custom_config_path() {
     let fixture = FixtureProject::empty().unwrap();
     fixture

@@ -1209,7 +1209,7 @@ fn report_truncation(report: &ry_workspace::TruncationReport, root: &std::path::
     }
     if report.max_files_hit {
         eprintln!(
-            "ry: warning: file count cap (index.max-files) reached at {};              additional R files were not discovered",
+            "ry: warning: file count cap (index.max-files) reached at {}; additional R files were not discovered",
             root.display()
         );
     }
@@ -1222,7 +1222,7 @@ fn report_truncation(report: &ry_workspace::TruncationReport, root: &std::path::
     }
     for dir in &report.depth_pruned_dirs {
         eprintln!(
-            "ry: warning: directory depth cap (index.max-depth) reached at {};              files below {} were not discovered",
+            "ry: warning: directory depth cap (index.max-depth) reached at {}; files below {} were not discovered",
             root.display(),
             dir.display()
         );

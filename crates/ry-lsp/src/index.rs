@@ -30,7 +30,8 @@ pub(crate) struct IndexOutcome {
 /// [`index_workspace`] which returns parsed files and cap reports.
 #[cfg(test)]
 pub(crate) fn discover_r_files(root: &Path, config: &Config) -> Vec<(String, String)> {
-    let result = ry_workspace::discover_r_files(root, Some(root), config, false);
+    let result =
+        ry_workspace::discover_r_files(root, Some(root), config, config.check_test_fixtures);
     result
         .files
         .into_iter()
@@ -45,7 +46,8 @@ pub(crate) fn discover_r_files(root: &Path, config: &Config) -> Vec<(String, Str
 /// `exclude` patterns and bounded caps. Returns parsed files plus
 /// any cap reports for the caller to surface as warnings.
 pub(crate) fn index_workspace(root: &Path, config: &Config) -> IndexOutcome {
-    let discovery = ry_workspace::discover_r_files(root, Some(root), config, false);
+    let discovery =
+        ry_workspace::discover_r_files(root, Some(root), config, config.check_test_fixtures);
     let files = parse_paths(&discovery.files);
     IndexOutcome {
         files,

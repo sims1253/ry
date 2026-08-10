@@ -1412,7 +1412,7 @@ fn discover_recursive(
             // P36-W7: max-files cap.
             if out.len() >= limits.max_files {
                 truncated.max_files_hit = true;
-                continue;
+                break;
             }
             // P36-W7: max-file-bytes cap.
             if let Ok(metadata) = std::fs::metadata(&path) {

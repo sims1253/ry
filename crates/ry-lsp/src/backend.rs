@@ -2577,11 +2577,11 @@ fn discover_folder_config(
             }
         }
     }
-    match ry_config::Config::load_from_dir(folder_root) {
-        Ok(Some(cfg)) => Ok(cfg),
-        Ok(None) => Ok(ry_config::Config::default()),
-        Err(error) => Err(error),
-    }
+    Ok(ry_config::Config::discover(folder_root)
+        .ok()
+        .flatten()
+        .map(|(_, c)| c)
+        .unwrap_or_default())
 }
 
 /// P36-W5 (#45): Resolve the baseline path from editor settings / `ry.toml`
@@ -2715,8 +2715,19 @@ fn rebuild_folder_context(old: &FolderAnalysisContext) -> FolderAnalysisContext 
             old.config.clone()
         }
     };
-    // Reload stubs from the (possibly retained) config.
-    let stubs = load_stubs_from_config(&config);
+    // Reload stubs from the (possibly retained) config. If the reload
+    // returns fewer stubs than before (e.g. a malformed stub directory),
+    // retain the previous stubs to avoid silently degrading analysis.
+    let new_stubs = load_stubs_from_config(&config);
+    let stubs = if new_stubs.is_empty() && !old.stubs.is_empty() {
+        tracing::warn!(
+            root = %old.root.display(),
+            "stub reload returned empty; retaining previous stubs"
+        );
+        old.stubs.clone()
+    } else {
+        new_stubs
+    };
     // Reload baseline; on failure retain the last valid baseline (#45).
     let baseline = match load_folder_baseline(&old.folder_settings, &config, Some(&old.root)) {
         Ok(opt) => opt,

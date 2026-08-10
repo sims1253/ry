@@ -924,7 +924,9 @@ fn p36_w5_baseline_reload_retains_context_on_corruption() {
     use ry_testkit::LspSession;
     // Serialize against the other W5 tests so the global baseline-read
     // counter is not polluted by a concurrently-running server.
-    let _io_guard = BASELINE_IO_TEST_GUARD.lock().unwrap();
+    let _io_guard = BASELINE_IO_TEST_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
 
     let fixture = FixtureProject::empty().unwrap();
     fixture
@@ -1021,7 +1023,9 @@ fn p36_w5_baseline_reload_converges_to_new_value() {
     use ry_testkit::LspSession;
     // Serialize against the other W5 tests so the global baseline-read
     // counter is not polluted by a concurrently-running server.
-    let _io_guard = BASELINE_IO_TEST_GUARD.lock().unwrap();
+    let _io_guard = BASELINE_IO_TEST_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
 
     let fixture = FixtureProject::empty().unwrap();
     fixture
@@ -1175,7 +1179,9 @@ fn p36_w5_publish_path_performs_no_baseline_disk_io() {
     use ry_testkit::LspSession;
     // Serialize against the other W5 tests so the global baseline-read
     // counter is not polluted by a concurrently-running server.
-    let _io_guard = BASELINE_IO_TEST_GUARD.lock().unwrap();
+    let _io_guard = BASELINE_IO_TEST_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
 
     let fixture = FixtureProject::empty().unwrap();
     fixture

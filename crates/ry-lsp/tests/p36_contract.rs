@@ -1147,7 +1147,6 @@ fn p36_w6_many_files_flat_filter_construction() {
 /// Currently the CLI and LSP discovery sets differ (CLI excludes
 /// `target/`, LSP includes it). The equality assertion fails.
 #[test]
-#[ignore = "P36-W7: shared bounded discovery CLI/LSP equality (#48) — fix pending"]
 fn p36_w7_cli_lsp_discovery_set_equality() {
     let fixture = FixtureProject::empty().unwrap();
     // Normal file with a diagnostic.

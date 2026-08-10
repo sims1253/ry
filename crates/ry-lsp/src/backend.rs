@@ -2325,9 +2325,15 @@ impl Backend {
         let indexed = tokio::task::spawn_blocking(move || {
             let mut all_disk_files: HashMap<String, Arc<SourceFile>> = HashMap::new();
             let mut contexts = Vec::new();
+            let mut all_truncated: Vec<(PathBuf, ry_workspace::TruncationReport)> = Vec::new();
             for (root, config, stubs) in &roots_with_config {
-                let files_for_root = crate::index::index_workspace(root, config);
-                let files: Vec<&SourceFile> = files_for_root.values().map(AsRef::as_ref).collect();
+                let outcome = crate::index::index_workspace(root, config);
+                if outcome.truncated.iter().any(|t| t.any_hit()) {
+                    for report in &outcome.truncated {
+                        all_truncated.push((root.clone(), report.clone()));
+                    }
+                }
+                let files: Vec<&SourceFile> = outcome.files.values().map(AsRef::as_ref).collect();
                 match ry_workspace::resolve_workspace_context(
                     root,
                     config,
@@ -2339,19 +2345,50 @@ impl Backend {
                     Ok(context) => contexts.push((root.clone(), context)),
                     Err(error) => tracing::warn!(%error, "workspace resolution degraded"),
                 }
-                all_disk_files.extend(files_for_root);
+                all_disk_files.extend(outcome.files);
             }
             contexts.sort_by_key(|(root, _)| std::cmp::Reverse(root.as_os_str().len()));
-            (all_disk_files, contexts)
+            (all_disk_files, contexts, all_truncated)
         })
         .await;
 
         match indexed {
-            Ok((disk_files, contexts)) => {
+            Ok((disk_files, contexts, truncated)) => {
                 tracing::info!(
                     files = disk_files.len(),
                     "background workspace index complete"
                 );
+                // P36-W7 (#48): emit a structured tracing event and one
+                // user-visible LSP warning per scan generation when a cap
+                // is hit. A cap hit is never silent.
+                for (root, report) in &truncated {
+                    if report.max_files_hit {
+                        tracing::warn!(
+                            root = %root.display(),
+                            cap = "index.max-files",
+                            omitted = report.omitted_count(),
+                            "discovery file-count cap reached; additional R files were not indexed"
+                        );
+                    }
+                    for (path, size) in &report.oversized_files {
+                        tracing::warn!(
+                            root = %root.display(),
+                            path = %path.display(),
+                            size,
+                            cap = "index.max-file-bytes",
+                            "file exceeds per-file size cap and was not indexed"
+                        );
+                    }
+                    for dir in &report.depth_pruned_dirs {
+                        tracing::warn!(
+                            root = %root.display(),
+                            pruned = %dir.display(),
+                            cap = "index.max-depth",
+                            "directory depth cap reached; files below were not indexed"
+                        );
+                    }
+                }
+                let cap_hit = !truncated.is_empty();
                 let mut state = self.state.lock().await;
                 // P36-W3 (#55) step 5: Discard results from an index generation
                 // belonging to the old folder set.
@@ -2371,6 +2408,16 @@ impl Backend {
                     if let Some((_, wc)) = contexts.iter().find(|(root, _)| root == &ctx.root) {
                         ctx.workspace_context = Some(wc.clone());
                     }
+                }
+                // P36-W7 (#48): one user-visible warning per scan generation.
+                if cap_hit {
+                    let _ = self
+                        .client
+                        .log_message(
+                            tower_lsp::lsp_types::MessageType::WARNING,
+                            "ry: discovery cap reached; some R files were not indexed.                              See server logs for details (index.max-files /                              index.max-file-bytes / index.max-depth).",
+                        )
+                        .await;
                 }
             }
             Err(error) => tracing::warn!(%error, "background workspace index failed"),

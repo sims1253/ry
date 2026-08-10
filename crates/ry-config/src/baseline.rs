@@ -48,7 +48,7 @@ pub fn filter_from_config(cfg: &Config) -> ry_checker::SeverityFilter {
     filter
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Baseline {
     pub version: u32,
     pub entries: Vec<BaselineEntry>,

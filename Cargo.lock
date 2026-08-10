@@ -1402,6 +1402,7 @@ version = "0.8.0"
 dependencies = [
  "bzip2",
  "flate2",
+ "glob",
  "rds2rust",
  "ry-checker",
  "ry-config",

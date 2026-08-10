@@ -147,6 +147,10 @@ mod symbols;
 mod util;
 
 use backend::{Backend, State};
+// P36-W5 (#45): re-export the baseline disk-read counter so integration
+// tests can assert that the publish/hover/completion hot path performs no
+// baseline file I/O.
+pub use backend::baseline_disk_reads;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_lsp::jsonrpc::Result as LspResult;

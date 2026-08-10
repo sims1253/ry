@@ -211,11 +211,24 @@ exclude = ["renv", "tests/snaps/**"]
 
 # Include R fixture data nested under package tests/ directories.
 check-test-fixtures = false
+
+# Bounded directory discovery. Both CLI (`ry check`) and LSP apply the
+# same limits so the two modes discover exactly the same file set.
+# Each key accepts a positive integer; zero is a configuration error.
+[index]
+max-files      = 20000   # files discovered per root (default: 20,000)
+max-file-bytes = 2097152 # bytes per R file (default: 2 MiB)
+max-depth      = 64      # directory depth (default: 64)
 ```
 
 CLI flags override the config only when passed explicitly.
 When multiple paths are checked, the first path anchors config discovery;
 that one configuration applies to the complete invocation.
+
+In the editor, open documents that are ineligible for analysis (excluded by
+`exclude` patterns, over `max-file-bytes`, or below a pruned `max-depth`)
+may still receive syntax highlighting and editor features, but they do not
+enter project-wide binding or diagnostic state.
 
 ## Custom typesheds
 

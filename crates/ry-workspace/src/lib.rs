@@ -1193,6 +1193,325 @@ pub fn is_file_eligible_with_excludes(
     !excludes.matches(&relative.to_string_lossy().replace('\\', "/"))
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// P36-W7 — Shared, bounded directory discovery (#48)
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Bounded directory discovery limits derived from `[index]` in `ry.toml`.
+/// Applied identically to CLI directory discovery and LSP background
+/// indexing so the two modes discover exactly the same file set.
+#[derive(Clone, Copy, Debug)]
+pub struct DiscoveryLimits {
+    /// Maximum number of R source files discovered per root.
+    pub max_files: usize,
+    /// Maximum size in bytes of a single R file to include.
+    pub max_file_bytes: u64,
+    /// Maximum directory depth to descend from each root.
+    pub max_depth: usize,
+}
+
+impl DiscoveryLimits {
+    pub fn from_config(config: &ry_config::Config) -> Self {
+        Self {
+            max_files: config.index.max_files as usize,
+            max_file_bytes: config.index.max_file_bytes,
+            max_depth: config.index.max_depth as usize,
+        }
+    }
+}
+
+impl Default for DiscoveryLimits {
+    fn default() -> Self {
+        Self::from_config(&ry_config::Config::default())
+    }
+}
+
+/// Structured report when a discovery cap is hit (P36-W7).
+/// A cap hit is never silent: the caller emits a tracing event,
+/// LSP warning, or CLI warning based on this report.
+#[derive(Clone, Debug, Default)]
+pub struct TruncationReport {
+    /// The root at which the cap was hit.
+    pub root: PathBuf,
+    /// `true` when `max-files` stopped discovery before exhausting the tree.
+    pub max_files_hit: bool,
+    /// Files omitted because they exceeded `max-file-bytes` (path, size).
+    pub oversized_files: Vec<(PathBuf, u64)>,
+    /// Directories whose contents were pruned by `max-depth`.
+    pub depth_pruned_dirs: Vec<PathBuf>,
+}
+
+impl TruncationReport {
+    /// Returns `true` when any cap was hit.
+    pub fn any_hit(&self) -> bool {
+        self.max_files_hit || !self.oversized_files.is_empty() || !self.depth_pruned_dirs.is_empty()
+    }
+
+    /// Total number of files omitted across all caps.
+    pub fn omitted_count(&self) -> usize {
+        // `max_files_hit` means we stopped, so the omitted count is
+        // unbounded from the walker's perspective; the caller reports
+        // the count it can determine. Here we count the known omissions.
+        self.oversized_files.len()
+    }
+}
+
+/// Result of a bounded directory discovery.
+#[derive(Clone, Debug, Default)]
+pub struct DiscoveryResult {
+    /// Discovered R source file paths (sorted and deduplicated).
+    pub files: Vec<PathBuf>,
+    /// Structured cap report. Empty when no limit was reached.
+    pub truncated: TruncationReport,
+}
+
+/// Discover all eligible R source files under `walk_root`, applying the
+/// same eligibility, extension, hidden-directory, symlink, exclude, and
+/// test-fixture rules to both CLI and LSP (P36-W7 / issue #48).
+///
+/// `exclude_root` anchors the compiled `exclude` patterns from `config`.
+/// It should be the directory containing the originating `ry.toml`. When
+/// `None`, exclude patterns are not applied (matching a missing config).
+///
+/// Caps (`index.max-files`, `index.max-file-bytes`, `index.max-depth`)
+/// bound discovery. A cap hit populates [`TruncationReport`] so the
+/// caller can surface a visible warning.
+pub fn discover_r_files(
+    walk_root: &Path,
+    exclude_root: Option<&Path>,
+    config: &ry_config::Config,
+    check_test_fixtures: bool,
+) -> DiscoveryResult {
+    // A single file passed directly is always included regardless of
+    // package rules: it is the explicit subject of the analysis.
+    if walk_root.is_file() {
+        return DiscoveryResult {
+            files: vec![walk_root.to_path_buf()],
+            truncated: TruncationReport {
+                root: walk_root.parent().unwrap_or(walk_root).to_path_buf(),
+                ..Default::default()
+            },
+        };
+    }
+    let limits = DiscoveryLimits::from_config(config);
+    let excludes = ry_config::Excludes::from_config(config);
+    let has_excludes = !excludes.is_empty();
+    let mut files = Vec::new();
+    let mut truncated = TruncationReport {
+        root: walk_root.to_path_buf(),
+        ..Default::default()
+    };
+    let package_root = walk_root
+        .ancestors()
+        .find(|ancestor| ancestor.join("DESCRIPTION").is_file())
+        .map(Path::to_path_buf);
+    let buildignore = package_root
+        .as_deref()
+        .map(read_rbuildignore)
+        .unwrap_or_default();
+    discover_recursive(
+        walk_root,
+        &mut files,
+        &mut truncated,
+        package_root.as_deref(),
+        &buildignore,
+        check_test_fixtures,
+        0,
+        &limits,
+        &excludes,
+        has_excludes,
+        exclude_root,
+    );
+    files.sort();
+    files.dedup();
+    DiscoveryResult { files, truncated }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn discover_recursive(
+    dir: &Path,
+    out: &mut Vec<PathBuf>,
+    truncated: &mut TruncationReport,
+    package_root: Option<&Path>,
+    buildignore: &[glob::Pattern],
+    check_test_fixtures: bool,
+    depth: usize,
+    limits: &DiscoveryLimits,
+    excludes: &ry_config::Excludes,
+    has_excludes: bool,
+    exclude_root: Option<&Path>,
+) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        // Skip symlinks and entries whose type cannot be classified;
+        // following either could make recursive discovery escape the
+        // requested tree.
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() {
+            continue;
+        }
+        let path = entry.path();
+        // Apply ry.toml exclude patterns (relative to the config root).
+        if has_excludes
+            && let Some(anchor) = exclude_root
+            && !is_file_eligible_with_excludes(&path, anchor, excludes)
+        {
+            continue;
+        }
+        // Apply .Rbuildignore patterns (relative to the package root).
+        if package_root.is_some_and(|root| is_rbuildignored(root, &path, buildignore)) {
+            continue;
+        }
+        if path.is_dir() {
+            if let Some(name) = path.file_name().and_then(|n| n.to_str())
+                && (name.starts_with('.')
+                    || name == "target"
+                    || name == "node_modules"
+                    || (name == "renv" && package_root.is_some())
+                    || name.ends_with(".Rcheck"))
+            {
+                continue;
+            }
+            if package_root.is_some_and(|root| is_excluded_package_directory(root, &path)) {
+                continue;
+            }
+            // P36-W7: depth cap prunes further descent.
+            if depth >= limits.max_depth {
+                truncated.depth_pruned_dirs.push(path);
+                continue;
+            }
+            let (nested_package_root, nested_buildignore) = if path.join("DESCRIPTION").is_file() {
+                (Some(path.clone()), read_rbuildignore(&path))
+            } else {
+                (package_root.map(Path::to_path_buf), buildignore.to_vec())
+            };
+            discover_recursive(
+                &path,
+                out,
+                truncated,
+                nested_package_root.as_deref(),
+                &nested_buildignore,
+                check_test_fixtures,
+                depth + 1,
+                limits,
+                excludes,
+                has_excludes,
+                exclude_root,
+            );
+        } else if matches!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("R") | Some("r") | Some("S") | Some("s") | Some("q")
+        ) && (check_test_fixtures
+            || ry_checker::project::package_file_kind(&path)
+                != ry_checker::project::PackageFileKind::TestFixture)
+        {
+            // P36-W7: max-files cap.
+            if out.len() >= limits.max_files {
+                truncated.max_files_hit = true;
+                break;
+            }
+            // P36-W7: max-file-bytes cap.
+            if let Ok(metadata) = std::fs::metadata(&path) {
+                let size = metadata.len();
+                if size > limits.max_file_bytes {
+                    truncated.oversized_files.push((path, size));
+                    continue;
+                }
+            }
+            out.push(path);
+        }
+    }
+}
+
+/// Read an R `.Rbuildignore` file and translate its conservative regex
+/// subset to glob patterns.
+fn read_rbuildignore(root: &Path) -> Vec<glob::Pattern> {
+    let Ok(contents) = std::fs::read_to_string(root.join(".Rbuildignore")) else {
+        return Vec::new();
+    };
+    contents
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter_map(rbuildignore_pattern)
+        .collect()
+}
+
+/// Translate the conservative regex subset used by conventional
+/// `.Rbuildignore` files to the already-depended-on glob matcher.
+/// Unsupported PCRE constructs are ignored, as required for patterns
+/// our engine cannot compile.
+pub fn rbuildignore_pattern(regex: &str) -> Option<glob::Pattern> {
+    if regex.contains(['(', ')', '|', '{', '}', '+']) {
+        return None;
+    }
+    let anchored_start = regex.starts_with('^');
+    let trailing_backslashes = regex
+        .strip_suffix('$')
+        .map(|prefix| prefix.chars().rev().take_while(|&ch| ch == '\\').count())
+        .unwrap_or(0);
+    let anchored_end = regex.ends_with('$') && trailing_backslashes.is_multiple_of(2);
+    let body = regex.strip_prefix('^').unwrap_or(regex);
+    let body = if anchored_end {
+        body.strip_suffix('$').unwrap_or(body)
+    } else {
+        body
+    };
+    let mut glob_str = String::new();
+    if !anchored_start {
+        glob_str.push('*');
+    }
+    let mut chars = body.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => glob_str.push(chars.next()?),
+            '.' if chars.peek() == Some(&'*') => {
+                chars.next();
+                glob_str.push('*');
+            }
+            '.' => glob_str.push('?'),
+            '*' | '?' | '[' | ']' => glob_str.push(ch),
+            ch => glob_str.push(ch),
+        }
+    }
+    if !anchored_end {
+        glob_str.push('*');
+    }
+    glob::Pattern::new(&glob_str).ok()
+}
+
+/// Whether `path` relative to `package_root` is excluded by
+/// `.Rbuildignore`. Files under `R/` or `tests/` are never excluded
+/// because they are always part of the package source.
+fn is_rbuildignored(root: &Path, path: &Path, patterns: &[glob::Pattern]) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+    if relative.starts_with("R") || relative.starts_with("tests") {
+        return false;
+    }
+    let relative = relative.to_string_lossy().replace('\\', "/");
+    patterns.iter().any(|pattern| pattern.matches(&relative))
+}
+
+/// Whether a directory relative to a package root should be skipped
+/// entirely (reverse-dependency check dirs, compiled source, snapshots).
+fn is_excluded_package_directory(package_root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(package_root) else {
+        return false;
+    };
+    let components: Vec<_> = relative
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .collect();
+    matches!(components.as_slice(), ["revdep"] | ["src"])
+        || matches!(components.as_slice(), ["tests", "testthat", "_snaps"])
+}
+
 #[cfg(test)]
 mod shared_tests {
     use super::*;
@@ -1232,5 +1551,175 @@ mod shared_tests {
 
         assert!(!is_file_eligible(&link, dir.path(), &config));
         assert!(is_file_eligible(&target, dir.path(), &config));
+    }
+
+    #[test]
+    fn discovery_skips_target_and_hidden_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("keep.R"),
+            "x <- 1
+",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("target")).unwrap();
+        std::fs::write(
+            dir.path().join("target/skip.R"),
+            "y <- 2
+",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join(".hidden")).unwrap();
+        std::fs::write(
+            dir.path().join(".hidden/secret.R"),
+            "z <- 3
+",
+        )
+        .unwrap();
+
+        let result = discover_r_files(dir.path(), None, &ry_config::Config::default(), false);
+        let names: Vec<String> = result
+            .files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert!(names.contains(&"keep.R".to_string()));
+        assert!(!names.contains(&"skip.R".to_string()), "target/ skipped");
+        assert!(!names.contains(&"secret.R".to_string()), "hidden/ skipped");
+    }
+
+    #[test]
+    fn discovery_max_files_cap_is_configurable_and_visible() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..5 {
+            std::fs::write(
+                dir.path().join(format!("file_{i}.R")),
+                "x <- 1
+",
+            )
+            .unwrap();
+        }
+        let config = ry_config::Config {
+            index: ry_config::IndexConfig {
+                max_files: 2,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let result = discover_r_files(dir.path(), None, &config, false);
+        assert_eq!(result.files.len(), 2, "only 2 files under cap");
+        assert!(result.truncated.max_files_hit, "max-files cap reported");
+    }
+
+    #[test]
+    fn discovery_max_file_bytes_cap_omits_oversized_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("small.R"),
+            "x <- 1
+",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("big.R"),
+            "y <- 2
+",
+        )
+        .unwrap();
+        // Set the big file's size via metadata — write a larger payload.
+        std::fs::write(dir.path().join("big.R"), "y ".repeat(100)).unwrap();
+        let config = ry_config::Config {
+            index: ry_config::IndexConfig {
+                max_file_bytes: 10,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let result = discover_r_files(dir.path(), None, &config, false);
+        let names: Vec<String> = result
+            .files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert!(names.contains(&"small.R".to_string()));
+        assert!(
+            !names.contains(&"big.R".to_string()),
+            "oversized file omitted"
+        );
+        assert!(
+            result
+                .truncated
+                .oversized_files
+                .iter()
+                .any(|(p, _)| { p.file_name().unwrap() == "big.R" }),
+            "oversized file reported in truncation"
+        );
+    }
+
+    #[test]
+    fn discovery_max_depth_cap_prunes_deep_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        // Create a chain: a/b/c/deep.R
+        let deep = dir.path().join("a/b/c/deep.R");
+        std::fs::create_dir_all(deep.parent().unwrap()).unwrap();
+        std::fs::write(
+            &deep, "x <- 1
+",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("shallow.R"),
+            "y <- 2
+",
+        )
+        .unwrap();
+
+        let config = ry_config::Config {
+            index: ry_config::IndexConfig {
+                max_depth: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let result = discover_r_files(dir.path(), None, &config, false);
+        let names: Vec<String> = result
+            .files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            names.contains(&"shallow.R".to_string()),
+            "shallow file found"
+        );
+        assert!(!names.contains(&"deep.R".to_string()), "deep file pruned");
+        assert!(
+            !result.truncated.depth_pruned_dirs.is_empty(),
+            "depth cap reported"
+        );
+    }
+
+    #[test]
+    fn discovery_includes_all_r_source_extensions() {
+        let dir = tempfile::tempdir().unwrap();
+        for ext in &["R", "r", "S", "s", "q"] {
+            std::fs::write(
+                dir.path().join(format!("source.{ext}")),
+                "value <- 1
+",
+            )
+            .unwrap();
+        }
+        std::fs::write(
+            dir.path().join("source.txt"),
+            "not R
+",
+        )
+        .unwrap();
+        let result = discover_r_files(dir.path(), None, &ry_config::Config::default(), false);
+        assert_eq!(
+            result.files.len(),
+            5,
+            "R, r, S, s, q discovered; .txt excluded"
+        );
     }
 }

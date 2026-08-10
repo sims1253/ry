@@ -434,26 +434,6 @@ fn render_diagnostics(
 /// root prefix from the literal path, and finally to the file's full
 /// display string, so exclude matching degrades gracefully rather than
 /// panicking.
-fn relative_path_for_exclude(file: &std::path::Path, root: &std::path::Path) -> String {
-    let canon_file = std::fs::canonicalize(file).ok();
-    let canon_root = std::fs::canonicalize(root).ok();
-    if let (Some(f), Some(r)) = (canon_file, canon_root) {
-        if let Ok(rel) = f.strip_prefix(&r) {
-            return rel
-                .to_string_lossy()
-                .replace(std::path::MAIN_SEPARATOR, "/");
-        }
-    }
-    // Best-effort fallback: strip the root's literal prefix.
-    if let Ok(rel) = file.strip_prefix(root) {
-        return rel
-            .to_string_lossy()
-            .replace(std::path::MAIN_SEPARATOR, "/");
-    }
-    file.to_string_lossy()
-        .replace(std::path::MAIN_SEPARATOR, "/")
-}
-
 #[allow(clippy::too_many_arguments)]
 fn run_check(
     paths: Vec<PathBuf>,
@@ -558,10 +538,11 @@ fn run_check(
     })?;
     let color = color.enabled(format);
     let filter = config::filter_from_config(&cfg);
-    let excludes = config::Excludes::from_config(&cfg);
     let user_stubs = load_user_stubs(&cfg.typeshed);
 
-    // Collect the initial file set.
+    // Collect the initial file set via the shared bounded discovery
+    // module (P36-W7 / issue #48). CLI and LSP use the same eligibility,
+    // extension, hidden-directory, symlink, exclude, and test-fixture rules.
     let mut all_paths = Vec::new();
     let search_roots: Vec<PathBuf> = if paths.is_empty() {
         vec![PathBuf::from(".")]
@@ -569,25 +550,16 @@ fn run_check(
         paths
     };
     for root in &search_roots {
-        collect_r_files(root, &mut all_paths, cfg.check_test_fixtures);
+        let result = ry_workspace::discover_r_files(
+            root,
+            config_root.as_deref(),
+            &cfg,
+            cfg.check_test_fixtures,
+        );
+        all_paths.extend(result.files);
+        report_truncation(&result.truncated, root);
     }
     sort_and_deduplicate_paths(&mut all_paths);
-
-    // Apply exclude patterns. Patterns match against the path relative
-    // to the directory containing the originating `ry.toml`; if no
-    // config was found, nothing is excluded. We use forward-slash
-    // separators to match the glob crate's expectations.
-    if let Some(root) = config_root.as_ref() {
-        if !excludes.is_empty() {
-            all_paths.retain(|path| {
-                let eligible = ry_workspace::is_file_eligible(path, root, &cfg);
-                if !eligible {
-                    tracing::debug!(path = %path.display(), "excluded by ry.toml");
-                }
-                eligible
-            });
-        }
-    }
 
     if all_paths.is_empty() {
         eprintln!("ry: no .R / .r files found in {:?}", search_roots);
@@ -640,20 +612,18 @@ fn run_check(
     loop {
         std::thread::sleep(poll_interval);
 
-        // Re-scan for new/deleted files.
+        // Re-scan for new/deleted files via shared bounded discovery.
         let mut current_paths = Vec::new();
         for root in &search_roots {
-            collect_r_files(root, &mut current_paths, cfg.check_test_fixtures);
+            let result = ry_workspace::discover_r_files(
+                root,
+                config_root.as_deref(),
+                &cfg,
+                cfg.check_test_fixtures,
+            );
+            current_paths.extend(result.files);
         }
         sort_and_deduplicate_paths(&mut current_paths);
-        if let Some(root) = config_root.as_ref() {
-            if !excludes.is_empty() {
-                current_paths.retain(|p| {
-                    let rel = relative_path_for_exclude(p, root);
-                    !excludes.matches(&rel)
-                });
-            }
-        }
 
         // Check for any file modification or file set change.
         let mut changed = current_paths.len() != all_paths.len();
@@ -1216,171 +1186,47 @@ fn enclosing_package_root(path: &std::path::Path) -> Option<PathBuf> {
         .map(std::path::Path::to_path_buf)
 }
 
+/// Test-compatible wrapper around the shared bounded discovery module.
+/// Production code calls [`ry_workspace::discover_r_files`] directly with
+/// the effective folder config so CLI and LSP use identical discovery
+/// rules (P36-W7 / issue #48).
+#[cfg(test)]
 fn collect_r_files(path: &std::path::Path, out: &mut Vec<PathBuf>, check_test_fixtures: bool) {
-    if path.is_file() {
-        out.push(path.to_path_buf());
+    let result = ry_workspace::discover_r_files(
+        path,
+        None,
+        &ry_config::Config::default(),
+        check_test_fixtures,
+    );
+    out.extend(result.files);
+}
+
+/// Surface a discovery cap hit to the user (P36-W7). A cap hit is never
+/// silent: the CLI prints one warning per root when any limit is reached.
+fn report_truncation(report: &ry_workspace::TruncationReport, root: &std::path::Path) {
+    if !report.any_hit() {
         return;
     }
-    let package_root = path
-        .ancestors()
-        .find(|ancestor| ancestor.join("DESCRIPTION").is_file())
-        .map(std::path::Path::to_path_buf);
-    let buildignore = package_root
-        .as_deref()
-        .map(read_rbuildignore)
-        .unwrap_or_default();
-    collect_r_files_recursive(path, out, package_root, &buildignore, check_test_fixtures);
-}
-
-fn collect_r_files_recursive(
-    path: &std::path::Path,
-    out: &mut Vec<PathBuf>,
-    package_root: Option<PathBuf>,
-    buildignore: &[glob::Pattern],
-    check_test_fixtures: bool,
-) {
-    let Ok(entries) = std::fs::read_dir(path) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        // Skip symlinks and entries whose type cannot be classified; following
-        // either could make recursive discovery escape the requested tree.
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        if file_type.is_symlink() {
-            continue;
-        }
-        let p = entry.path();
-        if package_root
-            .as_deref()
-            .is_some_and(|root| is_rbuildignored(root, &p, buildignore))
-        {
-            continue;
-        }
-        if p.is_dir() {
-            if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
-                if name.starts_with('.')
-                    || name == "target"
-                    || name == "node_modules"
-                    || (name == "renv" && package_root.is_some())
-                    || name.ends_with(".Rcheck")
-                {
-                    continue;
-                }
-            }
-            if package_root
-                .as_deref()
-                .is_some_and(|root| is_excluded_package_directory(root, &p))
-            {
-                continue;
-            }
-            let (nested_package_root, nested_buildignore) = if p.join("DESCRIPTION").is_file() {
-                (Some(p.clone()), read_rbuildignore(&p))
-            } else {
-                (package_root.clone(), buildignore.to_vec())
-            };
-            collect_r_files_recursive(
-                &p,
-                out,
-                nested_package_root,
-                &nested_buildignore,
-                check_test_fixtures,
-            );
-        } else if matches!(
-            p.extension().and_then(|e| e.to_str()),
-            Some("R") | Some("r") | Some("S") | Some("s") | Some("q")
-        ) && (check_test_fixtures
-            || ry_checker::project::package_file_kind(&p)
-                != ry_checker::project::PackageFileKind::TestFixture)
-        {
-            out.push(p);
-        }
+    if report.max_files_hit {
+        eprintln!(
+            "ry: warning: file count cap (index.max-files) reached at {}; additional R files were not discovered",
+            root.display()
+        );
     }
-}
-
-fn read_rbuildignore(root: &std::path::Path) -> Vec<glob::Pattern> {
-    let Ok(contents) = std::fs::read_to_string(root.join(".Rbuildignore")) else {
-        return Vec::new();
-    };
-    contents
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .filter_map(rbuildignore_pattern)
-        .collect()
-}
-
-/// Translate the conservative regex subset used by conventional
-/// `.Rbuildignore` files to the already-depended-on glob matcher. Unsupported
-/// PCRE constructs are ignored, as required for patterns our engine cannot
-/// compile.
-fn rbuildignore_pattern(regex: &str) -> Option<glob::Pattern> {
-    if regex.contains(['(', ')', '|', '{', '}', '+']) {
-        return None;
+    for (path, size) in &report.oversized_files {
+        eprintln!(
+            "ry: warning: {} ({} bytes) exceeds the per-file size cap              (index.max-file-bytes) and was not discovered",
+            path.display(),
+            size
+        );
     }
-    let anchored_start = regex.starts_with('^');
-    let trailing_backslashes = regex
-        .strip_suffix('$')
-        .map(|prefix| prefix.chars().rev().take_while(|&ch| ch == '\\').count())
-        .unwrap_or(0);
-    let anchored_end = regex.ends_with('$') && trailing_backslashes.is_multiple_of(2);
-    let body = regex.strip_prefix('^').unwrap_or(regex);
-    // Only strip the trailing `$` when it is a genuine anchor, not an
-    // escaped `\$` (which must survive as a literal in the glob body).
-    let body = if anchored_end {
-        body.strip_suffix('$').unwrap_or(body)
-    } else {
-        body
-    };
-    let mut glob = String::new();
-    if !anchored_start {
-        glob.push('*');
+    for dir in &report.depth_pruned_dirs {
+        eprintln!(
+            "ry: warning: directory depth cap (index.max-depth) reached at {}; files below {} were not discovered",
+            root.display(),
+            dir.display()
+        );
     }
-    let mut chars = body.chars().peekable();
-    while let Some(ch) = chars.next() {
-        match ch {
-            '\\' => glob.push(chars.next()?),
-            '.' if chars.peek() == Some(&'*') => {
-                chars.next();
-                glob.push('*');
-            }
-            '.' => glob.push('?'),
-            '*' | '?' | '[' | ']' => glob.push(ch),
-            ch => glob.push(ch),
-        }
-    }
-    if !anchored_end {
-        glob.push('*');
-    }
-    glob::Pattern::new(&glob).ok()
-}
-
-fn is_rbuildignored(
-    root: &std::path::Path,
-    path: &std::path::Path,
-    patterns: &[glob::Pattern],
-) -> bool {
-    let Ok(relative) = path.strip_prefix(root) else {
-        return false;
-    };
-    if relative.starts_with("R") || relative.starts_with("tests") {
-        return false;
-    }
-    let relative = relative.to_string_lossy().replace('\\', "/");
-    patterns.iter().any(|pattern| pattern.matches(&relative))
-}
-
-fn is_excluded_package_directory(package_root: &std::path::Path, path: &std::path::Path) -> bool {
-    let Ok(relative) = path.strip_prefix(package_root) else {
-        return false;
-    };
-    let components: Vec<_> = relative
-        .components()
-        .filter_map(|component| component.as_os_str().to_str())
-        .collect();
-    matches!(components.as_slice(), ["revdep"] | ["src"])
-        || matches!(components.as_slice(), ["tests", "testthat", "_snaps"])
 }
 
 fn sort_and_deduplicate_paths(paths: &mut Vec<PathBuf>) {
@@ -1394,8 +1240,8 @@ mod tests {
         Baseline, BaselineEntry, load_baseline, subtract_baseline, write_baseline_file,
     };
     use super::{
-        ColorChoice, collect_r_files, demote_non_source_paths, rbuildignore_pattern,
-        run_check_once, sort_and_deduplicate_diagnostics,
+        ColorChoice, collect_r_files, demote_non_source_paths, run_check_once,
+        sort_and_deduplicate_diagnostics,
     };
     use ry_checker::format::OutputFormat;
     use ry_checker::{Diagnostic, Severity};
@@ -1413,12 +1259,28 @@ mod tests {
 
     #[test]
     fn rbuildignore_trailing_dollar_respects_escape_parity() {
-        assert!(rbuildignore_pattern("^file$").unwrap().matches("file"));
-        assert!(!rbuildignore_pattern("^file$").unwrap().matches("filex"));
-        assert!(rbuildignore_pattern(r"^file\$").unwrap().matches("file$"));
-        assert!(rbuildignore_pattern(r"^file\\$").unwrap().matches(r"file\"));
         assert!(
-            !rbuildignore_pattern(r"^file\\$")
+            ry_workspace::rbuildignore_pattern("^file$")
+                .unwrap()
+                .matches("file")
+        );
+        assert!(
+            !ry_workspace::rbuildignore_pattern("^file$")
+                .unwrap()
+                .matches("filex")
+        );
+        assert!(
+            ry_workspace::rbuildignore_pattern(r"^file\$")
+                .unwrap()
+                .matches("file$")
+        );
+        assert!(
+            ry_workspace::rbuildignore_pattern(r"^file\\$")
+                .unwrap()
+                .matches(r"file\")
+        );
+        assert!(
+            !ry_workspace::rbuildignore_pattern(r"^file\\$")
                 .unwrap()
                 .matches(r"file\x")
         );

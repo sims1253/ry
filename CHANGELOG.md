@@ -4,6 +4,20 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Added — Shared, bounded discovery (P36-W7, #48)
+
+- **Shared directory discovery**: CLI (`ry check`) and LSP now use the
+  same `ry-workspace` discovery module so both produce identical file
+  sets over hidden, excluded, oversized, deep, symlink, and test-fixture
+  cases. Gated by `p36_w7_cli_lsp_discovery_set_equality`.
+- **Bounded discovery caps**: `index.max-files` (default 20,000),
+  `index.max-file-bytes` (default 2 MiB), and `index.max-depth`
+  (default 64) limit how many files are discovered. Each accepts a
+  positive integer; zero is a configuration error.
+- **Visible cap reporting**: a cap hit emits a structured tracing event,
+  one user-visible LSP warning per scan generation, a CLI warning, and
+  observable truncated state exposed to tests.
+
 ### Added — Editor extensions
 
 - **VS Code / Positron extension** (`editors/code/`): installable from

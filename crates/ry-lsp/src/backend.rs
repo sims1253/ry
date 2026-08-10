@@ -504,13 +504,14 @@ impl LanguageServer for Backend {
         // single longest-prefix ownership operation for every channel.
         let server_settings_clone = server_settings.clone();
         let root_clone = root.clone();
-        let ws_folder_paths: Vec<PathBuf> = params
+        let ws_folder_paths: Vec<(usize, PathBuf)> = params
             .workspace_folders
             .as_ref()
             .map(|folders| {
                 folders
                     .iter()
-                    .filter_map(|f| f.uri.to_file_path().ok())
+                    .enumerate()
+                    .filter_map(|(idx, f)| f.uri.to_file_path().ok().map(|path| (idx, path)))
                     .collect()
             })
             .unwrap_or_default();
@@ -2262,24 +2263,24 @@ fn load_stubs_from_config(
 /// becomes the single folder.
 fn build_folder_contexts(
     root: Option<&std::path::Path>,
-    workspace_folders: &[PathBuf],
+    workspace_folders: &[(usize, PathBuf)],
     server_settings: &ServerSettings,
 ) -> Vec<FolderAnalysisContext> {
     // Determine the folder roots: workspace_folders when provided, else root_uri.
-    let folders: Vec<PathBuf> = if !workspace_folders.is_empty() {
+    let folders: Vec<(usize, PathBuf)> = if !workspace_folders.is_empty() {
         workspace_folders.to_vec()
     } else if let Some(root) = root {
-        vec![root.to_path_buf()]
+        vec![(0, root.to_path_buf())]
     } else {
         return Vec::new();
     };
 
     let mut contexts = Vec::with_capacity(folders.len());
-    for (idx, folder_root) in folders.iter().enumerate() {
+    for (settings_idx, folder_root) in &folders {
         // Per-folder editor settings: index-correlated entry or global fallback (#44).
         let folder_settings = server_settings
             .settings
-            .get(idx)
+            .get(*settings_idx)
             .cloned()
             .unwrap_or_else(|| server_settings.global_settings.clone());
 

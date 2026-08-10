@@ -65,6 +65,11 @@ pub(super) struct State {
     /// is still the latest. A newer edit during the
     /// sleep window wins and the stale task aborts.
     diag_generation: u64,
+    /// P36-W3 (#55): Index generation stamp. Bumped every time
+    /// `spawn_background_index` starts so that results from a prior
+    /// folder set are discarded. The background task captures the
+    /// generation at dispatch and checks it before writing.
+    index_generation: u64,
     /// Runtime stubs loaded from the workspace's `ry.toml`. Kept in state so
     /// every rebuilt Project and single-file hover checker sees the same data.
     user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
@@ -92,6 +97,12 @@ pub(super) struct State {
     /// `initializationOptions`, `workspace/configuration`, or
     /// `didChangeConfiguration`.
     folder_settings: FolderSettings,
+    /// P36-W3 (#55): The full server settings envelope received at
+    /// initialize. Retained so dynamically added workspace folders can
+    /// be built through the same `build_folder_contexts` path as initial
+    /// folders (finding from PR #69 review: default settings instead of
+    /// the proper builder).
+    server_settings: ServerSettings,
     /// Whether the client supports the `workspace/configuration`
     /// pull request. When true, `didChangeConfiguration` re-pulls
     /// instead of parsing the notification payload.
@@ -165,6 +176,7 @@ pub(super) struct ProjectCheckResult {
 }
 
 /// Per-folder root with its config and stubs, used by the background indexer.
+#[allow(dead_code)]
 type FolderRoot = (
     PathBuf,
     ry_config::Config,
@@ -421,9 +433,14 @@ impl State {
         {
             return ry_workspace::is_file_eligible(path, root, config);
         }
+        // P36-W3 (#55): Fall back to the server root only when the path is
+        // actually inside it. After a folder removal, files under the removed
+        // root must not remain eligible via this fallback.
         match &self.root {
-            Some(root) => ry_workspace::is_file_eligible(path, root, &self.file_config),
-            None => true,
+            Some(root) if path.starts_with(root) => {
+                ry_workspace::is_file_eligible(path, root, &self.file_config)
+            }
+            _ => true,
         }
     }
 
@@ -559,6 +576,7 @@ impl LanguageServer for Backend {
         state.root = root;
         state.file_config = file_config;
         state.folder_settings = folder_settings;
+        state.server_settings = server_settings;
         state.supports_workspace_configuration = supports_workspace_configuration;
         state.supports_did_change_watched_files = supports_did_change_watched_files;
         // P36-W2: Install per-folder analysis contexts and project caches.
@@ -840,7 +858,12 @@ impl LanguageServer for Backend {
                 if let Some(value) = values.into_iter().next() {
                     if let Ok(settings) = serde_json::from_value::<FolderSettings>(value) {
                         let mut state = self.state.lock().await;
-                        state.folder_settings = settings;
+                        state.folder_settings = settings.clone();
+                        // P36-W3: Update the global settings fallback only.
+                        // Per-folder settings (set at initialize via scoped
+                        // workspace/configuration) are not overwritten to
+                        // avoid clobbering each folder's editor settings.
+                        state.server_settings.global_settings = settings;
                     }
                 }
             }
@@ -851,7 +874,12 @@ impl LanguageServer for Backend {
             let ry_section = raw.get("ry").unwrap_or(raw);
             if let Ok(settings) = serde_json::from_value::<FolderSettings>(ry_section.clone()) {
                 let mut state = self.state.lock().await;
-                state.folder_settings = settings;
+                state.folder_settings = settings.clone();
+                // P36-W3 / PR #69 review: Propagate to folder contexts.
+                for ctx in &mut state.folder_contexts {
+                    ctx.folder_settings = settings.clone();
+                }
+                state.server_settings.global_settings = settings;
             }
         }
 
@@ -869,71 +897,164 @@ impl LanguageServer for Backend {
     }
 
     async fn did_change_workspace_folders(&self, params: DidChangeWorkspaceFoldersParams) {
-        // S4/P36-W2: Handle workspace folder additions and removals.
+        // P36-W3 (#55): Rebuild the sorted folder contexts, load contexts and
+        // start indexing for added roots, remove all state owned by removed
+        // roots, then republish only after the new state is installed.
         let removed_uris: Vec<Url> = params.event.removed.iter().map(|f| f.uri.clone()).collect();
+        let removed_paths: Vec<PathBuf> = removed_uris
+            .iter()
+            .filter_map(|uri| uri.to_file_path().ok())
+            .collect();
+
+        // URIs for open documents owned by removed roots — diagnostics for
+        // these must be cleared.
+        let (docs_to_clear, docs_to_republish): (Vec<Url>, Vec<Url>) = {
+            let state = self.state.lock().await;
+
+            // P36-W3 (#55): Build added folder contexts through the same
+            // `build_folder_contexts` path used at initialize, so dynamically
+            // added folders get proper per-folder settings and config (PR #69
+            // review finding: default settings instead of the builder).
+            let docs_to_clear: Vec<Url> = state
+                .docs
+                .keys()
+                .filter(|p| {
+                    removed_paths
+                        .iter()
+                        .any(|r| std::path::Path::new(p.as_str()).starts_with(r))
+                })
+                .map(|p| path_to_uri(p))
+                .collect();
+            let docs_to_republish: Vec<Url> = state
+                .docs
+                .keys()
+                .filter(|p| {
+                    !removed_paths
+                        .iter()
+                        .any(|r| std::path::Path::new(p.as_str()).starts_with(r))
+                })
+                .map(|p| path_to_uri(p))
+                .collect();
+            (docs_to_clear, docs_to_republish)
+        };
 
         {
             let mut state = self.state.lock().await;
-            // P36-W2: Rebuild folder contexts for added folders.
-            for folder in &params.event.added {
-                if let Ok(path) = folder.uri.to_file_path() {
-                    let config = ry_config::Config::load_from_dir(&path)
-                        .ok()
-                        .flatten()
-                        .unwrap_or_default();
-                    let stubs = load_stubs_from_config(&config);
-                    let ctx = FolderAnalysisContext {
-                        root: path.clone(),
-                        config: config.clone(),
-                        folder_settings: FolderSettings::default(),
-                        stubs,
-                        workspace_context: None,
-                    };
-                    state.folder_contexts.push(ctx);
-                    state.folder_projects.insert(
-                        path.to_string_lossy().to_string(),
-                        Arc::new(Mutex::new(ProjectCache::default())),
-                    );
-                    state.workspace_folders.push((path, config));
-                }
-            }
-            // Remove deleted folder contexts and project caches.
-            let removed_paths: Vec<PathBuf> = removed_uris
+
+            // P36-W3 (#55) step 3: Remove disk_files, trees, diagnostics, and
+            // contexts owned by removed roots BEFORE rebuilding, so stale
+            // state never enters the next check.
+            state.disk_files.retain(|p, _| {
+                !removed_paths
+                    .iter()
+                    .any(|r| std::path::Path::new(p.as_str()).starts_with(r))
+            });
+            state.trees.retain(|p, _| {
+                !removed_paths
+                    .iter()
+                    .any(|r| std::path::Path::new(p.as_str()).starts_with(r))
+            });
+            state.parsed.retain(|p, _| {
+                !removed_paths
+                    .iter()
+                    .any(|r| std::path::Path::new(p.as_str()).starts_with(r))
+            });
+            state.scopes.retain(|p, _| {
+                !removed_paths
+                    .iter()
+                    .any(|r| std::path::Path::new(p.as_str()).starts_with(r))
+            });
+
+            // P36-W3 (#55) step 1: Rebuild the sorted folder contexts from
+            // the surviving + added roots, using the shared builder so
+            // added folders get per-folder settings and config.
+            let added_paths_ref: Vec<(usize, PathBuf)> = params
+                .event
+                .added
                 .iter()
-                .filter_map(|uri| uri.to_file_path().ok())
+                .enumerate()
+                .filter_map(|(idx, f)| f.uri.to_file_path().ok().map(|path| (idx, path)))
                 .collect();
+
+            // Build new contexts for added folders through build_folder_contexts.
+            let new_contexts = if !added_paths_ref.is_empty() {
+                let server_settings = state.server_settings.clone();
+                tokio::task::spawn_blocking(move || {
+                    build_folder_contexts(
+                        None,
+                        &added_paths_ref
+                            .iter()
+                            .map(|(_, path)| (usize::MAX, path.clone()))
+                            .collect::<Vec<_>>(),
+                        &server_settings,
+                    )
+                })
+                .await
+                .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+
+            // Remove contexts for removed roots.
             state
                 .folder_contexts
                 .retain(|ctx| !removed_paths.iter().any(|p| p == &ctx.root));
+            // Add new contexts.
+            state.folder_contexts.extend(new_contexts);
+            // Sort by root path length descending for longest-prefix matching.
+            state
+                .folder_contexts
+                .sort_by_key(|ctx| std::cmp::Reverse(ctx.root.as_os_str().len()));
+
+            // Per-folder project caches: remove for deleted roots, add for new.
             for p in &removed_paths {
                 state
                     .folder_projects
                     .remove(&p.to_string_lossy().to_string());
             }
-            // Legacy workspace_folders sync.
-            state.workspace_folders.retain(|(path, _)| {
-                !removed_uris
-                    .iter()
-                    .any(|uri| uri.to_file_path().ok().as_deref() == Some(path))
-            });
-            // Sort by path length descending for longest-prefix matching.
-            state
-                .workspace_folders
-                .sort_by_key(|(path, _)| std::cmp::Reverse(path.as_os_str().len()));
-            state
+            let ctx_keys: Vec<String> = state
                 .folder_contexts
-                .sort_by_key(|ctx| std::cmp::Reverse(ctx.root.as_os_str().len()));
+                .iter()
+                .map(|ctx| ctx.root.to_string_lossy().to_string())
+                .collect();
+            for key in &ctx_keys {
+                state
+                    .folder_projects
+                    .entry(key.clone())
+                    .or_insert_with(|| Arc::new(Mutex::new(ProjectCache::default())));
+            }
+
+            // Legacy workspace_folders sync: rebuild from folder_contexts.
+            state.workspace_folders = state
+                .folder_contexts
+                .iter()
+                .map(|ctx| (ctx.root.clone(), ctx.config.clone()))
+                .collect();
+
+            // P36-W3 (#55) step 5: Bump index generation so results from the
+            // old folder set are discarded.
+            state.index_generation = state.index_generation.wrapping_add(1);
         }
 
-        self.spawn_background_index().await;
+        // P36-W3 (#55) step 2: Load contexts and start indexing for the new
+        // folder set. Skip when no folder contexts remain (all removed)
+        // so state.root does not re-index a removed directory.
+        let has_contexts = !self.state.lock().await.folder_contexts.is_empty();
+        if has_contexts {
+            self.spawn_background_index().await;
+        }
 
-        // Republish diagnostics for all open documents.
-        let open_uris: Vec<Url> = {
-            let state = self.state.lock().await;
-            state.docs.keys().map(|p| path_to_uri(p)).collect()
-        };
-        for uri in open_uris {
-            self.schedule_diagnostics(uri).await;
+        // P36-W3 (#55) step 3 continued: Clear diagnostics for documents owned
+        // by removed roots.
+        for uri in &docs_to_clear {
+            self.client
+                .publish_diagnostics(uri.clone(), Vec::new(), None)
+                .await;
+        }
+
+        // P36-W3 (#55) step 4: Republish only after the new state is installed.
+        for uri in &docs_to_republish {
+            self.schedule_diagnostics(uri.clone()).await;
         }
     }
 
@@ -982,6 +1103,18 @@ impl LanguageServer for Backend {
                         if state.root.as_deref() == Some(directory.as_path()) {
                             state.file_config = config.clone();
                         }
+                        // P36-W3 / PR #69 review: Refresh per-folder context
+                        // configs so watched ry.toml changes propagate to
+                        // folder_contexts (finding: ctx.config never refreshed).
+                        if let Some(ctx) = state
+                            .folder_contexts
+                            .iter_mut()
+                            .find(|ctx| ctx.root == directory)
+                        {
+                            ctx.config = config.clone();
+                            ctx.stubs = load_stubs_from_config(&config);
+                        }
+                        // Legacy workspace_folders sync.
                         if let Some((_, folder_config)) = state
                             .workspace_folders
                             .iter_mut()
@@ -1042,13 +1175,29 @@ impl LanguageServer for Backend {
             state.docs.keys().cloned().collect::<Vec<_>>()
         };
         {
-            let project = {
+            // P36-W3 / PR #69 review: Clean up the file in both the root
+            // project cache and the owning folder's per-folder cache
+            // (finding: Per-folder ProjectCache entries not cleaned up on
+            // did_close).
+            let (root_project, folder_project_opt) = {
                 let state = self.state.lock().await;
-                Arc::clone(&state.project)
+                let root = Arc::clone(&state.project);
+                let folder = state.folder_context_for_path(&path).and_then(|ctx| {
+                    state
+                        .folder_projects
+                        .get(&ctx.root.to_string_lossy().to_string())
+                        .cloned()
+                });
+                (root, folder)
             };
-            let mut project = project.lock().await;
+            let mut project = root_project.lock().await;
             project.project.remove_file(&path);
             project.files.remove(&path);
+            if let Some(folder_proj) = folder_project_opt {
+                let mut folder_proj = folder_proj.lock().await;
+                folder_proj.project.remove_file(&path);
+                folder_proj.files.remove(&path);
+            }
         }
         // Clear diagnostics for the closed document so stale squiggles
         // don't linger after the user closes the file.
@@ -1871,7 +2020,7 @@ impl Backend {
         // Snapshot the open docs under the lock, then drop the lock
         // before running the checker so a slow check doesn't block
         // other LSP requests (e.g. didOpen of a second file).
-        let (path, doc_paths, versions, config_root) = {
+        let (path, doc_paths, versions) = {
             let state = self.state.lock().await;
             (
                 uri_to_path(&uri),
@@ -1882,7 +2031,6 @@ impl Backend {
                     .cloned()
                     .collect::<Vec<_>>(),
                 state.versions.clone(),
-                state.root.clone(),
             )
         };
         let requested_is_eligible = {
@@ -1995,7 +2143,7 @@ impl Backend {
             } = result;
             for (diagnostic_path, mut diagnostics) in per_file.clone() {
                 // Resolve the owning folder's effective config and settings.
-                let (filter, min_confidence, excludes, baseline) = {
+                let (filter, min_confidence, excludes, baseline, folder_root) = {
                     let state = self.state.lock().await;
                     let ctx = state.folder_context_for_path(&diagnostic_path);
                     let file_config = ctx.map(|c| c.config.clone()).unwrap_or_else(|| {
@@ -2018,7 +2166,13 @@ impl Backend {
                         });
                     let excludes = ry_config::Excludes::from_config(&file_config);
                     let baseline = state.effective_baseline_for_path(&diagnostic_path);
-                    (filter, min_confidence, excludes, baseline)
+                    // P36-W3 / PR #69 review: Use the owning folder root for
+                    // exclude/baseline normalization, not the server root
+                    // (finding: excludes/baselines normalized against wrong root).
+                    let folder_root = ctx
+                        .map(|c| Some(c.root.clone()))
+                        .unwrap_or_else(|| state.root.clone());
+                    (filter, min_confidence, excludes, baseline, folder_root)
                 };
                 ry_checker::apply_filter_to_diagnostics(&mut diagnostics, &filter);
 
@@ -2027,7 +2181,7 @@ impl Backend {
                 }
 
                 if !excludes.is_empty() {
-                    let rel = ry_config::diagnostic_path(&diagnostic_path, config_root.as_deref());
+                    let rel = ry_config::diagnostic_path(&diagnostic_path, folder_root.as_deref());
                     if excludes.matches(&rel) {
                         continue;
                     }
@@ -2037,7 +2191,7 @@ impl Backend {
                     ry_config::subtract_baseline(
                         &mut diagnostics,
                         baseline,
-                        config_root.as_deref(),
+                        folder_root.as_deref(),
                     );
                 }
 
@@ -2077,9 +2231,13 @@ impl Backend {
     /// diagnostic refresh is triggered so cross-file calls into unopened
     /// files resolve on the next check.
     async fn spawn_background_index(&self) {
-        let roots_with_config: Vec<FolderRoot> = {
-            let state = self.state.lock().await;
-            if !state.folder_contexts.is_empty() {
+        let (roots_with_config, index_gen) = {
+            let mut state = self.state.lock().await;
+            // P36-W3 (#55): Bump the index generation so results from a prior
+            // folder set are discarded when they arrive.
+            state.index_generation = state.index_generation.wrapping_add(1);
+            let idx_gen = state.index_generation;
+            let roots = if !state.folder_contexts.is_empty() {
                 // P36-W2: Use per-folder stubs for workspace resolution.
                 state
                     .folder_contexts
@@ -2102,7 +2260,8 @@ impl Backend {
                 )]
             } else {
                 Vec::new()
-            }
+            };
+            (roots, idx_gen)
         };
         if roots_with_config.is_empty() {
             return;
@@ -2139,6 +2298,16 @@ impl Backend {
                     "background workspace index complete"
                 );
                 let mut state = self.state.lock().await;
+                // P36-W3 (#55) step 5: Discard results from an index generation
+                // belonging to the old folder set.
+                if state.index_generation != index_gen {
+                    tracing::debug!(
+                        gen = index_gen,
+                        current = state.index_generation,
+                        "discarding stale background index results"
+                    );
+                    return;
+                }
                 state.disk_files = disk_files;
                 state.workspace_contexts = contexts.clone();
                 // P36-W2: Update each folder context's workspace_context

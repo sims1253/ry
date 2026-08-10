@@ -188,9 +188,9 @@ where
                     }
                 }
                 Ok(Err(e)) => {
-                    return Err(io::Error::other(
-                        format!("receive error during quiesce drain: {e}"),
-                    ));
+                    return Err(io::Error::other(format!(
+                        "receive error during quiesce drain: {e}"
+                    )));
                 }
                 Err(_) => break,
             }

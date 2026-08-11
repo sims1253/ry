@@ -4,3 +4,4 @@
 #
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
+cc c17cebb7450a1ed5ae9b2cf4348d78d47a5b9abaa26d58cae6fedec808bef4cc # shrinks to operations = [IncrementalEdit { file: 0, source: Clean }, Open { file: 2, source: AsciiDiagnostic }, IncrementalEdit { file: 0, source: BmpDiagnostic }, Close { file: 2 }, Open { file: 2, source: BmpDiagnostic }, Close { file: 2 }, Open { file: 0, source: AstralDiagnostic }]

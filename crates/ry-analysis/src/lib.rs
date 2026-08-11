@@ -12,7 +12,13 @@
 use std::path::{Path, PathBuf};
 
 pub mod snapshot;
+pub mod symbols;
+
 pub use snapshot::{AnalysisSnapshot, QueryResult, SnapshotDiagnostic};
+pub use symbols::{
+    DefinitionSite, ReferenceSite, SymbolId, SymbolIndex, SymbolKind, build_index_from_file,
+    merge_indices,
+};
 
 // == Stable identities ==
 

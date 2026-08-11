@@ -77,10 +77,13 @@ pub struct AnalysisSnapshot {
     roots: Vec<std::path::PathBuf>,
     /// Diagnostic results at this revision.
     diagnostics: HashMap<String, Vec<SnapshotDiagnostic>>,
+    /// Cross-file symbol index at this revision.
+    symbol_index: crate::symbols::SymbolIndex,
 }
 
 impl AnalysisSnapshot {
     /// Create a snapshot from the host.
+    #[allow(clippy::collapsible_if)]
     pub(crate) fn from_host(
         host: &AnalysisHost,
         diagnostics: HashMap<String, Vec<SnapshotDiagnostic>>,
@@ -91,11 +94,22 @@ impl AnalysisSnapshot {
                 files.insert(path.to_string_lossy().to_string(), content.to_string());
             }
         }
+        // Build a cross-file symbol index from all file contents.
+        let mut indices = Vec::new();
+        for (path, content) in &files {
+            if let Ok(mut parser) = ry_core::RParser::new() {
+                if let Ok(file) = parser.parse(path, content) {
+                    indices.push(crate::symbols::build_index_from_file(path, &file));
+                }
+            }
+        }
+        let symbol_index = crate::symbols::merge_indices(indices);
         Self {
             revision: host.revision(),
             files,
             roots: host.roots().to_vec(),
             diagnostics,
+            symbol_index,
         }
     }
 
@@ -140,6 +154,26 @@ impl AnalysisSnapshot {
     /// Check if this snapshot is still current relative to the host revision.
     pub fn is_current(&self, host: &AnalysisHost) -> bool {
         self.revision == host.revision()
+    }
+
+    /// Find all definitions of a symbol name across all files.
+    ///
+    /// P38-W6: This uses the cross-file symbol index, which includes
+    /// all files in the snapshot (open and disk-only).
+    pub fn definitions(&self, name: &str) -> Vec<crate::symbols::DefinitionSite> {
+        self.symbol_index.find_definitions(name).to_vec()
+    }
+
+    /// Find all references to a symbol name across all files.
+    ///
+    /// P38-W6: This searches all indexed files, including unopened disk files.
+    pub fn references(&self, name: &str) -> Vec<crate::symbols::ReferenceSite> {
+        self.symbol_index.find_references(name)
+    }
+
+    /// Get the underlying symbol index.
+    pub fn symbol_index(&self) -> &crate::symbols::SymbolIndex {
+        &self.symbol_index
     }
 
     /// Number of files in this snapshot.
@@ -275,6 +309,55 @@ mod tests {
         );
         let snap = AnalysisSnapshot::from_host(&host, diags);
         assert_eq!(snap.all_diagnostics().count(), 2);
+    }
+
+    #[test]
+    fn snapshot_cross_file_definitions() {
+        let mut host = AnalysisHost::new();
+        host.apply([
+            Change::SetDiskFile {
+                path: PathBuf::from("R/define.R"),
+                content: "shared_var <- 1\n".to_string(),
+            },
+            Change::SetDiskFile {
+                path: PathBuf::from("R/use.R"),
+                content: "shared_var + 1\n".to_string(),
+            },
+        ]);
+        let snap = host.snapshot();
+
+        // Definition should be in define.R
+        let defs = snap.definitions("shared_var");
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].symbol.file, "R/define.R");
+    }
+
+    #[test]
+    fn snapshot_cross_file_references() {
+        let mut host = AnalysisHost::new();
+        host.apply([
+            Change::SetDiskFile {
+                path: PathBuf::from("R/define.R"),
+                content: "shared_var <- 1\n".to_string(),
+            },
+            Change::SetDiskFile {
+                path: PathBuf::from("R/use1.R"),
+                content: "shared_var + 1\n".to_string(),
+            },
+            Change::SetDiskFile {
+                path: PathBuf::from("R/use2.R"),
+                content: "shared_var + 2\n".to_string(),
+            },
+        ]);
+        let snap = host.snapshot();
+
+        // References should span all files including disk-only ones
+        let refs = snap.references("shared_var");
+        assert_eq!(refs.len(), 2, "should find refs in use1.R and use2.R");
+
+        let files: std::collections::HashSet<&str> = refs.iter().map(|r| r.file.as_str()).collect();
+        assert!(files.contains("R/use1.R"));
+        assert!(files.contains("R/use2.R"));
     }
 
     #[test]

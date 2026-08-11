@@ -1295,6 +1295,7 @@ dependencies = [
  "insta",
  "proptest",
  "rayon",
+ "ry-config",
  "ry-core",
  "ry-testkit",
  "ry-typeshed",
@@ -1337,7 +1338,7 @@ version = "0.8.0"
 dependencies = [
  "glob",
  "miette",
- "ry-checker",
+ "ry-core",
  "serde",
  "serde_json",
  "tempfile",
@@ -1350,6 +1351,7 @@ dependencies = [
 name = "ry-core"
 version = "0.8.0"
 dependencies = [
+ "serde",
  "thiserror",
  "tracing",
  "tree-sitter",

@@ -537,7 +537,7 @@ fn run_check(
         )
     })?;
     let color = color.enabled(format);
-    let filter = config::filter_from_config(&cfg);
+    let filter = ry_checker::filter_from_config(&cfg);
     let user_stubs = load_user_stubs(&cfg.typeshed);
 
     // Collect the initial file set via the shared bounded discovery

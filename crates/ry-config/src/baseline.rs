@@ -4,49 +4,13 @@
 //! These types were previously embedded in `ry-cli`'s `main.rs` where
 //! they were unreachable from the language server.
 
-use crate::Config;
 use miette::{IntoDiagnostic, Result};
-use ry_checker::Diagnostic;
+use ry_core::BaselineDiagnostic;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
-/// Build a [`ry_checker::SeverityFilter`] from the `error`, `warn`, and
-/// `ignore` lists of a [`Config`]. The resulting filter is what the
-/// checker applies to raw diagnostics before they are displayed.
-pub fn build_filter(
-    error: &[String],
-    warn: &[String],
-    ignore: &[String],
-) -> ry_checker::SeverityFilter {
-    let mut f = ry_checker::SeverityFilter::default();
-    for e in error {
-        f.add_error(e);
-    }
-    for w in warn {
-        f.add_warn(w);
-    }
-    for i in ignore {
-        f.add_ignore(i);
-    }
-    f
-}
-
-/// Convenience: build a [`ry_checker::SeverityFilter`] directly from a
-/// [`Config`].
-pub fn filter_from_config(cfg: &Config) -> ry_checker::SeverityFilter {
-    let mut filter = build_filter(&cfg.error, &cfg.warn, &cfg.ignore);
-    if let Some(select) = &cfg.select {
-        filter.begin_selection();
-        for rule in select {
-            filter.add_select(rule);
-        }
-    }
-    for rule in &cfg.extend_select {
-        filter.add_extend_select(rule);
-    }
-    filter
-}
+// `build_filter` and `filter_from_config` moved to `ry-checker` (P38-W3).
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Baseline {
@@ -89,18 +53,18 @@ pub fn diagnostic_path(path: &str, repo_root: Option<&Path>) -> String {
         .replace(std::path::MAIN_SEPARATOR, "/")
 }
 
-pub fn write_baseline_file(
+pub fn write_baseline_file<D: BaselineDiagnostic>(
     path: &Path,
-    diagnostics: &[Diagnostic],
+    diagnostics: &[D],
     repo_root: Option<&Path>,
 ) -> Result<()> {
     let mut counts = std::collections::BTreeMap::new();
     for diagnostic in diagnostics {
         *counts
             .entry((
-                diagnostic_path(&diagnostic.path, repo_root),
-                diagnostic.code.to_string(),
-                diagnostic.message.clone(),
+                diagnostic_path(diagnostic.path(), repo_root),
+                diagnostic.code().to_string(),
+                diagnostic.message().to_string(),
             ))
             .or_insert(0usize) += 1;
     }
@@ -122,8 +86,8 @@ pub fn write_baseline_file(
         .map_err(|error| miette::miette!("could not write baseline {}: {error}", path.display()))
 }
 
-pub fn subtract_baseline(
-    diagnostics: &mut Vec<Diagnostic>,
+pub fn subtract_baseline<D: BaselineDiagnostic>(
+    diagnostics: &mut Vec<D>,
     baseline: &Baseline,
     repo_root: Option<&Path>,
 ) {
@@ -142,11 +106,11 @@ pub fn subtract_baseline(
         })
         .collect();
     diagnostics.retain(|diagnostic| {
-        let path = diagnostic_path(&diagnostic.path, repo_root);
+        let path = diagnostic_path(diagnostic.path(), repo_root);
         let key = (
             path,
-            diagnostic.code.to_string(),
-            diagnostic.message.clone(),
+            diagnostic.code().to_string(),
+            diagnostic.message().to_string(),
         );
         match remaining.get_mut(&key) {
             Some(count) if *count > 0 => {
@@ -161,24 +125,46 @@ pub fn subtract_baseline(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ry_checker::Severity;
 
     #[test]
-    fn explicit_empty_select_disables_default_rules() {
-        let config = Config {
-            select: Some(Vec::new()),
-            ..Config::default()
+    fn baseline_subtract_removes_matching_entries() {
+        use ry_core::BaselineDiagnostic;
+
+        struct TestDiag {
+            path: String,
+            code: String,
+            message: String,
+        }
+
+        impl BaselineDiagnostic for TestDiag {
+            fn path(&self) -> &str {
+                &self.path
+            }
+            fn code(&self) -> &str {
+                &self.code
+            }
+            fn message(&self) -> &str {
+                &self.message
+            }
+        }
+
+        let baseline = Baseline {
+            version: 1,
+            entries: vec![BaselineEntry {
+                path: "R/a.R".to_string(),
+                code: "RY010".to_string(),
+                message: "test".to_string(),
+                count: 1,
+            }],
         };
-        let filter = filter_from_config(&config);
-        assert_eq!(filter.effective("RY010", Severity::Warning), None);
-    }
 
-    #[test]
-    fn omitted_select_keeps_default_rules() {
-        let filter = filter_from_config(&Config::default());
-        assert_eq!(
-            filter.effective("RY010", Severity::Warning),
-            Some(Severity::Warning)
-        );
+        let mut diags = vec![TestDiag {
+            path: "R/a.R".to_string(),
+            code: "RY010".to_string(),
+            message: "test".to_string(),
+        }];
+
+        subtract_baseline(&mut diags, &baseline, None);
+        assert!(diags.is_empty(), "baseline should remove the diagnostic");
     }
 }

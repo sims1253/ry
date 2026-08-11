@@ -37,6 +37,41 @@ pub use diagnostics::{
     is_suppressed, parse_suppressions, parse_suppressions_from_comments,
 };
 
+// P38-W3: Configuration-driven filter builders moved here from ry-config
+// to break the ry-config → ry-checker dependency.
+
+/// Build a [`SeverityFilter`] from the `error`, `warn`, and `ignore`
+/// rule lists in a config.
+pub fn build_filter(error: &[String], warn: &[String], ignore: &[String]) -> SeverityFilter {
+    let mut f = SeverityFilter::default();
+    for e in error {
+        f.add_error(e);
+    }
+    for w in warn {
+        f.add_warn(w);
+    }
+    for i in ignore {
+        f.add_ignore(i);
+    }
+    f
+}
+
+/// Convenience: build a [`SeverityFilter`] directly from a
+/// config's `error`, `warn`, `ignore`, `select`, and `extend_select` fields.
+pub fn filter_from_config(cfg: &ry_config::Config) -> SeverityFilter {
+    let mut filter = build_filter(&cfg.error, &cfg.warn, &cfg.ignore);
+    if let Some(select) = &cfg.select {
+        filter.begin_selection();
+        for rule in select {
+            filter.add_select(rule);
+        }
+    }
+    for rule in &cfg.extend_select {
+        filter.add_extend_select(rule);
+    }
+    filter
+}
+
 use crate::infer::semantic_argument_name;
 use ry_core::Span;
 use ry_core::ast::*;

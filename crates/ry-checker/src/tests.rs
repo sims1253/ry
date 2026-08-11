@@ -11,9 +11,18 @@ fn check(src: &str) -> Vec<Diagnostic> {
 
 #[test]
 fn confidence_defaults_follow_rule_precision_and_info_severity() {
-    assert_eq!(Confidence::default_for("RY096"), Confidence::High);
-    assert_eq!(Confidence::default_for("RY010"), Confidence::Medium);
-    assert_eq!(Confidence::default_for("RY097"), Confidence::Low);
+    assert_eq!(
+        crate::diagnostics::default_confidence_for("RY096"),
+        Confidence::High
+    );
+    assert_eq!(
+        crate::diagnostics::default_confidence_for("RY010"),
+        Confidence::Medium
+    );
+    assert_eq!(
+        crate::diagnostics::default_confidence_for("RY097"),
+        Confidence::Low
+    );
     let info = Diagnostic::new(
         Severity::Info,
         Span::new(0, 1, 0, 0),

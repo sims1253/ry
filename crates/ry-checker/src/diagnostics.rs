@@ -6,7 +6,6 @@
 //! `ry_core::ast::Comment`, and the rule registry (`crate::rules`).
 
 use ry_core::Span;
-use serde::{Deserialize, Serialize};
 
 use crate::rules;
 
@@ -14,63 +13,18 @@ use crate::rules;
 // Severity + Diagnostic
 // ============================================================================
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Severity {
-    Error,
-    Warning,
-    Info,
-}
+// Severity and Confidence are defined in ry-core and re-exported here
+// for backward compatibility.
+pub use ry_core::{Confidence, Severity};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Confidence {
-    Low,
-    Medium,
-    High,
-}
-
-impl Confidence {
-    pub fn default_for(code: &str) -> Self {
-        match code {
-            "RY097" => Self::Low,
-            // RY102/RY105 are decided by syntax or by a length that is fixed
-            // by construction, so neither depends on inference that could be
-            // wrong about the runtime value.
-            "RY030" | "RY033" | "RY050" | "RY070" | "RY092" | "RY093" | "RY094" | "RY096"
-            | "RY101" | "RY102" | "RY105" => Self::High,
-            _ => Self::Medium,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Low => "low",
-            Self::Medium => "medium",
-            Self::High => "high",
-        }
-    }
-
-    pub fn demote(self) -> Self {
-        match self {
-            Self::High => Self::Medium,
-            Self::Medium | Self::Low => Self::Low,
-        }
-    }
-}
-
-impl Severity {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Severity::Error => "error",
-            Severity::Warning => "warning",
-            Severity::Info => "info",
-        }
-    }
-}
-
-impl std::fmt::Display for Severity {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
+/// Determine the default confidence level for a rule code.
+/// This is checker-specific and cannot live on the ry-core enum.
+pub fn default_confidence_for(code: &str) -> Confidence {
+    match code {
+        "RY097" => Confidence::Low,
+        "RY030" | "RY033" | "RY050" | "RY070" | "RY092" | "RY093" | "RY094" | "RY096" | "RY101"
+        | "RY102" | "RY105" => Confidence::High,
+        _ => Confidence::Medium,
     }
 }
 
@@ -91,6 +45,18 @@ pub struct Diagnostic {
     pub fix: Option<Fix>,
 }
 
+impl ry_core::BaselineDiagnostic for Diagnostic {
+    fn path(&self) -> &str {
+        &self.path
+    }
+    fn code(&self) -> &str {
+        self.code
+    }
+    fn message(&self) -> &str {
+        &self.message
+    }
+}
+
 impl Diagnostic {
     pub fn new(
         severity: Severity,
@@ -108,7 +74,7 @@ impl Diagnostic {
             confidence: if severity == Severity::Info {
                 Confidence::Low
             } else {
-                Confidence::default_for(code)
+                default_confidence_for(code)
             },
             fix: None,
         }

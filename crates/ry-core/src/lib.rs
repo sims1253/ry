@@ -11,3 +11,6 @@ pub use parser::{ParseError, RParser};
 pub use span::Span;
 pub use tree_sitter::{InputEdit, Point, Tree};
 pub use types::{Length, Mode, RType};
+
+pub mod diagnostic;
+pub use diagnostic::{BaselineDiagnostic, Confidence, Severity};

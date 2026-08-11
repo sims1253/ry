@@ -1297,6 +1297,7 @@ dependencies = [
  "rayon",
  "ry-config",
  "ry-core",
+ "ry-diagnostics",
  "ry-testkit",
  "ry-typeshed",
  "ry-workspace",
@@ -1358,6 +1359,10 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-r",
 ]
+
+[[package]]
+name = "ry-diagnostics"
+version = "0.1.0"
 
 [[package]]
 name = "ry-lsp"

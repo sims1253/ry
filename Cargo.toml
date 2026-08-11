@@ -26,6 +26,7 @@ repository = "https://github.com/sims1253/ry"
 authors = ["Maximilian Scholz"]
 
 [workspace.dependencies]
+ry-diagnostics = { path = "../ry-diagnostics" }
 # parsing
 tree-sitter = "0.26"
 tree-sitter-r = "1.3"

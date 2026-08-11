@@ -1281,7 +1281,6 @@ fn p36_w5_publish_path_performs_no_baseline_disk_io() {
 /// P36-W6 adds the construction-count instrumentation. Currently the filter
 /// is recomputed per file inside `publish_diagnostics`.
 #[test]
-#[ignore = "P36-W6: precompute filters once per folder (#46) — fix pending"]
 fn p36_w6_many_files_flat_filter_construction() {
     let fixture = FixtureProject::empty().unwrap();
     // Create 32 files, each with a diagnostic (RY090).
@@ -1320,49 +1319,59 @@ fn p36_w6_many_files_flat_filter_construction() {
             "textDocument": {"uri": trigger_uri, "languageId": "r", "version": 1, "text": trigger_text}
         })).await.unwrap();
 
-        // Collect diagnostics for the first and last indexed file.
+        // Drain ALL diagnostic publications with a timeout-based approach
+        // (like p36_w7). The background index + debounced publish will send
+        // diagnostics for trigger.R and all indexed files. We collect
+        // diagnostics for file_00 and file_31 from the drain.
         let first_uri = file_uri(&fixture.path("file_00.R"));
         let last_uri = file_uri(&fixture.path("file_31.R"));
-        let first_publish = client.receive_until(
-            |m| m.get("method") == Some(&json!("textDocument/publishDiagnostics"))
-                && m.pointer("/params/uri") == Some(&json!(first_uri)),
-            128,
-        ).await.unwrap();
-        let first_diags = published_from_lsp(
-            &first_publish,
-            &fixture.path("file_00.R"),
-            fixture.root(),
-        );
-        let last_publish = client.receive_until(
-            |m| m.get("method") == Some(&json!("textDocument/publishDiagnostics"))
-                && m.pointer("/params/uri") == Some(&json!(last_uri)),
-            128,
-        ).await.unwrap();
-        let last_diags = published_from_lsp(
-            &last_publish,
-            &fixture.path("file_31.R"),
-            fixture.root(),
-        );
+        let mut first_diags: Vec<Published> = Vec::new();
+        let mut last_diags: Vec<Published> = Vec::new();
+
+        for _ in 0..256 {
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(500),
+                client.receive(),
+            ).await {
+                Ok(Ok(message)) => {
+                    if message.get("method") == Some(&json!("textDocument/publishDiagnostics")) {
+                        if message.pointer("/params/uri") == Some(&json!(first_uri)) {
+                            first_diags = published_from_lsp(
+                                &message,
+                                &fixture.path("file_00.R"),
+                                fixture.root(),
+                            );
+                        }
+                        if message.pointer("/params/uri") == Some(&json!(last_uri)) {
+                            last_diags = published_from_lsp(
+                                &message,
+                                &fixture.path("file_31.R"),
+                                fixture.root(),
+                            );
+                        }
+                    }
+                }
+                Ok(Err(e)) => panic!("transport error during drain: {e}"),
+                Err(_) => break, // timeout: server has quiesced
+            }
+        }
 
         let shutdown_id = client.request("shutdown", Value::Null).await.unwrap();
-        client.receive_until(|m| m.get("id") == Some(&json!(shutdown_id)), 16).await.unwrap();
+        client.receive_until(|m| m.get("id") == Some(&json!(shutdown_id)), 128).await.unwrap();
         client.notify("exit", Value::Null).await.unwrap();
         drop(client);
-        tokio::time::timeout(std::time::Duration::from_secs(3), server).await.unwrap().unwrap().unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), server).await.unwrap().unwrap().unwrap();
 
         // Every indexed file must produce the same RY090 diagnostic.
-        // P36-W6 asserts the construction count is flat; this correctness
-        // baseline must hold before and after the fix.
         assert!(
-            first_diags.iter().any(|d| d.code == "RY090"),
-            "file_00 must produce RY090"
+            !first_diags.is_empty() && first_diags.iter().any(|d| d.code == "RY090"),
+            "file_00 must produce RY090; got {:?}",
+            first_diags
         );
-        // Diagnostics must be identical except for the file path.
-        // P36-W6 will assert that filter/glob construction count is flat
-        // as file count grows; this correctness baseline must hold.
         assert!(
-            last_diags.iter().any(|d| d.code == "RY090"),
-            "file_31 must produce RY090"
+            !last_diags.is_empty() && last_diags.iter().any(|d| d.code == "RY090"),
+            "file_31 must produce RY090; got {:?}",
+            last_diags
         );
         assert_eq!(
             first_diags.len(),
@@ -1380,14 +1389,17 @@ fn p36_w6_many_files_flat_filter_construction() {
         assert_eq!(first_diags[0].path, "file_00.R");
         assert_eq!(last_diags[0].path, "file_31.R");
 
-        // P36-W6 adds a construction-count test hook to `publish_diagnostics`
-        // so the filter/glob construction count is asserted directly as flat
-        // when file count grows. Until that instrumentation lands, the
-        // correctness baseline above passes but the construction-count
-        // assertion cannot be made. This sentinel marks the test RED.
-        panic!(
-            "P36-W6: filter/glob construction-count instrumentation required; \
-             this sentinel is removed when W6 provides the test hook"
+        // P37-W6 (#46): Assert filter/glob construction count is flat
+        // during the publish cycle. COMPILE_DURING_LAST_PUBLISH records
+        // the delta observed during the most recent publish_diagnostics
+        // call. It must be zero with precomputation.
+        let compile_during_publish = ry_lsp::COMPILE_DURING_LAST_PUBLISH
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(
+            compile_during_publish, 0,
+            "P37-W6: filter/glob construction count during publish must be \
+             zero (got {}); precomputation not working",
+            compile_during_publish
         );
     });
 }

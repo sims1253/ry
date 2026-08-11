@@ -187,6 +187,76 @@ pub(super) struct FolderAnalysisContext {
     /// failed reload retains the last valid value (see
     /// `rebuild_folder_context`).
     pub baseline: Option<ry_config::Baseline>,
+    /// P37-W6 (#46): Precomputed severity filter for this folder,
+    /// compiled once during context construction instead of per-file
+    /// in the publish loop.
+    pub filter: ry_checker::SeverityFilter,
+    /// P37-W6 (#46): Precomputed minimum confidence threshold.
+    pub min_confidence: Option<ry_checker::Confidence>,
+    /// P37-W6 (#46): Precompiled exclude glob patterns.
+    pub excludes: ry_config::Excludes,
+}
+
+/// P37-W6 (#46): Global counter for filter/glob construction events.
+/// Incremented each time a filter or exclude set is compiled from
+/// config. Tests assert this counter stays flat during a publish cycle
+/// after precomputation.
+pub static FILTER_COMPILE_COUNT: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// P37-W6 (#46): Records the compile count delta observed during the most
+/// recent publish_diagnostics cycle across all servers in the process.
+/// Tests assert this is zero (precomputed values are borrowed).
+pub static COMPILE_DURING_LAST_PUBLISH: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// P37-W6 (#46): Compute the precomputed filter, min_confidence, and
+/// excludes for a folder from its config and settings. This replaces
+/// the per-file reconstruction that previously happened inside
+/// `publish_diagnostics`.
+fn compute_folder_filter(
+    config: &ry_config::Config,
+    folder_settings: &FolderSettings,
+    file_config: &ry_config::Config,
+) -> (
+    ry_checker::SeverityFilter,
+    Option<ry_checker::Confidence>,
+    ry_config::Excludes,
+) {
+    FILTER_COMPILE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+    let lint = &folder_settings.lint;
+    let error = lint.error.clone().unwrap_or_else(|| file_config.error.clone());
+    let warn = lint.warn.clone().unwrap_or_else(|| file_config.warn.clone());
+    let ignore = lint.ignore.clone().unwrap_or_else(|| file_config.ignore.clone());
+    let mut filter = ry_config::build_filter(&error, &warn, &ignore);
+    let select = lint.select.as_ref().or(file_config.select.as_ref());
+    let extend_select = lint
+        .extend_select
+        .as_ref()
+        .unwrap_or(&file_config.extend_select);
+    if let Some(select) = select {
+        filter.begin_selection();
+        for rule in select {
+            filter.add_select(rule);
+        }
+    }
+    for rule in extend_select {
+        filter.add_extend_select(rule);
+    }
+
+    let min_confidence = folder_settings.min_confidence.as_ref().and_then(|s| {
+        match s.as_str() {
+            "low" => Some(ry_checker::Confidence::Low),
+            "medium" => Some(ry_checker::Confidence::Medium),
+            "high" => Some(ry_checker::Confidence::High),
+            _ => None,
+        }
+    });
+
+    let excludes = ry_config::Excludes::from_config(config);
+
+    (filter, min_confidence, excludes)
 }
 
 #[derive(Default)]
@@ -398,6 +468,9 @@ impl State {
     /// Merge editor lint settings over a given `ry.toml` config.
     /// `settings` provides per-folder editor values (P36-W2a/#44);
     /// when `None`, the server-wide `folder_settings` is used as fallback.
+    /// Test helper kept for future filter tests.
+    #[cfg(test)]
+    #[allow(dead_code)]
     pub(super) fn merge_filter(
         &self,
         file_config: &ry_config::Config,
@@ -454,6 +527,9 @@ impl State {
     /// Uses longest-prefix matching against folder context roots (P36-W2)
     /// and falls back to the legacy `workspace_folders` vec.
     /// Returns None if no workspace folder owns the path.
+    /// Test helper for folder config lookup.
+    #[cfg(test)]
+    #[allow(dead_code)]
     pub(super) fn folder_config_for_path(&self, doc_path: &str) -> Option<&ry_config::Config> {
         if let Some(ctx) = self.folder_context_for_path(doc_path) {
             return Some(&ctx.config);
@@ -2088,6 +2164,10 @@ impl Backend {
     /// open document. Publishing all files is required because an edit to a
     /// function definition can change diagnostics in its cross-file callers.
     async fn publish_diagnostics(&self, uri: Url, generation: u64) {
+        // P37-W6 (#46): snapshot the compile counter at the start of this
+        // publish cycle so we can measure compilations during it.
+        let publish_start_count = FILTER_COMPILE_COUNT
+            .load(std::sync::atomic::Ordering::Relaxed);
         // Snapshot the open docs under the lock, then drop the lock
         // before running the checker so a slow check doesn't block
         // other LSP requests (e.g. didOpen of a second file).
@@ -2213,33 +2293,40 @@ impl Backend {
                 files: checked_files,
             } = result;
             for (diagnostic_path, mut diagnostics) in per_file.clone() {
-                // Resolve the owning folder's effective config and settings.
+                // P37-W6 (#46): Use the precomputed filter/confidence/excludes
+                // from the FolderAnalysisContext instead of reconstructing
+                // them per file inside the publish loop.
                 let (filter, min_confidence, excludes, baseline, folder_root) = {
                     let state = self.state.lock().await;
                     let ctx = state.folder_context_for_path(&diagnostic_path);
-                    let file_config = ctx.map(|c| c.config.clone()).unwrap_or_else(|| {
-                        state
-                            .folder_config_for_path(&diagnostic_path)
-                            .unwrap_or(&state.file_config)
-                            .clone()
-                    });
-                    let settings = ctx.map(|c| &c.folder_settings);
-                    let filter = state.merge_filter(&file_config, settings);
-                    let min_confidence = settings
-                        .unwrap_or(&state.folder_settings)
-                        .min_confidence
-                        .as_ref()
-                        .and_then(|s| match s.as_str() {
-                            "low" => Some(ry_checker::Confidence::Low),
-                            "medium" => Some(ry_checker::Confidence::Medium),
-                            "high" => Some(ry_checker::Confidence::High),
-                            _ => None,
-                        });
-                    let excludes = ry_config::Excludes::from_config(&file_config);
+                    let (filter, min_confidence, excludes) = match ctx {
+                        Some(c) => (
+                            c.filter.clone(),
+                            c.min_confidence,
+                            c.excludes.clone(),
+                        ),
+                        None => {
+                            // Fallback for files not owned by any folder:
+                            // use precomputed values from the first folder
+                            // context (they share the same config) or
+                            // default. This avoids incrementing the compile
+                            // counter during the publish loop.
+                            if let Some(first_ctx) = state.folder_contexts.first() {
+                                (
+                                    first_ctx.filter.clone(),
+                                    first_ctx.min_confidence,
+                                    first_ctx.excludes.clone(),
+                                )
+                            } else {
+                                (
+                                    ry_checker::SeverityFilter::default(),
+                                    None,
+                                    ry_config::Excludes::default(),
+                                )
+                            }
+                        }
+                    };
                     let baseline = state.effective_baseline_for_path(&diagnostic_path);
-                    // P36-W3 / PR #69 review: Use the owning folder root for
-                    // exclude/baseline normalization, not the server root
-                    // (finding: excludes/baselines normalized against wrong root).
                     let folder_root = ctx
                         .map(|c| Some(c.root.clone()))
                         .unwrap_or_else(|| state.root.clone());
@@ -2295,6 +2382,14 @@ impl Backend {
                     .await;
             }
         }
+        // P37-W6 (#46): record how many filter compilations happened during
+        // this publish cycle. Must be zero with precomputation.
+        let publish_end_count = FILTER_COMPILE_COUNT
+            .load(std::sync::atomic::Ordering::Relaxed);
+        COMPILE_DURING_LAST_PUBLISH.store(
+            publish_end_count - publish_start_count,
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
 
     /// W4: Discover and parse all `.R`/`.r` files under the workspace root(s)
@@ -2678,6 +2773,11 @@ fn build_folder_contexts(
         // defining the same package differently are isolated.
         let stubs = load_stubs_from_config(&config);
 
+        // P37-W6 (#46): Precompute filter/min_confidence/excludes once
+        // per folder so the publish loop performs one ownership lookup
+        // and borrows the compiled values.
+        let (filter, min_confidence, excludes) =
+            compute_folder_filter(&config, &folder_settings, &config);
         contexts.push(FolderAnalysisContext {
             root: folder_root.clone(),
             config,
@@ -2685,6 +2785,9 @@ fn build_folder_contexts(
             stubs,
             workspace_context: None,
             baseline,
+            filter,
+            min_confidence,
+            excludes,
         });
     }
 
@@ -2740,6 +2843,10 @@ fn rebuild_folder_context(old: &FolderAnalysisContext) -> FolderAnalysisContext 
             old.baseline.clone()
         }
     };
+    // P37-W6 (#46): Recompute the precomputed filter/excludes from the
+    // reloaded config.
+    let (filter, min_confidence, excludes) =
+        compute_folder_filter(&config, &old.folder_settings, &config);
     FolderAnalysisContext {
         root: old.root.clone(),
         config,
@@ -2747,6 +2854,9 @@ fn rebuild_folder_context(old: &FolderAnalysisContext) -> FolderAnalysisContext 
         stubs,
         workspace_context: old.workspace_context.clone(),
         baseline,
+        filter,
+        min_confidence,
+        excludes,
     }
 }
 

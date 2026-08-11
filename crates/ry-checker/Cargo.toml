@@ -10,6 +10,7 @@ authors.workspace = true
 [dependencies]
 ry-core = { path = "../ry-core" }
 ry-config = { path = "../ry-config" }
+ry-workspace = { path = "../ry-workspace" }
 ry-typeshed = { path = "../ry-typeshed" }
 thiserror = { workspace = true }
 tracing = { workspace = true }

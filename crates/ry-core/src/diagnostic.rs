@@ -65,3 +65,11 @@ pub trait BaselineDiagnostic {
     fn code(&self) -> &str;
     fn message(&self) -> &str;
 }
+
+/// External-binding sentinel marking unenumerable serialized bindings.
+/// The `\0` prefix keeps it out of the R identifier namespace.
+pub const SERIALIZED_BINDINGS_UNENUMERABLE: &str = "\0serialized:unenumerable";
+
+/// R foreign-function-interface primitives.
+/// Their first argument is a native routine entry-point symbol, not a variable.
+pub const FFI_PRIMITIVES: &[&str] = &[".Call", ".C", ".Fortran", ".External", ".External2"];

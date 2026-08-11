@@ -15,7 +15,12 @@ pub mod snapshot;
 pub mod symbols;
 
 pub use snapshot::{AnalysisSnapshot, QueryResult, SnapshotDiagnostic};
+pub mod catalog;
 pub mod interactive;
+pub use catalog::{
+    BindingEffect, DefusingKind, Dispatch, Evaluation, FlowEffect, FunctionSemantics,
+    InMemoryCatalog, ParameterSpec, PredicateTarget, ReturnRule, SelectKind, SemanticCatalog,
+};
 pub use interactive::{
     CompletionItem, CompletionKind, HoverInfo, InlayHint, InlayHintKind, SignatureInfo,
 };

@@ -238,7 +238,7 @@ fn compute_folder_filter(
         .ignore
         .clone()
         .unwrap_or_else(|| file_config.ignore.clone());
-    let mut filter = ry_config::build_filter(&error, &warn, &ignore);
+    let mut filter = ry_checker::build_filter(&error, &warn, &ignore);
     let select = lint.select.as_ref().or(file_config.select.as_ref());
     let extend_select = lint
         .extend_select
@@ -499,7 +499,7 @@ impl State {
             .ignore
             .clone()
             .unwrap_or_else(|| file_config.ignore.clone());
-        let mut filter = ry_config::build_filter(&error, &warn, &ignore);
+        let mut filter = ry_checker::build_filter(&error, &warn, &ignore);
         let select = lint.select.as_ref().or(file_config.select.as_ref());
         let extend_select = lint
             .extend_select

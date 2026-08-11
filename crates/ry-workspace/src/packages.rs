@@ -180,6 +180,7 @@ fn visit_stmt_for_attachments(stmt: &Stmt, packages: &mut HashSet<String>) {
     }
 }
 
+#[allow(clippy::collapsible_if)]
 fn visit_expr_for_attachments(expr: &Expr, packages: &mut HashSet<String>) {
     match expr {
         Expr::Call { func, args, .. } => {

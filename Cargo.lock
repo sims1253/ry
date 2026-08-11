@@ -1291,6 +1291,7 @@ dependencies = [
 name = "ry-analysis"
 version = "0.8.0"
 dependencies = [
+ "proptest",
  "ry-checker",
  "ry-config",
  "ry-core",

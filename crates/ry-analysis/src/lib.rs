@@ -11,6 +11,9 @@
 
 use std::path::{Path, PathBuf};
 
+pub mod snapshot;
+pub use snapshot::{AnalysisSnapshot, QueryResult, SnapshotDiagnostic};
+
 // == Stable identities ==
 
 /// Identifier for a workspace root.
@@ -140,6 +143,32 @@ impl AnalysisHost {
     /// Get the workspace roots.
     pub fn roots(&self) -> &[PathBuf] {
         &self.roots
+    }
+
+    /// Number of workspace roots.
+    pub fn roots_count(&self) -> usize {
+        self.roots.len()
+    }
+
+    /// Take an immutable snapshot of the current analysis state.
+    ///
+    /// The snapshot captures all file contents at the current revision.
+    /// Diagnostic data must be supplied by the caller (e.g., from a checker
+    /// run); future workstreams will integrate the checker into the host.
+    pub fn snapshot(&self) -> AnalysisSnapshot {
+        AnalysisSnapshot::from_host(self, std::collections::HashMap::new())
+    }
+
+    /// Take a snapshot with diagnostic data attached.
+    ///
+    /// This is the primary entry point for production use: the caller runs
+    /// the checker, converts results to `SnapshotDiagnostic`, and attaches
+    /// them to the snapshot.
+    pub fn snapshot_with_diagnostics(
+        &self,
+        diagnostics: std::collections::HashMap<String, Vec<SnapshotDiagnostic>>,
+    ) -> AnalysisSnapshot {
+        AnalysisSnapshot::from_host(self, diagnostics)
     }
 
     /// Get the current configuration.

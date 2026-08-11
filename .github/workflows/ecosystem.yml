@@ -82,6 +82,8 @@ jobs:
             ecosystem-${{ runner.os }}-
       - name: Build release binary
         run: cargo build --release --locked -p ry-cli --bin ry
+      - name: P37-W5: Validate ledger summary consistency
+        run: python3 ecosystem/check-ledger.py docs/corpus/posit-0.9.0.json
       - name: Check Posit corpus
         run: >-
           ecosystem/run.sh --check

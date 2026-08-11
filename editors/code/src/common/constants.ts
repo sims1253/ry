@@ -17,7 +17,7 @@ export const EXTENSION_ROOT_DIR =
 /**
  * Extension ID on the marketplaces (`<publisher>.<name>`).
  */
-export const RY_EXTENSION_ID = "ry.ry";
+export const RY_EXTENSION_ID = "sims1253.ry";
 
 /**
  * The VS Code settings namespace (`ry.*`).

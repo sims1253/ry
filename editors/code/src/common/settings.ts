@@ -12,104 +12,103 @@ import { getConfiguration, getWorkspaceFolders } from "./vscodeapi";
 export const RY_SETTINGS_NAMESPACE = "ry";
 
 export interface ISettings {
-    enable?: boolean;
-    path?: string[];
-    configuration?: string;
-    importStrategy: "fromEnvironment" | "useBundled";
-    lint: ILintSettings;
-    minConfidence?: "low" | "medium" | "high";
-    baseline?: string;
-    checkTestFixtures?: boolean;
-    logLevel?: string;
-    addExecutableToTerminalPath: boolean;
+  enable?: boolean;
+  path?: string[];
+  configuration?: string;
+  importStrategy: "fromEnvironment" | "useBundled";
+  lint: ILintSettings;
+  minConfidence?: "low" | "medium" | "high";
+  baseline?: string;
+  checkTestFixtures?: boolean;
+  logLevel?: string;
+  addExecutableToTerminalPath: boolean;
 }
 
 export interface ILintSettings {
-    select?: string[];
-    extendSelect?: string[];
-    ignore?: string[];
-    error?: string[];
-    warn?: string[];
+  select?: string[];
+  extendSelect?: string[];
+  ignore?: string[];
+  error?: string[];
+  warn?: string[];
 }
 
-
 function getExplicitValue<T>(
-    config: vscode.WorkspaceConfiguration,
-    key: string,
+  config: vscode.WorkspaceConfiguration,
+  key: string,
 ): T | undefined {
-    const inspected = config.inspect<T>(key);
-    if (!inspected) return undefined;
-    // Preserve an explicitly configured empty array while omitting the schema
-    // default. Sending the default `[]` would mean "select no rules" to the
-    // server and would suppress diagnostics in an otherwise unconfigured
-    // workspace.
-    return (
-        inspected.workspaceFolderLanguageValue ??
-        inspected.workspaceLanguageValue ??
-        inspected.globalLanguageValue ??
-        inspected.workspaceFolderValue ??
-        inspected.workspaceValue ??
-        inspected.globalValue
-    );
+  const inspected = config.inspect<T>(key);
+  if (!inspected) return undefined;
+  // Preserve an explicitly configured empty array while omitting the schema
+  // default. Sending the default `[]` would mean "select no rules" to the
+  // server and would suppress diagnostics in an otherwise unconfigured
+  // workspace.
+  return (
+    inspected.workspaceFolderLanguageValue ??
+    inspected.workspaceLanguageValue ??
+    inspected.globalLanguageValue ??
+    inspected.workspaceFolderValue ??
+    inspected.workspaceValue ??
+    inspected.globalValue
+  );
 }
 
 export function getWorkspaceSettings(
-    namespace: string,
-    folder: vscode.WorkspaceFolder,
+  namespace: string,
+  folder: vscode.WorkspaceFolder,
 ): ISettings {
-    const config = getConfiguration(namespace, folder.uri);
-    return {
-        enable: config.get<boolean>("enable"),
-        path: config.get<string[]>("path"),
-        configuration: config.get<string>("configuration"),
-        importStrategy: config.get<"fromEnvironment" | "useBundled">(
-            "importStrategy",
-            "fromEnvironment",
-        ),
-        lint: {
-            select: getExplicitValue<string[]>(config, "lint.select"),
-            extendSelect: getExplicitValue<string[]>(config, "lint.extendSelect"),
-            ignore: getExplicitValue<string[]>(config, "lint.ignore"),
-            error: getExplicitValue<string[]>(config, "lint.error"),
-            warn: getExplicitValue<string[]>(config, "lint.warn"),
-        },
-        minConfidence: config.get<"low" | "medium" | "high">("minConfidence"),
-        baseline: config.get<string>("baseline"),
-        checkTestFixtures: config.get<boolean>("checkTestFixtures"),
-        logLevel: config.get<string>("logLevel"),
-        addExecutableToTerminalPath: config.get<boolean>(
-            "addExecutableToTerminalPath",
-            true,
-        ),
-    };
+  const config = getConfiguration(namespace, folder.uri);
+  return {
+    enable: config.get<boolean>("enable"),
+    path: config.get<string[]>("path"),
+    configuration: config.get<string>("configuration"),
+    importStrategy: config.get<"fromEnvironment" | "useBundled">(
+      "importStrategy",
+      "fromEnvironment",
+    ),
+    lint: {
+      select: getExplicitValue<string[]>(config, "lint.select"),
+      extendSelect: getExplicitValue<string[]>(config, "lint.extendSelect"),
+      ignore: getExplicitValue<string[]>(config, "lint.ignore"),
+      error: getExplicitValue<string[]>(config, "lint.error"),
+      warn: getExplicitValue<string[]>(config, "lint.warn"),
+    },
+    minConfidence: config.get<"low" | "medium" | "high">("minConfidence"),
+    baseline: config.get<string>("baseline"),
+    checkTestFixtures: config.get<boolean>("checkTestFixtures"),
+    logLevel: config.get<string>("logLevel"),
+    addExecutableToTerminalPath: config.get<boolean>(
+      "addExecutableToTerminalPath",
+      true,
+    ),
+  };
 }
 
 export function getGlobalSettings(namespace: string): ISettings {
-    const config = getConfiguration(namespace);
-    return {
-        enable: config.get<boolean>("enable"),
-        path: config.get<string[]>("path"),
-        configuration: config.get<string>("configuration"),
-        importStrategy: config.get<"fromEnvironment" | "useBundled">(
-            "importStrategy",
-            "fromEnvironment",
-        ),
-        lint: {
-            select: getExplicitValue<string[]>(config, "lint.select"),
-            extendSelect: getExplicitValue<string[]>(config, "lint.extendSelect"),
-            ignore: getExplicitValue<string[]>(config, "lint.ignore"),
-            error: getExplicitValue<string[]>(config, "lint.error"),
-            warn: getExplicitValue<string[]>(config, "lint.warn"),
-        },
-        minConfidence: config.get<"low" | "medium" | "high">("minConfidence"),
-        baseline: config.get<string>("baseline"),
-        checkTestFixtures: config.get<boolean>("checkTestFixtures"),
-        logLevel: config.get<string>("logLevel"),
-        addExecutableToTerminalPath: config.get<boolean>(
-            "addExecutableToTerminalPath",
-            true,
-        ),
-    };
+  const config = getConfiguration(namespace);
+  return {
+    enable: config.get<boolean>("enable"),
+    path: config.get<string[]>("path"),
+    configuration: config.get<string>("configuration"),
+    importStrategy: config.get<"fromEnvironment" | "useBundled">(
+      "importStrategy",
+      "fromEnvironment",
+    ),
+    lint: {
+      select: getExplicitValue<string[]>(config, "lint.select"),
+      extendSelect: getExplicitValue<string[]>(config, "lint.extendSelect"),
+      ignore: getExplicitValue<string[]>(config, "lint.ignore"),
+      error: getExplicitValue<string[]>(config, "lint.error"),
+      warn: getExplicitValue<string[]>(config, "lint.warn"),
+    },
+    minConfidence: config.get<"low" | "medium" | "high">("minConfidence"),
+    baseline: config.get<string>("baseline"),
+    checkTestFixtures: config.get<boolean>("checkTestFixtures"),
+    logLevel: config.get<string>("logLevel"),
+    addExecutableToTerminalPath: config.get<boolean>(
+      "addExecutableToTerminalPath",
+      true,
+    ),
+  };
 }
 
 /**
@@ -118,9 +117,9 @@ export function getGlobalSettings(namespace: string): ISettings {
  * initialize time.
  */
 export function getExtensionSettings(namespace: string): ISettings[] {
-    const folders = getWorkspaceFolders();
-    if (!folders) return [];
-    return folders.map((folder) => getWorkspaceSettings(namespace, folder));
+  const folders = getWorkspaceFolders();
+  if (!folders) return [];
+  return folders.map((folder) => getWorkspaceSettings(namespace, folder));
 }
 
 /**
@@ -130,15 +129,15 @@ export function getExtensionSettings(namespace: string): ISettings[] {
  * starts.
  */
 export function checkIfConfigurationChanged(
-    oldSettings: ISettings,
-    newSettings: ISettings,
+  oldSettings: ISettings,
+  newSettings: ISettings,
 ): boolean {
-    return (
-        JSON.stringify(oldSettings.path) !== JSON.stringify(newSettings.path) ||
-        oldSettings.importStrategy !== newSettings.importStrategy ||
-        oldSettings.configuration !== newSettings.configuration ||
-        oldSettings.logLevel !== newSettings.logLevel
-    );
+  return (
+    JSON.stringify(oldSettings.path) !== JSON.stringify(newSettings.path) ||
+    oldSettings.importStrategy !== newSettings.importStrategy ||
+    oldSettings.configuration !== newSettings.configuration ||
+    oldSettings.logLevel !== newSettings.logLevel
+  );
 }
 
 /**
@@ -146,22 +145,22 @@ export function checkIfConfigurationChanged(
  * ${workspaceFolder}, ${userHome}, ${env:VAR}, etc.
  */
 export function resolveVariables(
-    value: string | undefined,
-    folder?: vscode.WorkspaceFolder,
+  value: string | undefined,
+  folder?: vscode.WorkspaceFolder,
 ): string | undefined {
-    if (!value) return undefined;
-    let resolved = value;
-    if (folder) {
-        resolved = resolved.replace(
-            /\$\{workspaceFolder\}/g,
-            folder.uri.fsPath,
-        );
-    }
-    resolved = resolved.replace(/\$\{userHome\}/g, process.env.HOME ?? process.env.USERPROFILE ?? "");
-    resolved = resolved.replace(/\$\{cwd\}/g, process.cwd());
-    resolved = resolved.replace(
-        /\$\{env:(\w+)\}/g,
-        (_, name) => process.env[name] ?? "",
-    );
-    return resolved;
+  if (!value) return undefined;
+  let resolved = value;
+  if (folder) {
+    resolved = resolved.replace(/\$\{workspaceFolder\}/g, folder.uri.fsPath);
+  }
+  resolved = resolved.replace(
+    /\$\{userHome\}/g,
+    process.env.HOME ?? process.env.USERPROFILE ?? "",
+  );
+  resolved = resolved.replace(/\$\{cwd\}/g, process.cwd());
+  resolved = resolved.replace(
+    /\$\{env:(\w+)\}/g,
+    (_, name) => process.env[name] ?? "",
+  );
+  return resolved;
 }

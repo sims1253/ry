@@ -1,0 +1,107 @@
+name: Build VS Code extension
+
+# P37-W3a: Required PR workflow for the VS Code extension.
+# Runs frozen install, formatting, lint, type-check, unit tests,
+# compile, package inspection, and E2E activation.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "editors/code/**"
+      - ".github/workflows/build-vscode.yml"
+  pull_request:
+    paths:
+      - "editors/code/**"
+      - ".github/workflows/build-vscode.yml"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: editors/code
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618ae5fe8019c62421857d6 # v2
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+
+      - name: Build ry binary
+        working-directory: .
+        run: cargo build --release -p ry-cli
+
+      - name: Add ry to PATH
+        working-directory: .
+        run: echo "$(pwd)/target/release" >> "$GITHUB_PATH"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Format check
+        run: bun run fmt-check
+
+      - name: Lint
+        run: bun run lint
+
+      - name: TypeScript type-check
+        run: bun run tsc
+
+      - name: Unit tests
+        run: bun test src/test/binary.test.ts
+
+      - name: Compile
+        run: bun run compile
+
+      - name: Package VSIX
+        run: bun run vsce-package
+
+      - name: Verify VSIX exists
+        run: test -f ry.vsix
+
+      - name: Run E2E tests (xvfb)
+        run: xvfb-run -a bun run test
+
+  # P37-W3b: Publisher identity consistency check
+  publisher-consistency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Verify publisher identity is consistent
+        run: |
+          set -euo pipefail
+          # Extract publisher from package.json
+          pkg_publisher=$(jq -r '.publisher' editors/code/package.json)
+          pkg_name=$(jq -r '.name' editors/code/package.json)
+          ext_id="${pkg_publisher}.${pkg_name}"
+
+          # Extract RY_EXTENSION_ID from constants.ts
+          ts_id=$(grep 'RY_EXTENSION_ID' editors/code/src/common/constants.ts | sed 's/.*= "//;s/".*//')
+
+          # Extract from README marketplace link
+          readme_id=$(grep -oP 'itemName=\K[^")\s]+' README.md | head -1)
+
+          echo "package.json: ${ext_id}"
+          echo "constants.ts: ${ts_id}"
+          echo "README.md:    ${readme_id}"
+
+          if [[ "${ext_id}" != "${ts_id}" ]]; then
+            echo "ERROR: package.json (${ext_id}) != constants.ts (${ts_id})"
+            exit 1
+          fi
+          if [[ "${ext_id}" != "${readme_id}" ]]; then
+            echo "ERROR: package.json (${ext_id}) != README.md (${readme_id})"
+            exit 1
+          fi
+          echo "All publisher identities agree: ${ext_id}"

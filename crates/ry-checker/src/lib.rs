@@ -12,6 +12,7 @@
 
 mod cache;
 mod collect;
+pub mod diag_adapter;
 pub mod diagnostics;
 pub mod format;
 mod higher_order;

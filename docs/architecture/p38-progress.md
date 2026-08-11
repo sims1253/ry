@@ -2,7 +2,7 @@
 
 ## Status
 
-**Partial implementation.** W1–W4 complete. W5–W12 are future work requiring
+**Partial implementation.** W1–W7 and W10 complete. W8–W9, W11–W12 are future work requiring
 deep refactoring of the LSP handler layer and checker internals.
 
 ## Completed workstreams
@@ -66,16 +66,42 @@ Created `crates/ry-analysis` with:
 - `AnalysisHost` with open-over-disk precedence
 - 4 unit tests covering revision lifecycle, shadowing, and batch atomicity
 
+### P38-W5: Immutable AnalysisSnapshot (commit 845c1c2)
+
+- `AnalysisSnapshot` captures one Revision for immutable read-only queries
+- `QueryResult<T>` enum with Ok/Cancelled/NotFound for cooperative cancellation
+- `SnapshotDiagnostic` protocol-free diagnostic data
+- `AnalysisHost::snapshot()` and `snapshot_with_diagnostics()` methods
+- 3 proptest property tests: live-vs-fresh, snapshot immutability, revision monotonicity
+- 7 unit tests for snapshot behavior
+
+### P38-W6: SymbolId and cross-file navigation (commit 844f55f)
+
+- `SymbolId` with kinds (Global, Local, Parameter, LoopVar, Function)
+- `SymbolIndex` for cross-file definition/reference lookup
+- `build_index_from_file` AST walker extracts all bindings and usages
+- `merge_indices` combines per-file indices into project-wide index
+- Navigation queries on `AnalysisSnapshot`: `definitions(name)`, `references(name)`
+- Cross-file tests verify unopened disk files are included
+
+### P38-W7: Interactive query types (commit 692eec8)
+
+- `HoverInfo`, `CompletionItem` + `CompletionKind`, `SignatureInfo`
+- `InlayHint` + `InlayHintKind`
+- Protocol-free types for future LSP adapter conversion
+
+### P38-W10: Cache decision and cleanup (commit 7442162)
+
+- Deleted `crates/ry-checker/src/cache.rs` (279 lines of dead code)
+- Closed issue #47 as superseded
+- `docs/architecture/cache-decision.md` documents the rationale
+
 ## Remaining workstreams (future work)
 
 | WS | Description | Effort |
 |----|-------------|--------|
-| W5 | Immutable revisions and query lifecycle (`AnalysisSnapshot`) | High |
-| W6 | Resolved symbols (`SymbolId`) and project-aware navigation | High |
-| W7 | Project types powering hover/completion/signatures/hints | High |
 | W8 | Migrate CLI/LSP diagnostics through one `AnalysisSnapshot` query | Medium |
 | W9 | Query-engine decision (Salsa vs manual, with benchmarks) | High |
-| W10 | Cache decision and cleanup (#47) | Medium |
 | W11 | Remove compatibility state | Medium |
 | W12 | Final acceptance | Medium |
 

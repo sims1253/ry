@@ -78,9 +78,9 @@ pub const DEFUSING_CALLS: &[&str] = &[
 
 /// R foreign-function-interface primitives.
 ///
-/// Checked by typeshed agreement: all five exist in the embedded base
-/// typeshed.
-pub const FFI_PRIMITIVES: &[&str] = &[".Call", ".C", ".Fortran", ".External", ".External2"];
+/// Re-exported from ry-core. The typeshed-agreement coherence test is
+/// registered below.
+pub use ry_core::FFI_PRIMITIVES;
 
 /// Containers whose named arguments become named elements of the result, so
 /// `<-` typed where `=` was meant silently drops the name.

@@ -89,7 +89,7 @@ use std::sync::Arc;
 /// Metadata marker for a serialized workspace too large to enumerate safely.
 /// This is deliberately not an R identifier; package metadata passes it through
 /// the ordinary external-bindings channel so pass 3 can open the file scope.
-pub const SERIALIZED_BINDINGS_UNENUMERABLE: &str = "\0serialized:unenumerable";
+pub use ry_core::SERIALIZED_BINDINGS_UNENUMERABLE;
 
 fn string_literals(expr: &Expr) -> Vec<String> {
     match expr {

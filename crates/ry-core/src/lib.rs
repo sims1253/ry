@@ -13,4 +13,6 @@ pub use tree_sitter::{InputEdit, Point, Tree};
 pub use types::{Length, Mode, RType};
 
 pub mod diagnostic;
-pub use diagnostic::{BaselineDiagnostic, Confidence, Severity};
+pub use diagnostic::{
+    BaselineDiagnostic, Confidence, FFI_PRIMITIVES, SERIALIZED_BINDINGS_UNENUMERABLE, Severity,
+};

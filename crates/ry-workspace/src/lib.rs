@@ -4,8 +4,17 @@
 //! NAMESPACE files as R syntax, then turn proven imports/exports into opaque
 //! checker bindings.
 
-use ry_checker::SERIALIZED_BINDINGS_UNENUMERABLE;
-use ry_checker::packages::NamespaceMetadata;
+pub mod file_kind;
+pub mod packages;
+
+pub use file_kind::{PackageFileKind, package_file_kind};
+pub use packages::{
+    NATIVE_REGISTRATION_SENTINEL, NATIVE_ROUTINE_PREFIX_SENTINEL, NamespaceMetadata,
+    attached_packages, namespace_metadata,
+};
+pub use ry_core::FFI_PRIMITIVES;
+
+use ry_core::SERIALIZED_BINDINGS_UNENUMERABLE;
 use ry_core::SourceFile;
 use ry_core::ast::{Expr, Stmt};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -130,7 +139,7 @@ pub fn resolve_workspace_context<'a>(
         .chain(
             files
                 .iter()
-                .flat_map(|file| ry_checker::packages::attached_packages(file)),
+                .flat_map(|file| packages::attached_packages(file)),
         )
         .collect();
 
@@ -179,15 +188,14 @@ pub fn resolve_workspace_context<'a>(
             file_imported_from.extend(metadata.imported_from.clone());
             file_bindings.extend(metadata.s3_generics.iter().cloned());
             file_bindings.extend(metadata.native_routines.iter().cloned());
-            file_bindings.extend(metadata.native_routine_prefixes.iter().map(|prefix| {
-                format!(
-                    "{}{prefix}",
-                    ry_checker::packages::NATIVE_ROUTINE_PREFIX_SENTINEL
-                )
-            }));
+            file_bindings.extend(
+                metadata
+                    .native_routine_prefixes
+                    .iter()
+                    .map(|prefix| format!("{}{prefix}", packages::NATIVE_ROUTINE_PREFIX_SENTINEL)),
+            );
             if metadata.native_registration {
-                file_bindings
-                    .insert(ry_checker::packages::NATIVE_REGISTRATION_SENTINEL.to_string());
+                file_bindings.insert(packages::NATIVE_REGISTRATION_SENTINEL.to_string());
             }
             file_s3_methods.extend(metadata.s3_methods.iter().cloned());
             // `import(pkg)` puts pkg's exports in the package namespace,
@@ -267,7 +275,7 @@ pub fn resolve_workspace_context<'a>(
                 file_attached.extend(helpers.attached);
             }
         }
-        file_attached.extend(ry_checker::packages::attached_packages(file));
+        file_attached.extend(packages::attached_packages(file));
         for package in &file_attached {
             // The package currently being checked gets any shipped typeshed,
             // but its bindings come from this source tree. Reading exports
@@ -452,7 +460,7 @@ fn collect_dynamic_bindings_expr(expr: &Expr, function_depth: usize, found: &mut
                 // as an ordinary value (`capture_arg = ffi_enquo`), which the
                 // call-position rule alone cannot see. Record the witness so
                 // every later use of the name resolves.
-                if ry_checker::packages::FFI_PRIMITIVES.contains(&name.as_str())
+                if FFI_PRIMITIVES.contains(&name.as_str())
                     && let Some(Expr::Ident { name: symbol, .. }) = args
                         .first()
                         .filter(|arg| arg.name.is_none())
@@ -606,9 +614,7 @@ fn testthat_helper_context(root: &Path) -> TestthatHelperContext {
         let Ok(file) = parser.parse(&path.to_string_lossy(), &source) else {
             continue;
         };
-        context
-            .attached
-            .extend(ry_checker::packages::attached_packages(&file));
+        context.attached.extend(packages::attached_packages(&file));
         context
             .bindings
             .extend(file.stmts.iter().filter_map(|statement| match statement {
@@ -957,7 +963,7 @@ fn read_namespace(path: &Path) -> NamespaceMetadata {
     let Ok(file) = parser.parse(&path.to_string_lossy(), &src) else {
         return NamespaceMetadata::default();
     };
-    ry_checker::packages::namespace_metadata(&file)
+    packages::namespace_metadata(&file)
 }
 
 /// Find the nearest enclosing R package for a checked source path.
@@ -1406,8 +1412,7 @@ fn discover_recursive(
             path.extension().and_then(|e| e.to_str()),
             Some("R") | Some("r") | Some("S") | Some("s") | Some("q")
         ) && (check_test_fixtures
-            || ry_checker::project::package_file_kind(&path)
-                != ry_checker::project::PackageFileKind::TestFixture)
+            || file_kind::package_file_kind(&path) != file_kind::PackageFileKind::TestFixture)
         {
             // P36-W7: max-files cap.
             if out.len() >= limits.max_files {

@@ -9,49 +9,49 @@ import { ResolvedBinary } from "./binary";
 import { versionToString } from "./version";
 
 export class StatusItem {
-    private readonly item: vscode.LanguageStatusItem;
+  private readonly item: vscode.LanguageStatusItem;
 
-    constructor(id: string) {
-        this.item = vscode.languages.createLanguageStatusItem(id, {
-            language: "r",
-        });
-        this.item.name = "ry";
-        this.item.severity = vscode.LanguageStatusSeverity.Information;
-    }
+  constructor(id: string) {
+    this.item = vscode.languages.createLanguageStatusItem(id, {
+      language: "r",
+    });
+    this.item.name = "ry";
+    this.item.severity = vscode.LanguageStatusSeverity.Information;
+  }
 
-    setBusy(): void {
-        this.item.busy = true;
-        this.item.severity = vscode.LanguageStatusSeverity.Information;
-        this.item.text = "ry: starting…";
-        this.item.detail = undefined;
-    }
+  setBusy(): void {
+    this.item.busy = true;
+    this.item.severity = vscode.LanguageStatusSeverity.Information;
+    this.item.text = "ry: starting…";
+    this.item.detail = undefined;
+  }
 
-    setReady(binary: ResolvedBinary): void {
-        this.item.busy = false;
-        this.item.severity = vscode.LanguageStatusSeverity.Information;
-        this.item.text = `ry ${binary.version ? versionToString(binary.version) : "unknown"}`;
-        this.item.detail = binary.path;
-    }
+  setReady(binary: ResolvedBinary): void {
+    this.item.busy = false;
+    this.item.severity = vscode.LanguageStatusSeverity.Information;
+    this.item.text = `ry ${binary.version ? versionToString(binary.version) : "unknown"}`;
+    this.item.detail = binary.path;
+  }
 
-    setError(message: string): void {
-        this.item.busy = false;
-        this.item.severity = vscode.LanguageStatusSeverity.Error;
-        this.item.text = "ry: error";
-        this.item.detail = message;
-    }
+  setError(message: string): void {
+    this.item.busy = false;
+    this.item.severity = vscode.LanguageStatusSeverity.Error;
+    this.item.text = "ry: error";
+    this.item.detail = message;
+  }
 
-    setWarning(message: string): void {
-        this.item.busy = false;
-        this.item.severity = vscode.LanguageStatusSeverity.Warning;
-        this.item.text = "ry: warning";
-        this.item.detail = message;
-    }
+  setWarning(message: string): void {
+    this.item.busy = false;
+    this.item.severity = vscode.LanguageStatusSeverity.Warning;
+    this.item.text = "ry: warning";
+    this.item.detail = message;
+  }
 
-    setCommand(command: string, title: string): void {
-        this.item.command = { command, title, arguments: [] };
-    }
+  setCommand(command: string, title: string): void {
+    this.item.command = { command, title, arguments: [] };
+  }
 
-    dispose(): void {
-        this.item.dispose();
-    }
+  dispose(): void {
+    this.item.dispose();
+  }
 }

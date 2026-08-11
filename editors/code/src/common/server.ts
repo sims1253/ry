@@ -1,4 +1,3 @@
-import * as fs from "fs/promises";
 import * as vscode from "vscode";
 import { type Disposable, type OutputChannel } from "vscode";
 import {
@@ -11,12 +10,7 @@ import {
   LanguageClient,
   RevealOutputChannelOn,
 } from "vscode-languageclient/node";
-import {
-  BUNDLED_RY_EXECUTABLE,
-  LOG_CHANNEL_NAME,
-  RY_BINARY_NAME,
-  RY_SERVER_SUBCOMMAND,
-} from "./constants";
+import { LOG_CHANNEL_NAME, RY_SERVER_SUBCOMMAND } from "./constants";
 import { logger } from "./logger";
 import { getDocumentSelector } from "./utilities";
 import { getConfiguration } from "./vscodeapi";
@@ -34,7 +28,6 @@ export type InitializationOptions = {
   settings: ISettings[];
   globalSettings: ISettings;
 };
-
 
 /**
  * Build the `initializationOptions` to send at `initialize`.
@@ -54,60 +47,27 @@ export function getInitializationOptions(
   };
 }
 
-/**
- * Resolve the path to the `ry` binary.
- *
- * Minimal E1 strategy:
- *   1. the first existing entry in the `ry.path` setting;
- *   2. the bundled binary, if present;
- *   3. the bare command name, letting the OS resolve it via `PATH`.
- *
- * E2 replaces this with version gating, workspace-trust handling, and
- * import-strategy logic.
- */
-async function resolveBinary(namespace: string): Promise<string> {
-  const config = getConfiguration(namespace);
-  const candidatePaths = config.get<string[]>("path") ?? [];
-  for (const candidate of candidatePaths) {
-    try {
-      await fs.access(candidate);
-      logger.info(`Using 'path' setting: ${candidate}`);
-      return candidate;
-    } catch {
-      // Not found; try the next candidate.
-    }
-  }
-
-  try {
-    await fs.access(BUNDLED_RY_EXECUTABLE);
-    logger.info(`Using bundled executable: ${BUNDLED_RY_EXECUTABLE}`);
-    return BUNDLED_RY_EXECUTABLE;
-  } catch {
-    // No bundled binary; fall through to the environment.
-  }
-
-  logger.info(`Using environment executable: ${RY_BINARY_NAME}`);
-  return RY_BINARY_NAME;
-}
-
 let _disposables: Disposable[] = [];
 
 export type ServerState = {
   client: LanguageClient;
 };
 
-
-
 /**
  * Construct and start the language server client.
+ *
+ * P37-W2: `binaryPath` is the already-resolved binary path from
+ * `extension.ts`, which called `findRyBinaryPath()` with the correct
+ * `isUntrusted` flag. The server no longer resolves its own binary —
+ * eliminating the split-brain where a different binary could be
+ * version-gated/displayed vs. launched.
  */
 export async function startServer(
   namespace: string,
+  binaryPath: string,
   outputChannel: OutputChannel,
   traceOutputChannel: OutputChannel,
 ): Promise<ServerState | null> {
-  const binaryPath = await resolveBinary(namespace);
-
   const initializationOptions = getInitializationOptions(namespace);
   logger.info(
     `Initialization options: ${JSON.stringify(initializationOptions, null, 4)}`,
@@ -143,7 +103,9 @@ export async function startServer(
           return params.items.map((item, index) => {
             if (item.section !== namespace) return values[index];
             const folder = item.scopeUri
-              ? vscode.workspace.getWorkspaceFolder(vscode.Uri.parse(item.scopeUri))
+              ? vscode.workspace.getWorkspaceFolder(
+                  vscode.Uri.parse(item.scopeUri),
+                )
               : undefined;
             return folder
               ? getWorkspaceSettings(namespace, folder)

@@ -151,7 +151,7 @@ use backend::{Backend, State};
 // tests can assert that the publish/hover/completion hot path performs no
 // baseline file I/O.
 pub use backend::baseline_disk_reads;
-pub use backend::{FILTER_COMPILE_COUNT, COMPILE_DURING_LAST_PUBLISH};
+pub use backend::{COMPILE_DURING_LAST_PUBLISH, FILTER_COMPILE_COUNT};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_lsp::jsonrpc::Result as LspResult;

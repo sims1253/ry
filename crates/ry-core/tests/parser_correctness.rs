@@ -168,7 +168,9 @@ fn namespace_string_rhs_multibyte_no_panic() {
 fn namespace_string_rhs_multibyte_well_formed() {
     let file = parse("pkg::\"ÿ\"\n");
     assert!(
-        file.stmts.iter().any(|s| matches!(s, Stmt::Expr(Expr::Ident { name, .. }) if name == "pkg::ÿ")),
+        file.stmts
+            .iter()
+            .any(|s| matches!(s, Stmt::Expr(Expr::Ident { name, .. }) if name == "pkg::ÿ")),
         "pkg::\"ÿ\" must produce Ident {{ name: \"pkg::ÿ\" }}; got {:?}",
         file.stmts
     );

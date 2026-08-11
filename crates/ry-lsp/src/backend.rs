@@ -226,9 +226,18 @@ fn compute_folder_filter(
     FILTER_COMPILE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
     let lint = &folder_settings.lint;
-    let error = lint.error.clone().unwrap_or_else(|| file_config.error.clone());
-    let warn = lint.warn.clone().unwrap_or_else(|| file_config.warn.clone());
-    let ignore = lint.ignore.clone().unwrap_or_else(|| file_config.ignore.clone());
+    let error = lint
+        .error
+        .clone()
+        .unwrap_or_else(|| file_config.error.clone());
+    let warn = lint
+        .warn
+        .clone()
+        .unwrap_or_else(|| file_config.warn.clone());
+    let ignore = lint
+        .ignore
+        .clone()
+        .unwrap_or_else(|| file_config.ignore.clone());
     let mut filter = ry_config::build_filter(&error, &warn, &ignore);
     let select = lint.select.as_ref().or(file_config.select.as_ref());
     let extend_select = lint
@@ -245,14 +254,15 @@ fn compute_folder_filter(
         filter.add_extend_select(rule);
     }
 
-    let min_confidence = folder_settings.min_confidence.as_ref().and_then(|s| {
-        match s.as_str() {
+    let min_confidence = folder_settings
+        .min_confidence
+        .as_ref()
+        .and_then(|s| match s.as_str() {
             "low" => Some(ry_checker::Confidence::Low),
             "medium" => Some(ry_checker::Confidence::Medium),
             "high" => Some(ry_checker::Confidence::High),
             _ => None,
-        }
-    });
+        });
 
     let excludes = ry_config::Excludes::from_config(config);
 
@@ -2166,8 +2176,7 @@ impl Backend {
     async fn publish_diagnostics(&self, uri: Url, generation: u64) {
         // P37-W6 (#46): snapshot the compile counter at the start of this
         // publish cycle so we can measure compilations during it.
-        let publish_start_count = FILTER_COMPILE_COUNT
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let publish_start_count = FILTER_COMPILE_COUNT.load(std::sync::atomic::Ordering::Relaxed);
         // Snapshot the open docs under the lock, then drop the lock
         // before running the checker so a slow check doesn't block
         // other LSP requests (e.g. didOpen of a second file).
@@ -2300,11 +2309,7 @@ impl Backend {
                     let state = self.state.lock().await;
                     let ctx = state.folder_context_for_path(&diagnostic_path);
                     let (filter, min_confidence, excludes) = match ctx {
-                        Some(c) => (
-                            c.filter.clone(),
-                            c.min_confidence,
-                            c.excludes.clone(),
-                        ),
+                        Some(c) => (c.filter.clone(), c.min_confidence, c.excludes.clone()),
                         None => {
                             // Fallback for files not owned by any folder:
                             // use precomputed values from the first folder
@@ -2384,8 +2389,7 @@ impl Backend {
         }
         // P37-W6 (#46): record how many filter compilations happened during
         // this publish cycle. Must be zero with precomputation.
-        let publish_end_count = FILTER_COMPILE_COUNT
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let publish_end_count = FILTER_COMPILE_COUNT.load(std::sync::atomic::Ordering::Relaxed);
         COMPILE_DURING_LAST_PUBLISH.store(
             publish_end_count - publish_start_count,
             std::sync::atomic::Ordering::Relaxed,

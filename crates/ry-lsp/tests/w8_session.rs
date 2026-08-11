@@ -265,20 +265,14 @@ impl SessionModel {
     /// by the executor, reducing coverage without signal.
     fn is_valid(&self, op: &Operation) -> bool {
         match op {
-            Operation::Open { file, .. } => {
-                !self.is_open(*file) && self.has_disk(*file)
-            }
+            Operation::Open { file, .. } => !self.is_open(*file) && self.has_disk(*file),
             Operation::FullEdit { file, .. }
             | Operation::IncrementalEdit { file, .. }
-            | Operation::RapidEdit { file, .. } => {
-                self.is_open(*file)
-            }
+            | Operation::RapidEdit { file, .. } => self.is_open(*file),
             Operation::Close { file } => self.is_open(*file),
             Operation::Restart => true,
             Operation::CreateFile { file, .. } => !self.has_disk(*file),
-            Operation::DeleteFile { file } => {
-                self.has_disk(*file) && !self.is_open(*file)
-            }
+            Operation::DeleteFile { file } => self.has_disk(*file) && !self.is_open(*file),
             Operation::RenameFile { from, to } => {
                 *from != *to
                     && self.has_disk(*from)
@@ -309,8 +303,7 @@ impl SessionModel {
                     source: *source,
                 })
             }
-            Operation::FullEdit { source, .. }
-            | Operation::IncrementalEdit { source, .. } => {
+            Operation::FullEdit { source, .. } | Operation::IncrementalEdit { source, .. } => {
                 self.open_docs.keys().next().map(|&f| Operation::FullEdit {
                     file: f,
                     source: *source,
@@ -322,9 +315,11 @@ impl SessionModel {
                     source: *source,
                 })
             }
-            Operation::Close { .. } => {
-                self.open_docs.keys().next().map(|&f| Operation::Close { file: f })
-            }
+            Operation::Close { .. } => self
+                .open_docs
+                .keys()
+                .next()
+                .map(|&f| Operation::Close { file: f }),
             Operation::CreateFile { source, .. } => {
                 let empty: Vec<u8> = (0..FILES.len() as u8)
                     .filter(|&f| !self.has_disk(f))
@@ -338,7 +333,9 @@ impl SessionModel {
                 let deletable: Vec<u8> = (0..FILES.len() as u8)
                     .filter(|&f| self.has_disk(f) && !self.is_open(f))
                     .collect();
-                deletable.first().map(|&f| Operation::DeleteFile { file: f })
+                deletable
+                    .first()
+                    .map(|&f| Operation::DeleteFile { file: f })
             }
             _ => None,
         }

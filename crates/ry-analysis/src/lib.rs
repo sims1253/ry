@@ -15,6 +15,11 @@ pub mod snapshot;
 pub mod symbols;
 
 pub use snapshot::{AnalysisSnapshot, QueryResult, SnapshotDiagnostic};
+pub mod interactive;
+pub use interactive::{
+    CompletionItem, CompletionKind, HoverInfo, InlayHint, InlayHintKind, SignatureInfo,
+};
+
 pub use symbols::{
     DefinitionSite, ReferenceSite, SymbolId, SymbolIndex, SymbolKind, build_index_from_file,
     merge_indices,

@@ -259,6 +259,90 @@ impl SessionModel {
     fn has_disk(&self, file: u8) -> bool {
         self.disk_files.contains_key(&file)
     }
+
+    /// P37-W7c: Check whether an operation is valid against the current
+    /// model state. If false, the operation would be silently skipped
+    /// by the executor, reducing coverage without signal.
+    fn is_valid(&self, op: &Operation) -> bool {
+        match op {
+            Operation::Open { file, .. } => {
+                !self.is_open(*file) && self.has_disk(*file)
+            }
+            Operation::FullEdit { file, .. }
+            | Operation::IncrementalEdit { file, .. }
+            | Operation::RapidEdit { file, .. } => {
+                self.is_open(*file)
+            }
+            Operation::Close { file } => self.is_open(*file),
+            Operation::Restart => true,
+            Operation::CreateFile { file, .. } => !self.has_disk(*file),
+            Operation::DeleteFile { file } => {
+                self.has_disk(*file) && !self.is_open(*file)
+            }
+            Operation::RenameFile { from, to } => {
+                *from != *to
+                    && self.has_disk(*from)
+                    && !self.has_disk(*to)
+                    && !self.is_open(*from)
+                    && !self.is_open(*to)
+            }
+            Operation::EditConfig { .. }
+            | Operation::EditBaseline { .. }
+            | Operation::EditTypeshed
+            | Operation::EditNamespace
+            | Operation::EditDescription
+            | Operation::EditDiscoveryCaps { .. } => true,
+            Operation::AddFolder => !self.second_folder,
+            Operation::RemoveFolder => self.second_folder,
+        }
+    }
+
+    /// P37-W7c: Generate a valid alternative for an invalid operation.
+    fn valid_alternative(&self, original: &Operation) -> Option<Operation> {
+        match original {
+            Operation::Open { source, .. } => {
+                let closed_on_disk: Vec<u8> = (0..FILES.len() as u8)
+                    .filter(|&f| !self.is_open(f) && self.has_disk(f))
+                    .collect();
+                closed_on_disk.first().map(|&f| Operation::Open {
+                    file: f,
+                    source: *source,
+                })
+            }
+            Operation::FullEdit { source, .. }
+            | Operation::IncrementalEdit { source, .. } => {
+                self.open_docs.keys().next().map(|&f| Operation::FullEdit {
+                    file: f,
+                    source: *source,
+                })
+            }
+            Operation::RapidEdit { source, .. } => {
+                self.open_docs.keys().next().map(|&f| Operation::RapidEdit {
+                    file: f,
+                    source: *source,
+                })
+            }
+            Operation::Close { .. } => {
+                self.open_docs.keys().next().map(|&f| Operation::Close { file: f })
+            }
+            Operation::CreateFile { source, .. } => {
+                let empty: Vec<u8> = (0..FILES.len() as u8)
+                    .filter(|&f| !self.has_disk(f))
+                    .collect();
+                empty.first().map(|&f| Operation::CreateFile {
+                    file: f,
+                    source: *source,
+                })
+            }
+            Operation::DeleteFile { .. } => {
+                let deletable: Vec<u8> = (0..FILES.len() as u8)
+                    .filter(|&f| self.has_disk(f) && !self.is_open(f))
+                    .collect();
+                deletable.first().map(|&f| Operation::DeleteFile { file: f })
+            }
+            _ => None,
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -496,7 +580,21 @@ async fn w8_convergence_property(operations: Vec<Operation>) -> Result<(), TestC
     let (mut live, mut live_server) = spawn_session(&roots).await;
     let mut model = SessionModel::default();
 
+    let mut skipped_count: u32 = 0;
     for (step, operation) in operations.into_iter().enumerate() {
+        // P37-W7c: Track operations skipped due to invalid state.
+        // After precomputation, the generator should only produce
+        // valid operations, so this should remain zero.
+        let operation = if !model.is_valid(&operation) {
+            skipped_count += 1;
+            match model.valid_alternative(&operation) {
+                Some(valid) => valid,
+                None => continue,
+            }
+        } else {
+            operation
+        };
+
         // NOTE: target_slot is computed AFTER the operation is applied,
         // because some operations (DeleteFile, RenameFile) change which
         // files exist on disk.
@@ -847,6 +945,13 @@ async fn w8_convergence_property(operations: Vec<Operation>) -> Result<(), TestC
                 target_uri
             );
         }
+    }
+
+    // P37-W7c: Record corrected operations for coverage analysis.
+    if skipped_count > 0 {
+        eprintln!(
+            "P37-W7c: {skipped_count} operations were corrected to valid              alternatives (coverage could be improved with state-aware generation)"
+        );
     }
 
     join_session(live, live_server).await;

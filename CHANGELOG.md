@@ -4,6 +4,47 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Plan 37: Release truth and editor hardening
+
+#### P37-W1: Parser UTF-8 boundary panic fix
+- Fixed panic in `lower_namespace` when string RHS last byte is inside a
+  multi-byte character. Extracted shared `strip_quotes_at_boundaries` helper.
+
+#### P37-W2: VS Code split-brain binary resolution
+- Deleted `resolveBinary()` from `server.ts`. Server now uses the
+  pre-resolved binary path from `extension.ts`/`findRyBinaryPath()`.
+- Untrusted workspaces can no longer execute arbitrary binaries via
+  checked-in `ry.path` settings.
+
+#### P37-W3: CI workflow integrity and publisher consistency
+- Replaced empty `build-vscode.yml` with required PR workflow.
+- Fixed `release-vscode.yml` duplicate `needs: version` key.
+- Added explicit version and core-tag inputs to release workflow.
+- Resolved publisher identity to `sims1253.ry` across all surfaces.
+
+#### P37-W4: Zed extension integrity
+- Added SHA-256 checksum verification for downloaded binaries.
+- Added settings validation (minConfidence must be low/medium/high).
+- Added pure-Rust SHA-256 implementation for WASM compatibility.
+
+#### P37-W5: Ledger classification reconciliation
+- Fixed off-by-one in `posit-0.9.0.json` summary (729 → 728).
+- Added `ecosystem/check-ledger.py` validation script.
+
+#### P37-W6: Filter precomputation (P36-W6 completion)
+- Precomputed severity filter, min_confidence, and excludes once per
+  `FolderAnalysisContext` instead of per-file in the publish loop.
+- Un-ignored and fixed the P36-W6 test with construction-count assertion.
+
+#### P37-W7: Editor defaults, clean-checkout, valid generator
+- Documented evidence-backed editor-safe defaults in `docs/editor-defaults.md`.
+- Added clean-checkout CI gate to ecosystem.yml.
+- Fixed LSP session generator to produce valid operations (#65).
+
+#### P37-W8: Version alignment and runbook
+- Created `docs/release-runbook.md` covering binary, VS Code, and Zed releases.
+
+
 ### Added — LSP state-machine property (P36-W8)
 
 - **Complete session convergence property**: after every quiescent LSP

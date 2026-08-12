@@ -1331,6 +1331,7 @@ dependencies = [
  "glob",
  "miette",
  "rayon",
+ "ry-analysis",
  "ry-checker",
  "ry-config",
  "ry-core",

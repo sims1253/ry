@@ -18,7 +18,10 @@ pub use snapshot::{AnalysisSnapshot, QueryResult, SnapshotDiagnostic};
 pub mod catalog;
 pub mod catalog_adapter;
 pub mod check;
+pub mod effect;
 pub mod interactive;
+pub mod layering;
+pub mod rules;
 pub use check::{CheckInput, CheckOutput, check_project};
 
 pub use catalog::{

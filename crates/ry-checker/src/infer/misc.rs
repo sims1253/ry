@@ -33,7 +33,7 @@ pub(crate) fn equality_list_leaf_type(op: BinOpKind, value: &RType) -> Option<RT
 }
 
 pub(crate) fn is_ffi_primitive(name: &str) -> bool {
-    crate::packages::FFI_PRIMITIVES.contains(&name)
+    ry_core::FFI_PRIMITIVES.contains(&name)
 }
 
 #[cfg(test)]
@@ -49,7 +49,7 @@ mod ffi_primitives_tests {
     /// first argument is a *call*) must not be in the list.
     #[test]
     fn every_ffi_primitive_is_recognized() {
-        for &primitive in crate::packages::FFI_PRIMITIVES {
+        for &primitive in ry_core::FFI_PRIMITIVES {
             assert!(
                 is_ffi_primitive(primitive),
                 "`{primitive}` is in FFI_PRIMITIVES but is_ffi_primitive returned false"

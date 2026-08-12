@@ -2,7 +2,7 @@
   "name": "ry",
   "displayName": "ry",
   "description": "Static type checker for R.",
-  "version": "0.1.0",
+  "version": "0.9.0",
   "publisher": "sims1253",
   "license": "MIT",
   "homepage": "https://github.com/sims1253/ry",

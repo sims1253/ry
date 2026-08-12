@@ -18,7 +18,7 @@ members = [
 exclude = ["editors/zed", "fuzz"]
 
 [workspace.package]
-version = "0.8.0"
+version = "0.9.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
@@ -26,7 +26,6 @@ repository = "https://github.com/sims1253/ry"
 authors = ["Maximilian Scholz"]
 
 [workspace.dependencies]
-ry-diagnostics = { path = "../ry-diagnostics" }
 # parsing
 tree-sitter = "0.26"
 tree-sitter-r = "1.3"

@@ -16,7 +16,10 @@ pub mod symbols;
 
 pub use snapshot::{AnalysisSnapshot, QueryResult, SnapshotDiagnostic};
 pub mod catalog;
+pub mod check;
 pub mod interactive;
+pub use check::{CheckInput, CheckOutput, check_project};
+
 pub use catalog::{
     BindingEffect, DefusingKind, Dispatch, Evaluation, FlowEffect, FunctionSemantics,
     InMemoryCatalog, ParameterSpec, PredicateTarget, ReturnRule, SelectKind, SemanticCatalog,

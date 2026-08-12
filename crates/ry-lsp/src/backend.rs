@@ -347,6 +347,18 @@ impl ProjectCache {
             .set_external_s3_methods(workspace.s3_methods.clone());
         self.project
             .set_load_bindings(workspace.load_bindings.clone());
+        let any_changed = files.iter().any(|(path, version, file)| {
+            self.files.get(path).is_none_or(|(cached_version, cached)| {
+                *cached_version != *version || !Arc::ptr_eq(cached, file)
+            })
+        });
+        // P38-W5 convergence fix: when any file changed or was re-added
+        // (e.g., after close/reopen), force a full re-collection to
+        // eliminate stale incremental state. This fixes the
+        // w10_session_converges_to_fresh_server convergence bug.
+        if any_changed {
+            self.project.force_full_recollection();
+        }
         for (path, version, file) in files {
             let changed = self
                 .files

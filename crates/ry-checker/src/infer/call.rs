@@ -467,7 +467,7 @@ impl Checker {
             }
             if let Some(bindings) = self.load_bindings.get(&span.start).cloned() {
                 for binding in bindings {
-                    if binding == crate::SERIALIZED_BINDINGS_UNENUMERABLE {
+                    if binding == ry_core::SERIALIZED_BINDINGS_UNENUMERABLE {
                         // Oversized workspaces now fall back to a file-stem
                         // binding at scope-construction time (see
                         // `serialized_inventory`), so this marker no longer

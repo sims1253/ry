@@ -11,7 +11,6 @@
 #![allow(clippy::collapsible_if)]
 
 mod collect;
-pub mod diag_adapter;
 pub mod diagnostics;
 pub mod format;
 mod higher_order;
@@ -85,11 +84,6 @@ use ry_typeshed::{
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
-
-/// Metadata marker for a serialized workspace too large to enumerate safely.
-/// This is deliberately not an R identifier; package metadata passes it through
-/// the ordinary external-bindings channel so pass 3 can open the file scope.
-pub use ry_core::SERIALIZED_BINDINGS_UNENUMERABLE;
 
 fn string_literals(expr: &Expr) -> Vec<String> {
     match expr {
@@ -1207,7 +1201,7 @@ impl Checker {
         let mut scope = Scope::default();
         if self
             .external_bindings
-            .contains(SERIALIZED_BINDINGS_UNENUMERABLE)
+            .contains(ry_core::SERIALIZED_BINDINGS_UNENUMERABLE)
         {
             scope.mark_search_path_unknown();
         }
@@ -1283,7 +1277,8 @@ impl Checker {
 
     // Seed opaque bindings established by metadata for this source file.
     pub fn set_external_bindings(&mut self, bindings: HashSet<String>) {
-        self.native_registration = bindings.contains(crate::packages::NATIVE_REGISTRATION_SENTINEL);
+        self.native_registration =
+            bindings.contains(ry_workspace::packages::NATIVE_REGISTRATION_SENTINEL);
         self.external_bindings = bindings;
     }
 

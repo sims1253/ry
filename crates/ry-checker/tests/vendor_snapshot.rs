@@ -172,21 +172,21 @@ fn check_vendor(vendor_subdir: &str) -> Vec<String> {
 fn vendor_namespace(
     parser: &mut RParser,
     vendor_root: &std::path::Path,
-) -> Option<ry_checker::packages::NamespaceMetadata> {
+) -> Option<ry_workspace::packages::NamespaceMetadata> {
     let namespace = vendor_root.parent()?.join("NAMESPACE");
     let src = std::fs::read_to_string(&namespace).ok()?;
     let file = parser
         .parse(&namespace.to_string_lossy(), &src)
         .expect("parse vendored NAMESPACE");
-    Some(ry_checker::packages::namespace_metadata(&file))
+    Some(ry_workspace::packages::namespace_metadata(&file))
 }
 
 /// The opaque binding set a NAMESPACE contributes, mirroring
 /// `ry-cli`'s `package_metadata`.
 fn namespace_bindings(
-    metadata: &ry_checker::packages::NamespaceMetadata,
+    metadata: &ry_workspace::packages::NamespaceMetadata,
 ) -> std::collections::HashSet<String> {
-    use ry_checker::packages::{NATIVE_REGISTRATION_SENTINEL, NATIVE_ROUTINE_PREFIX_SENTINEL};
+    use ry_workspace::packages::{NATIVE_REGISTRATION_SENTINEL, NATIVE_ROUTINE_PREFIX_SENTINEL};
 
     let mut bindings: std::collections::HashSet<String> = metadata
         .imported_bindings

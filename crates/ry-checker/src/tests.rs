@@ -3925,7 +3925,7 @@ fn call_with_cleanup_symbol_needs_declared_registration() {
     let file = parser.parse("test.R", src).unwrap();
     let mut checker = Checker::new("test.R");
     checker.set_external_bindings(HashSet::from([
-        crate::packages::NATIVE_REGISTRATION_SENTINEL.to_string(),
+        ry_workspace::packages::NATIVE_REGISTRATION_SENTINEL.to_string(),
         "call_with_cleanup".to_string(),
     ]));
     checker.check(&file);
@@ -3964,7 +3964,7 @@ fn call_with_cleanup_still_checks_non_symbol_arguments() {
         .unwrap();
     let mut checker = Checker::new("test.R");
     checker.set_external_bindings(HashSet::from([
-        crate::packages::NATIVE_REGISTRATION_SENTINEL.to_string(),
+        ry_workspace::packages::NATIVE_REGISTRATION_SENTINEL.to_string(),
         "call_with_cleanup".to_string(),
     ]));
     checker.check(&file);
@@ -6938,9 +6938,9 @@ fn external_unenumerable_marker_suppresses_ry010_for_its_file() {
     let mut p = RParser::new().unwrap();
     let f = p.parse("test.R", "x <- genuinely_unbound_name\n").unwrap();
     let mut c = Checker::new("test.R");
-    c.set_external_bindings(HashSet::from(
-        [SERIALIZED_BINDINGS_UNENUMERABLE.to_string()],
-    ));
+    c.set_external_bindings(HashSet::from([
+        ry_core::SERIALIZED_BINDINGS_UNENUMERABLE.to_string()
+    ]));
     c.check(&f);
     let diags = c.take_diagnostics();
     assert!(

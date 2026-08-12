@@ -16,6 +16,7 @@ pub mod symbols;
 
 pub use snapshot::{AnalysisSnapshot, QueryResult, SnapshotDiagnostic};
 pub mod catalog;
+pub mod catalog_adapter;
 pub mod check;
 pub mod interactive;
 pub use check::{CheckInput, CheckOutput, check_project};

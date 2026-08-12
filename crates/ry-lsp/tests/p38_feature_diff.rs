@@ -38,6 +38,8 @@ async fn spawn_session(root: &Path) -> (Session, tokio::task::JoinHandle<()>) {
     });
     let mut session = LspSession::new(client_reader, client_writer);
     session.initialize(root).await.unwrap();
+    // Wait for background indexing to populate disk_files.
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     (session, server)
 }
 
@@ -61,7 +63,6 @@ where
 /// information in the consuming file. Currently it returns null because the
 /// hover checker only sees the single open file.
 #[test]
-#[ignore = "B2/P38-W7: hover is single-file; does not see project functions"]
 fn b2_hover_for_project_function_from_sibling() {
     run(async {
         let fixture = FixtureProject::empty().unwrap();
@@ -96,7 +97,6 @@ fn b2_hover_for_project_function_from_sibling() {
 
 /// Completion should include functions defined in project files.
 #[test]
-#[ignore = "B2/P38-W7: completion is single-file; does not see project functions"]
 fn b2_completion_includes_project_function() {
     run(async {
         let fixture = FixtureProject::empty().unwrap();
@@ -143,7 +143,6 @@ fn b2_completion_includes_project_function() {
 /// Go-to-definition should resolve to the correct definition based on scope,
 /// not just the first syntactic match of the same name string.
 #[test]
-#[ignore = "B3/P38-W6: definition uses syntax-name matching, not resolved identity"]
 fn b3_definition_uses_resolved_symbol_not_spelling() {
     run(async {
         let fixture = FixtureProject::empty().unwrap();
@@ -198,7 +197,6 @@ fn b3_definition_uses_resolved_symbol_not_spelling() {
 
 /// References should include occurrences in unopened disk files.
 #[test]
-#[ignore = "B4/P38-W6: references only search open documents, miss unopened files"]
 fn b4_references_include_unopened_files() {
     run(async {
         let fixture = FixtureProject::empty().unwrap();
@@ -243,7 +241,6 @@ fn b4_references_include_unopened_files() {
 
 /// Rename should edit all occurrences across the project.
 #[test]
-#[ignore = "B4/P38-W6: rename only edits open documents, misses unopened files"]
 fn b4_rename_edits_unopened_files() {
     run(async {
         let fixture = FixtureProject::empty().unwrap();
@@ -293,7 +290,6 @@ fn b4_rename_edits_unopened_files() {
 
 /// Signature help should show parameter info for user-defined project functions.
 #[test]
-#[ignore = "B5/P38-W7: signature help does not work for user-defined project functions"]
 fn b5_signature_help_for_user_defined_function() {
     run(async {
         let fixture = FixtureProject::empty().unwrap();

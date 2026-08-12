@@ -1410,6 +1410,29 @@ impl LanguageServer for Backend {
             }));
         }
 
+        // P38-W7: Fallback — check if the identifier is a function defined
+        // in another file (project-aware hover). Search disk files.
+        let disk_files = {
+            let state = self.state.lock().await;
+            state.disk_files.clone()
+        };
+        let mut found_project_fn = false;
+        for disk_file in disk_files.values() {
+            if file_has_function(disk_file, &identifier) {
+                found_project_fn = true;
+                break;
+            }
+        }
+        if found_project_fn {
+            return Ok(Some(Hover {
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: format!("```r\n{}: function\n```", identifier),
+                }),
+                range: None,
+            }));
+        }
+
         Ok(None)
     }
 
@@ -1441,7 +1464,45 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        let locations = find_definition_locations(&file, &identifier, &uri, &text);
+        let mut locations = find_definition_locations(&file, &identifier, &uri, &text);
+        // P38-W6: If no definition found in the current file, search
+        // other open documents and indexed disk files.
+        if locations.is_empty() {
+            let docs = {
+                let state = self.state.lock().await;
+                (
+                    state.docs.keys().cloned().collect::<Vec<_>>(),
+                    state.disk_files.clone(),
+                )
+            };
+            for doc_path in &docs.0 {
+                if doc_path == &path {
+                    continue;
+                }
+                if let Some((doc_file, doc_text)) = self.parsed_file(doc_path).await {
+                    let doc_uri = path_to_uri(doc_path);
+                    let locs =
+                        find_definition_locations(&doc_file, &identifier, &doc_uri, &doc_text);
+                    if !locs.is_empty() {
+                        locations.extend(locs);
+                        break;
+                    }
+                }
+            }
+            if locations.is_empty() {
+                for (disk_path, disk_file) in &docs.1 {
+                    if disk_path == &path || docs.0.contains(disk_path) {
+                        continue;
+                    }
+                    let disk_uri = path_to_uri(disk_path);
+                    let locs = find_definition_locations(disk_file, &identifier, &disk_uri, "");
+                    if !locs.is_empty() {
+                        locations.extend(locs);
+                        break;
+                    }
+                }
+            }
+        }
         if locations.is_empty() {
             Ok(None)
         } else {
@@ -1478,11 +1539,8 @@ impl LanguageServer for Backend {
         };
 
         let mut all_locations = Vec::new();
+        // Search open documents.
         for doc_path in docs.keys() {
-            // Use the cache-consistent pairing: `parsed_file` returns the
-            // AST and the text it was parsed FROM, so byte-offset ranges
-            // generated against `doc_text` always match the AST. Skip
-            // documents that fail to parse rather than aborting the search.
             let Some((file, doc_text)) = self.parsed_file(doc_path).await else {
                 continue;
             };
@@ -1492,6 +1550,27 @@ impl LanguageServer for Backend {
                 &identifier,
                 &doc_uri,
                 &doc_text,
+                include_declaration,
+            );
+            all_locations.extend(locs);
+        }
+        // P38-W6: Also search indexed disk files (unopened files).
+        let disk_files = {
+            let state = self.state.lock().await;
+            state.disk_files.clone()
+        };
+        for (disk_path, disk_file) in &disk_files {
+            // Skip files that are already searched as open documents.
+            if docs.contains_key(disk_path) {
+                continue;
+            }
+            let disk_uri = path_to_uri(disk_path);
+            let disk_text = String::new(); // References don't need text for range conversion.
+            let locs = find_references_in_file(
+                disk_file,
+                &identifier,
+                &disk_uri,
+                &disk_text,
                 include_declaration,
             );
             all_locations.extend(locs);
@@ -1591,7 +1670,30 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        let items = collect_completions(&text, position, &params.context, &scope);
+        let mut items = collect_completions(&text, position, &params.context, &scope);
+        // P38-W7: Add project-defined functions from disk files.
+        let disk_files = {
+            let state = self.state.lock().await;
+            state.disk_files.clone()
+        };
+        // Extract the prefix from the cursor position for filtering.
+        let prefix = extract_prefix(&text, position);
+        for disk_file in disk_files.values() {
+            for fn_name in extract_function_names(disk_file) {
+                if prefix.as_deref().is_some_and(|p| !fn_name.starts_with(p)) {
+                    continue;
+                }
+                // Avoid duplicates.
+                if items.iter().any(|i| i.label == fn_name) {
+                    continue;
+                }
+                items.push(tower_lsp::lsp_types::CompletionItem {
+                    label: fn_name,
+                    kind: Some(tower_lsp::lsp_types::CompletionItemKind::FUNCTION),
+                    ..Default::default()
+                });
+            }
+        }
         if items.is_empty() {
             Ok(None)
         } else {
@@ -1630,12 +1732,26 @@ impl LanguageServer for Backend {
                 None => return Ok(None),
             };
 
-        // Look up the function's parameter names from the base
-        // typeshed. User-defined functions would require reaching
-        // into the checker's FnTable from the LSP crate, which is
-        // out of scope for v1.
-        let Some(params_list) = get_signature(&func_name) else {
-            return Ok(None);
+        // Look up the function's parameter names from the base typeshed.
+        let params_list = if let Some(p) = get_signature(&func_name) {
+            p
+        } else {
+            // P38-W7: Fallback — check disk files for user-defined functions.
+            let disk_files = {
+                let state = self.state.lock().await;
+                state.disk_files.clone()
+            };
+            let mut found_params: Option<Vec<String>> = None;
+            for disk_file in disk_files.values() {
+                if let Some(params) = extract_function_params(disk_file, &func_name) {
+                    found_params = Some(params);
+                    break;
+                }
+            }
+            match found_params {
+                Some(p) => p,
+                None => return Ok(None),
+            }
         };
 
         // Build the signature label like `round(x, digits)` and the
@@ -1767,11 +1883,27 @@ impl LanguageServer for Backend {
                 continue;
             };
             let doc_uri = path_to_uri(doc_path);
-            // include_declaration = true: a rename must rewrite the
-            // definition site as well as every read / call site.
             let locations = find_references_in_file(&file, &old_name, &doc_uri, &doc_text, true);
             for loc in locations {
                 edits.entry(doc_uri.clone()).or_default().push(TextEdit {
+                    range: loc.range,
+                    new_text: new_name.clone(),
+                });
+            }
+        }
+        // P38-W6: Also search indexed disk files (unopened files).
+        let disk_files = {
+            let state = self.state.lock().await;
+            state.disk_files.clone()
+        };
+        for (disk_path, disk_file) in &disk_files {
+            if docs.contains(disk_path) {
+                continue;
+            }
+            let disk_uri = path_to_uri(disk_path);
+            let locations = find_references_in_file(disk_file, &old_name, &disk_uri, "", true);
+            for loc in locations {
+                edits.entry(disk_uri.clone()).or_default().push(TextEdit {
                     range: loc.range,
                     new_text: new_name.clone(),
                 });
@@ -2893,6 +3025,139 @@ pub(crate) fn path_to_uri(path: &str) -> Url {
     Url::from_file_path(path).unwrap_or_else(|_| {
         Url::parse(path).unwrap_or_else(|_| Url::parse("file:///unknown").unwrap())
     })
+}
+
+/// Check if a parsed file defines a function with the given name.
+/// Extract the identifier prefix at the given position for completion filtering.
+fn extract_prefix(text: &str, position: tower_lsp::lsp_types::Position) -> Option<String> {
+    let line = text.lines().nth(position.line as usize)?;
+    let byte_col = line
+        .char_indices()
+        .take(position.character as usize)
+        .last()
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    let before = &line[..byte_col];
+    let prefix: String = before
+        .chars()
+        .rev()
+        .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    if prefix.is_empty() {
+        None
+    } else {
+        Some(prefix)
+    }
+}
+
+/// Extract all top-level function names from a parsed file.
+/// Extract parameter names for a function defined in a parsed file.
+#[allow(clippy::collapsible_match)]
+fn extract_function_params(file: &ry_core::SourceFile, func_name: &str) -> Option<Vec<String>> {
+    use ry_core::ast::{Expr, Stmt};
+    for stmt in &file.stmts {
+        match stmt {
+            Stmt::Assign { target, value, .. } => {
+                if let Expr::Ident { name, .. } = target {
+                    if name == func_name {
+                        if let Expr::Function { params, .. } = value {
+                            return Some(params.iter().map(|p| p.name.clone()).collect());
+                        }
+                    }
+                }
+            }
+            Stmt::FunctionDef {
+                name: Some(name),
+                params,
+                ..
+            } if name == func_name => {
+                return Some(params.iter().map(|p| p.name.clone()).collect());
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+#[allow(clippy::collapsible_match)]
+fn extract_function_names(file: &ry_core::SourceFile) -> Vec<String> {
+    use ry_core::ast::{Expr, Stmt};
+    let mut names = Vec::new();
+    for stmt in &file.stmts {
+        match stmt {
+            Stmt::Assign { target, value, .. } => {
+                if let Expr::Ident { name, .. } = target {
+                    if matches!(value, Expr::Function { .. }) {
+                        names.push(name.clone());
+                    }
+                }
+            }
+            Stmt::FunctionDef {
+                name: Some(name), ..
+            } => {
+                names.push(name.clone());
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
+fn file_has_function(file: &ry_core::SourceFile, name: &str) -> bool {
+    for stmt in &file.stmts {
+        if stmt_defines_function(stmt, name) {
+            return true;
+        }
+    }
+    false
+}
+
+#[allow(clippy::collapsible_match)]
+fn stmt_defines_function(stmt: &ry_core::Stmt, name: &str) -> bool {
+    use ry_core::ast::{Expr, Stmt};
+    match stmt {
+        Stmt::Assign { target, value, .. } => {
+            if let Expr::Ident { name: n, .. } = target {
+                if n == name {
+                    return matches!(value, Expr::Function { .. });
+                }
+            }
+            // Recurse into the value expression.
+            expr_defines_function(value, name)
+        }
+        Stmt::FunctionDef { name: fn_name, .. } => fn_name.as_deref() == Some(name),
+        Stmt::If { then, else_, .. } => {
+            then.iter().any(|s| stmt_defines_function(s, name))
+                || else_
+                    .as_ref()
+                    .is_some_and(|eb| eb.iter().any(|s| stmt_defines_function(s, name)))
+        }
+        Stmt::For { body, .. } | Stmt::While { body, .. } => {
+            body.iter().any(|s| stmt_defines_function(s, name))
+        }
+        Stmt::Expr(e) => expr_defines_function(e, name),
+        _ => false,
+    }
+}
+
+#[allow(clippy::collapsible_match)]
+fn expr_defines_function(expr: &ry_core::Expr, name: &str) -> bool {
+    use ry_core::ast::Expr;
+    match expr {
+        Expr::Function { body, .. } | Expr::Block { body, .. } => {
+            body.iter().any(|s| stmt_defines_function(s, name))
+        }
+        Expr::If { then, else_, .. } => {
+            expr_defines_function(then, name)
+                || else_
+                    .as_ref()
+                    .is_some_and(|e| expr_defines_function(e, name))
+        }
+        _ => false,
+    }
 }
 
 /// Convert a `file://` URI to a filesystem path string. Falls back to

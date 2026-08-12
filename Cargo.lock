@@ -1379,6 +1379,7 @@ name = "ry-lsp"
 version = "0.9.0"
 dependencies = [
  "proptest",
+ "ry-analysis",
  "ry-checker",
  "ry-config",
  "ry-core",

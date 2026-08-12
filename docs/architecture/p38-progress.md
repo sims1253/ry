@@ -2,7 +2,7 @@
 
 ## Status
 
-**Partial implementation.** W1–W7 and W10 complete. W8–W9, W11–W12 are future work requiring
+**Partial implementation.** W1–W10 complete. W11–W12 are future work requiring
 deep refactoring of the LSP handler layer and checker internals.
 
 ## Completed workstreams
@@ -96,14 +96,34 @@ Created `crates/ry-analysis` with:
 - Closed issue #47 as superseded
 - `docs/architecture/cache-decision.md` documents the rationale
 
+### P38-W8: Unified diagnostics query (commit e3b3bf8)
+
+- Created `ry-analysis/src/check.rs` with `CheckInput`, `CheckOutput`, `check_project()`
+- Wired `ry-cli`'s `run_check_once` through `ry_analysis::check_project` instead
+  of inline Project coordination (7 `set_*` methods + `check()`)
+- 4 unit tests including cross-file resolution
+
+### P38-W9: Query-engine decision (commit 7319aae)
+
+- `docs/architecture/analysis-query-engine.md` documents the decision
+- Keep manual revisioned storage for 0.9
+- Salsa migration path documented with rollback triggers
+
+### P39-W4: Catalog adapter (commit 7319aae)
+
+- `ry-analysis/src/catalog_adapter.rs` converts typeshed `FunctionSig` to
+  neutral `FunctionSemantics` IR
+- Maps EvalMode → Evaluation, ReturnSpec → ReturnRule, PredicateSpec → FlowEffect
+- `catalog_from_typeshed()` builds InMemoryCatalog from loaded packages
+
 ## Remaining workstreams (future work)
 
 | WS | Description | Effort |
 |----|-------------|--------|
-| W8 | Migrate CLI/LSP diagnostics through one `AnalysisSnapshot` query | Medium |
-| W9 | Query-engine decision (Salsa vs manual, with benchmarks) | High |
-| W11 | Remove compatibility state | Medium |
-| W12 | Final acceptance | Medium |
+| W8 | CLI routes through `ry_analysis::check_project` ✅ | Done |
+| W9 | Query-engine decision: manual for 0.9 ✅ | Done |
+| W11 | Remove compatibility state | Future |
+| W12 | Final acceptance | Future |
 
 ## Dependency graph (current)
 

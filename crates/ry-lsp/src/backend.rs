@@ -21,7 +21,7 @@ use crate::navigation::{
 use crate::selection::build_selection_range;
 use crate::settings::{FolderSettings, ServerSettings};
 use crate::symbols::{collect_symbols, flatten_symbols_to_symbol_info};
-use crate::util::{position_to_byte_offset_pos, span_to_range};
+use crate::util::{position_to_byte_offset_pos, span_to_range, utf16_col_to_byte};
 use ry_checker::Project;
 use ry_core::{RParser, SourceFile};
 use std::collections::HashMap;
@@ -111,6 +111,18 @@ pub(super) struct State {
     /// fallback publish path (documents outside every folder root) performs
     /// no disk access. Reloaded alongside the root config on watch events.
     root_baseline: Option<ry_config::Baseline>,
+    /// Root-level filter, confidence threshold, and excludes, precomputed
+    /// from `file_config` and the root `folder_settings` at initialize and
+    /// refreshed on reload — the same treatment `root_baseline` gets.
+    ///
+    /// A document outside every folder root must be filtered by root-level
+    /// config. Borrowing `folder_contexts.first()` instead applied an
+    /// unrelated root's severity filter and exclude globs (that vec is sorted
+    /// by root-path length descending, so `.first()` is the *most specific*
+    /// unrelated root, whose excludes could drop the diagnostics entirely).
+    root_filter: ry_checker::SeverityFilter,
+    root_min_confidence: Option<ry_checker::Confidence>,
+    root_excludes: ry_config::Excludes,
     /// Editor-supplied per-folder settings, received via
     /// `initializationOptions`, `workspace/configuration`, or
     /// `didChangeConfiguration`.
@@ -159,6 +171,15 @@ pub(super) struct State {
     /// same invariant, so no cached tree can ever be served for a
     /// different document generation.
     trees: HashMap<String, (i32, ry_core::Tree)>,
+    /// P37-W6 (#46): per-server counter for filter/glob construction events.
+    /// Incremented each time a filter or exclude set is compiled from config.
+    /// Scoped to this server (not process-global) so parallel integration
+    /// tests each observe only their own compilations, never a sibling's.
+    pub(super) filter_compile_count: Arc<std::sync::atomic::AtomicU64>,
+    /// P37-W6 (#46): compile-count delta observed during this server's most
+    /// recent `publish_diagnostics` cycle. Tests assert it is zero
+    /// (precomputed values are borrowed, never recompiled mid-publish).
+    pub(super) compile_during_last_publish: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// P36-W2: One per-folder analysis context (#44/#54/#56).
@@ -197,33 +218,25 @@ pub(super) struct FolderAnalysisContext {
     pub excludes: ry_config::Excludes,
 }
 
-/// P37-W6 (#46): Global counter for filter/glob construction events.
-/// Incremented each time a filter or exclude set is compiled from
-/// config. Tests assert this counter stays flat during a publish cycle
-/// after precomputation.
-pub static FILTER_COMPILE_COUNT: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-
-/// P37-W6 (#46): Records the compile count delta observed during the most
-/// recent publish_diagnostics cycle across all servers in the process.
-/// Tests assert this is zero (precomputed values are borrowed).
-pub static COMPILE_DURING_LAST_PUBLISH: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-
 /// P37-W6 (#46): Compute the precomputed filter, min_confidence, and
 /// excludes for a folder from its config and settings. This replaces
 /// the per-file reconstruction that previously happened inside
 /// `publish_diagnostics`.
+///
+/// `filter_count` is this server's [`State::filter_compile_count`]; the
+/// increment is threaded in explicitly (rather than touching a process
+/// global) so parallel test servers never observe each other's compiles.
 fn compute_folder_filter(
     config: &ry_config::Config,
     folder_settings: &FolderSettings,
     file_config: &ry_config::Config,
+    filter_count: &std::sync::atomic::AtomicU64,
 ) -> (
     ry_checker::SeverityFilter,
     Option<ry_checker::Confidence>,
     ry_config::Excludes,
 ) {
-    FILTER_COMPILE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    filter_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
     let lint = &folder_settings.lint;
     let error = lint
@@ -347,15 +360,16 @@ impl ProjectCache {
             .set_external_s3_methods(workspace.s3_methods.clone());
         self.project
             .set_load_bindings(workspace.load_bindings.clone());
+        // Workaround for the close/reopen convergence defect (issue #81):
+        // re-collect the whole project whenever any file changed. This is
+        // expensive — it defeats pass-1 reuse on every keystroke — but
+        // removing it makes a reopened document publish no diagnostics.
+        // Remove only together with a fix for the underlying stale state.
         let any_changed = files.iter().any(|(path, version, file)| {
             self.files.get(path).is_none_or(|(cached_version, cached)| {
                 *cached_version != *version || !Arc::ptr_eq(cached, file)
             })
         });
-        // P38-W5 convergence fix: when any file changed or was re-added
-        // (e.g., after close/reopen), force a full re-collection to
-        // eliminate stale incremental state. This fixes the
-        // w10_session_converges_to_fresh_server convergence bug.
         if any_changed {
             self.project.force_full_recollection();
         }
@@ -676,15 +690,23 @@ impl LanguageServer for Backend {
                     .collect()
             })
             .unwrap_or_default();
-        let folder_contexts = tokio::task::spawn_blocking(move || {
-            build_folder_contexts(
-                root_clone.as_deref(),
-                &ws_folder_paths,
-                &server_settings_clone,
-            )
-        })
-        .await
-        .unwrap_or_default();
+        // P37-W6 (#46): Clone this server's per-instance compile counter so
+        // the free-function builders below increment it instead of a process
+        // global. Parallel test servers keep independent tallies.
+        let filter_compile_count = self.state.lock().await.filter_compile_count.clone();
+        let folder_contexts = {
+            let filter_compile_count = Arc::clone(&filter_compile_count);
+            tokio::task::spawn_blocking(move || {
+                build_folder_contexts(
+                    root_clone.as_deref(),
+                    &ws_folder_paths,
+                    &server_settings_clone,
+                    &filter_compile_count,
+                )
+            })
+            .await
+            .unwrap_or_default()
+        };
 
         // Load the root-level config and stubs for single-root fallback.
         let root_clone2 = root.clone();
@@ -727,11 +749,23 @@ impl LanguageServer for Backend {
             })
             .collect();
 
+        // Precompute the root-level filter alongside the per-folder ones, so
+        // the publish loop borrows compiled values and never recompiles.
+        let (root_filter, root_min_confidence, root_excludes) = compute_folder_filter(
+            &file_config,
+            &folder_settings,
+            &file_config,
+            &filter_compile_count,
+        );
+
         let mut state = self.state.lock().await;
         state.user_stubs = user_stubs;
         state.root = root;
         state.file_config = file_config;
         state.root_baseline = root_baseline;
+        state.root_filter = root_filter;
+        state.root_min_confidence = root_min_confidence;
+        state.root_excludes = root_excludes;
         state.folder_settings = folder_settings;
         state.server_settings = server_settings;
         state.supports_workspace_configuration = supports_workspace_configuration;
@@ -1142,6 +1176,9 @@ impl LanguageServer for Backend {
             // Build new contexts for added folders through build_folder_contexts.
             let new_contexts = if !added_paths_ref.is_empty() {
                 let server_settings = state.server_settings.clone();
+                // P37-W6 (#46): thread this server's compile counter in so
+                // added-folder filter builds count toward it, not a global.
+                let filter_compile_count = Arc::clone(&state.filter_compile_count);
                 tokio::task::spawn_blocking(move || {
                     build_folder_contexts(
                         None,
@@ -1150,6 +1187,7 @@ impl LanguageServer for Backend {
                             .map(|(_, path)| (usize::MAX, path.clone()))
                             .collect::<Vec<_>>(),
                         &server_settings,
+                        &filter_compile_count,
                     )
                 })
                 .await
@@ -1249,14 +1287,20 @@ impl LanguageServer for Backend {
         // A failed reload retains the last valid value for each field and
         // emits a visible warning; it never silently clears the baseline.
         if config_or_baseline_changed {
-            let (old_contexts, root) = {
+            let (old_contexts, root, filter_compile_count) = {
                 let state = self.state.lock().await;
-                (state.folder_contexts.clone(), state.root.clone())
+                // P37-W6 (#46): carry this server's compile counter into the
+                // rebuild so reloaded filters count toward it, not a global.
+                (
+                    state.folder_contexts.clone(),
+                    state.root.clone(),
+                    Arc::clone(&state.filter_compile_count),
+                )
             };
             let old_contexts_for_task = old_contexts.clone();
             // spawn_blocking keeps every disk read off the async runtime.
             let new_contexts = match tokio::task::spawn_blocking(move || {
-                rebuild_folder_contexts(&old_contexts_for_task)
+                rebuild_folder_contexts(&old_contexts_for_task, &filter_compile_count)
             })
             .await
             {
@@ -1276,6 +1320,11 @@ impl LanguageServer for Backend {
                     if state.root.as_deref() == Some(ctx.root.as_path()) {
                         state.file_config = ctx.config.clone();
                         state.root_baseline = ctx.baseline.clone();
+                        // Keep the root-level fallback filter in step with the
+                        // reloaded root config.
+                        state.root_filter = ctx.filter.clone();
+                        state.root_min_confidence = ctx.min_confidence;
+                        state.root_excludes = ctx.excludes.clone();
                     }
                     if let Some((_, folder_config)) = state
                         .workspace_folders
@@ -1490,12 +1539,23 @@ impl LanguageServer for Backend {
                 }
             }
             if locations.is_empty() {
-                for (disk_path, disk_file) in &docs.1 {
+                // `disk_files` is a HashMap, so iteration order varies between
+                // runs. Sort by path first, otherwise two files defining the
+                // same name make go-to-definition answer identical requests
+                // differently.
+                let mut disk_entries: Vec<_> = docs.1.iter().collect();
+                disk_entries.sort_by(|a, b| a.0.cmp(b.0));
+                for (disk_path, disk_file) in disk_entries {
                     if disk_path == &path || docs.0.contains(disk_path) {
                         continue;
                     }
                     let disk_uri = path_to_uri(disk_path);
-                    let locs = find_definition_locations(disk_file, &identifier, &disk_uri, "");
+                    let locs = find_definition_locations(
+                        disk_file,
+                        &identifier,
+                        &disk_uri,
+                        &disk_file.source,
+                    );
                     if !locs.is_empty() {
                         locations.extend(locs);
                         break;
@@ -1565,12 +1625,13 @@ impl LanguageServer for Backend {
                 continue;
             }
             let disk_uri = path_to_uri(disk_path);
-            let disk_text = String::new(); // References don't need text for range conversion.
+            // Range conversion maps byte spans to UTF-16 positions against this
+            // text, so the indexed file's own source is required here.
             let locs = find_references_in_file(
                 disk_file,
                 &identifier,
                 &disk_uri,
-                &disk_text,
+                &disk_file.source,
                 include_declaration,
             );
             all_locations.extend(locs);
@@ -1741,8 +1802,12 @@ impl LanguageServer for Backend {
                 let state = self.state.lock().await;
                 state.disk_files.clone()
             };
+            // Sorted so a duplicated function name always yields the same
+            // parameter list; HashMap order is not stable across requests.
+            let mut disk_entries: Vec<_> = disk_files.iter().collect();
+            disk_entries.sort_by(|a, b| a.0.cmp(b.0));
             let mut found_params: Option<Vec<String>> = None;
-            for disk_file in disk_files.values() {
+            for (_, disk_file) in disk_entries {
                 if let Some(params) = extract_function_params(disk_file, &func_name) {
                     found_params = Some(params);
                     break;
@@ -1901,7 +1966,12 @@ impl LanguageServer for Backend {
                 continue;
             }
             let disk_uri = path_to_uri(disk_path);
-            let locations = find_references_in_file(disk_file, &old_name, &disk_uri, "", true);
+            // The indexed file's own source is required: byte spans are mapped
+            // to UTF-16 positions against this text. Passing "" collapses every
+            // range to 0:0, which would make rename write `new_name` at the
+            // start of the file instead of at each occurrence.
+            let locations =
+                find_references_in_file(disk_file, &old_name, &disk_uri, &disk_file.source, true);
             for loc in locations {
                 edits.entry(disk_uri.clone()).or_default().push(TextEdit {
                     range: loc.range,
@@ -2318,13 +2388,14 @@ impl Backend {
     /// open document. Publishing all files is required because an edit to a
     /// function definition can change diagnostics in its cross-file callers.
     async fn publish_diagnostics(&self, uri: Url, generation: u64) {
-        // P37-W6 (#46): snapshot the compile counter at the start of this
-        // publish cycle so we can measure compilations during it.
-        let publish_start_count = FILTER_COMPILE_COUNT.load(std::sync::atomic::Ordering::Relaxed);
         // Snapshot the open docs under the lock, then drop the lock
         // before running the checker so a slow check doesn't block
         // other LSP requests (e.g. didOpen of a second file).
-        let (path, doc_paths, versions) = {
+        //
+        // P37-W6 (#46): also clone this server's per-instance counters so the
+        // compile-count delta measured below is scoped to this server, not the
+        // process. `publish_start_count` snapshots the counter at cycle start.
+        let (path, doc_paths, versions, filter_compile_count, compile_during_last_publish) = {
             let state = self.state.lock().await;
             (
                 uri_to_path(&uri),
@@ -2335,8 +2406,13 @@ impl Backend {
                     .cloned()
                     .collect::<Vec<_>>(),
                 state.versions.clone(),
+                Arc::clone(&state.filter_compile_count),
+                Arc::clone(&state.compile_during_last_publish),
             )
         };
+        // P37-W6 (#46): snapshot the compile counter at the start of this
+        // publish cycle so we can measure compilations during it.
+        let publish_start_count = filter_compile_count.load(std::sync::atomic::Ordering::Relaxed);
         let requested_is_eligible = {
             let state = self.state.lock().await;
             state.eligibility_for_path(&path)
@@ -2455,24 +2531,18 @@ impl Backend {
                     let (filter, min_confidence, excludes) = match ctx {
                         Some(c) => (c.filter.clone(), c.min_confidence, c.excludes.clone()),
                         None => {
-                            // Fallback for files not owned by any folder:
-                            // use precomputed values from the first folder
-                            // context (they share the same config) or
-                            // default. This avoids incrementing the compile
-                            // counter during the publish loop.
-                            if let Some(first_ctx) = state.folder_contexts.first() {
-                                (
-                                    first_ctx.filter.clone(),
-                                    first_ctx.min_confidence,
-                                    first_ctx.excludes.clone(),
-                                )
-                            } else {
-                                (
-                                    ry_checker::SeverityFilter::default(),
-                                    None,
-                                    ry_config::Excludes::default(),
-                                )
-                            }
+                            // Fallback for files outside every folder root:
+                            // borrow the precomputed *root-level* values, the
+                            // same source the `baseline` and `folder_root`
+                            // fallbacks below use. Borrowing an arbitrary
+                            // folder's values here applied unrelated severity
+                            // and exclude rules. Precomputed, so the publish
+                            // loop still performs no filter compilation.
+                            (
+                                state.root_filter.clone(),
+                                state.root_min_confidence,
+                                state.root_excludes.clone(),
+                            )
                         }
                     };
                     let baseline = state.effective_baseline_for_path(&diagnostic_path);
@@ -2533,8 +2603,8 @@ impl Backend {
         }
         // P37-W6 (#46): record how many filter compilations happened during
         // this publish cycle. Must be zero with precomputation.
-        let publish_end_count = FILTER_COMPILE_COUNT.load(std::sync::atomic::Ordering::Relaxed);
-        COMPILE_DURING_LAST_PUBLISH.store(
+        let publish_end_count = filter_compile_count.load(std::sync::atomic::Ordering::Relaxed);
+        compile_during_last_publish.store(
             publish_end_count - publish_start_count,
             std::sync::atomic::Ordering::Relaxed,
         );
@@ -2874,6 +2944,7 @@ fn build_folder_contexts(
     root: Option<&std::path::Path>,
     workspace_folders: &[(usize, PathBuf)],
     server_settings: &ServerSettings,
+    filter_count: &std::sync::atomic::AtomicU64,
 ) -> Vec<FolderAnalysisContext> {
     // Determine the folder roots: workspace_folders when provided, else root_uri.
     let folders: Vec<(usize, PathBuf)> = if !workspace_folders.is_empty() {
@@ -2925,7 +2996,7 @@ fn build_folder_contexts(
         // per folder so the publish loop performs one ownership lookup
         // and borrows the compiled values.
         let (filter, min_confidence, excludes) =
-            compute_folder_filter(&config, &folder_settings, &config);
+            compute_folder_filter(&config, &folder_settings, &config, filter_count);
         contexts.push(FolderAnalysisContext {
             root: folder_root.clone(),
             config,
@@ -2953,7 +3024,10 @@ fn build_folder_contexts(
 /// file-watch events (they come from editor push / the background indexer
 /// respectively) and are carried over unchanged. Disk I/O happens here;
 /// callers MUST run this outside the state lock.
-fn rebuild_folder_context(old: &FolderAnalysisContext) -> FolderAnalysisContext {
+fn rebuild_folder_context(
+    old: &FolderAnalysisContext,
+    filter_count: &std::sync::atomic::AtomicU64,
+) -> FolderAnalysisContext {
     // Reload config; on failure retain the previous config.
     let config = match discover_folder_config(&old.folder_settings, &old.root) {
         Ok(cfg) => cfg,
@@ -2994,7 +3068,7 @@ fn rebuild_folder_context(old: &FolderAnalysisContext) -> FolderAnalysisContext 
     // P37-W6 (#46): Recompute the precomputed filter/excludes from the
     // reloaded config.
     let (filter, min_confidence, excludes) =
-        compute_folder_filter(&config, &old.folder_settings, &config);
+        compute_folder_filter(&config, &old.folder_settings, &config, filter_count);
     FolderAnalysisContext {
         root: old.root.clone(),
         config,
@@ -3013,8 +3087,13 @@ fn rebuild_folder_context(old: &FolderAnalysisContext) -> FolderAnalysisContext 
 /// watched-files handler to rebuild outside the write lock and then swap
 /// atomically. Each context is rebuilt independently; a single folder's
 /// reload failure does not affect the others.
-fn rebuild_folder_contexts(old: &[FolderAnalysisContext]) -> Vec<FolderAnalysisContext> {
-    old.iter().map(rebuild_folder_context).collect()
+fn rebuild_folder_contexts(
+    old: &[FolderAnalysisContext],
+    filter_count: &std::sync::atomic::AtomicU64,
+) -> Vec<FolderAnalysisContext> {
+    old.iter()
+        .map(|ctx| rebuild_folder_context(ctx, filter_count))
+        .collect()
 }
 
 /// Convert a document's path string (the key used in `State::docs`)
@@ -3027,16 +3106,17 @@ pub(crate) fn path_to_uri(path: &str) -> Url {
     })
 }
 
-/// Check if a parsed file defines a function with the given name.
-/// Extract the identifier prefix at the given position for completion filtering.
+/// Extract the identifier prefix at the given position for completion
+/// filtering. `position.character` is a UTF-16 code-unit column, so it is
+/// converted with the same helper the rest of this file uses rather than by
+/// counting `char`s.
 fn extract_prefix(text: &str, position: tower_lsp::lsp_types::Position) -> Option<String> {
     let line = text.lines().nth(position.line as usize)?;
-    let byte_col = line
-        .char_indices()
-        .take(position.character as usize)
-        .last()
-        .map(|(i, _)| i)
-        .unwrap_or(0);
+    // Byte offset *after* the last character before the cursor. Using the
+    // index *of* that character would drop the character immediately left of
+    // the cursor, and would yield 0 after a single keystroke — which drops the
+    // prefix filter entirely and offers every project function.
+    let byte_col = utf16_col_to_byte(line, position.character)?;
     let before = &line[..byte_col];
     let prefix: String = before
         .chars()
@@ -3053,7 +3133,6 @@ fn extract_prefix(text: &str, position: tower_lsp::lsp_types::Position) -> Optio
     }
 }
 
-/// Extract all top-level function names from a parsed file.
 /// Extract parameter names for a function defined in a parsed file.
 #[allow(clippy::collapsible_match)]
 fn extract_function_params(file: &ry_core::SourceFile, func_name: &str) -> Option<Vec<String>> {
@@ -3082,6 +3161,7 @@ fn extract_function_params(file: &ry_core::SourceFile, func_name: &str) -> Optio
     None
 }
 
+/// Extract all top-level function names from a parsed file.
 #[allow(clippy::collapsible_match)]
 fn extract_function_names(file: &ry_core::SourceFile) -> Vec<String> {
     use ry_core::ast::{Expr, Stmt};
@@ -3106,6 +3186,7 @@ fn extract_function_names(file: &ry_core::SourceFile) -> Vec<String> {
     names
 }
 
+/// Check if a parsed file defines a function with the given name.
 fn file_has_function(file: &ry_core::SourceFile, name: &str) -> bool {
     for stmt in &file.stmts {
         if stmt_defines_function(stmt, name) {

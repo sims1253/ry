@@ -1300,7 +1300,13 @@ fn p36_w6_many_files_flat_filter_construction() {
         let (client_stream, server_stream) = tokio::io::duplex(256 * 1024);
         let (client_reader, client_writer) = tokio::io::split(client_stream);
         let (server_reader, server_writer) = tokio::io::split(server_stream);
-        let server = tokio::spawn(async move { ry_lsp::run_with(server_reader, server_writer).await });
+        // P37-W6 (#46): drive this server through `run_with_counters` so the
+        // "zero compiles during publish" assertion below reads this server's
+        // own per-instance counter, not a process global shared with parallel
+        // test servers.
+        let (server_fut, counters) =
+            ry_lsp::run_with_counters(server_reader, server_writer);
+        let server = tokio::spawn(server_fut);
         let mut client = AsyncJsonRpcClient::new(client_reader, client_writer);
 
         let init_id = client.request("initialize", json!({
@@ -1360,7 +1366,7 @@ fn p36_w6_many_files_flat_filter_construction() {
         client.receive_until(|m| m.get("id") == Some(&json!(shutdown_id)), 128).await.unwrap();
         client.notify("exit", Value::Null).await.unwrap();
         drop(client);
-        tokio::time::timeout(std::time::Duration::from_secs(5), server).await.unwrap().unwrap().unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), server).await.unwrap().unwrap();
 
         // Every indexed file must produce the same RY090 diagnostic.
         assert!(
@@ -1390,11 +1396,10 @@ fn p36_w6_many_files_flat_filter_construction() {
         assert_eq!(last_diags[0].path, "file_31.R");
 
         // P37-W6 (#46): Assert filter/glob construction count is flat
-        // during the publish cycle. COMPILE_DURING_LAST_PUBLISH records
-        // the delta observed during the most recent publish_diagnostics
-        // call. It must be zero with precomputation.
-        let compile_during_publish = ry_lsp::COMPILE_DURING_LAST_PUBLISH
-            .load(std::sync::atomic::Ordering::Relaxed);
+        // during the publish cycle. The per-server `counters` handle records
+        // the delta observed during the most recent publish_diagnostics call
+        // on this server only. It must be zero with precomputation.
+        let compile_during_publish = counters.compile_during_last_publish();
         assert_eq!(
             compile_during_publish, 0,
             "P37-W6: filter/glob construction count during publish must be \

@@ -230,9 +230,7 @@ impl Project {
         self.mark_all_dirty();
     }
 
-    /// Install runtime package stubs. User packages, including `base`,
-    /// replace same-named embedded packages wholesale for this project.
-    /// Mark every file as dirty so the next incremental check re-emits all.
+    /// Mark every file dirty so the next incremental check re-emits all.
     fn mark_all_dirty(&mut self) {
         let paths: Vec<String> = self.files.iter().map(|(p, _)| p.clone()).collect();
         for p in paths {
@@ -256,6 +254,9 @@ impl Project {
         }
     }
 
+    /// Install runtime package stubs. User packages, including `base`,
+    /// replace same-named embedded packages wholesale for this project.
+    /// Mark every file as dirty so the next incremental check re-emits all.
     pub fn set_user_stubs(&mut self, stubs: Arc<BTreeMap<String, Typeshed>>) {
         if !Arc::ptr_eq(&self.user_stubs, &stubs) {
             self.collected_files.clear();

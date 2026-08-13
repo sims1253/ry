@@ -188,6 +188,12 @@ pub trait SemanticCatalog {
     /// List all functions in a package.
     fn package_functions(&self, package: &str) -> Vec<&str>;
 
+    /// Every fully-qualified function name known to this catalog, in
+    /// unspecified order. Callers that need to traverse the whole catalog
+    /// (layering, diffing) must use this rather than guessing package names:
+    /// a hardcoded package list silently drops every entry outside it.
+    fn function_names(&self) -> Vec<&str>;
+
     /// Number of known functions.
     fn function_count(&self) -> usize;
 }
@@ -218,11 +224,16 @@ impl SemanticCatalog for InMemoryCatalog {
     }
 
     fn package_functions(&self, package: &str) -> Vec<&str> {
+        let prefix = format!("{}::", package);
         self.functions
             .keys()
-            .filter(|name| name.starts_with(&format!("{}::", package)))
+            .filter(|name| name.starts_with(&prefix))
             .map(|s| s.as_str())
             .collect()
+    }
+
+    fn function_names(&self) -> Vec<&str> {
+        self.functions.keys().map(|s| s.as_str()).collect()
     }
 
     fn function_count(&self) -> usize {

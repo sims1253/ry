@@ -15,49 +15,13 @@ pub fn layer_catalogs(catalogs: &[InMemoryCatalog]) -> InMemoryCatalog {
     let mut merged = InMemoryCatalog::new();
     for catalog in catalogs {
         // Each catalog in order; later registrations override earlier.
-        for fn_name in all_names(catalog) {
-            if let Some(sem) = catalog.lookup(&fn_name) {
-                merged.register(&fn_name, sem.clone());
+        for fn_name in catalog.function_names() {
+            if let Some(sem) = catalog.lookup(fn_name) {
+                merged.register(fn_name, sem.clone());
             }
         }
     }
     merged
-}
-
-/// Get all function names from a catalog.
-fn all_names(catalog: &InMemoryCatalog) -> Vec<String> {
-    // Collect from all packages.
-    let mut names: Vec<String> = Vec::new();
-    // The InMemoryCatalog doesn't expose all keys directly,
-    // so we iterate through known packages.
-    for pkg in [
-        "base",
-        "stats",
-        "utils",
-        "graphics",
-        "grDevices",
-        "methods",
-        "rlang",
-        "dplyr",
-        "tidyr",
-        "purrr",
-        "ggplot2",
-        "readr",
-        "stringr",
-        "forcats",
-        "tibble",
-        "lubridate",
-        "broom",
-        "testthat",
-        "shiny",
-        "jsonlite",
-        "httr",
-    ] {
-        for name in catalog.package_functions(pkg) {
-            names.push(name.to_string());
-        }
-    }
-    names
 }
 
 #[cfg(test)]
@@ -92,5 +56,32 @@ mod tests {
             ReturnRule::Fixed("user_type".to_string()),
             "user catalog should override base"
         );
+    }
+
+    /// Layering previously enumerated a hardcoded list of 21 package names,
+    /// so any entry outside that list was silently dropped. Every registered
+    /// entry must survive layering regardless of its package.
+    #[test]
+    fn layering_preserves_entries_from_unlisted_packages() {
+        let mut base = InMemoryCatalog::new();
+        for name in ["base::fn", "data.table::fread", "zoo::rollmean", "bare_fn"] {
+            base.register(
+                name,
+                FunctionSemantics {
+                    return_rule: ReturnRule::Fixed(format!("{name}_type")),
+                    ..Default::default()
+                },
+            );
+        }
+
+        let layered = layer_catalogs(&[base]);
+
+        assert_eq!(layered.function_count(), 4, "no entry may be dropped");
+        for name in ["base::fn", "data.table::fread", "zoo::rollmean", "bare_fn"] {
+            let sem = layered
+                .lookup(name)
+                .unwrap_or_else(|| panic!("{name} was dropped by layering"));
+            assert_eq!(sem.return_rule, ReturnRule::Fixed(format!("{name}_type")));
+        }
     }
 }

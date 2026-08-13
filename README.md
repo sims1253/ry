@@ -289,7 +289,7 @@ removed by regenerating the baseline.
 
 `ry server` speaks the Language Server Protocol over stdio: diagnostics
 as you type (debounced, cached parses), hover with inferred types,
-go-to-definition, references, rename, completion, signature help, inlay
+go-to-definition, references, completion, signature help, inlay
 hints, folding, and quick-fix actions that insert suppression comments.
 
 ### VS Code / Positron

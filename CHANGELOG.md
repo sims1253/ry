@@ -113,6 +113,22 @@ All notable changes to ry are documented in this file.
 
 ### Changed
 
+- **LSP no longer advertises `textDocument/rename`**: the server has dropped
+  the `textDocument/rename` and `textDocument/prepareRename` capabilities and
+  their handlers. Rename matched identifiers purely by spelling with no
+  binding or scope resolution, which is unsafe in R (NSE, `assign()`/`get()`,
+  S3 dispatch by naming convention, `$` on lists/environments, formulas, and
+  `library()` masking all break spelling-based rename). It will return once
+  real cross-file symbol resolution lands.
+- **LSP interactive features now operate on open documents only**: hover,
+  completion, signature help, go-to-definition, and references no longer
+  consult the background indexer's on-disk file snapshot. The cross-file
+  variants were added in Plan 38 (W6/W7) but every one shipped passing `""`
+  as the source text, so their ranges collapsed to 0:0 and none worked
+  correctly on the day they landed. The server's scope is the diagnostics
+  that `ry check` produces; growing it into a cross-file IDE feature set is
+  a separate, explicitly deferred decision. `textDocument/rename` was
+  removed for the same reason.
 - Measured the pinned 62-package Posit corpus before rule governance begins.
   This is the pre-governance Plan 34 baseline, not the final 0.9 rule set.
 - Extracted `Config`, `Baseline`, and diagnostic-filter types into a

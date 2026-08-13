@@ -1,13 +1,12 @@
 # ry — Static type checker for R
 
-[ry](https://github.com/sims1253/ry) is a static type checker for R. This extension provides diagnostics, hover with inferred types, go-to-definition, references, rename, completion, signature help, inlay hints, and code actions in VS Code and Positron.
+[ry](https://github.com/sims1253/ry) is a static type checker for R. This extension provides diagnostics, hover with inferred types, go-to-definition, references, completion, signature help, inlay hints, and code actions in VS Code and Positron.
 
 ## Features
 
 - **Type-checking diagnostics** as you type (debounced)
 - **Hover** showing inferred types
 - **Go-to-definition** and **find references**
-- **Rename** (workspace-wide)
 - **Completion** with column names after `$`
 - **Inlay hints** showing inferred types
 - **Code actions** to insert suppression comments

@@ -12,6 +12,14 @@ deep refactoring of the LSP handler layer and checker internals.
 Created 6 deterministic `#[ignore]`'d integration tests in
 `crates/ry-lsp/tests/p38_feature_diff.rs` that expose findings B2–B5:
 
+**Outcome: file deleted.** B2–B5 were treated as defects to fix, and W6/W7 added
+cross-file hover, completion, signature help, go-to-definition, and references by
+consulting the background file index. Every one of them passed `""` as the source
+text, so their ranges collapsed to 0:0 and none produced correct results. Rather
+than repair them, the capabilities were removed: the language server's scope is
+the diagnostics `ry check` produces, not a cross-file IDE feature set. B2–B5 are
+therefore accepted behaviour, not open defects.
+
 - **B2**: hover/completion are single-file; don't see project functions
 - **B3**: go-to-definition uses syntax-name matching, not resolved identity
 - **B4**: references/rename omit unopened disk files

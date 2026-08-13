@@ -22,3 +22,8 @@
 
 # rmarkdown render byproduct (README.md is the tracked output)
 /README.html
+
+# Local scratch from agent sessions (not project docs)
+/comms.md
+/plan-forward-report.html
+/time

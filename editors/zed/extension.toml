@@ -6,8 +6,9 @@ schema_version = 1
 authors = ["Maximilian Scholz"]
 repository = "https://github.com/sims1253/ry"
 
-# P37-W4: The extension downloads the ry server from GitHub releases.
-# SHA-256 checksum verification is performed on every download.
+# The extension downloads the ry server from GitHub releases over HTTPS.
+# Downloads are NOT yet integrity-checked against a published digest; see
+# issue #80.
 # Minimum compatible server version: 0.8.0 (the first release with
 # the `server` subcommand and LSP support).
 [language_servers.ry]

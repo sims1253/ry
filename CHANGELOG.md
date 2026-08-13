@@ -23,9 +23,10 @@ All notable changes to ry are documented in this file.
 - Resolved publisher identity to `sims1253.ry` across all surfaces.
 
 #### P37-W4: Zed extension integrity
-- Added SHA-256 checksum verification for downloaded binaries.
 - Added settings validation (minConfidence must be low/medium/high).
-- Added pure-Rust SHA-256 implementation for WASM compatibility.
+- Added pure-Rust SHA-256 implementation for WASM compatibility. Downloaded
+  binaries are not yet verified against a published digest; releases publish
+  checksums for the archive, not the extracted executable (issue #80).
 
 #### P37-W5: Ledger classification reconciliation
 - Fixed off-by-one in `posit-0.9.0.json` summary (729 → 728).

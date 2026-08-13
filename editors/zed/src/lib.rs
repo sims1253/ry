@@ -120,27 +120,20 @@ impl RyExtension {
             )
             .map_err(|error| format!("Failed to download file: {error}"))?;
 
-            // P37-W4: Verify the SHA-256 checksum of the downloaded binary.
-            // The release workflow produces .sha256 sidecar files. Download
-            // and verify before accepting the binary.
-            // P37-W4: Compute SHA-256 of the downloaded binary for integrity
-            // verification. The release workflow produces .sha256 sidecar
-            // files; if the sidecar asset exists, the hash is verified.
-            let sha256_asset_name = format!("{}.sha256", release_details.asset_name);
-            let _has_sha256_asset = release
-                .assets
-                .iter()
-                .any(|a| a.name == sha256_asset_name);
-            match Self::verify_checksum(None, &release_details.downloaded_binary_path) {
-                Ok(()) => {}
-                Err(error) => {
-                    // Remove the partial download on verification failure.
-                    let _ = fs::remove_dir_all(&release_details.downloaded_directory);
-                    return Err(format!(
-                        "Binary checksum verification failed: {error}.                          The download may be corrupted or tampered with."
-                    ));
-                }
-            }
+            // NOTE: downloaded binaries are NOT integrity-checked yet.
+            //
+            // A previous version of this code called `verify_checksum(None, ..)`,
+            // which returns `Ok(())` unconditionally, while the surrounding
+            // comments and the error text claimed tamper detection. The claim
+            // was removed rather than left in place; see issue #80.
+            //
+            // The blocker is that releases publish `.sha256` sidecars for the
+            // *archive* (`ry-cli-<target>.tar.gz.sha256`), but this code path
+            // only ever holds the *extracted* executable — `download_file`
+            // extracts in the same call that fetches. Verifying the archive
+            // digest here would compare two different artifacts. The fix is to
+            // publish a digest of the executable itself and check that; the
+            // helper below (`sha256_hex`) is retained for it.
 
             // Clean out other entries in our personal extension directory;
             // this may include outdated versions of the extension, so it is
@@ -221,27 +214,13 @@ impl GithubReleaseDetails {
 }
 
 impl RyExtension {
-    /// P37-W4: Compute the SHA-256 of the downloaded binary and verify
-    /// it against the expected hash if provided.
-        fn verify_checksum(expected_hash: Option<&str>, binary_path: &str) -> Result<()> {
-        let binary_bytes = fs::read(binary_path)
-            .map_err(|e| format!("Failed to read downloaded binary: {e}"))?;
-        let actual_hash = Self::sha256_hex(&binary_bytes);
-
-        if let Some(expected) = expected_hash {
-            let expected = expected.trim().to_lowercase();
-            if actual_hash != expected {
-                return Err(format!(
-                    "Checksum mismatch: expected {expected}, got {actual_hash}"
-                ));
-            }
-        }
-
-        Ok(())
-    }
-
-    /// P37-W4: Compute SHA-256 hash and return as lowercase hex string.
+    /// Compute SHA-256 hash and return as lowercase hex string.
     /// Uses a pure-Rust implementation that works in WASM.
+    ///
+    /// Currently exercised only by tests: the download path does not verify
+    /// integrity yet (issue #80). Retained because the fix needs exactly this
+    /// primitive, and it is already covered by FIPS 180-4 vectors below.
+    #[allow(dead_code)]
     fn sha256_hex(data: &[u8]) -> String {
         let hash = Self::sha256(data);
         hash.iter().map(|b| format!("{b:02x}")).collect()

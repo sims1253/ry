@@ -10,6 +10,12 @@
 # Agent working plans (local pipeline artifacts, not project docs)
 /docs/plans/
 
+# Background QA agent scratch (local run tracking, not project docs)
+/docs/dev/
+
+# npm lockfile: the extension is managed with bun (bun.lock is tracked)
+/editors/code/package-lock.json
+
 # Ecosystem regression harness caches and message-bearing reports
 /ecosystem/.cache/
 /ecosystem/reports/*.full.txt

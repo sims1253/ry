@@ -75,10 +75,13 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
 
       - name: Download binary
+        env:
+          CORE_TAG: ${{ inputs.core-tag }}
+          DIST_TARGET: ${{ matrix.dist-target }}
         run: |
           set -euo pipefail
-          base_url="https://github.com/sims1253/ry/releases/download/${{ inputs.core-tag }}"
-          dist_target="${{ matrix.dist-target }}"
+          base_url="https://github.com/sims1253/ry/releases/download/${CORE_TAG}"
+          dist_target="${DIST_TARGET}"
 
           # Download the binary archive and its sha256 sidecar.
           if [[ "${{ matrix.code-target }}" == win32-* ]]; then

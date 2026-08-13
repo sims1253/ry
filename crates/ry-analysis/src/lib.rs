@@ -264,7 +264,7 @@ mod tests {
                 path: PathBuf::from("/r1/a.R"),
                 content: "x <- 1\n".to_string(),
             },
-            Change::SetConfig(Box::new(ry_config::Config::default())),
+            Change::SetConfig(Box::default()),
         ];
         let rev = host.apply(changes);
         assert_eq!(rev, Revision(1));

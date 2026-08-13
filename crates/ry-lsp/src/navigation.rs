@@ -1,4 +1,4 @@
-//! Go-to-definition, references, document-highlight, and rename helpers
+//! Go-to-definition, references, and document-highlight helpers
 //!.
 //!
 //! These walk the AST to find definition sites, references, and
@@ -6,16 +6,10 @@
 //! the parsed `SourceFile` and source text; the `Backend` request
 //! handlers call them after resolving the identifier under the cursor.
 
-#[cfg(test)]
-use std::collections::HashMap;
-
 use ry_core::{Expr, SourceFile, Span, Stmt};
 use tower_lsp::lsp_types::{
     DocumentHighlight, DocumentHighlightKind, Location, Position, Range, Url,
 };
-
-#[cfg(test)]
-use tower_lsp::lsp_types::{TextEdit, WorkspaceEdit};
 
 use crate::util::byte_offset_to_position;
 
@@ -480,30 +474,4 @@ fn span_to_visible_range(span: Span, text: &str) -> Range {
         end
     };
     Range { start, end }
-}
-
-/// Build a `WorkspaceEdit` renaming `old_name` to `new_name` across the
-/// given slice of `(path, parsed_file, source_text)` tuples. Unit-test
-/// mirror of the `rename` LSP method.
-#[cfg(test)]
-pub(super) fn build_rename_edits(
-    docs: &[(&str, &SourceFile, &str)],
-    old_name: &str,
-    new_name: &str,
-) -> WorkspaceEdit {
-    let mut edits: HashMap<Url, Vec<TextEdit>> = HashMap::new();
-    for (doc_path, file, doc_text) in docs {
-        let doc_uri = crate::backend::path_to_uri(doc_path);
-        let locations = find_references_in_file(file, old_name, &doc_uri, doc_text, true);
-        for loc in locations {
-            edits.entry(doc_uri.clone()).or_default().push(TextEdit {
-                range: loc.range,
-                new_text: new_name.to_string(),
-            });
-        }
-    }
-    WorkspaceEdit {
-        changes: Some(edits),
-        ..Default::default()
-    }
 }

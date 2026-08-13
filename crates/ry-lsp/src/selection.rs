@@ -16,12 +16,10 @@ use crate::util::{
 ///
 /// The search expands left and right from the cursor to find the
 /// boundaries of the word. Filtering rules: pure numbers and R keywords
-/// are rejected (they are not renameable bindings).
+/// are rejected (they are not valid bindings).
 ///
-/// Used by `prepare_rename` to validate that the cursor sits on a
-/// renameable identifier before the editor shows the rename UI, and
-/// to hand the editor the exact span to highlight as the rename
-/// target.
+/// Used by `build_selection_range` to resolve the innermost identifier
+/// span as the starting point of an expand/shrink selection chain.
 pub(super) fn find_identifier_range_at_position(
     text: &str,
     line: usize,

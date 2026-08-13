@@ -14,14 +14,14 @@ use crate::folding::collect_folding_ranges;
 use crate::hints::{
     active_parameter, collect_completions, collect_inlay_hints, find_enclosing_call, get_signature,
 };
-use crate::ident::{find_ident_at_offset, is_valid_identifier};
+use crate::ident::find_ident_at_offset;
 use crate::navigation::{
     collect_document_highlights, find_definition_locations, find_references_in_file,
 };
 use crate::selection::build_selection_range;
 use crate::settings::{FolderSettings, ServerSettings};
 use crate::symbols::{collect_symbols, flatten_symbols_to_symbol_info};
-use crate::util::{position_to_byte_offset_pos, span_to_range, utf16_col_to_byte};
+use crate::util::position_to_byte_offset_pos;
 use ry_checker::Project;
 use ry_core::{RParser, SourceFile};
 use std::collections::HashMap;
@@ -847,23 +847,6 @@ impl LanguageServer for Backend {
                 // and filters by a case-insensitive substring match
                 // against the query string.
                 workspace_symbol_provider: Some(OneOf::Left(true)),
-                // Enable `textDocument/rename` so the client can do a
-                // workspace-wide rename of a variable / function
-                // (F2 / "Rename Symbol"). The handler is `rename`
-                // below; it reuses the references walker to find every
-                // occurrence of the identifier at the cursor across all
-                // open documents and produces a `WorkspaceEdit`
-                // grouping `TextEdit`s by file URI.
-                //
-                // `prepare_provider: true` also advertises
-                // `textDocument/prepareRename` (handled by
-                // `prepare_rename` below) so the editor can validate
-                // that the cursor sits on a renameable identifier
-                // before showing the rename UI.
-                rename_provider: Some(OneOf::Right(RenameOptions {
-                    prepare_provider: Some(true),
-                    work_done_progress_options: Default::default(),
-                })),
                 // Enable `textDocument/documentHighlight` so the client
                 // can highlight all in-file occurrences of the symbol
                 // under the cursor (e.g. with a colored background). The
@@ -1078,6 +1061,42 @@ impl LanguageServer for Backend {
                 }
                 state.server_settings.global_settings = settings;
             }
+        }
+
+        // PR #79 round 2: recompute the cached filter / min_confidence /
+        // excludes for every folder context and for the root-level fallback.
+        // The publish path *borrows* these precomputed values (P37-W6 (#46)):
+        // without recomputing here, a change to lint severity, select/ignore,
+        // or minConfidence has no effect on subsequently published diagnostics
+        // until a filesystem rebuild or server restart.
+        //
+        // Constraint: this stays OUT of `publish_diagnostics`. The P37-W6
+        // contract asserts zero filter compilations *during a publish cycle*.
+        // Recomputing on configuration change is fine; recomputing inside the
+        // publish loop is not. Each folder mirrors `rebuild_folder_context`
+        // (the folder config is both the exclude source and the severity
+        // fallback); the root mirrors `initialize`.
+        {
+            let mut state = self.state.lock().await;
+            let filter_count = Arc::clone(&state.filter_compile_count);
+            for ctx in &mut state.folder_contexts {
+                let (filter, min_confidence, excludes) = compute_folder_filter(
+                    &ctx.config,
+                    &ctx.folder_settings,
+                    &ctx.config,
+                    &filter_count,
+                );
+                ctx.filter = filter;
+                ctx.min_confidence = min_confidence;
+                ctx.excludes = excludes;
+            }
+            let file_config = state.file_config.clone();
+            let folder_settings = state.folder_settings.clone();
+            let (root_filter, root_min_confidence, root_excludes) =
+                compute_folder_filter(&file_config, &folder_settings, &file_config, &filter_count);
+            state.root_filter = root_filter;
+            state.root_min_confidence = root_min_confidence;
+            state.root_excludes = root_excludes;
         }
 
         self.spawn_background_index().await;
@@ -1459,29 +1478,6 @@ impl LanguageServer for Backend {
             }));
         }
 
-        // P38-W7: Fallback — check if the identifier is a function defined
-        // in another file (project-aware hover). Search disk files.
-        let disk_files = {
-            let state = self.state.lock().await;
-            state.disk_files.clone()
-        };
-        let mut found_project_fn = false;
-        for disk_file in disk_files.values() {
-            if file_has_function(disk_file, &identifier) {
-                found_project_fn = true;
-                break;
-            }
-        }
-        if found_project_fn {
-            return Ok(Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: format!("```r\n{}: function\n```", identifier),
-                }),
-                range: None,
-            }));
-        }
-
         Ok(None)
     }
 
@@ -1514,17 +1510,14 @@ impl LanguageServer for Backend {
         };
 
         let mut locations = find_definition_locations(&file, &identifier, &uri, &text);
-        // P38-W6: If no definition found in the current file, search
-        // other open documents and indexed disk files.
+        // If no definition is found in the current file, search the other
+        // open documents. Unopened files on disk are not consulted.
         if locations.is_empty() {
-            let docs = {
+            let docs: Vec<String> = {
                 let state = self.state.lock().await;
-                (
-                    state.docs.keys().cloned().collect::<Vec<_>>(),
-                    state.disk_files.clone(),
-                )
+                state.docs.keys().cloned().collect()
             };
-            for doc_path in &docs.0 {
+            for doc_path in &docs {
                 if doc_path == &path {
                     continue;
                 }
@@ -1532,30 +1525,6 @@ impl LanguageServer for Backend {
                     let doc_uri = path_to_uri(doc_path);
                     let locs =
                         find_definition_locations(&doc_file, &identifier, &doc_uri, &doc_text);
-                    if !locs.is_empty() {
-                        locations.extend(locs);
-                        break;
-                    }
-                }
-            }
-            if locations.is_empty() {
-                // `disk_files` is a HashMap, so iteration order varies between
-                // runs. Sort by path first, otherwise two files defining the
-                // same name make go-to-definition answer identical requests
-                // differently.
-                let mut disk_entries: Vec<_> = docs.1.iter().collect();
-                disk_entries.sort_by(|a, b| a.0.cmp(b.0));
-                for (disk_path, disk_file) in disk_entries {
-                    if disk_path == &path || docs.0.contains(disk_path) {
-                        continue;
-                    }
-                    let disk_uri = path_to_uri(disk_path);
-                    let locs = find_definition_locations(
-                        disk_file,
-                        &identifier,
-                        &disk_uri,
-                        &disk_file.source,
-                    );
                     if !locs.is_empty() {
                         locations.extend(locs);
                         break;
@@ -1614,29 +1583,6 @@ impl LanguageServer for Backend {
             );
             all_locations.extend(locs);
         }
-        // P38-W6: Also search indexed disk files (unopened files).
-        let disk_files = {
-            let state = self.state.lock().await;
-            state.disk_files.clone()
-        };
-        for (disk_path, disk_file) in &disk_files {
-            // Skip files that are already searched as open documents.
-            if docs.contains_key(disk_path) {
-                continue;
-            }
-            let disk_uri = path_to_uri(disk_path);
-            // Range conversion maps byte spans to UTF-16 positions against this
-            // text, so the indexed file's own source is required here.
-            let locs = find_references_in_file(
-                disk_file,
-                &identifier,
-                &disk_uri,
-                &disk_file.source,
-                include_declaration,
-            );
-            all_locations.extend(locs);
-        }
-
         if all_locations.is_empty() {
             Ok(None)
         } else {
@@ -1731,30 +1677,7 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        let mut items = collect_completions(&text, position, &params.context, &scope);
-        // P38-W7: Add project-defined functions from disk files.
-        let disk_files = {
-            let state = self.state.lock().await;
-            state.disk_files.clone()
-        };
-        // Extract the prefix from the cursor position for filtering.
-        let prefix = extract_prefix(&text, position);
-        for disk_file in disk_files.values() {
-            for fn_name in extract_function_names(disk_file) {
-                if prefix.as_deref().is_some_and(|p| !fn_name.starts_with(p)) {
-                    continue;
-                }
-                // Avoid duplicates.
-                if items.iter().any(|i| i.label == fn_name) {
-                    continue;
-                }
-                items.push(tower_lsp::lsp_types::CompletionItem {
-                    label: fn_name,
-                    kind: Some(tower_lsp::lsp_types::CompletionItemKind::FUNCTION),
-                    ..Default::default()
-                });
-            }
-        }
+        let items = collect_completions(&text, position, &params.context, &scope);
         if items.is_empty() {
             Ok(None)
         } else {
@@ -1797,18 +1720,21 @@ impl LanguageServer for Backend {
         let params_list = if let Some(p) = get_signature(&func_name) {
             p
         } else {
-            // P38-W7: Fallback — check disk files for user-defined functions.
-            let disk_files = {
+            // Fallback: look up parameter names for a user-defined function
+            // in the open documents (unopened files on disk are not
+            // consulted). Sort the path list so a duplicated function name
+            // always resolves to the same parameters; HashMap iteration order
+            // is not stable across requests.
+            let mut open_paths: Vec<String> = {
                 let state = self.state.lock().await;
-                state.disk_files.clone()
+                state.docs.keys().cloned().collect()
             };
-            // Sorted so a duplicated function name always yields the same
-            // parameter list; HashMap order is not stable across requests.
-            let mut disk_entries: Vec<_> = disk_files.iter().collect();
-            disk_entries.sort_by(|a, b| a.0.cmp(b.0));
+            open_paths.sort();
             let mut found_params: Option<Vec<String>> = None;
-            for (_, disk_file) in disk_entries {
-                if let Some(params) = extract_function_params(disk_file, &func_name) {
+            for doc_path in &open_paths {
+                if let Some((doc_file, _)) = self.parsed_file(doc_path).await
+                    && let Some(params) = extract_function_params(&doc_file, &func_name)
+                {
                     found_params = Some(params);
                     break;
                 }
@@ -1896,127 +1822,6 @@ impl LanguageServer for Backend {
         } else {
             Ok(Some(all_symbols))
         }
-    }
-
-    async fn rename(&self, params: RenameParams) -> LspResult<Option<WorkspaceEdit>> {
-        let uri = params.text_document_position.text_document.uri.clone();
-        let path = uri_to_path(&uri);
-        let position = params.text_document_position.position;
-        let new_name = params.new_name;
-
-        // Rename inserts the supplied text without backticks, so reject names
-        // that are not syntactically valid unquoted R identifiers.
-        if !is_valid_identifier(&new_name) {
-            return Ok(None);
-        }
-
-        // Snapshot ALL open document paths under the lock, then drop the
-        // lock before parsing/walking so a slow rename doesn't block
-        // other LSP requests. Rename is workspace-wide, so we walk
-        // every open document (not just the current one). The per-file
-        // source text comes from `parsed_file` so it always matches the
-        // AST it was parsed from.
-        let docs = {
-            let state = self.state.lock().await;
-            state.docs.keys().cloned().collect::<Vec<_>>()
-        };
-
-        // Find the identifier at the cursor position via an AST walk to
-        // learn the old name (cached). We rename
-        // ALL occurrences of that name across all open documents,
-        // mirroring how `references` works. Returns `None` (no rename)
-        // for operators, numbers, keywords.
-        let Some((current_file, text)) = self.parsed_file(&path).await else {
-            return Ok(None);
-        };
-        let Some(byte_offset) = position_to_byte_offset_pos(&text, position) else {
-            return Ok(None);
-        };
-        let Some((old_name, _)) = find_ident_at_offset(&current_file, byte_offset) else {
-            return Ok(None);
-        };
-
-        // Build the per-URI edit map. For each open document we find
-        // every occurrence of `old_name` (including declaration sites,
-        // since a rename must update the definition too) and append a
-        // `TextEdit` replacing the old name with the new one. Edits
-        // are grouped by file URI into the `WorkspaceEdit.changes`
-        // map; the editor applies each group atomically per file.
-        let mut edits: HashMap<Url, Vec<TextEdit>> = HashMap::new();
-        for doc_path in &docs {
-            let Some((file, doc_text)) = self.parsed_file(doc_path).await else {
-                continue;
-            };
-            let doc_uri = path_to_uri(doc_path);
-            let locations = find_references_in_file(&file, &old_name, &doc_uri, &doc_text, true);
-            for loc in locations {
-                edits.entry(doc_uri.clone()).or_default().push(TextEdit {
-                    range: loc.range,
-                    new_text: new_name.clone(),
-                });
-            }
-        }
-        // P38-W6: Also search indexed disk files (unopened files).
-        let disk_files = {
-            let state = self.state.lock().await;
-            state.disk_files.clone()
-        };
-        for (disk_path, disk_file) in &disk_files {
-            if docs.contains(disk_path) {
-                continue;
-            }
-            let disk_uri = path_to_uri(disk_path);
-            // The indexed file's own source is required: byte spans are mapped
-            // to UTF-16 positions against this text. Passing "" collapses every
-            // range to 0:0, which would make rename write `new_name` at the
-            // start of the file instead of at each occurrence.
-            let locations =
-                find_references_in_file(disk_file, &old_name, &disk_uri, &disk_file.source, true);
-            for loc in locations {
-                edits.entry(disk_uri.clone()).or_default().push(TextEdit {
-                    range: loc.range,
-                    new_text: new_name.clone(),
-                });
-            }
-        }
-
-        // No occurrences across any open document: report no rename
-        // rather than an empty (no-op) workspace edit.
-        if edits.is_empty() {
-            return Ok(None);
-        }
-
-        Ok(Some(WorkspaceEdit {
-            changes: Some(edits),
-            ..Default::default()
-        }))
-    }
-
-    async fn prepare_rename(
-        &self,
-        params: TextDocumentPositionParams,
-    ) -> LspResult<Option<PrepareRenameResponse>> {
-        let uri = params.text_document.uri.clone();
-        let path = uri_to_path(&uri);
-        let position = params.position;
-
-        // Validate that the cursor is on a renameable identifier before
-        // the editor shows the rename UI. Use the AST-based finder so we
-        // get the exact span of the innermost identifier, then convert
-        // it to an LSP range. Returns `None` for operators, numbers,
-        // keywords, and whitespace.
-        let Some((file, text)) = self.parsed_file(&path).await else {
-            return Ok(None);
-        };
-        let Some(byte_offset) = position_to_byte_offset_pos(&text, position) else {
-            return Ok(None);
-        };
-        let Some((_, span)) = find_ident_at_offset(&file, byte_offset) else {
-            return Ok(None);
-        };
-        let range = span_to_range(&text, span).unwrap();
-
-        Ok(Some(PrepareRenameResponse::Range(range)))
     }
 
     async fn document_highlight(
@@ -3106,33 +2911,6 @@ pub(crate) fn path_to_uri(path: &str) -> Url {
     })
 }
 
-/// Extract the identifier prefix at the given position for completion
-/// filtering. `position.character` is a UTF-16 code-unit column, so it is
-/// converted with the same helper the rest of this file uses rather than by
-/// counting `char`s.
-fn extract_prefix(text: &str, position: tower_lsp::lsp_types::Position) -> Option<String> {
-    let line = text.lines().nth(position.line as usize)?;
-    // Byte offset *after* the last character before the cursor. Using the
-    // index *of* that character would drop the character immediately left of
-    // the cursor, and would yield 0 after a single keystroke — which drops the
-    // prefix filter entirely and offers every project function.
-    let byte_col = utf16_col_to_byte(line, position.character)?;
-    let before = &line[..byte_col];
-    let prefix: String = before
-        .chars()
-        .rev()
-        .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
-        .collect::<String>()
-        .chars()
-        .rev()
-        .collect();
-    if prefix.is_empty() {
-        None
-    } else {
-        Some(prefix)
-    }
-}
-
 /// Extract parameter names for a function defined in a parsed file.
 #[allow(clippy::collapsible_match)]
 fn extract_function_params(file: &ry_core::SourceFile, func_name: &str) -> Option<Vec<String>> {
@@ -3159,86 +2937,6 @@ fn extract_function_params(file: &ry_core::SourceFile, func_name: &str) -> Optio
         }
     }
     None
-}
-
-/// Extract all top-level function names from a parsed file.
-#[allow(clippy::collapsible_match)]
-fn extract_function_names(file: &ry_core::SourceFile) -> Vec<String> {
-    use ry_core::ast::{Expr, Stmt};
-    let mut names = Vec::new();
-    for stmt in &file.stmts {
-        match stmt {
-            Stmt::Assign { target, value, .. } => {
-                if let Expr::Ident { name, .. } = target {
-                    if matches!(value, Expr::Function { .. }) {
-                        names.push(name.clone());
-                    }
-                }
-            }
-            Stmt::FunctionDef {
-                name: Some(name), ..
-            } => {
-                names.push(name.clone());
-            }
-            _ => {}
-        }
-    }
-    names
-}
-
-/// Check if a parsed file defines a function with the given name.
-fn file_has_function(file: &ry_core::SourceFile, name: &str) -> bool {
-    for stmt in &file.stmts {
-        if stmt_defines_function(stmt, name) {
-            return true;
-        }
-    }
-    false
-}
-
-#[allow(clippy::collapsible_match)]
-fn stmt_defines_function(stmt: &ry_core::Stmt, name: &str) -> bool {
-    use ry_core::ast::{Expr, Stmt};
-    match stmt {
-        Stmt::Assign { target, value, .. } => {
-            if let Expr::Ident { name: n, .. } = target {
-                if n == name {
-                    return matches!(value, Expr::Function { .. });
-                }
-            }
-            // Recurse into the value expression.
-            expr_defines_function(value, name)
-        }
-        Stmt::FunctionDef { name: fn_name, .. } => fn_name.as_deref() == Some(name),
-        Stmt::If { then, else_, .. } => {
-            then.iter().any(|s| stmt_defines_function(s, name))
-                || else_
-                    .as_ref()
-                    .is_some_and(|eb| eb.iter().any(|s| stmt_defines_function(s, name)))
-        }
-        Stmt::For { body, .. } | Stmt::While { body, .. } => {
-            body.iter().any(|s| stmt_defines_function(s, name))
-        }
-        Stmt::Expr(e) => expr_defines_function(e, name),
-        _ => false,
-    }
-}
-
-#[allow(clippy::collapsible_match)]
-fn expr_defines_function(expr: &ry_core::Expr, name: &str) -> bool {
-    use ry_core::ast::Expr;
-    match expr {
-        Expr::Function { body, .. } | Expr::Block { body, .. } => {
-            body.iter().any(|s| stmt_defines_function(s, name))
-        }
-        Expr::If { then, else_, .. } => {
-            expr_defines_function(then, name)
-                || else_
-                    .as_ref()
-                    .is_some_and(|e| expr_defines_function(e, name))
-        }
-        _ => false,
-    }
 }
 
 /// Convert a `file://` URI to a filesystem path string. Falls back to

@@ -8,16 +8,19 @@
 //!   * `textDocument/didChange` (incremental edits re-check and republish)
 //!   * `textDocument/didClose` (clears diagnostics)
 //!   * Document diagnostics via `textDocument/publishDiagnostics`
-//!   * `textDocument/hover` (type at cursor)
-//!   * `textDocument/definition` (go-to-definition for variables/functions)
+//!   * `textDocument/hover` (inferred type at cursor)
+//!   * `textDocument/definition` (go-to-definition, scoped to open documents)
 //!   * `textDocument/references` (find all usages of a symbol across open files)
 //!   * `textDocument/documentSymbol` (outline view of the file's bindings)
 //!   * `workspace/symbol` (search for symbols across all open files)
-//!   * `textDocument/rename` (workspace-wide rename of a variable / function)
-//!   * `textDocument/prepareRename` (validates the cursor is on a renameable identifier)
 //!   * `textDocument/completion`, `signatureHelp`, `inlayHint`,
 //!     `foldingRange`, `codeAction`, `selectionRange`, `documentHighlight`
 //!   * Graceful shutdown via `shutdown` / `exit`
+//!
+//! The interactive requests (`hover`, `definition`, `references`,
+//! `completion`, `signatureHelp`) operate on open documents only; they do
+//! not consult unopened files on disk. The server reports what `ry check`
+//! reports and is intentionally not a cross-file IDE feature set.
 //!
 //! Architecture: this file is intentionally small --
 //! module declarations + the `run()` entry point. All request-handler

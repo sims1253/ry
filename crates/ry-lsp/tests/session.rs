@@ -416,33 +416,6 @@ async fn utf16_transcript() {
         .unwrap();
     assert_eq!(surrogate_interior_signature, Value::Null);
 
-    // Rename consumes one UTF-16 position and emits workspace-edit ranges in
-    // both the mixed-Unicode CRLF document and another astral document.
-    let rename = session
-        .request(
-            "textDocument/rename",
-            json!({
-                "textDocument": {"uri": main_uri},
-                "position": position("target declaration"),
-                "newName": "renamed"
-            }),
-        )
-        .await
-        .unwrap();
-    let main_edits = rename["changes"][&main_uri].as_array().unwrap();
-    assert_eq!(main_edits.len(), 2);
-    assert_position(&main_edits[0]["range"]["start"], "target declaration");
-    assert_position(&main_edits[0]["range"]["end"], "target declaration end");
-    assert_position(&main_edits[1]["range"]["start"], "target read");
-    assert_position(&main_edits[1]["range"]["end"], "target read end");
-    assert_eq!(
-        rename["changes"][&other_uri][0]["range"],
-        json!({
-            "start": {"line": 0, "character": 6},
-            "end": {"line": 0, "character": 12}
-        })
-    );
-
     // A cursor inside the surrogate pair is not a legal LSP position. The
     // valid boundary resolves the backtick identifier; the interior must not
     // silently snap forward and resolve the same identifier.

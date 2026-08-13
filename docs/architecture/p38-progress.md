@@ -31,6 +31,21 @@ Created `ry-diagnostics` as an independent external crate:
 - CI for fmt/clippy/test/MSRV
 - Conversion adapter in `ry-checker/src/diag_adapter.rs`
 
+**Outcome: reverted.** The crate was never consumed. `diag_adapter.rs` was 24
+lines converting `Severity`/`Confidence` between the two vocabularies — the only
+two types that happened to be structurally identical. `TextSize`, `TextRange`,
+`RuleId`, `Fix`, and `Diagnostic` were never imported, because ry uses
+`ry_core::Span { start, end, line, col }` and a differently-shaped `Diagnostic`;
+adopting them was the whole job and it was never started. W11 deleted the
+adapter as "transitional, no callers" and the dangling workspace dependency was
+removed in a06df8b. `ry-core` still defines the original types, so the repo got
+no lighter.
+
+The lesson for future extractions: name the consumer that does not depend on the
+crate being extracted from, and state acceptance in terms of the consuming code
+("N call sites import X", "the duplicate type is deleted") rather than the
+extracted artifact's existence. See issue #83.
+
 ### P38-W3: Correct lower-layer ownership (commits 23644d4, 802c4a6)
 
 Broke the inverted dependency chain:
@@ -128,12 +143,11 @@ Created `crates/ry-analysis` with:
 ## Dependency graph (current)
 
 ```
-ry-diagnostics (external leaf, v0.1.0)
 ry-typeshed
-ry-core ← ry-diagnostics (not yet consumed)
+ry-core
 ry-config ← ry-core
 ry-workspace ← ry-core, ry-config, ry-typeshed
-ry-checker ← ry-core, ry-config, ry-workspace, ry-typeshed, ry-diagnostics
+ry-checker ← ry-core, ry-config, ry-workspace, ry-typeshed
 ry-analysis ← ry-core, ry-checker, ry-config, ry-workspace, ry-typeshed
 ry-cli ← all above
 ry-lsp ← all above

@@ -11,7 +11,8 @@ All 8 workstreams merged:
 - W1: Parser UTF-8 boundary panic fix
 - W2: VS Code split-brain binary resolution
 - W3: CI workflows + publisher identity
-- W4: Zed SHA-256 integrity verification
+- W4: Zed settings validation + SHA-256 primitive (integrity verification of
+  downloaded binaries is NOT implemented; see issue #80)
 - W5: Ledger classification reconciliation
 - W6: Filter precomputation
 - W7: Editor defaults + clean-checkout + valid generator

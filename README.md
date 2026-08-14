@@ -77,8 +77,8 @@ ry check demo.R
 ```
 
 Diagnostics use the `full` format by default – the offending line with
-the span underlined – and messages carry the context you need to act,
-e.g. a column miss lists what IS there:
+the span underlined – and messages carry the context you need to act;
+for example, an undefined-column diagnostic lists the available columns.
 
 ``` bash
 ry check /tmp/ry-readme/analysis.R
@@ -90,8 +90,8 @@ ry check /tmp/ry-readme/analysis.R
 
 Exit codes are CI-friendly: non-zero when any error-level diagnostic
 fires (`--exit-zero` overrides; `--error-on-warning` promotes warnings).
-Human-readable diagnostics use ANSI color on terminals; select the policy
-explicitly with `--color auto|always|never`. Automatic color respects
+Human-readable diagnostics use ANSI color on terminals; select the
+color policy with `--color auto|always|never`. Automatic color respects
 `NO_COLOR`, and machine-readable formats never contain ANSI escapes.
 
 ## Package awareness
@@ -120,10 +120,10 @@ recipes, mirai, and others. Packages attached outside the checked
 sources can be declared in `ry.toml`.
 
 When checking a package source tree, files are checked in their
-evaluation context: executable `tests/testthat/` and `inst/tinytest/` files see
+evaluation context. Executable `tests/testthat/` and `inst/tinytest/` files see
 the package’s own namespace, the test framework, DESCRIPTION
 `Depends` / `Suggests`, and bindings plus `library()` calls from
-`helper*` / `setup*` files; `data-raw/`, `demo/`, and `vignettes/`
+`helper*` / `setup*` files. `data-raw/`, `demo/`, and `vignettes/`
 attach `Depends`. `revdep/`, `src/`, snapshot data, and
 `.Rbuildignore` matches (never `R/` or `tests/`) are skipped. R files nested
 under `tests/` are treated as fixture data unless they are runners at
@@ -175,8 +175,8 @@ rlang’s `{{ }}` embrace, the `.data` / `.env` pronouns, `!!` / `!!!`,
 and functions that defuse their own arguments (a parameter whose first
 use is `enquo()` / `substitute()` / …) are recognized, so wrapper
 functions do not produce false unbound-variable reports. When the
-masked data’s schema is unknown, column candidates stay silent rather
-than guessed at.
+masked data’s schema is unknown, ry stays silent rather than guessing
+at column candidates.
 
 ## Configuration (`ry.toml`)
 

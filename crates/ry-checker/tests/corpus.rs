@@ -199,10 +199,9 @@ fn corpus_check_each_fixture() {
     }
 }
 
-/// Reviewable message/fix gate for every checker fixture. This deliberately
+/// Reviewable message gate for every checker fixture. This deliberately
 /// stores normalized fields rather than a digest or the ignored ecosystem
-/// `.full.txt` reports, so wording and replacement drift appears as a normal
-/// snapshot diff.
+/// `.full.txt` reports, so wording drift appears as a normal snapshot diff.
 #[test]
 fn checker_fixture_diagnostics_are_readable_snapshots() {
     let snapshots = load_fixtures()
@@ -221,15 +220,6 @@ fn checker_fixture_diagnostics_are_readable_snapshots() {
                             "column": diagnostic.span.col,
                         },
                         "message": diagnostic.message,
-                        "fix": diagnostic.fix.map(|fix| serde_json::json!({
-                            "span": {
-                                "start": fix.span.start,
-                                "end": fix.span.end,
-                                "line": fix.span.line,
-                                "column": fix.span.col,
-                            },
-                            "replacement": fix.replacement,
-                        })),
                     })
                 })
                 .collect::<Vec<_>>();

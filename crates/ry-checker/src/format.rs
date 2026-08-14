@@ -35,13 +35,6 @@ impl OutputFormat {
 }
 
 #[derive(Debug, Serialize)]
-struct JsonFix<'a> {
-    start: usize,
-    end: usize,
-    replacement: &'a str,
-}
-
-#[derive(Debug, Serialize)]
 struct JsonDiagnostic<'a> {
     code: &'a str,
     severity: &'a str,
@@ -50,8 +43,6 @@ struct JsonDiagnostic<'a> {
     line: usize,
     column: usize,
     confidence: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    fix: Option<JsonFix<'a>>,
 }
 
 /// Render the diagnostics to a string. `srcs` maps `path` -> source text
@@ -146,11 +137,6 @@ pub fn render_with_color(
                         line,
                         column: col,
                         confidence: d.confidence.as_str(),
-                        fix: d.fix.as_ref().map(|fix| JsonFix {
-                            start: fix.span.start,
-                            end: fix.span.end,
-                            replacement: &fix.replacement,
-                        }),
                     }
                 })
                 .collect();
@@ -554,30 +540,6 @@ mod tests {
         // Github format uses the same conversion.
         let gh = render(&d, OutputFormat::Github, &srcs);
         assert!(gh.contains("col=5::"), "github col should be 5, got: {gh}");
-    }
-
-    #[test]
-    fn json_fix_is_additive_and_absent_keys_are_omitted() {
-        let plain = diag("RY040", Severity::Error);
-        let fixed = diag("RY034", Severity::Warning).with_fix(crate::Fix {
-            span: Span::new(4, 11, 0, 4),
-            replacement: "is.na(x)".to_string(),
-        });
-        let srcs = std::collections::HashMap::from([(
-            "x.R".to_string(),
-            "bad x == NA
-"
-            .to_string(),
-        )]);
-        let value: serde_json::Value =
-            serde_json::from_str(&render(&[plain, fixed], OutputFormat::Json, &srcs)).unwrap();
-        assert!(value[0].get("fix").is_none());
-        assert_eq!(
-            value[1]["fix"],
-            serde_json::json!({"start": 4, "end": 11, "replacement": "is.na(x)"})
-        );
-        assert_eq!(value[0]["code"], "RY040");
-        assert_eq!(value[0]["line"], 1);
     }
 
     #[test]

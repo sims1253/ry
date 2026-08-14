@@ -1288,16 +1288,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "ry-analysis"
+version = "0.9.0"
+dependencies = [
+ "proptest",
+ "ry-checker",
+ "ry-config",
+ "ry-core",
+ "ry-typeshed",
+ "ry-workspace",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "ry-checker"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "criterion",
  "insta",
  "proptest",
  "rayon",
+ "ry-config",
  "ry-core",
  "ry-testkit",
  "ry-typeshed",
+ "ry-workspace",
  "serde",
  "serde_json",
  "tempfile",
@@ -1307,13 +1323,14 @@ dependencies = [
 
 [[package]]
 name = "ry-cli"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "clap",
  "clap_complete",
  "glob",
  "miette",
  "rayon",
+ "ry-analysis",
  "ry-checker",
  "ry-config",
  "ry-core",
@@ -1333,11 +1350,11 @@ dependencies = [
 
 [[package]]
 name = "ry-config"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "glob",
  "miette",
- "ry-checker",
+ "ry-core",
  "serde",
  "serde_json",
  "tempfile",
@@ -1348,8 +1365,9 @@ dependencies = [
 
 [[package]]
 name = "ry-core"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
+ "serde",
  "thiserror",
  "tracing",
  "tree-sitter",
@@ -1358,9 +1376,10 @@ dependencies = [
 
 [[package]]
 name = "ry-lsp"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "proptest",
+ "ry-analysis",
  "ry-checker",
  "ry-config",
  "ry-core",
@@ -1377,7 +1396,7 @@ dependencies = [
 
 [[package]]
 name = "ry-testkit"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1388,7 +1407,7 @@ dependencies = [
 
 [[package]]
 name = "ry-typeshed"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1398,13 +1417,12 @@ dependencies = [
 
 [[package]]
 name = "ry-workspace"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "bzip2",
  "flate2",
  "glob",
  "rds2rust",
- "ry-checker",
  "ry-config",
  "ry-core",
  "ry-typeshed",

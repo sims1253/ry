@@ -4,7 +4,6 @@ expression: snapshots
 ---
 - diagnostics:
     - code: RY090
-      fix: ~
       message: "unknown argument `al` to `choose`"
       severity: warning
       span:
@@ -13,7 +12,6 @@ expression: snapshots
         line: 2
         start: 70
     - code: RY091
-      fix: ~
       message: "missing required argument `alpha` in call to `choose`"
       severity: warning
       span:
@@ -24,7 +22,6 @@ expression: snapshots
   fixture: err_ambiguous_partial_argument.R
 - diagnostics:
     - code: RY092
-      fix: ~
       message: "argument `x` to `mean` is `list`, expected numeric"
       severity: error
       span:
@@ -35,7 +32,6 @@ expression: snapshots
   fixture: err_argument_list_type_mismatch.R
 - diagnostics:
     - code: RY092
-      fix: ~
       message: "argument `x` to `mean` is `character`, expected numeric"
       severity: error
       span:
@@ -46,7 +42,6 @@ expression: snapshots
   fixture: err_argument_type_mismatch.R
 - diagnostics:
     - code: RY070
-      fix: ~
       message: "cannot call a value of mode `double`"
       severity: error
       span:
@@ -55,7 +50,6 @@ expression: snapshots
         line: 2
         start: 108
     - code: RY070
-      fix: ~
       message: "cannot call a value of mode `logical`"
       severity: error
       span:
@@ -64,7 +58,6 @@ expression: snapshots
         line: 3
         start: 118
     - code: RY070
-      fix: ~
       message: "cannot call a value of mode `NULL`"
       severity: error
       span:
@@ -75,7 +68,6 @@ expression: snapshots
   fixture: err_call_literal.R
 - diagnostics:
     - code: RY070
-      fix: ~
       message: "`x` is `double`, not a function; cannot call it"
       severity: error
       span:
@@ -86,7 +78,6 @@ expression: snapshots
   fixture: err_call_non_function.R
 - diagnostics:
     - code: RY033
-      fix: ~
       message: "comparing `character` with `double`; R coerces the numeric value to character and compares lexicographically, which is rarely intended"
       severity: warning
       span:
@@ -97,7 +88,6 @@ expression: snapshots
   fixture: err_compare_mode_mismatch.R
 - diagnostics:
     - code: RY061
-      fix: ~
       message: "$ operator is invalid for atomic vectors of mode `character`"
       severity: error
       span:
@@ -108,7 +98,6 @@ expression: snapshots
   fixture: err_dollar_assign_atomic.R
 - diagnostics:
     - code: RY061
-      fix: ~
       message: "$ operator is invalid for atomic vectors of mode `integer`"
       severity: error
       span:
@@ -119,7 +108,6 @@ expression: snapshots
   fixture: err_dollar_on_atomic.R
 - diagnostics:
     - code: RY040
-      fix: ~
       message: "cannot apply arithmetic op to `character` and `double`"
       severity: error
       span:
@@ -130,7 +118,6 @@ expression: snapshots
   fixture: err_fnbody_arith.R
 - diagnostics:
     - code: RY040
-      fix: ~
       message: "cannot apply arithmetic op to `character` and `double`"
       severity: error
       span:
@@ -141,7 +128,6 @@ expression: snapshots
   fixture: err_fnbody_nested_if.R
 - diagnostics:
     - code: RY010
-      fix: ~
       message: "variable `undefined_variable_xyz` is not bound in this scope"
       severity: warning
       span:
@@ -152,7 +138,6 @@ expression: snapshots
   fixture: err_fnbody_unbound.R
 - diagnostics:
     - code: RY010
-      fix: ~
       message: "variable `undefined_var` is not bound in this scope"
       severity: warning
       span:
@@ -163,7 +148,6 @@ expression: snapshots
   fixture: err_ho_callback_unbound.R
 - diagnostics:
     - code: RY040
-      fix: ~
       message: "cannot apply arithmetic op to `integer` and `character`"
       severity: error
       span:
@@ -174,7 +158,6 @@ expression: snapshots
   fixture: err_ho_sapply_infers_type.R
 - diagnostics:
     - code: RY040
-      fix: ~
       message: "cannot apply arithmetic op to `union` and `double`"
       severity: error
       span:
@@ -185,7 +168,6 @@ expression: snapshots
   fixture: err_if_expr_join.R
 - diagnostics:
     - code: RY092
-      fix: ~
       message: "argument `value` to `check_string` is `character<len=2>`, expected character"
       severity: error
       span:
@@ -196,7 +178,6 @@ expression: snapshots
   fixture: err_impossible_standalone_guard.R
 - diagnostics:
     - code: RY070
-      fix: ~
       message: "`x` is `NULL`, not a function; cannot call it"
       severity: error
       span:
@@ -207,7 +188,6 @@ expression: snapshots
   fixture: err_is_null_narrowing_no_leak.R
 - diagnostics:
     - code: RY040
-      fix: ~
       message: "cannot apply arithmetic op to `integer` and `character`"
       severity: error
       span:
@@ -218,7 +198,6 @@ expression: snapshots
   fixture: err_lapply_double_bracket.R
 - diagnostics:
     - code: RY091
-      fix: ~
       message: "missing required argument `x` in call to `length`"
       severity: warning
       span:
@@ -229,7 +208,6 @@ expression: snapshots
   fixture: err_missing_required_argument.R
 - diagnostics:
     - code: RY000
-      fix: ~
       message: "syntax error: unparseable region (recovered tree may be unreliable)"
       severity: error
       span:
@@ -238,7 +216,6 @@ expression: snapshots
         line: 3
         start: 169
     - code: RY000
-      fix: ~
       message: "syntax error: unparseable region (recovered tree may be unreliable)"
       severity: error
       span:
@@ -247,7 +224,6 @@ expression: snapshots
         line: 4
         start: 179
     - code: RY000
-      fix: ~
       message: "syntax error: unparseable region (recovered tree may be unreliable)"
       severity: error
       span:
@@ -256,7 +232,6 @@ expression: snapshots
         line: 4
         start: 187
     - code: RY010
-      fix: ~
       message: "variable `syntax` is not bound in this scope"
       severity: warning
       span:
@@ -267,7 +242,6 @@ expression: snapshots
   fixture: err_parse_error.R
 - diagnostics:
     - code: RY060
-      fix: ~
       message: "column `x` not found in data frame schema; available columns: y, x_x"
       severity: error
       span:
@@ -278,13 +252,6 @@ expression: snapshots
   fixture: err_partial_column_indexed_assignment.R
 - diagnostics:
     - code: RY102
-      fix:
-        replacement: "="
-        span:
-          column: 34
-          end: 373
-          line: 6
-          start: 371
       message: "`<-` inside `list()` assigns `github-ref` and leaves the element unnamed; write `\"github-ref\" = ...` to name it"
       severity: warning
       span:
@@ -293,13 +260,6 @@ expression: snapshots
         line: 6
         start: 358
     - code: RY103
-      fix:
-        replacement: "!inherits(df[[1]], t)"
-        span:
-          column: 21
-          end: 605
-          line: 10
-          start: 586
       message: "`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `!inherits(df[[1]], t)`"
       severity: warning
       span:
@@ -308,7 +268,6 @@ expression: snapshots
         line: 10
         start: 586
     - code: RY105
-      fix: ~
       message: "`u_dl` is a length-1 double, so `length(...)` is 1 here and this zero-length guard is always TRUE"
       severity: warning
       span:
@@ -319,7 +278,6 @@ expression: snapshots
   fixture: err_plan31_recall_repro.R
 - diagnostics:
     - code: RY080
-      fix: ~
       message: "`map_dbl` expects `double` returns but the callback returns `character`; R will coerce silently"
       severity: warning
       span:
@@ -330,7 +288,6 @@ expression: snapshots
   fixture: err_purrr_map_dbl_type_mismatch.R
 - diagnostics:
     - code: RY098
-      fix: ~
       message: "parameter `x` has a self-referential default that recurses when forced"
       severity: warning
       span:
@@ -341,7 +298,6 @@ expression: snapshots
   fixture: err_recursive_default_forced_call.R
 - diagnostics:
     - code: RY098
-      fix: ~
       message: "parameter `x` has a self-referential default that recurses when forced"
       severity: warning
       span:
@@ -352,7 +308,6 @@ expression: snapshots
   fixture: err_recursive_default_literal_branch.R
 - diagnostics:
     - code: RY098
-      fix: ~
       message: "parameter `x` has a self-referential default that recurses when forced"
       severity: warning
       span:
@@ -363,7 +318,6 @@ expression: snapshots
   fixture: err_recursive_default_literal_false_block.R
 - diagnostics:
     - code: RY098
-      fix: ~
       message: "parameter `copy` has a self-referential default that recurses when forced"
       severity: warning
       span:
@@ -372,7 +326,6 @@ expression: snapshots
         line: 1
         start: 51
     - code: RY098
-      fix: ~
       message: "parameter `j` has a self-referential default that recurses when forced"
       severity: warning
       span:
@@ -383,7 +336,6 @@ expression: snapshots
   fixture: err_recursive_parameter_default.R
 - diagnostics:
     - code: RY070
-      fix: ~
       message: "`x` is `integer`, not a function; cannot call it"
       severity: error
       span:
@@ -394,7 +346,6 @@ expression: snapshots
   fixture: err_s7_callable_future_assignment.R
 - diagnostics:
     - code: RY070
-      fix: ~
       message: "`x` is `integer`, not a function; cannot call it"
       severity: error
       span:
@@ -405,13 +356,6 @@ expression: snapshots
   fixture: err_s7_callable_reassigned.R
 - diagnostics:
     - code: RY032
-      fix:
-        replacement: "&"
-        span:
-          column: 9
-          end: 113
-          line: 3
-          start: 111
       message: "`&&` applied to a length-3 operand; only the first element is used"
       severity: warning
       span:
@@ -422,7 +366,6 @@ expression: snapshots
   fixture: err_scalar_logical.R
 - diagnostics:
     - code: RY040
-      fix: ~
       message: "cannot apply arithmetic op to `union` and `double`"
       severity: error
       span:
@@ -433,7 +376,6 @@ expression: snapshots
   fixture: err_switch_mixed.R
 - diagnostics:
     - code: RY040
-      fix: ~
       message: "cannot apply arithmetic op to `union` and `double`"
       severity: error
       span:
@@ -444,13 +386,6 @@ expression: snapshots
   fixture: err_union_all_invalid.R
 - diagnostics:
     - code: RY090
-      fix:
-        replacement: x
-        span:
-          column: 7
-          end: 32
-          line: 1
-          start: 30
       message: "unknown argument `xx` to `length`; did you mean `x`?"
       severity: warning
       span:
@@ -459,7 +394,6 @@ expression: snapshots
         line: 1
         start: 30
     - code: RY091
-      fix: ~
       message: "missing required argument `x` in call to `length`"
       severity: warning
       span:
@@ -470,7 +404,6 @@ expression: snapshots
   fixture: err_unknown_argument.R
 - diagnostics:
     - code: RY091
-      fix: ~
       message: "missing required argument `x` in call to `required`"
       severity: warning
       span:
@@ -767,7 +700,6 @@ expression: snapshots
   fixture: ok_standalone_guard_uncertain_and_collisions.R
 - diagnostics:
     - code: RY040
-      fix: ~
       message: "cannot apply arithmetic op to `double` and `character`"
       severity: error
       span:
@@ -834,7 +766,6 @@ expression: snapshots
   fixture: ok_with_unknown_object.R
 - diagnostics:
     - code: RY001
-      fix: ~
       message: "`if` condition is `character<len=1>`, expected length-1 logical"
       severity: error
       span:
@@ -845,7 +776,6 @@ expression: snapshots
   fixture: ry001_if_condition.R
 - diagnostics:
     - code: RY003
-      fix: ~
       message: "`if` condition is `integer`; R coerces nonzero to TRUE"
       severity: info
       span:
@@ -856,7 +786,6 @@ expression: snapshots
   fixture: ry001_numeric_condition.R
 - diagnostics:
     - code: RY002
-      fix: ~
       message: "`if` condition has length 2; R requires a length-1 condition"
       severity: warning
       span:
@@ -867,7 +796,6 @@ expression: snapshots
   fixture: ry002_if_length.R
 - diagnostics:
     - code: RY010
-      fix: ~
       message: "variable `undefined_thing` is not bound in this scope"
       severity: warning
       span:
@@ -878,7 +806,6 @@ expression: snapshots
   fixture: ry010_unbound.R
 - diagnostics:
     - code: RY020
-      fix: ~
       message: "cannot apply unary `-` to `raw`"
       severity: error
       span:
@@ -889,7 +816,6 @@ expression: snapshots
   fixture: ry020_raw_unary.R
 - diagnostics:
     - code: RY020
-      fix: ~
       message: "cannot apply unary `-` to `character`"
       severity: error
       span:
@@ -900,7 +826,6 @@ expression: snapshots
   fixture: ry020_unary_minus.R
 - diagnostics:
     - code: RY021
-      fix: ~
       message: "cannot apply `!` to `character`"
       severity: error
       span:
@@ -913,7 +838,6 @@ expression: snapshots
   fixture: ry030_compare.R
 - diagnostics:
     - code: RY031
-      fix: ~
       message: "logical op applied to `character` and `logical`"
       severity: error
       span:
@@ -924,13 +848,6 @@ expression: snapshots
   fixture: ry031_logical_op.R
 - diagnostics:
     - code: RY034
-      fix:
-        replacement: is.na(x)
-        span:
-          column: 0
-          end: 44
-          line: 2
-          start: 37
       message: "comparison with `NA` always produces `NA`; use `is.na()` instead"
       severity: warning
       span:
@@ -939,13 +856,6 @@ expression: snapshots
         line: 2
         start: 37
     - code: RY034
-      fix:
-        replacement: "!is.na(x)"
-        span:
-          column: 0
-          end: 58
-          line: 3
-          start: 45
       message: "comparison with `NA` always produces `NA`; use `is.na()` instead"
       severity: warning
       span:
@@ -956,7 +866,6 @@ expression: snapshots
   fixture: ry034_compare_na.R
 - diagnostics:
     - code: RY040
-      fix: ~
       message: "cannot apply arithmetic op to `character` and `integer`"
       severity: error
       span:
@@ -967,7 +876,6 @@ expression: snapshots
   fixture: ry040_arith.R
 - diagnostics:
     - code: RY040
-      fix: ~
       message: "cannot apply arithmetic op to `raw` and `raw`"
       severity: error
       span:
@@ -976,7 +884,6 @@ expression: snapshots
         line: 1
         start: 23
     - code: RY040
-      fix: ~
       message: "cannot apply arithmetic op to `raw` and `integer`"
       severity: error
       span:
@@ -987,7 +894,6 @@ expression: snapshots
   fixture: ry040_raw_arithmetic.R
 - diagnostics:
     - code: RY040
-      fix: ~
       message: "cannot apply arithmetic op to `character` and `integer`"
       severity: error
       span:
@@ -998,7 +904,6 @@ expression: snapshots
   fixture: ry040_user_fn_return.R
 - diagnostics:
     - code: RY041
-      fix: ~
       message: vector lengths 3 and 2 do not divide evenly; R will recycle with a warning
       severity: warning
       span:
@@ -1009,7 +914,6 @@ expression: snapshots
   fixture: ry041_non_divisible_recycling.R
 - diagnostics:
     - code: RY042
-      fix: ~
       message: "arithmetic on a factor produces `NA`; operate on its levels or convert it explicitly"
       severity: warning
       span:
@@ -1020,7 +924,6 @@ expression: snapshots
   fixture: ry042_factor_arithmetic.R
 - diagnostics:
     - code: RY050
-      fix: ~
       message: "S3 generic `Summary` called on value with classes [undefined] but no matching method is defined"
       severity: warning
       span:
@@ -1031,7 +934,6 @@ expression: snapshots
   fixture: ry050_missing_method.R
 - diagnostics:
     - code: RY060
-      fix: ~
       message: "column `nonexistent` not found in data frame schema; available columns: am, carb, cyl, disp, drat, ..."
       severity: error
       span:
@@ -1044,7 +946,6 @@ expression: snapshots
   fixture: ry095_ry096_real_shapes.R
 - diagnostics:
     - code: RY096
-      fix: ~
       message: "`hasArg(threshold)` names a parameter that is not a formal; it is always FALSE"
       severity: warning
       span:
@@ -1057,7 +958,6 @@ expression: snapshots
   fixture: ry098_default_forced_before_assignment.R
 - diagnostics:
     - code: RY001
-      fix: ~
       message: "`if` condition is `NULL<len=0>`, expected length-1 logical"
       severity: error
       span:
@@ -1068,7 +968,6 @@ expression: snapshots
   fixture: warn_forwarded_null_default_condition.R
 - diagnostics:
     - code: RY001
-      fix: ~
       message: "`if` condition is `NULL<len=0>`, expected length-1 logical"
       severity: error
       span:
@@ -1079,7 +978,6 @@ expression: snapshots
   fixture: warn_null_default_condition.R
 - diagnostics:
     - code: RY003
-      fix: ~
       message: "`if` condition is `double`; R coerces nonzero to TRUE"
       severity: info
       span:
@@ -1090,7 +988,6 @@ expression: snapshots
   fixture: warn_numeric_min_condition.R
 - diagnostics:
     - code: RY002
-      fix: ~
       message: "`if` condition has length 2; R requires a length-1 condition"
       severity: warning
       span:

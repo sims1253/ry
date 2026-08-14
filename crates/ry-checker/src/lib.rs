@@ -10,7 +10,6 @@
 
 #![allow(clippy::collapsible_if)]
 
-mod cache;
 mod collect;
 pub mod diagnostics;
 pub mod format;
@@ -31,11 +30,46 @@ pub use project::Project;
 // crate root for back-compat (callers and tests reference
 // `ry_checker::{Severity, Diagnostic, ...}` directly).
 pub use diagnostics::{
-    Confidence, Diagnostic, Fix, Severity, SeverityFilter, Suppression,
-    apply_filter_to_diagnostics, filter_default_disabled, filter_suppressed,
-    filter_suppressed_with_comments, has_file_suppression, has_file_suppression_from_comments,
-    is_suppressed, parse_suppressions, parse_suppressions_from_comments,
+    Confidence, Diagnostic, Severity, SeverityFilter, Suppression, apply_filter_to_diagnostics,
+    filter_default_disabled, filter_suppressed, filter_suppressed_with_comments,
+    has_file_suppression, has_file_suppression_from_comments, is_suppressed, parse_suppressions,
+    parse_suppressions_from_comments,
 };
+
+// P38-W3: Configuration-driven filter builders moved here from ry-config
+// to break the ry-config → ry-checker dependency.
+
+/// Build a [`SeverityFilter`] from the `error`, `warn`, and `ignore`
+/// rule lists in a config.
+pub fn build_filter(error: &[String], warn: &[String], ignore: &[String]) -> SeverityFilter {
+    let mut f = SeverityFilter::default();
+    for e in error {
+        f.add_error(e);
+    }
+    for w in warn {
+        f.add_warn(w);
+    }
+    for i in ignore {
+        f.add_ignore(i);
+    }
+    f
+}
+
+/// Convenience: build a [`SeverityFilter`] directly from a
+/// config's `error`, `warn`, `ignore`, `select`, and `extend_select` fields.
+pub fn filter_from_config(cfg: &ry_config::Config) -> SeverityFilter {
+    let mut filter = build_filter(&cfg.error, &cfg.warn, &cfg.ignore);
+    if let Some(select) = &cfg.select {
+        filter.begin_selection();
+        for rule in select {
+            filter.add_select(rule);
+        }
+    }
+    for rule in &cfg.extend_select {
+        filter.add_extend_select(rule);
+    }
+    filter
+}
 
 use crate::infer::semantic_argument_name;
 use ry_core::Span;
@@ -50,11 +84,6 @@ use ry_typeshed::{
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
-
-/// Metadata marker for a serialized workspace too large to enumerate safely.
-/// This is deliberately not an R identifier; package metadata passes it through
-/// the ordinary external-bindings channel so pass 3 can open the file scope.
-pub const SERIALIZED_BINDINGS_UNENUMERABLE: &str = "\0serialized:unenumerable";
 
 fn string_literals(expr: &Expr) -> Vec<String> {
     match expr {
@@ -583,7 +612,8 @@ pub struct Checker {
     pub(crate) diagnostics: Vec<Diagnostic>,
     pub(crate) path: String,
     /// Source text corresponding to `path`, set at every production check seam.
-    /// Structured fixes slice this exact text by parser spans.
+    /// Messages that quote source spelling slice this exact text by parser
+    /// spans.
     pub(crate) source: String,
     // When true, `emit` is a no-op. Set during pass-2 (fixpoint) return-
     // type refinement and closure-signature building so the single
@@ -1172,7 +1202,7 @@ impl Checker {
         let mut scope = Scope::default();
         if self
             .external_bindings
-            .contains(SERIALIZED_BINDINGS_UNENUMERABLE)
+            .contains(ry_core::SERIALIZED_BINDINGS_UNENUMERABLE)
         {
             scope.mark_search_path_unknown();
         }
@@ -1248,7 +1278,8 @@ impl Checker {
 
     // Seed opaque bindings established by metadata for this source file.
     pub fn set_external_bindings(&mut self, bindings: HashSet<String>) {
-        self.native_registration = bindings.contains(crate::packages::NATIVE_REGISTRATION_SENTINEL);
+        self.native_registration =
+            bindings.contains(ry_workspace::packages::NATIVE_REGISTRATION_SENTINEL);
         self.external_bindings = bindings;
     }
 

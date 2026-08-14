@@ -1,11 +1,16 @@
 id = "ry"
 name = "ry"
 description = "Static type checker for R"
-version = "0.1.0"
+version = "0.9.0"
 schema_version = 1
 authors = ["Maximilian Scholz"]
 repository = "https://github.com/sims1253/ry"
 
+# The extension downloads the ry server from GitHub releases over HTTPS.
+# Downloads are NOT yet integrity-checked against a published digest; see
+# issue #80.
+# Minimum compatible server version: 0.8.0 (the first release with
+# the `server` subcommand and LSP support).
 [language_servers.ry]
 name = "ry"
 languages = ["R"]

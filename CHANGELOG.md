@@ -4,6 +4,48 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Plan 37: Release truth and editor hardening
+
+#### P37-W1: Parser UTF-8 boundary panic fix
+- Fixed panic in `lower_namespace` when string RHS last byte is inside a
+  multi-byte character. Extracted shared `strip_quotes_at_boundaries` helper.
+
+#### P37-W2: VS Code split-brain binary resolution
+- Deleted `resolveBinary()` from `server.ts`. Server now uses the
+  pre-resolved binary path from `extension.ts`/`findRyBinaryPath()`.
+- Untrusted workspaces can no longer execute arbitrary binaries via
+  checked-in `ry.path` settings.
+
+#### P37-W3: CI workflow integrity and publisher consistency
+- Replaced empty `build-vscode.yml` with required PR workflow.
+- Fixed `release-vscode.yml` duplicate `needs: version` key.
+- Added explicit version and core-tag inputs to release workflow.
+- Resolved publisher identity to `sims1253.ry` across all surfaces.
+
+#### P37-W4: Zed extension integrity
+- Added settings validation (minConfidence must be low/medium/high).
+- Added pure-Rust SHA-256 implementation for WASM compatibility. Downloaded
+  binaries are not yet verified against a published digest; releases publish
+  checksums for the archive, not the extracted executable (issue #80).
+
+#### P37-W5: Ledger classification reconciliation
+- Fixed off-by-one in `posit-0.9.0.json` summary (729 → 728).
+- Added `ecosystem/check-ledger.py` validation script.
+
+#### P37-W6: Filter precomputation (P36-W6 completion)
+- Precomputed severity filter, min_confidence, and excludes once per
+  `FolderAnalysisContext` instead of per-file in the publish loop.
+- Un-ignored and fixed the P36-W6 test with construction-count assertion.
+
+#### P37-W7: Editor defaults, clean-checkout, valid generator
+- Documented evidence-backed editor-safe defaults in `docs/editor-defaults.md`.
+- Added clean-checkout CI gate to ecosystem.yml.
+- Fixed LSP session generator to produce valid operations (#65).
+
+#### P37-W8: Version alignment and runbook
+- Created `docs/release-runbook.md` covering binary, VS Code, and Zed releases.
+
+
 ### Added — LSP state-machine property (P36-W8)
 
 - **Complete session convergence property**: after every quiescent LSP
@@ -71,6 +113,39 @@ All notable changes to ry are documented in this file.
 
 ### Changed
 
+- **Suggested fixes removed from published diagnostics**: the `fix` payload is
+  gone from `ry check --output-format json` and from the `data` field of
+  published LSP diagnostics, along with the internal `Fix` machinery that
+  produced it. Nothing ever applied these edits — there is no `ry check
+  --fix`, and the language server's quick-fix actions only insert
+  suppression comments — and a replacement that is correct in isolation can
+  be wrong under R's non-standard evaluation, so applying source rewrites is
+  a separate concern from type checking (see the README's stance on
+  formatting). Diagnostics are otherwise unchanged: codes, spans, messages,
+  severities, and confidences are identical, and no shipped release ever
+  contained the `fix` field. Where autofix should live is tracked in #89.
+- **LSP no longer advertises `textDocument/rename`**: the server has dropped
+  the `textDocument/rename` and `textDocument/prepareRename` capabilities and
+  their handlers. Rename matched identifiers purely by spelling with no
+  binding or scope resolution, which is unsafe in R (NSE, `assign()`/`get()`,
+  S3 dispatch by naming convention, `$` on lists/environments, formulas, and
+  `library()` masking all break spelling-based rename). It will return once
+  real cross-file symbol resolution lands.
+- **LSP no longer advertises `textDocument/foldingRange` and
+  `textDocument/selectionRange`**: the server has dropped both capabilities
+  and their handlers. They used no type information — every tree-sitter-based
+  R editor integration already provides folding and expand/shrink selection
+  from the grammar — so they duplicated editor-native behaviour outside the
+  server's scope of publishing the diagnostics `ry check` produces.
+- **LSP interactive features now operate on open documents only**: hover,
+  completion, signature help, go-to-definition, and references no longer
+  consult the background indexer's on-disk file snapshot. The cross-file
+  variants were added in Plan 38 (W6/W7) but every one shipped passing `""`
+  as the source text, so their ranges collapsed to 0:0 and none worked
+  correctly on the day they landed. The server's scope is the diagnostics
+  that `ry check` produces; growing it into a cross-file IDE feature set is
+  a separate, explicitly deferred decision. `textDocument/rename` was
+  removed for the same reason.
 - Measured the pinned 62-package Posit corpus before rule governance begins.
   This is the pre-governance Plan 34 baseline, not the final 0.9 rule set.
 - Extracted `Config`, `Baseline`, and diagnostic-filter types into a

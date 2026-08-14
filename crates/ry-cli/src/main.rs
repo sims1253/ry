@@ -537,7 +537,7 @@ fn run_check(
         )
     })?;
     let color = color.enabled(format);
-    let filter = config::filter_from_config(&cfg);
+    let filter = ry_checker::filter_from_config(&cfg);
     let user_stubs = load_user_stubs(&cfg.typeshed);
 
     // Collect the initial file set via the shared bounded discovery
@@ -914,20 +914,28 @@ fn run_check_once(
             },
         )
         .map_err(|error| miette::miette!(error))?;
-        let mut project = ry_checker::Project::new();
+        let mut analysis_files = Vec::new();
         for index in indices {
             let (_, path, _, file) = &parsed[*index];
-            project.add_file(path.clone(), file.clone());
+            analysis_files.push((path.clone(), 0, std::sync::Arc::new(file.clone())));
             comments.insert(path.clone(), file.comments.clone());
         }
-        project.set_loaded(package_scope.attached_packages);
-        project.set_bare_loaded(package_scope.bare_bindings);
-        project.set_user_stubs(Arc::clone(&user_stubs));
-        project.set_external_bindings(package_scope.external_bindings);
-        project.set_imported_from(package_scope.imported_bindings);
-        project.set_external_s3_methods(package_scope.s3_methods);
-        project.set_load_bindings(package_scope.load_bindings);
-        per_file_diagnostics.extend(project.check());
+        let check_input = ry_analysis::CheckInput {
+            files: analysis_files,
+            user_stubs: Arc::clone(&user_stubs),
+            workspace: Some(ry_workspace::WorkspaceContext {
+                attached_packages: package_scope.attached_packages,
+                bare_bindings: package_scope.bare_bindings,
+                external_bindings: package_scope.external_bindings,
+                imported_bindings: package_scope.imported_bindings,
+                s3_methods: package_scope.s3_methods,
+                load_bindings: package_scope.load_bindings,
+                native_registrations: package_scope.native_registrations,
+                degraded_scopes: Vec::new(),
+            }),
+        };
+        let check_output = ry_analysis::check_project(check_input);
+        per_file_diagnostics.extend(check_output.diagnostics);
         for (path, reason) in package_scope.degraded_scopes {
             degraded.insert(format!("{} ({})", path.display(), reason));
         }

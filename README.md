@@ -289,8 +289,12 @@ removed by regenerating the baseline.
 
 `ry server` speaks the Language Server Protocol over stdio: diagnostics
 as you type (debounced, cached parses), hover with inferred types,
-go-to-definition, references, rename, completion, signature help, inlay
-hints, folding, and quick-fix actions that insert suppression comments.
+go-to-definition, references, completion, signature help, inlay
+hints, and quick-fix actions that insert suppression comments.
+
+Diagnostics cover the whole project, exactly as `ry check` does. The
+interactive features above are scoped to **open documents** — they do not
+search unopened files on disk.
 
 ### VS Code / Positron
 

@@ -13,6 +13,7 @@ ry-checker = { path = "../ry-checker" }
 ry-typeshed = { path = "../ry-typeshed" }
 ry-config = { path = "../ry-config" }
 ry-workspace = { path = "../ry-workspace" }
+ry-analysis = { path = "../ry-analysis" }
 tower-lsp = "0.20"
 tokio = { workspace = true, features = ["rt", "io-std", "sync", "time"] }
 tracing = { workspace = true }

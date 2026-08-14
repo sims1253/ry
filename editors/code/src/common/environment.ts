@@ -15,33 +15,38 @@ import { Logger } from "./logger";
 // extension activation context. It will be wired up when the extension
 // is first tested in a real editor host.
 export class PathEnvironmentVariableManager {
-    constructor(
-        private readonly logger: Logger,
-        private readonly pathToAdd: string,
-    ) {}
+  constructor(
+    private readonly logger: Logger,
+    private readonly pathToAdd: string,
+  ) {}
 
-    async ensureOnPath(collection?: vscode.GlobalEnvironmentVariableCollection): Promise<void> {
-        if (!collection) {
-            this.logger.debug("No environment variable collection available; skipping PATH update");
-            return;
-        }
-
-        const currentPath = collection.get("PATH")?.value ?? process.env.PATH ?? "";
-        if (currentPath.includes(this.pathToAdd)) {
-            this.logger.debug(`${this.pathToAdd} is already on PATH`);
-            return;
-        }
-
-        const newPath = `${this.pathToAdd}${process.platform === "win32" ? ";" : ":"}${currentPath}`;
-        collection.prepend(
-            "PATH",
-            newPath,
-            { applyAtShellIntegration: true, applyAtProcessCreation: false },
-        );
-        this.logger.info(`Prepended ${this.pathToAdd} to terminal PATH`);
+  async ensureOnPath(
+    collection?: vscode.GlobalEnvironmentVariableCollection,
+  ): Promise<void> {
+    if (!collection) {
+      this.logger.debug(
+        "No environment variable collection available; skipping PATH update",
+      );
+      return;
     }
 
-    async dispose(collection?: vscode.GlobalEnvironmentVariableCollection): Promise<void> {
-        collection?.delete("PATH");
+    const currentPath = collection.get("PATH")?.value ?? process.env.PATH ?? "";
+    if (currentPath.includes(this.pathToAdd)) {
+      this.logger.debug(`${this.pathToAdd} is already on PATH`);
+      return;
     }
+
+    const newPath = `${this.pathToAdd}${process.platform === "win32" ? ";" : ":"}${currentPath}`;
+    collection.prepend("PATH", newPath, {
+      applyAtShellIntegration: true,
+      applyAtProcessCreation: false,
+    });
+    this.logger.info(`Prepended ${this.pathToAdd} to terminal PATH`);
+  }
+
+  async dispose(
+    collection?: vscode.GlobalEnvironmentVariableCollection,
+  ): Promise<void> {
+    collection?.delete("PATH");
+  }
 }

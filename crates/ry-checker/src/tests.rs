@@ -11,9 +11,18 @@ fn check(src: &str) -> Vec<Diagnostic> {
 
 #[test]
 fn confidence_defaults_follow_rule_precision_and_info_severity() {
-    assert_eq!(Confidence::default_for("RY096"), Confidence::High);
-    assert_eq!(Confidence::default_for("RY010"), Confidence::Medium);
-    assert_eq!(Confidence::default_for("RY097"), Confidence::Low);
+    assert_eq!(
+        crate::diagnostics::default_confidence_for("RY096"),
+        Confidence::High
+    );
+    assert_eq!(
+        crate::diagnostics::default_confidence_for("RY010"),
+        Confidence::Medium
+    );
+    assert_eq!(
+        crate::diagnostics::default_confidence_for("RY097"),
+        Confidence::Low
+    );
     let info = Diagnostic::new(
         Severity::Info,
         Span::new(0, 1, 0, 0),
@@ -2117,7 +2126,6 @@ fn is_suppressed_matches_line_and_code() {
         code: "RY010",
         message: "test".into(),
         confidence: Confidence::Medium,
-        fix: None,
     };
     let diag_wrong_line = Diagnostic {
         span: Span {
@@ -2153,7 +2161,6 @@ fn is_suppressed_empty_rules_matches_any_code() {
         code: "RY999",
         message: "test".into(),
         confidence: Confidence::Medium,
-        fix: None,
     };
     assert!(is_suppressed(&diag, &supps));
 }
@@ -3916,7 +3923,7 @@ fn call_with_cleanup_symbol_needs_declared_registration() {
     let file = parser.parse("test.R", src).unwrap();
     let mut checker = Checker::new("test.R");
     checker.set_external_bindings(HashSet::from([
-        crate::packages::NATIVE_REGISTRATION_SENTINEL.to_string(),
+        ry_workspace::packages::NATIVE_REGISTRATION_SENTINEL.to_string(),
         "call_with_cleanup".to_string(),
     ]));
     checker.check(&file);
@@ -3955,7 +3962,7 @@ fn call_with_cleanup_still_checks_non_symbol_arguments() {
         .unwrap();
     let mut checker = Checker::new("test.R");
     checker.set_external_bindings(HashSet::from([
-        crate::packages::NATIVE_REGISTRATION_SENTINEL.to_string(),
+        ry_workspace::packages::NATIVE_REGISTRATION_SENTINEL.to_string(),
         "call_with_cleanup".to_string(),
     ]));
     checker.check(&file);
@@ -6929,9 +6936,9 @@ fn external_unenumerable_marker_suppresses_ry010_for_its_file() {
     let mut p = RParser::new().unwrap();
     let f = p.parse("test.R", "x <- genuinely_unbound_name\n").unwrap();
     let mut c = Checker::new("test.R");
-    c.set_external_bindings(HashSet::from(
-        [SERIALIZED_BINDINGS_UNENUMERABLE.to_string()],
-    ));
+    c.set_external_bindings(HashSet::from([
+        ry_core::SERIALIZED_BINDINGS_UNENUMERABLE.to_string()
+    ]));
     c.check(&f);
     let diags = c.take_diagnostics();
     assert!(

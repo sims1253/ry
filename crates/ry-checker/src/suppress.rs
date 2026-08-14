@@ -437,28 +437,6 @@ impl Checker {
         code: &'static str,
         msg: impl Into<String>,
     ) {
-        self.emit_optional_fix(severity, span, code, msg, None);
-    }
-
-    pub(crate) fn emit_with_fix(
-        &mut self,
-        severity: Severity,
-        span: Span,
-        code: &'static str,
-        msg: impl Into<String>,
-        fix: Fix,
-    ) {
-        self.emit_optional_fix(severity, span, code, msg, Some(fix));
-    }
-
-    fn emit_optional_fix(
-        &mut self,
-        severity: Severity,
-        span: Span,
-        code: &'static str,
-        msg: impl Into<String>,
-        fix: Option<Fix>,
-    ) {
         if self.discarding {
             // Pass 2 (fixpoint) and closure-signature building run the
             // single inference engine in "discarding" mode: types are
@@ -467,35 +445,16 @@ impl Checker {
             // against the refined FnTable).
             return;
         }
-        let mut diagnostic = Diagnostic::new(severity, span, &self.path, code, msg);
-        diagnostic.fix = fix;
+        let diagnostic = Diagnostic::new(severity, span, &self.path, code, msg);
         self.diagnostics.push(diagnostic);
     }
 
-    /// Slice the exact parser input. Fix producers use AST spans and this
-    /// source seam; they never recover replacement text from a diagnostic
-    /// message or attempt to pretty-print an AST.
+    /// Slice the exact parser input. Messages that quote source spelling
+    /// (e.g. RY102's `"name" = ...` hint) use AST spans and this source
+    /// seam; they never recover text from a diagnostic message field or
+    /// attempt to pretty-print an AST.
     pub(crate) fn source_text(&self, span: Span) -> Option<&str> {
         self.source.get(span.start..span.end)
-    }
-
-    pub(crate) fn source_span(&self, start: usize, end: usize) -> Option<Span> {
-        if start > end || !self.source.is_char_boundary(start) || !self.source.is_char_boundary(end)
-        {
-            return None;
-        }
-        let prefix = self.source.get(..start)?;
-        let line = prefix.bytes().filter(|byte| *byte == b'\n').count();
-        let line_start = prefix.rfind('\n').map_or(0, |offset| offset + 1);
-        Some(Span::new(start, end, line, start - line_start))
-    }
-
-    pub(crate) fn fix(&self, span: Span, replacement: impl Into<String>) -> Option<Fix> {
-        self.source_text(span)?;
-        Some(Fix {
-            span,
-            replacement: replacement.into(),
-        })
     }
 
     // Surface parse errors collected by `RParser` as `RY000`

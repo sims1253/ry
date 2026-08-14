@@ -2,8 +2,8 @@
 //!
 //! `find_ident_at_offset` walks the whole AST to resolve the innermost
 //! `Expr::Ident` whose span contains a byte offset, used by hover,
-//! go-to-definition, references, rename, prepare-rename, and document
-//! highlights. Keywords and numeric literals are filtered out.
+//! go-to-definition, references, and document highlights. Keywords and
+//! numeric literals are filtered out.
 
 use ry_core::{Expr, SourceFile, Span, Stmt};
 
@@ -152,26 +152,6 @@ fn find_ident_in_expr(e: &Expr, offset: usize, best: &mut Option<(String, Span)>
     }
 }
 
-/// True when `name` is a syntactically valid, unquoted R identifier.
-/// Backtick-quoted names are intentionally excluded because rename inserts
-/// the supplied text directly without adding quotes.
-pub(super) fn is_valid_identifier(name: &str) -> bool {
-    let mut chars = name.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    if !(first.is_alphabetic() || first == '.') {
-        return false;
-    }
-    if first == '.' && chars.clone().next().is_some_and(char::is_numeric) {
-        return false;
-    }
-    if !chars.all(|ch| ch.is_alphanumeric() || ch == '_' || ch == '.') {
-        return false;
-    }
-    !is_reserved_word(name)
-}
-
 fn is_reserved_word(name: &str) -> bool {
     matches!(
         name,
@@ -197,26 +177,11 @@ fn is_reserved_word(name: &str) -> bool {
     )
 }
 
-/// True if `name` is a pure number or an R reserved word -- rename/hover/
-/// go-to-def ignore keywords and numeric literals.
+/// True if `name` is a pure number or an R reserved word -- hover/go-to-def
+/// ignore keywords and numeric literals.
 pub(super) fn is_numeric_or_keyword(name: &str) -> bool {
     if name.parse::<f64>().is_ok() {
         return true;
     }
     is_reserved_word(name) || matches!(name, "T" | "F" | "library" | "require")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::is_valid_identifier;
-
-    #[test]
-    fn validates_unquoted_r_identifiers() {
-        for valid in ["name", ".name", "snake_case", "café", "x2"] {
-            assert!(is_valid_identifier(valid), "expected valid: {valid}");
-        }
-        for invalid in ["", "2name", ".2name", "has space", "if", "TRUE", "a-b"] {
-            assert!(!is_valid_identifier(invalid), "expected invalid: {invalid}");
-        }
-    }
 }

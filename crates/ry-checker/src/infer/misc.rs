@@ -33,7 +33,7 @@ pub(crate) fn equality_list_leaf_type(op: BinOpKind, value: &RType) -> Option<RT
 }
 
 pub(crate) fn is_ffi_primitive(name: &str) -> bool {
-    crate::packages::FFI_PRIMITIVES.contains(&name)
+    ry_core::FFI_PRIMITIVES.contains(&name)
 }
 
 #[cfg(test)]
@@ -49,7 +49,7 @@ mod ffi_primitives_tests {
     /// first argument is a *call*) must not be in the list.
     #[test]
     fn every_ffi_primitive_is_recognized() {
-        for &primitive in crate::packages::FFI_PRIMITIVES {
+        for &primitive in ry_core::FFI_PRIMITIVES {
             assert!(
                 is_ffi_primitive(primitive),
                 "`{primitive}` is in FFI_PRIMITIVES but is_ffi_primitive returned false"
@@ -1481,22 +1481,7 @@ impl Checker {
                 .map(|name| format!("; did you mean `{name}`?"))
                 .unwrap_or_default();
             let message = format!("unknown argument `{argument_name}` to `{function_name}`{hint}");
-            let fix = suggestion.and_then(|name| {
-                let name_span = Span::new(
-                    argument.span.start,
-                    argument.span.start + argument_name.len(),
-                    argument.span.line,
-                    argument.span.col,
-                );
-                self.source_text(name_span)
-                    .filter(|source_name| *source_name == argument_name)
-                    .and_then(|_| self.fix(name_span, name.to_string()))
-            });
-            if let Some(fix) = fix {
-                self.emit_with_fix(Severity::Warning, argument.span, "RY090", message, fix);
-            } else {
-                self.emit(Severity::Warning, argument.span, "RY090", message);
-            }
+            self.emit(Severity::Warning, argument.span, "RY090", message);
         }
     }
 

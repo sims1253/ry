@@ -1,15 +1,12 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "types": [
-      "node",
-      "vscode",
-      "mocha",
-      "chai"
-    ]
+    "types": ["node", "vscode", "mocha", "chai"]
   },
-  "include": [
-    "src/test/**/*"
-  ],
-  "exclude": []
+  "include": ["src/test/**/*"],
+  // binary.test.ts is a Bun unit test (`bun test src/test/binary.test.ts`).
+  // It imports `bun:test`, which resolves neither here nor in the VS Code
+  // Extension Host, so it must not be compiled into the Mocha suite that
+  // .vscode-test.js runs from out/test/**/*.test.js.
+  "exclude": ["src/test/binary.test.ts"]
 }

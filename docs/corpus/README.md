@@ -11,7 +11,7 @@ removing one finding can never be silently mistaken for removing another.
 | [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.7.1 | 24 | 100 | 4 / 96 / 0 | hermetic (strict CI gate) |
 | [`posit-0.8.0.json`](posit-0.8.0.json) | 0.8.0 | 62 | 1142 | 34 / 1108 / 0 | audit-transcript (historical) |
 | [`posit-plan34-baseline.json`](posit-plan34-baseline.json) | pre-0.9 | 62 | 729 | 37 / 692 / 0 | hermetic (measured starting tree) |
-| [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 729 | 37 / 692 / 0 | hermetic (strict CI gate) |
+| [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 728 | 37 / 691 / 0 | hermetic (strict CI gate) |
 
 
 ## Parser invariant evidence
@@ -21,10 +21,12 @@ P35-W4 audit of parser `?`, `.ok()?`, and `None` propagation. Its executable R1
 and R6 gates live in `crates/ry-checker/tests/invariants.rs` and cover all
 checker fixtures plus a deterministic sample of the vendored ecosystem sources.
 
-## Readable message and fix ledger
+## Readable message ledger
 
-[`posit-messages-0.9.json`](posit-messages-0.9.json) records the message,
-severity, and optional structured fix for all 729 reviewed Posit diagnostics.
+[`posit-messages-0.9.json`](posit-messages-0.9.json) records the message and
+severity for all 728 reviewed Posit diagnostics. It previously also carried an
+optional structured fix; the autofix machinery was removed before 0.9.0 (see
+issue #89), so those payloads are gone.
 Each entry is keyed by the same stable `(package, code, path, line, column)`
 identity as `posit-0.9.0.json`; it is intentionally readable JSON rather than a
 digest or an ignored `.full.txt` report.

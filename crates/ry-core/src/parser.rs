@@ -688,10 +688,12 @@ impl RParser {
         };
         // For identifier RHS the raw text is the bare name. For a string
         // RHS (e.g. `pkg::"my func"`, used for non-syntactic names) we
-        // strip the surrounding quotes, mirroring `lower_expr`'s string
-        // handling.
-        let name = if rhs.kind() == "string" && raw.len() >= 2 {
-            raw[1..raw.len() - 1].to_string()
+        // strip the surrounding quotes.  Use the shared boundary-safe
+        // helper (P37-W1): `raw.len() - 1` need not be a char boundary
+        // when the string token is malformed/truncated, which would
+        // panic on the naive slice `raw[1..raw.len() - 1]`.
+        let name = if rhs.kind() == "string" {
+            strip_quotes_at_boundaries(&raw).to_string()
         } else {
             raw
         };
@@ -754,22 +756,39 @@ fn unquote_r_string(raw: &str) -> String {
     }
     // The text should be surrounded by quotes, but a malformed or
     // unterminated literal (discovered by fuzzing: input `n"ÿ`) can
-    // leave the last byte inside a multi-byte character. Slice only to
-    // the final char boundary before the nominal end so the operation
-    // never panics on a non-boundary.
-    let end = raw.len() - 1;
-    let end = if end > 0 && raw.is_char_boundary(end) {
-        end
-    } else {
-        // Walk back to the nearest char boundary before `end`.
-        let mut boundary = end;
-        while boundary > 1 && !raw.is_char_boundary(boundary) {
-            boundary -= 1;
-        }
-        boundary
-    };
-    let inner = &raw[1..end];
+    // leave the last byte inside a multi-byte character. Use the shared
+    // boundary-safe helper so the operation never panics.
+    let inner = strip_quotes_at_boundaries(raw);
     process_r_escapes(inner)
+}
+
+/// Strip the leading and trailing quote bytes from `raw`, walking back
+/// to the nearest char boundary at each end so the slice never panics
+/// when the token is malformed or truncated (e.g. a fuzz input like
+/// `"backslash-n + multibyte char` where the trailing byte is inside
+/// a multi-byte character).
+///
+/// Both `lower_namespace` and `unquote_r_string` call this helper so the
+/// two string-stripping call sites share one boundary-safe code path
+/// (P37-W1).  Escape processing is NOT performed here; callers that need
+/// R escape handling apply it to the returned slice.
+fn strip_quotes_at_boundaries(raw: &str) -> &str {
+    if raw.len() < 2 {
+        return raw;
+    }
+    // Start: byte 1 (the byte after the opening quote).  The opening
+    // quote is always a single ASCII byte, so byte 1 is a char boundary.
+    let start = 1;
+    // End: walk back from `raw.len() - 1` to the nearest preceding char
+    // boundary, mirroring the original fuzz-discovered fix.
+    let mut end = raw.len() - 1;
+    while end > start && !raw.is_char_boundary(end) {
+        end -= 1;
+    }
+    if end < start {
+        return "";
+    }
+    &raw[start..end]
 }
 
 /// Strip the delimiters of a raw string whose body starts after the

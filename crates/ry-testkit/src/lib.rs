@@ -13,7 +13,7 @@ pub use fixture::FixtureProject;
 pub use json_rpc::{AsyncJsonRpcClient, JsonRpcProcess};
 pub use lsp_session::{LspSession, file_uri};
 pub use observed::{
-    Driver, DriverError, ObservedDiagnostic, ObservedFix, ObservedPosition, ObservedRange,
-    PositionEncoding, normalize_path, normalize_position,
+    Driver, DriverError, ObservedDiagnostic, ObservedPosition, ObservedRange, PositionEncoding,
+    normalize_path, normalize_position,
 };
 pub use process::CliProcess;

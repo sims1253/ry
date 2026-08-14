@@ -51,6 +51,57 @@ where
         Ok(result)
     }
 
+    /// Initialize the server with a custom client-capabilities object, then
+    /// send `initialized`. Used by tests that must advertise a capability
+    /// the default [`initialize`](Self::initialize) does not (e.g.
+    /// `workspace.configuration` pull).
+    pub async fn initialize_with_capabilities(
+        &mut self,
+        root: &Path,
+        capabilities: Value,
+    ) -> io::Result<Value> {
+        let root_uri = file_uri(root)?;
+        let result = self
+            .request(
+                "initialize",
+                json!({
+                    "processId": null,
+                    "rootUri": root_uri,
+                    "capabilities": capabilities,
+                    "workspaceFolders": [{"uri": root_uri, "name": "fixture"}]
+                }),
+            )
+            .await?;
+        self.notify("initialized", json!({})).await?;
+        Ok(result)
+    }
+
+    /// Await a server-initiated request (one carrying both `id` and
+    /// `method`) matching `method`, then reply with `result`.
+    ///
+    /// Server-initiated requests such as `workspace/configuration` arrive
+    /// while the client is driving the session — e.g. during `initialized`
+    /// or after a `workspace/didChangeConfiguration` notification on a pull
+    /// client. This lets a test answer them with a scripted response so the
+    /// server unblocks and proceeds (without it, a pull-config server stalls
+    /// in the handler awaiting the reply).
+    pub async fn respond_to_request(&mut self, method: &str, result: Value) -> io::Result<()> {
+        let request = self
+            .receive_matching(0, |message| {
+                message.get("method").and_then(Value::as_str) == Some(method)
+                    && message.get("id").is_some()
+            })
+            .await?;
+        let id = request.get("id").cloned().unwrap_or(Value::Null);
+        self.client
+            .send(&json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": result,
+            }))
+            .await
+    }
+
     pub async fn request(&mut self, method: &str, params: Value) -> io::Result<Value> {
         let id = self.client.request(method, params).await?;
         self.response(method, id).await

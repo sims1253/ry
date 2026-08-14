@@ -9,7 +9,6 @@ publish = false
 
 [dependencies]
 ry-core = { path = "../ry-core" }
-ry-checker = { path = "../ry-checker" }
 ry-typeshed = { path = "../ry-typeshed" }
 ry-config = { path = "../ry-config" }
 thiserror = { workspace = true }

@@ -8,23 +8,28 @@
 //!   * `textDocument/didChange` (incremental edits re-check and republish)
 //!   * `textDocument/didClose` (clears diagnostics)
 //!   * Document diagnostics via `textDocument/publishDiagnostics`
-//!   * `textDocument/hover` (type at cursor)
-//!   * `textDocument/definition` (go-to-definition for variables/functions)
+//!   * `textDocument/hover` (inferred type at cursor)
+//!   * `textDocument/definition` (go-to-definition, scoped to open documents)
 //!   * `textDocument/references` (find all usages of a symbol across open files)
 //!   * `textDocument/documentSymbol` (outline view of the file's bindings)
 //!   * `workspace/symbol` (search for symbols across all open files)
-//!   * `textDocument/rename` (workspace-wide rename of a variable / function)
-//!   * `textDocument/prepareRename` (validates the cursor is on a renameable identifier)
 //!   * `textDocument/completion`, `signatureHelp`, `inlayHint`,
-//!     `foldingRange`, `codeAction`, `selectionRange`, `documentHighlight`
+//!     `codeAction`, `documentHighlight`
 //!   * Graceful shutdown via `shutdown` / `exit`
+//!
+//! The interactive requests (`hover`, `definition`, `references`,
+//! `completion`, `signatureHelp`) are scoped to **open documents**. Some of
+//! them (`definition`, `references`) do span several open documents, but none
+//! consults an unopened file on disk. The server's purpose is the diagnostics
+//! `ry check` produces; whole-workspace navigation over unopened files was
+//! removed because it resolved symbols by spelling rather than by binding.
 //!
 //! Architecture: this file is intentionally small --
 //! module declarations + the `run()` entry point. All request-handler
 //! logic lives in [`backend`] (`Backend`, `State`, the
 //! `LanguageServer` impl, and the parse/scope/debounce caches); the
 //! per-feature helpers live in their own modules (`navigation`,
-//! `symbols`, `hints`, `folding`, `selection`, `diagnostics`, `ident`).
+//! `symbols`, `hints`, `diagnostics`, `ident`).
 //!
 //! CRITICAL INVARIANT: the LSP protocol uses stdout for JSON-RPC framing.
 //! Any tracing or log output that lands on stdout will corrupt the stream
@@ -136,12 +141,10 @@ pub mod test_seam {
 
 mod backend;
 mod diagnostics;
-mod folding;
 mod hints;
 mod ident;
 mod index;
 mod navigation;
-mod selection;
 mod settings;
 mod symbols;
 mod util;
@@ -176,13 +179,71 @@ where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin,
 {
+    // Delegates to `run_with_counters` and discards the handle, so production
+    // and the counter-observing tests construct the server through exactly one
+    // code path. Duplicating the `LspService::build` call here would let the
+    // two drift, and the drift would be invisible: the tests would keep
+    // passing while exercising a server the CLI never runs.
+    let (server, _counters) = run_with_counters(reader, writer);
+    server.await;
+    Ok(())
+}
+
+/// P37-W6 (#46): Test-only handle to a single server's filter-compile
+/// counters, returned by [`run_with_counters`]. Because the counters live in
+/// per-server [`State`] (not process globals), each spawned server observes
+/// only its own compilations, so parallel integration tests never trip each
+/// other's "zero compiles during publish" assertion.
+pub struct ServerCounters {
+    compile_during_last_publish: Arc<std::sync::atomic::AtomicU64>,
+    filter_compile_count: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl ServerCounters {
+    /// Compile-count delta observed during this server's most recent
+    /// `publish_diagnostics` cycle. Must be zero once filters are
+    /// precomputed and borrowed in the publish loop.
+    pub fn compile_during_last_publish(&self) -> u64 {
+        self.compile_during_last_publish
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Total filter/glob compilations this server has performed. Exposed for
+    /// symmetry; the publish-window assertion uses
+    /// [`compile_during_last_publish`](Self::compile_during_last_publish).
+    pub fn filter_compile_count(&self) -> u64 {
+        self.filter_compile_count
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+/// Test-only: like [`run_with`], but also returns a handle to this server's
+/// counters so assertions are scoped to one instance rather than the process.
+/// The returned future drives the server (spawn it as you would `run_with`);
+/// the [`ServerCounters`] handle shares the same per-server `Arc`s, so reads
+/// after the server quiesces see exactly what the server stored.
+pub fn run_with_counters<I, O>(
+    read: I,
+    write: O,
+) -> (impl std::future::Future<Output = ()>, ServerCounters)
+where
+    I: tokio::io::AsyncRead + Unpin,
+    O: tokio::io::AsyncWrite + Unpin,
+{
+    let state = State::default();
+    let counters = ServerCounters {
+        compile_during_last_publish: Arc::clone(&state.compile_during_last_publish),
+        filter_compile_count: Arc::clone(&state.filter_compile_count),
+    };
     let (service, socket) = LspService::build(|client| Backend {
         client,
-        state: Arc::new(Mutex::new(State::default())),
+        state: Arc::new(Mutex::new(state)),
     })
     .finish();
-    Server::new(reader, writer, socket).serve(service).await;
-    Ok(())
+    let fut = async move {
+        Server::new(read, write, socket).serve(service).await;
+    };
+    (fut, counters)
 }
 
 #[cfg(test)]

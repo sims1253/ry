@@ -30,6 +30,10 @@ The LSP handler migration (routing every feature through `AnalysisSnapshot`)
 remains future work. The foundation is in place.
 
 ## Gates
-- 963 workspace tests pass (1 pre-existing convergence failure)
+- 963 workspace tests pass. The one convergence failure recorded here as a
+  known baseline was later diagnosed as a race in the w10 test harness
+  (the close's clearing publication matched as the reopened document's
+  publication), not a checker defect; it is fixed and regression-gated —
+  see #81.
 - 0 clippy warnings
 - Dependency edges enforced

@@ -322,9 +322,16 @@ impl SessionModel {
                     source: *source,
                 })
             }
-            Operation::FullEdit { source, .. } | Operation::IncrementalEdit { source, .. } => {
+            Operation::FullEdit { source, .. } => {
                 let open: Vec<u8> = self.open_docs.keys().copied().collect();
                 nth(&open).map(|f| Operation::FullEdit {
+                    file: f,
+                    source: *source,
+                })
+            }
+            Operation::IncrementalEdit { source, .. } => {
+                let open: Vec<u8> = self.open_docs.keys().copied().collect();
+                nth(&open).map(|f| Operation::IncrementalEdit {
                     file: f,
                     source: *source,
                 })
@@ -596,9 +603,12 @@ async fn w8_convergence_property(operations: Vec<Operation>) -> Result<(), TestC
     let mut model = SessionModel::default();
 
     for (step, operation) in operations.into_iter().enumerate() {
-        // P37-W7c: Correct invalid operations to valid alternatives so
-        // every generated op contributes coverage instead of being
-        // silently skipped by the executor.
+        // Correct an invalid operation by retargeting it within the same
+        // operation kind (a different open doc, a different free slot).
+        // Ops with no valid same-kind target — RenameFile without a free
+        // destination slot, AddFolder when the second folder already
+        // exists, RemoveFolder when it does not — have no semantic
+        // replacement, so they are deliberately skipped.
         let operation = if !model.is_valid(&operation) {
             match model.valid_alternative(&operation) {
                 Some(valid) => valid,

@@ -18,9 +18,11 @@
 //!   * Graceful shutdown via `shutdown` / `exit`
 //!
 //! The interactive requests (`hover`, `definition`, `references`,
-//! `completion`, `signatureHelp`) operate on open documents only; they do
-//! not consult unopened files on disk. The server reports what `ry check`
-//! reports and is intentionally not a cross-file IDE feature set.
+//! `completion`, `signatureHelp`) are scoped to **open documents**. Some of
+//! them (`definition`, `references`) do span several open documents, but none
+//! consults an unopened file on disk. The server's purpose is the diagnostics
+//! `ry check` produces; whole-workspace navigation over unopened files was
+//! removed because it resolved symbols by spelling rather than by binding.
 //!
 //! Architecture: this file is intentionally small --
 //! module declarations + the `run()` entry point. All request-handler

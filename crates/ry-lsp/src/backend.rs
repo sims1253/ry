@@ -282,6 +282,41 @@ fn compute_folder_filter(
     (filter, min_confidence, excludes)
 }
 
+/// PR #79 round 3: Recompute the cached filter / min_confidence /
+/// excludes for every folder context and the root-level fallback from
+/// their (already installed) `folder_settings`.
+///
+/// Factored out so the initial pull in `initialized` and the refresh pull
+/// in `did_change_configuration` share one cache-refresh path and cannot
+/// drift; the push-based `did_change_configuration` path uses it too for
+/// the same reason. Each folder mirrors `rebuild_folder_context` (the
+/// folder config is both the exclude source and the severity fallback);
+/// the root mirrors `initialize`. This stays OUT of `publish_diagnostics`:
+/// the P37-W6 (#46) contract asserts zero filter compilations *during a
+/// publish cycle*; recomputing on a configuration change is the same
+/// off-publish treatment the push-based path already uses.
+fn refresh_cached_folder_filters(state: &mut State) {
+    let filter_count = Arc::clone(&state.filter_compile_count);
+    for ctx in &mut state.folder_contexts {
+        let (filter, min_confidence, excludes) = compute_folder_filter(
+            &ctx.config,
+            &ctx.folder_settings,
+            &ctx.config,
+            &filter_count,
+        );
+        ctx.filter = filter;
+        ctx.min_confidence = min_confidence;
+        ctx.excludes = excludes;
+    }
+    let file_config = state.file_config.clone();
+    let folder_settings = state.folder_settings.clone();
+    let (root_filter, root_min_confidence, root_excludes) =
+        compute_folder_filter(&file_config, &folder_settings, &file_config, &filter_count);
+    state.root_filter = root_filter;
+    state.root_min_confidence = root_min_confidence;
+    state.root_excludes = root_excludes;
+}
+
 #[derive(Default)]
 pub(super) struct ProjectCache {
     project: Project,
@@ -631,6 +666,43 @@ impl State {
         }
         self.root_baseline.clone()
     }
+
+    /// PR #79 round 3: Whether two document paths belong to the same
+    /// folder root, via the longest-prefix ownership the publish path
+    /// enforces. Two paths outside every folder root fall in the same
+    /// (rootless) bucket; a folder-rooted path never matches a rootless
+    /// one, or one under a different root. Roots are isolated by design —
+    /// that isolation is what `folder_contexts` exists to enforce.
+    fn same_folder_root(&self, a: &str, b: &str) -> bool {
+        match (
+            self.folder_context_for_path(a),
+            self.folder_context_for_path(b),
+        ) {
+            (Some(ca), Some(cb)) => ca.root == cb.root,
+            (None, None) => true,
+            _ => false,
+        }
+    }
+
+    /// PR #79 round 3: Open documents eligible for the same folder root as
+    /// `doc_path`, with `doc_path` first and the rest in sorted order.
+    ///
+    /// `goto_definition` and `signature_help` share this rule so the two
+    /// open-document fallback searches cannot drift. Roots are isolated by
+    /// design, so a same-named definition in a different root must never
+    /// win; among equally-eligible candidates the winner must not depend on
+    /// traversal order, so the rest are sorted. The current document is
+    /// preferred over any other. Unopened files on disk are not consulted.
+    fn eligible_open_documents(&self, doc_path: &str) -> Vec<String> {
+        let mut docs: Vec<String> = self.docs.keys().cloned().collect();
+        docs.sort();
+        docs.retain(|p| self.same_folder_root(p, doc_path));
+        // Prefer the current document: a stable sort by "is current" keeps
+        // the remaining lexicographic order intact while moving `doc_path`
+        // to the front.
+        docs.sort_by_key(|p| std::cmp::Reverse(p.as_str() == doc_path));
+        docs
+    }
 }
 
 #[tower_lsp::async_trait]
@@ -906,30 +978,15 @@ impl LanguageServer for Backend {
             state.supports_workspace_configuration
         };
         if should_pull {
-            let root_uri = {
-                let state = self.state.lock().await;
-                state
-                    .root
-                    .as_ref()
-                    .and_then(|p| Url::from_file_path(p).ok())
-            };
-            let item = ConfigurationItem {
-                scope_uri: root_uri,
-                section: Some("ry".to_string()),
-            };
-            match self.client.configuration(vec![item]).await {
-                Ok(values) => {
-                    if let Some(value) = values.into_iter().next() {
-                        if let Ok(settings) = serde_json::from_value::<FolderSettings>(value) {
-                            let mut state = self.state.lock().await;
-                            state.folder_settings = settings;
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("workspace/configuration pull failed: {e}");
-                }
-            }
+            // PR #79 round 3: pull per-folder settings and recompute the
+            // cached filter / min_confidence / excludes through the shared
+            // `pull_folder_settings` helper (also used by
+            // `did_change_configuration`) so the two pull paths cannot drift.
+            // The pre-fix initial pull stored only into the server-wide
+            // `folder_settings` and never wrote each context's settings nor
+            // refreshed its cached values, so the initial configuration had
+            // no effect until a filesystem rebuild or server restart.
+            self.pull_folder_settings().await;
         }
 
         // Register workspace-resolution watchers so configuration, package
@@ -1023,30 +1080,14 @@ impl LanguageServer for Backend {
         };
 
         if should_pull {
-            let root_uri = {
-                let state = self.state.lock().await;
-                state
-                    .root
-                    .as_ref()
-                    .and_then(|p| Url::from_file_path(p).ok())
-            };
-            let item = ConfigurationItem {
-                scope_uri: root_uri,
-                section: Some("ry".to_string()),
-            };
-            if let Ok(values) = self.client.configuration(vec![item]).await {
-                if let Some(value) = values.into_iter().next() {
-                    if let Ok(settings) = serde_json::from_value::<FolderSettings>(value) {
-                        let mut state = self.state.lock().await;
-                        state.folder_settings = settings.clone();
-                        // P36-W3: Update the global settings fallback only.
-                        // Per-folder settings (set at initialize via scoped
-                        // workspace/configuration) are not overwritten to
-                        // avoid clobbering each folder's editor settings.
-                        state.server_settings.global_settings = settings;
-                    }
-                }
-            }
+            // PR #79 round 3: pull per-folder settings and recompute the
+            // cached filter / min_confidence / excludes through the shared
+            // `pull_folder_settings` helper (also used by `initialized`)
+            // so the two pull paths cannot drift. The pre-fix pull stored
+            // only into the server-wide `folder_settings` /
+            // `global_settings` and left each context's `folder_settings`
+            // — and thus its cached values — unchanged.
+            self.pull_folder_settings().await;
         } else {
             // The client sent settings inline. They may be wrapped in
             // an outer "ry" key (VS Code) or be the raw ry settings.
@@ -1060,43 +1101,14 @@ impl LanguageServer for Backend {
                     ctx.folder_settings = settings.clone();
                 }
                 state.server_settings.global_settings = settings;
+                // PR #79 round 3: recompute the cached filter /
+                // min_confidence / excludes through the shared
+                // `refresh_cached_folder_filters` helper so the push and
+                // pull paths share one refresh and cannot drift. This stays
+                // OUT of `publish_diagnostics`: the P37-W6 (#46) contract
+                // asserts zero filter compilations *during a publish cycle*.
+                refresh_cached_folder_filters(&mut state);
             }
-        }
-
-        // PR #79 round 2: recompute the cached filter / min_confidence /
-        // excludes for every folder context and for the root-level fallback.
-        // The publish path *borrows* these precomputed values (P37-W6 (#46)):
-        // without recomputing here, a change to lint severity, select/ignore,
-        // or minConfidence has no effect on subsequently published diagnostics
-        // until a filesystem rebuild or server restart.
-        //
-        // Constraint: this stays OUT of `publish_diagnostics`. The P37-W6
-        // contract asserts zero filter compilations *during a publish cycle*.
-        // Recomputing on configuration change is fine; recomputing inside the
-        // publish loop is not. Each folder mirrors `rebuild_folder_context`
-        // (the folder config is both the exclude source and the severity
-        // fallback); the root mirrors `initialize`.
-        {
-            let mut state = self.state.lock().await;
-            let filter_count = Arc::clone(&state.filter_compile_count);
-            for ctx in &mut state.folder_contexts {
-                let (filter, min_confidence, excludes) = compute_folder_filter(
-                    &ctx.config,
-                    &ctx.folder_settings,
-                    &ctx.config,
-                    &filter_count,
-                );
-                ctx.filter = filter;
-                ctx.min_confidence = min_confidence;
-                ctx.excludes = excludes;
-            }
-            let file_config = state.file_config.clone();
-            let folder_settings = state.folder_settings.clone();
-            let (root_filter, root_min_confidence, root_excludes) =
-                compute_folder_filter(&file_config, &folder_settings, &file_config, &filter_count);
-            state.root_filter = root_filter;
-            state.root_min_confidence = root_min_confidence;
-            state.root_excludes = root_excludes;
         }
 
         self.spawn_background_index().await;
@@ -1513,9 +1525,19 @@ impl LanguageServer for Backend {
         // If no definition is found in the current file, search the other
         // open documents. Unopened files on disk are not consulted.
         if locations.is_empty() {
+            // PR #79 round 3: restrict the open-document fallback to
+            // documents owned by the same folder root as this one. Roots
+            // are isolated by design (that isolation is what
+            // `folder_contexts` longest-prefix ownership enforces), so a
+            // same-named definition in a different root must never win. The
+            // current document is searched above; the shared
+            // `eligible_open_documents` helper orders the remaining
+            // candidates deterministically (sorted) so the winner does not
+            // depend on traversal order. Unopened files on disk are not
+            // consulted.
             let docs: Vec<String> = {
                 let state = self.state.lock().await;
-                state.docs.keys().cloned().collect()
+                state.eligible_open_documents(&path)
             };
             for doc_path in &docs {
                 if doc_path == &path {
@@ -1722,14 +1744,18 @@ impl LanguageServer for Backend {
         } else {
             // Fallback: look up parameter names for a user-defined function
             // in the open documents (unopened files on disk are not
-            // consulted). Sort the path list so a duplicated function name
-            // always resolves to the same parameters; HashMap iteration order
-            // is not stable across requests.
-            let mut open_paths: Vec<String> = {
+            // consulted). PR #79 round 3: look in the current document
+            // first, then only documents owned by the same folder root —
+            // roots are isolated by design (that isolation is what
+            // `folder_contexts` longest-prefix ownership enforces), so a
+            // duplicated function name in an unrelated root must never win.
+            // The shared `eligible_open_documents` helper orders the
+            // candidates (current first, then sorted) so a duplicated name
+            // always resolves to the same parameters, never crossing roots.
+            let open_paths: Vec<String> = {
                 let state = self.state.lock().await;
-                state.docs.keys().cloned().collect()
+                state.eligible_open_documents(&path)
             };
-            open_paths.sort();
             let mut found_params: Option<Vec<String>> = None;
             for doc_path in &open_paths {
                 if let Some((doc_file, _)) = self.parsed_file(doc_path).await
@@ -2187,6 +2213,71 @@ impl Backend {
             }
         }
         Some(scope)
+    }
+
+    /// PR #79 round 3: Pull `ry` settings per folder scope via
+    /// `workspace/configuration`, install each result into the matching
+    /// [`FolderAnalysisContext`]'s `folder_settings`, update the root-level
+    /// fallback, then recompute the cached filter / min_confidence /
+    /// excludes through [`refresh_cached_folder_filters`].
+    ///
+    /// Shared by the initial pull in [`Backend::initialized`] and the
+    /// refresh pull in [`Backend::did_change_configuration`] so the two
+    /// paths cannot drift. One item is sent per folder root (scoped to that
+    /// root); a final root-scoped item updates the server-wide fallback,
+    /// matching the pre-fix single-item pull. The recompute stays here —
+    /// outside `publish_diagnostics` — preserving the P37-W6 (#46) contract
+    /// of zero filter compilations during a publish cycle.
+    async fn pull_folder_settings(&self) {
+        // One item per folder root scope, then a root-scoped item for the
+        // server-wide fallback. Built under the lock, then sent without it.
+        let items: Vec<ConfigurationItem> = {
+            let state = self.state.lock().await;
+            state
+                .folder_contexts
+                .iter()
+                .map(|ctx| ConfigurationItem {
+                    scope_uri: Url::from_file_path(&ctx.root).ok(),
+                    section: Some("ry".to_string()),
+                })
+                .chain(std::iter::once(ConfigurationItem {
+                    scope_uri: state
+                        .root
+                        .as_ref()
+                        .and_then(|p| Url::from_file_path(p).ok()),
+                    section: Some("ry".to_string()),
+                }))
+                .collect()
+        };
+
+        let values = match self.client.configuration(items).await {
+            Ok(values) => values,
+            Err(e) => {
+                tracing::warn!("workspace/configuration pull failed: {e}");
+                return;
+            }
+        };
+
+        let mut state = self.state.lock().await;
+        let folder_count = state.folder_contexts.len();
+        // Per-folder results: install into the matching context by index
+        // (the items were built in `folder_contexts` order).
+        for (idx, ctx) in state.folder_contexts.iter_mut().enumerate() {
+            if let Some(value) = values.get(idx)
+                && let Ok(settings) = serde_json::from_value::<FolderSettings>(value.clone())
+            {
+                ctx.folder_settings = settings;
+            }
+        }
+        // Root-scoped result (the item after the per-folder entries) updates
+        // the server-wide fallback, matching the pre-fix single-item pull.
+        if let Some(value) = values.get(folder_count)
+            && let Ok(settings) = serde_json::from_value::<FolderSettings>(value.clone())
+        {
+            state.folder_settings = settings.clone();
+            state.server_settings.global_settings = settings;
+        }
+        refresh_cached_folder_filters(&mut state);
     }
 
     /// Incrementally update the project and publish diagnostics for every

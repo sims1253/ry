@@ -119,11 +119,13 @@ jobs:
 
       - name: Set version
         working-directory: editors/code
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
         run: |
           # --allow-same-version: package.json is kept aligned with the Cargo
           # workspace version, so dispatching the release for the already-set
           # version must not fail with "Version not changed".
-          npm version "${{ needs.version.outputs.version }}" --no-git-tag-version --allow-same-version
+          npm version "$RELEASE_VERSION" --no-git-tag-version --allow-same-version
 
       - name: Package VSIX
         working-directory: editors/code

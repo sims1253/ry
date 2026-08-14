@@ -292,6 +292,10 @@ as you type (debounced, cached parses), hover with inferred types,
 go-to-definition, references, completion, signature help, inlay
 hints, folding, and quick-fix actions that insert suppression comments.
 
+Diagnostics cover the whole project, exactly as `ry check` does. The
+interactive features above are scoped to **open documents** — they do not
+search unopened files on disk.
+
 ### VS Code / Positron
 
 Install the **ry** extension from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=sims1253.ry)

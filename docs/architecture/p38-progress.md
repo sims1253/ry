@@ -153,10 +153,10 @@ Created `crates/ry-analysis` with:
 ```
 ry-typeshed
 ry-core
-ry-config ← ry-core
-ry-workspace ← ry-core, ry-config, ry-typeshed
-ry-checker ← ry-core, ry-config, ry-workspace, ry-typeshed
-ry-analysis ← ry-core, ry-checker, ry-config, ry-workspace, ry-typeshed
-ry-cli ← all above
-ry-lsp ← all above
+ry-config    → ry-core
+ry-workspace → ry-core, ry-config, ry-typeshed
+ry-checker   → ry-core, ry-config, ry-workspace, ry-typeshed
+ry-analysis  → ry-core, ry-checker, ry-config, ry-workspace, ry-typeshed
+ry-cli       → all above
+ry-lsp       → all above
 ```

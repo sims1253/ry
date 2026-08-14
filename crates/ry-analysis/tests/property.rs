@@ -1,8 +1,11 @@
 //! P38-W5 property tests: live vs fresh equivalence after arbitrary change batches.
 //!
 //! The core invariant: after applying a batch of changes to the host,
-//! a snapshot taken from the live host must equal a snapshot taken from
-//! a fresh host constructed with the same final inputs.
+//! a snapshot taken from the live host must match, file for file, a
+//! snapshot taken from a fresh host fed the same final *contents*. The
+//! host exposes no open-file queries, so the fresh host cannot replay
+//! open/closed state or document versions — every file is installed as
+//! a disk file and only content equivalence is asserted.
 
 use proptest::prelude::*;
 use ry_analysis::*;
@@ -53,7 +56,9 @@ fn arb_change() -> impl Strategy<Value = Change> {
 
 proptest! {
     /// Property: a live host after N changes produces the same file set
-    /// and content as a fresh host built from the final state.
+    /// and content as a fresh host fed the same final contents (as disk
+    /// files — open state and versions are not reconstructable through
+    /// the host's public API).
     #[test]
     fn live_equals_fresh_file_contents(changes in proptest::collection::vec(arb_change(), 1..20)) {
         // Apply all changes to a live host.
@@ -62,7 +67,7 @@ proptest! {
             live.apply([change.clone()]);
         }
 
-        // Build a fresh host from the live host's final state.
+        // Build a fresh host from the live host's final contents.
         let mut fresh = AnalysisHost::new();
         let live_files: Vec<_> = live.all_files().map(|p| p.to_path_buf()).collect();
         for path in &live_files {
@@ -122,10 +127,13 @@ proptest! {
     fn revision_monotonically_increases(n in 1u32..50) {
         let mut host = AnalysisHost::new();
         let initial = host.revision();
-        for _ in 0..n {
+        for i in 0..n {
+            // Index, not the loop bound: reusing the bound wrote the same
+            // bytes every iteration, so the sequence never exercised
+            // successive different writes to one path.
             host.apply([Change::SetDiskFile {
                 path: PathBuf::from("R/a.R"),
-                content: format!("v{}", n),
+                content: format!("v{i}"),
             }]);
         }
         let final_rev = host.revision();

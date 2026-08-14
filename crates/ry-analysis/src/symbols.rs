@@ -419,7 +419,9 @@ mod tests {
 
     #[test]
     fn same_name_different_files() {
-        // Two files defining the same name - both are valid definitions
+        // Two files defining the same name: the merge must keep both
+        // definitions (one per file) without corrupting the reference
+        // side — b.R's call to its local helper stays indexed.
         let file_a = parse("helper <- function() 1\n");
         let file_b = parse("helper <- function() 2\nhelper()\n");
         let idx_a = build_index_from_file("a.R", &file_a);
@@ -428,9 +430,16 @@ mod tests {
 
         let defs = merged.find_definitions("helper");
         assert_eq!(defs.len(), 2, "both files define helper");
+        for file in ["a.R", "b.R"] {
+            assert_eq!(
+                defs.iter().filter(|d| d.symbol.file == file).count(),
+                1,
+                "{file} must contribute exactly one helper definition"
+            );
+        }
 
-        // The reference in b.R should resolve to b.R's local definition
-        let b_def = defs.iter().find(|d| d.symbol.file == "b.R").unwrap();
-        assert_eq!(b_def.start, 0);
+        let refs = merged.find_references("helper");
+        assert_eq!(refs.len(), 1, "b.R's call to helper must stay a reference");
+        assert_eq!(refs[0].file, "b.R");
     }
 }

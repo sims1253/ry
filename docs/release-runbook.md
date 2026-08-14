@@ -1,7 +1,7 @@
 # Release Runbook
 
-This document covers the release process for ry core binary, VS Code
-extension, and Zed extension. Follow these steps in order.
+This document covers the release process for the ry core binary, the
+VS Code extension, and the Zed extension. Follow these steps in order.
 
 ## Pre-release checklist
 
@@ -83,6 +83,7 @@ v{version}  (e.g. v0.9.0)
 
 3. Post-publish smoke test:
    - Install the extension from the marketplace in a clean VS Code
+     installation
    - Open an R file
    - Verify diagnostics fire
    - Check the status bar shows the correct version
@@ -125,5 +126,5 @@ After all artifacts are published:
 - VS Code extension uses its own SemVer (e.g. `0.1.0`).
 - Zed extension uses its own SemVer (e.g. `0.1.0`).
 - Each extension release records the exact core tag it packages.
-- The CHANGELOG records core version changes; extension releases are
-  recorded in their respective marketplace listings.
+- The CHANGELOG records core version changes; extension releases appear
+  in their marketplace listings.

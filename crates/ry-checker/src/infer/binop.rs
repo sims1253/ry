@@ -8,7 +8,6 @@ impl Checker {
         rt: RType,
         span: Span,
         known_null_is_actionable: bool,
-        scalar_logical_fix: Option<Fix>,
     ) -> RType {
         // `:` sequence operator. Always produces a vector; mode depends
         // on operand modes per R's coercion (int:int -> int, otherwise
@@ -128,8 +127,8 @@ impl Checker {
                 lt.length.binary(rt.length)
             };
             if matches!(op, BinOpKind::AndAnd | BinOpKind::OrOr) {
-                self.emit_scalar_logical_length(op, lt.length, span, scalar_logical_fix.as_ref());
-                self.emit_scalar_logical_length(op, rt.length, span, scalar_logical_fix.as_ref());
+                self.emit_scalar_logical_length(op, lt.length, span);
+                self.emit_scalar_logical_length(op, rt.length, span);
             }
             return RType::new(Mode::Logical, length);
         }
@@ -316,14 +315,8 @@ impl Checker {
                 self.infer(rhs, scope)
             }
         };
-        // A parameter guard relies on lazy short-circuit evaluation. Replacing
-        // it with `&` / `|` can eagerly evaluate an invalid RHS and change a
-        // valid result (for example `is.null(x) || x == "a"` for `x = NULL`).
-        let scalar_logical_fix = if rhs_parameter_vector {
-            None
-        } else {
-            self.scalar_logical_operator_fix(op, lhs, rhs)
-        };
+        // A parameter guard relies on lazy short-circuit evaluation, so it
+        // keeps its distinct warning below rather than the length-based one.
         let before = self.diagnostics.len();
         let result = self.infer_binop(
             op,
@@ -331,7 +324,6 @@ impl Checker {
             rt,
             span,
             known_null_arithmetic_operand(lhs, scope) || known_null_arithmetic_operand(rhs, scope),
-            scalar_logical_fix.clone(),
         );
         if rhs_parameter_vector
             && !self.diagnostics[before..]
@@ -347,13 +339,7 @@ impl Checker {
         result
     }
 
-    fn emit_scalar_logical_length(
-        &mut self,
-        op: BinOpKind,
-        length: Length,
-        span: Span,
-        fix: Option<&Fix>,
-    ) {
+    fn emit_scalar_logical_length(&mut self, op: BinOpKind, length: Length, span: Span) {
         if let Length::Known(n) = length
             && n > 1
         {
@@ -362,50 +348,8 @@ impl Checker {
                 op_symbol(op),
                 n
             );
-            if let Some(fix) = fix {
-                self.emit_with_fix(Severity::Warning, span, "RY032", message, fix.clone());
-            } else {
-                self.emit(Severity::Warning, span, "RY032", message);
-            }
+            self.emit(Severity::Warning, span, "RY032", message);
         }
-    }
-
-    fn scalar_logical_operator_fix(&self, op: BinOpKind, lhs: &Expr, rhs: &Expr) -> Option<Fix> {
-        let replacement = match op {
-            BinOpKind::AndAnd => "&",
-            BinOpKind::OrOr => "|",
-            _ => return None,
-        };
-        self.binary_operator_fix(lhs, rhs, op_symbol(op), replacement)
-    }
-
-    /// Build a narrow edit for the operator token between two parsed operands.
-    /// Only lexical trivia may precede the token, so prose in comments cannot
-    /// accidentally become the edit target.
-    pub(crate) fn binary_operator_fix(
-        &self,
-        lhs: &Expr,
-        rhs: &Expr,
-        operator: &str,
-        replacement: &str,
-    ) -> Option<Fix> {
-        self.binary_operator_span(lhs, rhs, operator)
-            .and_then(|span| self.fix(span, replacement))
-    }
-
-    pub(crate) fn binary_operator_span(
-        &self,
-        lhs: &Expr,
-        rhs: &Expr,
-        operator: &str,
-    ) -> Option<Span> {
-        let lhs_end = span_of(lhs).end;
-        let rhs_start = span_of(rhs).start;
-        let between = self.source.get(lhs_end..rhs_start)?;
-        let relative = skip_r_trivia(between);
-        between.get(relative..)?.strip_prefix(operator)?;
-        let start = lhs_end + relative;
-        self.source_span(start, start + operator.len())
     }
 
     // Desugar `lhs %>% rhs` (and `lhs |> rhs`, `lhs %<>% rhs`) into a
@@ -428,34 +372,6 @@ impl Checker {
     // when it appears in an `Assign` statement; for a bare binop we
     // cannot reassign without a target expression, so we leave that to
     // a future pass.
-}
-
-/// Skip whitespace, R comments, and closing parentheses erased by AST
-/// lowering between an operand span and its binary operator. The next syntax
-/// token must be the operator represented by the AST; comment prose is never
-/// eligible as an edit target.
-fn skip_r_trivia(source: &str) -> usize {
-    let mut offset = 0;
-    loop {
-        let rest = &source[offset..];
-        let trimmed = rest.trim_start_matches(char::is_whitespace);
-        offset += rest.len() - trimmed.len();
-        let rest = &source[offset..];
-        if rest.starts_with(')') {
-            // Parenthesized expressions are transparent in the compact AST,
-            // so their closing delimiter can sit between an operand span and
-            // the binary operator token.
-            offset += 1;
-            continue;
-        }
-        if !rest.starts_with('#') {
-            return offset;
-        }
-        let Some(newline) = rest.find('\n') else {
-            return source.len();
-        };
-        offset += newline + 1;
-    }
 }
 
 /// Recognize the high-confidence parameter guard patterns found in package

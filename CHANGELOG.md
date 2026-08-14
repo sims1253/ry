@@ -113,6 +113,17 @@ All notable changes to ry are documented in this file.
 
 ### Changed
 
+- **Suggested fixes removed from published diagnostics**: the `fix` payload is
+  gone from `ry check --output-format json` and from the `data` field of
+  published LSP diagnostics, along with the internal `Fix` machinery that
+  produced it. Nothing ever applied these edits — there is no `ry check
+  --fix`, and the language server's quick-fix actions only insert
+  suppression comments — and a replacement that is correct in isolation can
+  be wrong under R's non-standard evaluation, so applying source rewrites is
+  a separate concern from type checking (see the README's stance on
+  formatting). Diagnostics are otherwise unchanged: codes, spans, messages,
+  severities, and confidences are identical, and no shipped release ever
+  contained the `fix` field. Where autofix should live is tracked in #89.
 - **LSP no longer advertises `textDocument/rename`**: the server has dropped
   the `textDocument/rename` and `textDocument/prepareRename` capabilities and
   their handlers. Rename matched identifiers purely by spelling with no
@@ -120,6 +131,12 @@ All notable changes to ry are documented in this file.
   S3 dispatch by naming convention, `$` on lists/environments, formulas, and
   `library()` masking all break spelling-based rename). It will return once
   real cross-file symbol resolution lands.
+- **LSP no longer advertises `textDocument/foldingRange` and
+  `textDocument/selectionRange`**: the server has dropped both capabilities
+  and their handlers. They used no type information — every tree-sitter-based
+  R editor integration already provides folding and expand/shrink selection
+  from the grammar — so they duplicated editor-native behaviour outside the
+  server's scope of publishing the diagnostics `ry check` produces.
 - **LSP interactive features now operate on open documents only**: hover,
   completion, signature help, go-to-definition, and references no longer
   consult the background indexer's on-disk file snapshot. The cross-file

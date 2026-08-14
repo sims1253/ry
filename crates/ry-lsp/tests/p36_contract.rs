@@ -39,15 +39,6 @@ use std::process::Command;
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct PublishedFix {
-    start_line: u32,
-    start_byte_column: u32,
-    end_line: u32,
-    end_byte_column: u32,
-    replacement: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct Published {
     path: String,
     code: String,
@@ -55,7 +46,6 @@ struct Published {
     message: String,
     line: u32,
     byte_column: u32,
-    fix: Option<PublishedFix>,
 }
 
 fn workspace_root() -> PathBuf {
@@ -124,17 +114,6 @@ fn published_from_cli_value(value: &Value, root: &Path) -> Published {
         encoding: PositionEncoding::UnicodeScalar,
     };
     let position = normalize_position(&source, &scalar).unwrap();
-    let fix = value.get("fix").filter(|f| f.is_object()).map(|fix| {
-        let start = byte_offset_position(&source, fix["start"].as_u64().unwrap() as usize);
-        let end = byte_offset_position(&source, fix["end"].as_u64().unwrap() as usize);
-        PublishedFix {
-            start_line: start.0,
-            start_byte_column: start.1,
-            end_line: end.0,
-            end_byte_column: end.1,
-            replacement: fix["replacement"].as_str().unwrap().to_string(),
-        }
-    });
     Published {
         path: relative,
         code: value["code"].as_str().unwrap().to_string(),
@@ -142,16 +121,7 @@ fn published_from_cli_value(value: &Value, root: &Path) -> Published {
         message: value["message"].as_str().unwrap().to_string(),
         line: position.line,
         byte_column: position.character,
-        fix,
     }
-}
-
-fn byte_offset_position(source: &str, offset: usize) -> (u32, u32) {
-    assert!(offset <= source.len() && source.is_char_boundary(offset));
-    let prefix = &source[..offset];
-    let line = prefix.bytes().filter(|byte| *byte == b'\n').count() as u32;
-    let line_start = prefix.rfind('\n').map_or(0, |position| position + 1);
-    (line, (offset - line_start) as u32)
 }
 
 /// Normalize an LSP `publishDiagnostics` message into `Published` entries.
@@ -175,33 +145,6 @@ fn published_from_lsp(message: &Value, path: &Path, root: &Path) -> Vec<Publishe
                 },
             )
             .expect("diagnostic start position must normalize");
-            let fix = value.pointer("/data/fix").map(|fix| {
-                let start = normalize_position(
-                    &source,
-                    &ObservedPosition {
-                        line: fix["range"]["start"]["line"].as_u64().unwrap_or(0) as u32,
-                        character: fix["range"]["start"]["character"].as_u64().unwrap_or(0) as u32,
-                        encoding: PositionEncoding::Utf16,
-                    },
-                )
-                .expect("diagnostic start position must normalize");
-                let end = normalize_position(
-                    &source,
-                    &ObservedPosition {
-                        line: fix["range"]["end"]["line"].as_u64().unwrap_or(0) as u32,
-                        character: fix["range"]["end"]["character"].as_u64().unwrap_or(0) as u32,
-                        encoding: PositionEncoding::Utf16,
-                    },
-                )
-                .expect("fix start position must normalize");
-                PublishedFix {
-                    start_line: start.line,
-                    start_byte_column: start.character,
-                    end_line: end.line,
-                    end_byte_column: end.character,
-                    replacement: fix["replacement"].as_str().unwrap_or("").to_string(),
-                }
-            });
             Published {
                 path: relative.clone(),
                 code: value["code"].as_str().unwrap_or("").to_string(),
@@ -216,7 +159,6 @@ fn published_from_lsp(message: &Value, path: &Path, root: &Path) -> Vec<Publishe
                 message: value["message"].as_str().unwrap_or("").to_string(),
                 line: position.line,
                 byte_column: position.character,
-                fix,
             }
         })
         .collect();
@@ -1390,7 +1332,6 @@ fn p36_w6_many_files_flat_filter_construction() {
             assert_eq!(a.message, b.message, "messages must match");
             assert_eq!(a.line, b.line, "lines must match");
             assert_eq!(a.byte_column, b.byte_column, "columns must match");
-            assert_eq!(a.fix, b.fix, "fixes must match");
         }
         assert_eq!(first_diags[0].path, "file_00.R");
         assert_eq!(last_diags[0].path, "file_31.R");

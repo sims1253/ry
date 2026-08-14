@@ -146,8 +146,8 @@ impl Checker {
             let Expr::BinOp {
                 op: BinOpKind::Assign,
                 lhs,
-                rhs,
                 span,
+                ..
             } = &argument.value
             else {
                 continue;
@@ -162,11 +162,7 @@ impl Checker {
             let message = format!(
                 "`<-` inside `{lookup_name}()` assigns `{name}` and leaves the element unnamed; write `{spelling} = ...` to name it"
             );
-            if let Some(fix) = self.binary_operator_fix(lhs, rhs, "<-", "=") {
-                self.emit_with_fix(Severity::Warning, *span, "RY102", message, fix);
-            } else {
-                self.emit(Severity::Warning, *span, "RY102", message);
-            }
+            self.emit(Severity::Warning, *span, "RY102", message);
         }
     }
 
@@ -203,17 +199,17 @@ impl Checker {
             return;
         }
 
-        // The warning describes the risky comparison shape, but an automated
-        // rewrite additionally requires exactly one class() operand and proof
-        // that its callee is base::class rather than a qualified or shadowed
-        // function with unrelated semantics.
-        let fix_operands = match (lhs_is_class, rhs_is_class) {
+        // The message can name the concrete `inherits()` rewrite only when
+        // exactly one operand is a class() call proven to be base::class;
+        // a qualified or shadowed callee with unrelated semantics would
+        // make the suggestion wrong, so those cases get the generic wording.
+        let suggestable_operands = match (lhs_is_class, rhs_is_class) {
             (true, false) if self.is_base_class_call(lhs, scope) => Some((lhs, rhs)),
             (false, true) if self.is_base_class_call(rhs, scope) => Some((rhs, lhs)),
             _ => None,
         };
         let prefix = if matches!(op, BinOpKind::Eq) { "" } else { "!" };
-        let suggestion = fix_operands
+        let suggestion = suggestable_operands
             .and_then(|(class_call, other_side)| {
                 call_argument(class_call).map(|argument| (argument, other_side))
             })
@@ -226,11 +222,7 @@ impl Checker {
             || "`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `inherits()`".to_string(),
             |suggestion| format!("`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `{suggestion}`"),
         );
-        if let Some(fix) = suggestion.and_then(|replacement| self.fix(*span, replacement)) {
-            self.emit_with_fix(Severity::Warning, *span, "RY103", message, fix);
-        } else {
-            self.emit(Severity::Warning, *span, "RY103", message);
-        }
+        self.emit(Severity::Warning, *span, "RY103", message);
     }
 
     fn is_base_class_call(&self, expr: &Expr, scope: &Scope) -> bool {

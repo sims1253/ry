@@ -63,8 +63,8 @@ fn check_source(src: &str) -> Vec<String> {
         .collect()
 }
 
-/// Parse and check R source, returning (code, has_fix) pairs.
-fn check_source_with_fixs(src: &str) -> Vec<(String, bool)> {
+/// Parse and check R source, returning (code, message) pairs.
+fn check_source_with_messages(src: &str) -> Vec<(String, String)> {
     let mut parser = RParser::new().expect("parser init");
     let file = parser.parse("test.R", src).expect("parse");
     let mut checker = Checker::new("test.R");
@@ -72,7 +72,7 @@ fn check_source_with_fixs(src: &str) -> Vec<(String, bool)> {
     checker
         .take_diagnostics()
         .into_iter()
-        .map(|d| (d.code.to_string(), d.fix.is_some()))
+        .map(|d| (d.code.to_string(), d.message))
         .collect()
 }
 
@@ -307,51 +307,58 @@ fn adding_bogus_operator_to_list_would_fail() {
 
 // ── Deliverable 2: Canonical base-call resolution ────────────────────────
 
-/// A qualified `base::class()` call resolves to base and gets a fix.
+/// A qualified `base::class()` call resolves to base, so the RY103 message
+/// names the concrete `inherits()` rewrite.
 #[test]
 fn base_qualified_call_resolves() {
-    let diags = check_source_with_fixs("if (base::class(x) == \"foo\") TRUE\n");
-    let ry103 = diags.iter().find(|(c, _)| c == "RY103");
+    let diags = check_source_with_messages("if (base::class(x) == \"foo\") TRUE\n");
+    let ry103 = diags.iter().find(|(code, _)| code == "RY103");
     assert!(
         ry103.is_some(),
         "base::class comparison should fire RY103, got {diags:?}"
     );
     assert!(
-        ry103.is_some_and(|(_, fix)| *fix),
-        "base::class should offer a fix (resolves to base)"
+        ry103.is_some_and(|(_, message)| message.contains("use `inherits(x, \"foo\")`")),
+        "base::class resolves to base, so the message names the inherits() rewrite"
     );
 }
 
-/// An unshadowed bare `class()` call resolves to base and gets a fix.
+/// An unshadowed bare `class()` call resolves to base, so the RY103 message
+/// names the concrete `inherits()` rewrite.
 #[test]
 fn unshadowed_bare_call_resolves() {
-    let diags = check_source_with_fixs("if (class(x) == \"foo\") TRUE\n");
-    let ry103 = diags.iter().find(|(c, _)| c == "RY103");
+    let diags = check_source_with_messages("if (class(x) == \"foo\") TRUE\n");
+    let ry103 = diags.iter().find(|(code, _)| code == "RY103");
     assert!(
-        ry103.is_some_and(|(_, fix)| *fix),
-        "unshadowed class should offer a fix (resolves to base), got {diags:?}"
+        ry103.is_some(),
+        "unshadowed class comparison should fire RY103, got {diags:?}"
+    );
+    assert!(
+        ry103.is_some_and(|(_, message)| message.contains("use `inherits(x, \"foo\")`")),
+        "unshadowed class resolves to base, so the message names the inherits() rewrite"
     );
 }
 
 /// A lexically shadowed `class` does not resolve to base.
-/// RY103 fires on the comparison shape, but no fix is offered.
+/// RY103 still fires, with the generic `inherits()` wording.
 #[test]
 fn lexical_shadow_does_not_resolve() {
-    let diags =
-        check_source_with_fixs("class <- function(x) \"myclass\"\nif (class(x) == \"foo\") TRUE\n");
-    let ry103 = diags.iter().find(|(c, _)| c == "RY103");
+    let diags = check_source_with_messages(
+        "class <- function(x) \"myclass\"\nif (class(x) == \"foo\") TRUE\n",
+    );
+    let ry103 = diags.iter().find(|(code, _)| code == "RY103");
     assert!(
         ry103.is_some(),
         "RY103 fires on class() comparison shape regardless of shadowing"
     );
     assert!(
-        ry103.is_some_and(|(_, fix)| !*fix),
-        "shadowed class should NOT offer a fix (does not resolve to base)"
+        ry103.is_some_and(|(_, message)| message.contains("use `inherits()`")),
+        "shadowed class does not resolve to base, so the message keeps the generic inherits() wording"
     );
 }
 
 /// A fn_table shadowed `class` does not resolve to base (cross-file binding).
-/// RY103 fires on the shape, but no fix is offered.
+/// RY103 still fires, with the generic `inherits()` wording.
 #[test]
 fn fn_table_shadow_does_not_resolve() {
     let mut parser = RParser::new().expect("parser init");
@@ -368,34 +375,35 @@ fn fn_table_shadow_does_not_resolve() {
     project.add_file("def.R".to_string(), def_file);
     project.add_file("use.R".to_string(), use_file);
     let results = project.check();
-    let diags: Vec<(String, bool)> = results
+    let diags: Vec<(String, String)> = results
         .into_iter()
         .filter(|(path, _)| path == "use.R")
-        .flat_map(|(_, ds)| {
-            ds.into_iter()
-                .map(|d| (d.code.to_string(), d.fix.is_some()))
-        })
+        .flat_map(|(_, ds)| ds.into_iter().map(|d| (d.code.to_string(), d.message)))
         .collect();
-    let ry103 = diags.iter().find(|(c, _)| c == "RY103");
+    let ry103 = diags.iter().find(|(code, _)| code == "RY103");
     assert!(
         ry103.is_some(),
         "RY103 fires on the class() comparison shape, got {diags:?}"
     );
     assert!(
-        ry103.is_some_and(|(_, fix)| !*fix),
-        "fn_table shadowed class should NOT offer a fix"
+        ry103.is_some_and(|(_, message)| message.contains("use `inherits()`")),
+        "fn_table shadowed class does not resolve to base, so the message keeps the generic inherits() wording"
     );
 }
 
 /// A non-base qualified call does not resolve to base.
-/// RY103 fires on the shape, but no fix is offered.
+/// RY103 still fires, with the generic `inherits()` wording.
 #[test]
 fn non_base_qualified_does_not_resolve() {
-    let diags = check_source_with_fixs("if (other::class(x) == \"foo\") TRUE\n");
-    let ry103 = diags.iter().find(|(c, _)| c == "RY103");
+    let diags = check_source_with_messages("if (other::class(x) == \"foo\") TRUE\n");
+    let ry103 = diags.iter().find(|(code, _)| code == "RY103");
     assert!(
-        ry103.is_some_and(|(_, fix)| !*fix),
-        "non-base qualified class should NOT offer a fix, got {diags:?}"
+        ry103.is_some(),
+        "non-base qualified class comparison should fire RY103, got {diags:?}"
+    );
+    assert!(
+        ry103.is_some_and(|(_, message)| message.contains("use `inherits()`")),
+        "non-base qualified class does not resolve to base, so the message keeps the generic inherits() wording"
     );
 }
 

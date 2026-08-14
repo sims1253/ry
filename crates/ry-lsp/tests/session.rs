@@ -276,8 +276,8 @@ async fn utf16_transcript() {
     session.open(&main_uri, 1, SOURCE).await.unwrap();
     session.open(&other_uri, 1, OTHER_SOURCE).await.unwrap();
 
-    // Byte -> UTF-16: diagnostics and their structured fix both publish the
-    // exact range after BMP, combining, astral, and CRLF prefixes.
+    // Byte -> UTF-16: diagnostics publish the exact range after BMP,
+    // combining, astral, and CRLF prefixes.
     let publish = session
         .published_diagnostics_after(&main_uri, open_mark)
         .await
@@ -290,15 +290,9 @@ async fn utf16_transcript() {
         .expect("length's partial argument name should emit RY090");
     assert_position(&diagnostic["range"]["start"], "diagnostic name");
     assert_position(&diagnostic["range"]["end"], "diagnostic end");
-    let fix = diagnostic
-        .pointer("/data/fix")
-        .expect("RY090 structured fix");
-    assert_position(&fix["range"]["start"], "diagnostic name");
-    assert_position(&fix["range"]["end"], "diagnostic name end");
-    assert_eq!(fix["replacement"], "x");
 
     // Unopened indexed files must retain their source text too; otherwise
-    // byte columns leak into LSP and structured fixes disappear.
+    // byte columns leak into LSP ranges.
     let disk_publish = session
         .published_diagnostics_after(&disk_uri, open_mark)
         .await
@@ -314,16 +308,6 @@ async fn utf16_transcript() {
         json!({
             "start": {"line": 0, "character": 23},
             "end": {"line": 0, "character": 30}
-        })
-    );
-    assert_eq!(
-        disk_diagnostic["data"]["fix"],
-        json!({
-            "range": {
-                "start": {"line": 0, "character": 23},
-                "end": {"line": 0, "character": 25}
-            },
-            "replacement": "x"
         })
     );
 

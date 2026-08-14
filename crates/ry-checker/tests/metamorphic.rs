@@ -341,10 +341,6 @@ fn shift_diagnostic(
         code: d.code,
         message: d.message.clone(),
         confidence: d.confidence,
-        fix: d.fix.as_ref().map(|fix| ry_checker::Fix {
-            span: shift_span(fix.span, offset, inserted_len, inserted_newlines),
-            replacement: fix.replacement.clone(),
-        }),
     }
 }
 

@@ -30,10 +30,10 @@ pub use project::Project;
 // crate root for back-compat (callers and tests reference
 // `ry_checker::{Severity, Diagnostic, ...}` directly).
 pub use diagnostics::{
-    Confidence, Diagnostic, Fix, Severity, SeverityFilter, Suppression,
-    apply_filter_to_diagnostics, filter_default_disabled, filter_suppressed,
-    filter_suppressed_with_comments, has_file_suppression, has_file_suppression_from_comments,
-    is_suppressed, parse_suppressions, parse_suppressions_from_comments,
+    Confidence, Diagnostic, Severity, SeverityFilter, Suppression, apply_filter_to_diagnostics,
+    filter_default_disabled, filter_suppressed, filter_suppressed_with_comments,
+    has_file_suppression, has_file_suppression_from_comments, is_suppressed, parse_suppressions,
+    parse_suppressions_from_comments,
 };
 
 // P38-W3: Configuration-driven filter builders moved here from ry-config
@@ -612,7 +612,8 @@ pub struct Checker {
     pub(crate) diagnostics: Vec<Diagnostic>,
     pub(crate) path: String,
     /// Source text corresponding to `path`, set at every production check seam.
-    /// Structured fixes slice this exact text by parser spans.
+    /// Messages that quote source spelling slice this exact text by parser
+    /// spans.
     pub(crate) source: String,
     // When true, `emit` is a no-op. Set during pass-2 (fixpoint) return-
     // type refinement and closure-signature building so the single

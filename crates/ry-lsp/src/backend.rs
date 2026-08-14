@@ -10,7 +10,6 @@
 use crate::diagnostics::{
     diagnostic_to_lsp, diagnostic_to_lsp_with_source, make_ignore_action, make_ignore_file_action,
 };
-use crate::folding::collect_folding_ranges;
 use crate::hints::{
     active_parameter, collect_completions, collect_inlay_hints, find_enclosing_call, get_signature,
 };
@@ -18,7 +17,6 @@ use crate::ident::find_ident_at_offset;
 use crate::navigation::{
     collect_document_highlights, find_definition_locations, find_references_in_file,
 };
-use crate::selection::build_selection_range;
 use crate::settings::{FolderSettings, ServerSettings};
 use crate::symbols::{collect_symbols, flatten_symbols_to_symbol_info};
 use crate::util::position_to_byte_offset_pos;
@@ -928,27 +926,12 @@ impl LanguageServer for Backend {
                 // assignment targets as `WRITE` and all other occurrences
                 // as `READ`.
                 document_highlight_provider: Some(OneOf::Left(true)),
-                // Enable `textDocument/foldingRange` so editors can offer
-                // code folding (collapsible regions) for multi-line
-                // function bodies, `if`/`else` blocks, and `for`/`while`
-                // loop bodies. The handler is `folding_range` below; it
-                // walks the AST looking for statement spans that cross a
-                // newline and emits one `FoldingRange` per such span.
-                folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
                 // Enable `textDocument/codeAction` so editors can offer
                 // quick fixes for diagnostics. The handler is
                 // `code_action` below; it offers per-diagnostic
                 // `# ry: ignore[CODE]` line-suppression comments and a
                 // file-level `# ry: ignore-file` action.
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
-                // Enable `textDocument/selectionRange` so editors can
-                // offer expand/shrink selection ("Expand Selection" /
-                // "Shrink Selection") based on AST structure. The
-                // handler is `selection_range` below; it builds a chain
-                // of progressively wider ranges (identifier ->
-                // enclosing statement -> whole file) for each cursor
-                // position requested.
-                selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
                 // S4: Advertise workspace folder support so clients send
                 // multi-root workspace folders and change notifications.
                 workspace: Some(WorkspaceServerCapabilities {
@@ -1887,29 +1870,6 @@ impl LanguageServer for Backend {
         }
     }
 
-    async fn folding_range(
-        &self,
-        params: FoldingRangeParams,
-    ) -> LspResult<Option<Vec<FoldingRange>>> {
-        let uri = params.text_document.uri.clone();
-        let path = uri_to_path(&uri);
-
-        // Parse the document (cached), pairing the AST with the exact
-        // text it was parsed from. On any parse failure we return
-        // `None` (no folding ranges) rather than erroring. Mirrors
-        // `document_symbol` / `inlay_hint`.
-        let Some((file, text)) = self.parsed_file(&path).await else {
-            return Ok(None);
-        };
-
-        let ranges = collect_folding_ranges(&file, &text);
-        if ranges.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(ranges))
-        }
-    }
-
     async fn code_action(&self, params: CodeActionParams) -> LspResult<Option<CodeActionResponse>> {
         let uri = params.text_document.uri.clone();
         let path = uri_to_path(&uri);
@@ -1948,38 +1908,6 @@ impl LanguageServer for Backend {
             Ok(None)
         } else {
             Ok(Some(actions))
-        }
-    }
-
-    async fn selection_range(
-        &self,
-        params: SelectionRangeParams,
-    ) -> LspResult<Option<Vec<SelectionRange>>> {
-        let uri = params.text_document.uri.clone();
-        let path = uri_to_path(&uri);
-
-        // Parse the document (cached), pairing the AST with the exact
-        // text it was parsed from. On any parse failure we return
-        // `None` (no selection ranges) rather than erroring. Mirrors
-        // `document_symbol` / `folding_range`.
-        let Some((file, text)) = self.parsed_file(&path).await else {
-            return Ok(None);
-        };
-
-        // Build one `SelectionRange` chain per requested position.
-        // The LSP spec allows the client to pass multiple cursor
-        // positions in a single request (e.g. multi-cursor edit);
-        // we return one chain per position in the same order.
-        let ranges: Vec<SelectionRange> = params
-            .positions
-            .into_iter()
-            .map(|pos| build_selection_range(pos, &file, &text))
-            .collect();
-
-        if ranges.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(ranges))
         }
     }
 }

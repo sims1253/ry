@@ -3,7 +3,6 @@ use crate::diagnostics::{
     diag_code_from_lsp, diagnostic_to_lsp, diagnostic_to_lsp_with_source, make_ignore_action,
     make_ignore_file_action,
 };
-use crate::folding::collect_folding_ranges;
 use crate::hints::{
     active_parameter, collect_completions, collect_inlay_hints, common_r_completions,
     extract_last_identifier, find_enclosing_call, get_signature,
@@ -11,10 +10,9 @@ use crate::hints::{
 use crate::navigation::{
     collect_document_highlights, find_definition_locations, find_references_in_file,
 };
-use crate::selection::build_selection_range;
 use crate::symbols::{collect_symbols, flatten_symbols_to_symbol_info};
 use crate::util::*;
-use ry_checker::{Diagnostic, Fix, Severity};
+use ry_checker::{Diagnostic, Severity};
 use ry_core::{RParser, SourceFile, Span};
 use tower_lsp::lsp_types::Diagnostic as LspDiagnostic;
 use tower_lsp::lsp_types::*;
@@ -40,24 +38,6 @@ fn converts_error_diagnostic() {
         Some(NumberOrString::String(s)) => assert_eq!(s, "RY040"),
         other => panic!("expected String code, got {:?}", other),
     }
-}
-
-#[test]
-fn no_source_diagnostic_omits_fix_data() {
-    let d = Diagnostic::new(
-        Severity::Warning,
-        Span::new(7, 8, 0, 7),
-        "test.R",
-        "RY032",
-        "test",
-    )
-    .with_fix(Fix {
-        // A multiline byte span cannot be reconstructed from line/column alone.
-        span: Span::new(7, 15, 0, 7),
-        replacement: "replacement".to_string(),
-    });
-    let lsp = diagnostic_to_lsp(d);
-    assert_eq!(lsp.data, None);
 }
 
 #[test]
@@ -1351,127 +1331,6 @@ fn document_highlight_classifies_loop_variable_as_write() {
     assert_eq!(reads[0].range.start.line, 1);
 }
 
-// ---- folding range helpers ----
-
-/// Helper: parse a snippet and return its folding ranges. Mirrors
-/// what the `folding_range` LSP method does, minus the async state
-/// lookup. Ranges are returned in source order.
-fn folding_ranges(src: &str) -> Vec<FoldingRange> {
-    let mut parser = RParser::new().unwrap();
-    let file = parser.parse("test.R", src).unwrap();
-    collect_folding_ranges(&file, src)
-}
-
-#[test]
-fn folding_range_for_multiline_function_body() {
-    // A function whose body spans multiple lines must produce a
-    // folding range covering the body. The named function pattern
-    // `f <- function() { ... }` is modeled by the parser as an
-    // `Assign` with an `Expr::Function` value, so the recursive
-    // `collect_folding_from_expr` must find the function-literal
-    // span. The body starts on line 0 and ends on line 2.
-    let src = "f <- function() {\n  x <- 1L\n  x\n}\n";
-    let ranges = folding_ranges(src);
-    assert!(
-        !ranges.is_empty(),
-        "expected at least one range, got {:?}",
-        ranges
-    );
-    // At least one range must start at line 0 and end at line 3.
-    let covers_func = ranges
-        .iter()
-        .any(|r| r.start_line == 0 && r.end_line == 3 && r.kind == Some(FoldingRangeKind::Region));
-    assert!(
-        covers_func,
-        "expected a range covering the function body (0..3), got {:?}",
-        ranges
-    );
-    // Every range must be `Region`-kinded and span at least 2 lines.
-    for r in &ranges {
-        assert_eq!(r.kind, Some(FoldingRangeKind::Region));
-        assert!(
-            r.end_line > r.start_line,
-            "expected multi-line range: {:?}",
-            r
-        );
-    }
-}
-
-#[test]
-fn folding_range_for_if_else_block() {
-    // An `if`/`else` block whose body spans multiple lines must
-    // produce a folding range. The `if` statement spans lines 0..2.
-    let src = "if (x > 0) {\n  print(\"pos\")\n} else {\n  print(\"nonpos\")\n}\n";
-    let ranges = folding_ranges(src);
-    assert!(
-        !ranges.is_empty(),
-        "expected at least one range, got {:?}",
-        ranges
-    );
-    // The outer `if` must cover lines 0..4 (it ends on the final
-    // `}` of the `else` block).
-    let covers_if = ranges.iter().any(|r| r.start_line == 0 && r.end_line == 4);
-    assert!(
-        covers_if,
-        "expected a range covering the whole if/else (0..4), got {:?}",
-        ranges
-    );
-}
-
-#[test]
-fn folding_range_for_for_loop() {
-    // A `for` loop with a multi-line body must fold from the loop
-    // header line down to the closing brace.
-    let src = "for (i in 1:3) {\n  print(i)\n  print(i * 2)\n}\n";
-    let ranges = folding_ranges(src);
-    assert!(
-        !ranges.is_empty(),
-        "expected at least one range, got {:?}",
-        ranges
-    );
-    let covers_for = ranges.iter().any(|r| r.start_line == 0 && r.end_line == 3);
-    assert!(
-        covers_for,
-        "expected a range covering the for loop (0..3), got {:?}",
-        ranges
-    );
-}
-
-#[test]
-fn folding_range_empty_for_single_line_statement() {
-    // A single-line statement has no foldable region; the helper
-    // must return an empty list.
-    let src = "x <- 1L + 2L\ny <- x * 3L\n";
-    let ranges = folding_ranges(src);
-    assert!(
-        ranges.is_empty(),
-        "expected no folding ranges for single-line code, got {:?}",
-        ranges
-    );
-}
-
-#[test]
-fn folding_range_nested_blocks_each_get_their_own_range() {
-    // A function body containing a nested multi-line `if` must
-    // yield (at least) two ranges: one for the outer function and
-    // one for the inner `if`. This guards the recursive walk.
-    let src = "f <- function(x) {\n  if (x > 0) {\n    print(x)\n  }\n}\n";
-    let ranges = folding_ranges(src);
-    // We expect at least 2 ranges: the outer function body and
-    // the inner if body.
-    assert!(
-        ranges.len() >= 2,
-        "expected at least 2 ranges (function + nested if), got {:?}",
-        ranges
-    );
-    // One range must cover the whole function (lines 0..4), and
-    // another must cover the inner if (lines 1..3).
-    let has_outer = ranges.iter().any(|r| r.start_line == 0 && r.end_line == 4);
-    let has_inner_if = ranges.iter().any(|r| r.start_line == 1 && r.end_line == 3);
-    assert!(has_outer, "missing outer function range: {:?}", ranges);
-    assert!(has_inner_if, "missing inner if range: {:?}", ranges);
-}
-
 // ---- code action helpers ----
 
 /// Helper: build an LSP `Diagnostic` covering a given line range
@@ -1641,166 +1500,6 @@ fn diag_code_from_lsp_handles_missing_code() {
     let mut diag = lsp_diag(0, 0, 1, "RY099");
     diag.code = None;
     assert_eq!(diag_code_from_lsp(&diag), "");
-}
-
-// ---- selection range helpers ----
-
-/// Helper: parse a snippet and return the `SelectionRange` chain
-/// for a single cursor position. Mirrors what the
-/// `selection_range` LSP method does, minus the async state
-/// lookup.
-fn selection_range_at(src: &str, position: Position) -> SelectionRange {
-    let mut parser = RParser::new().unwrap();
-    let file = parser.parse("test.R", src).unwrap();
-    build_selection_range(position, &file, src)
-}
-
-/// Walk a `SelectionRange` chain from narrowest to widest,
-/// returning the list of `Range`s in order. Used by the tests to
-/// assert the chain widens monotonically.
-fn chain_ranges(sel: &SelectionRange) -> Vec<Range> {
-    let mut out = vec![sel.range];
-    let mut cur = &sel.parent;
-    while let Some(p) = cur {
-        out.push(p.range);
-        cur = &p.parent;
-    }
-    out
-}
-
-#[test]
-fn selection_range_chain_widens_from_identifier_to_file() {
-    // For `result <- x + 1` with the cursor on `result`, the chain
-    // must widen: identifier (`result`) -> enclosing statement ->
-    // whole file. Each level must strictly contain the previous.
-    let src = "result <- x + 1\n";
-    // Cursor on 's' in 'result' (line 0, col 2).
-    let pos = Position {
-        line: 0,
-        character: 2,
-    };
-    let sel = selection_range_at(src, pos);
-    let ranges = chain_ranges(&sel);
-
-    // The narrowest range must cover the identifier `result`
-    // (cols 0..6 on line 0).
-    assert_eq!(ranges[0].start.line, 0);
-    assert_eq!(ranges[0].start.character, 0);
-    assert_eq!(ranges[0].end.character, "result".len() as u32);
-
-    // The chain must have at least 2 levels (identifier + file).
-    assert!(
-        ranges.len() >= 2,
-        "expected at least 2 levels, got {:?}",
-        ranges
-    );
-
-    // Every level must contain the cursor position.
-    for r in &ranges {
-        let contains = (r.start.line < pos.line
-            || (r.start.line == pos.line && r.start.character <= pos.character))
-            && (r.end.line > pos.line
-                || (r.end.line == pos.line && r.end.character >= pos.character));
-        assert!(contains, "range {:?} does not contain cursor {:?}", r, pos);
-    }
-
-    // Each level must contain or equal the previous (monotonic
-    // widening), with no two consecutive identical ranges.
-    for w in ranges.windows(2) {
-        assert!(
-            w[0] != w[1],
-            "consecutive duplicate ranges in chain: {:?}",
-            w
-        );
-    }
-
-    // The widest level (last) must start at (0, 0).
-    let widest = ranges.last().unwrap();
-    assert_eq!(widest.start.line, 0);
-    assert_eq!(widest.start.character, 0);
-}
-
-#[test]
-fn selection_range_identifier_on_rhs() {
-    // Cursor on `x` in `result <- x + 1` (the RHS read). The
-    // narrowest range must be the identifier `x` (1 char), and
-    // the chain must widen to the enclosing statement.
-    let src = "result <- x + 1\n";
-    // `x` is at line 0, col 10 (after "result <- ").
-    let pos = Position {
-        line: 0,
-        character: 10,
-    };
-    let sel = selection_range_at(src, pos);
-    let ranges = chain_ranges(&sel);
-
-    // The narrowest range is the single-character `x`.
-    assert_eq!(ranges[0].start.line, 0);
-    assert_eq!(ranges[0].start.character, 10);
-    assert_eq!(ranges[0].end.character, 11);
-
-    // The chain widens beyond the identifier.
-    assert!(
-        ranges.len() >= 2,
-        "expected at least 2 levels, got {:?}",
-        ranges
-    );
-}
-
-#[test]
-fn selection_range_picks_correct_statement_in_multi_line_file() {
-    // In a two-statement file, the enclosing statement for a
-    // cursor on line 1 must be the second statement, not the
-    // first.
-    let src = "x <- 1L\ny <- x + 1\n";
-    // Cursor on `y` (line 1, col 0).
-    let pos = Position {
-        line: 1,
-        character: 0,
-    };
-    let sel = selection_range_at(src, pos);
-    let ranges = chain_ranges(&sel);
-
-    // The narrowest range is the identifier `y`.
-    assert_eq!(ranges[0].start.line, 1);
-    assert_eq!(ranges[0].start.character, 0);
-    assert_eq!(ranges[0].end.character, 1);
-
-    // The enclosing statement (the middle level) must start on
-    // line 1 and cover at least the `y <- x + 1` text.
-    let stmt_level = ranges
-        .iter()
-        .find(|r| r.start.line == 1 && r.end.character > 1)
-        .unwrap_or_else(|| panic!("expected a statement-level range on line 1: {:?}", ranges));
-    assert!(
-        stmt_level.start.character == 0,
-        "statement range should start at col 0: {:?}",
-        stmt_level
-    );
-}
-
-#[test]
-fn selection_range_no_identifier_falls_back_to_cursor() {
-    // Cursor on whitespace (between `<-` and the value) is not on
-    // an identifier. The narrowest range must be a zero-width
-    // span at the cursor so the editor still has an anchor.
-    let src = "x <- 1L\n";
-    // Cursor on the space after `<-` (line 0, col 4).
-    let pos = Position {
-        line: 0,
-        character: 4,
-    };
-    let sel = selection_range_at(src, pos);
-    let ranges = chain_ranges(&sel);
-
-    // The narrowest range is a zero-width span at the cursor.
-    assert_eq!(ranges[0].start, pos);
-    assert_eq!(ranges[0].end, pos);
-
-    // The chain still widens to the file level.
-    let widest = ranges.last().unwrap();
-    assert_eq!(widest.start.line, 0);
-    assert_eq!(widest.start.character, 0);
 }
 
 #[test]

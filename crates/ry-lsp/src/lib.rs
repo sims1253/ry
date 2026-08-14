@@ -14,7 +14,7 @@
 //!   * `textDocument/documentSymbol` (outline view of the file's bindings)
 //!   * `workspace/symbol` (search for symbols across all open files)
 //!   * `textDocument/completion`, `signatureHelp`, `inlayHint`,
-//!     `foldingRange`, `codeAction`, `selectionRange`, `documentHighlight`
+//!     `codeAction`, `documentHighlight`
 //!   * Graceful shutdown via `shutdown` / `exit`
 //!
 //! The interactive requests (`hover`, `definition`, `references`,
@@ -29,7 +29,7 @@
 //! logic lives in [`backend`] (`Backend`, `State`, the
 //! `LanguageServer` impl, and the parse/scope/debounce caches); the
 //! per-feature helpers live in their own modules (`navigation`,
-//! `symbols`, `hints`, `folding`, `selection`, `diagnostics`, `ident`).
+//! `symbols`, `hints`, `diagnostics`, `ident`).
 //!
 //! CRITICAL INVARIANT: the LSP protocol uses stdout for JSON-RPC framing.
 //! Any tracing or log output that lands on stdout will corrupt the stream
@@ -141,12 +141,10 @@ pub mod test_seam {
 
 mod backend;
 mod diagnostics;
-mod folding;
 mod hints;
 mod ident;
 mod index;
 mod navigation;
-mod selection;
 mod settings;
 mod symbols;
 mod util;

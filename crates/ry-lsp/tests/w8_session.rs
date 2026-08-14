@@ -233,6 +233,10 @@ struct SessionModel {
     max_files: u64,
     /// Monotonic version counter.
     version: i32,
+    /// Rotation counter for corrected operations: always correcting to
+    /// the lowest open doc / first free slot collapses every correction
+    /// onto one file, hollowing out seed coverage.
+    correction_step: usize,
 }
 
 impl Default for SessionModel {
@@ -248,6 +252,7 @@ impl Default for SessionModel {
             second_folder: false,
             max_files: 20_000,
             version: 1,
+            correction_step: 0,
         }
     }
 }
@@ -292,39 +297,61 @@ impl SessionModel {
     }
 
     /// P37-W7c: Generate a valid alternative for an invalid operation.
-    fn valid_alternative(&self, original: &Operation) -> Option<Operation> {
+    /// Each correction advances `correction_step` and picks the
+    /// `step % len`-th candidate slot, so consecutive corrections
+    /// rotate across open docs / free slots instead of all funneling
+    /// onto the first one. Deterministic: the step is model state, and
+    /// every seed lane replays the same sequence.
+    fn valid_alternative(&mut self, original: &Operation) -> Option<Operation> {
+        let step = self.correction_step;
+        self.correction_step = self.correction_step.wrapping_add(1);
+        let nth = |slots: &[u8]| -> Option<u8> {
+            if slots.is_empty() {
+                None
+            } else {
+                Some(slots[step % slots.len()])
+            }
+        };
         match original {
             Operation::Open { source, .. } => {
                 let closed_on_disk: Vec<u8> = (0..FILES.len() as u8)
                     .filter(|&f| !self.is_open(f) && self.has_disk(f))
                     .collect();
-                closed_on_disk.first().map(|&f| Operation::Open {
+                nth(&closed_on_disk).map(|f| Operation::Open {
                     file: f,
                     source: *source,
                 })
             }
-            Operation::FullEdit { source, .. } | Operation::IncrementalEdit { source, .. } => {
-                self.open_docs.keys().next().map(|&f| Operation::FullEdit {
+            Operation::FullEdit { source, .. } => {
+                let open: Vec<u8> = self.open_docs.keys().copied().collect();
+                nth(&open).map(|f| Operation::FullEdit {
+                    file: f,
+                    source: *source,
+                })
+            }
+            Operation::IncrementalEdit { source, .. } => {
+                let open: Vec<u8> = self.open_docs.keys().copied().collect();
+                nth(&open).map(|f| Operation::IncrementalEdit {
                     file: f,
                     source: *source,
                 })
             }
             Operation::RapidEdit { source, .. } => {
-                self.open_docs.keys().next().map(|&f| Operation::RapidEdit {
+                let open: Vec<u8> = self.open_docs.keys().copied().collect();
+                nth(&open).map(|f| Operation::RapidEdit {
                     file: f,
                     source: *source,
                 })
             }
-            Operation::Close { .. } => self
-                .open_docs
-                .keys()
-                .next()
-                .map(|&f| Operation::Close { file: f }),
+            Operation::Close { .. } => {
+                let open: Vec<u8> = self.open_docs.keys().copied().collect();
+                nth(&open).map(|f| Operation::Close { file: f })
+            }
             Operation::CreateFile { source, .. } => {
                 let empty: Vec<u8> = (0..FILES.len() as u8)
                     .filter(|&f| !self.has_disk(f))
                     .collect();
-                empty.first().map(|&f| Operation::CreateFile {
+                nth(&empty).map(|f| Operation::CreateFile {
                     file: f,
                     source: *source,
                 })
@@ -333,9 +360,7 @@ impl SessionModel {
                 let deletable: Vec<u8> = (0..FILES.len() as u8)
                     .filter(|&f| self.has_disk(f) && !self.is_open(f))
                     .collect();
-                deletable
-                    .first()
-                    .map(|&f| Operation::DeleteFile { file: f })
+                nth(&deletable).map(|f| Operation::DeleteFile { file: f })
             }
             _ => None,
         }
@@ -577,13 +602,14 @@ async fn w8_convergence_property(operations: Vec<Operation>) -> Result<(), TestC
     let (mut live, mut live_server) = spawn_session(&roots).await;
     let mut model = SessionModel::default();
 
-    let mut skipped_count: u32 = 0;
     for (step, operation) in operations.into_iter().enumerate() {
-        // P37-W7c: Track operations skipped due to invalid state.
-        // After precomputation, the generator should only produce
-        // valid operations, so this should remain zero.
+        // Correct an invalid operation by retargeting it within the same
+        // operation kind (a different open doc, a different free slot).
+        // Ops with no valid same-kind target — RenameFile without a free
+        // destination slot, AddFolder when the second folder already
+        // exists, RemoveFolder when it does not — have no semantic
+        // replacement, so they are deliberately skipped.
         let operation = if !model.is_valid(&operation) {
-            skipped_count += 1;
             match model.valid_alternative(&operation) {
                 Some(valid) => valid,
                 None => continue,
@@ -942,13 +968,6 @@ async fn w8_convergence_property(operations: Vec<Operation>) -> Result<(), TestC
                 target_uri
             );
         }
-    }
-
-    // P37-W7c: Record corrected operations for coverage analysis.
-    if skipped_count > 0 {
-        eprintln!(
-            "P37-W7c: {skipped_count} operations were corrected to valid              alternatives (coverage could be improved with state-aware generation)"
-        );
     }
 
     join_session(live, live_server).await;

@@ -169,6 +169,16 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Tests that could not fail were fixed or deleted (#82): the ry-analysis
+  workspace-context test now asserts the rlang/RY070 flip in both
+  directions (check.rs), the same-name symbol test asserts reference
+  indexing instead of an unobservable resolution claim (symbols.rs), the
+  property tests write distinct per-apply content and claim only
+  final-contents equivalence (tests/property.rs), and the w8 session
+  model rotates corrected-operation targets across candidate slots with
+  the stale coverage eprintln (which miscounted invalid ops as
+  corrections and claimed it should stay zero) removed
+  (ry-lsp/tests/w8_session.rs).
 - `Checker::check` now resets the function table and return slots before each
   run, so a reused single-file `Checker` no longer leaks inference state
   (functions, known-vars) from a previous file into the current check. This

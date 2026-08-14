@@ -87,18 +87,42 @@ mod tests {
 
     #[test]
     fn check_project_with_workspace_context() {
-        let mut parser = ry_core::RParser::new().unwrap();
-        let file = parser.parse("test.R", "dplyr_function(1)\n").unwrap();
-        let mut workspace = ry_workspace::WorkspaceContext::default();
-        workspace.attached_packages.insert("dplyr".to_string());
-        let input = CheckInput {
-            files: vec![("test.R".to_string(), 0, Arc::new(file))],
-            user_stubs: Arc::new(BTreeMap::new()),
-            workspace: Some(workspace),
+        // `is_null(x)` narrows `x` away from NULL only when its defining
+        // package is attached, so the trailing `x()` is an RY070
+        // (calling a non-function) exactly when rlang is absent. Running
+        // the same source with and without the workspace context proves
+        // check_project actually feeds attached_packages into the checker
+        // instead of ignoring it.
+        let src = "x <- NULL\nif (is_null(x)) stop(\"missing\")\nx()\n";
+        let run = |workspace: Option<ry_workspace::WorkspaceContext>| -> usize {
+            let mut parser = ry_core::RParser::new().unwrap();
+            let file = parser.parse("test.R", src).unwrap();
+            let output = check_project(CheckInput {
+                files: vec![("test.R".to_string(), 0, Arc::new(file))],
+                user_stubs: Arc::new(BTreeMap::new()),
+                workspace,
+            });
+            output
+                .diagnostics
+                .iter()
+                .flat_map(|(_, diags)| diags.iter())
+                .filter(|d| d.code == "RY070")
+                .count()
         };
-        let output = check_project(input);
-        // Should complete without error even with workspace context.
-        assert!(!output.diagnostics.is_empty());
+
+        let without = run(None);
+        assert!(
+            without > 0,
+            "without rlang the predicate cannot narrow x; RY070 must fire for x()"
+        );
+
+        let mut with = ry_workspace::WorkspaceContext::default();
+        with.attached_packages.insert("rlang".to_string());
+        assert_eq!(
+            run(Some(with)),
+            0,
+            "with rlang attached the predicate narrows x; no RY070 may survive"
+        );
     }
 
     #[test]

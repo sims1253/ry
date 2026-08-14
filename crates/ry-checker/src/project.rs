@@ -238,22 +238,6 @@ impl Project {
         }
     }
 
-    /// Force a full re-collection of all files on the next check.
-    ///
-    /// This is the nuclear option for incremental convergence: it clears
-    /// all cached collection state so the next `check_incremental()` call
-    /// re-collects every file from scratch. Used when files are removed
-    /// and re-added (close/reopen) to prevent stale cross-file state.
-    pub fn force_full_recollection(&mut self) {
-        self.collected_files.clear();
-        self.file_known_vars.clear();
-        self.dirty_paths.clear();
-        let paths: Vec<String> = self.files.iter().map(|(p, _)| p.clone()).collect();
-        for p in paths {
-            self.dirty_paths.insert(p);
-        }
-    }
-
     /// Install runtime package stubs. User packages, including `base`,
     /// replace same-named embedded packages wholesale for this project.
     /// Mark every file as dirty so the next incremental check re-emits all.

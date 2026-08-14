@@ -393,19 +393,6 @@ impl ProjectCache {
             .set_external_s3_methods(workspace.s3_methods.clone());
         self.project
             .set_load_bindings(workspace.load_bindings.clone());
-        // Workaround for the close/reopen convergence defect (issue #81):
-        // re-collect the whole project whenever any file changed. This is
-        // expensive — it defeats pass-1 reuse on every keystroke — but
-        // removing it makes a reopened document publish no diagnostics.
-        // Remove only together with a fix for the underlying stale state.
-        let any_changed = files.iter().any(|(path, version, file)| {
-            self.files.get(path).is_none_or(|(cached_version, cached)| {
-                *cached_version != *version || !Arc::ptr_eq(cached, file)
-            })
-        });
-        if any_changed {
-            self.project.force_full_recollection();
-        }
         for (path, version, file) in files {
             let changed = self
                 .files

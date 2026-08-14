@@ -218,15 +218,25 @@ impl Project {
     /// packages attached via `library`/`require` in
     /// any file, and the union is seeded into every pass-3 emitter so
     /// the dplyr NSE gating sees a project-wide view.
+    ///
+    /// Equality-aware: reinstalling the declared set already in place is a
+    /// no-op. The comparison is against `declared_loaded` (the input), not
+    /// `loaded`, which is recomputed from it on every check pass.
     pub fn set_loaded(&mut self, loaded: std::collections::HashSet<String>) {
+        if self.declared_loaded == loaded {
+            return;
+        }
         self.declared_loaded = loaded.clone();
         self.loaded = loaded;
         self.mark_all_dirty();
     }
 
+    /// Equality-aware: reinstalling the value already in place is a no-op.
     pub fn set_bare_loaded(&mut self, loaded: HashMap<String, HashSet<String>>) {
+        if self.bare_loaded == loaded {
+            return;
+        }
         self.bare_loaded = loaded;
-
         self.mark_all_dirty();
     }
 
@@ -240,11 +250,13 @@ impl Project {
 
     /// Install runtime package stubs. User packages, including `base`,
     /// replace same-named embedded packages wholesale for this project.
-    /// Mark every file as dirty so the next incremental check re-emits all.
+    /// Equality-aware: installing the same `Arc` again is a no-op; a
+    /// different stub set clears all cached collection and re-emits.
     pub fn set_user_stubs(&mut self, stubs: Arc<BTreeMap<String, Typeshed>>) {
-        if !Arc::ptr_eq(&self.user_stubs, &stubs) {
-            self.collected_files.clear();
+        if Arc::ptr_eq(&self.user_stubs, &stubs) {
+            return;
         }
+        self.collected_files.clear();
         self.user_stubs = stubs;
         self.mark_all_dirty();
     }
@@ -252,30 +264,42 @@ impl Project {
     /// Declare per-file names provided by project metadata, such as
     /// `NAMESPACE`'s `importFrom()` directives. Per-file scoping prevents an
     /// import in one checked package from leaking into an unrelated package.
+    /// Equality-aware: reinstalling the value already in place is a no-op.
     pub fn set_external_bindings(&mut self, bindings: HashMap<String, HashSet<String>>) {
+        if self.external_bindings == bindings {
+            return;
+        }
         self.external_bindings = bindings;
-
         self.mark_all_dirty();
     }
 
+    /// Equality-aware: reinstalling the value already in place is a no-op.
     pub fn set_imported_from(&mut self, imports: HashMap<String, HashMap<String, String>>) {
+        if self.imported_from == imports {
+            return;
+        }
         self.imported_from = imports;
-
         self.mark_all_dirty();
     }
 
+    /// Equality-aware: reinstalling the value already in place is a no-op.
     pub fn set_external_s3_methods(&mut self, methods: HashMap<String, HashSet<(String, String)>>) {
+        if self.external_s3_methods == methods {
+            return;
+        }
         self.external_s3_methods = methods;
-
         self.mark_all_dirty();
     }
 
+    /// Equality-aware: reinstalling the value already in place is a no-op.
     pub fn set_load_bindings(
         &mut self,
         bindings: HashMap<String, HashMap<usize, HashSet<String>>>,
     ) {
+        if self.load_bindings == bindings {
+            return;
+        }
         self.load_bindings = bindings;
-
         self.mark_all_dirty();
     }
 

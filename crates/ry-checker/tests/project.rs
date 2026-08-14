@@ -287,6 +287,86 @@ fn load_bindings_activate_at_the_load_statement() {
     );
 }
 
+/// A no-op environment reinstall must not re-emit any file (#86). The LSP
+/// reinstalls all six environment setters on every check cycle; before the
+/// setters were equality-aware that marked every file dirty on every
+/// publish, defeating `check_incremental`'s emit scoping entirely.
+#[test]
+fn no_op_environment_reinstall_does_not_re_emit() {
+    let mut project = Project::new();
+    project.add_file("a.R".to_string(), parse("a.R", "f <- function(x) x + 1L\n"));
+    project.add_file("b.R".to_string(), parse("b.R", "g <- function() f(1L)\n"));
+
+    let loaded = HashSet::from(["dplyr".to_string()]);
+    let bare_loaded =
+        HashMap::from([("a.R".to_string(), HashSet::from(["bare_name".to_string()]))]);
+    let external_bindings = HashMap::from([(
+        "b.R".to_string(),
+        HashSet::from(["external_name".to_string()]),
+    )]);
+    let imported_from = HashMap::from([(
+        "a.R".to_string(),
+        HashMap::from([("imported_helper".to_string(), "fixture".to_string())]),
+    )]);
+    let external_s3_methods = HashMap::from([(
+        "a.R".to_string(),
+        HashSet::from([("Ops".to_string(), "external_class".to_string())]),
+    )]);
+    let load_bindings = HashMap::from([(
+        "b.R".to_string(),
+        HashMap::from([(0, HashSet::from(["loaded_name".to_string()]))]),
+    )]);
+    let install = |project: &mut Project| {
+        project.set_loaded(loaded.clone());
+        project.set_bare_loaded(bare_loaded.clone());
+        project.set_external_bindings(external_bindings.clone());
+        project.set_imported_from(imported_from.clone());
+        project.set_external_s3_methods(external_s3_methods.clone());
+        project.set_load_bindings(load_bindings.clone());
+    };
+
+    install(&mut project);
+    let first = project.check_incremental();
+    assert_eq!(
+        project.emit_count, 2,
+        "first check must emit both files, got {}",
+        project.emit_count
+    );
+
+    // Reinstalling the identical environment is a no-op: nothing is
+    // re-emitted and the cached diagnostics are served unchanged.
+    install(&mut project);
+    let second = project.check_incremental();
+    assert_eq!(
+        project.emit_count, 0,
+        "no-op reinstall must not re-emit any file"
+    );
+    assert_eq!(
+        second, first,
+        "no-op reinstall must serve the cached diagnostics unchanged"
+    );
+
+    // The same holds for stubs installed as the identical Arc.
+    let stubs = generated_user_stubs(true);
+    project.set_user_stubs(Arc::clone(&stubs));
+    let _ = project.check_incremental();
+    assert!(project.emit_count >= 1, "installing new stubs must re-emit");
+    project.set_user_stubs(Arc::clone(&stubs));
+    let _ = project.check_incremental();
+    assert_eq!(
+        project.emit_count, 0,
+        "reinstalling the same stub Arc must not re-emit"
+    );
+
+    // A real change must still invalidate.
+    project.set_loaded(HashSet::from(["dplyr".to_string(), "rlang".to_string()]));
+    let _ = project.check_incremental();
+    assert_eq!(
+        project.emit_count, 2,
+        "a changed environment must re-emit every file"
+    );
+}
+
 #[test]
 fn redefinition_in_different_files_shadows() {
     // If utils.R defines f and other.R also defines f, the later

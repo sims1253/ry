@@ -113,6 +113,14 @@ All notable changes to ry are documented in this file.
 
 ### Changed
 
+- `Project`'s six environment setters (`set_loaded`, `set_bare_loaded`,
+  `set_external_bindings`, `set_imported_from`, `set_external_s3_methods`,
+  `set_load_bindings`) and `set_user_stubs` are equality-aware: reinstalling
+  the value already in place no longer marks every file dirty (#86). The LSP
+  reinstalls the whole workspace environment on every check cycle, so this
+  previously defeated `check_incremental`'s emit scoping on every publish.
+  A no-op reinstall now re-emits nothing; a real change still invalidates
+  everything (gated by an `emit_count` test and the convergence property).
 - **Suggested fixes removed from published diagnostics**: the `fix` payload is
   gone from `ry check --output-format json` and from the `data` field of
   published LSP diagnostics, along with the internal `Fix` machinery that

@@ -90,8 +90,10 @@ cargo run -p ry-cli -- check editors/example-project
 ```
 
 Expected summary: `checked 7 file(s), 11 error(s), 18 warning(s)`,
-exit code 1. The same diagnostics are what the LSP should publish — the
-CLI and LSP share one diagnostics entry point (`ry_analysis::check_project`).
+exit code 1. The same diagnostics are what the LSP should publish: the
+CLI and the LSP wrap the same checker core (`ry-checker::Project`), so
+any divergence between this table and an editor's squiggles is a
+finding, not a rendering quirk (#89).
 
 ## What to eyeball in the LSP beyond squiggles
 

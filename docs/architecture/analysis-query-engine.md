@@ -37,8 +37,10 @@ The `ry-analysis` crate currently implements manual revisioned storage:
 - The `Project` in ry-checker already has hand-maintained incremental state
   (`collected_files`, `file_known_vars`) that duplicates what a query engine
   would provide automatically
-- The pre-existing convergence bug (`w10_session_converges_to_fresh_server`)
-  is exactly the kind of incremental invalidation error that Salsa prevents
+- The `w10_session_converges_to_fresh_server` failure (#81) was recorded here as
+  the kind of incremental invalidation error Salsa prevents. #93 later
+  diagnosed it as a race in the w10 test harness, not the checker; it is fixed
+  and no longer counts against manual invalidation.
 
 ### Salsa evaluation
 
@@ -77,8 +79,8 @@ Rationale:
 3. Migrating to Salsa requires restructuring `Project::check()` which has
    interior mutation, multi-pass collection, and fixpoint iteration — none of
    which fit Salsa's pure-function model without significant refactoring.
-4. The pre-existing convergence bug should be fixed by improving the manual
-   invalidation in the LSP's `ProjectCache`, not by adopting Salsa.
+4. The convergence failure (#81) was resolved without Salsa: it was a race in
+   the w10 test harness, fixed in #93, not a defect in manual invalidation.
 
 **Rollback trigger:** If more than 3 incremental invalidation bugs are found
 in the LSP session convergence tests, re-evaluate Salsa adoption.

@@ -49,7 +49,8 @@ All 12 workstreams merged:
 
 ## Test summary
 - **970 workspace tests pass**
-- **1 pre-existing convergence failure** (w10_session_converges, tracked)
+- **1 pre-existing convergence failure** (w10_session_converges, tracked;
+  later diagnosed as a race in the w10 test harness and fixed, see #81)
 - **0 clippy warnings**
 - **Dependency edges enforced** by CI gate
 

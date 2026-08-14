@@ -969,6 +969,20 @@ async fn w10_convergence_property(operations: Vec<Operation>) -> Result<(), Test
                     continue;
                 }
                 let closed_uri = uris[*file as usize].clone();
+                // Consume the close's clearing publication here instead of
+                // relying on a later step's barrier (#81).  `did_close`
+                // publishes `[]` from the notification lane while requests
+                // are answered on a concurrent lane, so the clearing
+                // notification can be written after a subsequent hover
+                // response; a read-order mark taken after that response
+                // then matches the stale `[]` instead of the reopened
+                // document's real publication.  The barrier drains
+                // in-flight publications for the URI before the mark, and
+                // the loop absorbs any populated one written so late that
+                // it still sequences after it — only the close's `[]` can
+                // terminate the wait.
+                sync_barrier(&mut live, &closed_uri).await;
+                let clear_mark = live.publication_mark();
                 model.open_docs.remove(file);
                 live.notify(
                     "textDocument/didClose",
@@ -976,10 +990,17 @@ async fn w10_convergence_property(operations: Vec<Operation>) -> Result<(), Test
                 )
                 .await
                 .unwrap();
+                loop {
+                    let publish = live
+                        .published_diagnostics_after(&closed_uri, clear_mark)
+                        .await
+                        .unwrap();
+                    if normalize_diagnostics(&publish).is_empty() {
+                        break;
+                    }
+                }
                 // After close, compare the first remaining open document
-                // (if any) against the oracle.  The sync barrier inside
-                // quiesce_and_compare drains the close's empty publication
-                // and any stale publications from prior steps.
+                // (if any) against the oracle.
                 if let Some((&first_open, _)) = model.open_docs.iter().next() {
                     quiesce_and_compare(
                         &mut live,
@@ -1026,4 +1047,75 @@ async fn w10_convergence_property(operations: Vec<Operation>) -> Result<(), Test
 
     join_session(live, live_server).await;
     Ok(())
+}
+
+/// Regression for #81: after a close/reopen the server must publish the
+/// reopened document's diagnostics, and the close's clearing `[]` must not
+/// be mistakable for that publication.  Deterministic companion to the
+/// convergence property, which samples this path randomly.
+#[test]
+fn close_reopen_publishes_diagnostics_again() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(close_reopen_republishes());
+}
+
+async fn close_reopen_republishes() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture.write_file("a.R", W10_DISK).unwrap();
+    let uri = file_uri(&fixture.path("a.R")).unwrap();
+    let (mut session, server) = spawn_session(fixture.root()).await;
+
+    // Barrier + mark before the open, the same pattern
+    // `fresh_server_diagnostics` uses to drain the initialize cycle's
+    // background-index publications.
+    sync_barrier(&mut session, &uri).await;
+    let open_mark = session.publication_mark();
+    session
+        .open(&uri, 1, SourceVariant::AsciiDiagnostic.text())
+        .await
+        .unwrap();
+    let first = session
+        .published_diagnostics_after(&uri, open_mark)
+        .await
+        .unwrap();
+    assert!(
+        !normalize_diagnostics(&first).is_empty(),
+        "initial open must publish diagnostics"
+    );
+
+    let close_mark = session.publication_mark();
+    session
+        .notify(
+            "textDocument/didClose",
+            json!({"textDocument": {"uri": uri}}),
+        )
+        .await
+        .unwrap();
+    let cleared = session
+        .published_diagnostics_after(&uri, close_mark)
+        .await
+        .unwrap();
+    assert!(
+        normalize_diagnostics(&cleared).is_empty(),
+        "close must clear diagnostics"
+    );
+
+    let reopen_mark = session.publication_mark();
+    session
+        .open(&uri, 2, SourceVariant::AstralDiagnostic.text())
+        .await
+        .unwrap();
+    let republish = session
+        .published_diagnostics_after(&uri, reopen_mark)
+        .await
+        .unwrap();
+    assert!(
+        !normalize_diagnostics(&republish).is_empty(),
+        "reopen must publish diagnostics again, not the close's clearing []"
+    );
+
+    join_session(session, server).await;
 }

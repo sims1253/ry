@@ -166,6 +166,15 @@ All notable changes to ry are documented in this file.
   (functions, known-vars) from a previous file into the current check. This
   accumulated-diagnostics defect is gated by the P35-W9 reset/non-interference
   property tests.
+- The w10 session convergence failure (#81) was a race in the test harness,
+  not the checker: the close's clearing `[]` publication can be written after
+  a subsequent request's response, so the harness matched the stale `[]` as
+  the reopened document's publication. `Close` in the model now consumes its
+  own clearing publication, and a deterministic close/reopen regression test
+  pins the behaviour.
+- Deleted `Project::force_full_recollection` and its call in the LSP check
+  cycle. The workaround forced a full project re-collection on every
+  keystroke and did not prevent the failure it was added for.
 
 ## [0.8.0] - 2026-08-04
 

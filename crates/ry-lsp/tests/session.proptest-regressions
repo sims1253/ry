@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 3f6889a6ce7bbafd22ae59e2c5a9b91c1f5aa6592d60ffa56a69d063a816dc87 # shrinks to operations = [Open { file: 2, source: Clean }, FullEdit { file: 2, source: Clean }, Close { file: 2 }, Open { file: 2, source: AsciiDiagnostic }]
+cc 726404ecbb55b606c718e583e3980e670593ba009a56679dea99df1bf6c2eb15 # shrinks to operations = [Open { file: 2, source: Clean }, Open { file: 0, source: Clean }, Close { file: 0 }, Close { file: 2 }, Open { file: 2, source: AsciiDiagnostic }]

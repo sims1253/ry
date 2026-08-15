@@ -21,12 +21,18 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
+      # zizmor annotations (comment-only, per the do-not-edit header):
+      # - artipacked is ignored because the pullfrog agent needs this
+      #   checkout's credentials to push its work; the workflow is
+      #   maintainer-dispatched and uploads no artifacts.
+      # - checkout stays on the vendor's moving v6 tag.
+      - name: Checkout code # zizmor: ignore[artipacked]
+        uses: actions/checkout@v6 # zizmor: ignore[unpinned-uses]
         with:
           fetch-depth: 1
       - name: Run agent
-        uses: pullfrog/pullfrog@v0
+        # the vendor documents and updates this action via the moving v0 tag
+        uses: pullfrog/pullfrog@v0 # zizmor: ignore[unpinned-uses]
         with:
           prompt: ${{ inputs.prompt }}
         env:

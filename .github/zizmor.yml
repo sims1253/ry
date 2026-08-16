@@ -7,11 +7,13 @@ rules:
   #   the bump branch with the credentials the checkout persists, so
   #   persist-credentials: false would break it; the job uploads no
   #   artifacts.
-  # - pullfrog.yml: the pullfrog agent needs the checkout's credentials
-  #   to push its work; the workflow is maintainer-dispatched and
-  #   uploads no artifacts, and it is deliberately left byte-identical
-  #   to the maintainer's version, so it is suppressed here rather than
-  #   annotated in place.
+  # - pullfrog.yml: the workflow is pullfrog's own generated reference
+  #   shape (their docs recommend exactly this) and is deliberately left
+  #   byte-identical to the installed version. The persisted checkout
+  #   credential is inert under pullfrog's documented model: the agent
+  #   mints its own short-lived OIDC installation tokens for every API
+  #   call and never consumes the workflow's GITHUB_TOKEN, and the job's
+  #   token is contents: read only. See https://docs.pullfrog.com/security.
   artipacked:
     ignore:
       - typeshed-bump.yml:23

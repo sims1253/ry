@@ -23,7 +23,7 @@ sales <- data.frame(
 )
 
 daily_report <- function(df) {
-  picked <- select(df, item, units)
+  picked <- select(df, item, units, price)
   mutate(picked, total = units * price)
 }
 

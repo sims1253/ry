@@ -107,6 +107,14 @@ pub struct Project {
     /// Previous pooled known_vars set, used to detect when non-function
     /// bindings changed across files (affects RY010 diagnostics).
     prev_known_vars: HashSet<String>,
+    /// When true, pass-3 emitters snapshot each file's lexical scopes.
+    /// Off by default; see [`Checker::enable_scope_capture`].
+    capture_scopes: bool,
+    /// Scope records from the most recent emission, one entry per
+    /// re-emitted file. Files served from the incremental cache keep no
+    /// records, so a cold `check()` (which emits every file) is the
+    /// complete view.
+    scope_records: Vec<(String, Vec<crate::ScopeRecord>)>,
     /// Test-visible counter: how many files were actually emitted (not
     /// served from cache) in the most recent `refine_and_emit` call.
     /// Asserted on in unit tests the same way `parse_count` is in backend.rs.
@@ -153,6 +161,8 @@ impl Project {
             prev_fn_returns: HashMap::new(),
             prev_fn_signatures: HashMap::new(),
             prev_known_vars: HashSet::new(),
+            capture_scopes: false,
+            scope_records: Vec::new(),
             emit_count: 0,
         }
     }
@@ -246,6 +256,22 @@ impl Project {
         for p in paths {
             self.dirty_paths.insert(p);
         }
+    }
+
+    /// Opt this project into snapshotting every file's lexical scopes
+    /// during the next check. The records replace those of the previous
+    /// emission and are read back with
+    /// [`take_scope_records`](Self::take_scope_records).
+    pub fn enable_scope_capture(&mut self) {
+        self.capture_scopes = true;
+        self.scope_records.clear();
+    }
+
+    /// Take the scope records captured by the most recent check. Empty
+    /// unless [`enable_scope_capture`](Self::enable_scope_capture) was
+    /// called before it.
+    pub fn take_scope_records(&mut self) -> Vec<(String, Vec<crate::ScopeRecord>)> {
+        std::mem::take(&mut self.scope_records)
     }
 
     /// Install runtime package stubs. User packages, including `base`,
@@ -676,8 +702,9 @@ impl Project {
             .map(|(i, _)| i)
             .collect();
         self.emit_count = emit_indices.len();
+        let capture_scopes = self.capture_scopes;
 
-        let per_file: Vec<(usize, String, Vec<Diagnostic>)> = emit_indices
+        let per_file: Vec<(usize, String, Vec<Diagnostic>, Vec<crate::ScopeRecord>)> = emit_indices
             .par_iter()
             .map(|&i| {
                 let (path, file) = &self.files[i];
@@ -706,8 +733,12 @@ impl Project {
                     external_s3_methods.get(path).cloned().unwrap_or_default(),
                 );
                 emitter.set_load_bindings(load_bindings.get(path).cloned().unwrap_or_default());
+                if capture_scopes {
+                    emitter.enable_scope_capture();
+                }
                 emitter.emit_diagnostics(file);
-                (i, path.clone(), emitter.take_diagnostics())
+                let records = emitter.take_scope_records();
+                (i, path.clone(), emitter.take_diagnostics(), records)
             })
             .collect();
 
@@ -727,9 +758,21 @@ impl Project {
         // files that were not in the dirty set.
         let mut result: Vec<(String, Vec<Diagnostic>)> = Vec::with_capacity(self.files.len());
 
+        // Scope records replace the previous emission's; files served
+        // from cache contribute none (see `scope_records` on the struct).
+        let mut per_file = per_file;
+        if capture_scopes {
+            self.scope_records = per_file
+                .iter_mut()
+                .map(|(_, path, _, records)| (path.clone(), std::mem::take(records)))
+                .collect();
+        }
+
         // Build a lookup from emitted results.
-        let mut emitted_map: HashMap<usize, (String, Vec<Diagnostic>)> =
-            per_file.into_iter().map(|(i, p, d)| (i, (p, d))).collect();
+        let mut emitted_map: HashMap<usize, (String, Vec<Diagnostic>)> = per_file
+            .into_iter()
+            .map(|(i, p, d, _)| (i, (p, d)))
+            .collect();
 
         for (i, (path, _)) in self.files.iter().enumerate() {
             if let Some((p, d)) = emitted_map.remove(&i) {
@@ -881,5 +924,83 @@ mod tests {
                 .all(|diagnostic| diagnostic.code != "RY010"),
             "project calls should honor loaded stub eval metadata: {diagnostics:?}"
         );
+    }
+
+    #[test]
+    fn scope_capture_records_top_and_function_scopes_once() {
+        use crate::{Scope, ScopeRecordKind};
+
+        // A nested closure: the inner body references `base`, which only
+        // the outer scope binds, so the inner snapshot must still contain
+        // it (R's lexical capture) while the outer records it as a local.
+        // The trailing `outer()` omits both formals, which is the call
+        // evidence that lets ry commit to `x`'s default type; without a
+        // call site a defaulted formal stays opaque by design.
+        let src = "base <- 2L\nouter <- function(x = 1L, y) {\n  local <- x + base\n  inner <- function(z) z + base\n  inner(y)\n}\nouter()\n";
+        let mut project = Project::new();
+        project.add_file("a.R".to_string(), parse("a.R", src));
+        project.enable_scope_capture();
+        project.check();
+        let records = project.take_scope_records();
+        assert_eq!(records.len(), 1, "one file: {records:?}");
+        let (path, records) = &records[0];
+        assert_eq!(path, "a.R");
+
+        let mut sorted = records.clone();
+        sorted.sort_by_key(|record| record.span.start);
+        // top, outer, inner -- exactly one record each (the fixpoint and
+        // signature walks must not double-capture).
+        assert_eq!(sorted.len(), 3, "{sorted:?}");
+        assert_eq!(sorted[0].kind, ScopeRecordKind::Top);
+        assert!(sorted[0].name.is_none());
+        assert_eq!(sorted[1].kind, ScopeRecordKind::Function);
+        assert_eq!(sorted[1].name.as_deref(), Some("outer"));
+        assert_eq!(
+            sorted[1]
+                .params
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["x", "y"]
+        );
+        assert_eq!(sorted[2].name.as_deref(), Some("inner"));
+
+        let outer = &sorted[1];
+        // The default-valued parameter carries its literal type; the
+        // default-less one stays opaque.
+        assert_eq!(
+            outer.scope.get("x").map(|t| t.to_string()),
+            Some("integer<len=1>".to_string())
+        );
+        assert!(outer.scope.parameter_bindings.contains("x"));
+        // Captured from the outer scope's cloned table.
+        assert!(sorted[2].scope.get("base").is_some());
+        // Local assignment present in the final snapshot.
+        assert!(outer.scope.get("local").is_some());
+        // No capture without opting in.
+        let mut plain = Project::new();
+        plain.add_file("a.R".to_string(), parse("a.R", src));
+        plain.check();
+        assert!(plain.take_scope_records().is_empty());
+    }
+
+    #[test]
+    fn scope_snapshot_is_a_plain_scope() {
+        // Compile-level guard: the recorded value is the ordinary `Scope`
+        // type, so dump consumers can use the same accessors as the LSP.
+        use crate::{Scope, ScopeRecordKind};
+        let mut project = Project::new();
+        project.add_file(
+            "a.R".to_string(),
+            parse("a.R", "f <- function(x) { y <- x\n y }\n"),
+        );
+        project.enable_scope_capture();
+        project.check();
+        let records = project.take_scope_records();
+        let _: Option<&Scope> = records[0]
+            .1
+            .iter()
+            .find(|r| r.kind == ScopeRecordKind::Function)
+            .map(|r| &r.scope);
     }
 }

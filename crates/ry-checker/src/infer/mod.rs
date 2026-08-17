@@ -261,7 +261,7 @@ impl Checker {
                 // runs in discarding mode and emits nothing on its own, so
                 // without this walk almost all real R code would go
                 // unchecked.
-                if let Expr::Function { params, body, .. } = value {
+                if let Expr::Function { params, body, span } = value {
                     let mut fn_scope = scope.clone();
                     if let Some(captures) = self.deferred_captures.last() {
                         for capture in captures {
@@ -308,6 +308,7 @@ impl Checker {
                     for s in body {
                         self.walk_stmt(s, &mut fn_scope, None);
                     }
+                    self.record_scope(binding_name(target), *span, params, &fn_scope);
                     self.vector_intent_parameters.pop();
                     self.enclosing_formals.pop();
                     self.deferred_captures.pop();
@@ -516,7 +517,10 @@ impl Checker {
                 }
             }
             Stmt::FunctionDef {
-                name, params, body, ..
+                name,
+                params,
+                body,
+                span,
             } => {
                 let vt = self.function_value_from_literal(params, body, scope, 0);
                 if let Some(n) = name {
@@ -565,6 +569,10 @@ impl Checker {
                 for s in body {
                     self.walk_stmt(s, &mut fn_scope, None);
                 }
+                // Statement-position literals are anonymous (`name` is
+                // always `None` today, but honor it if the parser ever
+                // names them).
+                self.record_scope(name.as_deref(), *span, params, &fn_scope);
                 self.vector_intent_parameters.pop();
                 self.enclosing_formals.pop();
                 self.deferred_captures.pop();

@@ -8,4 +8,4 @@
 
 pub mod check;
 
-pub use check::{CheckInput, CheckOutput, check_project};
+pub use check::{CheckInput, CheckOutput, check_project, check_project_with_scope_capture};

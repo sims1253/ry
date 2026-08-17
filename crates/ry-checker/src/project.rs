@@ -928,7 +928,7 @@ mod tests {
 
     #[test]
     fn scope_capture_records_top_and_function_scopes_once() {
-        use crate::{Scope, ScopeRecordKind};
+        use crate::ScopeRecordKind;
 
         // A nested closure: the inner body references `base`, which only
         // the outer scope binds, so the inner snapshot must still contain

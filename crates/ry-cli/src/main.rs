@@ -1078,10 +1078,9 @@ struct BindingDump {
 /// clap value parser for `--position LINE:COL`. Rows and columns are
 /// 1-based, matching the dump output.
 fn parse_dump_position(value: &str) -> Result<(usize, usize), String> {
-    let (line, col) =
-        value
-            .split_once(':')
-            .ok_or_else(|| format!("expected LINE:COL, got `{value}`"))?;
+    let (line, col) = value
+        .split_once(':')
+        .ok_or_else(|| format!("expected LINE:COL, got `{value}`"))?;
     let line = line
         .trim()
         .parse::<usize>()
@@ -1408,7 +1407,7 @@ fn assemble_file_dump(
                 .scope
                 .bindings
                 .iter()
-                .filter_map(|(name, ty)| {
+                .map(|(name, ty)| {
                     // A formal counts as `param` only in the scope that
                     // declares it: scope snapshots are cloned from the
                     // enclosing function, which also clones the
@@ -1418,11 +1417,13 @@ fn assemble_file_dump(
                     // rebinds rather than narrows), so it degrades to
                     // `local` at its reassignment site.
                     let is_formal_here = info.params.contains_key(name.as_str());
-                    let is_param =
-                        is_formal_here && record.scope.parameter_bindings.contains(name);
+                    let is_param = is_formal_here && record.scope.parameter_bindings.contains(name);
                     let local_span = info.locals.get(name.as_str()).copied();
                     let (kind, definition_span) = if is_param {
-                        ("param", info.params.get(name.as_str()).copied().or(local_span))
+                        (
+                            "param",
+                            info.params.get(name.as_str()).copied().or(local_span),
+                        )
                     } else if let Some(span) = local_span {
                         ("local", Some(span))
                     } else if record.kind == ry_checker::ScopeRecordKind::Function {
@@ -1433,11 +1434,11 @@ fn assemble_file_dump(
                     // A closed-over binding has no site in this scope;
                     // point at the definition in the nearest enclosing
                     // scope that binds the name, when one was recorded.
-                    let definition_span =
-                        definition_span.or_else(|| enclosing_binding_span(&infos, index, name.as_str()));
-                    Some((name, ty, kind, definition_span, is_formal_here))
+                    let definition_span = definition_span
+                        .or_else(|| enclosing_binding_span(&infos, index, name.as_str()));
+                    (name, ty, kind, definition_span, is_formal_here)
                 })
-                .filter(|(name, _, _, definition_span, is_formal_here)| {
+                .filter(|(_, _, _, definition_span, is_formal_here)| {
                     // Visibility at the selecting positions: formals bind
                     // at call entry (always visible); a local assigned
                     // after every selecting position is not yet in scope
@@ -1458,8 +1459,7 @@ fn assemble_file_dump(
                     name: name.clone(),
                     kind,
                     type_: dump_type_string(ty),
-                    start: definition_span
-                        .map(|span| offset_to_line_char_col(source, span.start)),
+                    start: definition_span.map(|span| offset_to_line_char_col(source, span.start)),
                 })
                 .collect();
             bindings.sort_by(|a, b| a.name.cmp(&b.name));
@@ -1486,11 +1486,7 @@ fn assemble_file_dump(
 /// Definition site of `name` in the nearest recorded scope enclosing
 /// `index`, walking outward. Used for closed-over bindings, whose only
 /// site in this file lives in an outer scope.
-fn enclosing_binding_span(
-    infos: &[ScopeInfo],
-    index: usize,
-    name: &str,
-) -> Option<ry_core::Span> {
+fn enclosing_binding_span(infos: &[ScopeInfo], index: usize, name: &str) -> Option<ry_core::Span> {
     let inner = infos[index].record.span;
     let mut candidates: Vec<&ScopeInfo> = infos
         .iter()
@@ -1530,10 +1526,7 @@ fn run_dump_types(
 
     // Config discovery mirrors `ry check`: anchored at the first input,
     // missing config is fine, malformed config aborts.
-    let search_start = files
-        .first()
-        .cloned()
-        .unwrap_or_else(|| PathBuf::from("."));
+    let search_start = files.first().cloned().unwrap_or_else(|| PathBuf::from("."));
     let cfg = match config::Config::discover(&search_start) {
         Ok(Some((_path, cfg))) => cfg,
         Ok(None) => config::Config::defaults(),
@@ -1562,9 +1555,11 @@ fn run_dump_types(
             const { std::cell::RefCell::new(None) };
     }
     use rayon::prelude::*;
-    // Err(row) = unreadable file (fatal); Ok(None) = unparseable file
-    // (warned and skipped; the dump still covers every parseable file).
-    let results: Vec<Result<Option<(String, String, ry_core::SourceFile)>, String>> = all_paths
+    // Ok(Some(..)) = parsed; Ok(None) = unparseable (warned and skipped;
+    // the dump still covers every parseable file); Err(..) = unreadable
+    // (fatal, reported after the join).
+    type ParseOutcome = Result<Option<(String, String, ry_core::SourceFile)>, String>;
+    let results: Vec<ParseOutcome> = all_paths
         .par_iter()
         .map(|path| {
             let src = match read_r_source(path) {
@@ -1574,8 +1569,9 @@ fn run_dump_types(
             let path_str = path.to_string_lossy().to_string();
             let file = DUMP_PARSER.with(|cell| {
                 let mut slot = cell.borrow_mut();
-                let parser = slot
-                    .get_or_insert_with(|| ry_core::RParser::new().expect("parser init (thread-local)"));
+                let parser = slot.get_or_insert_with(|| {
+                    ry_core::RParser::new().expect("parser init (thread-local)")
+                });
                 parser.parse(&path_str, &src)
             });
             match file {
@@ -1623,16 +1619,15 @@ fn run_dump_types(
             .clone()
             .or_else(|| project_root.clone())
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-        let package_scope =
-            ry_workspace::resolve_workspace_context(
-                &resolution_root,
-                &cfg,
-                ry_workspace::ResolutionEnvironment {
-                    files: indices.iter().map(|index| &parsed[*index].2).collect(),
-                    user_stubs: &user_stubs,
-                },
-            )
-            .map_err(|error| miette::miette!(error))?;
+        let package_scope = ry_workspace::resolve_workspace_context(
+            &resolution_root,
+            &cfg,
+            ry_workspace::ResolutionEnvironment {
+                files: indices.iter().map(|index| &parsed[*index].2).collect(),
+                user_stubs: &user_stubs,
+            },
+        )
+        .map_err(|error| miette::miette!(error))?;
         let analysis_files: Vec<_> = indices
             .iter()
             .map(|index| {
@@ -1668,10 +1663,7 @@ fn run_dump_types(
             })
             .collect(),
     };
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&dump).into_diagnostic()?
-    );
+    println!("{}", serde_json::to_string_pretty(&dump).into_diagnostic()?);
     // Diagnostics (if any) never affect the dump's exit code.
     Ok(ExitCode::SUCCESS)
 }
@@ -2607,7 +2599,10 @@ mod tests {
         let src = "a <- 1L\n#\u{e9} <- 2L\nlast <- 3L\n";
         assert_eq!(offset_to_line_char_col(src, 0), (1, 1));
         // Start of line 3.
-        assert_eq!(offset_to_line_char_col(src, src.find("last").unwrap()), (3, 1));
+        assert_eq!(
+            offset_to_line_char_col(src, src.find("last").unwrap()),
+            (3, 1)
+        );
         // The identifier on line 2 starts after `#`, a multi-byte char.
         let ident = src.find("<- 2L").unwrap();
         let (row, col) = offset_to_line_char_col(src, ident);
@@ -2630,7 +2625,8 @@ mod tests {
     fn dump_type_string_renders_unknown_and_display_forms() {
         use super::dump_type_string;
         assert_eq!(dump_type_string(&ry_core::RType::unknown()), "unknown");
-        let integer = ry_core::RType::new(ry_core::types::Mode::Integer, ry_core::types::Length::One);
+        let integer =
+            ry_core::RType::new(ry_core::types::Mode::Integer, ry_core::types::Length::One);
         assert_eq!(dump_type_string(&integer), "integer<len=1>");
     }
 

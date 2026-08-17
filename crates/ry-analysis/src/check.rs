@@ -30,7 +30,11 @@ pub struct CheckOutput {
 /// This is the single entry point for diagnostics computation.
 /// ry-cli calls this instead of coordinating Project setters.
 pub fn check_project(input: CheckInput) -> CheckOutput {
-    let mut project = apply_workspace(ry_checker::Project::new(), input.workspace.as_ref(), &input.user_stubs);
+    let mut project = apply_workspace(
+        ry_checker::Project::new(),
+        input.workspace.as_ref(),
+        &input.user_stubs,
+    );
 
     // Add all files.
     for (path, _, file) in &input.files {
@@ -55,8 +59,11 @@ pub fn check_project(input: CheckInput) -> CheckOutput {
 pub fn check_project_with_scope_capture(
     input: CheckInput,
 ) -> Vec<(String, Vec<ry_checker::ScopeRecord>)> {
-    let mut project =
-        apply_workspace(ry_checker::Project::new(), input.workspace.as_ref(), &input.user_stubs);
+    let mut project = apply_workspace(
+        ry_checker::Project::new(),
+        input.workspace.as_ref(),
+        &input.user_stubs,
+    );
     for (path, _, file) in &input.files {
         project.add_file(path.clone(), (**file).clone());
     }

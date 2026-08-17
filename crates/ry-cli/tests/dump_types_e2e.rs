@@ -62,9 +62,7 @@ fn fixture_package() -> tempfile::TempDir {
     temp
 }
 
-fn bindings_of<'a>(
-    scope: &'a serde_json::Value,
-) -> Vec<(&'a str, &'a str, &'a str)> {
+fn bindings_of(scope: &serde_json::Value) -> Vec<(&str, &str, &str)> {
     scope["bindings"]
         .as_array()
         .expect("bindings array")
@@ -91,10 +89,12 @@ fn dumps_json_shape_with_param_concrete_and_unknown_types() {
 
     let files = dump["files"].as_array().expect("files array");
     assert_eq!(files.len(), 1);
-    assert!(files[0]["path"]
-        .as_str()
-        .expect("path")
-        .ends_with("R/analysis.R"));
+    assert!(
+        files[0]["path"]
+            .as_str()
+            .expect("path")
+            .ends_with("R/analysis.R")
+    );
 
     let scopes = files[0]["scopes"].as_array().expect("scopes array");
     // Top level, moving_average, and the nested window function.
@@ -152,9 +152,11 @@ fn dumps_json_shape_with_param_concrete_and_unknown_types() {
         .expect("threshold bound");
     assert_eq!(threshold.1, "local");
     assert_eq!(threshold.2, "integer<len=1>");
-    assert!(top_bindings
-        .iter()
-        .any(|(name, kind, _)| *name == "moving_average" && *kind == "local"));
+    assert!(
+        top_bindings
+            .iter()
+            .any(|(name, kind, _)| *name == "moving_average" && *kind == "local")
+    );
 
     // The nested function closes over names its own body never assigns.
     let inner_bindings = bindings_of(&scopes[2]);
@@ -174,7 +176,11 @@ fn dumps_json_shape_with_param_concrete_and_unknown_types() {
 #[test]
 fn position_flag_selects_innermost_scope_and_filters_late_bindings() {
     let temp = fixture_package();
-    let file = temp.path().join("R/analysis.R").to_string_lossy().into_owned();
+    let file = temp
+        .path()
+        .join("R/analysis.R")
+        .to_string_lossy()
+        .into_owned();
 
     // Line 9 is inside window's body: only the innermost scope is dumped.
     let output = run(&["dump-types", &file, "--position", "9:5"]);
@@ -210,7 +216,14 @@ fn position_flag_selects_innermost_scope_and_filters_late_bindings() {
     assert_eq!(scopes[0]["kind"], "top");
 
     // Repeated positions select the union of their innermost scopes.
-    let output = run(&["dump-types", &file, "--position", "9:5", "--position", "1:1"]);
+    let output = run(&[
+        "dump-types",
+        &file,
+        "--position",
+        "9:5",
+        "--position",
+        "1:1",
+    ]);
     let dump = stdout_json(&output);
     let scopes = dump["files"][0]["scopes"].as_array().unwrap();
     let selected: Vec<&str> = scopes
@@ -229,16 +242,17 @@ fn directory_input_dumps_every_discovered_file() {
     let dump = stdout_json(&output);
     let files = dump["files"].as_array().unwrap();
     assert_eq!(files.len(), 1);
-    assert!(files[0]["path"]
-        .as_str()
-        .unwrap()
-        .ends_with("R/analysis.R"));
+    assert!(files[0]["path"].as_str().unwrap().ends_with("R/analysis.R"));
 }
 
 #[test]
 fn exit_code_nonzero_only_for_usage_and_io_failures() {
     let temp = fixture_package();
-    let file = temp.path().join("R/analysis.R").to_string_lossy().into_owned();
+    let file = temp
+        .path()
+        .join("R/analysis.R")
+        .to_string_lossy()
+        .into_owned();
 
     // Unknown format is a usage failure.
     let output = run(&["dump-types", &file, "--format", "yaml"]);

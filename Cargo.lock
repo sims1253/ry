@@ -1291,14 +1291,10 @@ dependencies = [
 name = "ry-analysis"
 version = "0.9.0"
 dependencies = [
- "proptest",
  "ry-checker",
- "ry-config",
  "ry-core",
  "ry-typeshed",
  "ry-workspace",
- "tempfile",
- "tracing",
 ]
 
 [[package]]
@@ -1379,7 +1375,6 @@ name = "ry-lsp"
 version = "0.9.0"
 dependencies = [
  "proptest",
- "ry-analysis",
  "ry-checker",
  "ry-config",
  "ry-core",

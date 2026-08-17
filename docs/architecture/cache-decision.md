@@ -24,10 +24,11 @@ unsafe for reuse.
 
 3. **Correctness over speed.** Plan 38 Decision 8 states: "No production
    cache is wired until a complete, versioned query summary and measured
-   need exist." The revisioned query engine that decision pointed to was
-   later deleted (no consumer ever used it), so the precondition stands
-   as a design requirement to settle before any cache work, not as a
-   tracked document.
+   need exist." The `ry-analysis` query engine that decision pointed to
+   was later deleted because no consumer ever used it. No versioned query
+   summary exists, and the decision record that tracked the requirement
+   (`analysis-query-engine.md`) was deleted with it. Settle the
+   requirement before wiring any cache.
 
 ## Future cache requirements
 

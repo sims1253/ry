@@ -178,6 +178,85 @@ functions do not produce false unbound-variable reports. When the
 masked data’s schema is unknown, ry stays silent rather than guessing
 at column candidates.
 
+## Dumping inferred types
+
+`ry dump-types` is the non-interactive counterpart of the LSP hover: it
+runs one analysis pass (the same pass `ry check` runs, over the same
+package-aware environment) and prints every lexical scope of the
+requested files as JSON on stdout. Downstream tooling can query which
+bindings a scope holds and with what inferred types, without re-running
+the checker per position.
+
+``` bash
+ry dump-types R/analysis.R
+#> {
+#>   "files": [
+#>     {
+#>       "path": "R/analysis.R",
+#>       "scopes": [
+#>         {
+#>           "kind": "function",
+#>           "name": "moving_average",
+#>           "start": [3, 19],
+#>           "end": [8, 2],
+#>           "bindings": [
+#>             { "name": "n", "kind": "param", "type": "integer<len=1>", "start": [3, 31] },
+#>             { "name": "threshold", "kind": "closed-over", "type": "integer<len=1>", "start": [1, 1] },
+#>             { "name": "window", "kind": "local", "type": "function<len=1>", "start": [4, 3] },
+#>             { "name": "x", "kind": "param", "type": "unknown", "start": [3, 28] }
+#>           ]
+#>         }
+#>       ]
+#>     }
+#>   ]
+#> }
+```
+
+Positions are 1-based `[row, column]` pairs; columns count characters,
+not bytes. Scopes are ordered by start position, bindings by name.
+`type` is the same string the LSP hover shows; `unknown` marks bindings
+ry could not infer, and never fails the run.
+
+Binding kinds:
+
+- `param` — a formal of this scope that the body never reassigns. A
+  reassigned formal degrades to `local` at its reassignment site
+  (R rebinds rather than narrows).
+- `local` — first assigned inside this scope’s own body (assignments in
+  `if` / `for` / `while` bodies and braced value blocks count; they bind
+  in the enclosing function in R).
+- `closed-over` — function scopes only: present because the body’s
+  scope is cloned from the enclosing one at the point of definition.
+- `imported` — top-level bindings the file never assigns, supplied by
+  the host environment (for example Shiny server fragments, where
+  `input` / `output` / `session` are ambient).
+
+Each binding’s `start` points at its definition site — the formal, the
+first assignment, or, for `closed-over`, the site in the nearest
+enclosing scope that defines the name (`null` when none is recorded).
+
+`--position LINE:COL` (repeatable) restricts output to the innermost
+scope containing each position and drops locals assigned after it,
+answering "which bindings are in scope at line N":
+
+``` bash
+ry dump-types R/analysis.R --position 4:5
+#> (only moving_average’s scope; window is still assigned at 4:3, x and n are visible)
+```
+
+A directory argument expands to every discoverable R file under it,
+using `ry check`’s discovery rules. `--project-root <DIR>` overrides the
+analysis root for non-package files; by default each file is analyzed in
+the context of its nearest enclosing package (the ancestor directory
+with a `DESCRIPTION`), else the working directory — mirroring `ry check`’s
+per-package grouping. The exit code is 0 even when the analyzed code has
+diagnostics; it is non-zero only for usage, IO, or internal failure.
+Scopes reflect the checker’s snapshot semantics: each table is the
+scope’s state at the end of its body, and a nested function captures the
+enclosing scope as of its definition point (ry’s documented closure
+approximation). Anonymous function literals used as call arguments are
+inferred in discarding mode and are therefore not recorded as scopes.
+
 ## Configuration (`ry.toml`)
 
 Discovered by walking up from the checked path. All keys optional:

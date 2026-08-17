@@ -113,6 +113,15 @@ All notable changes to ry are documented in this file.
 
 ### Changed
 
+- **Deduplicated the operator S3-generic list (#42)**: `is_operator_generic`
+  now answers from `semantic_lists::OPERATORS` instead of restating the same
+  13 Arith + Compare symbols as match arms, so the S3 method-name splitter
+  and the method-registration predicate share one registered constant. The
+  recognized operator set is unchanged; a new test iterates the list against
+  the predicate, with negative samples for the operator symbols that must
+  stay unrecognized, so the two representations cannot silently drift.
+  `is_operator_symbol` remains a separate, documented set covering all
+  plain operator tokens for RY010 suppression.
 - `Project`'s six environment setters (`set_loaded`, `set_bare_loaded`,
   `set_external_bindings`, `set_imported_from`, `set_external_s3_methods`,
   `set_load_bindings`) and `set_user_stubs` are equality-aware: reinstalling

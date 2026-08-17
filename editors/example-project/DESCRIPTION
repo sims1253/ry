@@ -1,0 +1,17 @@
+Package: coffeestats
+Type: Package
+Title: Small Helpers for Coffee-Shop Sales Figures
+Version: 0.1.0
+Authors@R:
+    person("Example", "Project", email = "example@example.com", role = c("aut", "cre"))
+Description: A deliberately tiny example package used to eyeball ry
+    diagnostics in VS Code and Zed. Every file in R/ has a stated
+    purpose in the project README, including the intentionally broken
+    one.
+License: MIT
+Encoding: UTF-8
+Depends:
+    R (>= 4.1.0)
+Imports:
+    dplyr,
+    purrr

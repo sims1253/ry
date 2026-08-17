@@ -49,14 +49,14 @@ field selects how a delta is treated:
   missing/unowned delta is printed for visibility but does **not** gate the
   build; re-audit and regenerate the ledger to update it.
 
-In both modes, findings labelled `true_positive` are checked explicitly so a
+In both modes, findings labeled `true_positive` are checked explicitly so a
 real bug disappearing is always surfaced.
 
 ## Regenerating the posit ledger
 
 The posit ledger is generated — never hand-written — from the audit working
 directory, so the 1,142 identities and the 34/1108 classification are re-derived
-from the audited artefacts every time. The generator lives with the audit data
+from the audited artifacts every time. The generator lives with the audit data
 (`ry-audits/posit-corpus/transcribe-corpus.R`) and is deliberately not vendored
 here: it reads a private audit checkout, and this repo carries only the
 resulting ledger.

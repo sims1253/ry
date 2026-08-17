@@ -38,7 +38,7 @@ The default-enabled rules use the ordinary ry configuration/filter seam
 ## Precision implications
 
 At `minConfidence: "low"` with the default rule set, the editor shows all
-rules with at least low confidence. This means some false positives appear,
+rules with at least low confidence. Some false positives still appear,
 particularly for RY010 in packages with dynamic bindings. Users who want
 fewer false positives can:
 

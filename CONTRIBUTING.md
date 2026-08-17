@@ -99,7 +99,7 @@ bunx @vscode/vsce package --no-dependencies
 
 This is required because `vsce`'s dependency walker cannot read
 `bun.lock`, so a non-bundled extension mis-resolves `node_modules`.
-Bundling with esbuild sidesteps this.
+Bundling with esbuild avoids this.
 
 ### Zed extension
 

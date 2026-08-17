@@ -2,7 +2,7 @@
 //!
 //! `find_ident_at_offset` walks the whole AST to resolve the innermost
 //! `Expr::Ident` whose span contains a byte offset, used by hover,
-//! go-to-definition, references, and document highlights. Keywords and
+//! go-to-definition, and references. Keywords and
 //! numeric literals are filtered out.
 
 use ry_core::{Expr, SourceFile, Span, Stmt};

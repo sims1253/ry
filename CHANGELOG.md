@@ -215,6 +215,15 @@ All notable changes to ry are documented in this file.
   `p39-w1-catalog-design.md`, `p39-acceptance.md`) are deleted too.
   Nothing ever called the deleted surface, so diagnostic output is
   unchanged.
+- **LSP no longer advertises `textDocument/documentHighlight`**: the
+  capability, its handler, and its AST walker are gone. Highlighting
+  matched identifiers purely by spelling with no binding or scope
+  resolution, and every editor already highlights same-name tokens from
+  its own R grammar — the server's scope is the diagnostics `ry check`
+  produces (issue #87). This completes the clear-cut removals begun with
+  `textDocument/foldingRange` and `textDocument/selectionRange` above;
+  none of the three was ever shipped in a release, so no released
+  capability schema changes.
 
 ### Fixed
 

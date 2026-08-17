@@ -14,7 +14,7 @@
 //!   * `textDocument/documentSymbol` (outline view of the file's bindings)
 //!   * `workspace/symbol` (search for symbols across all open files)
 //!   * `textDocument/completion`, `signatureHelp`, `inlayHint`,
-//!     `codeAction`, `documentHighlight`
+//!     `codeAction`
 //!   * Graceful shutdown via `shutdown` / `exit`
 //!
 //! The interactive requests (`hover`, `definition`, `references`,

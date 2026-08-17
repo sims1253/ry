@@ -151,7 +151,8 @@ enum Cmd {
         files: Vec<PathBuf>,
         /// Analysis root for whole-project inference. Defaults, per file,
         /// to the nearest ancestor directory containing a DESCRIPTION
-        /// (the enclosing package), else the current directory — the same
+        /// (the enclosing package), else the directory owning the
+        /// discovered ry.toml, else the current directory — the same
         /// grouping `ry check` uses.
         #[arg(long, value_name = "DIR")]
         project_root: Option<PathBuf>,
@@ -1304,10 +1305,14 @@ fn assemble_file_dump(
     positions: &[(usize, usize)],
 ) -> FileDump {
     // Sort by start position and drop duplicates (an injected-expression
-    // re-walk can complete the same literal twice).
+    // re-walk can complete the same literal twice). The dedup key
+    // includes the kind: a leading function literal's span starts at the
+    // same byte 0 as the whole-file top scope, and keying on the offset
+    // alone would drop that top scope and every top-level binding with
+    // it.
     let mut records = records;
     records.sort_by_key(|record| record.span.start);
-    records.dedup_by(|a, b| a.span.start == b.span.start);
+    records.dedup_by(|a, b| a.kind == b.kind && a.span.start == b.span.start);
 
     let mut function_locals: HashMap<usize, HashMap<String, ry_core::Span>> = HashMap::new();
     index_scope_bodies(&file.stmts, &mut function_locals);
@@ -1344,38 +1349,14 @@ fn assemble_file_dump(
     // Which scopes does --position select? Without positions, all. With
     // them, the innermost containing scope for each position (the union,
     // deduplicated). Byte offsets make containment exact regardless of
-    // encoding.
-    let selected: Vec<usize> = if positions.is_empty() {
-        (0..infos.len()).collect()
-    } else {
-        let mut chosen: Vec<usize> = Vec::new();
-        for &(row, col) in positions {
-            let Some(offset) = line_char_col_to_offset(&file.source, row, col) else {
-                continue;
-            };
-            let mut best: Option<(usize, usize)> = None;
-            for (index, info) in infos.iter().enumerate() {
-                let span = info.record.span;
-                if span.start <= offset && offset < span.end {
-                    let extent = span.end - span.start;
-                    if best.is_none_or(|(extent_so_far, _)| extent < extent_so_far) {
-                        best = Some((extent, index));
-                    }
-                }
-            }
-            if let Some((_, index)) = best {
-                chosen.push(index);
-            }
-        }
-        chosen.sort_unstable();
-        chosen.dedup();
-        chosen
-    };
-
-    // The offsets that selected each scope, for binding-visibility
-    // filtering below.
+    // encoding. One pass records both the selected scopes and, per
+    // scope, the offsets that selected it — the latter drives
+    // binding-visibility filtering below.
+    let mut selected: Vec<usize> = Vec::new();
     let mut selecting_offsets: HashMap<usize, Vec<usize>> = HashMap::new();
-    if !positions.is_empty() {
+    if positions.is_empty() {
+        selected.extend(0..infos.len());
+    } else {
         for &(row, col) in positions {
             let Some(offset) = line_char_col_to_offset(&file.source, row, col) else {
                 continue;
@@ -1394,6 +1375,9 @@ fn assemble_file_dump(
                 selecting_offsets.entry(index).or_default().push(offset);
             }
         }
+        selected.extend(selecting_offsets.keys().copied());
+        selected.sort_unstable();
+        selected.dedup();
     }
 
     let scopes = selected
@@ -1525,11 +1509,14 @@ fn run_dump_types(
     }
 
     // Config discovery mirrors `ry check`: anchored at the first input,
-    // missing config is fine, malformed config aborts.
+    // missing config is fine, malformed config aborts. The config's
+    // directory is kept as `config_root` — it anchors the `exclude`
+    // patterns below and is the resolution-root fallback for non-package
+    // files, exactly as in `run_check`.
     let search_start = files.first().cloned().unwrap_or_else(|| PathBuf::from("."));
-    let cfg = match config::Config::discover(&search_start) {
-        Ok(Some((_path, cfg))) => cfg,
-        Ok(None) => config::Config::defaults(),
+    let (config_root, cfg) = match config::Config::discover(&search_start) {
+        Ok(Some((path, cfg))) => (path.parent().map(PathBuf::from), cfg),
+        Ok(None) => (None, config::Config::defaults()),
         Err(e) => {
             eprintln!("ry: {}", e);
             return Ok(ExitCode::FAILURE);
@@ -1542,7 +1529,12 @@ fn run_dump_types(
             eprintln!("ry: {}: no such file or directory", root.display());
             return Ok(ExitCode::FAILURE);
         }
-        let result = ry_workspace::discover_r_files(root, None, &cfg, cfg.check_test_fixtures);
+        let result = ry_workspace::discover_r_files(
+            root,
+            config_root.as_deref(),
+            &cfg,
+            cfg.check_test_fixtures,
+        );
         all_paths.extend(result.files);
         report_truncation(&result.truncated, root);
     }
@@ -1603,7 +1595,9 @@ fn run_dump_types(
 
     // Same per-package grouping as `ry check`: each DESCRIPTION root is
     // its own library namespace. Non-package scripts share one group
-    // rooted at --project-root (or the working directory).
+    // rooted at --project-root, else the config root (the directory
+    // owning the discovered ry.toml), else the working directory —
+    // `run_check_once`'s fallback chain with --project-root overriding.
     let mut groups: std::collections::BTreeMap<Option<PathBuf>, Vec<usize>> =
         std::collections::BTreeMap::new();
     for (index, (path, _, _)) in parsed.iter().enumerate() {
@@ -1618,6 +1612,7 @@ fn run_dump_types(
         let resolution_root = group_root
             .clone()
             .or_else(|| project_root.clone())
+            .or_else(|| config_root.clone())
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
         let package_scope = ry_workspace::resolve_workspace_context(
             &resolution_root,
@@ -1649,6 +1644,15 @@ fn run_dump_types(
                 degraded_scopes: Vec::new(),
             }),
         };
+        // `ry check` prints one summary line per degraded scope; keep the
+        // note on stderr here too so a dump over the same project reports
+        // the same precision loss without polluting the JSON on stdout.
+        for (path, reason) in &package_scope.degraded_scopes {
+            eprintln!(
+                "ry: {}: degraded scope ({reason}); serialized data file(s) over the byte cap fell back to file stems",
+                path.display()
+            );
+        }
         for (path, records) in ry_analysis::check_project_with_scope_capture(check_input) {
             records_by_path.insert(path, records);
         }

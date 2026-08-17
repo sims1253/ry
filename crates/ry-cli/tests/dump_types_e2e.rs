@@ -245,6 +245,143 @@ fn directory_input_dumps_every_discovered_file() {
     assert!(files[0]["path"].as_str().unwrap().ends_with("R/analysis.R"));
 }
 
+/// A directory dump must apply the discovered `ry.toml`'s `exclude`
+/// patterns with the same anchoring as `ry check`, so the two commands
+/// never disagree on the file set.
+#[test]
+fn directory_dump_applies_config_exclude_patterns_like_check() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::write(temp.path().join("keep.R"), "a <- 1L\n").unwrap();
+    fs::create_dir_all(temp.path().join("vendor")).unwrap();
+    fs::write(temp.path().join("vendor/skip.R"), "b <- 2L\n").unwrap();
+    // Gitignore-style patterns are matched against paths relative to the
+    // directory owning the ry.toml; `**` on both sides tolerates the
+    // relative `./` discovery prefix.
+    fs::write(
+        temp.path().join("ry.toml"),
+        "exclude = [\"**/vendor/**\"]\n",
+    )
+    .unwrap();
+    let root = temp.path().to_str().unwrap();
+
+    let dump = stdout_json(&run(&["dump-types", root]));
+    let dumped: Vec<&str> = dump["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| file["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(dumped.len(), 1, "{dumped:?}");
+    assert!(dumped[0].ends_with("keep.R"), "{dumped:?}");
+    assert!(
+        !dumped.iter().any(|path| path.contains("vendor")),
+        "excluded file must not be dumped: {dumped:?}"
+    );
+
+    // The same directory through `ry check` analyzes exactly one file:
+    // the dumped set and the checked set agree.
+    let check = run(&["check", root]);
+    let stderr = String::from_utf8_lossy(&check.stderr);
+    assert!(
+        stderr.contains("checked 1 file(s)"),
+        "check and dump disagree on the file set: {stderr}"
+    );
+}
+
+/// A file whose first statement is a bare `function` literal produces a
+/// function record whose span starts at the same byte 0 as the whole-file
+/// top scope; the dump dedup must key on the kind too and keep both.
+#[test]
+fn leading_function_literal_keeps_top_scope_and_its_bindings() {
+    let temp = tempfile::tempdir().unwrap();
+    let file = temp.path().join("f.R");
+    fs::write(&file, "function(x) x\na <- 1L\n").unwrap();
+    let file = file.to_str().unwrap();
+
+    let dump = stdout_json(&run(&["dump-types", file]));
+    let scopes = dump["files"][0]["scopes"].as_array().unwrap();
+    assert_eq!(scopes.len(), 2, "{scopes:?}");
+    assert_eq!(scopes[0]["kind"], "function");
+    assert_eq!(scopes[0]["name"], serde_json::Value::Null);
+    assert_eq!(scopes[1]["kind"], "top");
+    let top = bindings_of(&scopes[1]);
+    assert!(
+        top.iter()
+            .any(|(name, kind, _)| *name == "a" && *kind == "local"),
+        "top-level binding vanished: {top:?}"
+    );
+
+    // A position on a later line resolves through the surviving top
+    // scope instead of selecting nothing.
+    let dump = stdout_json(&run(&["dump-types", file, "--position", "2:1"]));
+    let scopes = dump["files"][0]["scopes"].as_array().unwrap();
+    assert_eq!(scopes.len(), 1, "{scopes:?}");
+    assert_eq!(scopes[0]["kind"], "top");
+    assert!(
+        bindings_of(&scopes[0])
+            .iter()
+            .any(|(name, _, _)| *name == "a")
+    );
+}
+
+/// The README records this asymmetry: an anonymous function literal used
+/// as a call argument is inferred in discarding mode and is not dumped,
+/// but a named function defined inside it completes and is.
+#[test]
+fn named_function_inside_anonymous_callback_is_recorded() {
+    let temp = tempfile::tempdir().unwrap();
+    let file = temp.path().join("g.R");
+    fs::write(
+        &file,
+        concat!(
+            "x <- lapply(1:3, function(item) {\n",
+            "  helper <- function(v) v + 1L\n",
+            "  helper(item)\n",
+            "})\n",
+        ),
+    )
+    .unwrap();
+    let dump = stdout_json(&run(&["dump-types", file.to_str().unwrap()]));
+    let scopes = dump["files"][0]["scopes"].as_array().unwrap();
+    let names: Vec<&str> = scopes
+        .iter()
+        .map(|scope| scope["name"].as_str().unwrap_or("top"))
+        .collect();
+    // The anonymous callback scope is absent; `helper` inside it is not.
+    assert_eq!(names, vec!["top", "helper"], "{scopes:?}");
+}
+
+/// Degraded scopes (serialized data over the byte cap) print a stderr
+/// note like `ry check`'s, without polluting the JSON on stdout.
+#[test]
+fn degraded_scopes_are_noted_on_stderr_only() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir_all(temp.path().join("R")).unwrap();
+    fs::create_dir_all(temp.path().join("data")).unwrap();
+    fs::write(
+        temp.path().join("DESCRIPTION"),
+        "Package: degr\nVersion: 0.0.0.9000\nLazyData: true\n",
+    )
+    .unwrap();
+    fs::write(temp.path().join("R/x.R"), "a <- 1L\n").unwrap();
+    fs::write(temp.path().join("data/big.rda"), vec![0u8; 4096]).unwrap();
+    fs::write(temp.path().join("ry.toml"), "max-serialized-bytes = 16\n").unwrap();
+    let root = temp.path().to_str().unwrap();
+
+    let output = run(&["dump-types", root]);
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("degraded scope"),
+        "missing parity note on stderr: {stderr}"
+    );
+    // The note never leaks into the machine-facing dump.
+    let dump = stdout_json(&output);
+    let files = dump["files"].as_array().unwrap();
+    assert_eq!(files.len(), 1);
+    assert!(files[0]["path"].as_str().unwrap().ends_with("R/x.R"));
+}
+
 #[test]
 fn exit_code_nonzero_only_for_usage_and_io_failures() {
     let temp = fixture_package();

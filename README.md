@@ -245,17 +245,21 @@ ry dump-types R/analysis.R --position 4:5
 ```
 
 A directory argument expands to every discoverable R file under it,
-using `ry check`’s discovery rules. `--project-root <DIR>` overrides the
-analysis root for non-package files; by default each file is analyzed in
-the context of its nearest enclosing package (the ancestor directory
-with a `DESCRIPTION`), else the working directory — mirroring `ry check`’s
-per-package grouping. The exit code is 0 even when the analyzed code has
+using `ry check`’s discovery rules, including the discovered `ry.toml`’s
+`exclude` patterns. `--project-root <DIR>` overrides the analysis root
+for non-package files; by default each file is analyzed in the context
+of its nearest enclosing package (the ancestor directory with a
+`DESCRIPTION`), else the directory owning the discovered `ry.toml`, else
+the working directory — mirroring `ry check`’s per-package grouping. The
+exit code is 0 even when the analyzed code has
 diagnostics; it is non-zero only for usage, IO, or internal failure.
 Scopes reflect the checker’s snapshot semantics: each table is the
 scope’s state at the end of its body, and a nested function captures the
 enclosing scope as of its definition point (ry’s documented closure
 approximation). Anonymous function literals used as call arguments are
-inferred in discarding mode and are therefore not recorded as scopes.
+inferred in discarding mode and are therefore not recorded as scopes —
+but named functions defined *inside* such a callback do complete and are
+recorded, so a dump can contain a scope whose enclosing scope is absent.
 
 ## Configuration (`ry.toml`)
 

@@ -14,9 +14,7 @@ use crate::hints::{
     active_parameter, collect_completions, collect_inlay_hints, find_enclosing_call, get_signature,
 };
 use crate::ident::find_ident_at_offset;
-use crate::navigation::{
-    collect_document_highlights, find_definition_locations, find_references_in_file,
-};
+use crate::navigation::{find_definition_locations, find_references_in_file};
 use crate::settings::{FolderSettings, ServerSettings};
 use crate::symbols::{collect_symbols, flatten_symbols_to_symbol_info};
 use crate::util::position_to_byte_offset_pos;
@@ -904,15 +902,6 @@ impl LanguageServer for Backend {
                 // and filters by a case-insensitive substring match
                 // against the query string.
                 workspace_symbol_provider: Some(OneOf::Left(true)),
-                // Enable `textDocument/documentHighlight` so the client
-                // can highlight all in-file occurrences of the symbol
-                // under the cursor (e.g. with a colored background). The
-                // handler is `document_highlight` below; it reuses the
-                // reference walker to find every `Expr::Ident` matching
-                // the cursor's identifier in the current file, classifying
-                // assignment targets as `WRITE` and all other occurrences
-                // as `READ`.
-                document_highlight_provider: Some(OneOf::Left(true)),
                 // Enable `textDocument/codeAction` so editors can offer
                 // quick fixes for diagnostics. The handler is
                 // `code_action` below; it offers per-diagnostic
@@ -1817,43 +1806,6 @@ impl LanguageServer for Backend {
             Ok(None)
         } else {
             Ok(Some(all_symbols))
-        }
-    }
-
-    async fn document_highlight(
-        &self,
-        params: DocumentHighlightParams,
-    ) -> LspResult<Option<Vec<DocumentHighlight>>> {
-        let uri = params
-            .text_document_position_params
-            .text_document
-            .uri
-            .clone();
-        let path = uri_to_path(&uri);
-        let position = params.text_document_position_params.position;
-
-        // Parse the current document (cached). Document
-        // highlight is scoped to the current file (per the LSP spec), so
-        // we only parse once. `text` comes from the same version the
-        // AST was parsed from, so offsets always match.
-        let Some((file, text)) = self.parsed_file(&path).await else {
-            return Ok(None);
-        };
-
-        // Find the identifier under the cursor via an AST walk. Returns
-        // `None` (no highlights) for operators, numbers, and keywords.
-        let Some(byte_offset) = position_to_byte_offset_pos(&text, position) else {
-            return Ok(None);
-        };
-        let Some((identifier, _)) = find_ident_at_offset(&file, byte_offset) else {
-            return Ok(None);
-        };
-
-        let highlights = collect_document_highlights(&file, &identifier, &text);
-        if highlights.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(highlights))
         }
     }
 

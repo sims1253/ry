@@ -267,7 +267,7 @@ Create a deep interface, provisionally `WorkspaceAnalysis`, that owns:
 - effective config, baselines, workspace metadata, and typesheds per root;
 - parsing and project semantic state;
 - diagnostics, hover, completion, signature help, navigation, symbols,
-  and inlay hints;
+  inlay hints, and fixes;
 - cancellation and stale-result rejection.
 
 The API should accept changes and answer immutable-revision queries. Protocol

@@ -13,10 +13,7 @@ use crate::diagnostics::{
 use crate::hints::{
     active_parameter, collect_completions, collect_inlay_hints, find_enclosing_call, get_signature,
 };
-use crate::ident::find_ident_at_offset;
-use crate::navigation::{find_definition_locations, find_references_in_file};
 use crate::settings::{FolderSettings, ServerSettings};
-use crate::symbols::{collect_symbols, flatten_symbols_to_symbol_info};
 use crate::util::position_to_byte_offset_pos;
 use ry_checker::Project;
 use ry_core::{RParser, SourceFile};
@@ -844,23 +841,6 @@ impl LanguageServer for Backend {
                     // tree-sitter InputEdit for incremental reparse.
                     TextDocumentSyncKind::INCREMENTAL,
                 )),
-                hover_provider: Some(HoverProviderCapability::Simple(true)),
-                // Enable `textDocument/definition` so the client can
-                // request go-to-definition (Ctrl+click / "Go to
-                // Definition"). The handler is `goto_definition` below.
-                definition_provider: Some(OneOf::Left(true)),
-                // Enable `textDocument/references` so the client can
-                // find all usages of a variable / function across the
-                // workspace (Shift+F12 / "Find All References"). The
-                // handler is `references` below; it walks every open
-                // document's AST collecting matching `Expr::Ident`
-                // nodes, optionally including the definition site.
-                references_provider: Some(OneOf::Left(true)),
-                // Enable `textDocument/documentSymbol` so the client can
-                // render an outline of the file's structure (functions,
-                // variables) in the sidebar. The handler is
-                // `document_symbol` below.
-                document_symbol_provider: Some(OneOf::Left(true)),
                 // Enable `textDocument/inlayHint` so the client can
                 // request inline "ghost text" annotations showing the
                 // inferred type of each binding. For a checker with no
@@ -892,16 +872,6 @@ impl LanguageServer for Backend {
                     trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
                     ..Default::default()
                 }),
-                // Enable `workspace/symbol` so the client can search
-                // for symbols across all open files (Ctrl+T / "Go to
-                // Symbol in Workspace"). The handler is `symbol`
-                // below; it walks every open document's AST, flattens
-                // the hierarchical `DocumentSymbol` tree produced by
-                // `collect_symbols` into a flat list of
-                // `SymbolInformation` (each carrying its file `Url`),
-                // and filters by a case-insensitive substring match
-                // against the query string.
-                workspace_symbol_provider: Some(OneOf::Left(true)),
                 // Enable `textDocument/codeAction` so editors can offer
                 // quick fixes for diagnostics. The handler is
                 // `code_action` below; it offers per-diagnostic
@@ -1410,194 +1380,6 @@ impl LanguageServer for Backend {
         Ok(())
     }
 
-    async fn hover(&self, params: HoverParams) -> LspResult<Option<Hover>> {
-        let uri = params
-            .text_document_position_params
-            .text_document
-            .uri
-            .clone();
-        let path = uri_to_path(&uri);
-        let position = params.text_document_position_params.position;
-
-        // Parse (cached) and reuse the cached scope for the type lookup.
-        let Some((file, text)) = self.parsed_file(&path).await else {
-            return Ok(None);
-        };
-        let Some(scope) = self.scope_for(&path).await else {
-            return Ok(None);
-        };
-
-        // Find the identifier at the hover position via an AST walk
-        // (smallest enclosing Expr::Ident), so non-ASCII identifiers and
-        // identifiers in any syntactic position resolve correctly.
-        let Some(byte_offset) = position_to_byte_offset_pos(&text, position) else {
-            return Ok(None);
-        };
-        let Some((identifier, _)) = find_ident_at_offset(&file, byte_offset) else {
-            return Ok(None);
-        };
-
-        // Look up the identifier in the scope.
-        if let Some(t) = scope.get(&identifier) {
-            let type_str = format!("{}", t);
-            return Ok(Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: format!("```r\n{}: {}\n```", identifier, type_str),
-                }),
-                range: None,
-            }));
-        }
-
-        Ok(None)
-    }
-
-    async fn goto_definition(
-        &self,
-        params: GotoDefinitionParams,
-    ) -> LspResult<Option<GotoDefinitionResponse>> {
-        let uri = params
-            .text_document_position_params
-            .text_document
-            .uri
-            .clone();
-        let path = uri_to_path(&uri);
-        let position = params.text_document_position_params.position;
-
-        // Parse the current document (cached). We do not
-        // need the checker's scope here: definitions live in the AST,
-        // not the type environment.
-        let Some((file, text)) = self.parsed_file(&path).await else {
-            return Ok(None);
-        };
-
-        // Find the identifier under the cursor via an AST walk. Returns
-        // `None` (no definition) for operators, numbers, and keywords.
-        let Some(byte_offset) = position_to_byte_offset_pos(&text, position) else {
-            return Ok(None);
-        };
-        let Some((identifier, _)) = find_ident_at_offset(&file, byte_offset) else {
-            return Ok(None);
-        };
-
-        let mut locations = find_definition_locations(&file, &identifier, &uri, &text);
-        // If no definition is found in the current file, search the other
-        // open documents. Unopened files on disk are not consulted.
-        if locations.is_empty() {
-            // PR #79 round 3: restrict the open-document fallback to
-            // documents owned by the same folder root as this one. Roots
-            // are isolated by design (that isolation is what
-            // `folder_contexts` longest-prefix ownership enforces), so a
-            // same-named definition in a different root must never win. The
-            // current document is searched above; the shared
-            // `eligible_open_documents` helper orders the remaining
-            // candidates deterministically (sorted) so the winner does not
-            // depend on traversal order. Unopened files on disk are not
-            // consulted.
-            let docs: Vec<String> = {
-                let state = self.state.lock().await;
-                state.eligible_open_documents(&path)
-            };
-            for doc_path in &docs {
-                if doc_path == &path {
-                    continue;
-                }
-                if let Some((doc_file, doc_text)) = self.parsed_file(doc_path).await {
-                    let doc_uri = path_to_uri(doc_path);
-                    let locs =
-                        find_definition_locations(&doc_file, &identifier, &doc_uri, &doc_text);
-                    if !locs.is_empty() {
-                        locations.extend(locs);
-                        break;
-                    }
-                }
-            }
-        }
-        if locations.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(GotoDefinitionResponse::Array(locations)))
-        }
-    }
-
-    async fn references(&self, params: ReferenceParams) -> LspResult<Option<Vec<Location>>> {
-        let uri = params.text_document_position.text_document.uri.clone();
-        let path = uri_to_path(&uri);
-        let position = params.text_document_position.position;
-        let include_declaration = params.context.include_declaration;
-
-        // Snapshot ALL open documents under the lock, then drop the
-        // lock before parsing/walking so a slow search doesn't block
-        // other LSP requests. References are workspace-wide, so we
-        // search every open document (not just the current one).
-        let docs = {
-            let state = self.state.lock().await;
-            state.docs.clone()
-        };
-
-        // Find the identifier under the cursor via an AST walk of the
-        // current document (cached). Returns `None` for
-        // operators, numbers, and keywords.
-        let Some((current_file, text)) = self.parsed_file(&path).await else {
-            return Ok(None);
-        };
-        let Some(byte_offset) = position_to_byte_offset_pos(&text, position) else {
-            return Ok(None);
-        };
-        let Some((identifier, _)) = find_ident_at_offset(&current_file, byte_offset) else {
-            return Ok(None);
-        };
-
-        let mut all_locations = Vec::new();
-        // Search open documents.
-        for doc_path in docs.keys() {
-            let Some((file, doc_text)) = self.parsed_file(doc_path).await else {
-                continue;
-            };
-            let doc_uri = path_to_uri(doc_path);
-            let locs = find_references_in_file(
-                &file,
-                &identifier,
-                &doc_uri,
-                &doc_text,
-                include_declaration,
-            );
-            all_locations.extend(locs);
-        }
-        if all_locations.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(all_locations))
-        }
-    }
-
-    async fn document_symbol(
-        &self,
-        params: DocumentSymbolParams,
-    ) -> LspResult<Option<DocumentSymbolResponse>> {
-        let uri = params.text_document.uri.clone();
-        let path = uri_to_path(&uri);
-
-        // Reuse the cached parse and cached single-file
-        // scope so the symbol panel doesn't re-check on
-        // every request. Symbols nested inside function bodies fall back
-        // to "function" / "variable" since the top-level scope does not
-        // track locals.
-        let Some((file, text)) = self.parsed_file(&path).await else {
-            return Ok(None);
-        };
-        let Some(scope) = self.scope_for(&path).await else {
-            return Ok(None);
-        };
-
-        let symbols = collect_symbols(&file.stmts, &text, Some(&scope));
-        if symbols.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(DocumentSymbolResponse::Nested(symbols)))
-        }
-    }
-
     async fn inlay_hint(&self, params: InlayHintParams) -> LspResult<Option<Vec<InlayHint>>> {
         let uri = params.text_document.uri.clone();
         let path = uri_to_path(&uri);
@@ -1606,7 +1388,6 @@ impl LanguageServer for Backend {
         // Parse the document (cached). On any parse
         // failure we return `None` (no hints) rather than erroring, so
         // the editor simply shows nothing instead of a broken state.
-        // Mirrors `document_symbol`.
         let Some((file, text)) = self.parsed_file(&path).await else {
             return Ok(None);
         };
@@ -1754,59 +1535,6 @@ impl LanguageServer for Backend {
             active_signature: Some(0),
             active_parameter: active_param,
         }))
-    }
-
-    async fn symbol(
-        &self,
-        params: WorkspaceSymbolParams,
-    ) -> LspResult<Option<Vec<SymbolInformation>>> {
-        let query = params.query;
-
-        // Snapshot ALL open documents under the lock, then drop the
-        // lock before parsing/walking so a slow search doesn't block
-        // other LSP requests. Workspace symbols span every open
-        // document, mirroring how `references` works.
-        let docs = {
-            let state = self.state.lock().await;
-            state.docs.clone()
-        };
-
-        let mut all_symbols: Vec<SymbolInformation> = Vec::new();
-        for doc_path in docs.keys() {
-            // Cached parse and cached single-file scope
-            //; skip documents that fail to parse rather
-            // than aborting the whole search.
-            let Some((file, doc_text)) = self.parsed_file(doc_path).await else {
-                continue;
-            };
-            let Some(scope) = self.scope_for(doc_path).await else {
-                continue;
-            };
-
-            let doc_symbols = collect_symbols(&file.stmts, &doc_text, Some(&scope));
-            let doc_uri = path_to_uri(doc_path);
-            // Flatten the hierarchical `DocumentSymbol` tree (which
-            // nests function-body bindings as children) into a flat
-            // list of `SymbolInformation`, attaching the file URI to
-            // each symbol's `Location`. Workspace symbols is a flat
-            // list per the LSP spec.
-            all_symbols.extend(flatten_symbols_to_symbol_info(doc_symbols, &doc_uri));
-        }
-
-        // Filter by the query string (case-insensitive substring match
-        // on the symbol name). An empty query returns every symbol,
-        // matching the convention used by other LSP servers (the
-        // editor typically caps the result count client-side).
-        if !query.is_empty() {
-            let query_lower = query.to_lowercase();
-            all_symbols.retain(|s| s.name.to_lowercase().contains(&query_lower));
-        }
-
-        if all_symbols.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(all_symbols))
-        }
     }
 
     async fn code_action(&self, params: CodeActionParams) -> LspResult<Option<CodeActionResponse>> {

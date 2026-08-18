@@ -11,7 +11,7 @@ All notable changes to ry are documented in this file.
   prints every lexical scope of the requested files as JSON on stdout:
   scope kind/name/extent plus each binding's name, kind
   (`param`/`local`/`closed-over`/`imported`), type string (the same
-  `Display` rendering the LSP hover returns; `unknown` when inference
+  `Display` rendering the LSP inlay hints show; `unknown` when inference
   has nothing), and definition site. `--position LINE:COL` (repeatable)
   restricts output to the innermost scope containing each position and
   drops locals assigned after it. `--project-root <DIR>` overrides the
@@ -272,6 +272,22 @@ All notable changes to ry are documented in this file.
   workspace member entry, and every dependency edge naming it are
   deleted. Nothing outside ry-cli referenced it, so diagnostic output
   is unchanged.
+- **LSP no longer advertises the outline/navigation family**:
+  `textDocument/hover`, `textDocument/definition`,
+  `textDocument/references`, `textDocument/documentSymbol`, and
+  `workspace/symbol` are removed end-to-end — handlers, capability
+  advertisements, the `ident`/`navigation`/`symbols` helper modules
+  (~800 lines), and their unit tests (issue #87, step two of the diet).
+  All five resolved symbols by spelling rather than by binding — the
+  same unsafe identity heuristic that made `documentHighlight` and
+  `rename` incorrect — and outline/search duplicate what every
+  tree-sitter-based R editor integration already provides. The kept
+  interactive surface is exactly `inlayHint` (the checker's output
+  rendered inline), `codeAction` (suppressions and computed fixes),
+  `completion`, and `signatureHelp`, all scoped to open documents; the
+  background file index is untouched so far and loses its remaining
+  consumers in a later step of the diet. None of the five capabilities
+  ever shipped in a release, so no released capability schema changes.
 
 ### Fixed
 

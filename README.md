@@ -180,7 +180,8 @@ at column candidates.
 
 ## Dumping inferred types
 
-`ry dump-types` is the non-interactive counterpart of the LSP hover: it
+`ry dump-types` is the non-interactive counterpart of the LSP's inline
+type hints: it
 runs one analysis pass (the same pass `ry check` runs, over the same
 package-aware environment) and prints every lexical scope of the
 requested files as JSON on stdout. Downstream tooling can query which
@@ -214,7 +215,7 @@ ry dump-types R/analysis.R
 
 Positions are 1-based `[row, column]` pairs; columns count characters,
 not bytes. Scopes are ordered by start position, bindings by name.
-`type` is the same string the LSP hover shows; `unknown` marks bindings
+`type` is the same string the inlay hints show; `unknown` marks bindings
 ry could not infer, and never fails the run.
 
 Binding kinds:
@@ -371,9 +372,8 @@ removed by regenerating the baseline.
 ## Editors
 
 `ry server` speaks the Language Server Protocol over stdio: diagnostics
-as you type (debounced, cached parses), hover with inferred types,
-go-to-definition, references, completion, signature help, inlay
-hints, and quick-fix actions that insert suppression comments.
+as you type (debounced, cached parses), completion, signature help,
+inlay hints, and quick-fix actions that insert suppression comments.
 
 Diagnostics cover the whole project, exactly as `ry check` does. The
 interactive features above are scoped to **open documents** — they do not

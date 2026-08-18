@@ -1,12 +1,15 @@
-//! PR #79 round 3: open-document fallback isolation for `goto_definition`
-//! and `signature_help`.
+//! Open-document fallback isolation for `signature_help`.
 //!
-//! Both handlers share the `eligible_open_documents` rule (current document
-//! first, then same-folder-root candidates, sorted). These tests pin the two
-//! bugs that rule fixes:
+//! The handler's cross-document fallback shares the
+//! `eligible_open_documents` rule (current document first, then
+//! same-folder-root candidates, sorted). These tests pin the two bugs
+//! that rule fixes:
 //!
-//! * `goto_definition` could jump into an unrelated workspace root (a
-//!   same-named definition in a different root won, which is never correct).
+//! * the fallback could resolve into an unrelated workspace root (a
+//!   same-named function in a different root won, which is never
+//!   correct) — originally reported against `goto_definition`, whose
+//!   removal (issue #87) left `signature_help` as the rule's only
+//!   consumer;
 //! * `signature_help` sorted every open path and returned the first match,
 //!   so a duplicated user-defined function name resolved to an unrelated
 //!   file's parameters.
@@ -50,15 +53,15 @@ async fn spawn_session(root: &Path) -> (Session, tokio::task::JoinHandle<()>) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Item 2 — goto_definition must not cross workspace roots
+// Item 2 — signature_help must not cross workspace roots
 // ════════════════════════════════════════════════════════════════════════════
 
 #[test]
-fn goto_definition_does_not_cross_workspace_roots() {
+fn signature_help_does_not_cross_workspace_roots() {
     run(async {
         let fixture = FixtureProject::empty().unwrap();
-        // root-a uses `bar` but never defines it.
-        fixture.write_file("root-a/R/a.R", "bar()\n").unwrap();
+        // root-a calls `bar` but never defines it.
+        fixture.write_file("root-a/R/a.R", "bar(1)\n").unwrap();
         // root-b defines `bar` — in a DIFFERENT root, so it must never win.
         fixture
             .write_file("root-b/R/b.R", "bar <- function(leaked) {}\n")
@@ -109,7 +112,7 @@ fn goto_definition_does_not_cross_workspace_roots() {
             .notify(
                 "textDocument/didOpen",
                 json!({"textDocument": {
-                    "uri": a_uri, "languageId": "r", "version": 1, "text": "bar()\n"
+                    "uri": a_uri, "languageId": "r", "version": 1, "text": "bar(1)\n"
                 }}),
             )
             .await
@@ -127,35 +130,39 @@ fn goto_definition_does_not_cross_workspace_roots() {
             .await
             .unwrap();
 
-        // Request the definition of `bar` from inside root-a. root-a defines
-        // no `bar`; the only definer is in root-b. The fallback must NOT cross
-        // roots, so the result is empty (null). The pre-fix fallback iterated
-        // every open document and would jump to root-b's definition.
-        let def_id = client
+        // Request signature help inside the call in root-a. root-a defines
+        // no `bar`; the only definer is in root-b. The fallback must NOT
+        // cross roots, so no signature may be served. The pre-fix fallback
+        // iterated every open document and served root-b's parameters.
+        let sig_id = client
             .request(
-                "textDocument/definition",
+                "textDocument/signatureHelp",
                 json!({
                     "textDocument": {"uri": a_uri},
-                    "position": {"line": 0, "character": 1}
+                    "position": {"line": 0, "character": 4}
                 }),
             )
             .await
             .unwrap();
         // Drop open/index diagnostic noise; keep the matching response.
         let response = client
-            .receive_until(|m| m.get("id") == Some(&json!(def_id)), 128)
+            .receive_until(|m| m.get("id") == Some(&json!(sig_id)), 128)
             .await
             .unwrap();
         let result = response.get("result").cloned().unwrap_or(Value::Null);
 
+        let leaked = result
+            .pointer("/signatures/0/label")
+            .and_then(Value::as_str)
+            .is_some_and(|label| label.contains("leaked"));
         assert!(
-            result == Value::Null || result.as_array().is_some_and(|a| a.is_empty()),
-            "definition must not cross into root-b; got: {result}"
+            !leaked,
+            "signature help must not cross into root-b; got: {result}"
         );
         let serialized = serde_json::to_string(&result).unwrap();
         assert!(
             !serialized.contains(&b_uri),
-            "definition must not resolve to root-b's document; got: {serialized}"
+            "signature help must not resolve to root-b's document; got: {serialized}"
         );
 
         // Best-effort teardown.

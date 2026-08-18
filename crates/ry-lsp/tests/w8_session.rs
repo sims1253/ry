@@ -552,10 +552,10 @@ async fn fresh_server_snapshot(
     let target_uri = file_uri_str(fixture, target_slot);
     let _ = session
         .request(
-            "textDocument/hover",
+            "textDocument/inlayHint",
             json!({
                 "textDocument": {"uri": &target_uri},
-                "position": {"line": 0, "character": 0}
+                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}}
             }),
         )
         .await;
@@ -577,10 +577,10 @@ async fn fresh_server_snapshot(
 async fn sync_barrier(session: &mut ClientSession, uri: &str) {
     let _ = session
         .request(
-            "textDocument/hover",
+            "textDocument/inlayHint",
             json!({
                 "textDocument": {"uri": uri},
-                "position": {"line": 0, "character": 0}
+                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}}
             }),
         )
         .await;

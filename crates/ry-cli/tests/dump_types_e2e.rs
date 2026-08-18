@@ -319,6 +319,10 @@ fn expression_position_assignments_are_locals_with_sites() {
         !names.contains(&"inner"),
         "assigned after the position: {names:?}"
     );
+    assert!(
+        names.contains(&"outer"),
+        "inclusive boundary: starts exactly at the position: {names:?}"
+    );
 }
 
 /// A named function inside an anonymous callback that itself sits in a

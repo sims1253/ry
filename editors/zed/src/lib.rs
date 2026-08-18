@@ -535,9 +535,14 @@ mod test {
 
     /// The cache candidate is offered only while the downloaded file is
     /// still on disk, so a cache wiped between versions falls through to
-    /// a download rather than returning a dangling path.
+    /// a download rather than returning a dangling path. Only a regular
+    /// file counts: a directory at the cached path is not a usable
+    /// binary and must fall through to a download as well.
     #[test]
     fn cached_binary_on_disk_requires_a_file() {
+        let directory = std::env::temp_dir();
+        assert!(!RyExtension::cached_binary_on_disk(directory.to_str().unwrap()));
+
         let file = std::env::temp_dir().join(format!("ry-zed-cache-{}", std::process::id()));
         std::fs::write(&file, b"").unwrap();
         let path = file.to_str().unwrap();

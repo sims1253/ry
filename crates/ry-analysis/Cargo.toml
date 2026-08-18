@@ -1,6 +1,6 @@
 [package]
 name = "ry-analysis"
-description = "Unified analysis host for ry — one semantic snapshot for all callers."
+description = "Unified diagnostics query for ry — parsed files and workspace context in, diagnostics out."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,11 +10,5 @@ publish = false
 [dependencies]
 ry-core = { path = "../ry-core" }
 ry-checker = { path = "../ry-checker" }
-ry-config = { path = "../ry-config" }
 ry-workspace = { path = "../ry-workspace" }
 ry-typeshed = { path = "../ry-typeshed" }
-tracing = { workspace = true }
-
-[dev-dependencies]
-tempfile = { workspace = true }
-proptest = { workspace = true }

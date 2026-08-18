@@ -5,6 +5,12 @@
 **Partial implementation.** W1–W10 complete. W11–W12 are future work requiring
 deep refactoring of the LSP handler layer and checker internals.
 
+**Later revision.** The W4–W7 host, snapshot, symbol, and interactive
+machinery and the P39-W4 catalog adapter were later deleted; no consumer
+ever used them. `ry-analysis` now holds only `check.rs`. The W9 decision
+record `analysis-query-engine.md` was deleted with the machinery;
+`cache-decision.md` keeps the surviving no-cache precondition.
+
 ## Completed workstreams
 
 ### P38-W1: Feature differential tests (commit 78e8722)
@@ -128,16 +134,17 @@ Created `crates/ry-analysis` with:
 
 ### P38-W9: Query-engine decision (commit 7319aae)
 
-- `docs/architecture/analysis-query-engine.md` documents the decision
+- `docs/architecture/analysis-query-engine.md` (since deleted) documented
+  the decision
 - Keep manual revisioned storage for 0.9
 - Salsa migration path documented with rollback triggers
 
 ### P39-W4: Catalog adapter (commit 7319aae)
 
-- `ry-analysis/src/catalog_adapter.rs` converts typeshed `FunctionSig` to
-  neutral `FunctionSemantics` IR
-- Maps EvalMode → Evaluation, ReturnSpec → ReturnRule, PredicateSpec → FlowEffect
-- `catalog_from_typeshed()` builds InMemoryCatalog from loaded packages
+- `ry-analysis/src/catalog_adapter.rs` (since deleted) converted typeshed
+  `FunctionSig` to neutral `FunctionSemantics` IR
+- Mapped EvalMode → Evaluation, ReturnSpec → ReturnRule, PredicateSpec → FlowEffect
+- `catalog_from_typeshed()` built InMemoryCatalog from loaded packages
 
 ## Remaining workstreams (future work)
 
@@ -156,7 +163,7 @@ ry-core
 ry-config    → ry-core
 ry-workspace → ry-core, ry-config, ry-typeshed
 ry-checker   → ry-core, ry-config, ry-workspace, ry-typeshed
-ry-analysis  → ry-core, ry-checker, ry-config, ry-workspace, ry-typeshed
+ry-analysis  → ry-core, ry-checker, ry-workspace, ry-typeshed
 ry-cli       → all above
-ry-lsp       → all above
+ry-lsp       → all above except ry-analysis
 ```

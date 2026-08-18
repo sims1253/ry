@@ -167,15 +167,33 @@ All notable changes to ry are documented in this file.
   changes; the ledger is unchanged because no intentional identity changes
   were made.
 
+### Removed
+
+- **ry-analysis reduced to its one consumer-facing entry point**: the
+  speculative analysis host and query stack — `AnalysisHost`/`Change`,
+  the snapshot layer, the symbol index, the P39 semantic catalog
+  (`catalog`, `catalog_adapter`, `effect`, `layering`, `rules`), the
+  interactive hover/completion types, and the property tests that
+  exercised only that machinery — are deleted. No code outside the crate
+  referenced any of it: ry-cli consumes exactly `CheckInput`,
+  `CheckOutput`, and `check_project`, which are unchanged, and ry-lsp
+  never referenced the crate at all, so its declared dependency edge is
+  dropped as well. The architecture records that documented only the
+  deleted machinery (`analysis-query-engine.md`,
+  `p39-w1-catalog-design.md`, `p39-acceptance.md`) are deleted too.
+  Nothing ever called the deleted surface, so diagnostic output is
+  unchanged.
+
 ### Fixed
 
 - Tests that could not fail were fixed or deleted (#82): the ry-analysis
   workspace-context test now asserts the rlang/RY070 flip in both
-  directions (check.rs), the same-name symbol test asserts reference
-  indexing instead of an unobservable resolution claim (symbols.rs), the
-  property tests write distinct per-apply content and claim only
-  final-contents equivalence (tests/property.rs), and the w8 session
-  model rotates corrected-operation targets across candidate slots with
+  directions (check.rs), the same-name symbol test asserted reference
+  indexing instead of an unobservable resolution claim (later removed
+  with its module, see Removed), the property tests wrote distinct
+  per-apply content and claimed only final-contents equivalence (later
+  removed with their module, see Removed), and the w8 session model
+  rotates corrected-operation targets across candidate slots with
   the stale coverage eprintln (which miscounted invalid ops as
   corrections and claimed it should stay zero) removed
   (ry-lsp/tests/w8_session.rs).

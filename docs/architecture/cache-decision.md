@@ -24,7 +24,11 @@ unsafe for reuse.
 
 3. **Correctness over speed.** Plan 38 Decision 8 states: "No production
    cache is wired until a complete, versioned query summary and measured
-   need exist." The query engine decision (P38-W9) must come first.
+   need exist." The `ry-analysis` query engine that decision pointed to
+   was later deleted because no consumer ever used it. No versioned query
+   summary exists, and the decision record that tracked the requirement
+   (`analysis-query-engine.md`) was deleted with it. Settle the
+   requirement before wiring any cache.
 
 ## Future cache requirements
 

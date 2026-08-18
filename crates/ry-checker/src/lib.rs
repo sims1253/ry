@@ -379,6 +379,45 @@ impl Scope {
     }
 }
 
+/// Which lexical scope a [`ScopeRecord`] snapshot came from.
+///
+/// R has exactly two lexical scope kinds: the top level of a source file
+/// and function bodies. Braced blocks, `if` branches, and loop bodies all
+/// assign into the enclosing function's environment, so no other kinds
+/// exist to record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScopeRecordKind {
+    Top,
+    Function,
+}
+
+/// One lexical scope's binding table, snapshotted when the checker's
+/// diagnostic walk finishes that scope's body.
+///
+/// The snapshot is the FINAL state of the table (after the body's last
+/// statement), matching what a reader at the closing brace would observe;
+/// consumers that need "in scope at line N" semantics can use each
+/// binding's definition position, which the dump layer derives from the
+/// AST. Only the pass-3 (diagnostic-emitting) walk records scopes: the
+/// fixpoint and signature-building walks reuse the same walker but run
+/// in discarding mode, so no scope is captured twice.
+#[derive(Debug, Clone)]
+pub struct ScopeRecord {
+    pub kind: ScopeRecordKind,
+    /// The bound name for `f <- function(...)` definitions; `None` for
+    /// anonymous statement-position literals and the top level.
+    pub name: Option<String>,
+    /// Span of the function literal; the whole file for the top level.
+    pub span: Span,
+    /// `(name, span)` for every formal parameter. Parameters are also
+    /// present in `scope.bindings` (marked in `parameter_bindings`), but
+    /// the source spans live only here because `Scope` is a plain
+    /// name-to-type table.
+    pub params: Vec<(String, Span)>,
+    /// The final binding table of the scope.
+    pub scope: Scope,
+}
+
 /// A user-defined function recorded for interprocedural inference.
 /// We store the AST nodes by index into a side-table the checker owns,
 /// avoiding lifetime entanglement with the SourceFile.
@@ -678,6 +717,14 @@ pub struct Checker {
     // cache is populated only for the duration of that rewritten call, so it
     // never crosses a scope-changing inference boundary.
     pipe_argument_types: HashMap<Span, RType>,
+    // When true, the pass-3 walk snapshots every completed lexical scope
+    // into `scope_records`. Off by default so ordinary checks (and the
+    // LSP) pay nothing; `dump-types` opts in. Recording is additionally
+    // suppressed while `discarding`, which keeps the fixpoint and
+    // signature-building walks (the same walker in discarding mode) from
+    // double-capturing a body.
+    capture_scopes: bool,
+    scope_records: Vec<ScopeRecord>,
 }
 
 impl Checker {
@@ -803,6 +850,8 @@ impl Checker {
             enclosing_formals: Vec::new(),
             vector_intent_parameters: Vec::new(),
             pipe_argument_types: HashMap::new(),
+            capture_scopes: false,
+            scope_records: Vec::new(),
         }
     }
 
@@ -1189,6 +1238,52 @@ impl Checker {
         for s in &file.stmts {
             self.check_stmt(s, &mut scope);
         }
+        // The top level is itself a lexical scope in R; record it after
+        // the walk so the snapshot reflects every top-level assignment.
+        if self.capture_scopes {
+            let record = ScopeRecord {
+                kind: ScopeRecordKind::Top,
+                name: None,
+                span: whole_file_span(&self.source),
+                params: Vec::new(),
+                scope,
+            };
+            self.scope_records.push(record);
+        }
+    }
+
+    /// Opt this checker into snapshotting every completed lexical scope
+    /// during the diagnostic walk. See [`ScopeRecord`].
+    pub fn enable_scope_capture(&mut self) {
+        self.capture_scopes = true;
+    }
+
+    /// Take the scopes recorded since the last call. Empty unless
+    /// [`enable_scope_capture`](Self::enable_scope_capture) was called.
+    pub fn take_scope_records(&mut self) -> Vec<ScopeRecord> {
+        std::mem::take(&mut self.scope_records)
+    }
+
+    // Snapshot one completed function-body scope. Called at the end of
+    // `walk_stmt`'s two function-definition arms; `discarding` guards the
+    // fixpoint / signature-building re-walks of the same body.
+    pub(crate) fn record_scope(
+        &mut self,
+        name: Option<&str>,
+        span: Span,
+        params: &[Param],
+        scope: &Scope,
+    ) {
+        if !self.capture_scopes || self.discarding {
+            return;
+        }
+        self.scope_records.push(ScopeRecord {
+            kind: ScopeRecordKind::Function,
+            name: name.map(str::to_string),
+            span,
+            params: params.iter().map(|p| (p.name.clone(), p.span)).collect(),
+            scope: scope.clone(),
+        });
     }
 
     pub fn take_diagnostics(&mut self) -> Vec<Diagnostic> {
@@ -1314,6 +1409,17 @@ fn embedded_base() -> Arc<Typeshed> {
     Arc::clone(
         BASE.get_or_init(|| Arc::new(load_base_cached().expect("typeshed must load").clone())),
     )
+}
+
+/// Span covering the entire file, used as the top-level scope record's
+/// extent so position queries anywhere in the file resolve to it.
+fn whole_file_span(source: &str) -> Span {
+    let line = source.matches('\n').count();
+    let col = source
+        .rsplit_once('\n')
+        .map(|(_, last)| last.len())
+        .unwrap_or(source.len());
+    Span::new(0, source.len(), line, col)
 }
 
 #[cfg(test)]

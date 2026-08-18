@@ -4,6 +4,29 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Added — `ry dump-types` CLI
+
+- **Non-interactive type dump**: `ry dump-types <FILE>...` runs one
+  analysis pass (identical pipeline and environment to `ry check`) and
+  prints every lexical scope of the requested files as JSON on stdout:
+  scope kind/name/extent plus each binding's name, kind
+  (`param`/`local`/`closed-over`/`imported`), type string (the same
+  `Display` rendering the LSP hover returns; `unknown` when inference
+  has nothing), and definition site. `--position LINE:COL` (repeatable)
+  restricts output to the innermost scope containing each position and
+  drops locals assigned after it. `--project-root <DIR>` overrides the
+  analysis root for non-package files; the default mirrors `ry check`'s
+  per-package (DESCRIPTION) grouping. Exit code stays 0 even when the
+  analyzed code has diagnostics; non-zero only for usage, IO, or
+  internal failure.
+- **Opt-in scope capture in the checker**: `Checker` and `Project` can
+  snapshot every completed lexical scope during the pass-3 diagnostic
+  walk (`ry_checker::ScopeRecord`); recording is suppressed in
+  discarding mode so fixpoint and signature-building re-walks never
+  double-capture. `ry_analysis::check_project_with_scope_capture`
+  exposes it through the shared check pipeline. Existing commands and
+  checker behavior are unchanged.
+
 ### Plan 37: Release truth and editor hardening
 
 #### P37-W1: Parser UTF-8 boundary panic fix

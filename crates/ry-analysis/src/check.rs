@@ -30,18 +30,11 @@ pub struct CheckOutput {
 /// This is the single entry point for diagnostics computation.
 /// ry-cli calls this instead of coordinating Project setters.
 pub fn check_project(input: CheckInput) -> CheckOutput {
-    let mut project = ry_checker::Project::new();
-
-    // Apply workspace metadata.
-    let empty_workspace = ry_workspace::WorkspaceContext::default();
-    let workspace = input.workspace.as_ref().unwrap_or(&empty_workspace);
-    project.set_loaded(workspace.attached_packages.clone());
-    project.set_bare_loaded(workspace.bare_bindings.clone());
-    project.set_user_stubs(Arc::clone(&input.user_stubs));
-    project.set_external_bindings(workspace.external_bindings.clone());
-    project.set_imported_from(workspace.imported_bindings.clone());
-    project.set_external_s3_methods(workspace.s3_methods.clone());
-    project.set_load_bindings(workspace.load_bindings.clone());
+    let mut project = apply_workspace(
+        ry_checker::Project::new(),
+        input.workspace.as_ref(),
+        &input.user_stubs,
+    );
 
     // Add all files.
     for (path, _, file) in &input.files {
@@ -52,6 +45,51 @@ pub fn check_project(input: CheckInput) -> CheckOutput {
     let diagnostics = project.check();
 
     CheckOutput { diagnostics }
+}
+
+/// Run the same one-shot check, additionally snapshotting every file's
+/// lexical scopes (top level plus each walked function body).
+///
+/// The pipeline is identical to [`check_project`] -- same workspace
+/// metadata, shared fixpoint, one pass -- so captured types match what a
+/// `check` run infers. Returns one `(path, records)` entry per file, in
+/// input order. Diagnostics are computed as usual but discarded: the
+/// dump consumer (`ry dump-types`) treats diagnostics as irrelevant to
+/// its exit code and output.
+pub fn check_project_with_scope_capture(
+    input: CheckInput,
+) -> Vec<(String, Vec<ry_checker::ScopeRecord>)> {
+    let mut project = apply_workspace(
+        ry_checker::Project::new(),
+        input.workspace.as_ref(),
+        &input.user_stubs,
+    );
+    for (path, _, file) in &input.files {
+        project.add_file(path.clone(), (**file).clone());
+    }
+    project.enable_scope_capture();
+    project.check();
+    project.take_scope_records()
+}
+
+/// Install the workspace metadata onto a fresh project. Shared by
+/// [`check_project`] and [`check_project_with_scope_capture`] so the two
+/// entry points can never drift in what environment they model.
+fn apply_workspace(
+    mut project: ry_checker::Project,
+    workspace: Option<&ry_workspace::WorkspaceContext>,
+    user_stubs: &Arc<BTreeMap<String, ry_typeshed::Typeshed>>,
+) -> ry_checker::Project {
+    let empty_workspace = ry_workspace::WorkspaceContext::default();
+    let workspace = workspace.unwrap_or(&empty_workspace);
+    project.set_loaded(workspace.attached_packages.clone());
+    project.set_bare_loaded(workspace.bare_bindings.clone());
+    project.set_user_stubs(Arc::clone(user_stubs));
+    project.set_external_bindings(workspace.external_bindings.clone());
+    project.set_imported_from(workspace.imported_bindings.clone());
+    project.set_external_s3_methods(workspace.s3_methods.clone());
+    project.set_load_bindings(workspace.load_bindings.clone());
+    project
 }
 
 #[cfg(test)]
@@ -149,5 +187,29 @@ mod tests {
             .map(|(_, d)| d.len())
             .unwrap_or(0);
         assert_eq!(b_diags, 0, "cross-file function call should resolve");
+    }
+
+    #[test]
+    fn check_project_with_scope_capture_returns_records_per_file() {
+        let mut parser = ry_core::RParser::new().unwrap();
+        let file = parser
+            .parse("a.R", "f <- function(x = 1L) { y <- x\n y }\n")
+            .unwrap();
+        let records = check_project_with_scope_capture(CheckInput {
+            files: vec![("a.R".to_string(), 0, Arc::new(file))],
+            user_stubs: Arc::new(BTreeMap::new()),
+            workspace: None,
+        });
+        assert_eq!(records.len(), 1);
+        let (path, file_records) = &records[0];
+        assert_eq!(path, "a.R");
+        // Exactly the top scope and the one function scope.
+        assert_eq!(file_records.len(), 2, "{file_records:?}");
+        let function = file_records
+            .iter()
+            .find(|r| r.kind == ry_checker::ScopeRecordKind::Function)
+            .expect("function scope recorded");
+        assert_eq!(function.name.as_deref(), Some("f"));
+        assert_eq!(function.params.len(), 1);
     }
 }

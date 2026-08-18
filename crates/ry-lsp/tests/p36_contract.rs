@@ -1267,20 +1267,30 @@ fn p36_w6_many_files_flat_filter_construction() {
             "textDocument": {"uri": trigger_uri, "languageId": "r", "version": 1, "text": trigger_text}
         })).await.unwrap();
 
-        // Drain ALL diagnostic publications with a timeout-based approach
-        // (like p36_w7). The background index + debounced publish will send
-        // diagnostics for trigger.R and all indexed files. We collect
-        // diagnostics for file_00 and file_31 from the drain.
+        // Collect diagnostics for the first and last indexed files from
+        // the background index's publications. The background index +
+        // debounced publish will send diagnostics for trigger.R and all
+        // indexed files; we keep receiving until both sentinel files have
+        // published.
         let first_uri = file_uri(&fixture.path("file_00.R"));
         let last_uri = file_uri(&fixture.path("file_31.R"));
         let mut first_diags: Vec<Published> = Vec::new();
         let mut last_diags: Vec<Published> = Vec::new();
 
-        for _ in 0..256 {
-            match tokio::time::timeout(
-                std::time::Duration::from_millis(500),
-                client.receive(),
-            ).await {
+        // Drain until diagnostics for both sentinel files have been
+        // published, bounded by a total deadline. Quiescence (one silent
+        // 500 ms window) cannot decide completion here: on a loaded
+        // machine the background index of 32 files plus the publish
+        // debounce can pause longer than a single window before the first
+        // indexed-file publication, which used to end collection with both
+        // sentinel vectors still empty and fail the assertions below with
+        // no production defect (#90).
+        let drain_deadline =
+            tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+        while (first_diags.is_empty() || last_diags.is_empty())
+            && tokio::time::Instant::now() < drain_deadline
+        {
+            match tokio::time::timeout_at(drain_deadline, client.receive()).await {
                 Ok(Ok(message)) => {
                     if message.get("method") == Some(&json!("textDocument/publishDiagnostics")) {
                         if message.pointer("/params/uri") == Some(&json!(first_uri)) {
@@ -1300,7 +1310,7 @@ fn p36_w6_many_files_flat_filter_construction() {
                     }
                 }
                 Ok(Err(e)) => panic!("transport error during drain: {e}"),
-                Err(_) => break, // timeout: server has quiesced
+                Err(_) => break, // total deadline exhausted before both files published
             }
         }
 

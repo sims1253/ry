@@ -17,8 +17,19 @@ Before starting any release:
    - `ecosystem/test-drift-detection.sh`
    - `ecosystem/test-posit-drift-detection.sh`
 
-2. **Clean-checkout validated:** the `clean-checkout` CI job passes
-   (or manually run `git clean -fdX && cargo build --release -p ry-cli`).
+2. **Clean-checkout validated:** the `clean-checkout` CI job passes, or
+   manually reproduce it from a tracked-only tree:
+
+   ```sh
+   tmp=$(mktemp -d)
+   git archive HEAD | tar -x -C "$tmp"
+   cargo build --release --locked --manifest-path "$tmp/Cargo.toml" -p ry-cli --bin ry
+   rm -rf "$tmp"
+   ```
+
+   Running `git clean -fdX` in the working tree is not an equivalent
+   substitute: it keeps untracked non-ignored files, so it can pass while a
+   tracked-only checkout fails (#50).
 
 3. **Ledger reconciled:** `python3 ecosystem/check-ledger.py docs/corpus/posit-0.9.0.json`
    reports agreement.

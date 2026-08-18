@@ -113,6 +113,17 @@ All notable changes to ry are documented in this file.
 
 ### Changed
 
+- **Documentation truth pass (#83)**: the README rule table lists every
+  registered rule again — RY003, RY102, RY103, and RY105 had silently
+  disappeared from the hand-maintained table — with a note that RY003 is
+  default-off; `docs/release-runbook.md`'s manual clean-checkout fallback
+  now reproduces the CI gate from a tracked-only `git archive` extraction
+  instead of `git clean -fdX`, which keeps untracked files and can pass
+  while a clean tree fails (#50); the remediation plan's R0.1 and R0.3
+  "current issue" statements are corrected (the sibling `ry-diagnostics`
+  dependency is gone and the LSP convergence failure is fixed, #81) and
+  A2.3 notes the descoping of the cross-file interactive migration; and
+  `p38-progress.md` no longer marks W11/W12 as future work.
 - **Deduplicated the operator S3-generic list (#42)**: `is_operator_generic`
   now answers from `semantic_lists::OPERATORS` instead of restating the same
   13 Arith + Compare symbols as match arms, so the S3 method-name splitter
@@ -178,6 +189,15 @@ All notable changes to ry are documented in this file.
 
 ### Removed
 
+- **Deleted the Plan 38 and Plans 37–39 acceptance records (#83)**
+  (`docs/architecture/p38-w12-acceptance.md`,
+  `docs/architecture/plans-37-39-acceptance.md`): both recorded workspace
+  test counts alongside a known convergence failure as an accepted
+  baseline, and ticked acceptance criteria for machinery that has since
+  been deleted with no consumers (the `ry-diagnostics` extraction, the
+  analysis host, the P39 catalog). The two records also disagreed about
+  Plan 38's completion status. `p38-progress.md` keeps the per-workstream
+  history and outcomes.
 - **ry-analysis reduced to its one consumer-facing entry point**: the
   speculative analysis host and query stack — `AnalysisHost`/`Change`,
   the snapshot layer, the symbol index, the P39 semantic catalog

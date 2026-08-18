@@ -377,6 +377,70 @@ fn named_function_inside_loop_body_callback_gets_locals() {
     );
 }
 
+/// `--project-root` anchors workspace resolution for non-package files,
+/// overriding the config-root fallback (the directory owning the
+/// discovered `ry.toml`). With two sibling script directories under one
+/// parent, the shared parent's `ry.toml` is discovered from the first
+/// input; `--project-root` must win over that config root, which the
+/// not-a-directory error proves (the config root alone would succeed).
+#[test]
+fn project_root_overrides_config_root_for_non_package_files() {
+    let outer = tempfile::tempdir().unwrap();
+    let parent = outer.path().join("proj");
+    fs::create_dir_all(parent.join("one")).unwrap();
+    fs::create_dir_all(parent.join("two")).unwrap();
+    fs::write(parent.join("ry.toml"), "").unwrap();
+    fs::write(parent.join("one/a.R"), "a_val <- 1L\n").unwrap();
+    fs::write(parent.join("two/b.R"), "b_val <- a_val + 1L\n").unwrap();
+    let a = parent.join("one/a.R").to_string_lossy().into_owned();
+    let b = parent.join("two/b.R").to_string_lossy().into_owned();
+    let parent_str = parent.to_string_lossy().into_owned();
+
+    let run_from_outer = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_ry"))
+            .args(args)
+            .current_dir(outer.path())
+            .output()
+            .expect("failed to invoke ry")
+    };
+
+    // Without the flag, the ry.toml's directory (the shared parent) is
+    // the resolution-root fallback and the dump succeeds.
+    let output = run_from_outer(&["dump-types", &a, &b]);
+    assert!(output.status.success(), "{}", output.status);
+    let dump = stdout_json(&output);
+    let files = dump["files"].as_array().unwrap();
+    assert_eq!(files.len(), 2, "{files:?}");
+    assert!(
+        bindings_of(&files[1]["scopes"][0])
+            .iter()
+            .any(|(name, kind, _)| *name == "b_val" && *kind == "local"),
+        "sibling binding missing: {}",
+        files[1]["scopes"][0]
+    );
+
+    // An explicit --project-root at the same parent behaves identically.
+    let output = run_from_outer(&["dump-types", &a, &b, "--project-root", &parent_str]);
+    assert!(output.status.success(), "{}", output.status);
+    assert_eq!(stdout_json(&output)["files"].as_array().unwrap().len(), 2);
+
+    // Pointing the flag at a non-directory fails resolution: the flag
+    // takes precedence over the (valid) config root.
+    let output = run_from_outer(&[
+        "dump-types",
+        &a,
+        &b,
+        "--project-root",
+        &parent.join("one/a.R").to_string_lossy(),
+    ]);
+    assert!(!output.status.success(), "{}", output.status);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("workspace root is not a directory"),
+        "missing InvalidRoot note: {stderr}"
+    );
+}
+
 /// A directory dump must apply the discovered `ry.toml`'s `exclude`
 /// patterns with the same anchoring as `ry check`, so the two commands
 /// never disagree on the file set.

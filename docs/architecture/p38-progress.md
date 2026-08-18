@@ -2,8 +2,13 @@
 
 ## Status
 
-**Partial implementation.** W1–W10 complete. W11–W12 are future work requiring
-deep refactoring of the LSP handler layer and checker internals.
+**Executed in full, later pruned.** All twelve workstreams ran. W11 removed
+the compatibility state (`diag_adapter.rs` went with it, and the dangling
+`ry-diagnostics` workspace dependency was removed in a06df8b). W12 produced
+a final acceptance record, since deleted: it ticked criteria for machinery
+that no longer exists and recorded a red gate as an accepted baseline (#83).
+The surviving deliverables are the CI-enforced dependency direction (W3),
+`ry_analysis::check_project` (W8), and the cache deletion (W10).
 
 **Later revision.** The W4–W7 host, snapshot, symbol, and interactive
 machinery and the P39-W4 catalog adapter were later deleted; no consumer
@@ -146,14 +151,14 @@ Created `crates/ry-analysis` with:
 - Mapped EvalMode → Evaluation, ReturnSpec → ReturnRule, PredicateSpec → FlowEffect
 - `catalog_from_typeshed()` built InMemoryCatalog from loaded packages
 
-## Remaining workstreams (future work)
+## Workstream status
 
-| WS | Description | Effort |
-|----|-------------|--------|
-| W8 | CLI routes through `ry_analysis::check_project` ✅ | Done |
-| W9 | Query-engine decision: manual for 0.9 ✅ | Done |
-| W11 | Remove compatibility state | Future |
-| W12 | Final acceptance | Future |
+| WS | Description | Outcome |
+|----|-------------|---------|
+| W8 | CLI routes through `ry_analysis::check_project` | Done; ry-cli remains its only consumer |
+| W9 | Query-engine decision: manual for 0.9 | Done; the record was deleted with the machinery |
+| W11 | Remove compatibility state | Done |
+| W12 | Final acceptance | Acceptance record invalidated and pruned; no valid acceptance remains (#83) |
 
 ## Dependency graph (current)
 

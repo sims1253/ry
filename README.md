@@ -444,6 +444,7 @@ explanation for one rule.
 | RY000 | syntax-error             | error    | Unparseable input. tree-sitter could not recover this region; subsequent diagnostics may be unreliable.                                                                                                   |
 | RY001 | invalid-condition        | warning  | `if` / `while` condition is not a length-1 logical.                                                                                                                                                       |
 | RY002 | condition-length         | warning  | `if` condition length is known to be greater than 1; only the first element is used.                                                                                                                      |
+| RY003 | numeric-condition        | info     | `if` / `while` condition is numeric; R coerces nonzero to TRUE. Legal but implicit — prefer an explicit comparison.                                                                                         |
 | RY010 | unbound-variable         | warning  | Reference to a variable with no binding in scope.                                                                                                                                                         |
 | RY020 | unary-minus-type         | error    | Unary `-` applied to a non-numeric type.                                                                                                                                                                  |
 | RY021 | unary-not-type           | error    | Unary `!` applied to a non-coercible-to-logical type.                                                                                                                                                     |
@@ -471,6 +472,13 @@ explanation for one rule.
 | RY099 | discarded-conditional-value | warning | A value-producing expression in a non-tail one-arm `if` is discarded, commonly because an assignment was omitted.                                                                                   |
 | RY100 | comparison-inside-math-call | warning | A comparison directly inside a numeric math function is usually a parenthesization mistake.                                                                                                         |
 | RY101 | identical-list-subset-scalar | warning | `identical()` compares a single-bracket list subset with an atomic scalar, making the result always `FALSE`; use `[[` to extract the element.                                                        |
+| RY102 | named-list-element-arrow | warning | `<-` where `=` was meant inside `list()`/`c()`/`data.frame()`/`structure()`. The element is created without a name and a stray binding is assigned as a side effect.                                        |
+| RY103 | class-equality           | warning | `class(x)` compared with `==`/`!=` in a length-1 logical context. `class()` returns a character vector, so a multi-class object makes `if`/`&&` error. Use `inherits()`.                                    |
+| RY105 | constant-length-comparison | warning | `length()` of a value that is length-1 by construction, compared with a literal. The comparison has a constant result, so the guard is dead.                                                          |
+
+RY003 is registered but default-off: it is omitted from output unless a
+severity override or rule selection names it (for example
+`warn = ["RY003"]`).
 
 Known gaps: S4 modeling covers in-package `setClass` / `setGeneric` /
 `setMethod` and `@` slot access but not full method resolution order;

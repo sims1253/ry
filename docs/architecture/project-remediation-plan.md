@@ -52,8 +52,15 @@ No feature work should merge while this phase is incomplete.
 
 ### R0.1 Make clean checkouts self-contained
 
-Current issue: the workspace points at `../ry-diagnostics`, which is not part of
-this repository.
+Current issue at review time (2026-08-12): the workspace pointed at
+`../ry-diagnostics`, which is not part of this repository.
+
+**Since resolved.** The `ry-diagnostics` dependency was removed outright
+(a06df8b) rather than republished or vendored; no external path dependency
+remains, and a tracked-only `git archive HEAD` extraction passes
+`cargo check --workspace --all-targets --locked`. The clean-archive CI gate
+below remains proposed work; the scheduled `clean-checkout` job in
+`ecosystem.yml` approximates it from a fresh clone.
 
 Work:
 
@@ -104,8 +111,13 @@ xvfb-run -a bun run test
 
 ### R0.3 Turn the LSP convergence failure into a deterministic regression
 
-Current issue: closing and reopening a document can publish no diagnostics while
-a fresh server publishes `RY090` and `RY091`.
+Current issue at review time (2026-08-12): closing and reopening a document
+could publish no diagnostics while a fresh server published `RY090` and
+`RY091`.
+
+**Since resolved.** The failure was a race in the w10 test harness (the
+close's clearing publication matched as the reopened document's
+publication), not a server defect; it is fixed and regression-gated (#81).
 
 Work:
 
@@ -254,7 +266,7 @@ Create a deep interface, provisionally `WorkspaceAnalysis`, that owns:
 - document versions and revisions;
 - effective config, baselines, workspace metadata, and typesheds per root;
 - parsing and project semantic state;
-- diagnostics, hover, completion, signature help, navigation, rename, symbols,
+- diagnostics, hover, completion, signature help, navigation, symbols,
   inlay hints, and fixes;
 - cancellation and stale-result rejection.
 
@@ -283,18 +295,27 @@ Acceptance:
 
 Work:
 
-- Route hover, completion, definition, references, rename, and signature help
+- Route hover, completion, definition, references, and signature help
   through the same revision used for diagnostics.
 - Resolve symbol identity by binding and scope, not spelling alone.
-- Include eligible unopened project files in workspace queries.
-- Unignore and satisfy the existing P38 feature-differential cases.
+
+Later revision: the cross-file half of this section was descoped, not
+deferred. The P38 feature-differential file was deleted with B2–B5 accepted
+as behaviour, `textDocument/rename` was removed outright (spelling-based
+rename is unsafe under R's NSE and dynamic binding), and the interactive
+handlers keep open-document scope (see
+`docs/architecture/p38-progress.md`). The binding-resolution and
+shared-revision requirements still apply to the open-document features that
+remain.
 
 Acceptance:
 
-- Project functions appear in hover, completion, and signature help.
-- Definition chooses the correct same-named binding.
-- References and rename include eligible unopened files.
-- Diagnostics and interactive queries cannot observe different source revisions.
+- Open-document hover, completion, definition, references, and signature
+  help resolve bindings and scopes correctly.
+- Diagnostics and interactive queries cannot observe different source
+  revisions.
+- Cross-file queries and `textDocument/rename` remain descoped (see the
+  revision note above).
 
 ### A2.4 Remove compatibility state
 

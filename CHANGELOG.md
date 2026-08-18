@@ -169,6 +169,26 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- The Zed extension's cache-precedence test asserted only that a
+  constructed release path ends in "ry" (#90, the #82 test-theater
+  family), so it passed with the cache branch deleted outright. Binary
+  resolution now runs through an extracted `BinarySource` precedence
+  function whose tests pin settings > PATH lookup > previous download >
+  download and require the cached file to still exist on disk
+  (editors/zed/src/lib.rs).
+- The P36-W6 many-files test's drain loop stopped at the first silent
+  500 ms window (#90), so a loaded machine could end collection before
+  the background index plus the publish debounce had emitted anything,
+  failing the sentinel assertions with no production defect. The loop
+  now drains until both sentinel files have published, bounded by a
+  total deadline instead of a per-message gap
+  (ry-lsp/tests/p36_contract.rs).
+- `ecosystem/check-ledger.py` compared each summary block per observed
+  key only (#90), so a negative entry for an unseen label offset by a
+  positive one preserved both the total and every observed count. Each
+  summary is now compared over the union of summary and observed keys;
+  zero-valued entries for categories no finding carries remain valid
+  (the classification taxonomy is fixed), and any other mismatch fails.
 - Tests that could not fail were fixed or deleted (#82): the ry-analysis
   workspace-context test now asserts the rlang/RY070 flip in both
   directions (check.rs), the same-name symbol test asserts reference

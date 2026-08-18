@@ -23,12 +23,19 @@ Before starting any release:
    the commit about to be tagged), or validate the release commit directly
    with a tracked-only `git archive` build:
 
-   ```sh
-   tmp=$(mktemp -d)
-   git archive HEAD | tar -x -C "$tmp"
-   cargo build --release --locked --manifest-path "$tmp/Cargo.toml" -p ry-cli --bin ry
-   rm -rf "$tmp"
+   ```bash
+   (
+     set -euo pipefail
+     tmp=$(mktemp -d)
+     trap 'rm -rf "$tmp"' EXIT
+     git archive HEAD | tar -x -C "$tmp"
+     cargo build --release --locked --manifest-path "$tmp/Cargo.toml" -p ry-cli --bin ry
+   )
    ```
+
+   The subshell fails fast (`set -euo pipefail`), and the trap removes the
+   extraction on any exit, so a failed validation cannot be masked by
+   cleanup.
 
    The extraction contains exactly the tracked files of `HEAD`. Running
    `git clean -fdX` in the working tree is not an equivalent substitute:

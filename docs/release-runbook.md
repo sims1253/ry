@@ -17,8 +17,11 @@ Before starting any release:
    - `ecosystem/test-drift-detection.sh`
    - `ecosystem/test-posit-drift-detection.sh`
 
-2. **Clean-checkout validated:** the `clean-checkout` CI job passes, or
-   manually reproduce it from a tracked-only tree:
+2. **Tracked-only build validated:** the scheduled `clean-checkout` CI job
+   passes (it builds from a fresh clone, which contains only tracked
+   files, but it runs only on schedule or manual dispatch and never gates
+   the commit about to be tagged), or validate the release commit directly
+   with a tracked-only `git archive` build:
 
    ```sh
    tmp=$(mktemp -d)
@@ -27,9 +30,10 @@ Before starting any release:
    rm -rf "$tmp"
    ```
 
-   Running `git clean -fdX` in the working tree is not an equivalent
-   substitute: it keeps untracked non-ignored files, so it can pass while a
-   tracked-only checkout fails (#50).
+   The extraction contains exactly the tracked files of `HEAD`. Running
+   `git clean -fdX` in the working tree is not an equivalent substitute:
+   it removes only ignored files, so untracked non-ignored files survive
+   and it can pass while a tracked-only build fails (#50).
 
 3. **Ledger reconciled:** `python3 ecosystem/check-ledger.py docs/corpus/posit-0.9.0.json`
    reports agreement.

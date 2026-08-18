@@ -158,7 +158,7 @@ Created `crates/ry-analysis` with:
 | W8 | CLI routes through `ry_analysis::check_project` | Done; ry-cli remains its only consumer |
 | W9 | Query-engine decision: manual for 0.9 | Done; the record was deleted with the machinery |
 | W11 | Remove compatibility state | Done |
-| W12 | Final acceptance | Done; the record is deleted (#83) |
+| W12 | Final acceptance | Acceptance record invalidated and pruned; no valid acceptance remains (#83) |
 
 ## Dependency graph (current)
 

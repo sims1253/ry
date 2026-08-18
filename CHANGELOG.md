@@ -116,14 +116,18 @@ All notable changes to ry are documented in this file.
 - **Documentation truth pass (#83)**: the README rule table lists every
   registered rule again — RY003, RY102, RY103, and RY105 had silently
   disappeared from the hand-maintained table — with a note that RY003 is
-  default-off; `docs/release-runbook.md`'s manual clean-checkout fallback
-  now reproduces the CI gate from a tracked-only `git archive` extraction
-  instead of `git clean -fdX`, which keeps untracked files and can pass
-  while a clean tree fails (#50); the remediation plan's R0.1 and R0.3
-  "current issue" statements are corrected (the sibling `ry-diagnostics`
-  dependency is gone and the LSP convergence failure is fixed, #81) and
-  A2.3 notes the descoping of the cross-file interactive migration; and
-  `p38-progress.md` no longer marks W11/W12 as future work.
+  default-off; `docs/release-runbook.md`'s manual fallback is a
+  tracked-only `git archive` build of the commit being released —
+  `git clean -fdX` removes only ignored files, so untracked non-ignored
+  files survive and it can pass while a tracked-only build fails (#50),
+  and the scheduled `clean-checkout` CI job builds from a fresh clone,
+  not an archive; the remediation plan's R0.1 and R0.3 "current issue"
+  statements are corrected (the sibling `ry-diagnostics` dependency is
+  gone and the LSP convergence failure is fixed, #81) and A2.3 states
+  its Work and Acceptance in descoped terms, with cross-file queries and
+  `textDocument/rename` out; and `p38-progress.md` no longer marks
+  W11/W12 as future work and records W12's acceptance record as
+  invalidated, not accepted.
 - **Deduplicated the operator S3-generic list (#42)**: `is_operator_generic`
   now answers from `semantic_lists::OPERATORS` instead of restating the same
   13 Arith + Compare symbols as match arms, so the S3 method-name splitter

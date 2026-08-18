@@ -295,11 +295,9 @@ Acceptance:
 
 Work:
 
-- Route hover, completion, definition, references, rename, and signature help
+- Route hover, completion, definition, references, and signature help
   through the same revision used for diagnostics.
 - Resolve symbol identity by binding and scope, not spelling alone.
-- Include eligible unopened project files in workspace queries.
-- Unignore and satisfy the existing P38 feature-differential cases.
 
 Later revision: the cross-file half of this section was descoped, not
 deferred. The P38 feature-differential file was deleted with B2–B5 accepted
@@ -312,10 +310,12 @@ remain.
 
 Acceptance:
 
-- Project functions appear in hover, completion, and signature help.
-- Definition chooses the correct same-named binding.
-- References and rename include eligible unopened files.
-- Diagnostics and interactive queries cannot observe different source revisions.
+- Open-document hover, completion, definition, references, and signature
+  help resolve bindings and scopes correctly.
+- Diagnostics and interactive queries cannot observe different source
+  revisions.
+- Cross-file queries and `textDocument/rename` remain descoped (see the
+  revision note above).
 
 ### A2.4 Remove compatibility state
 

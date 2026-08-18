@@ -445,6 +445,15 @@ pub(crate) fn is_return_call(e: &Expr) -> bool {
 /// These are commonly user-defined or package-imported operators that
 /// the checker cannot resolve against any scope, typeshed, or FnTable.
 /// Used to suppress spurious RY010 (unbound variable) on such names.
+///
+/// This list deliberately covers a different set than
+/// [`crate::semantic_lists::OPERATORS`]: RY010 suppression wants every
+/// plain operator token (Logic, assignment, sequence, and access
+/// operators included), while operator S3 dispatch is modeled only for
+/// the Arith + Compare members (see [`is_operator_generic`]). The
+/// `%`-wrapped operators (`%%`, `%/%`, user-defined `%foo%`) are absent
+/// because the call site tests `contains('%')` before consulting this
+/// predicate, so the two lists must not be unified.
 pub(crate) fn is_operator_symbol(s: &str) -> bool {
     matches!(
         s,
@@ -620,11 +629,18 @@ pub(crate) fn is_dplyr_control_arg(name: &str) -> bool {
     )
 }
 
+/// Whether `name` is an operator that ry models as an S3 generic, e.g. the
+/// `+` in `` `+.widget` ``. This is exactly the Arith + Compare operator
+/// set registered as [`crate::semantic_lists::OPERATORS`] and already used
+/// by the S3 method-name splitter, so the predicate reads that constant
+/// rather than restating the symbols; the two users cannot drift apart.
+///
+/// Membership is pinned to R's own Arith and Compare group definitions by
+/// the oracle test in `tests/semantic_lists.rs`. Logic and other operator
+/// tokens are deliberately outside the set: they are RY010-suppression
+/// operator symbols (see [`is_operator_symbol`]), not modeled generics.
 pub(crate) fn is_operator_generic(name: &str) -> bool {
-    matches!(
-        name,
-        "+" | "-" | "*" | "/" | "^" | "%%" | "%/%" | "==" | "!=" | "<" | "<=" | ">" | ">="
-    )
+    crate::semantic_lists::OPERATORS.contains(&name)
 }
 
 pub(crate) fn insert_s3_dispatch_context(method_name: &str, scope: &mut Scope, globals: &Globals) {
@@ -720,4 +736,38 @@ pub(crate) fn assigned_names_in_body(body: &[Stmt]) -> HashSet<String> {
         visit(statement, &mut names);
     }
     names
+}
+
+#[cfg(test)]
+mod operator_generic_tests {
+    use super::is_operator_generic;
+    use crate::semantic_lists::OPERATORS;
+
+    /// `is_operator_generic` must recognize exactly the members of
+    /// `semantic_lists::OPERATORS`: the same constant backs the S3
+    /// method-name splitter in `lib.rs`, so any divergence between the two
+    /// representations is an inconsistency (issue #42). The negative
+    /// samples pin the set to the Arith + Compare members -- Logic,
+    /// assignment, sequence, and access operators are operator symbols
+    /// for RY010 suppression but never operator generics, `%in%` is a
+    /// function-backed infix operator outside both dispatch groups, and a
+    /// full method name like `+.foo` is split before this predicate runs.
+    /// Reinstating a separate hardcoded symbol set here fails this test.
+    #[test]
+    fn operator_generic_recognizes_exactly_the_operators_list() {
+        for operator in OPERATORS {
+            assert!(
+                is_operator_generic(operator),
+                "OPERATORS member {operator:?} must be recognized as an operator generic"
+            );
+        }
+        for non_generic in [
+            "&", "|", "&&", "||", "!", ":", "<-", "<<-", "=", "~", "$", "@", "?", "%in%", "+.foo",
+        ] {
+            assert!(
+                !is_operator_generic(non_generic),
+                "{non_generic:?} is not an Arith/Compare operator and must not be recognized"
+            );
+        }
+    }
 }

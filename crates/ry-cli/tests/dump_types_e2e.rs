@@ -77,6 +77,20 @@ fn bindings_of(scope: &serde_json::Value) -> Vec<(&str, &str, &str)> {
         .collect()
 }
 
+/// The dump entry for one binding by name, with kind and start position.
+fn binding_entry<'a>(scope: &'a serde_json::Value, name: &str) -> (&'a str, serde_json::Value) {
+    let binding = scope["bindings"]
+        .as_array()
+        .expect("bindings array")
+        .iter()
+        .find(|binding| binding["name"].as_str() == Some(name))
+        .unwrap_or_else(|| panic!("`{name}` missing from scope: {scope}"));
+    (
+        binding["kind"].as_str().expect("kind"),
+        binding["start"].clone(),
+    )
+}
+
 #[test]
 fn dumps_json_shape_with_param_concrete_and_unknown_types() {
     let temp = fixture_package();
@@ -243,6 +257,124 @@ fn directory_input_dumps_every_discovered_file() {
     let files = dump["files"].as_array().unwrap();
     assert_eq!(files.len(), 1);
     assert!(files[0]["path"].as_str().unwrap().ends_with("R/analysis.R"));
+}
+
+/// Assignments in expression position — inside a call argument, chained
+/// onto another assignment, in an `if` condition, or through `%<>%` — bind
+/// in the enclosing scope for the checker, so the dump must classify them
+/// as `local` with a definition site (not `imported` with `start: null`),
+/// and `--position` must be able to filter on that site.
+#[test]
+fn expression_position_assignments_are_locals_with_sites() {
+    let temp = tempfile::tempdir().unwrap();
+    let file = temp.path().join("expr_assign.R");
+    fs::write(
+        &file,
+        concat!(
+            "print(side <- 5L)\n",
+            "outer <- inner <- 1L\n",
+            "if (flag <- TRUE) {\n",
+            "  message(\"yes\")\n",
+            "}\n",
+            "q %<>% abs()\n",
+        ),
+    )
+    .unwrap();
+    let file = file.to_str().unwrap();
+
+    let dump = stdout_json(&run(&["dump-types", file]));
+    let top = &dump["files"][0]["scopes"][0];
+    assert_eq!(top["kind"], "top");
+    assert_eq!(
+        binding_entry(top, "side"),
+        ("local", serde_json::json!([1, 7]))
+    );
+    assert_eq!(
+        binding_entry(top, "inner"),
+        ("local", serde_json::json!([2, 10]))
+    );
+    assert_eq!(
+        binding_entry(top, "outer"),
+        ("local", serde_json::json!([2, 1]))
+    );
+    assert_eq!(
+        binding_entry(top, "flag"),
+        ("local", serde_json::json!([3, 5]))
+    );
+    assert_eq!(
+        binding_entry(top, "q"),
+        ("local", serde_json::json!([6, 1]))
+    );
+
+    // With a site on record, --position filtering applies: at 2:1 `side`
+    // (line 1) is already assigned, while `inner` (assigned later on the
+    // same line) is not yet bound. `outer` starts exactly at the position
+    // and counts as visible there.
+    let dump = stdout_json(&run(&["dump-types", file, "--position", "2:1"]));
+    let top = &dump["files"][0]["scopes"][0];
+    assert_eq!(top["kind"], "top");
+    assert_eq!(binding_entry(top, "side").0, "local");
+    let names: Vec<&str> = bindings_of(top).iter().map(|(name, _, _)| *name).collect();
+    assert!(
+        !names.contains(&"inner"),
+        "assigned after the position: {names:?}"
+    );
+}
+
+/// A named function inside an anonymous callback that itself sits in a
+/// loop body is recorded by the checker (only the anonymous literal is
+/// discarded), so the dump's scope indexing must recurse through the call
+/// argument and the callback's body to give it its own locals. Closed-over
+/// bindings resolve to the enclosing recorded scope's site.
+#[test]
+fn named_function_inside_loop_body_callback_gets_locals() {
+    let temp = tempfile::tempdir().unwrap();
+    let file = temp.path().join("loop_cb.R");
+    fs::write(
+        &file,
+        concat!(
+            "xs <- c(1, 2, 3)\n",
+            "for (i in 1:3) {\n",
+            "  lapply(xs, function(item) {\n",
+            "    step <- function(v) {\n",
+            "      scaled <- v * i\n",
+            "      scaled\n",
+            "    }\n",
+            "    step(item)\n",
+            "  })\n",
+            "}\n",
+        ),
+    )
+    .unwrap();
+    let dump = stdout_json(&run(&["dump-types", file.to_str().unwrap()]));
+    let scopes = dump["files"][0]["scopes"].as_array().unwrap();
+    let names: Vec<&str> = scopes
+        .iter()
+        .map(|scope| scope["name"].as_str().unwrap_or("top"))
+        .collect();
+    // The anonymous callback scope is absent (discarding mode); `step`
+    // inside it is not.
+    assert_eq!(names, vec!["top", "step"], "{scopes:?}");
+
+    let step = &scopes[1];
+    assert_eq!(
+        binding_entry(step, "scaled"),
+        ("local", serde_json::json!([5, 7]))
+    );
+    assert_eq!(
+        binding_entry(step, "v"),
+        ("param", serde_json::json!([4, 22]))
+    );
+    // `i` and `xs` belong to the top scope; their sites resolve through
+    // the enclosing-scope chain (the callback between them is unrecorded).
+    assert_eq!(
+        binding_entry(step, "i"),
+        ("closed-over", serde_json::json!([2, 6]))
+    );
+    assert_eq!(
+        binding_entry(step, "xs"),
+        ("closed-over", serde_json::json!([1, 1]))
+    );
 }
 
 /// A directory dump must apply the discovered `ry.toml`'s `exclude`

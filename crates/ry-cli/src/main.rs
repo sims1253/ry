@@ -1444,6 +1444,10 @@ fn assemble_file_dump(
         })
         .collect();
 
+    // Enclosing-scope chains are shared by every binding of a scope, so
+    // compute them once per file instead of once per closed-over lookup.
+    let chains = enclosing_scope_chains(&infos);
+
     // Which scopes does --position select? Without positions, all. With
     // them, the innermost containing scope for each position (the union,
     // deduplicated). Byte offsets make containment exact regardless of
@@ -1517,7 +1521,7 @@ fn assemble_file_dump(
                     // point at the definition in the nearest enclosing
                     // scope that binds the name, when one was recorded.
                     let definition_span = definition_span
-                        .or_else(|| enclosing_binding_span(&infos, index, name.as_str()));
+                        .or_else(|| enclosing_binding_span(&infos, &chains[index], name.as_str()));
                     (name, ty, kind, definition_span, is_formal_here)
                 })
                 .filter(|(_, _, _, definition_span, is_formal_here)| {
@@ -1565,24 +1569,40 @@ fn assemble_file_dump(
     }
 }
 
-/// Definition site of `name` in the nearest recorded scope enclosing
-/// `index`, walking outward. Used for closed-over bindings, whose only
-/// site in this file lives in an outer scope.
-fn enclosing_binding_span(infos: &[ScopeInfo], index: usize, name: &str) -> Option<ry_core::Span> {
-    let inner = infos[index].record.span;
-    let mut candidates: Vec<&ScopeInfo> = infos
-        .iter()
-        .enumerate()
-        .filter(|(other, info)| {
-            *other != index
-                && info.record.span.start <= inner.start
-                && inner.end <= info.record.span.end
+/// Sorted (nearest-first) enclosing-scope index chain for every scope:
+/// each entry lists the other scopes whose span contains it, ordered by
+/// smallest extent first. Computed once per file so every binding lookup
+/// in a scope reuses the same chain.
+fn enclosing_scope_chains(infos: &[ScopeInfo]) -> Vec<Vec<usize>> {
+    (0..infos.len())
+        .map(|index| {
+            let inner = infos[index].record.span;
+            let mut chain: Vec<usize> = (0..infos.len())
+                .filter(|other| {
+                    *other != index
+                        && infos[*other].record.span.start <= inner.start
+                        && inner.end <= infos[*other].record.span.end
+                })
+                .collect();
+            // Nearest first: smallest enclosing extent.
+            chain.sort_by_key(|other| {
+                infos[*other].record.span.end - infos[*other].record.span.start
+            });
+            chain
         })
-        .map(|(_, info)| info)
-        .collect();
-    // Nearest first: smallest enclosing extent.
-    candidates.sort_by_key(|info| info.record.span.end - info.record.span.start);
-    for info in candidates {
+        .collect()
+}
+
+/// Definition site of `name` in the nearest recorded scope enclosing the
+/// scope that owns `chain`, walking outward. Used for closed-over
+/// bindings, whose only site in this file lives in an outer scope.
+fn enclosing_binding_span(
+    infos: &[ScopeInfo],
+    chain: &[usize],
+    name: &str,
+) -> Option<ry_core::Span> {
+    for index in chain {
+        let info = &infos[*index];
         if let Some(span) = info.params.get(name).copied() {
             return Some(span);
         }

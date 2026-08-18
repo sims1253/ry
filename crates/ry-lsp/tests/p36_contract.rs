@@ -657,10 +657,10 @@ fn p36_w3_workspace_folder_add_remove_convergence() {
         live2.notify("initialized", json!({})).await.unwrap();
         live2
             .request(
-                "textDocument/hover",
+                "textDocument/inlayHint",
                 json!({
                     "textDocument": {"uri": main_a_uri},
-                    "position": {"line": 0, "character": 0}
+                    "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}}
                 }),
             )
             .await
@@ -691,10 +691,10 @@ fn p36_w3_workspace_folder_add_remove_convergence() {
         // After removal, trigger a republish and sync.
         live2
             .request(
-                "textDocument/hover",
+                "textDocument/inlayHint",
                 json!({
                     "textDocument": {"uri": main_a_uri},
-                    "position": {"line": 0, "character": 0}
+                    "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}}
                 }),
             )
             .await
@@ -919,9 +919,9 @@ fn p36_w5_baseline_reload_retains_context_on_corruption() {
         })).await.unwrap();
 
         // Sync barrier to let the reload + republish happen.
-        live.request("textDocument/hover", json!({
+        live.request("textDocument/inlayHint", json!({
             "textDocument": {"uri": main_uri},
-            "position": {"line": 0, "character": 0}
+            "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}}
         })).await.ok();
 
         // Phase 3: trigger a republish. RY002 must STILL be suppressed
@@ -1069,10 +1069,10 @@ fn p36_w5_baseline_reload_converges_to_new_value() {
         // Sync barrier: the hover response guarantees the watch notification
         // (and its outside-the-lock context rebuild) has been processed.
         live.request(
-            "textDocument/hover",
+            "textDocument/inlayHint",
             json!({
                 "textDocument": {"uri": main_uri},
-                "position": {"line": 0, "character": 0}
+                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}}
             }),
         )
         .await
@@ -1158,10 +1158,10 @@ fn p36_w5_publish_path_performs_no_baseline_disk_io() {
 
         // Exercise hover (read path) and publish (diagnostic path).
         live.request(
-            "textDocument/hover",
+            "textDocument/inlayHint",
             json!({
                 "textDocument": {"uri": main_uri},
-                "position": {"line": 0, "character": 0}
+                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}}
             }),
         )
         .await

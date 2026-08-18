@@ -220,6 +220,44 @@ fn assert_position(actual: &Value, name: &str) {
     assert_eq!(actual, &position(name), "wrong LSP position for {name}");
 }
 
+/// Request inlay hints for a single line of `uri`. The transcript test
+/// uses this as its state-observable probe: a response is produced from
+/// the cached parse and the checked scope, so it reflects exactly what
+/// the server currently believes the document contains.
+async fn hints_for_line(session: &mut ClientSession, uri: &str, line: u32) -> Value {
+    session
+        .request(
+            "textDocument/inlayHint",
+            json!({
+                "textDocument": {"uri": uri},
+                "range": {
+                    "start": {"line": line, "character": 0},
+                    "end": {"line": line + 1, "character": 0}
+                }
+            }),
+        )
+        .await
+        .unwrap()
+}
+
+/// Assert the server placed a type hint immediately after the binding
+/// identifier at (`line`, `character`).
+fn assert_hint_at(hints: &Value, line: u32, character: u32) {
+    assert!(
+        hints
+            .as_array()
+            .expect("inlay hints should be an array")
+            .iter()
+            .any(
+                |hint| hint["position"] == json!({"line": line, "character": character})
+                    && hint["label"]
+                        .as_str()
+                        .is_some_and(|label| label.starts_with(": "))
+            ),
+        "expected a type hint at ({line}, {character}); got: {hints}"
+    );
+}
+
 #[test]
 fn utf16_contract_holds_across_one_real_lsp_transcript() {
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -311,25 +349,6 @@ async fn utf16_transcript() {
         })
     );
 
-    // UTF-16 -> byte: hover lands on target despite every Unicode class on
-    // the preceding part of the line.
-    let hover = session
-        .request(
-            "textDocument/hover",
-            json!({
-                "textDocument": {"uri": main_uri}, "position": position("target declaration")
-            }),
-        )
-        .await
-        .unwrap();
-    assert!(
-        hover
-            .pointer("/contents/value")
-            .and_then(Value::as_str)
-            .is_some_and(|value| value.contains("target"))
-    );
-    assert!(hover.get("range").is_none());
-
     // Completion consumes the UTF-16 cursor following an astral scalar.
     let completion = session
         .request(
@@ -400,29 +419,12 @@ async fn utf16_transcript() {
         .unwrap();
     assert_eq!(surrogate_interior_signature, Value::Null);
 
-    // A cursor inside the surrogate pair is not a legal LSP position. The
-    // valid boundary resolves the backtick identifier; the interior must not
-    // silently snap forward and resolve the same identifier.
-    let valid_astral_hover = session
-        .request(
-            "textDocument/hover",
-            json!({
-                "textDocument": {"uri": main_uri}, "position": position("multiline backtick read")
-            }),
-        )
-        .await
-        .unwrap();
-    assert_ne!(valid_astral_hover, Value::Null);
-    let surrogate_interior_hover = session
-        .request(
-            "textDocument/hover",
-            json!({
-                "textDocument": {"uri": main_uri}, "position": {"line": 8, "character": 2}
-            }),
-        )
-        .await
-        .unwrap();
-    assert_eq!(surrogate_interior_hover, Value::Null);
+    // The state-observable probe through a kept capability: the line-0
+    // binding places a type hint right after its identifier. The
+    // change-path tests below reuse this probe to observe what the
+    // server's cached parse contains after each edit.
+    let initial_hints = hints_for_line(&mut session, &main_uri, 0).await;
+    assert_hint_at(&initial_hints, 0, 5);
 
     // The document-change path must reject the same invalid position rather
     // than corrupting the document by snapping into the backtick identifier.
@@ -445,16 +447,10 @@ async fn utf16_transcript() {
         .published_diagnostics_after(&main_uri, invalid_change_mark)
         .await
         .unwrap();
-    let hover_after_invalid_change = session
-        .request(
-            "textDocument/hover",
-            json!({
-                "textDocument": {"uri": main_uri}, "position": position("multiline backtick read")
-            }),
-        )
-        .await
-        .unwrap();
-    assert_ne!(hover_after_invalid_change, Value::Null);
+    // The rejected edit must leave the last-good parse serving content
+    // requests unchanged.
+    let hints_after_invalid_change = hints_for_line(&mut session, &main_uri, 0).await;
+    assert_hint_at(&hints_after_invalid_change, 0, 5);
 
     let out_of_range_change_mark = session.publication_mark();
     session
@@ -475,16 +471,8 @@ async fn utf16_transcript() {
         .published_diagnostics_after(&main_uri, out_of_range_change_mark)
         .await
         .unwrap();
-    let hover_after_out_of_range_change = session
-        .request(
-            "textDocument/hover",
-            json!({
-                "textDocument": {"uri": main_uri}, "position": position("multiline backtick read")
-            }),
-        )
-        .await
-        .unwrap();
-    assert_ne!(hover_after_out_of_range_change, Value::Null);
+    let hints_after_out_of_range_change = hints_for_line(&mut session, &main_uri, 0).await;
+    assert_hint_at(&hints_after_out_of_range_change, 0, 5);
 
     // A valid incremental edit after BMP, decomposed combining, and astral
     // scalars must use UTF-16 columns in both endpoints.
@@ -533,22 +521,11 @@ async fn utf16_transcript() {
             .any(|item| item["label"] == "column")
     );
 
-    let hover_after_valid_change = session
-        .request(
-            "textDocument/hover",
-            json!({
-                "textDocument": {"uri": main_uri},
-                "position": {"line": 2, "character": 21}
-            }),
-        )
-        .await
-        .unwrap();
-    assert!(
-        hover_after_valid_change
-            .pointer("/contents/value")
-            .and_then(Value::as_str)
-            .is_some_and(|value| value.contains("changed"))
-    );
+    // The re-parse is visible through the kept surface: the edited
+    // line-2 binding is now `changed`, so its hint moves to the new
+    // identifier's UTF-16 end column.
+    let hints_after_valid_change = hints_for_line(&mut session, &main_uri, 2).await;
+    assert_hint_at(&hints_after_valid_change, 2, 28);
 
     session.shutdown().await.unwrap();
     drop(session);
@@ -570,7 +547,7 @@ async fn utf16_transcript() {
 //
 // Quiescence is the `textDocument/publishDiagnostics` notification — an
 // explicit protocol signal, never a sleep. Before each checkpoint a
-// request/response round-trip (hover) acts as a synchronization barrier:
+// request/response round-trip (inlayHint) acts as a synchronization barrier:
 // it drains publications left over from the previous step's multi-URI
 // broadcast into the session's pending queue so the subsequent
 // `publication_mark` captures only future arrivals.  This is the pattern
@@ -757,10 +734,10 @@ async fn fresh_server_diagnostics(
     // Sync barrier to drain stale publications from the initialize cycle.
     let _ = session
         .request(
-            "textDocument/hover",
+            "textDocument/inlayHint",
             json!({
                 "textDocument": {"uri": &uris[target_file as usize]},
-                "position": {"line": 0, "character": 0}
+                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}}
             }),
         )
         .await;
@@ -785,10 +762,10 @@ async fn fresh_server_diagnostics(
 async fn sync_barrier(live: &mut ClientSession, uri: &str) {
     let _ = live
         .request(
-            "textDocument/hover",
+            "textDocument/inlayHint",
             json!({
                 "textDocument": {"uri": uri},
-                "position": {"line": 0, "character": 0}
+                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}}
             }),
         )
         .await;
@@ -973,7 +950,7 @@ async fn w10_convergence_property(operations: Vec<Operation>) -> Result<(), Test
                 // relying on a later step's barrier (#81).  `did_close`
                 // publishes `[]` from the notification lane while requests
                 // are answered on a concurrent lane, so the clearing
-                // notification can be written after a subsequent hover
+                // notification can be written after a subsequent barrier
                 // response; a read-order mark taken after that response
                 // then matches the stale `[]` instead of the reopened
                 // document's real publication.  The barrier drains

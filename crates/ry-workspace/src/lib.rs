@@ -34,8 +34,6 @@ pub struct WorkspaceContext {
     pub bare_bindings: HashMap<String, HashSet<String>>,
     pub external_bindings: HashMap<String, HashSet<String>>,
     pub imported_bindings: HashMap<String, HashMap<String, String>>,
-    /// Per-file native routine names proven by `useDynLib` metadata.
-    pub native_registrations: HashMap<String, HashSet<String>>,
     pub s3_methods: HashMap<String, HashSet<(String, String)>>,
     pub load_bindings: HashMap<String, HashMap<usize, HashSet<String>>>,
     pub degraded_scopes: Vec<(PathBuf, &'static str)>,
@@ -126,7 +124,6 @@ pub fn resolve_workspace_context<'a>(
     let mut bare_attached = HashMap::new();
     let mut bindings = HashMap::new();
     let mut imported_from = HashMap::new();
-    let mut native_registrations = HashMap::new();
     let mut s3_methods = HashMap::new();
     let mut load_bindings = HashMap::new();
     // A package root is visited once per file in it, so a single oversized
@@ -147,7 +144,6 @@ pub fn resolve_workspace_context<'a>(
         let mut file_attached: HashSet<String> = configured_packages.iter().cloned().collect();
         let mut file_bindings = HashSet::new();
         let mut file_s3_methods = HashSet::new();
-        let mut file_native_registrations = HashSet::new();
         let mut file_imported_from = HashMap::new();
         let mut source_package = None;
         file_bindings.extend(configured_globals.iter().cloned());
@@ -180,9 +176,8 @@ pub fn resolve_workspace_context<'a>(
             // the evidence that a name is one of them. Without the
             // declaration the same names are ordinary unbound reads.
             if metadata.native_registration {
-                file_native_registrations.extend(source_bindings.native_symbols.iter().cloned());
-                file_native_registrations.extend(metadata.native_routines.iter().cloned());
-                file_bindings.extend(file_native_registrations.iter().cloned());
+                file_bindings.extend(source_bindings.native_symbols.iter().cloned());
+                file_bindings.extend(metadata.native_routines.iter().cloned());
             }
             file_bindings.extend(metadata.imported_bindings.iter().cloned());
             file_imported_from.extend(metadata.imported_from.clone());
@@ -301,7 +296,6 @@ pub fn resolve_workspace_context<'a>(
         bare_attached.insert(file.path.clone(), file_attached);
         bindings.insert(file.path.clone(), file_bindings);
         imported_from.insert(file.path.clone(), file_imported_from);
-        native_registrations.insert(file.path.clone(), file_native_registrations);
         s3_methods.insert(file.path.clone(), file_s3_methods);
     }
     Ok(WorkspaceContext {
@@ -309,7 +303,6 @@ pub fn resolve_workspace_context<'a>(
         bare_bindings: bare_attached,
         external_bindings: bindings,
         imported_bindings: imported_from,
-        native_registrations,
         s3_methods,
         load_bindings,
         degraded_scopes: degraded.into_iter().collect(),

@@ -1,9 +1,10 @@
 //! P36-W1: Red contract matrix — deterministic failing cases for every
 //! remaining LSP contract gap addressed by Plan 36.
 //!
-//! Every test in this file is `#[ignore]`'d because it verifies behavior that
-//! P36-W2 through W7 will implement. Each test's `#[ignore]` message and
-//! doc-comment name the specific workstream (and issue) that will make it pass.
+//! Every case in this file was authored `#[ignore]`'d while P36-W2 through
+//! W7 were unimplemented; those attributes were removed as the workstreams
+//! landed, and the tests now run as ordinary (passing) contract gates. Each
+//! test's doc-comment names the specific workstream (and issue) it covers.
 //!
 //! Shared infrastructure reuses Plan 35's `ry-testkit` (`FixtureProject`,
 //! `LspSession`, `AsyncJsonRpcClient`) and the `ry_lsp::run_with` in-memory

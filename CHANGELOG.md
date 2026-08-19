@@ -259,8 +259,8 @@ All notable changes to ry are documented in this file.
   `rename` incorrect — and outline/search duplicate what every
   tree-sitter-based R editor integration already provides. The kept
   interactive surface is exactly `inlayHint` (the checker's output
-  rendered inline), `codeAction` (suppressions and computed fixes),
-  `completion`, and `signatureHelp`, all scoped to open documents; the
+  rendered inline), `codeAction` (suppressions), `completion`, and
+  `signatureHelp`, all scoped to open documents; the
   background file index is untouched so far and loses its remaining
   consumers in a later step of the diet. None of the five capabilities
   ever shipped in a release, so no released capability schema changes.

@@ -27,15 +27,15 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
 /// P36-W5 (#45): counts baseline file reads performed by `load_folder_baseline`
-/// (the only baseline disk-read site in the LSP). Reads of publish/hover/
+/// (the only baseline disk-read site in the LSP). Reads of publish/inlay-hint/
 /// completion state use the cached [`FolderAnalysisContext`] and never touch
 /// this counter. Exposed via [`baseline_disk_reads`] so integration tests can
 /// assert hot-path I/O is absent rather than infer it from timing.
 static BASELINE_DISK_READS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// P36-W5 (#45): number of baseline file reads since process start. A
-/// publish/hover/completion that does not change this value performs zero
-/// baseline disk I/O.
+/// publish/inlay-hint/completion that does not change this value performs
+/// zero baseline disk I/O.
 pub fn baseline_disk_reads() -> usize {
     BASELINE_DISK_READS.load(std::sync::atomic::Ordering::Relaxed)
 }
@@ -63,7 +63,7 @@ pub(super) struct State {
     /// parser is constructed per request and only the result is cached.
     parsed: HashMap<String, (i32, Arc<SourceFile>)>,
     /// path -> (version, top-level Scope from `check_with_scope`).
-    /// Reused by hover/inlay/completion so they don't re-run the
+    /// Reused by inlay_hint/completion so they don't re-run the
     /// single-file check on every request. Invalidated
     /// by `update_doc` alongside the parse cache.
     scopes: HashMap<String, (i32, ry_checker::Scope)>,
@@ -78,7 +78,7 @@ pub(super) struct State {
     /// generation at dispatch and checks it before writing.
     index_generation: u64,
     /// Runtime stubs loaded from the workspace's `ry.toml`. Kept in state so
-    /// every rebuilt Project and single-file hover checker sees the same data.
+    /// every rebuilt Project and single-file scope check sees the same data.
     user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
     /// Persistent multi-file checker used only by diagnostics. Its own mutex
     /// keeps project checks serialized without holding the document-state
@@ -667,12 +667,13 @@ impl State {
     /// PR #79 round 3: Open documents eligible for the same folder root as
     /// `doc_path`, with `doc_path` first and the rest in sorted order.
     ///
-    /// `goto_definition` and `signature_help` share this rule so the two
-    /// open-document fallback searches cannot drift. Roots are isolated by
-    /// design, so a same-named definition in a different root must never
-    /// win; among equally-eligible candidates the winner must not depend on
-    /// traversal order, so the rest are sorted. The current document is
-    /// preferred over any other. Unopened files on disk are not consulted.
+    /// `signature_help`'s open-document fallback search uses this rule
+    /// (its only consumer since the outline/navigation removal). Roots are
+    /// isolated by design, so a same-named definition in a different root
+    /// must never win; among equally-eligible candidates the winner must
+    /// not depend on traversal order, so the rest are sorted. The current
+    /// document is preferred over any other. Unopened files on disk are
+    /// not consulted.
     fn eligible_open_documents(&self, doc_path: &str) -> Vec<String> {
         let mut docs: Vec<String> = self.docs.keys().cloned().collect();
         docs.sort();
@@ -1433,8 +1434,8 @@ impl LanguageServer for Backend {
         };
 
         // Reuse the cached scope, which parses lazily
-        // via the parse cache. Mirrors `hover` and `inlay_hint`: on any
-        // parse failure we return `None` (no completions).
+        // via the parse cache. Mirrors `inlay_hint`: on any parse
+        // failure we return `None` (no completions).
         let Some(scope) = self.scope_for(&path).await else {
             return Ok(None);
         };
@@ -1758,7 +1759,7 @@ impl Backend {
 
     /// Return the top-level `Scope` for `path`, reusing the cached
     /// single-file `check_with_scope` result when its version matches.
-    /// Used by hover/inlay/completion so they don't re-run the check on
+    /// Used by inlay_hint/completion so they don't re-run the check on
     /// every request. Returns `None` when the document
     /// is not open or parsing fails.
     async fn scope_for(&self, path: &str) -> Option<ry_checker::Scope> {

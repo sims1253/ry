@@ -139,10 +139,11 @@ enum Cmd {
         min_confidence: ConfidenceChoice,
     },
     /// Dump inferred types for every lexical scope in R files, as JSON on
-    /// stdout. Non-interactive counterpart of the LSP hover: bindings map
-    /// to the same type strings. Downstream tooling (training-data
-    /// builders, IDE backends) can query which names a scope binds and
-    /// with what inferred types, without re-implementing the checker.
+    /// stdout. Non-interactive counterpart of the LSP's inline type
+    /// hints: bindings map to the same type strings. Downstream tooling
+    /// (training-data builders, IDE backends) can query which names a
+    /// scope binds and with what inferred types, without re-implementing
+    /// the checker.
     DumpTypes {
         /// R files or directories to dump. A directory expands to every
         /// discoverable R file under it, using `ry check`'s discovery
@@ -1097,7 +1098,7 @@ fn parse_dump_position(value: &str) -> Result<(usize, usize), String> {
 }
 
 /// The type string for one binding. Same `Display` rendering the LSP
-/// hover produces, except the fully-uninformed type is reported as
+/// inlay hints show, except the fully-uninformed type is reported as
 /// "unknown" so consumers never mistake `opaque<len=?>:?` for a real
 /// inference result.
 fn dump_type_string(t: &ry_core::RType) -> String {

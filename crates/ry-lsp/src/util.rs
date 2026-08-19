@@ -9,8 +9,7 @@
 //! are pure functions with no dependency on the `Backend`/`State` and
 //! are reused across every LSP handler.
 
-use ry_core::Span;
-use tower_lsp::lsp_types::{Position, Range};
+use tower_lsp::lsp_types::Position;
 
 /// Map a byte offset into the source text to an LSP `Position`
 /// (0-indexed line, 0-indexed character column).
@@ -112,14 +111,4 @@ pub(crate) fn utf16_col_to_byte(line: &str, utf16_col: u32) -> Option<usize> {
         col = next_col;
     }
     (col == utf16_col).then_some(line.len())
-}
-
-/// Convert a ry `Span` (byte offsets) to an LSP `Range` (UTF-16
-/// positions). Both endpoints go through `byte_offset_to_position` so
-/// the character column is a UTF-16 code-unit count and start/end are
-/// computed consistently.
-pub(crate) fn span_to_range(text: &str, span: Span) -> Option<Range> {
-    let start = byte_offset_to_position(text, span.start);
-    let end = byte_offset_to_position(text, span.end);
-    Some(Range { start, end })
 }

@@ -24,10 +24,9 @@ use crate::util::{byte_offset_to_position, utf16_col_to_byte};
 ///
 /// Opaque (`Mode::Opaque`) types are deliberately skipped: they
 /// represent "we don't know" and would only clutter the editor with
-/// unhelpful `: opaque<len=?>?NA?` annotations. This mirrors how the
-/// `document_symbol` detail path behaves implicitly (it surfaces
-/// whatever the scope has, but for opaque the Display string is
-/// noisy). For inlay hints, skipping is the better UX.
+/// unhelpful `: opaque<len=?>?NA?` annotations (the scope's Display
+/// string is noisy for opaque modes). For inlay hints, skipping is
+/// the better UX.
 pub(super) fn collect_inlay_hints(file: &SourceFile, scope: &Scope, text: &str) -> Vec<InlayHint> {
     let mut hints = Vec::new();
     for stmt in &file.stmts {
@@ -99,7 +98,7 @@ fn collect_inlay_hints_from_stmt(
         // Other statement forms (bare expressions, control flow,
         // returns) do not introduce named top-level bindings, so they
         // contribute no hints. We deliberately do NOT recurse into
-        // `if`/`for`/`while` bodies here (unlike `collect_symbols`)
+        // `if`/`for`/`while` bodies here
         // because the top-level scope only tracks the file's top
         // scope; bindings introduced inside control-flow blocks may
         // not be present in `scope`, and emitting a hint for a name

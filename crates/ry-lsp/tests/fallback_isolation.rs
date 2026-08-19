@@ -151,18 +151,13 @@ fn signature_help_does_not_cross_workspace_roots() {
             .unwrap();
         let result = response.get("result").cloned().unwrap_or(Value::Null);
 
-        let leaked = result
-            .pointer("/signatures/0/label")
-            .and_then(Value::as_str)
-            .is_some_and(|label| label.contains("leaked"));
-        assert!(
-            !leaked,
+        // With no same-root definer the handler must serve nothing at
+        // all: `Ok(None)` serializes to JSON null, so any signature
+        // object here means the fallback crossed roots.
+        assert_eq!(
+            result,
+            Value::Null,
             "signature help must not cross into root-b; got: {result}"
-        );
-        let serialized = serde_json::to_string(&result).unwrap();
-        assert!(
-            !serialized.contains(&b_uri),
-            "signature help must not resolve to root-b's document; got: {serialized}"
         );
 
         // Best-effort teardown.

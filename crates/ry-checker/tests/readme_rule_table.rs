@@ -14,6 +14,7 @@
 //! `\>`). The stable contract is code, name, and severity, plus a non-empty
 //! summary cell so a truncated row cannot pass.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
@@ -146,12 +147,22 @@ fn readme_rule_table_matches_rule_registry() {
         }
     }
 
-    // README -> registry: no row may document an unregistered rule.
+    // README -> registry: no row may document an unregistered rule, and a
+    // pasted-duplicate row must be caught even though the registry -> README
+    // loop only ever looks at the first row per code.
+    let mut seen: HashSet<&str> = HashSet::new();
     for row in &rows {
         if !RULES.iter().any(|r| r.code == row.code) {
             problems.push(format!(
                 "unknown row: README line {} documents {} (`{}`) but no rule \
                  with that code is registered; remove the row or fix the code",
+                row.line, row.code, row.name
+            ));
+            continue;
+        }
+        if !seen.insert(row.code.as_str()) {
+            problems.push(format!(
+                "duplicate row: README line {} repeats {} ({})",
                 row.line, row.code, row.name
             ));
         }

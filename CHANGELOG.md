@@ -151,6 +151,14 @@ All notable changes to ry are documented in this file.
   `textDocument/rename` out; and `p38-progress.md` no longer marks
   W11/W12 as future work and records W12's acceptance record as
   invalidated, not accepted.
+- **README rule-table drift guard (#107)**: a workspace integration test
+  (`cargo test -p ry-checker --test readme_rule_table`) parses the README
+  "## Rules" table and asserts parity with `ry_checker::rules::RULES` on
+  rule code, name, and severity, with per-rule failure messages naming the
+  README line and the direction of the drift. A registry change without a
+  matching README edit (or vice versa) now fails `cargo test --workspace`
+  in the default PR workflow, so the #83 manual table restore cannot
+  silently recur.
 - **Deduplicated the operator S3-generic list (#42)**: `is_operator_generic`
   now answers from `semantic_lists::OPERATORS` instead of restating the same
   13 Arith + Compare symbols as match arms, so the S3 method-name splitter

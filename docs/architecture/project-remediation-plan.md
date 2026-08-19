@@ -85,7 +85,6 @@ cargo check --manifest-path <temporary-directory>/Cargo.toml --workspace --all-t
 
 Work:
 
-- Fix the Clippy failure in `ry-analysis`.
 - Fix the mixed Mocha/`bun:test` compilation model so `bun run test` reaches the
   VS Code Extension Host.
 - Consolidate the overlapping `test-code.yml` and `build-vscode.yml` workflows

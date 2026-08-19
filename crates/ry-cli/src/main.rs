@@ -963,7 +963,6 @@ fn run_check_once(
                 imported_bindings: package_scope.imported_bindings,
                 s3_methods: package_scope.s3_methods,
                 load_bindings: package_scope.load_bindings,
-                native_registrations: package_scope.native_registrations,
                 degraded_scopes: Vec::new(),
             }),
         };
@@ -1758,7 +1757,6 @@ fn run_dump_types(
                 imported_bindings: package_scope.imported_bindings,
                 s3_methods: package_scope.s3_methods,
                 load_bindings: package_scope.load_bindings,
-                native_registrations: package_scope.native_registrations,
                 degraded_scopes: Vec::new(),
             }),
         };

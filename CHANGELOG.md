@@ -248,9 +248,19 @@ All notable changes to ry are documented in this file.
   `textDocument/foldingRange` and `textDocument/selectionRange` above;
   none of the three was ever shipped in a release, so no released
   capability schema changes.
+- **Deleted the dead `WorkspaceContext::native_registrations` plumbing
+  (#90)**: ry-workspace populated the per-file native-routine map and the
+  CLI forwarded it into `CheckInput`, but `check_project` never applied
+  it — ry-checker's `Project` has no setter for it, and the names already
+  reach the checker through `external_bindings`. The field, its
+  population, and the forwarding are gone; diagnostics are unchanged.
 
 ### Fixed
 
+- The `p36_contract.rs` file header still claimed every test in the file
+  is `#[ignore]`'d (#90); none are — the attributes were removed as
+  P36-W2 through W7 landed. The header now records that the tests run as
+  ordinary (passing) contract gates.
 - The Zed extension's cache-precedence test asserted only that a
   constructed release path ends in "ry" (#90, the #82 test-theater
   family), so it passed with the cache branch deleted outright. Binary

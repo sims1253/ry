@@ -23,8 +23,9 @@ All notable changes to ry are documented in this file.
   snapshot every completed lexical scope during the pass-3 diagnostic
   walk (`ry_checker::ScopeRecord`); recording is suppressed in
   discarding mode so fixpoint and signature-building re-walks never
-  double-capture. `ry_analysis::check_project_with_scope_capture`
-  exposes it through the shared check pipeline. Existing commands and
+  double-capture. ry-cli's shared check pipeline
+  (`check::check_project_with_scope_capture` in
+  `crates/ry-cli/src/check.rs`) exposes it. Existing commands and
   checker behavior are unchanged.
 
 ### Plan 37: Release truth and editor hardening
@@ -262,6 +263,15 @@ All notable changes to ry are documented in this file.
   it — ry-checker's `Project` has no setter for it, and the names already
   reach the checker through `external_bindings`. The field, its
   population, and the forwarding are gone; diagnostics are unchanged.
+- **Dissolved the `ry-analysis` crate (#108)**: what remained after the
+  reduction above — the shared check pipeline (`CheckInput`,
+  `CheckOutput`, `check_project`,
+  `check_project_with_scope_capture`) — moved verbatim into ry-cli
+  (`crates/ry-cli/src/check.rs`), its only consumer since ry-lsp began
+  coordinating `ry_checker::Project` directly. The crate directory, its
+  workspace member entry, and every dependency edge naming it are
+  deleted. Nothing outside ry-cli referenced it, so diagnostic output
+  is unchanged.
 
 ### Fixed
 

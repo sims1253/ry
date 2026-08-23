@@ -1288,16 +1288,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ry-analysis"
-version = "0.9.0"
-dependencies = [
- "ry-checker",
- "ry-core",
- "ry-typeshed",
- "ry-workspace",
-]
-
-[[package]]
 name = "ry-checker"
 version = "0.9.0"
 dependencies = [
@@ -1326,7 +1316,6 @@ dependencies = [
  "glob",
  "miette",
  "rayon",
- "ry-analysis",
  "ry-checker",
  "ry-config",
  "ry-core",

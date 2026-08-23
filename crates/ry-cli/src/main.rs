@@ -1,5 +1,7 @@
 #![allow(clippy::collapsible_if)]
 
+mod check;
+
 use std::collections::HashMap;
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -953,7 +955,7 @@ fn run_check_once(
             analysis_files.push((path.clone(), 0, std::sync::Arc::new(file.clone())));
             comments.insert(path.clone(), file.comments.clone());
         }
-        let check_input = ry_analysis::CheckInput {
+        let check_input = check::CheckInput {
             files: analysis_files,
             user_stubs: Arc::clone(&user_stubs),
             workspace: Some(ry_workspace::WorkspaceContext {
@@ -966,7 +968,7 @@ fn run_check_once(
                 degraded_scopes: Vec::new(),
             }),
         };
-        let check_output = ry_analysis::check_project(check_input);
+        let check_output = check::check_project(check_input);
         per_file_diagnostics.extend(check_output.diagnostics);
         for (path, reason) in package_scope.degraded_scopes {
             degraded.insert(format!("{} ({})", path.display(), reason));
@@ -1747,7 +1749,7 @@ fn run_dump_types(
                 (path.clone(), 0, std::sync::Arc::new(file.clone()))
             })
             .collect();
-        let check_input = ry_analysis::CheckInput {
+        let check_input = check::CheckInput {
             files: analysis_files,
             user_stubs: Arc::clone(&user_stubs),
             workspace: Some(ry_workspace::WorkspaceContext {
@@ -1769,7 +1771,7 @@ fn run_dump_types(
                 path.display()
             );
         }
-        for (path, records) in ry_analysis::check_project_with_scope_capture(check_input) {
+        for (path, records) in check::check_project_with_scope_capture(check_input) {
             records_by_path.insert(path, records);
         }
     }

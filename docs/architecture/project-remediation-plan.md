@@ -396,6 +396,13 @@ remove it from the schema and documentation:
 
 - Generate or verify the README rule table from the registry so new codes do
   not disappear from documentation.
+
+  **Since resolved (#107).** `crates/ry-checker/tests/readme_rule_table.rs`
+  parses the README "## Rules" table and asserts parity with
+  `ry_checker::rules::RULES` on code, name, and severity (summaries must be
+  present), with actionable per-rule failure messages. Any drift — a rule
+  missing from the table, an unregistered row, or a severity/name mismatch —
+  fails `cargo test --workspace` in the default PR workflow.
 - Update editor limitations after unopened-file indexing and interactive
   migrations are complete.
 - Do not record a plan as accepted while its required default gate is red.

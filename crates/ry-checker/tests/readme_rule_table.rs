@@ -66,12 +66,18 @@ fn rule_table_rows() -> Vec<Row> {
         .map(|i| heading + 1 + i)
         .unwrap_or(lines.len());
 
-    let table: Vec<(usize, &str)> = lines[heading + 1..section_end]
-        .iter()
-        .enumerate()
-        .filter(|(_, l)| l.starts_with('|'))
-        .map(|(i, l)| (heading + 2 + i, *l))
-        .collect();
+    // The rule table is the first contiguous run of `|`-prefixed lines in
+    // the section: a second table later in the same section (examples,
+    // tier tables, …) is legal prose and must not be parsed as rule rows,
+    // so collection stops at the table's first non-table line.
+    let mut table: Vec<(usize, &str)> = Vec::new();
+    for (offset, line) in lines[heading + 1..section_end].iter().enumerate() {
+        if line.starts_with('|') {
+            table.push((heading + 2 + offset, line));
+        } else if !table.is_empty() {
+            break; // the first contiguous table has ended
+        }
+    }
 
     assert!(
         table.len() >= 3,
@@ -169,12 +175,18 @@ fn readme_rule_table_matches_rule_registry() {
     }
 
     // The registry keeps codes lexicographic; the table must follow it.
-    // Only checked when membership matches, so a missing/unknown row does
-    // not also produce a noisy order diff on top of its own message.
+    // Only checked when membership is exact and duplicate-free, so a
+    // missing/unknown row does not also produce a noisy order diff on top
+    // of its own message — and a duplicate row paired with a missing one
+    // (which preserves the row count) cannot slip through either.
+    // `seen` holds every distinct *registered* row code (unknown rows are
+    // skipped above), so equal row and `seen` lengths mean no duplicate or
+    // unknown rows, and `seen` equal to the registry codes means nothing
+    // is missing.
     let readme_order: Vec<&str> = rows.iter().map(|r| r.code.as_str()).collect();
     let registry_order: Vec<&str> = RULES.iter().map(|r| r.code).collect();
-    let same_membership =
-        rows.len() == RULES.len() && rows.iter().all(|r| RULES.iter().any(|g| g.code == r.code));
+    let registry_codes: HashSet<&str> = RULES.iter().map(|r| r.code).collect();
+    let same_membership = rows.len() == seen.len() && seen == registry_codes;
     if same_membership && readme_order != registry_order {
         problems.push(format!(
             "row order: README rows are ordered {readme_order:?} but the \

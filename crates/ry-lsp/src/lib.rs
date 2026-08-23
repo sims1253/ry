@@ -8,28 +8,25 @@
 //!   * `textDocument/didChange` (incremental edits re-check and republish)
 //!   * `textDocument/didClose` (clears diagnostics)
 //!   * Document diagnostics via `textDocument/publishDiagnostics`
-//!   * `textDocument/hover` (inferred type at cursor)
-//!   * `textDocument/definition` (go-to-definition, scoped to open documents)
-//!   * `textDocument/references` (find all usages of a symbol across open files)
-//!   * `textDocument/documentSymbol` (outline view of the file's bindings)
-//!   * `workspace/symbol` (search for symbols across all open files)
 //!   * `textDocument/completion`, `signatureHelp`, `inlayHint`,
 //!     `codeAction`
 //!   * Graceful shutdown via `shutdown` / `exit`
 //!
-//! The interactive requests (`hover`, `definition`, `references`,
-//! `completion`, `signatureHelp`) are scoped to **open documents**. Some of
-//! them (`definition`, `references`) do span several open documents, but none
-//! consults an unopened file on disk. The server's purpose is the diagnostics
-//! `ry check` produces; whole-workspace navigation over unopened files was
-//! removed because it resolved symbols by spelling rather than by binding.
+//! The interactive requests (`completion`, `signatureHelp`) are scoped to
+//! **open documents**; none consults an unopened file on disk. The server's
+//! purpose is the diagnostics `ry check` produces; whole-workspace
+//! navigation over unopened files was removed because it resolved symbols
+//! by spelling rather than by binding, and the outline/navigation features
+//! built on the same spelling-match identity were removed with it (the
+//! `hover`, `definition`, `references`, `documentSymbol`, and
+//! `workspace/symbol` capabilities — see issue #87).
 //!
 //! Architecture: this file is intentionally small --
 //! module declarations + the `run()` entry point. All request-handler
 //! logic lives in [`backend`] (`Backend`, `State`, the
 //! `LanguageServer` impl, and the parse/scope/debounce caches); the
-//! per-feature helpers live in their own modules (`navigation`,
-//! `symbols`, `hints`, `diagnostics`, `ident`).
+//! per-feature helpers live in their own modules (`hints`,
+//! `diagnostics`, `util`).
 //!
 //! CRITICAL INVARIANT: the LSP protocol uses stdout for JSON-RPC framing.
 //! Any tracing or log output that lands on stdout will corrupt the stream
@@ -142,17 +139,14 @@ pub mod test_seam {
 mod backend;
 mod diagnostics;
 mod hints;
-mod ident;
 mod index;
-mod navigation;
 mod settings;
-mod symbols;
 mod util;
 
 use backend::{Backend, State};
 // P36-W5 (#45): re-export the baseline disk-read counter so integration
-// tests can assert that the publish/hover/completion hot path performs no
-// baseline file I/O.
+// tests can assert that the publish/inlay-hint/completion hot path performs
+// no baseline file I/O.
 pub use backend::baseline_disk_reads;
 use std::sync::Arc;
 use tokio::sync::Mutex;

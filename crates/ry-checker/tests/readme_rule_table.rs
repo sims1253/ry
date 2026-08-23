@@ -186,6 +186,16 @@ fn readme_rule_table_matches_rule_registry() {
     let readme_order: Vec<&str> = rows.iter().map(|r| r.code.as_str()).collect();
     let registry_order: Vec<&str> = RULES.iter().map(|r| r.code).collect();
     let registry_codes: HashSet<&str> = RULES.iter().map(|r| r.code).collect();
+    // The registry's own order is part of the contract: if RULES and the
+    // table drifted to the same non-lexicographic order together, the
+    // comparison below would still pass while the invariant above fails.
+    // Strict `<` also rejects duplicate codes in the registry itself.
+    if !registry_order.windows(2).all(|pair| pair[0] < pair[1]) {
+        problems.push(format!(
+            "registry order: rule codes are not lexicographically ordered: \
+             {registry_order:?}"
+        ));
+    }
     let same_membership = rows.len() == seen.len() && seen == registry_codes;
     if same_membership && readme_order != registry_order {
         problems.push(format!(

@@ -545,6 +545,13 @@ async fn utf16_transcript() {
 // equal those of a fresh server initialized on the same disk/open-document
 // state.
 //
+// Since #65 the operation sequence is generated statefully: the strategy
+// emits a dense vector of raw choices, and `resolve_operations` translates
+// each choice against the running `SessionModel`, so only protocol-valid
+// operations can be produced (no duplicate didOpen, no ops on unopened
+// files, monotonic versions across restarts).  A failure therefore always
+// means a server bug, never a test-sending-garbage bug.
+//
 // Quiescence is the `textDocument/publishDiagnostics` notification — an
 // explicit protocol signal, never a sleep. Before each checkpoint a
 // request/response round-trip (inlayHint) acts as a synchronization barrier:
@@ -560,7 +567,7 @@ async fn utf16_transcript() {
 
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::time::Duration;
 
@@ -588,6 +595,14 @@ enum SourceVariant {
 }
 
 impl SourceVariant {
+    /// Every variant, ordered for `from_choice`'s residue pick.
+    const ALL: [Self; 4] = [
+        Self::Clean,
+        Self::AsciiDiagnostic,
+        Self::BmpDiagnostic,
+        Self::AstralDiagnostic,
+    ];
+
     fn text(self) -> &'static str {
         match self {
             Self::Clean => "x <- 1L\ny <- 2L\n",
@@ -602,50 +617,253 @@ impl SourceVariant {
     fn first_line(self) -> &'static str {
         self.text().lines().next().unwrap()
     }
+
+    /// Resolve a raw source byte to a variant.  Deterministic so shrinking
+    /// the byte shrinks the resolved operation.
+    fn from_choice(source: u8) -> Self {
+        Self::ALL[source as usize % Self::ALL.len()]
+    }
 }
 
-fn source_strategy() -> impl Strategy<Value = SourceVariant> {
-    prop_oneof![
-        Just(SourceVariant::Clean),
-        Just(SourceVariant::AsciiDiagnostic),
-        Just(SourceVariant::BmpDiagnostic),
-        Just(SourceVariant::AstralDiagnostic),
-    ]
-}
-
-/// The gated operation alphabet for W10.
+/// The gated operation alphabet for W10.  Versioned operations carry the
+/// exact `textDocument/version` they send, and `Restart` carries the
+/// `(file, version)` pairs used to re-open the documents that were open when
+/// the previous session ended — so the entire protocol stream a sequence
+/// emits is visible in the generated value.
 #[derive(Clone, Debug)]
 enum Operation {
-    Open { file: u8, source: SourceVariant },
-    FullEdit { file: u8, source: SourceVariant },
-    IncrementalEdit { file: u8, source: SourceVariant },
-    Save { file: u8 },
-    Close { file: u8 },
-    Restart,
+    Open {
+        file: u8,
+        version: i32,
+        source: SourceVariant,
+    },
+    FullEdit {
+        file: u8,
+        version: i32,
+        source: SourceVariant,
+    },
+    IncrementalEdit {
+        file: u8,
+        version: i32,
+        source: SourceVariant,
+    },
+    Save {
+        file: u8,
+    },
+    Close {
+        file: u8,
+    },
+    Restart {
+        reopens: Vec<(u8, i32)>,
+    },
 }
 
-fn operation_strategy() -> impl Strategy<Value = Operation> {
-    let file = 0u8..W10_FILES.len() as u8;
-    prop_oneof![
-        4 => (file.clone(), source_strategy())
-            .prop_map(|(file, source)| Operation::Open { file, source }),
-        3 => (file.clone(), source_strategy())
-            .prop_map(|(file, source)| Operation::FullEdit { file, source }),
-        3 => (file.clone(), source_strategy())
-            .prop_map(|(file, source)| Operation::IncrementalEdit { file, source }),
-        1 => file.clone().prop_map(|file| Operation::Save { file }),
-        2 => file.prop_map(|file| Operation::Close { file }),
-        1 => Just(Operation::Restart),
-    ]
+/// A dense, state-independent choice element.  The strategy emits a vector of
+/// these; `resolve_operations` deterministically translates each element
+/// against the running `SessionModel`, so every produced sequence is a legal
+/// LSP session by construction (#65) — no post-generation filtering.  Because
+/// resolution is a pure function of the raw vector, shrinking the raw bytes
+/// shrinks the resolved sequence.
+#[derive(Clone, Copy, Debug)]
+struct RawChoice {
+    op: u8,
+    file: u8,
+    source: u8,
+}
+
+fn raw_choice_strategy() -> impl Strategy<Value = RawChoice> {
+    (any::<u8>(), any::<u8>(), any::<u8>()).prop_map(|(op, file, source)| RawChoice {
+        op,
+        file,
+        source,
+    })
 }
 
 fn operation_sequence_strategy() -> impl Strategy<Value = Vec<Operation>> {
-    prop::collection::vec(operation_strategy(), 1..10)
+    prop::collection::vec(raw_choice_strategy(), 1..10).prop_map(|raw| resolve_operations(&raw))
+}
+
+/// Operation kinds for `resolve_kind`'s weighted residue pick.  The weights
+/// preserve the relative frequencies of the original state-independent
+/// alphabet (4 open, 3 full edit, 3 incremental edit, 1 save, 2 close, 1
+/// restart out of 14).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum OpKind {
+    Open,
+    FullEdit,
+    IncrementalEdit,
+    Save,
+    Close,
+    Restart,
+}
+
+impl OpKind {
+    /// All kinds in the fixed order `resolve_kind` walks them.
+    const ALL: [Self; 6] = [
+        Self::Open,
+        Self::FullEdit,
+        Self::IncrementalEdit,
+        Self::Save,
+        Self::Close,
+        Self::Restart,
+    ];
+
+    fn weight(self) -> u8 {
+        match self {
+            Self::Open => 4,
+            Self::FullEdit => 3,
+            Self::IncrementalEdit => 3,
+            Self::Save => 1,
+            Self::Close => 2,
+            Self::Restart => 1,
+        }
+    }
+
+    /// Whether the model admits this kind right now.  `Open` needs an
+    /// unopened file; every edit, save, and close needs an open one;
+    /// `Restart` is always legal.
+    fn is_applicable(self, model: &SessionModel) -> bool {
+        match self {
+            Self::Open => model.open_docs.len() < W10_FILES.len(),
+            Self::Restart => true,
+            _ => !model.open_docs.is_empty(),
+        }
+    }
+}
+
+/// Resolve a raw op byte to the applicable kind whose cumulative weight
+/// covers `op % applicable_weight`.  Restricting the residues to the kinds
+/// the current model admits makes protocol-invalid picks impossible while
+/// preserving each kind's relative weight in every state, and the pure
+/// residue arithmetic keeps resolution deterministic under shrinking.
+fn resolve_kind(op: u8, model: &SessionModel) -> OpKind {
+    let applicable: Vec<OpKind> = OpKind::ALL
+        .iter()
+        .copied()
+        .filter(|kind| kind.is_applicable(model))
+        .collect();
+    let total: u8 = applicable.iter().map(|kind| kind.weight()).sum();
+    let mut residue = op % total;
+    for kind in applicable {
+        if residue < kind.weight() {
+            return kind;
+        }
+        residue -= kind.weight();
+    }
+    unreachable!("residues always land inside an applicable kind")
+}
+
+/// Resolve a raw file byte for an operation that requires an open document
+/// (edit, save, close).  A pick that names an unopened file falls back to
+/// the open documents in index order.
+fn resolve_open_file(file: u8, model: &SessionModel) -> u8 {
+    let candidate = file % W10_FILES.len() as u8;
+    if model.is_open(candidate) {
+        return candidate;
+    }
+    let open: Vec<u8> = model.open_docs.keys().copied().collect();
+    open[file as usize % open.len()]
+}
+
+/// Resolve a raw file byte for `didOpen`, which requires a document that is
+/// not currently open.  A pick that names an open file falls back to the
+/// unopened files in index order.
+fn resolve_closed_file(file: u8, model: &SessionModel) -> u8 {
+    let candidate = file % W10_FILES.len() as u8;
+    if !model.is_open(candidate) {
+        return candidate;
+    }
+    let closed: Vec<u8> = (0..W10_FILES.len() as u8)
+        .filter(|index| !model.is_open(*index))
+        .collect();
+    closed[file as usize % closed.len()]
+}
+
+/// Translate raw choices into a protocol-legal operation sequence by
+/// advancing a `SessionModel` alongside the picks (#65).  Every element maps
+/// to exactly one operation: the kind resolves to an applicable one, the
+/// file falls back to a document that kind may act on, and versioned
+/// operations draw the next value from the shared monotonic counter.  A
+/// restart re-opens the currently open documents with the NEXT counter
+/// values — never a literal reset to 1.
+fn resolve_operations(raw: &[RawChoice]) -> Vec<Operation> {
+    let mut model = SessionModel::default();
+    let mut operations = Vec::with_capacity(raw.len());
+    for choice in raw {
+        let operation = match resolve_kind(choice.op, &model) {
+            OpKind::Open => Operation::Open {
+                file: resolve_closed_file(choice.file, &model),
+                version: model.version,
+                source: SourceVariant::from_choice(choice.source),
+            },
+            OpKind::FullEdit => Operation::FullEdit {
+                file: resolve_open_file(choice.file, &model),
+                version: model.version,
+                source: SourceVariant::from_choice(choice.source),
+            },
+            OpKind::IncrementalEdit => Operation::IncrementalEdit {
+                file: resolve_open_file(choice.file, &model),
+                version: model.version,
+                source: SourceVariant::from_choice(choice.source),
+            },
+            OpKind::Save => Operation::Save {
+                file: resolve_open_file(choice.file, &model),
+            },
+            OpKind::Close => Operation::Close {
+                file: resolve_open_file(choice.file, &model),
+            },
+            OpKind::Restart => {
+                let reopens = model
+                    .open_docs
+                    .keys()
+                    .enumerate()
+                    .map(|(offset, &file)| (file, model.version + offset as i32))
+                    .collect();
+                Operation::Restart { reopens }
+            }
+        };
+        apply_to_model(&mut model, &operation);
+        operations.push(operation);
+    }
+    operations
+}
+
+/// Advance `model` to the state after `operation`.  The single state
+/// transition shared by the resolver (which runs it during generation) and
+/// the property (which runs it in lockstep with the live session), so the
+/// sequence generated against the model is exactly the sequence played
+/// against the server.
+fn apply_to_model(model: &mut SessionModel, operation: &Operation) {
+    match operation {
+        Operation::Open { file, source, .. } | Operation::FullEdit { file, source, .. } => {
+            model.open_docs.insert(*file, source.text().to_string());
+            model.version += 1;
+        }
+        Operation::IncrementalEdit { file, source, .. } => {
+            let old_text = model.open_docs[file].clone();
+            let new_text = apply_incremental_edit(&old_text, *source);
+            model.open_docs.insert(*file, new_text);
+            model.version += 1;
+        }
+        Operation::Save { .. } => {}
+        Operation::Close { file } => {
+            model.open_docs.remove(file);
+        }
+        Operation::Restart { reopens } => {
+            // The open-document set survives a restart; only the shared
+            // version counter moves, once per re-opened document.
+            model.version += reopens.len() as i32;
+        }
+    }
 }
 
 /// Track which documents are open and their current text.  This mirrors the
-/// server's authoritative buffer state and lets the oracle reconstruct the
-/// same disk/open-document configuration on a fresh server.
+/// server's authoritative buffer state: the resolver advances it while
+/// generating, the property advances it in lockstep with the live session,
+/// and the oracle reads its snapshot to reconstruct the same
+/// disk/open-document configuration on a fresh server.  `version` is the
+/// shared monotonic counter supplying every `textDocument/version` the
+/// sequence sends; restarts continue from it rather than resetting to 1.
 #[derive(Default)]
 struct SessionModel {
     open_docs: BTreeMap<u8, String>,
@@ -828,6 +1046,83 @@ proptest! {
     }
 }
 
+/// Independent legality checker for resolved sequences (#65 self-check).  It
+/// deliberately re-derives the rules from the LSP protocol — open-set
+/// tracking and per-document version monotonicity — instead of reusing
+/// `SessionModel`, so a regression in the resolver's state machine fails
+/// here with a minimal raw vector instead of surfacing later as an
+/// ambiguous convergence failure.
+fn assert_sequence_is_protocol_valid(operations: &[Operation]) {
+    let mut open: HashSet<u8> = HashSet::new();
+    let mut last_version: HashMap<u8, i32> = HashMap::new();
+
+    let mut assert_version_advances = |file: &u8, version: i32| {
+        if let Some(&last) = last_version.get(file) {
+            assert!(
+                version > last,
+                "file {file}: version {version} does not advance past previous {last}"
+            );
+        }
+        last_version.insert(*file, version);
+    };
+
+    for operation in operations {
+        match operation {
+            Operation::Open { file, version, .. } => {
+                assert!(!open.contains(file), "didOpen for already-open file {file}");
+                open.insert(*file);
+                assert_version_advances(file, *version);
+            }
+
+            Operation::FullEdit { file, version, .. }
+            | Operation::IncrementalEdit { file, version, .. } => {
+                assert!(open.contains(file), "didChange for unopened file {file}");
+                assert_version_advances(file, *version);
+            }
+
+            Operation::Save { file } => {
+                assert!(open.contains(file), "didSave for unopened file {file}");
+            }
+
+            Operation::Close { file } => {
+                assert!(open.contains(file), "didClose for unopened file {file}");
+                open.remove(file);
+            }
+
+            Operation::Restart { reopens } => {
+                // The fresh server starts with no documents open, and the
+                // harness must replay exactly the pre-restart open set.
+                let reopened: HashSet<u8> = reopens.iter().map(|&(file, _)| file).collect();
+                assert_eq!(
+                    reopened, open,
+                    "restart must re-open exactly the previously open documents"
+                );
+                for (file, version) in reopens {
+                    assert_version_advances(file, *version);
+                }
+            }
+        }
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig {
+        cases: 64,
+        max_shrink_iters: 256,
+        ..ProptestConfig::default()
+    })]
+
+    /// #65 self-check guarding the stateful generator itself: whatever raw
+    /// choices the strategy produces, the resolved sequence must be a legal
+    /// LSP session by construction.
+    #[test]
+    fn w10_generator_emits_protocol_valid_sequences(
+        raw in prop::collection::vec(raw_choice_strategy(), 0..32),
+    ) {
+        assert_sequence_is_protocol_valid(&resolve_operations(&raw));
+    }
+}
+
 /// Core property logic, factored out of the `proptest!` body so
 /// `prop_assert_eq!` (which uses `return`) exits this async block and the
 /// error propagates through `block_on`.
@@ -844,17 +1139,21 @@ async fn w10_convergence_property(operations: Vec<Operation>) -> Result<(), Test
     let (mut live, mut live_server) = spawn_session(fixture.root()).await;
     let mut model = SessionModel::default();
 
+    // Every operation was resolved against an identical model at generation
+    // time (#65), so the sequence is protocol-legal by construction and no
+    // post-hoc filtering is needed here: applying each operation to the
+    // model advances the same state machine the resolver used.
     for (step, operation) in operations.into_iter().enumerate() {
         match &operation {
-            Operation::Open { file, source } => {
-                if model.is_open(*file) {
-                    continue;
-                }
-                live.open(&uris[*file as usize], model.version, source.text())
+            Operation::Open {
+                file,
+                version,
+                source,
+            } => {
+                live.open(&uris[*file as usize], *version, source.text())
                     .await
                     .unwrap();
-                model.version += 1;
-                model.open_docs.insert(*file, source.text().to_string());
+                apply_to_model(&mut model, &operation);
                 quiesce_and_compare(
                     &mut live,
                     &model,
@@ -867,19 +1166,19 @@ async fn w10_convergence_property(operations: Vec<Operation>) -> Result<(), Test
                 .await?;
             }
 
-            Operation::FullEdit { file, source } => {
-                if !model.is_open(*file) {
-                    continue;
-                }
+            Operation::FullEdit {
+                file,
+                version,
+                source,
+            } => {
                 live.change(
                     &uris[*file as usize],
-                    model.version,
+                    *version,
                     json!([{ "text": source.text() }]),
                 )
                 .await
                 .unwrap();
-                model.version += 1;
-                model.open_docs.insert(*file, source.text().to_string());
+                apply_to_model(&mut model, &operation);
                 quiesce_and_compare(
                     &mut live,
                     &model,
@@ -892,15 +1191,17 @@ async fn w10_convergence_property(operations: Vec<Operation>) -> Result<(), Test
                 .await?;
             }
 
-            Operation::IncrementalEdit { file, source } => {
-                if !model.is_open(*file) {
-                    continue;
-                }
-                let old_text = &model.open_docs[file];
-                let range_end = first_line_utf16_len(old_text);
+            Operation::IncrementalEdit {
+                file,
+                version,
+                source,
+            } => {
+                // The range is computed from the pre-edit model text, so it
+                // must be taken before `apply_to_model` advances the model.
+                let range_end = first_line_utf16_len(&model.open_docs[file]);
                 live.change(
                     &uris[*file as usize],
-                    model.version,
+                    *version,
                     json!([{
                         "range": {
                             "start": {"line": 0, "character": 0},
@@ -911,9 +1212,7 @@ async fn w10_convergence_property(operations: Vec<Operation>) -> Result<(), Test
                 )
                 .await
                 .unwrap();
-                model.version += 1;
-                let new_text = apply_incremental_edit(old_text, *source);
-                model.open_docs.insert(*file, new_text.clone());
+                apply_to_model(&mut model, &operation);
                 quiesce_and_compare(
                     &mut live,
                     &model,
@@ -927,9 +1226,6 @@ async fn w10_convergence_property(operations: Vec<Operation>) -> Result<(), Test
             }
 
             Operation::Save { file } => {
-                if !model.is_open(*file) {
-                    continue;
-                }
                 // The server has no didSave handler, so this is a
                 // protocol-level no-op.  The sync barrier in the next
                 // step's quiesce drains any leftover publications.
@@ -942,9 +1238,6 @@ async fn w10_convergence_property(operations: Vec<Operation>) -> Result<(), Test
             }
 
             Operation::Close { file } => {
-                if !model.is_open(*file) {
-                    continue;
-                }
                 let closed_uri = uris[*file as usize].clone();
                 // Consume the close's clearing publication here instead of
                 // relying on a later step's barrier (#81).  `did_close`
@@ -960,7 +1253,7 @@ async fn w10_convergence_property(operations: Vec<Operation>) -> Result<(), Test
                 // terminate the wait.
                 sync_barrier(&mut live, &closed_uri).await;
                 let clear_mark = live.publication_mark();
-                model.open_docs.remove(file);
+                apply_to_model(&mut model, &operation);
                 live.notify(
                     "textDocument/didClose",
                     json!({"textDocument": {"uri": closed_uri}}),
@@ -992,20 +1285,21 @@ async fn w10_convergence_property(operations: Vec<Operation>) -> Result<(), Test
                 }
             }
 
-            Operation::Restart => {
+            Operation::Restart { reopens } => {
                 join_session(live, live_server).await;
                 let (new_live, new_server) = spawn_session(fixture.root()).await;
                 live = new_live;
                 live_server = new_server;
 
-                // Re-open all documents that were open before the restart,
-                // using the shared version counter to preserve monotonicity.
-                for (file, text) in &model.open_docs {
-                    live.open(&uris[*file as usize], model.version, text)
+                // Re-open the documents that were open before the restart
+                // with the versions carried by the operation: the next
+                // values from the shared counter, never a reset to 1.
+                for (file, version) in reopens {
+                    live.open(&uris[*file as usize], *version, &model.open_docs[file])
                         .await
                         .unwrap();
-                    model.version += 1;
                 }
+                apply_to_model(&mut model, &operation);
                 if let Some((&first_open, _)) = model.open_docs.iter().next() {
                     quiesce_and_compare(
                         &mut live,

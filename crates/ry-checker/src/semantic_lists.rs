@@ -16,8 +16,6 @@
 //! - [`CheckKind::ROracle`] — the list must match R's own behaviour, verified
 //!   by running `Rscript --vanilla`. Adding an item R does not recognise as
 //!   part of the asserted group fails the test.
-//!
-//! See `docs/plans/35-invariants-over-examples.md`, P35-W7.
 
 /// How a registered semantic list is validated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

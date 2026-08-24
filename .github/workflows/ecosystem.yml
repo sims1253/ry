@@ -41,6 +41,13 @@ jobs:
             ecosystem-${{ runner.os }}-
       - name: Build release binary
         run: cargo build --release --locked -p ry-cli --bin ry
+      # A developer's working tree can carry gitignored *.full.txt reports
+      # from earlier update runs, and drift-check logic must never be able to
+      # compare against them. Removing them first makes the --check run below
+      # validate against the same state as a fresh checkout, proving the
+      # committed .txt snapshots are the sole baseline (#50).
+      - name: Remove gitignored full reports
+        run: rm -f ecosystem/reports/*.full.txt
       - name: Check ecosystem snapshots
         run: ecosystem/run.sh --check
         env:

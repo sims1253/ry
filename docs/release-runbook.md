@@ -17,11 +17,10 @@ Before starting any release:
    - `ecosystem/test-drift-detection.sh`
    - `ecosystem/test-posit-drift-detection.sh`
 
-2. **Tracked-only build validated:** the scheduled `clean-checkout` CI job
-   passes (it builds from a fresh clone, which contains only tracked
-   files, but it runs only on schedule or manual dispatch and never gates
-   the commit about to be tagged), or validate the release commit directly
-   with a tracked-only `git archive` build:
+2. **Tracked-only build validated:** every PR's `ecosystem` CI job builds
+   `--locked` from a fresh checkout, which contains only tracked files; for
+   the exact commit about to be tagged, validate directly with a
+   tracked-only `git archive` build:
 
    ```bash
    (

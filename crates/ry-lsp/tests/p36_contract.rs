@@ -841,8 +841,8 @@ fn p36_w4_version_stamped_tree_cache_rejects_stale_parse() {
 // P36-W5 — Cache baseline/config state outside the hot lock (#45)
 //
 // The baseline and effective config are loaded into each
-// `FolderAnalysisContext` during initialize; the publish/inlay-hint/
-// completion path reads the cached value and performs no disk access.
+// `FolderAnalysisContext` during initialize; the publish/inlay-hint
+// path reads the cached value and performs no disk access.
 // Watch events rebuild the context outside the write lock and swap it
 // atomically; a failed reload retains the last valid context and emits a
 // visible error.
@@ -1116,7 +1116,7 @@ fn p36_w5_baseline_reload_converges_to_new_value() {
     );
 }
 
-/// P36-W5 (#45): the publish/inlay-hint/completion hot path performs ZERO
+/// P36-W5 (#45): the publish/inlay-hint hot path performs ZERO
 /// baseline file reads. `baseline_disk_reads()` counts every disk read by
 /// the context loader; a publish that touches it betrays a regression.
 #[test]

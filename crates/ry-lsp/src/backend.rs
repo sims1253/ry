@@ -10,9 +10,7 @@
 use crate::diagnostics::{
     diagnostic_to_lsp, diagnostic_to_lsp_with_source, make_ignore_action, make_ignore_file_action,
 };
-use crate::hints::{
-    active_parameter, collect_completions, collect_inlay_hints, find_enclosing_call, get_signature,
-};
+use crate::hints::collect_inlay_hints;
 use crate::settings::{FolderSettings, ServerSettings};
 use crate::util::position_to_byte_offset_pos;
 use ry_checker::Project;
@@ -27,14 +25,14 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
 /// P36-W5 (#45): counts baseline file reads performed by `load_folder_baseline`
-/// (the only baseline disk-read site in the LSP). Reads of publish/inlay-hint/
-/// completion state use the cached [`FolderAnalysisContext`] and never touch
+/// (the only baseline disk-read site in the LSP). Reads of publish/inlay-hint
+/// state use the cached [`FolderAnalysisContext`] and never touch
 /// this counter. Exposed via [`baseline_disk_reads`] so integration tests can
 /// assert hot-path I/O is absent rather than infer it from timing.
 static BASELINE_DISK_READS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// P36-W5 (#45): number of baseline file reads since process start. A
-/// publish/inlay-hint/completion that does not change this value performs
+/// publish/inlay-hint that does not change this value performs
 /// zero baseline disk I/O.
 pub fn baseline_disk_reads() -> usize {
     BASELINE_DISK_READS.load(std::sync::atomic::Ordering::Relaxed)
@@ -63,7 +61,7 @@ pub(super) struct State {
     /// parser is constructed per request and only the result is cached.
     parsed: HashMap<String, (i32, Arc<SourceFile>)>,
     /// path -> (version, top-level Scope from `check_with_scope`).
-    /// Reused by inlay_hint/completion so they don't re-run the
+    /// Reused by inlay_hint so it doesn't re-run the
     /// single-file check on every request. Invalidated
     /// by `update_doc` alongside the parse cache.
     scopes: HashMap<String, (i32, ry_checker::Scope)>,
@@ -646,44 +644,6 @@ impl State {
         }
         self.root_baseline.clone()
     }
-
-    /// PR #79 round 3: Whether two document paths belong to the same
-    /// folder root, via the longest-prefix ownership the publish path
-    /// enforces. Two paths outside every folder root fall in the same
-    /// (rootless) bucket; a folder-rooted path never matches a rootless
-    /// one, or one under a different root. Roots are isolated by design —
-    /// that isolation is what `folder_contexts` exists to enforce.
-    fn same_folder_root(&self, a: &str, b: &str) -> bool {
-        match (
-            self.folder_context_for_path(a),
-            self.folder_context_for_path(b),
-        ) {
-            (Some(ca), Some(cb)) => ca.root == cb.root,
-            (None, None) => true,
-            _ => false,
-        }
-    }
-
-    /// PR #79 round 3: Open documents eligible for the same folder root as
-    /// `doc_path`, with `doc_path` first and the rest in sorted order.
-    ///
-    /// `signature_help`'s open-document fallback search uses this rule
-    /// (its only consumer since the outline/navigation removal). Roots are
-    /// isolated by design, so a same-named definition in a different root
-    /// must never win; among equally-eligible candidates the winner must
-    /// not depend on traversal order, so the rest are sorted. The current
-    /// document is preferred over any other. Unopened files on disk are
-    /// not consulted.
-    fn eligible_open_documents(&self, doc_path: &str) -> Vec<String> {
-        let mut docs: Vec<String> = self.docs.keys().cloned().collect();
-        docs.sort();
-        docs.retain(|p| self.same_folder_root(p, doc_path));
-        // Prefer the current document: a stable sort by "is current" keeps
-        // the remaining lexicographic order intact while moving `doc_path`
-        // to the front.
-        docs.sort_by_key(|p| std::cmp::Reverse(p.as_str() == doc_path));
-        docs
-    }
 }
 
 #[tower_lsp::async_trait]
@@ -849,30 +809,6 @@ impl LanguageServer for Backend {
                 // users see the checker's work. The handler is
                 // `inlay_hint` below.
                 inlay_hint_provider: Some(OneOf::Left(true)),
-                // Enable `textDocument/completion` so editors can
-                // auto-complete variable / function names from the
-                // checked scope, and column names after a `$` trigger.
-                // The `:` trigger is advertised in anticipation of
-                // future `package::name` namespace completion; v1 has
-                // no special handling for it and it falls through to
-                // the generic in-scope list. The handler is
-                // `completion` below.
-                completion_provider: Some(CompletionOptions {
-                    trigger_characters: Some(vec!["$".to_string(), ":".to_string()]),
-                    ..Default::default()
-                }),
-                // Enable `textDocument/signatureHelp` so editors can
-                // show function parameter hints when the user types
-                // `(` or `,` inside a call. The handler is
-                // `signature_help` below; it walks backward from the
-                // cursor to identify the enclosing call, looks up the
-                // function's parameter names in a small curated table,
-                // and returns a `SignatureHelp` highlighting the
-                // active parameter (counted by commas).
-                signature_help_provider: Some(SignatureHelpOptions {
-                    trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
-                    ..Default::default()
-                }),
                 // Enable `textDocument/codeAction` so editors can offer
                 // quick fixes for diagnostics. The handler is
                 // `code_action` below; it offers per-diagnostic
@@ -1419,125 +1355,6 @@ impl LanguageServer for Backend {
         }
     }
 
-    async fn completion(&self, params: CompletionParams) -> LspResult<Option<CompletionResponse>> {
-        let uri = params.text_document_position.text_document.uri.clone();
-        let path = uri_to_path(&uri);
-        let position = params.text_document_position.position;
-
-        let text = {
-            let state = self.state.lock().await;
-            state.docs.get(&path).cloned()
-        };
-
-        let Some(text) = text else {
-            return Ok(None);
-        };
-
-        // Reuse the cached scope, which parses lazily
-        // via the parse cache. Mirrors `inlay_hint`: on any parse
-        // failure we return `None` (no completions).
-        let Some(scope) = self.scope_for(&path).await else {
-            return Ok(None);
-        };
-
-        let items = collect_completions(&text, position, &params.context, &scope);
-        if items.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(CompletionResponse::Array(items)))
-        }
-    }
-
-    async fn signature_help(
-        &self,
-        params: SignatureHelpParams,
-    ) -> LspResult<Option<SignatureHelp>> {
-        let uri = params
-            .text_document_position_params
-            .text_document
-            .uri
-            .clone();
-        let path = uri_to_path(&uri);
-        let position = params.text_document_position_params.position;
-
-        let text = {
-            let state = self.state.lock().await;
-            state.docs.get(&path).cloned()
-        };
-
-        let Some(text) = text else {
-            return Ok(None);
-        };
-
-        // Walk backward from the cursor on the current line to find
-        // the enclosing call's function name and the active parameter
-        // index. Returns `None` when the cursor is not inside a call
-        // (e.g. at the top level, inside `[`, or before any `(`).
-        let (func_name, active_param) =
-            match find_enclosing_call(&text, position.line as usize, position.character as usize) {
-                Some(c) => c,
-                None => return Ok(None),
-            };
-
-        // Look up the function's parameter names from the base typeshed.
-        let params_list = if let Some(p) = get_signature(&func_name) {
-            p
-        } else {
-            // Fallback: look up parameter names for a user-defined function
-            // in the open documents (unopened files on disk are not
-            // consulted). PR #79 round 3: look in the current document
-            // first, then only documents owned by the same folder root —
-            // roots are isolated by design (that isolation is what
-            // `folder_contexts` longest-prefix ownership enforces), so a
-            // duplicated function name in an unrelated root must never win.
-            // The shared `eligible_open_documents` helper orders the
-            // candidates (current first, then sorted) so a duplicated name
-            // always resolves to the same parameters, never crossing roots.
-            let open_paths: Vec<String> = {
-                let state = self.state.lock().await;
-                state.eligible_open_documents(&path)
-            };
-            let mut found_params: Option<Vec<String>> = None;
-            for doc_path in &open_paths {
-                if let Some((doc_file, _)) = self.parsed_file(doc_path).await
-                    && let Some(params) = extract_function_params(&doc_file, &func_name)
-                {
-                    found_params = Some(params);
-                    break;
-                }
-            }
-            match found_params {
-                Some(p) => p,
-                None => return Ok(None),
-            }
-        };
-
-        // Build the signature label like `round(x, digits)` and the
-        // per-parameter `ParameterInformation` list. Extra arguments keep
-        // the final variadic parameter active; non-variadic signatures clear
-        // the highlight once the cursor moves past their final parameter.
-        let active_param = active_parameter(&params_list, active_param);
-        let label = format!("{}({})", func_name, params_list.join(", "));
-        let param_infos: Vec<ParameterInformation> = params_list
-            .iter()
-            .map(|p| ParameterInformation {
-                label: ParameterLabel::Simple(p.clone()),
-                documentation: None,
-            })
-            .collect();
-
-        Ok(Some(SignatureHelp {
-            signatures: vec![SignatureInformation {
-                label,
-                documentation: None,
-                parameters: Some(param_infos),
-                active_parameter: active_param,
-            }],
-            active_signature: Some(0),
-            active_parameter: active_param,
-        }))
-    }
-
     async fn code_action(&self, params: CodeActionParams) -> LspResult<Option<CodeActionResponse>> {
         let uri = params.text_document.uri.clone();
         let path = uri_to_path(&uri);
@@ -1759,7 +1576,7 @@ impl Backend {
 
     /// Return the top-level `Scope` for `path`, reusing the cached
     /// single-file `check_with_scope` result when its version matches.
-    /// Used by inlay_hint/completion so they don't re-run the check on
+    /// Used by inlay_hint so it doesn't re-run the check on
     /// every request. Returns `None` when the document
     /// is not open or parsing fails.
     async fn scope_for(&self, path: &str) -> Option<ry_checker::Scope> {
@@ -2596,34 +2413,6 @@ pub(crate) fn path_to_uri(path: &str) -> Url {
     Url::from_file_path(path).unwrap_or_else(|_| {
         Url::parse(path).unwrap_or_else(|_| Url::parse("file:///unknown").unwrap())
     })
-}
-
-/// Extract parameter names for a function defined in a parsed file.
-#[allow(clippy::collapsible_match)]
-fn extract_function_params(file: &ry_core::SourceFile, func_name: &str) -> Option<Vec<String>> {
-    use ry_core::ast::{Expr, Stmt};
-    for stmt in &file.stmts {
-        match stmt {
-            Stmt::Assign { target, value, .. } => {
-                if let Expr::Ident { name, .. } = target {
-                    if name == func_name {
-                        if let Expr::Function { params, .. } = value {
-                            return Some(params.iter().map(|p| p.name.clone()).collect());
-                        }
-                    }
-                }
-            }
-            Stmt::FunctionDef {
-                name: Some(name),
-                params,
-                ..
-            } if name == func_name => {
-                return Some(params.iter().map(|p| p.name.clone()).collect());
-            }
-            _ => {}
-        }
-    }
-    None
 }
 
 /// Convert a `file://` URI to a filesystem path string. Falls back to

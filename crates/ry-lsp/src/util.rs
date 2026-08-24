@@ -94,21 +94,3 @@ pub(crate) fn position_to_byte_offset(text: &str, line: u32, utf16_col: u32) -> 
 pub(crate) fn position_to_byte_offset_pos(text: &str, position: Position) -> Option<usize> {
     position_to_byte_offset(text, position.line, position.character)
 }
-
-/// Convert a UTF-16 code-unit column (LSP) to a byte offset within a
-/// single line. Returns `None` when the column lands past the end of
-/// the line or inside a surrogate pair.
-pub(crate) fn utf16_col_to_byte(line: &str, utf16_col: u32) -> Option<usize> {
-    let mut col = 0u32;
-    for (byte, ch) in line.char_indices() {
-        if col == utf16_col {
-            return Some(byte);
-        }
-        let next_col = col + utf16_len(ch) as u32;
-        if utf16_col < next_col {
-            return None;
-        }
-        col = next_col;
-    }
-    (col == utf16_col).then_some(line.len())
-}

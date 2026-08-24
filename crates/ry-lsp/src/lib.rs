@@ -8,18 +8,16 @@
 //!   * `textDocument/didChange` (incremental edits re-check and republish)
 //!   * `textDocument/didClose` (clears diagnostics)
 //!   * Document diagnostics via `textDocument/publishDiagnostics`
-//!   * `textDocument/completion`, `signatureHelp`, `inlayHint`,
-//!     `codeAction`
+//!   * `textDocument/inlayHint`, `codeAction`
 //!   * Graceful shutdown via `shutdown` / `exit`
 //!
-//! The interactive requests (`completion`, `signatureHelp`) are scoped to
-//! **open documents**; none consults an unopened file on disk. The server's
-//! purpose is the diagnostics `ry check` produces; whole-workspace
-//! navigation over unopened files was removed because it resolved symbols
-//! by spelling rather than by binding, and the outline/navigation features
-//! built on the same spelling-match identity were removed with it (the
-//! `hover`, `definition`, `references`, `documentSymbol`, and
-//! `workspace/symbol` capabilities — see issue #87).
+//! The server's purpose is the diagnostics `ry check` produces;
+//! whole-workspace navigation over unopened files was removed because
+//! it resolved symbols by spelling rather than by binding, and the
+//! features built on the same spelling-match identity were removed
+//! with it (the `hover`, `definition`, `references`, `documentSymbol`,
+//! `workspace/symbol`, `completion`, and `signatureHelp`
+//! capabilities — see issue #87).
 //!
 //! Architecture: this file is intentionally small --
 //! module declarations + the `run()` entry point. All request-handler
@@ -145,7 +143,7 @@ mod util;
 
 use backend::{Backend, State};
 // P36-W5 (#45): re-export the baseline disk-read counter so integration
-// tests can assert that the publish/inlay-hint/completion hot path performs
+// tests can assert that the publish/inlay-hint hot path performs
 // no baseline file I/O.
 pub use backend::baseline_disk_reads;
 use std::sync::Arc;

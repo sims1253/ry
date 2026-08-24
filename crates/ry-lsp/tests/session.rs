@@ -6,8 +6,6 @@ const SOURCE: &str = concat!(
     "frame <- data.frame(column = 1L)\r\n",
     "marker <- \"é e\u{301} 😀\"; target <- 1L\r\n",
     "marker; target\r\n",
-    "marker <- \"😀\"; frame$\r\n",
-    "marker <- \"é😀\"; round(1L, 2L)\r\n",
     "marker <- \"😀\"; length(xx = 1L)\r\n",
     "`😀` <- 4L\r\n",
     "`😀`\r\n",
@@ -134,73 +132,49 @@ const ANCHORS: &[Anchor] = &[
         following: "\r\n",
     },
     Anchor {
-        name: "completion cursor",
-        byte: 126,
-        line: 4,
-        scalar: 21,
-        character: 22,
-        following: "\r\n",
-    },
-    Anchor {
-        name: "signature astral",
-        byte: 141,
-        line: 5,
-        scalar: 12,
-        character: 12,
-        following: "😀",
-    },
-    Anchor {
-        name: "signature cursor",
-        byte: 158,
-        line: 5,
-        scalar: 26,
-        character: 27,
-        following: "2L",
-    },
-    Anchor {
         name: "diagnostic name",
-        byte: 188,
-        line: 6,
+        byte: 127,
+        line: 4,
         scalar: 22,
         character: 23,
         following: "xx",
     },
     Anchor {
         name: "diagnostic name end",
-        byte: 190,
-        line: 6,
+        byte: 129,
+        line: 4,
         scalar: 24,
         character: 25,
         following: " =",
     },
     Anchor {
         name: "diagnostic end",
-        byte: 195,
-        line: 6,
+        byte: 134,
+        line: 4,
         scalar: 29,
         character: 30,
         following: ")",
     },
     Anchor {
         name: "backtick astral",
-        byte: 199,
-        line: 7,
+        byte: 138,
+        line: 5,
         scalar: 1,
         character: 1,
         following: "😀",
     },
     Anchor {
         name: "backtick astral end",
-        byte: 203,
-        line: 7,
+        byte: 142,
+        line: 5,
         scalar: 2,
         character: 3,
         following: "`",
     },
     Anchor {
         name: "multiline backtick read",
-        byte: 213,
-        line: 8,
+        byte: 152,
+        line: 6,
         scalar: 1,
         character: 1,
         following: "😀",
@@ -349,76 +323,6 @@ async fn utf16_transcript() {
         })
     );
 
-    // Completion consumes the UTF-16 cursor following an astral scalar.
-    let completion = session
-        .request(
-            "textDocument/completion",
-            json!({
-                "textDocument": {"uri": main_uri},
-                "position": position("completion cursor"),
-                "context": {"triggerKind": 2, "triggerCharacter": "$"}
-            }),
-        )
-        .await
-        .unwrap();
-    assert!(
-        completion
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|item| item["label"] == "column")
-    );
-
-    let column_completion = completion
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|item| item["label"] == "column")
-        .unwrap();
-    // CompletionItem currently relies on the client's default insertion at
-    // the consumed cursor; it emits no position-bearing edit of its own.
-    assert!(column_completion.get("textEdit").is_none());
-    assert!(column_completion.get("additionalTextEdits").is_none());
-
-    let surrogate_interior_completion = session
-        .request(
-            "textDocument/completion",
-            json!({
-                "textDocument": {"uri": main_uri},
-                "position": {"line": 4, "character": 12},
-                "context": {"triggerKind": 2, "triggerCharacter": "$"}
-            }),
-        )
-        .await
-        .unwrap();
-    assert_eq!(surrogate_interior_completion, Value::Null);
-
-    // Signature help consumes a cursor following BMP and astral scalars and
-    // selects the second parameter at the hand-declared UTF-16 column.
-    let signature = session
-        .request(
-            "textDocument/signatureHelp",
-            json!({
-                "textDocument": {"uri": main_uri}, "position": position("signature cursor")
-            }),
-        )
-        .await
-        .unwrap();
-    assert_eq!(signature["signatures"][0]["label"], "round(x, digits, ...)");
-    assert_eq!(signature["activeParameter"], 1);
-    assert!(signature.get("range").is_none());
-    let surrogate_interior_signature = session
-        .request(
-            "textDocument/signatureHelp",
-            json!({
-                "textDocument": {"uri": main_uri},
-                "position": {"line": 5, "character": 13}
-            }),
-        )
-        .await
-        .unwrap();
-    assert_eq!(surrogate_interior_signature, Value::Null);
-
     // The state-observable probe through a kept capability: the line-0
     // binding places a type hint right after its identifier. The
     // change-path tests below reuse this probe to observe what the
@@ -435,8 +339,8 @@ async fn utf16_transcript() {
             2,
             json!([{
                 "range": {
-                    "start": {"line": 8, "character": 2},
-                    "end": {"line": 8, "character": 3}
+                    "start": {"line": 6, "character": 2},
+                    "end": {"line": 6, "character": 3}
                 },
                 "text": "BROKEN"
             }]),
@@ -459,8 +363,8 @@ async fn utf16_transcript() {
             3,
             json!([{
                 "range": {
-                    "start": {"line": 8, "character": 99},
-                    "end": {"line": 8, "character": 99}
+                    "start": {"line": 6, "character": 99},
+                    "end": {"line": 6, "character": 99}
                 },
                 "text": "BROKEN"
             }]),
@@ -501,24 +405,6 @@ async fn utf16_transcript() {
             .unwrap()
             .iter()
             .any(|diagnostic| diagnostic["code"] == "RY090")
-    );
-    let completion_after_change = session
-        .request(
-            "textDocument/completion",
-            json!({
-                "textDocument": {"uri": main_uri},
-                "position": {"line": 4, "character": 22},
-                "context": {"triggerKind": 2, "triggerCharacter": "$"}
-            }),
-        )
-        .await
-        .unwrap();
-    assert!(
-        completion_after_change
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|item| item["label"] == "column")
     );
 
     // The re-parse is visible through the kept surface: the edited

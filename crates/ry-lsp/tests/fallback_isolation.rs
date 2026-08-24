@@ -1,27 +1,20 @@
-//! Open-document fallback isolation for `signature_help`.
+//! Workspace-root isolation for LSP requests.
 //!
-//! The handler's cross-document fallback shares the
-//! `eligible_open_documents` rule (current document first, then
-//! same-folder-root candidates, sorted). These tests pin the two bugs
-//! that rule fixes:
-//!
-//! * the fallback could resolve into an unrelated workspace root (a
-//!   same-named function in a different root won, which is never
-//!   correct) — originally reported against `goto_definition`, whose
-//!   removal (issue #87) left `signature_help` as the rule's only
-//!   consumer;
-//! * `signature_help` sorted every open path and returned the first match,
-//!   so a duplicated user-defined function name resolved to an unrelated
-//!   file's parameters.
+//! Requests that read open-document state must never resolve into an
+//! unrelated workspace root: a same-named binding in a different root
+//! must never win. The property was originally reported against
+//! `goto_definition`, then carried by `signature_help`'s open-document
+//! fallback (`eligible_open_documents`); that machinery was removed
+//! with the completion/signatureHelp removal (issue #87), so the
+//! property is now pinned on `textDocument/inlayHint` — the remaining
+//! interactive request that serves answers from per-document cached
+//! state (parse + single-file scope). A hint for a document in one
+//! root must reflect that root's document only, even when another
+//! root has an open document binding the same name to a different
+//! type.
 
-use ry_testkit::{AsyncJsonRpcClient, FixtureProject, LspSession, file_uri};
+use ry_testkit::{AsyncJsonRpcClient, FixtureProject, file_uri};
 use serde_json::{Value, json};
-use std::path::Path;
-
-type Session = LspSession<
-    tokio::io::ReadHalf<tokio::io::DuplexStream>,
-    tokio::io::WriteHalf<tokio::io::DuplexStream>,
->;
 
 /// Run a future on a current-thread tokio runtime (same pattern as
 /// session.rs / configuration_refresh.rs).
@@ -36,35 +29,20 @@ where
     runtime.block_on(future)
 }
 
-/// Spawn an LSP server and return a connected session: initialize, then
-/// briefly sleep so the background indexer settles before the test drives
-/// the server.
-async fn spawn_session(root: &Path) -> (Session, tokio::task::JoinHandle<()>) {
-    let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
-    let (client_reader, client_writer) = tokio::io::split(client_stream);
-    let (server_reader, server_writer) = tokio::io::split(server_stream);
-    let server = tokio::spawn(async move {
-        let _ = ry_lsp::run_with(server_reader, server_writer).await;
-    });
-    let mut session = LspSession::new(client_reader, client_writer);
-    session.initialize(root).await.unwrap();
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    (session, server)
-}
-
 // ════════════════════════════════════════════════════════════════════════════
-// Item 2 — signature_help must not cross workspace roots
+// Requests must not cross workspace roots
 // ════════════════════════════════════════════════════════════════════════════
 
 #[test]
-fn signature_help_does_not_cross_workspace_roots() {
+fn inlay_hint_does_not_cross_workspace_roots() {
     run(async {
         let fixture = FixtureProject::empty().unwrap();
-        // root-a calls `bar` but never defines it.
-        fixture.write_file("root-a/R/a.R", "bar(1)\n").unwrap();
-        // root-b defines `bar` — in a DIFFERENT root, so it must never win.
+        // root-a binds `x` to an integer.
+        fixture.write_file("root-a/R/a.R", "x <- 1L\n").unwrap();
+        // root-b binds the SAME name to a character vector — in a
+        // DIFFERENT root, so it must never win.
         fixture
-            .write_file("root-b/R/b.R", "bar <- function(leaked) {}\n")
+            .write_file("root-b/R/b.R", "x <- \"leak\"\n")
             .unwrap();
 
         let root_a = fixture.path("root-a");
@@ -112,7 +90,7 @@ fn signature_help_does_not_cross_workspace_roots() {
             .notify(
                 "textDocument/didOpen",
                 json!({"textDocument": {
-                    "uri": a_uri, "languageId": "r", "version": 1, "text": "bar(1)\n"
+                    "uri": a_uri, "languageId": "r", "version": 1, "text": "x <- 1L\n"
                 }}),
             )
             .await
@@ -124,107 +102,52 @@ fn signature_help_does_not_cross_workspace_roots() {
                     "uri": b_uri,
                     "languageId": "r",
                     "version": 1,
-                    "text": "bar <- function(leaked) {}\n"
+                    "text": "x <- \"leak\"\n"
                 }}),
             )
             .await
             .unwrap();
 
-        // Request signature help inside the call in root-a. root-a defines
-        // no `bar`; the only definer is in root-b. The fallback must NOT
-        // cross roots, so no signature may be served. The pre-fix fallback
-        // iterated every open document and served root-b's parameters.
-        let sig_id = client
+        // Request inlay hints for root-a's document. root-b's open
+        // document binds the same name to a character vector; the hint
+        // must still report root-a's own integer binding. Any hint
+        // carrying root-b's type here means the request crossed roots.
+        let hint_id = client
             .request(
-                "textDocument/signatureHelp",
+                "textDocument/inlayHint",
                 json!({
                     "textDocument": {"uri": a_uri},
-                    "position": {"line": 0, "character": 4}
+                    "range": {
+                        "start": {"line": 0, "character": 0},
+                        "end": {"line": 1, "character": 0}
+                    }
                 }),
             )
             .await
             .unwrap();
         // Drop open/index diagnostic noise; keep the matching response.
         let response = client
-            .receive_until(|m| m.get("id") == Some(&json!(sig_id)), 128)
+            .receive_until(|m| m.get("id") == Some(&json!(hint_id)), 128)
             .await
             .unwrap();
         let result = response.get("result").cloned().unwrap_or(Value::Null);
 
-        // With no same-root definer the handler must serve nothing at
-        // all: `Ok(None)` serializes to JSON null, so any signature
-        // object here means the fallback crossed roots.
-        assert_eq!(
-            result,
-            Value::Null,
-            "signature help must not cross into root-b; got: {result}"
+        let hints = result
+            .as_array()
+            .expect("inlay hints for root-a's `x <- 1L` should be a non-null array");
+        assert_eq!(hints.len(), 1, "one hint for `x`; got: {hints:?}");
+        let label = hints[0]["label"].as_str().expect("hint label is a string");
+        assert!(
+            label.contains("integer"),
+            "root-a's hint must show root-a's integer binding; got: {label}"
+        );
+        assert!(
+            !label.contains("character"),
+            "root-b's character binding leaked across roots; got: {label}"
         );
 
         // Best-effort teardown.
         let _ = client.notify("exit", Value::Null).await;
         let _ = tokio::time::timeout(std::time::Duration::from_secs(3), server).await;
-    })
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// Item 3 — signature_help must prefer the current document
-// ════════════════════════════════════════════════════════════════════════════
-
-#[test]
-fn signature_help_prefers_current_document() {
-    run(async {
-        let fixture = FixtureProject::empty().unwrap();
-        // A definer that sorts BEFORE the current document, so the pre-fix
-        // "sort every open path, take the first match" fallback picked it
-        // even though the cursor was in a different file.
-        fixture
-            .write_file("aaa_first.R", "myfn <- function(leaked_param) {}\n")
-            .unwrap();
-        // The current document: also defines myfn, plus the call to position in.
-        fixture
-            .write_file(
-                "zzz_current.R",
-                "myfn <- function(current_param) {}\nmyfn()\n",
-            )
-            .unwrap();
-
-        let (mut session, _server) = spawn_session(fixture.root()).await;
-
-        let first_uri = file_uri(&fixture.path("aaa_first.R")).unwrap();
-        let current_uri = file_uri(&fixture.path("zzz_current.R")).unwrap();
-
-        session
-            .open(&first_uri, 1, "myfn <- function(leaked_param) {}\n")
-            .await
-            .unwrap();
-        session
-            .open(
-                &current_uri,
-                1,
-                "myfn <- function(current_param) {}\nmyfn()\n",
-            )
-            .await
-            .unwrap();
-
-        // Signature help inside the call on line 1 of the current document:
-        // "myfn()" at character 5 sits right after the `(`.
-        let signature = session
-            .request(
-                "textDocument/signatureHelp",
-                json!({
-                    "textDocument": {"uri": current_uri},
-                    "position": {"line": 1, "character": 5}
-                }),
-            )
-            .await
-            .unwrap();
-
-        // The current document defines myfn(current_param); the pre-fix
-        // fallback sorted every open path and returned aaa_first.R's
-        // myfn(leaked_param). The fix prefers the current document.
-        assert_eq!(
-            signature["signatures"][0]["label"], "myfn(current_param)",
-            "signature help should use the current document's parameters; got: {signature}"
-        );
     })
 }

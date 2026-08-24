@@ -519,6 +519,10 @@ fn utf16_position_counts_astral_as_two_units() {
     assert_eq!(byte_offset_to_position(text, 5).character, 3);
     // 'a'=1 unit, '😀'=2 units -> 'b' is at UTF-16 col 3.
     assert_eq!(position_to_byte_offset(text, 0, 3), Some(5));
+    // A column inside the astral char (the second unit of its surrogate
+    // pair) is rejected rather than snapped onto a wrong byte offset;
+    // didChange incremental edits route through this conversion.
+    assert_eq!(position_to_byte_offset(text, 0, 2), None);
 }
 
 #[test]

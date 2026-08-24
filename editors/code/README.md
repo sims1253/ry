@@ -2,7 +2,7 @@
 
 [ry](https://github.com/sims1253/ry) is a static type checker for R. This extension provides diagnostics as you type (debounced, cached parses), inlay hints, and quick-fix actions that insert suppression comments in VS Code and Positron.
 
-Diagnostics cover the whole project, exactly as `ry check` does. The interactive features are scoped to open documents — they do not search unopened files on disk.
+Diagnostics cover the whole project, exactly as `ry check` does. Inlay hints and quick-fix actions apply to the open document only — they do not search unopened files on disk.
 
 ## Features
 

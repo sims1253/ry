@@ -66,11 +66,9 @@ struct DataInventory {
 }
 
 /// A single file-stem binding, used as the conservative fallback when a
-/// serialized workspace cannot be enumerated. A package's `sysdata.rda`
-/// over the byte cap used to disable RY010 for every file in the package
-/// (via [`SERIALIZED_BINDINGS_UNENUMERABLE`]); reducing it to its stem
-/// (`sysdata`) keeps unbound-variable analysis live and only masks the
-/// single colliding name.
+/// serialized workspace cannot be enumerated within the byte cap. The
+/// bare file stem (`sysdata`) keeps unbound-variable analysis live and
+/// only masks the single colliding name.
 fn file_stem_binding(path: &Path) -> HashSet<String> {
     path.file_stem()
         .and_then(|stem| stem.to_str())
@@ -341,7 +339,7 @@ struct SourceBindings {
     /// Names used as the entry-point argument of an FFI primitive somewhere
     /// in the package, which proves they are native routines rather than
     /// ordinary variables. Only meaningful when the NAMESPACE declares
-    /// `useDynLib(..., .registration = TRUE)`; see [`resolve`].
+    /// `useDynLib(..., .registration = TRUE)`; see [`resolve_workspace_context`].
     native_symbols: HashSet<String>,
 }
 
@@ -717,8 +715,7 @@ fn source_package_datasets(root: &Path, max_serialized_bytes: u64) -> DataInvent
 /// Returns the enumerated object names plus a `degraded` flag. When the
 /// decoded payload exceeds the byte cap, enumeration is skipped and the
 /// binding set is reduced to a single file-stem fallback ([`file_stem_binding`])
-/// so unbound-variable analysis (RY010) stays live instead of being disabled
-/// package-wide (the previous behavior via [`SERIALIZED_BINDINGS_UNENUMERABLE`]).
+/// so unbound-variable analysis (RY010) stays live.
 fn serialized_inventory(path: &Path, cap: u64) -> SerializedInventory {
     /// What the cached inventory was derived from. A mismatch on any field
     /// means the entry is stale. `cap` is part of it because raising
@@ -764,10 +761,8 @@ fn serialized_inventory(path: &Path, cap: u64) -> SerializedInventory {
 }
 
 fn serialized_inventory_uncached(path: &Path, cap: u64) -> SerializedInventory {
-    // Decoded payload exceeded the byte cap: rather than disabling
-    // unbound-variable analysis package-wide (the former
-    // `SERIALIZED_BINDINGS_UNENUMERABLE` path), fall back to the file
-    // stem as a single conservative binding. Callers flag the scope as
+    // Decoded payload exceeded the byte cap: fall back to the file stem
+    // as a single conservative binding. Callers flag the scope as
     // degraded so the user knows RY010 precision dropped for that file.
     let degraded = |path: &Path| SerializedInventory {
         bindings: file_stem_binding(path),
@@ -1193,7 +1188,7 @@ pub fn is_file_eligible_with_excludes(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// P36-W7 — Shared, bounded directory discovery (#48)
+// Shared, bounded directory discovery (#48)
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Bounded directory discovery limits derived from `[index]` in `ry.toml`.
@@ -1225,7 +1220,7 @@ impl Default for DiscoveryLimits {
     }
 }
 
-/// Structured report when a discovery cap is hit (P36-W7).
+/// Structured report when a discovery cap is hit .
 /// A cap hit is never silent: the caller emits a tracing event,
 /// LSP warning, or CLI warning based on this report.
 #[derive(Clone, Debug, Default)]
@@ -1266,7 +1261,7 @@ pub struct DiscoveryResult {
 
 /// Discover all eligible R source files under `walk_root`, applying the
 /// same eligibility, extension, hidden-directory, symlink, exclude, and
-/// test-fixture rules to both CLI and LSP (P36-W7 / issue #48).
+/// test-fixture rules to both CLI and LSP (#48).
 ///
 /// `exclude_root` anchors the compiled `exclude` patterns from `config`.
 /// It should be the directory containing the originating `ry.toml`. When
@@ -1378,7 +1373,7 @@ fn discover_recursive(
             if package_root.is_some_and(|root| is_excluded_package_directory(root, &path)) {
                 continue;
             }
-            // P36-W7: depth cap prunes further descent.
+            // depth cap prunes further descent.
             if depth >= limits.max_depth {
                 truncated.depth_pruned_dirs.push(path);
                 continue;
@@ -1407,12 +1402,12 @@ fn discover_recursive(
         ) && (check_test_fixtures
             || file_kind::package_file_kind(&path) != file_kind::PackageFileKind::TestFixture)
         {
-            // P36-W7: max-files cap.
+            // max-files cap.
             if out.len() >= limits.max_files {
                 truncated.max_files_hit = true;
                 break;
             }
-            // P36-W7: max-file-bytes cap.
+            // max-file-bytes cap.
             if let Ok(metadata) = std::fs::metadata(&path) {
                 let size = metadata.len();
                 if size > limits.max_file_bytes {

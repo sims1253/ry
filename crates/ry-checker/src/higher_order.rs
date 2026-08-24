@@ -622,7 +622,7 @@ impl Checker {
                 }
             }
         }
-        // 3. A default method is the final S3 dispatch fallback. Consult
+        // A default method is the final S3 dispatch fallback. Consult
         // every source used for specific methods above (plus external
         // registrations), and do not report a missing class method when
         // dispatch can reach one.
@@ -640,7 +640,7 @@ impl Checker {
             return Some(RType::unknown());
         }
 
-        // 4. Without a default, use the project-owned-method fallback gate.
+        // Without a default, use the project-owned-method fallback gate.
         // External/typeshed methods alone cannot prove that this project owns
         // the class, so suppress RY050 for potentially un-stubbed packages.
         let has_known_s3_method =

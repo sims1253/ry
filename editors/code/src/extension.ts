@@ -51,7 +51,6 @@ export async function activate(
   statusItem.setBusy();
   context.subscriptions.push(statusItem);
 
-  // The `ry.enable` gate: return early from activation when disabled.
   const enable = getConfiguration(serverId).get<boolean>("enable", true);
   if (!enable) {
     logger.info(
@@ -61,7 +60,7 @@ export async function activate(
     return;
   }
 
-  // E2: Resolve the binary and probe its version before starting.
+  // Resolve the binary and probe its version before starting.
   const isUntrusted = !vscode.workspace.isTrusted;
   const settings = getWorkspaceSettings(serverId, {
     uri: vscode.Uri.file(process.cwd()),
@@ -134,7 +133,7 @@ export async function activate(
     await restartPromise;
   };
 
-  // E3: Configuration change triggers restart only for settings
+  // Configuration change triggers restart only for settings
   // that need a respawn. Live-updatable settings go via
   // didChangeConfiguration instead.
   context.subscriptions.push(
@@ -157,7 +156,7 @@ export async function activate(
         await requestRestart();
       }
     }),
-    // E3: Workspace trust changes respawn because trust affects binary resolution.
+    // Workspace trust changes respawn because trust affects binary resolution.
     vscode.workspace.onDidGrantWorkspaceTrust(async () => {
       await requestRestart();
     }),

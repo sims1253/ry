@@ -392,7 +392,7 @@ impl Checker {
             .collect();
         let slot = self.return_slots.0.len();
         Arc::make_mut(&mut self.return_slots).set(slot, RType::unknown());
-        // Wrap the body in an Rc so the per-fixpoint clone in
+        // Wrap the body in an Arc so the per-fixpoint clone in
         // refine_fn_return is a refcount bump, not a deep copy.
         let body: Arc<[Stmt]> = Arc::from(body);
         let prev = Arc::make_mut(&mut self.fn_table).fns.insert(

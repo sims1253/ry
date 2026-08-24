@@ -271,9 +271,7 @@ impl ClassVector {
 /// Stores an ordered `(name, RType)` list so we can both look up by
 /// name (column access) and iterate in source order (display, audit).
 ///
-/// Stored behind an `Arc` on `RType` (see `RType::columns`); the Arc is
-/// released when the owning `RType` is dropped, so column schemas no
-/// longer leak for the lifetime of the process.
+/// Stored behind an `Arc` on `RType` (see `RType::columns`).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ColumnSchema {
     pub columns: Vec<(String, RType)>,
@@ -362,10 +360,7 @@ pub struct FunctionSignature {
 ///
 /// `RType` is `Clone` (not `Copy`): the `columns` and `fn_sig` fields
 /// hold `Arc`-shared heap data, and the `class` names are `Arc<str>`.
-/// Cloning bumps refcounts and is cheap. The previous design held these
-/// as `&'static` references into globally-leaked intern tables; the Arcs
-/// are released when the owning value is dropped, so long-running LSP
-/// sessions no longer accumulate schemas and class names unboundedly.
+/// Cloning bumps refcounts and is cheap.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RType {
     pub mode: Mode,
@@ -409,8 +404,7 @@ impl RType {
     /// or schema. Used whenever inference gives up.
     ///
     /// This is a function (not a `const`) because `RType`'s `Arc` fields
-    /// cannot be constructed in a const context. Callers that previously
-    /// wrote `RType::UNKNOWN` should call `RType::unknown()`.
+    /// cannot be constructed in a const context.
     pub fn unknown() -> RType {
         RType {
             mode: Mode::Opaque,
@@ -488,7 +482,6 @@ impl RType {
             return RType::unknown();
         }
         if members.len() == 1 {
-            // A single-member "union" is just that member.
             return (*members.first().unwrap()).clone();
         }
         // Length: common across members if they all agree, else Unknown.
@@ -598,8 +591,7 @@ impl RType {
     /// the two branches have the same type, that type wins. Otherwise
     /// we build an honest **union** of the two (deduplicated, capped at
     /// `MAX_UNION_MEMBERS`, collapsing to `RType::unknown()` beyond the
-    /// cap). This replaces the old coercion-ladder join, which silently
-    /// promoted `if (p) 1L else "a"` to `character`.
+    /// cap).
     ///
     /// Opaque is absorbing: joining anything with unknown yields unknown.
     ///

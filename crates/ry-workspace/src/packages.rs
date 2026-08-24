@@ -16,7 +16,7 @@ pub const NATIVE_ROUTINE_PREFIX_SENTINEL: &str = "\0useDynLib:";
 /// External-binding sentinel recording `useDynLib(..., .registration = TRUE)`.
 /// The registered entry points are declared in `src/`'s `R_registerRoutines`
 /// table, which ry does not read, so the flag instead licenses bare symbols in
-/// native-call argument position (see `is_native_symbol_call`).
+/// native-call argument position.
 pub const NATIVE_REGISTRATION_SENTINEL: &str = "\0useDynLibRegistration";
 
 /// Re-export FFI primitives from ry-core for convenience.

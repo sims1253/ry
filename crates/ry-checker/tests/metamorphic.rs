@@ -894,11 +894,11 @@ fn r10_pipe_placeholder_matrix_no_panic_deterministic() {
     let cases: &[&str] = &[
         // Native pipe, no placeholder.
         "x <- 1L\ny <- x |> identity()\n",
-        // Native pipe, underscore placeholder (R 4.2+).
+        // No pipe control: named-argument call.
         "x <- 1L\ny <- identity(z = x)\n",
-        // Magrittr pipe, no placeholder (prepended as first arg).
+        // Native pipe into a one-argument function.
         "x <- 1L\ny <- x |> sum()\n",
-        // Magrittr pipe, dot placeholder.
+        // Native pipe into a data-frame call.
         "df <- data.frame(a = 1L)\nresult <- df |> nrow()\n",
         // Chained pipes.
         "x <- c(1L, 2L, 3L)\ny <- x |> sum() |> identity()\n",

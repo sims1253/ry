@@ -41,13 +41,9 @@ describe("E2E: ry extension", () => {
     expect(codes).to.include(expectedCode);
   });
 
-  // P37-W2: After the split-brain fix, startServer() receives the
-  // pre-resolved binaryPath from extension.ts (which called
-  // findRyBinaryPath with the isUntrusted flag). The server starting
-  // and producing diagnostics proves a single binary identity — no
-  // separate resolveBinary() path can launch a different binary.
-  // The unit tests in binary.test.ts verify trust-honoring resolution.
-  it("Server starts from the resolved binary path (P37-W2 no split-brain)", async function () {
+  // The server launches from the single pre-resolved binary path; the
+  // unit tests in binary.test.ts verify trust-honoring resolution.
+  it("Server starts from the resolved binary path", async function () {
     this.timeout(30000);
 
     const fixturePath = path.join(

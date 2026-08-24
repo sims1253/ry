@@ -233,7 +233,6 @@ fn inlay_hints_skip_opaque_types() {
     // the non-opaque binding.
     let src = "result <- some_unknown_function()\nx <- 1L + 2L\n";
     let hints = inlay_hints(src);
-    // Only `x` should produce a hint; `result` is opaque and skipped.
     // Each hint's position is right after its identifier:
     //   `result` is at col 0..6 -> hint at col 6 (line 0)
     //   `x`      is at col 0..1 -> hint at col 1 (line 1)
@@ -498,10 +497,8 @@ fn position_to_byte_offset_basic() {
 
 #[test]
 fn utf16_position_roundtrip_on_non_ascii() {
-    // A line with a 2-byte UTF-8 char ('é', U+00E9) before the
-    // cursor. The LSP character column is a UTF-16 code-unit count,
-    // so 'é' contributes 1 unit (BMP). Byte offset of the char
-    // after 'é' is 2 (1 for 'x'... wait, build a clearer case).
+    // The LSP character column is a UTF-16 code-unit count, so 'é'
+    // contributes 1 unit despite being 2 UTF-8 bytes.
     // Text: "café_x" -- 'c','a','f','é'(2 bytes),'_','x'.
     let text = "café_x";
     // The byte offset of '_': c(0) a(1) f(2) é(3,4) _(5).
@@ -869,7 +866,6 @@ fn file_added_after_initial_check_is_emitted() {
     ];
     let diags = cache.check(files, std::sync::Arc::clone(&stubs));
 
-    // The second file must be present in the output.
     assert_eq!(diags.len(), 2, "both files after adding b.R");
     assert!(diags.iter().any(|(p, _)| p == "b.R"), "b.R in output");
 }
@@ -959,7 +955,7 @@ fn return_type_change_propagates_to_callers() {
     let files = vec![
         (
             "utils.R".to_string(),
-            2, // version bumped
+            2,
             parse_src("utils.R", "make_value <- function() 1L\n"),
         ),
         (
@@ -1009,7 +1005,7 @@ fn changing_stubs_invalidates_cached_diagnostics() {
     // This exercises the incremental path after a content change.
     let files = vec![(
         "pkg.R".to_string(),
-        2, // version bumped → forces update
+        2,
         parse_src("pkg.R", "x <- \"str\" + 1L\n"),
     )];
     let diags = cache.check(files, std::sync::Arc::clone(&empty_stubs));

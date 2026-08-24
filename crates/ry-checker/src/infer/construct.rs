@@ -140,25 +140,8 @@ impl Checker {
         }
     }
 
-    // Infer the result type of `rep(x, times, each)`. R's `rep` has
-    // two relevant parameters for length:
-    //   * `times` (default 1): how many times to repeat the whole
-    //     vector. Total length = `length(x) * times`.
-    //   * `each` (default 1): how many times to repeat each element
-    //     before concatenating. Total length = `length(x) * each`.
-    //   * Combined: `length(x) * times * each`.
-    //
-    // The result mode is `x`'s mode (matching the typeshed's
-    // `"mode": "arg0"` spec). We preserve `x`'s class and column
-    // schema too, so `rep(factor(...), 3)` stays a factor.
-    //
-    // We read `times` / `each` from the raw AST (not the inferred
-    // `RType`) because the type lattice discards the runtime value.
-    // When the values aren't literal integers or `x`'s length is
-    // unknown, we fall back to `Length::Unknown`. Named args win over
-    // positional ones; if `times`/`each` is supplied but isn't a
-    // literal, the length is Unknown (we can't know the runtime
-    // value, unlike the "not supplied" case which defaults to 1).
+    // Infer the result type of `vector(mode, length)`: pin the mode and
+    // length from literal arguments when possible.
     pub(crate) fn infer_vector(&self, args: &[Arg]) -> RType {
         let mode_expr = args
             .iter()
@@ -204,6 +187,26 @@ impl Checker {
     }
 
     pub(crate) fn infer_rep(&self, args: &[Arg], arg_types: &[RType], _span: Span) -> RType {
+        // Infer the result type of `rep(x, times, each)`. R's `rep` has
+        // two relevant parameters for length:
+        //   * `times` (default 1): how many times to repeat the whole
+        //     vector. Total length = `length(x) * times`.
+        //   * `each` (default 1): how many times to repeat each element
+        //     before concatenating. Total length = `length(x) * each`.
+        //   * Combined: `length(x) * times * each`.
+        //
+        // The result mode is `x`'s mode (matching the typeshed's
+        // `"mode": "arg0"` spec). We preserve `x`'s class and column
+        // schema too, so `rep(factor(...), 3)` stays a factor.
+        //
+        // We read `times` / `each` from the raw AST (not the inferred
+        // `RType`) because the type lattice discards the runtime value.
+        // When the values aren't literal integers or `x`'s length is
+        // unknown, we fall back to `Length::Unknown`. Named args win over
+        // positional ones; if `times`/`each` is supplied but isn't a
+        // literal, the length is Unknown (we can't know the runtime
+        // value, unlike the "not supplied" case which defaults to 1).
+        //
         // Helper: find the index in `args` of a named or positional
         // argument. Named args win over positional. The `pos` index
         // counts only unnamed args, so `rep(each = 2, c(1,2,3), 1)`
@@ -348,9 +351,8 @@ impl Checker {
         let (by_supplied, by_val) = find("by", 2);
         let (lo_supplied, lo_val) = find("length.out", 3);
 
-        // Mode: integer if `from` is an integer literal, else double
-        // (mirrors the typeshed's "double_or_int" rule). We look at
-        // the named `from = ...` first, then the first positional arg.
+        // Look at the named `from = ...` first, then the first
+        // positional arg.
         let from_expr = args
             .iter()
             .find(|a| a.name.as_deref() == Some("from"))

@@ -47,10 +47,9 @@ pub(super) fn diagnostic_to_lsp(d: RyDiagnostic) -> LspDiagnostic {
 
 /// Convert a `ry_checker::Diagnostic` to an LSP `Diagnostic` using a
 /// precise multi-character range derived from the span's byte offsets
-/// against the source text. The production path
-/// (`publish_diagnostics`); editors squiggle exactly the offending
-/// token. Zero-width spans are extended by one character so the squiggle
-/// is still visible.
+/// against the source text. This is the path `publish_diagnostics`
+/// uses, so editors squiggle exactly the offending token. Zero-width
+/// spans are extended by one character so the squiggle is still visible.
 pub(super) fn diagnostic_to_lsp_with_source(d: &RyDiagnostic, text: &str) -> LspDiagnostic {
     let start = byte_offset_to_position(text, d.span.start);
     let end = byte_offset_to_position(text, d.span.end);

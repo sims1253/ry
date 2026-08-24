@@ -784,9 +784,9 @@ impl Project {
         // Record state for the next incremental check.
         self.prev_loaded = Some(self.loaded.clone());
         self.prev_return_slots = Some(self.return_slots.0.clone());
-        // Save refined return types keyed by function name for the next
-        // fixpoint seeding (W2).
         self.prev_known_vars = self.fn_table.known_vars.clone();
+        // Save refined return types keyed by function name for the next
+        // fixpoint seeding.
         self.prev_fn_returns = self
             .fn_table
             .fns

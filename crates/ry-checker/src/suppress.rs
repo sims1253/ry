@@ -304,30 +304,10 @@ impl Checker {
         self.user_s3_dispatch_return(generic, first).is_some()
     }
 
-    /// Whether the callee `name` resolves to `base::bare_name` at this call
-    /// site, given the current lexical scope and project metadata.
-    ///
-    /// This is the single canonical base-call resolution operation (Plan 35
-    /// W7). It replaces scattered ad-hoc "is this the base function or a
-    /// shadow?" guards. Callers ask this method; they do not duplicate lookup
-    /// order.
-    ///
-    /// Lookup order (first match decides):
-    ///
-    /// 1. `base::name` or `base:::name` → resolves to base (explicit).
-    /// 2. `otherpkg::name` → does not resolve to base.
-    /// 3. A lexical data binding of `name` → shadowed.
-    /// 4. A lexical function binding of `name` → shadowed.
-    /// 5. A project `fn_table` definition of `name` → shadowed.
-    /// 6. `importFrom(base, name)` → resolves to base.
-    /// 7. Any other external binding or `importFrom` source → shadowed.
-    /// 8. A non-empty search path (`bare_loaded` or `search_path_unknown`)
-    ///    → cannot prove base resolution.
-    /// 9. Otherwise the bare name falls through to base.
+    /// Lenient variant of [`Self::resolves_to_base`]: same resolution
+    /// order minus the search-path guard, because a loaded package rarely
+    /// redefines `list` or `length`.
     pub(crate) fn resolves_to_base_lenient(&self, name: &str, scope: &Scope) -> bool {
-        // Same as resolves_to_base but the search_path_unknown / bare_loaded
-        // guard is relaxed. A loaded package rarely redefines `list` or
-        // `length`, and the old code only checked fn_table shadowing.
         if name.rsplit_once("::").is_some() {
             return crate::semantic_lists::is_base_qualified(name);
         }
@@ -351,6 +331,24 @@ impl Checker {
         true
     }
 
+    /// Whether the callee `name` resolves to `base::bare_name` at this call
+    /// site, given the current lexical scope and project metadata.
+    ///
+    /// This is the canonical base-call resolution operation. Callers ask
+    /// this method; they do not duplicate lookup order.
+    ///
+    /// Lookup order (first match decides):
+    ///
+    /// 1. `base::name` or `base:::name` → resolves to base (explicit).
+    /// 2. `otherpkg::name` → does not resolve to base.
+    /// 3. A lexical data binding of `name` → shadowed.
+    /// 4. A lexical function binding of `name` → shadowed.
+    /// 5. A project `fn_table` definition of `name` → shadowed.
+    /// 6. `importFrom(base, name)` → resolves to base.
+    /// 7. Any other external binding or `importFrom` source → shadowed.
+    /// 8. A non-empty search path (`bare_loaded` or `search_path_unknown`)
+    ///    → cannot prove base resolution.
+    /// 9. Otherwise the bare name falls through to base.
     pub(crate) fn resolves_to_base(&self, name: &str, scope: &Scope) -> bool {
         // (a) Explicit base:: qualification.
         if name.rsplit_once("::").is_some() {

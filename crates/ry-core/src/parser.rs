@@ -40,8 +40,8 @@ impl RParser {
         Ok(file)
     }
 
-    /// Parse with an old tree-sitter `Tree` for incremental re-parsing
-    /// (Plan 33 W6). The old tree must have been edited via `InputEdit`
+    /// Parse with an old tree-sitter `Tree` for incremental re-parsing.
+    /// The old tree must have been edited via `InputEdit`
     /// before calling this method. The AST is rebuilt from the new tree,
     /// but tree-sitter reuses unchanged subtrees internally, making
     /// reparse cost proportional to the edited region, not the file size.
@@ -97,12 +97,9 @@ impl RParser {
         let start = n.start_byte();
         let end = n.end_byte();
         let pos = n.start_position();
-        // tree-sitter reports both row and column for free; the previous
-        // implementation discarded `.column` and recomputed a *char*
-        // column by rescanning the whole file from byte 0 for every node
-        // (O(n^2) total). We now use the byte column tree-sitter gives us
-        // directly. `Span::col` is therefore byte-indexed within the line;
-        // diagnostics rendering that need a char column convert per-line.
+        // `Span::col` is tree-sitter's byte-indexed column within the
+        // line; diagnostics rendering that needs a char column converts
+        // per-line.
         Span::new(start, end, pos.row, pos.column)
     }
 
@@ -152,10 +149,10 @@ impl RParser {
     fn try_lower_assign(&self, n: Node, src: &str) -> Option<Stmt> {
         let op_node = n.child_by_field_name("operator")?;
         let op_text = text(op_node, src)?;
-        // Note: tree-sitter-r emits the super-assignment operator as the
-        // token `<<-`, NOT `<<`. Matching `<<` (as this code once did)
-        // silently fails for every super-assignment and lets it fall
-        // through to `lower_binary`, which mis-lowers it.
+        // tree-sitter-r emits the super-assignment operator as the token
+        // `<<-`, not `<<`. Matching `<<` silently fails for every
+        // super-assignment and lets it fall through to `lower_binary`,
+        // which mis-lowers it.
         if !matches!(op_text.as_str(), "<-" | "<<-" | "=" | "->" | "->>" | ":=") {
             return None;
         }
@@ -276,10 +273,8 @@ impl RParser {
 
     /// Preserve a brace used in statement position as one block expression.
     ///
-    /// Keeping only the last lowered child used to delete all earlier statements;
-    /// assigning each lowering result directly to `last` could also turn an
-    /// already-preserved child back into `None`. A block carries every represented
-    /// child, while malformed children remain owned by `SourceFile::parse_errors`.
+    /// A block carries every represented child; malformed children remain
+    /// owned by `SourceFile::parse_errors`.
     fn lower_braced_as_stmt(&self, n: Node, src: &str) -> Stmt {
         Stmt::Expr(Expr::Block {
             body: self.lower_block(n, src),
@@ -347,12 +342,9 @@ impl RParser {
                 let stripped = raw.trim_end_matches('L').trim_end_matches('l');
                 let span = self.span(n, src);
                 // Integer literals that don't fit `i64` (e.g. `1e5L`,
-                // `0x10L` for non-hex, very large values) must NOT cause
-                // the whole statement to vanish. Earlier code returned
-                // `None` here, and `?`-propagation in `lower_binary` /
-                // `try_lower_assign` dropped the enclosing statement
-                // entirely. Fall back to a double, then to `Unknown`, but
-                // always produce *some* expression.
+                // `0x10L` for non-hex, very large values) must NOT vanish
+                // via `?`-propagation and take the enclosing statement
+                // with them. Fall back to a double, then to `Unknown`.
                 if let Ok(v) = stripped.parse::<i64>() {
                     Some(Expr::Integer(v, span))
                 } else if let Ok(d) = stripped.parse::<f64>() {
@@ -370,11 +362,9 @@ impl RParser {
                     "NaN" | "nan" => f64::NAN,
                     s => match s.parse::<f64>() {
                         Ok(v) => v,
-                        // A float-looking token we couldn't parse (e.g.
-                        // exotic locale or a tree-sitter quirk): do NOT
-                        // return None -- that propagates up via `?` and
-                        // drops the enclosing statement entirely. Yield
-                        // Unknown so the statement survives.
+                        // Unparseable float token: yield Unknown rather
+                        // than `None`, which would drop the enclosing
+                        // statement via `?`-propagation.
                         Err(_) => return Some(Expr::Unknown(span)),
                     },
                 };
@@ -560,8 +550,7 @@ impl RParser {
             // inner assignment in `a <- b <- 1L`). These return the
             // assigned value in R, so `infer_binop` returns the RHS
             // type for them. `->` and `->>` are right-to-left, so we
-            // swap the operands. tree-sitter-r emits the
-            // super-assignment token as `<<-` (not `<<`).
+            // swap the operands.
             "<-" | "=" => BinOpKind::Assign,
             "<<-" => BinOpKind::SuperAssign,
             "->" | "->>" => {
@@ -689,7 +678,7 @@ impl RParser {
         // For identifier RHS the raw text is the bare name. For a string
         // RHS (e.g. `pkg::"my func"`, used for non-syntactic names) we
         // strip the surrounding quotes.  Use the shared boundary-safe
-        // helper (P37-W1): `raw.len() - 1` need not be a char boundary
+        // helper: `raw.len() - 1` need not be a char boundary
         // when the string token is malformed/truncated, which would
         // panic on the naive slice `raw[1..raw.len() - 1]`.
         let name = if rhs.kind() == "string" {
@@ -769,8 +758,8 @@ fn unquote_r_string(raw: &str) -> String {
 /// a multi-byte character).
 ///
 /// Both `lower_namespace` and `unquote_r_string` call this helper so the
-/// two string-stripping call sites share one boundary-safe code path
-/// (P37-W1).  Escape processing is NOT performed here; callers that need
+/// two string-stripping call sites share one boundary-safe code path.
+/// Escape processing is NOT performed here; callers that need
 /// R escape handling apply it to the returned slice.
 fn strip_quotes_at_boundaries(raw: &str) -> &str {
     if raw.len() < 2 {
@@ -780,7 +769,7 @@ fn strip_quotes_at_boundaries(raw: &str) -> &str {
     // quote is always a single ASCII byte, so byte 1 is a char boundary.
     let start = 1;
     // End: walk back from `raw.len() - 1` to the nearest preceding char
-    // boundary, mirroring the original fuzz-discovered fix.
+    // boundary.
     let mut end = raw.len() - 1;
     while end > start && !raw.is_char_boundary(end) {
         end -= 1;
@@ -1056,10 +1045,9 @@ fn namespace_op(n: Node, src: &str) -> Option<&'static str> {
 
 /// Convert a byte column within a single line to a character column.
 ///
-/// Used by diagnostic rendering when a human-visible column is needed. The
-/// previous per-node column computation rescanned the entire file from byte
-/// 0 for every AST node (O(n^2) total, 47s on 20k lines); this only ever
-/// scans the one line the column lives on.
+/// Used by diagnostic rendering when a human-visible column is needed.
+/// Only the single line containing the column is scanned, never the
+/// whole file.
 ///
 /// `line_start` is the byte offset of the start of the line containing the
 /// column, and `byte_col` is the byte offset of the target within that line.

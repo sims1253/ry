@@ -54,7 +54,7 @@ Install from Open VSX via Positron's extension gallery.
 
 **Diagnostics cover only files you have open in the editor.** `ry check .`
 may report additional findings in files you haven't opened. This is a
-known limitation being addressed in incremental core work.
+known limitation.
 
 ## License
 

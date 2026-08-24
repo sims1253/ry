@@ -36,7 +36,7 @@ pub use diagnostics::{
     parse_suppressions_from_comments,
 };
 
-// P38-W3: Configuration-driven filter builders moved here from ry-config
+// Configuration-driven filter builders moved here from ry-config
 // to break the ry-config → ry-checker dependency.
 
 /// Build a [`SeverityFilter`] from the `error`, `warn`, and `ignore`
@@ -745,8 +745,7 @@ impl Checker {
         // run's diagnostics. Also reset the function table and return
         // slots: `collect_fns` appends to the table, so without a reset
         // a reused Checker leaks functions and known-vars from the
-        // previous file into the current check (P35-W9 accumulated-
-        // diagnostics defect).
+        // previous file into the current check.
         self.diagnostics.clear();
         self.fn_table = Arc::new(FnTable::default());
         self.return_slots = Arc::new(ReturnSlots::default());
@@ -902,19 +901,10 @@ impl Checker {
         Arc::unwrap_or_clone(std::mem::take(&mut self.loaded))
     }
 
-    // Pass 2: refine all function return types until convergence.
-    // Iterates the shared `FnTable`; safe to call once after all files
-    // have been collected.
-    //
-    // S3 methods (`print.foo`, etc.) are inserted into `fns` under
-    // their full name during pass 1, with `s3_methods` pointing at
-    // the same return slot. Iterating `fns.keys()` therefore refines
-    // S3 method bodies alongside regular functions; dispatch reads
-    // the refined slot via the `s3_methods` map.
     /// Overlay previously-refined return types onto the current return slots.
     ///
     /// Called before [`run_fixpoint`](Self::run_fixpoint) to seed the fixpoint
-    /// with the previous solution (Plan 33 W2). Functions whose definition
+    /// with the previous solution. Functions whose definition
     /// has not changed and whose callees' return types are unchanged will
     /// keep their seeded value, reducing the number of fixpoint iterations
     /// needed to re-stabilise.
@@ -950,6 +940,15 @@ impl Checker {
         }
     }
 
+    // Pass 2: refine all function return types until convergence.
+    // Iterates the shared `FnTable`; safe to call once after all files
+    // have been collected.
+    //
+    // S3 methods (`print.foo`, etc.) are inserted into `fns` under
+    // their full name during pass 1, with `s3_methods` pointing at
+    // the same return slot. Iterating `fns.keys()` therefore refines
+    // S3 method bodies alongside regular functions; dispatch reads
+    // the refined slot via the `s3_methods` map.
     pub(crate) fn run_fixpoint(&mut self) {
         self.run_fixpoint_inner(None);
     }
@@ -957,7 +956,7 @@ impl Checker {
     /// Run the fixpoint, but only refine functions in `scope`. Functions
     /// outside the scope keep their current (seeded) return type. Used by
     /// `Project` for incremental checks where only a subset of functions
-    /// can have changed (Plan 33 W2).
+    /// can have changed.
     ///
     /// The set must include every function whose definition or callees
     /// changed; functions outside the set are assumed stable. The fixpoint

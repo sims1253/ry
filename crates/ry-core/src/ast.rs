@@ -10,8 +10,8 @@ use crate::types::RType;
 #[derive(Debug, Clone, Default)]
 pub struct SourceFile {
     pub path: String,
-    /// Original UTF-8 text. Checker fixes slice this production parse input by
-    /// AST spans rather than attempting to print or scrape diagnostic prose.
+    /// Original UTF-8 text. The checker slices this string by AST spans
+    /// rather than scraping diagnostic prose.
     pub source: String,
     pub stmts: Vec<Stmt>,
     /// Parse errors (tree-sitter `ERROR` / `MISSING` nodes) discovered

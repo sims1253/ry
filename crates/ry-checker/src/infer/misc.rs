@@ -502,7 +502,7 @@ pub(crate) fn apply_narrowing(
     match narrowing {
         Narrowing::None => {}
         Narrowing::Positive { var, target } => {
-            // New rule: a predicate narrows only
+            // A predicate narrows only
             // when the existing type is opaque (untyped) or a union that
             // already contains the predicate's mode. A KNOWN type is
             // never rewritten: `is.numeric(x)` on a known Integer must

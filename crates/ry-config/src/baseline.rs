@@ -1,16 +1,11 @@
 //! Baseline and severity-filter helpers shared between the CLI and the
 //! LSP server.
-//!
-//! These types were previously embedded in `ry-cli`'s `main.rs` where
-//! they were unreachable from the language server.
 
 use miette::{IntoDiagnostic, Result};
 use ry_core::BaselineDiagnostic;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
-
-// `build_filter` and `filter_from_config` moved to `ry-checker` (P38-W3).
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Baseline {

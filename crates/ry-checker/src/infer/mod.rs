@@ -202,7 +202,7 @@ fn discarded_value_expression(expression: &Expr) -> bool {
 
 // The T7b "mutually-exclusive branch" loop refinement was removed after two
 // rounds of corpus regressions (it ended up flagging loop iterators inside
-// their own bodies). Loop bodies simply pre-bind every name assigned anywhere
+// their own bodies). Loop bodies pre-bind every name assigned anywhere
 // in the body before walking; a use-before-first-assignment inside a loop is
 // statically indistinguishable from a legitimate loop-carried binding.
 
@@ -1163,7 +1163,6 @@ impl Checker {
                 self.infer(target, scope);
             }
             _ => {
-                // Indexed assignment `x[i] <- v` etc. is too dynamic for v1.
                 self.infer(target, scope);
             }
         }

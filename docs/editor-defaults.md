@@ -39,8 +39,7 @@ The default-enabled rules use the ordinary ry configuration/filter seam
 
 At `minConfidence: "low"` with the default rule set, the editor shows all
 rules with at least low confidence. Some false positives still appear,
-particularly for RY010 in packages with dynamic bindings. Users who want
-fewer false positives can:
+particularly for RY010 in packages with dynamic bindings. To reduce them:
 
 1. Set `minConfidence: "medium"` or `"high"` to filter lower-confidence findings.
 2. Use `ry.toml` to disable specific rules per-project.
@@ -49,8 +48,8 @@ fewer false positives can:
 ## No client-only suppression
 
 Editor defaults are enforced through the server configuration, not through
-client-side filtering. This ensures CLI and LSP produce identical diagnostics
-for the same project, preserving the differential test contract.
+client-side filtering, so CLI and LSP produce identical diagnostics for
+the same project (the differential test contract).
 
 ## Future improvements
 

@@ -724,9 +724,10 @@ struct CheckResult {
 
 /// Whether parser recovery indicates that a file is probably not R source.
 ///
-/// Keep the original majority-error guard, and also catch foreign files whose
-/// syntax happens to produce many recoverable R expressions.  The absolute
-/// floor avoids suppressing ordinary R files with a few syntax errors.
+/// Two guards, so foreign files whose syntax produces many recoverable R
+/// expressions are still caught while ordinary R files with a few syntax
+/// errors pass: more parse errors than statements, or at least 5 errors
+/// making up 15% of statements.
 fn is_probably_not_r_source(file: &ry_core::SourceFile) -> bool {
     let parse_errors = file.parse_errors.len();
     let statements = file.stmts.len();
@@ -738,8 +739,7 @@ impl CheckResult {
     fn print_summary(&self, format: ry_checker::format::OutputFormat, statistics: bool) {
         // Suppress the human summary line for machine-readable formats
         // so it can't corrupt JSON/Github/Gitlab/Junit output (it goes
-        // to stderr, but consumers that merge stderr would see it). The
-        // plan calls for printing it only for the human formats.
+        // to stderr, but consumers that merge stderr would see it).
         let is_human = matches!(
             format,
             ry_checker::format::OutputFormat::Full | ry_checker::format::OutputFormat::Concise

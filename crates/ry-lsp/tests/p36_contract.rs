@@ -157,23 +157,18 @@ fn published_from_lsp(message: &Value, path: &Path, root: &Path) -> Vec<Publishe
 // ──────────────────────────────────────────────────────────────────────────
 // P36-W2a — Per-folder editor settings (#44)
 //
-// The server currently stores a single server-wide `folder_settings`
+// Bug being pinned: the server stored a single server-wide `folder_settings`
 // (`State::folder_settings`) taken from the first `initializationOptions`
-// entry. Per-folder editor settings are not honored. This test creates two
-// roots whose `ry.toml` already configures different behavior and supplies
-// matching per-folder editor settings so that the correct LSP output equals
-// an independent CLI run in each root.
-//
-// Fix: P36-W2a replaces the single `folder_settings` with per-root values.
+// entry, so per-folder editor settings were not honored. W2a replaced it
+// with per-root values.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// P36-W2a (#44): two roots with different editor settings must produce
 /// per-file CLI/LSP parity. Root A ignores RY002 (both in `ry.toml` and
 /// editor settings); root B does not. Both files trigger RY002.
 ///
-/// The current code applies only the first folder's settings server-wide, so
-/// root B's editor ignore list incorrectly suppresses RY002. This fails
-/// against `ry check` run independently in root B.
+/// Before W2a, root A's ignore list was applied server-wide and wrongly
+/// suppressed RY002 in root B, diverging from `ry check` run there.
 #[test]
 fn p36_w2a_two_roots_different_editor_settings_differential() {
     let fixture = FixtureProject::empty().unwrap();
@@ -319,11 +314,10 @@ fn p36_w2a_two_roots_different_editor_settings_differential() {
 // ──────────────────────────────────────────────────────────────────────────
 // P36-W2b — Per-folder typeshed isolation (#54)
 //
-// `load_workspace_stubs` takes a single `root: Option<&Path>` and returns
-// empty when the root has no `ry.toml`. In a multi-root workspace it is
-// called with `root_uri`, not with each workspace folder. Two roots may
-// define the same package differently; the fix loads stubs per root and
-// resolves them through longest-prefix ownership.
+// Bug being pinned: stubs were loaded only for the root URI, so in a
+// multi-root workspace two roots defining the same package differently
+// collided. The fix loads stubs per root and resolves them through
+// longest-prefix ownership.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// P36-W2b (#54): two roots define the same stub package (`localdep`) with
@@ -331,9 +325,8 @@ fn p36_w2a_two_roots_different_editor_settings_differential() {
 /// diagnostic); root B's stub returns character (RY001 — `if` condition is
 /// character). Each root's LSP output must equal its independent CLI run.
 ///
-/// Currently the LSP loads no stubs (root_uri has no typeshed config), so
-/// `my_func` has an unknown return type and neither root produces RY001.
-/// Root B diverges from its CLI run.
+/// Before W2b, neither root loaded its local stubs: `my_func` had an
+/// unknown return type and neither root produced RY001.
 #[test]
 fn p36_w2b_colliding_local_stubs_isolation() {
     let fixture = FixtureProject::empty().unwrap();
@@ -476,18 +469,15 @@ fn p36_w2b_colliding_local_stubs_isolation() {
 // ──────────────────────────────────────────────────────────────────────────
 // P36-W2c — Honor the configuration override (#56)
 //
-// `FolderSettings::configuration` is deserialized but has no read site. The
-// fix resolves it relative to the workspace root and loads that file instead
-// of directory discovery.
+// Bug being pinned: `FolderSettings::configuration` was deserialized but
+// never read. The fix resolves it relative to the workspace root and loads
+// that file instead of directory discovery.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// P36-W2c (#56): a folder whose `ry.toml` lives at a custom path
 /// (`config/custom.toml`) should honor the `configuration` editor setting.
-/// The custom config ignores RY002; the source triggers RY002.
-///
-/// Currently `configuration` is dead code, so the server falls back to
-/// directory discovery (no `ry.toml` at root) and RY002 appears. The test
-/// asserts RY002 is absent — it fails against current code.
+/// The custom config ignores RY002; the source triggers RY002. Asserts
+/// RY002 is absent, proving the override was honored.
 #[test]
 fn p36_w2c_per_folder_custom_config_path() {
     let fixture = FixtureProject::empty().unwrap();
@@ -584,15 +574,14 @@ fn p36_w2c_per_folder_custom_config_path() {
 // ──────────────────────────────────────────────────────────────────────────
 // P36-W3 — Workspace-folder mutation converges to cold state (#55)
 //
-// `did_change_workspace_folders` updates `workspace_folders` but does not
-// remove `disk_files`, trees, diagnostics, or contexts owned by removed
-// roots, and does not cancel results from an old folder set.
+// Bug being pinned: `did_change_workspace_folders` updated
+// `workspace_folders` but left behind `disk_files`, trees, diagnostics,
+// and contexts owned by removed roots.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// P36-W3 (#55): add and remove a workspace folder. After each mutation the
 /// final diagnostics must equal a fresh server initialized on the same final
 /// roots. Removed roots must leave no reachable state.
-///
 #[test]
 fn p36_w3_workspace_folder_add_remove_convergence() {
     use ry_testkit::LspSession;
@@ -689,9 +678,7 @@ fn p36_w3_workspace_folder_add_remove_convergence() {
             .ok();
         let clear_mark = live2.publication_mark();
 
-        // Give the server a chance to republish for root-b's file.
-        // After removal, root-b's file should clear its diagnostics.
-        // The server republishes after the folder change.
+        // Await the post-removal republish for root-b's file.
         let republish = tokio::time::timeout(
             std::time::Duration::from_secs(2),
             live2.published_diagnostics_after(&main_b_uri, clear_mark),
@@ -704,7 +691,6 @@ fn p36_w3_workspace_folder_add_remove_convergence() {
 
         // After removing root-b, the server must clear diagnostics for files
         // owned by root-b (empty publish or no publish at all).
-        // Currently disk_files from root-b persist, so diagnostics remain.
         match republish {
             Ok(Ok(publish)) => {
                 let diags = publish
@@ -1200,18 +1186,15 @@ fn p36_w5_publish_path_performs_no_baseline_disk_io() {
 // building each `FolderAnalysisContext` and borrows the compiled values in
 // the loop.
 //
-// P36-W6 adds a construction-count test hook so the count is asserted
-// directly rather than inferred from wall time. Until then, this test
-// creates the many-files fixture and verifies diagnostic correctness.
+// P36-W6 adds a construction-count test hook so the count can be asserted
+// directly rather than inferred from wall time; until it landed, this test
+// created the many-files fixture and verified diagnostic correctness.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// P36-W6 (#46): for a fixed folder count, filter/glob construction must be
 /// flat as file count grows. This test creates many files in one folder,
 /// opens a trigger document, and verifies that all published diagnostics are
 /// byte-for-byte correct.
-///
-/// P36-W6 adds the construction-count instrumentation. Currently the filter
-/// is recomputed per file inside `publish_diagnostics`.
 #[test]
 fn p36_w6_many_files_flat_filter_construction() {
     let fixture = FixtureProject::empty().unwrap();
@@ -1353,26 +1336,22 @@ fn p36_w6_many_files_flat_filter_construction() {
 // ──────────────────────────────────────────────────────────────────────────
 // P36-W7 — Shared, bounded discovery (#48)
 //
-// The CLI (`collect_r_files`) and LSP (`index::discover_r_files`) use
-// different discovery rules. For example, the CLI skips `target/` and
-// `node_modules/` directories, while the LSP only skips hidden directories.
-// The fix moves discovery behind a shared module so both modes agree.
+// Bug being pinned: the CLI (`collect_r_files`) and LSP
+// (`index::discover_r_files`) used different discovery rules — for example,
+// the CLI skipped `target/` while the LSP did not. The fix moved discovery
+// behind a shared module so both modes agree.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// P36-W7 (#48): the same fixture tree must produce the same discovered path
-/// set in CLI and LSP. The fixture includes a `target/` directory (CLI skips
-/// it; the LSP currently does not), a hidden directory (both skip), and a
-/// normal file. Every file has a diagnostic so the discovery set is
-/// observable through published diagnostic paths.
-///
-/// Currently the CLI and LSP discovery sets differ (CLI excludes
-/// `target/`, LSP includes it). The equality assertion fails.
+/// set in CLI and LSP. The fixture includes a `target/` directory, a hidden
+/// directory (both skip), and a normal file. Every file has a diagnostic so
+/// the discovery set is observable through published diagnostic paths.
 #[test]
 fn p36_w7_cli_lsp_discovery_set_equality() {
     let fixture = FixtureProject::empty().unwrap();
     // Normal file with a diagnostic.
     fixture.write_file("normal.R", "length(xx = 1L)\n").unwrap();
-    // File in target/ — CLI skips this directory, LSP does not.
+    // File in target/ — both modes skip this directory.
     fixture
         .write_file("target/skipped.R", "length(xx = 1L)\n")
         .unwrap();

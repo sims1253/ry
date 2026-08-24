@@ -910,8 +910,6 @@ impl LanguageServer for Backend {
                 break;
             }
         }
-        // Debounced: a burst of keystrokes coalesces into a single
-        // diagnostic publish.
         self.schedule_diagnostics(uri).await;
         // P36-W4 (#53): test-only scheduling seam. Signals that the
         // document version has been bumped and diagnostics re-scheduled,
@@ -1429,8 +1427,6 @@ impl Backend {
                     build_input_edit_from_span(&old_text, start_byte, end_byte, &change.text);
                 self.update_doc(path.to_string(), new_text, version).await;
 
-                // Apply the edit to the old tree so the next parse is
-                // incremental.
                 let mut tree_mut = old_tree;
                 if let Some(ref mut tree) = tree_mut {
                     tree.edit(&edit);
@@ -1537,7 +1533,6 @@ impl Backend {
                 }
                 Arc::new(parsed)
             } else {
-                // Full parse: also store the tree so subsequent edits can be incremental.
                 let (parsed, new_tree) = parser.parse_with_tree(path, &text, None).ok()?;
                 {
                     let mut state = self.state.lock().await;
@@ -1712,7 +1707,6 @@ impl Backend {
                 .await;
         }
 
-        // Build the combined file list from open documents and disk files.
         let mut project_files = Vec::with_capacity(doc_paths.len());
         for doc_path in &doc_paths {
             let Some((file, _)) = self.parsed_file(doc_path).await else {
@@ -1727,6 +1721,7 @@ impl Backend {
             let state = self.state.lock().await;
             state.disk_files.clone()
         };
+        // Disk files never shadow open documents.
         let open_paths: std::collections::HashSet<String> =
             project_files.iter().map(|(p, _, _)| p.clone()).collect();
         for (p, file) in &disk_files {
@@ -1736,7 +1731,7 @@ impl Backend {
             project_files.push((p.clone(), 0, Arc::clone(file)));
         }
 
-        // P36-W2: Partition files by owning folder and check each folder
+        // Partition files by owning folder and check each folder
         // independently so two roots defining the same package differently
         // never collide (#54). Each folder gets its own ProjectCache, stubs,
         // and workspace context.
@@ -2062,7 +2057,6 @@ impl Backend {
         };
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(180)).await;
-            // Only publish if no newer edit arrived during the sleep.
             let stale = {
                 let state = backend.state.lock().await;
                 state.diag_generation != generation

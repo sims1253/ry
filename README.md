@@ -81,8 +81,8 @@ ry check demo.R
 ```
 
 Diagnostics use the `full` format by default – the offending line with
-the span underlined – and messages carry the context you need to act;
-for example, an undefined-column diagnostic lists the available columns.
+the span underlined. Messages carry context: an undefined-column
+diagnostic lists the available columns.
 
 ``` bash
 ry check /tmp/ry-readme/analysis.R
@@ -185,11 +185,11 @@ at column candidates.
 ## Dumping inferred types
 
 `ry dump-types` is the non-interactive counterpart of the LSP's inline
-type hints: it runs one analysis pass (the same pass `ry check` runs,
-over the same package-aware environment) and prints every lexical scope
-of the requested files as JSON on stdout, so downstream tooling can
-query a scope's bindings and their inferred types without re-running
-the checker per position.
+type hints. It runs the same analysis pass as `ry check`, over the same
+package-aware environment, and prints every lexical scope of the
+requested files as JSON on stdout, so downstream tooling can query a
+scope's bindings and their inferred types without re-running the checker
+per position.
 
 ``` bash
 ry dump-types R/analysis.R
@@ -402,8 +402,7 @@ Settings (in `settings.json`):
 
 > **Note:** Diagnostics cover only files you have open in the editor.
 > `ry check .` may report additional findings in files you haven't
-> opened. This is a known limitation being addressed in incremental
-> core work.
+> opened. This is a known limitation.
 
 ### Zed
 

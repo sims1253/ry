@@ -769,8 +769,7 @@ impl Checker {
 
     // Check a file and return both diagnostics and the final top-level
     // scope. Used by the LSP server's scope cache: the scope maps variable
-    // names to their inferred types, feeding inlay hints and completion
-    // lookups.
+    // names to their inferred types, feeding inlay hint lookups.
     pub fn check_with_scope(&mut self, file: &SourceFile) -> (Vec<Diagnostic>, Scope) {
         self.path = file.path.clone();
         self.source.clone_from(&file.source);

@@ -288,6 +288,24 @@ All notable changes to ry are documented in this file.
   background file index is untouched so far and loses its remaining
   consumers in a later step of the diet. None of the five capabilities
   ever shipped in a release, so no released capability schema changes.
+- **LSP no longer advertises `textDocument/completion` or
+  `textDocument/signatureHelp`**, completing the #87 diet of the
+  advertised surface to "report what `ry check` reports" before 0.9.0
+  ships: handlers, capability advertisements, the completion and
+  signature-table helpers in `hints.rs`, the
+  `eligible_open_documents`/`same_folder_root` fallback search (whose
+  only consumer was signature help), the now-unused
+  `utf16_col_to_byte` util, and the unit tests that exercised them.
+  Diagnostics are unchanged. The kept interactive surface is exactly
+  `inlayHint` and `codeAction` (suppressions), both scoped to open
+  documents; real completion and signature help belong to dedicated R
+  editor integrations, not a checker frontend. The cross-root
+  request-isolation guarantee formerly pinned on signature help is
+  re-pinned on `inlayHint`. The background file index **stays**: its
+  remaining and standing consumer is `publish_diagnostics`, which
+  merges indexed disk files with open documents so the editor sees the
+  whole project exactly as `ry check` reports it. Neither capability
+  ever shipped in a release, so no released capability schema changes.
 
 ### Fixed
 

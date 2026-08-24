@@ -376,8 +376,8 @@ removed by regenerating the baseline.
 ## Editors
 
 `ry server` speaks the Language Server Protocol over stdio: diagnostics
-as you type (debounced, cached parses), completion, signature help,
-inlay hints, and quick-fix actions that insert suppression comments.
+as you type (debounced, cached parses), inlay hints, and quick-fix
+actions that insert suppression comments.
 
 Diagnostics cover the whole project, exactly as `ry check` does. The
 interactive features above are scoped to **open documents** — they do not

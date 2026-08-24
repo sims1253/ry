@@ -1,7 +1,7 @@
 # expect: RY102, RY103, RY105
-# Plan 31 W18 recall rules, reproduced from `docs/plans/repro/31/fn.R`.
-# Each line is the minimal form of a real defect the 62-package Posit corpus
-# audit found and 0.8.0 missed entirely (the repro file checked clean).
+# Plan 31 W18 recall rules: each line is the minimal form of a real defect
+# the 62-package Posit corpus audit found and 0.8.0 missed entirely.
+#
 #
 # A1 — pak R/pak-sitrep-data.R:41. `names()` of this list is c("ref", "", "sha").
 l <- list(ref = "a", "github-ref" <- "b", sha = "c")

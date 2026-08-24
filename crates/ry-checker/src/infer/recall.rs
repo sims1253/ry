@@ -6,7 +6,6 @@
 //! *shape* of an expression rather than by the inferred type of a value, so
 //! their false-positive surface is bounded by the syntax they match.
 //!
-//! `docs/plans/repro/31/fn.R` holds one reproduction per rule and
 //! `tests/plan31_recall_rules.rs` pins both the positive and the negative
 //! direction of each.
 //!

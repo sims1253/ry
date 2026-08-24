@@ -256,25 +256,25 @@ expression: snapshots
       severity: warning
       span:
         column: 21
-        end: 377
+        end: 302
         line: 6
-        start: 358
+        start: 283
     - code: RY103
       message: "`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `!inherits(df[[1]], t)`"
       severity: warning
       span:
         column: 21
-        end: 605
+        end: 530
         line: 10
-        start: 586
+        start: 511
     - code: RY105
       message: "`u_dl` is a length-1 double, so `length(...)` is 1 here and this zero-length guard is always TRUE"
       severity: warning
       span:
         column: 13
-        end: 1430
+        end: 1355
         line: 30
-        start: 1414
+        start: 1339
   fixture: err_plan31_recall_repro.R
 - diagnostics:
     - code: RY080

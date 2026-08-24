@@ -207,6 +207,22 @@ fn discarded_value_expression(expression: &Expr) -> bool {
 // statically indistinguishable from a legitimate loop-carried binding.
 
 impl Checker {
+    /// The unified statement walker. Handles both diagnostic emission
+    /// (gated by `self.discarding`) and return-type collection (when
+    /// `returns` is `Some`).
+    ///
+    /// Callers:
+    ///   * `check_stmt` (pass 3): discarding=false, returns=None.
+    ///   * `refine_fn_return` (pass 2 fixpoint): discarding=true (set by
+    ///     caller), returns=Some.
+    ///   * `build_function_signature` (closure literals, both passes):
+    ///     discarding=true (set by caller), returns=Some.
+    ///
+    /// Approximations:
+    ///   * `if` branches use `apply_narrowing` + separate child scopes
+    ///     (then/else); bindings leak into subsequent statements.
+    ///   * Loop bodies are walked once (not to fixpoint).
+    ///   * Indexed assignment (`x[i] <- v`) does not update the scope.
     pub(crate) fn walk_stmt(
         &mut self,
         s: &Stmt,

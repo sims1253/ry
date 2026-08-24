@@ -1,10 +1,7 @@
 //! Unified diagnostics query — one entry point for the CLI.
 //!
-//! P38-W8: This module encapsulates the Project coordination that was
-//! previously duplicated between ry-cli and ry-lsp. The caller supplies
-//! parsed files and workspace context; the module returns diagnostics.
-//! ry-lsp since moved to coordinating `ry_checker::Project` directly, so
-//! only ry-cli consumes this today.
+//! The caller supplies parsed files and workspace context; the module
+//! returns diagnostics.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -36,12 +33,10 @@ pub fn check_project(input: CheckInput) -> CheckOutput {
         &input.user_stubs,
     );
 
-    // Add all files.
     for (path, _, file) in &input.files {
         project.add_file(path.clone(), (**file).clone());
     }
 
-    // Run the checker.
     let diagnostics = project.check();
 
     CheckOutput { diagnostics }

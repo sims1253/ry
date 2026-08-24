@@ -241,7 +241,6 @@ impl Project {
         self.mark_all_dirty();
     }
 
-    /// Equality-aware: reinstalling the value already in place is a no-op.
     pub fn set_bare_loaded(&mut self, loaded: HashMap<String, HashSet<String>>) {
         if self.bare_loaded == loaded {
             return;
@@ -290,7 +289,6 @@ impl Project {
     /// Declare per-file names provided by project metadata, such as
     /// `NAMESPACE`'s `importFrom()` directives. Per-file scoping prevents an
     /// import in one checked package from leaking into an unrelated package.
-    /// Equality-aware: reinstalling the value already in place is a no-op.
     pub fn set_external_bindings(&mut self, bindings: HashMap<String, HashSet<String>>) {
         if self.external_bindings == bindings {
             return;
@@ -299,7 +297,6 @@ impl Project {
         self.mark_all_dirty();
     }
 
-    /// Equality-aware: reinstalling the value already in place is a no-op.
     pub fn set_imported_from(&mut self, imports: HashMap<String, HashMap<String, String>>) {
         if self.imported_from == imports {
             return;
@@ -308,7 +305,6 @@ impl Project {
         self.mark_all_dirty();
     }
 
-    /// Equality-aware: reinstalling the value already in place is a no-op.
     pub fn set_external_s3_methods(&mut self, methods: HashMap<String, HashSet<(String, String)>>) {
         if self.external_s3_methods == methods {
             return;
@@ -317,7 +313,6 @@ impl Project {
         self.mark_all_dirty();
     }
 
-    /// Equality-aware: reinstalling the value already in place is a no-op.
     pub fn set_load_bindings(
         &mut self,
         bindings: HashMap<String, HashMap<usize, HashSet<String>>>,
@@ -768,7 +763,6 @@ impl Project {
                 .collect();
         }
 
-        // Build a lookup from emitted results.
         let mut emitted_map: HashMap<usize, (String, Vec<Diagnostic>)> = per_file
             .into_iter()
             .map(|(i, p, d, _)| (i, (p, d)))

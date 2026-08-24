@@ -1388,19 +1388,6 @@ impl Checker {
     pub fn set_load_bindings(&mut self, bindings: HashMap<usize, HashSet<String>>) {
         self.load_bindings = bindings;
     }
-
-    // Resolve a function signature by name, consulting (in order):
-    //   1. a `pkg::fun` / `pkg:::fun` qualified name -- looked up in
-    //      `load_package(pkg)` directly, bypassing base and loaded
-    //      packages (a qualified call is an explicit reference);
-    //   2. the base typeshed (`self.typeshed`);
-    //   3. each loaded package that ships signatures (reverse load
-    //      order so the most-recently-loaded package wins, mirroring
-    //      R's search path).
-    //
-    // Returns the signature and the resolved call name (the bare
-    // function name, suitable for `apply_sig`'s slot resolution).
-    // Returns `None` when no package knows the name.
 }
 
 fn embedded_base() -> Arc<Typeshed> {

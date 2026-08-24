@@ -727,23 +727,8 @@ pub(crate) fn parse_class_literal(e: &Expr) -> ClassLiteral {
     }
 }
 
-/// Build a `ColumnSchema` from a `list(...)` / `data.frame(...)` argument
-/// Match call arguments to function parameters using R's standard
-/// argument matching rules. Returns a vector indexed by parameter
-/// position, where each entry is the type of the argument bound to
-/// that parameter (or `RType::unknown()` if no argument was provided).
-///
-/// Algorithm (simplified v1):
-///   1. Exact name match: a named arg `x = ...` binds to the parameter
-///      named `x` if one exists.
-///   2. Positional fill: unmatched positional args fill remaining
-///      unmatched parameters in declaration order.
-///   3. `...` in the parameter list absorbs any extra args; those are
-///      inaccessible by index and get `UNKNOWN`.
-///
-/// Partial matching (R's prefix-based arg matching) is intentionally
-/// not implemented; it's rarely used in modern R code and adds
-/// significant complexity.
+/// Walk `stmts` collecting calls inside `caller`'s body that forward its
+/// `params` to nested calls.
 pub(crate) fn collect_forwarded_calls_in_stmts(
     caller: &str,
     params: &[Param],

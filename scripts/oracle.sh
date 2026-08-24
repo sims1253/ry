@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run the R oracle suite (PLAN Phase 7 item 2).
+# Run the R oracle suite (see CONTRIBUTING.md, "Build and test gate").
 #
 # The oracle tests are #[ignore]'d by default so the standard CI test
 # job does not require R to be installed. This script runs them when

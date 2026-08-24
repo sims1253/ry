@@ -147,6 +147,17 @@ impl Checker {
         None
     }
 
+    /// Resolve a function signature by name, consulting (in order):
+    ///   1. a `pkg::fun` / `pkg:::fun` qualified name -- looked up in
+    ///      `package_typeshed(pkg)` directly, bypassing base and loaded
+    ///      packages (a qualified call is an explicit reference);
+    ///   2. an unqualified name with a recorded `importFrom` binding --
+    ///      resolved against that package's typeshed (exact provenance);
+    ///   3. the base typeshed (`self.typeshed`);
+    ///   4. each loaded package that ships signatures, in a fixed
+    ///      deterministic priority order approximating R's search path.
+    ///
+    /// Returns the signature; `None` when no package knows the name.
     pub(crate) fn resolve_typeshed_sig(&self, name: &str) -> Option<FunctionSig> {
         // Qualified call: explicit package reference.
         if let Some((pkg_raw, fun)) = name.rsplit_once("::") {
@@ -472,13 +483,6 @@ impl Checker {
             );
         }
     }
-
-    // Pass 1: walk top-level (and only top-level) statements, collecting
-    // function definitions of the form `name <- function(...) body` into
-    // the FnTable. Nested function definitions are recorded only if they
-    // are themselves bound to a name at their enclosing scope; this is
-    // sufficient for v2 since R-style nested defs typically close over
-    // locals and are tricky to type without proper closure analysis.
 }
 
 fn has_schema_semantics(signature: &FunctionSig) -> bool {

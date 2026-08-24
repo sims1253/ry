@@ -56,8 +56,8 @@ pub(super) struct State {
     versions: HashMap<String, i32>,
     /// path -> (version, parsed SourceFile). Populated lazily by the
     /// request handlers and invalidated by `update_doc`. Reading the
-    /// cached parse lets every handler avoid re-parsing on each request
-    ///. `SourceFile` is `Send`; `RParser` is NOT, so the
+    /// cached parse lets every handler avoid re-parsing on each request.
+    /// `SourceFile` is `Send`; `RParser` is NOT, so the
     /// parser is constructed per request and only the result is cached.
     parsed: HashMap<String, (i32, Arc<SourceFile>)>,
     /// path -> (version, top-level Scope from `check_with_scope`).
@@ -85,8 +85,7 @@ pub(super) struct State {
     /// Counts every actual parse (`RParser::parse`) performed by
     /// `parsed_file` -- i.e. every cache MISS. The E1 acceptance test
     /// asserts that editing one file in a multi-file workspace parses
-    /// only that file, so this counter must NOT rise for cache hits
-    ///.
+    /// only that file, so this counter must NOT rise for cache hits.
     #[cfg(test)]
     pub(super) parse_count: Arc<std::sync::atomic::AtomicUsize>,
 
@@ -444,11 +443,9 @@ impl State {
         self.parse_count.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// P36-W4 (#53): Return the cached tree-sitter `Tree` for `path`
-    /// only when its recorded generation matches the current document
-    /// version. A stale tree from a superseded generation is never
-    /// served — the cache read enforces the same invariant as the
-    /// write (`store_tree`).
+    /// Return the cached tree-sitter `Tree` for `path`, but only when
+    /// its recorded version matches the current document version (the
+    /// read half of `store_tree`'s write-side invariant).
     fn tree_for(&self, path: &str) -> Option<ry_core::Tree> {
         let current_version = self.versions.get(path).copied()?;
         let (tree_version, tree) = self.trees.get(path)?;
@@ -459,12 +456,11 @@ impl State {
         }
     }
 
-    /// P36-W4 (#53): Store a tree-sitter `Tree` for `path`, tagged with
-    /// `version`. The tree replaces the cache entry only if `version`
-    /// still matches the current document version. A stale parse whose
-    /// version was superseded by a concurrent edit is dropped rather
-    /// than overwriting the current tree, so no cached tree can ever
-    /// be served for a different document generation.
+    /// Store a tree-sitter `Tree` for `path`, tagged with `version`.
+    /// The entry is written only if `version` still matches the current
+    /// document version, so a parse superseded by a concurrent edit is
+    /// dropped and no cached tree is ever served for a different
+    /// document generation.
     fn store_tree(&mut self, path: &str, version: i32, tree: ry_core::Tree) {
         if self.versions.get(path).copied() == Some(version) {
             self.trees.insert(path.to_string(), (version, tree));
@@ -509,15 +505,11 @@ impl State {
 
     // --- S2: effective config computation ---
 
-    /// Compute the effective `SeverityFilter` from editor settings
-    /// merged over `ry.toml`. Editor settings take precedence: if the
-    /// editor provides an `ignore`/`error`/`warn` list, it replaces
-    /// the `ry.toml` value; otherwise the `ry.toml` value (which may
-    /// itself be the empty default) is used.
-    /// Merge editor lint settings over a given `ry.toml` config.
-    /// `settings` provides per-folder editor values (P36-W2a/#44);
-    /// when `None`, the server-wide `folder_settings` is used as fallback.
-    /// Test helper kept for future filter tests.
+    /// Merge editor lint settings over a given `ry.toml` config: for
+    /// each `ignore`/`error`/`warn` field, an editor-provided list
+    /// replaces the config value; `settings` supplies per-folder editor
+    /// values (P36-W2a/#44), falling back to the server-wide
+    /// `folder_settings`. Test-only.
     #[cfg(test)]
     #[allow(dead_code)]
     pub(super) fn merge_filter(
@@ -802,18 +794,11 @@ impl LanguageServer for Backend {
                     // tree-sitter InputEdit for incremental reparse.
                     TextDocumentSyncKind::INCREMENTAL,
                 )),
-                // Enable `textDocument/inlayHint` so the client can
-                // request inline "ghost text" annotations showing the
-                // inferred type of each binding. For a checker with no
-                // annotation syntax (like R), this is the primary way
-                // users see the checker's work. The handler is
-                // `inlay_hint` below.
+                // Inlay hints are the primary way users see the checker's
+                // inference: R has no annotation syntax to attach types to.
                 inlay_hint_provider: Some(OneOf::Left(true)),
-                // Enable `textDocument/codeAction` so editors can offer
-                // quick fixes for diagnostics. The handler is
-                // `code_action` below; it offers per-diagnostic
-                // `# ry: ignore[CODE]` line-suppression comments and a
-                // file-level `# ry: ignore-file` action.
+                // Quick fixes that insert `# ry: ignore[CODE]` line
+                // suppressions, plus a file-level `# ry: ignore-file` action.
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 // S4: Advertise workspace folder support so clients send
                 // multi-root workspace folders and change notifications.
@@ -1444,12 +1429,12 @@ impl Backend {
                     build_input_edit_from_span(&old_text, start_byte, end_byte, &change.text);
                 self.update_doc(path.to_string(), new_text, version).await;
 
-                // Build InputEdit and do incremental parse.
+                // Apply the edit to the old tree so the next parse is
+                // incremental.
                 let mut tree_mut = old_tree;
                 if let Some(ref mut tree) = tree_mut {
                     tree.edit(&edit);
                 }
-                // Store the tree for next time so the next parse is incremental.
                 let mut state = self.state.lock().await;
                 if let Some(tree) = tree_mut {
                     state.store_tree(path, version, tree);
@@ -1488,16 +1473,14 @@ impl Backend {
         state.scopes.remove(&path);
     }
 
-    /// Return the parsed `SourceFile` for `path`, reusing the cached
-    /// parse when its version matches the latest known version. The
-    /// cache is read + repopulated under the state lock; parsing itself
-    /// (which needs a non-`Send` `RParser`) happens after releasing the
     /// Return the current AST for `path` together with the exact source
     /// text it was parsed from. Pairing the two is atomic: handlers use
     /// the text for byte-offset / UTF-16 conversions that must match the
     /// AST's span offsets, so a concurrent `didChange` racing the parse
     /// can never yield a stale text applied to a fresher AST (or vice
-    /// versa).
+    /// versa). The parse cache is read and repopulated under the state
+    /// lock; parsing itself (which needs a non-`Send` `RParser`) happens
+    /// outside it.
     ///
     /// Returns `None` when the path is not an open document or parsing
     /// fails.
@@ -1526,9 +1509,8 @@ impl Backend {
                 (Some(t), Some(v)) => (t, v),
                 _ => return None,
             };
-            // W6: Use incremental parse when we have an old tree.
-            // P36-W4 (#53): tree_for returns the cached tree only when its
-            // recorded generation matches the current document version.
+            // Incremental reparse when an old tree exists (`tree_for`
+            // already enforces the version match).
             let old_tree = {
                 let state = self.state.lock().await;
                 state.tree_for(path)
@@ -1548,9 +1530,7 @@ impl Backend {
             let mut parser = RParser::new().ok()?;
             let file = if let Some(tree) = old_tree {
                 let (parsed, new_tree) = parser.parse_with_tree(path, &text, Some(&tree)).ok()?;
-                // P36-W4 (#53): Store the tree only if the version still
-                // matches. A parse whose version was superseded by a
-                // concurrent edit must not overwrite the current tree.
+                // Store only if the version still matches (`store_tree`).
                 {
                     let mut state = self.state.lock().await;
                     state.store_tree(path, version, new_tree);

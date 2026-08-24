@@ -546,22 +546,6 @@ impl Checker {
             }
         }
     }
-
-    // Resolve the type of a subset/extract expression given the base
-    // type, the kind of index (`[`, `[[`, `$`), and the (already
-    // lowered) argument list.
-    //
-    // v1 column-access semantics:
-    // * `df$col` (`Dollar`): the column name lives on `args[0].name`.
-    //   If `bt` has a column schema, return that column's type; if the
-    //   name isn't in the schema, emit RY060. Otherwise (no schema) we
-    //   conservatively return a length-1 value of `bt`'s mode.
-    // * `df[["col"]]` (`Double`): same idea, but the name comes from a
-    //   string-literal positional argument. Non-string-literal args
-    //   fall through to the conservative length-1 default.
-    // * `df[i]` or `df[i, j]` (`Single`): keep the existing opaque
-    //   behavior (returns `bt`). Subsetting semantics are complex and
-    //   out of scope for v1.
 }
 
 fn semantic_return_length(

@@ -476,23 +476,6 @@ impl Checker {
         self.deferred_captures.pop();
         self.inferring.pop();
     }
-
-    // The unified statement walker. Handles BOTH diagnostic emission (gated by
-    // `self.discarding`) AND return-type collection (when `returns` is
-    // `Some`).
-    //
-    // Callers:
-    //   * `check_stmt` (pass 3): discarding=false, returns=None.
-    //   * `refine_fn_return` (pass 2 fixpoint): discarding=true (set by
-    //     caller), returns=Some.
-    //   * `build_function_signature` (closure literals, both passes):
-    //     discarding=true (set by caller), returns=Some.
-    //
-    // Approximations (documented):
-    //   * `if` branches use `apply_narrowing` + separate child scopes
-    //     (then/else); bindings leak into subsequent statements.
-    //   * Loop bodies are walked once (not to fixpoint).
-    //   * Indexed assignment (`x[i] <- v`) does not update the scope.
 }
 
 /// Whether `parameter` is captured without evaluation by this function.

@@ -31,6 +31,20 @@ fn dollar_receiver_mode_description(receiver: &RType) -> String {
 }
 
 impl Checker {
+    /// Resolve the type of a subset/extract expression given the base
+    /// type, the kind of index (`[`, `[[`, `$`), and the (already
+    /// lowered) argument list.
+    ///
+    /// * `df$col` (`Dollar`): the column name lives on `args[0].name`.
+    ///   With a column schema, return that column's type (RY060 on a
+    ///   miss); without one, degrade conservatively: opaque for
+    ///   list-like bases, else a length-1 value of `bt`'s mode.
+    /// * `df[["col"]]` (`Double`): same idea, but the name comes from a
+    ///   string-literal positional argument. Non-string-literal args
+    ///   fall through to the conservative default.
+    /// * `df[i]` or `df[i, j]` (`Single`): two-index selection on a
+    ///   schema'd frame resolves the column's type (`drop = FALSE`
+    ///   yields a one-column frame); otherwise returns `bt`.
     pub(crate) fn infer_index(
         &mut self,
         bt: RType,
@@ -407,15 +421,6 @@ fn literal_negative_exclusion_length(base: Length, expr: &Expr) -> Option<Length
     })
 }
 
-/// Apply a `SeverityFilter` to a vec of diagnostics in place. Each
-/// diagnostic's severity is replaced by the filter's effective
-/// severity for its code; diagnostics for codes the filter suppresses
-/// are dropped entirely.
-///
-/// Both `Checker::apply_filter`, `Project::apply_filter`, and the CLI
-/// (for per-file diagnostic vecs produced by `Project::check`) call
-/// this. Keeping the logic here avoids duplicating the resolution
-/// rules.
 /// Quick literal-only inference for function parameter defaults. We
 /// don't have a scope yet at the point of `record_fn`, but for typed
 /// defaults (`x = 1L`, `trim = 0`, `verbose = TRUE`) the literal

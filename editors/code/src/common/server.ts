@@ -30,11 +30,8 @@ export type InitializationOptions = {
 };
 
 /**
- * Build the `initializationOptions` to send at `initialize`.
- *
- * Returns the global settings as both the single folder entry and the
- * global fallback. E3's `getExtensionSettings` will replace this with a
- * proper per-workspace-folder array (consumed by S4 multi-root support).
+ * Build the `initializationOptions` to send at `initialize`: the
+ * per-folder array from `getExtensionSettings`, plus the global fallback.
  */
 export function getInitializationOptions(
   namespace: string,

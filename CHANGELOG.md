@@ -137,6 +137,15 @@ All notable changes to ry are documented in this file.
 
 ### Changed
 
+- **Ecosystem CI validates `--check` against a cleaned state (#50)**: the
+  PR-time `ecosystem` job removes gitignored `ecosystem/reports/*.full.txt`
+  reports before the snapshot check, and the drift-detection test now plants
+  a poisoned `.full.txt` sentinel before its first `--check`, so a
+  drift-check change that starts comparing gitignored baselines fails on any
+  machine rather than surfacing only as a CI failure. The schedule-only
+  `clean-checkout` job, which delivered neither protection at merge or
+  release time, is removed; the release runbook points at the PR-time job's
+  fresh-checkout build instead.
 - **Documentation truth pass (#83)**: the README rule table lists every
   registered rule again — RY003, RY102, RY103, and RY105 had silently
   disappeared from the hand-maintained table — with a note that RY003 is

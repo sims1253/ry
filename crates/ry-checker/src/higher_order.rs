@@ -371,7 +371,7 @@ impl Checker {
     /// Infer the return type of a single callback invocation, given the
     /// argument types the higher-order function will pass to it.
     ///
-    /// Covers three callback forms:
+    /// Covers four callback forms:
     ///   * `Expr::Function { params, body }` (anonymous literal): walk
     ///     the body with a scope containing the params bound to the
     ///     element types, collecting returns. Bounded by

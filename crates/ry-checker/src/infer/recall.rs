@@ -7,7 +7,7 @@
 //! their false-positive surface is bounded by the syntax they match.
 //!
 //! `tests/plan31_recall_rules.rs` pins both the positive and the negative
-//! direction of each.
+//! direction of each rule.
 //!
 //! Two of the plan's sketches are deliberately **not** implemented.
 //!

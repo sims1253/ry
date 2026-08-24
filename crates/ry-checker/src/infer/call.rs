@@ -1388,27 +1388,6 @@ impl Checker {
         let _ = span;
         base_type
     }
-
-    // Handle R's Non-Standard Evaluation verbs (`subset`, `with`,
-    // `within`, `transform`). These evaluate their expression
-    // arguments in an augmented scope where the data frame's columns
-    // are bound as names, so `subset(df, cyl == 4)` resolves `cyl`
-    // against `df`'s column schema rather than the enclosing scope.
-    //
-    // Returns `Some(t)` when the call was recognized as an NSE verb
-    // (the caller uses `t` verbatim and skips the regular arg-inference
-    // path). Returns `None` for non-NSE names so `infer_call` falls
-    // through to the regular path.
-    //
-    // Behavior when the first arg has no column schema: we cannot
-    // enumerate the columns, so the expression arguments cannot be
-    // type-checked meaningfully. We still infer them against the bare
-    // scope (no column augmentation) so any genuinely unbound name in
-    // the expression still emits RY010; this mirrors the conservative
-    // approach for unknown data throughout the checker.
-    //
-    // The augmented scope is local to this call: column bindings must
-    // NOT leak back into the enclosing scope (we operate on a clone).
 }
 
 /// Whether an `R6Class()` call opts out of R6's portable evaluation model.

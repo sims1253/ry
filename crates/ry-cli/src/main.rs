@@ -240,12 +240,8 @@ enum TypeshedCmd {
 }
 
 fn main() -> Result<ExitCode> {
-    // We parse into the typed `Cli` for ergonomic access to argument
-    // values, but we ALSO retain the underlying `ArgMatches` so we can
-    // distinguish "the user passed --error-on-warning on the command
-    // line" from "the default value of false". That distinction is what
-    // lets a `ry.toml` `error-on-warning = true` take effect when the
-    // user runs a bare `ry check` (no flags).
+    // `ArgMatches` is kept alongside the typed `Cli` so `flag_set` can
+    // tell a user-passed flag from its clap default (see `flag_set`).
     //
     // clap derive's `from_arg_matches` is infallible for our schema
     // (every arg has a default or is optional); the unwrap is safe.
@@ -524,10 +520,8 @@ fn run_check(
         }
     };
 
-    // Determine which scalar CLI flags were explicitly set on the
-    // command line. `value_source == CommandLine` distinguishes a
-    // user-provided value from the clap default. When the CLI did NOT
-    // set a scalar, we forward `None` so the config file's value wins.
+    // Forward `None` for scalars the CLI did not set explicitly, so the
+    // config file's value wins.
     let m = check_matches;
     let cli_error_on_warning = flag_set(m, "error_on_warning").then_some(error_on_warning);
     let cli_exit_zero = flag_set(m, "exit_zero").then_some(exit_zero);
@@ -602,7 +596,6 @@ fn run_check(
         return Ok(ExitCode::SUCCESS);
     }
 
-    // Run the initial check.
     let result = run_check_once(
         &all_paths,
         &filter,

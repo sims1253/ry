@@ -71,7 +71,6 @@ Never add a function name you have not verified against R.
 `scripts/gen_typeshed.R <pkg>` drafts a stub file from a package's
 exports for hand-refinement.
 
-
 ## Editor extensions
 
 The VS Code / Positron extension lives in `editors/code/`. It uses
@@ -104,8 +103,8 @@ Bundling with esbuild avoids this.
 ### Zed extension
 
 The Zed extension lives in `editors/zed/`. It has its own `Cargo.lock`
-and is excluded from the root workspace (see R1 in the plan) because
-`zed_extension_api` is not held to ry's MSRV.
+and is excluded from the root workspace because `zed_extension_api` is
+not held to ry's MSRV.
 
 ```bash
 cargo build --manifest-path editors/zed/Cargo.toml

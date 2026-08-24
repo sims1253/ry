@@ -185,11 +185,10 @@ at column candidates.
 ## Dumping inferred types
 
 `ry dump-types` is the non-interactive counterpart of the LSP's inline
-type hints: it
-runs one analysis pass (the same pass `ry check` runs, over the same
-package-aware environment) and prints every lexical scope of the
-requested files as JSON on stdout. Downstream tooling can query which
-bindings a scope holds and with what inferred types, without re-running
+type hints: it runs one analysis pass (the same pass `ry check` runs,
+over the same package-aware environment) and prints every lexical scope
+of the requested files as JSON on stdout, so downstream tooling can
+query a scope's bindings and their inferred types without re-running
 the checker per position.
 
 ``` bash

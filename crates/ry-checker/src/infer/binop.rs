@@ -351,27 +351,6 @@ impl Checker {
             self.emit(Severity::Warning, span, "RY032", message);
         }
     }
-
-    // Desugar `lhs %>% rhs` (and `lhs |> rhs`, `lhs %<>% rhs`) into a
-    // call to `rhs` with `lhs` injected into the argument list.
-    //
-    // Magrittr `%>%` semantics: if `rhs` is a call, prepend `lhs` as
-    // the first positional argument - unless one of the args is the
-    // bare placeholder `.` (or base-R `_`), in which case the first
-    // such occurrence is replaced with `lhs`. Bare `rhs` (e.g. `x %>% abs`)
-    // becomes a one-arg call.
-    //
-    // Data pronoun: when `rhs` is an index expression whose base is
-    // the magrittr `.` pronoun (`df %>% .$col`, `df %>% .[i]`,
-    // `df %>% .[[i]]`), the `.` resolves to the piped LHS value and
-    // the index is inferred against `lhs`'s type. A bare `x %>% .`
-    // returns the LHS value itself.
-    //
-    // `%<>%` (assignment pipe) shares the result type with `%>%` at v1.
-    // The assignment side-effect (`x <- ...`) is handled by the caller
-    // when it appears in an `Assign` statement; for a bare binop we
-    // cannot reassign without a target expression, so we leave that to
-    // a future pass.
 }
 
 /// Recognize the high-confidence parameter guard patterns found in package

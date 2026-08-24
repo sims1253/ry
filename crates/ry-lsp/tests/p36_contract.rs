@@ -12,19 +12,6 @@
 //! contract is "LSP published diagnostics equal `ry check` run independently
 //! in the same root."
 //!
-//! ## Plan 35 green prerequisites
-//!
-//! Before authoring these red cases, Plan 35's green gates were re-run and
-//! confirmed passing:
-//!
-//! - **Package metadata parity**: `package_import_from_value_position_is_clean_in_both_modes`
-//!   and the `complete-package` rows in `cli_and_run_with_publish_the_same_single_root_matrix`.
-//! - **File eligibility**: the single-root rows in the same matrix plus
-//!   `excluded-influence`.
-//! - **Checker parameter-metadata dirty propagation (issue #52)**:
-//!   `parameter_signature_change_reemits_transitive_callers` in
-//!   `ry-checker/tests/project.rs`.
-//!
 //! No test below adds package-import or filtering differences to `normalise()`.
 
 use ry_testkit::{

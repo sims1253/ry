@@ -7,9 +7,11 @@ The unmodified starting tree was measured at audited commit
 from that commit before the corpus run (rather than trusting a pre-existing
 `target/release/ry`). The full 62-package corpus was run hermetically with
 `RY_NO_INSTALLED_LIBRARIES=1` using `ecosystem/posit-packages.txt` and
-reconciled identity-by-identity with `docs/corpus/posit-0.8.0.json`.
+reconciled identity-by-identity against the then-committed 0.8.0
+audit-transcript ledger (since removed as a generated artifact).
 
-The measured identities are committed in `posit-plan34-baseline.json`; its
+The measured identities were captured in a baseline ledger snapshot
+(since removed as a generated artifact; recoverable from git history); its
 source-report SHA-256 is `602fe749c12cfb2217d96fdb82a93634907a4f1d4f9507a27abb51d5209fb7e7`.
 
 ## Measurement
@@ -157,6 +159,6 @@ that a bare unknown-length parameter remains quiet, while a known length greater
 than one diagnoses.
 
 Both the fast (35-package) and full (62-package) hermetic corpus runs reconciled
-against `posit-plan34-baseline.json` after the fix. The before/after diagnostic
+against the Plan 34 baseline ledger after the fix. The before/after diagnostic
 identity delta is exactly zero: 729 diagnostics overall, with every baseline
 identity retained and no unowned identity.

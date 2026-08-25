@@ -892,24 +892,23 @@ fn parse_typeshed(json: &str, path: &Path) -> Result<Typeshed, TypeshedError> {
     parse_typeshed_with_order(json, path).map(|(typeshed, _)| typeshed)
 }
 
-/// Load the base typeshed once and cache it for the life of the process.
+/// Load the base typeshed and cache it for the life of the process.
 ///
-/// The base typeshed is a compile-time-embedded 61KB JSON document that
-/// never changes after startup. Parsing it on every `Checker::new` (which
-/// happens once per file in a `Project`, and once per keystroke in the
-/// LSP) is pure waste. This caches the parsed value in a `OnceLock` so the
-/// JSON is deserialized exactly once; subsequent callers receive a
-/// reference to the cached `Typeshed`.
+/// The base typeshed is compile-time-embedded and never changes, so
+/// parsing it on every `Checker::new` (once per file in a `Project`, and
+/// once per keystroke in the LSP) is wasted work. This caches the parsed
+/// value in a `OnceLock`; concurrent first callers may each parse, but
+/// all receive the same cached `Typeshed`.
 ///
 /// Callers that mutate the typeshed (none do today, but the API allows it)
 /// should `.clone()` the returned reference rather than mutating the cache.
 pub fn load_base_cached() -> Result<&'static Typeshed, TypeshedError> {
     static CACHE: std::sync::OnceLock<Typeshed> = std::sync::OnceLock::new();
     // `get_or_try_init` is still unstable, so initialize eagerly via
-    // `get_or_init`. The base typeshed is a compile-time-embedded JSON
-    // document that always parses; a failure here is a build-time data
-    // bug, not a runtime condition, so panicking during first access is
-    // acceptable (and matches the existing `load_base().expect()` callers).
+    // `get_or_init`. The embedded JSON always parses; a failure here is
+    // a build-time data bug, not a runtime condition, so panicking
+    // during first access is acceptable (and matches the existing
+    // `load_base().expect()` callers).
     if let Some(cached) = CACHE.get() {
         return Ok(cached);
     }
@@ -928,15 +927,8 @@ pub fn load_base_cached() -> Result<&'static Typeshed, TypeshedError> {
 
 /// Load a non-base package's typeshed. Returns `None` for an unknown
 /// package name (the checker treats that as "no signatures available",
-/// i.e. opaque). Known packages and their JSON sources:
-///
-/// - `dplyr` -> `data/dplyr.json` (bare function names).
-/// - `purrr` -> `data/purrr.json` (bare function names).
-/// - `mirai` -> `data/mirai.json` (bare function names).
-/// - `survival` -> `data/survival.json` (bare function names).
-/// - `testthat` -> `data/testthat.json` (bare function names).
-/// - `brms`, `posterior`, `loo`, `bayesplot`, `cmdstanr` each map to a
-///   separate vendored package file with bare function names.
+/// i.e. opaque). The known packages are those in `PACKAGE_SPECS`; each
+/// maps one-to-one to a vendored JSON file.
 ///
 /// Results are cached for the life of the process (the JSON documents
 /// are compile-time-embedded and never change), so repeated lookups are

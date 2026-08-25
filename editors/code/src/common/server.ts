@@ -53,11 +53,9 @@ export type ServerState = {
 /**
  * Construct and start the language server client.
  *
- * P37-W2: `binaryPath` is the already-resolved binary path from
- * `extension.ts`, which called `findRyBinaryPath()` with the correct
- * `isUntrusted` flag. The server no longer resolves its own binary —
- * eliminating the split-brain where a different binary could be
- * version-gated/displayed vs. launched.
+ * `binaryPath` must be pre-resolved by the caller via
+ * `findRyBinaryPath()` (which honors workspace trust) so the launched
+ * binary is the same one that was version-gated and displayed.
  */
 export async function startServer(
   namespace: string,
@@ -70,7 +68,6 @@ export async function startServer(
     `Initialization options: ${JSON.stringify(initializationOptions, null, 4)}`,
   );
 
-  // M10: Pass --log-level to the server if configured.
   const logLevel = getConfiguration(namespace).get<string>("logLevel");
   const serverArgs: string[] = logLevel
     ? [RY_SERVER_SUBCOMMAND, "--log-level", logLevel]

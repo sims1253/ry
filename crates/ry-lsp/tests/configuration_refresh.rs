@@ -105,9 +105,7 @@ fn did_change_configuration_refreshes_cached_filters() {
             .await
             .unwrap();
 
-        // The recomputed cached min_confidence must now suppress RY090. Without
-        // the refresh the cached value is stale and RY090 persists until a
-        // filesystem rebuild or server restart.
+        // The recomputed min_confidence must suppress RY090.
         assert_eq!(
             count_code(&after, "RY090"),
             0,
@@ -155,8 +153,7 @@ async fn spawn_pull_session(root: &Path) -> (Session, tokio::task::JoinHandle<()
 fn did_change_configuration_pull_applies_per_folder_settings() {
     run(async {
         let fixture = FixtureProject::empty().unwrap();
-        // RY090 (partial argument name) is emitted at Medium confidence by
-        // default, so raising `minConfidence` to "high" suppresses it.
+        // Same RY090/min-confidence setup as the test above.
         fixture
             .write_file("R/diag.R", "z <- length(xx = 1L)\n")
             .unwrap();

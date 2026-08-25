@@ -2037,7 +2037,7 @@ fn parse_standalone_comment_applies_to_next_line() {
     let src = "# ry: ignore\nx <- bad\n";
     let supps = parse_suppressions(src);
     assert_eq!(supps.len(), 1);
-    assert_eq!(supps[0].line, 1); // next line
+    assert_eq!(supps[0].line, 1);
 }
 
 #[test]
@@ -3065,9 +3065,6 @@ fn structure_call_sets_class() {
     let mut c = Checker::new("test.R");
     c.check(&f);
     let diags = c.take_diagnostics();
-    // Without `Summary.foo` (or `Summary.default`), RY050 should fire - proving the class was
-    // attached. (If `structure` had failed to set the class, the
-    // value would be classless and no RY050 would appear.)
     assert!(
         diags.iter().any(|d| d.code == "RY050"),
         "expected RY050 proving class was attached, got {:?}",
@@ -3091,7 +3088,6 @@ fn mtcars_mpg_column_infers_double() {
         x
     );
     assert_eq!(x.length, Length::Known(32), "mpg has 32 rows");
-    // Behavioral check: arithmetic on the inferred double works.
     let diags = check("df <- mtcars\nx <- df$mpg\ny <- x + 1L\n");
     assert!(
         diags.iter().all(|d| d.code != "RY040"),
@@ -3706,8 +3702,7 @@ fn closure_capture_resolves_outer_binding() {
         "add5(3) must resolve to double, got {:?}",
         sig.return_type
     );
-    // Behavioral check: using the result arithmetically with a
-    // character operand must fire RY040.
+    // Behavioral check: RY040 on v + "x".
     let diags = check(
         "make_adder <- function(x = 0) {\n\
              \x20 function(y = 0) { x + y }\n\
@@ -3747,7 +3742,6 @@ fn nested_function_definition_visible_in_outer_body() {
         "h() must resolve to integer, got {:?}",
         sig.return_type
     );
-    // Behavioral check.
     let diags = check(
         "f <- function() {\n\
              \x20 g <- function() { 1L }\n\

@@ -1,6 +1,6 @@
 /**
- * Command implementations — `ry.restart`, `ry.showLogs`,
- * `ry.showServerLogs`, `ry.debugInformation`, `ry.explainRule`.
+ * Command implementations — `ry.showLogs`, `ry.showServerLogs`,
+ * `ry.debugInformation`, `ry.explainRule`.
  */
 
 import * as vscode from "vscode";
@@ -8,13 +8,6 @@ import * as cp from "child_process";
 import { Logger } from "./logger";
 import { ResolvedBinary } from "./binary";
 import { type ISettings } from "./settings";
-
-export async function restartCommand(): Promise<void> {
-  // The actual restart is handled by the extension's restart
-  // orchestration; this command just triggers it via the
-  // requestRestart callback set up in extension.ts.
-  await vscode.commands.executeCommand("_ry.internalRestart");
-}
 
 export function showLogsCommand(logger: Logger): void {
   logger.channel.show();

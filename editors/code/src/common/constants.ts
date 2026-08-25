@@ -39,7 +39,7 @@ export const RY_BINARY_NAME = process.platform === "win32" ? "ry.exe" : "ry";
  * Path to the `ry` executable that is bundled with the extension.
  *
  * CI injects the platform-specific binary here; the directory is
- * gitignored. Binary resolution (E2) picks between this path and a
+ * gitignored. Binary resolution picks between this path and a
  * user-installed `ry`.
  */
 export const BUNDLED_RY_EXECUTABLE = path.join(

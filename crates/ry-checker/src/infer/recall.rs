@@ -79,7 +79,7 @@ fn mistyped_element_name(target: &Expr) -> Option<&str> {
     }
 }
 
-/// Strip any leading unary `!` operators, returning the negated expression.
+/// Strip any leading unary `!` operators, returning the operand under them.
 fn strip_negation(expr: &Expr) -> &Expr {
     let mut inner = expr;
     while let Expr::UnaryOp {
@@ -393,10 +393,7 @@ impl Checker {
     }
 
     /// Whether the typeshed stub for `callee` declares a concrete return
-    /// length of exactly 1. This replaces a hardcoded list of function
-    /// This eliminates the need for a hardcoded function list: the data lives in
-    /// the stubs, is maintained in one place, and automatically covers
-    /// every function the typeshed documents as scalar.
+    /// length of exactly 1.
     fn is_typeshed_scalar_reduction(&self, callee: &str) -> bool {
         let Some(sig) = self.resolve_typeshed_sig(callee) else {
             return false;

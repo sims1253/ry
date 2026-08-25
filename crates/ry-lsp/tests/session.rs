@@ -858,11 +858,9 @@ async fn fresh_server_diagnostics(
     publish
 }
 
-/// Issue a request/response round-trip that drains leftover publications
-/// from the previous step's multi-URI broadcast into the session's pending
-/// queue.  After this barrier the next `publication_mark` captures only
-/// future arrivals — the pattern documented on
-/// `LspSession::publication_mark`.
+/// Synchronization barrier: a request/response round-trip that drains
+/// leftover publications so the next `publication_mark` captures only
+/// future arrivals. See the module docs and `LspSession::publication_mark`.
 async fn sync_barrier(live: &mut ClientSession, uri: &str) {
     let _ = live
         .request(

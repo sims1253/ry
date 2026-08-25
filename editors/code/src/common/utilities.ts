@@ -21,9 +21,8 @@ async function pathExists(p: string): Promise<boolean> {
  * Pick the single workspace folder to use as the project root.
  *
  * With one folder, that folder wins. With several, the shortest
- * existing folder path is chosen — the pre-S4 heuristic that
- * treats the top-most (least nested) directory as the project root.
- * With no folders, falls back to the process working directory.
+ * existing folder path is chosen (the top-most, least nested
+ * directory). With no folders, falls back to the process working directory.
  *
  * This mirrors ruff-vscode's `getProjectRoot`.
  */
@@ -71,8 +70,7 @@ export async function getProjectRoot(): Promise<WorkspaceFolder> {
  * `file`, `untitled`, and notebook schemes are enumerated explicitly.
  *
  * `ry.toml` is included so that config edits arrive as ordinary
- * `didOpen`/`didChange` syncs — a cheap path toward S3's reload that
- * complements `didChangeWatchedFiles`.
+ * `didOpen`/`didChange` syncs, complementing `didChangeWatchedFiles`.
  */
 export function getDocumentSelector(): DocumentSelector {
   return isVirtualWorkspace()

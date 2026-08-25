@@ -233,7 +233,7 @@ pub fn find(code: &str) -> Option<&'static Rule> {
     RULES.iter().find(|r| r.code == code || r.name == code)
 }
 
-/// Severity for `all` shorthand in CLI filters.
+/// All rule codes, expanded for the `all` shorthand in CLI severity filters.
 pub fn all_codes() -> Vec<&'static str> {
     RULES.iter().map(|r| r.code).collect()
 }

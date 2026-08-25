@@ -15,9 +15,8 @@ use crate::util::byte_offset_to_position;
 ///
 /// The walk recurses into `Stmt::FunctionDef` bodies so that local
 /// bindings inside named functions are annotated too (the top-level
-/// scope may or may not track them; if it doesn't, the lookup simply
-/// yields `None` and no hint is emitted, which is the right call for
-/// v1).
+/// scope may or may not track them; if it doesn't, the lookup yields
+/// `None` and no hint is emitted).
 ///
 /// Opaque (`Mode::Opaque`) types are deliberately skipped: they
 /// represent "we don't know" and would only clutter the editor with
@@ -52,19 +51,13 @@ fn collect_inlay_hints_from_stmt(
             ..
         } => {
             if let Some(t) = scope.get(name) {
-                // Skip opaque types: they're not useful to the
-                // user (they represent "we don't know"). Showing
-                // `: opaque<len=?>?NA?` next to every unknown
-                // binding would just be visual noise.
+                // Opaque types are skipped; see the rationale on
+                // `collect_inlay_hints`.
                 if matches!(t.mode, ry_core::types::Mode::Opaque) {
                     return;
                 }
-                // Place the hint right after the identifier name.
-                // `span.start + name.len()` lands on the first
-                // character past the identifier (the identifier's
-                // byte end); `byte_offset_to_position` converts it to
-                // a UTF-16 LSP `Position`, so non-ASCII identifiers
-                // are handled correctly too.
+                // UTF-16 conversion matters here: non-ASCII identifiers
+                // must land the hint past their last code unit.
                 let pos = byte_offset_to_position(text, span.start + name.len());
                 hints.push(InlayHint {
                     position: pos,

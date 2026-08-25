@@ -3,7 +3,7 @@
  *
  * Provides `ISettings`, `getWorkspaceSettings`, `getGlobalSettings`,
  * `getExtensionSettings` (returning the per-folder array that feeds
- * S2's `initializationOptions`), and `checkIfConfigurationChanged`.
+ * `initializationOptions`), and `checkIfConfigurationChanged`.
  */
 
 import * as vscode from "vscode";
@@ -112,9 +112,8 @@ export function getGlobalSettings(namespace: string): ISettings {
 }
 
 /**
- * Build the per-folder settings array that feeds S2's
- * `initializationOptions`. This is what the server receives at
- * initialize time.
+ * Build the per-folder settings array sent as
+ * `initializationOptions` at `initialize` time.
  */
 export function getExtensionSettings(namespace: string): ISettings[] {
   const folders = getWorkspaceFolders();

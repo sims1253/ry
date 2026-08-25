@@ -38,7 +38,7 @@ export function versionGte(a: VersionInfo, b: VersionInfo): boolean {
 
 /**
  * The minimum server version that supports the initializationOptions
- * settings channel (S2). Older binaries will produce an actionable
+ * settings channel. Older binaries will produce an actionable
  * error message instead of launching.
  */
 export const MINIMUM_SETTINGS_CHANNEL_VERSION: VersionInfo = {

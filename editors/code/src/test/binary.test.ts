@@ -1,11 +1,10 @@
 /**
- * P37-W2: Unit tests for binary resolution trust behavior.
+ * Unit tests for binary resolution trust behavior.
  *
- * After the split-brain fix, the server uses the path resolved by
- * `findRyBinaryPath()` from `binary.ts`, which honors workspace trust.
- * An untrusted workspace must NOT use a `ry.path` setting, even if the
- * file exists — that would allow a checked-in `.vscode/settings.json`
- * to execute an arbitrary binary.
+ * `findRyBinaryPath()` honors workspace trust: an untrusted workspace
+ * must NOT use a `ry.path` setting, even if the file exists — that
+ * would allow a checked-in `.vscode/settings.json` to execute an
+ * arbitrary binary.
  */
 
 import { describe, it, expect } from "bun:test";
@@ -15,7 +14,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
-describe("findRyBinaryPath trust behavior (P37-W2)", () => {
+describe("findRyBinaryPath trust behavior", () => {
   it("ignores ry.path in an untrusted workspace and returns the bundled binary", () => {
     // Create a decoy binary that exists on disk.
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ry-test-"));

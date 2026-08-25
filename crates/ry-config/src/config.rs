@@ -21,14 +21,14 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// Default output format when neither the config file nor the CLI
-/// specifies one. Matches the CLI's pre-config default.
+/// specifies one.
 pub const DEFAULT_OUTPUT_FORMAT: &str = "full";
 
 /// The on-disk filename ry looks for.
 pub const CONFIG_FILENAME: &str = "ry.toml";
 pub const DEFAULT_MAX_SERIALIZED_BYTES: u64 = 2 * 1024 * 1024;
 
-/// Defaults for bounded directory discovery (P36-W7 / issue #48).
+/// Defaults for bounded directory discovery.
 pub const DEFAULT_INDEX_MAX_FILES: u64 = 20_000;
 pub const DEFAULT_INDEX_MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 pub const DEFAULT_INDEX_MAX_DEPTH: u64 = 64;
@@ -151,15 +151,12 @@ pub struct Config {
     pub typeshed: Vec<PathBuf>,
     /// Baseline file. Relative paths are anchored at the config directory.
     pub baseline: Option<PathBuf>,
-    /// Bounded directory discovery limits (P36-W7 / issue #48).
+    /// Bounded directory discovery limits.
     pub index: IndexConfig,
 }
 
 impl Default for Config {
-    /// Built-in defaults. Mirrors `Config::defaults()` so callers can
-    /// use either spelling interchangeably, and so a struct-literal
-    /// `Config { ..Config::default() }` picks up the right output
-    /// format rather than the empty string.
+    /// Same as [`Config::defaults`].
     fn default() -> Self {
         Self::defaults()
     }
@@ -175,9 +172,7 @@ fn default_output_format() -> String {
 }
 
 impl Config {
-    /// Built-in defaults. Equivalent to `Config::default()` but named
-    /// for symmetry with the spec and for callers that want to be
-    /// explicit about "no config file present".
+    /// Built-in defaults, as if no config file were present.
     pub fn defaults() -> Self {
         Self {
             error_on_warning: false,
@@ -249,7 +244,7 @@ impl Config {
 
     /// Validate that bounded discovery limits are positive integers.
     /// Zero is a configuration error rather than an undocumented
-    /// "unlimited" sentinel (P36-W7 / issue #48). Returns the offending
+    /// "unlimited" sentinel. Returns the offending
     /// field name on failure.
     pub fn validate(&self) -> Result<(), &'static str> {
         if self.index.max_files == 0 {
@@ -450,7 +445,7 @@ pub enum ConfigError {
         source: toml::de::Error,
     },
     /// A bounded discovery limit was set to zero, which is a
-    /// configuration error (P36-W7 / issue #48).
+    /// configuration error.
     #[error(
         "config file {path} has invalid value for {field}:              bounded discovery limits must be positive integers,              zero is not permitted"
     )]

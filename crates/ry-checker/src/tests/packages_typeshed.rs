@@ -266,7 +266,9 @@ fn conditional_lazy_default_force_stays_silent() {
 
 #[test]
 fn lazy_default_reachability_precision_cases_stay_silent() {
-    let diags = check(include_str!("../../testdata/ok_lazy_default_reachability.R"));
+    let diags = check(include_str!(
+        "../../testdata/ok_lazy_default_reachability.R"
+    ));
     assert!(
         diags.iter().all(|diagnostic| diagnostic.code != "RY098"),
         "conservative negative cases must remain silent: {diags:?}"

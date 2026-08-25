@@ -941,14 +941,12 @@ impl Checker {
     }
 
     // Pass 2: refine all function return types until convergence.
-    // Iterates the shared `FnTable`; safe to call once after all files
-    // have been collected.
+    // Safe to call once, after all files have been collected.
     //
-    // S3 methods (`print.foo`, etc.) are inserted into `fns` under
-    // their full name during pass 1, with `s3_methods` pointing at
-    // the same return slot. Iterating `fns.keys()` therefore refines
-    // S3 method bodies alongside regular functions; dispatch reads
-    // the refined slot via the `s3_methods` map.
+    // S3 methods (`print.foo`, etc.) sit in `fns` under their full
+    // name, with `s3_methods` pointing at the same return slot, so
+    // iterating `fns` refines their bodies alongside regular
+    // functions; dispatch reads the refined slot via `s3_methods`.
     pub(crate) fn run_fixpoint(&mut self) {
         self.run_fixpoint_inner(None);
     }

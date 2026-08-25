@@ -334,8 +334,8 @@ impl Checker {
     /// Whether the callee `name` resolves to `base::bare_name` at this call
     /// site, given the current lexical scope and project metadata.
     ///
-    /// This is the canonical base-call resolution operation. Callers ask
-    /// this method; they do not duplicate lookup order.
+    /// The canonical base-call resolution operation: callers ask this
+    /// method instead of duplicating the lookup order.
     ///
     /// Lookup order (first match decides):
     ///

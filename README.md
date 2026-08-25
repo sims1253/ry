@@ -80,9 +80,9 @@ ry check demo.R
 #> ry: checked 1 file(s), 1 error(s), 3 warning(s)
 ```
 
-Diagnostics use the `full` format by default – the offending line with
-the span underlined. Messages carry context: an undefined-column
-diagnostic lists the available columns.
+Diagnostics use the `full` format by default: the output shows the
+offending line with the span underlined. Messages carry context: an
+undefined-column diagnostic lists the available columns.
 
 ``` bash
 ry check /tmp/ry-readme/analysis.R
@@ -399,10 +399,6 @@ Settings (in `settings.json`):
 | `ry.lint.error` | `[]` | Rules to treat as errors |
 | `ry.lint.warn` | `[]` | Rules to treat as warnings |
 | `ry.logLevel` | `"warn"` | Server log level (`error`, `warn`, `info`, `debug`, `trace`) |
-
-> **Note:** Diagnostics cover only files you have open in the editor.
-> `ry check .` may report additional findings in files you haven't
-> opened. This is a known limitation.
 
 ### Zed
 

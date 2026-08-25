@@ -1,6 +1,6 @@
 /**
- * Command implementations — `ry.restart`, `ry.showLogs`,
- * `ry.showServerLogs`, `ry.debugInformation`, `ry.explainRule`.
+ * Command implementations — `ry.showLogs`, `ry.showServerLogs`,
+ * `ry.debugInformation`, `ry.explainRule`.
  */
 
 import * as vscode from "vscode";

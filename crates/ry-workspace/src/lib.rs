@@ -1220,7 +1220,7 @@ impl Default for DiscoveryLimits {
     }
 }
 
-/// Structured report when a discovery cap is hit .
+/// Structured report when a discovery cap is hit.
 /// A cap hit is never silent: the caller emits a tracing event,
 /// LSP warning, or CLI warning based on this report.
 #[derive(Clone, Debug, Default)]

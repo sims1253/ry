@@ -678,7 +678,7 @@ fn p36_w3_workspace_folder_add_remove_convergence() {
             .ok();
         let clear_mark = live2.publication_mark();
 
-        // Await the post-removal republish for root-b's file.
+        // Wait for a possible post-removal publication for root-b's file.
         let republish = tokio::time::timeout(
             std::time::Duration::from_secs(2),
             live2.published_diagnostics_after(&main_b_uri, clear_mark),
@@ -1179,22 +1179,19 @@ fn p36_w5_publish_path_performs_no_baseline_disk_io() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// P36-W6 — Precompute filters once per folder (#46)
+// Precompute filters once per folder (#46)
 //
 // `folder_config_for_path` plus filter/confidence/exclude construction runs
 // inside the per-file publish loop. The fix compiles these once while
 // building each `FolderAnalysisContext` and borrows the compiled values in
-// the loop.
-//
-// P36-W6 adds a construction-count test hook so the count can be asserted
-// directly rather than inferred from wall time; until it landed, this test
-// created the many-files fixture and verified diagnostic correctness.
+// the loop. A construction-count test hook lets this test assert the count
+// directly instead of inferring it from wall time.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// P36-W6 (#46): for a fixed folder count, filter/glob construction must be
-/// flat as file count grows. This test creates many files in one folder,
-/// opens a trigger document, and verifies that all published diagnostics are
-/// byte-for-byte correct.
+/// #46: for a fixed folder count, filter/glob construction must be flat
+/// as file count grows. This test creates many files in one folder,
+/// opens a trigger document, and verifies that all published diagnostics
+/// are byte-for-byte correct.
 #[test]
 fn p36_w6_many_files_flat_filter_construction() {
     let fixture = FixtureProject::empty().unwrap();

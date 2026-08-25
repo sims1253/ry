@@ -896,7 +896,7 @@ fn r10_pipe_placeholder_matrix_no_panic_deterministic() {
         "x <- 1L\ny <- x |> identity()\n",
         // No pipe control: named-argument call.
         "x <- 1L\ny <- identity(z = x)\n",
-        // Native pipe into a one-argument function.
+        // Native pipe with no explicit extra arguments.
         "x <- 1L\ny <- x |> sum()\n",
         // Native pipe into a data-frame call.
         "df <- data.frame(a = 1L)\nresult <- df |> nrow()\n",

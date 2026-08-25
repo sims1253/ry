@@ -341,7 +341,7 @@ impl Checker {
     ///
     /// 1. `base::name` or `base:::name` → resolves to base (explicit).
     /// 2. `otherpkg::name` → does not resolve to base.
-    /// 3. A lexical data binding of `name` → shadowed.
+    /// 3. A lexical parameter binding of `name` → shadowed.
     /// 4. A lexical function binding of `name` → shadowed.
     /// 5. A project `fn_table` definition of `name` → shadowed.
     /// 6. `importFrom(base, name)` → resolves to base.

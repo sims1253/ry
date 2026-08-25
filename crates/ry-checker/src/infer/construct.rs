@@ -195,6 +195,9 @@ impl Checker {
         //     before concatenating. Total length = `length(x) * each`.
         //   * Combined: `length(x) * times * each`.
         //
+        // `length.out` is not modeled: in R it takes precedence over
+        // `times`, but the length here ignores it.
+        //
         // The result mode is `x`'s mode (matching the typeshed's
         // `"mode": "arg0"` spec). We preserve `x`'s class and column
         // schema too, so `rep(factor(...), 3)` stays a factor.

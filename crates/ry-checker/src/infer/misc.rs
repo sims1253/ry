@@ -502,12 +502,10 @@ pub(crate) fn apply_narrowing(
     match narrowing {
         Narrowing::None => {}
         Narrowing::Positive { var, target } => {
-            // A predicate narrows only
-            // when the existing type is opaque (untyped) or a union that
-            // already contains the predicate's mode. A KNOWN type is
-            // never rewritten: `is.numeric(x)` on a known Integer must
-            // NOT rewrite it to Double (the old coerce_rank comparison
-            // did exactly that).
+            // A mode-only predicate never rewrites a KNOWN type
+            // (`is.numeric` on Integer must not become Double);
+            // class targets and incompatible parameter defaults
+            // do install.
             if let Some(existing) = then_scope.get(var).cloned() {
                 let class_narrowing = target.class.has_known_class();
                 let incompatible_parameter_default =

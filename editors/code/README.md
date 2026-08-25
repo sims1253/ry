@@ -50,12 +50,6 @@ Install from Open VSX via Positron's extension gallery.
 | `ry.debugInformation` | Dump binary path, version, strategy, and settings |
 | `ry.explainRule`      | Show the explanation for a rule                   |
 
-## Known limitations
-
-**Diagnostics cover only files you have open in the editor.** `ry check .`
-may report additional findings in files you haven't opened. This is a
-known limitation.
-
 ## License
 
 MIT

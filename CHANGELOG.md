@@ -4,369 +4,122 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
-### Added — `ry dump-types` CLI
+This cycle adds the `ry dump-types` command, first-party VS Code and Zed
+extensions, and discovery limits for large projects. It slims the language
+server to what a static checker can serve reliably — inline type hints and
+suppression actions — and fixes a parser panic plus several editor issues.
 
-- **Non-interactive type dump**: `ry dump-types <FILE>...` runs one
-  analysis pass (identical pipeline and environment to `ry check`) and
-  prints every lexical scope of the requested files as JSON on stdout:
-  scope kind/name/extent plus each binding's name, kind
-  (`param`/`local`/`closed-over`/`imported`), type string (the same
-  `Display` rendering the LSP inlay hints show; `unknown` when inference
-  has nothing), and definition site. `--position LINE:COL` (repeatable)
-  restricts output to the innermost scope containing each position and
-  drops locals assigned after it. `--project-root <DIR>` overrides the
-  analysis root for non-package files; the default mirrors `ry check`'s
-  per-package (DESCRIPTION) grouping. Exit code stays 0 even when the
-  analyzed code has diagnostics; non-zero only for usage, IO, or
+### Added
+
+- **`ry dump-types` command**: `ry dump-types <FILE>...` runs the same
+  analysis pass as `ry check` and prints every lexical scope of the
+  requested files as JSON on stdout: scope kind, name, and extent, plus
+  each binding's name, kind (`param`/`local`/`closed-over`/`imported`),
+  type string (the same rendering the editor's inlay hints show, `unknown`
+  when inference has nothing), and definition site. `--position LINE:COL`
+  (repeatable) restricts output to the innermost scope containing each
+  position and drops locals assigned after it. `--project-root <DIR>`
+  overrides the analysis root for non-package files; the default mirrors
+  `ry check`'s per-package (DESCRIPTION) grouping. The exit code is 0 even
+  when the analyzed code has diagnostics; non-zero means a usage, IO, or
   internal failure.
-- **Opt-in scope capture in the checker**: `Checker` and `Project` can
-  snapshot every completed lexical scope during the pass-3 diagnostic
-  walk (`ry_checker::ScopeRecord`); recording is suppressed in
-  discarding mode so fixpoint and signature-building re-walks never
-  double-capture. ry-cli's shared check pipeline
-  (`check::check_project_with_scope_capture` in
-  `crates/ry-cli/src/check.rs`) exposes it. Existing commands and
-  checker behavior are unchanged.
-
-### Plan 37: Release truth and editor hardening
-
-#### P37-W1: Parser UTF-8 boundary panic fix
-- Fixed panic in `lower_namespace` when string RHS last byte is inside a
-  multi-byte character. Extracted shared `strip_quotes_at_boundaries` helper.
-
-#### P37-W2: VS Code split-brain binary resolution
-- Deleted `resolveBinary()` from `server.ts`. Server now uses the
-  pre-resolved binary path from `extension.ts`/`findRyBinaryPath()`.
-- Untrusted workspaces can no longer execute arbitrary binaries via
-  checked-in `ry.path` settings.
-
-#### P37-W3: CI workflow integrity and publisher consistency
-- Replaced empty `build-vscode.yml` with required PR workflow.
-- Fixed `release-vscode.yml` duplicate `needs: version` key.
-- Added explicit version and core-tag inputs to release workflow.
-- Resolved publisher identity to `sims1253.ry` across all surfaces.
-
-#### P37-W4: Zed extension integrity
-- Added settings validation (minConfidence must be low/medium/high).
-- Added pure-Rust SHA-256 implementation for WASM compatibility. Downloaded
-  binaries are not yet verified against a published digest; releases publish
-  checksums for the archive, not the extracted executable (issue #80).
-
-#### P37-W5: Ledger classification reconciliation
-- Fixed off-by-one in `posit-0.9.0.json` summary (729 → 728).
-- Added `ecosystem/check-ledger.py` validation script.
-
-#### P37-W6: Filter precomputation (P36-W6 completion)
-- Precomputed severity filter, min_confidence, and excludes once per
-  `FolderAnalysisContext` instead of per-file in the publish loop.
-- Un-ignored and fixed the P36-W6 test with construction-count assertion.
-
-#### P37-W7: Editor defaults, clean-checkout, valid generator
-- Documented evidence-backed editor-safe defaults in `docs/editor-defaults.md`.
-- Added clean-checkout CI gate to ecosystem.yml.
-- Fixed LSP session generator to produce valid operations (#65).
-
-#### P37-W8: Version alignment and runbook
-- Created `docs/release-runbook.md` covering binary, VS Code, and Zed releases.
-
-
-### Added — LSP state-machine property (P36-W8)
-
-- **Complete session convergence property**: after every quiescent LSP
-  operation (open, edit, close, save, restart, add/remove workspace folder,
-  edit config/baseline/discovery caps, create/delete/rename on-disk R file,
-  controlled parse races), every published diagnostic and the observable
-  discovered-file set equal a fresh server on the same final workspace.
-  Gated by `cargo test -p ry-lsp --test w8_session`.
-- **Deterministic seeds**: 16 fixed seeds on PRs, 1000 fixed seeds nightly
-  (`#[ignore]`). No random proptest RNG, no sleeps. Proptest shrinking is
-  preserved through `TestRunner::new_with_rng` with fixed ChaCha seeds.
-  Gated by `w8_pr_session_seeds` and `w8_nightly_session_seeds`.
-- **Historical bug coverage**: every P36 historical bug (#44, #45, #48, #53,
-  #55, #56) is caught by a deterministic regression case.
-  Gated by `w8_catches_*` tests.
-- **Shrinking quality**: an injected stale-state defect is shrunk to 3
-  operations (< 10). Gated by
-  `w8_property_shrinks_injected_defect_to_under_ten_ops`.
-
-### Added — Final corpus and 0.9 evidence (P36-W9)
-
-- **Release evidence**: `docs/corpus/0.9-release-evidence.md` documents
-  final precision (37 TP / 728 findings = 5.08%), TP retention (31/34 =
-  91.18%), per-rule verdict counts, cross-mode matrix status, LSP session
-  seed count, cap behavior, and remaining gaps. Every metric traces to a
-  committed gate.
-- **Ledger reconciliation**: the full 62-package Posit corpus is current —
-  728 identities match the committed ledger. Gated by
-  `ecosystem/run.sh --check --manifest ecosystem/posit-packages.txt
-  --ledger docs/corpus/posit-0.9.0.json --tier full`.
-
-### Added — Shared, bounded discovery (P36-W7, #48)
-
-- **Shared directory discovery**: CLI (`ry check`) and LSP now use the
-  same `ry-workspace` discovery module so both produce identical file
-  sets over hidden, excluded, oversized, deep, symlink, and test-fixture
-  cases. Gated by `p36_w7_cli_lsp_discovery_set_equality`.
-- **Bounded discovery caps**: `index.max-files` (default 20,000),
+- **Bounded file discovery**: `index.max-files` (default 20,000),
   `index.max-file-bytes` (default 2 MiB), and `index.max-depth`
-  (default 64) limit how many files are discovered. Each accepts a
-  positive integer; zero is a configuration error.
-- **Visible cap reporting**: a cap hit emits a structured tracing event,
-  one user-visible LSP warning per scan generation, a CLI warning, and
-  observable truncated state exposed to tests.
-
-### Added — Editor extensions
-
-- **VS Code / Positron extension** (`editors/code/`): installable from
-  the VS Code Marketplace and Open VSX. Bundles the `ry` binary, exposes
+  (default 64) limit how many files `ry check` and the language server
+  discover. Each accepts a positive integer; zero is a configuration
+  error. Hitting a cap produces one warning per scan in the editor and a
+  CLI warning.
+- **Identical file sets in CLI and editor**: `ry check` and the language
+  server share one directory-discovery engine, so both see the same
+  project, including hidden, excluded, oversized, deeply nested,
+  symlinked, and test-fixture files.
+- **VS Code / Positron extension** (`editors/code/`): installable from the
+  VS Code Marketplace and Open VSX. Bundles the `ry` binary, exposes the
   `ry.lint.*` settings, and supports both `fromEnvironment` and
   `useBundled` import strategies.
-- **Zed extension** (`editors/zed/`): downloads the `ry` binary from
-  GitHub releases on first use, with path construction unit-tested for
-  all six cargo-dist targets.
-- **CLI/editor diagnostic parity**: `ignore`, `select`, `extend-select`,
-  `error`, `warn`, `exclude`, `baseline`, `min-confidence`, default-disabled
-  rules, package metadata, and Unicode positions produce the same published
-  codes, severities, messages, and locations in `ry check` and the editor for
-  a single workspace root. This claim is gated by
-  `cargo test -p ry-lsp --test protocol`.
-- **`ry.toml` hot-reload**: editing `ry.toml` updates diagnostics
-  without restarting the language server.
+- **Zed extension** (`editors/zed/`): locates the `ry` binary via
+  settings, `PATH`, a previous download, or a fresh GitHub-release
+  download, with path construction unit-tested for all six cargo-dist
+  targets. Settings are validated (`minConfidence` must be `low`,
+  `medium`, or `high`). Downloaded binaries are not yet verified against
+  a published digest; releases publish checksums for the archive, not the
+  extracted executable (#80).
+- **Matching diagnostics in CLI and editor**: `ignore`, `select`,
+  `extend-select`, `error`, `warn`, `exclude`, `baseline`,
+  `min-confidence`, default-disabled rules, package metadata, and Unicode
+  positions produce the same codes, severities, messages, and locations
+  in `ry check` and in the editor for a single workspace root.
+- **`ry.toml` hot-reload**: editing `ry.toml` updates diagnostics without
+  restarting the language server.
 - **Multi-root workspaces**: per-folder `ry.toml` configs are honoured.
 - **`ry server --log-level`**: configurable server tracing on stderr.
+- **Documentation**: `docs/editor-defaults.md` collects evidence-backed
+  editor-safe settings, and `docs/release-runbook.md` documents the
+  binary, VS Code, and Zed release processes.
 
 ### Changed
 
-- **Ecosystem CI validates `--check` against a cleaned state (#50)**: the
-  PR-time `ecosystem` job removes gitignored `ecosystem/reports/*.full.txt`
-  reports before the snapshot check, and the drift-detection test now plants
-  a poisoned `.full.txt` sentinel before its first `--check`, so a
-  drift-check change that starts comparing gitignored baselines fails on any
-  machine rather than surfacing only as a CI failure. The schedule-only
-  `clean-checkout` job, which delivered neither protection at merge or
-  release time, is removed; the release runbook points at the PR-time job's
-  fresh-checkout build instead.
-- **Documentation truth pass (#83)**: the README rule table lists every
-  registered rule again — RY003, RY102, RY103, and RY105 had silently
-  disappeared from the hand-maintained table — with a note that RY003 is
-  default-off; `docs/release-runbook.md`'s manual fallback is a
-  tracked-only `git archive` build of the commit being released —
-  `git clean -fdX` removes only ignored files, so untracked non-ignored
-  files survive and it can pass while a tracked-only build fails (#50),
-  and the scheduled `clean-checkout` CI job builds from a fresh clone,
-  not an archive; the remediation plan's R0.1 and R0.3 "current issue"
-  statements are corrected (the sibling `ry-diagnostics` dependency is
-  gone and the LSP convergence failure is fixed, #81) and A2.3 states
-  its Work and Acceptance in descoped terms, with cross-file queries and
-  `textDocument/rename` out; and `p38-progress.md` no longer marks
-  W11/W12 as future work and records W12's acceptance record as
-  invalidated, not accepted.
-- **README rule-table drift guard (#107)**: a workspace integration test
-  (`cargo test -p ry-checker --test readme_rule_table`) parses the README
-  "## Rules" table and asserts parity with `ry_checker::rules::RULES` on
-  rule code, name, and severity, with per-rule failure messages naming the
-  README line and the direction of the drift. A registry change without a
-  matching README edit (or vice versa) now fails `cargo test --workspace`
-  in the default PR workflow, so the #83 manual table restore cannot
-  silently recur.
-- **Deduplicated the operator S3-generic list (#42)**: `is_operator_generic`
-  now answers from `semantic_lists::OPERATORS` instead of restating the same
-  13 Arith + Compare symbols as match arms, so the S3 method-name splitter
-  and the method-registration predicate share one registered constant. The
-  recognized operator set is unchanged; a new test iterates the list against
-  the predicate, with negative samples for the operator symbols that must
-  stay unrecognized, so the two representations cannot silently drift.
-  `is_operator_symbol` remains a separate, documented set covering all
-  plain operator tokens for RY010 suppression.
-- `Project`'s six environment setters (`set_loaded`, `set_bare_loaded`,
-  `set_external_bindings`, `set_imported_from`, `set_external_s3_methods`,
-  `set_load_bindings`) and `set_user_stubs` are equality-aware: reinstalling
-  the value already in place no longer marks every file dirty (#86). The LSP
-  reinstalls the whole workspace environment on every check cycle, so this
-  previously defeated `check_incremental`'s emit scoping on every publish.
-  A no-op reinstall now re-emits nothing; a real change still invalidates
-  everything (gated by an `emit_count` test and the convergence property).
-- **Suggested fixes removed from published diagnostics**: the `fix` payload is
-  gone from `ry check --output-format json` and from the `data` field of
-  published LSP diagnostics, along with the internal `Fix` machinery that
-  produced it. Nothing ever applied these edits — there is no `ry check
-  --fix`, and the language server's quick-fix actions only insert
-  suppression comments — and a replacement that is correct in isolation can
-  be wrong under R's non-standard evaluation, so applying source rewrites is
-  a separate concern from type checking (see the README's stance on
-  formatting). Diagnostics are otherwise unchanged: codes, spans, messages,
-  severities, and confidences are identical, and no shipped release ever
-  contained the `fix` field. Where autofix should live is tracked in #89.
-- **LSP no longer advertises `textDocument/rename`**: the server has dropped
-  the `textDocument/rename` and `textDocument/prepareRename` capabilities and
-  their handlers. Rename matched identifiers purely by spelling with no
-  binding or scope resolution, which is unsafe in R (NSE, `assign()`/`get()`,
-  S3 dispatch by naming convention, `$` on lists/environments, formulas, and
-  `library()` masking all break spelling-based rename). It will return once
-  real cross-file symbol resolution lands.
-- **LSP no longer advertises `textDocument/foldingRange` and
-  `textDocument/selectionRange`**: the server has dropped both capabilities
-  and their handlers. They used no type information — every tree-sitter-based
-  R editor integration already provides folding and expand/shrink selection
-  from the grammar — so they duplicated editor-native behaviour outside the
-  server's scope of publishing the diagnostics `ry check` produces.
-- **LSP interactive features now operate on open documents only**: hover,
-  completion, signature help, go-to-definition, and references no longer
-  consult the background indexer's on-disk file snapshot. The cross-file
-  variants were added in Plan 38 (W6/W7) but every one shipped passing `""`
-  as the source text, so their ranges collapsed to 0:0 and none worked
-  correctly on the day they landed. The server's scope is the diagnostics
-  that `ry check` produces; growing it into a cross-file IDE feature set is
-  a separate, explicitly deferred decision. `textDocument/rename` was
-  removed for the same reason.
-- Measured the pinned 62-package Posit corpus before rule governance begins.
-  This is the pre-governance Plan 34 baseline, not the final 0.9 rule set.
-- Extracted `Config`, `Baseline`, and diagnostic-filter types into a
-  new `ry-config` library crate, shared between `ry-cli` and `ry-lsp`.
-- **Rule verdicts (P35-W12)**: every checker rule now has an evidence-backed
-  verdict in `docs/corpus/rule-evidence-0.9.md`. The R7 literal-to-parameter
-  lifting report classifies each rule's reachability (lift-reachable,
-  parameter-unreachable, consistent, or n/a). A targeted mutation pilot
-  covers RY032, RY040, RY093, and RY103. All rules are `keep` except RY003
-  (already `default-off`) and RY095 (retired in Plan 31). No rule behavior
-  changes; the ledger is unchanged because no intentional identity changes
-  were made.
+- **JSON diagnostics no longer suggest fixes**: the `fix` payload is gone
+  from `ry check --output-format json` and from the `data` field of
+  published editor diagnostics. Nothing ever applied these suggestions —
+  there is no `ry check --fix`, and the editor's quick-fix actions only
+  insert suppression comments — and a replacement that is correct in
+  isolation can be wrong under R's non-standard evaluation. Diagnostics
+  are otherwise unchanged: codes, spans, messages, severities, and
+  confidences are identical. No shipped release ever contained the `fix`
+  field; where autofix should live is tracked in #89.
+- **README rule table restored**: RY003, RY102, RY103, and RY105 are
+  listed again, with a note that RY003 is default-off, and an automated
+  check now fails if the table and the rule registry drift apart (#107).
+- **Fewer redundant editor updates**: when a check pass leaves the
+  workspace environment unchanged, the language server no longer re-emits
+  every file's diagnostics; a genuine change still invalidates the whole
+  project (#86).
 
 ### Removed
 
-- **Deleted the Plan 38 and Plans 37–39 acceptance records (#83)**
-  (`docs/architecture/p38-w12-acceptance.md`,
-  `docs/architecture/plans-37-39-acceptance.md`): both recorded workspace
-  test counts alongside a known convergence failure as an accepted
-  baseline, and ticked acceptance criteria for machinery that has since
-  been deleted with no consumers (the `ry-diagnostics` extraction, the
-  analysis host, the P39 catalog). The two records also disagreed about
-  Plan 38's completion status. `p38-progress.md` keeps the per-workstream
-  history and outcomes.
-- **ry-analysis reduced to its one consumer-facing entry point**: the
-  speculative analysis host and query stack — `AnalysisHost`/`Change`,
-  the snapshot layer, the symbol index, the P39 semantic catalog
-  (`catalog`, `catalog_adapter`, `effect`, `layering`, `rules`), the
-  interactive hover/completion types, and the property tests that
-  exercised only that machinery — are deleted. No code outside the crate
-  referenced any of it: ry-cli consumes exactly `CheckInput`,
-  `CheckOutput`, and `check_project`, which are unchanged, and ry-lsp
-  never referenced the crate at all, so its declared dependency edge is
-  dropped as well. The architecture records that documented only the
-  deleted machinery (`analysis-query-engine.md`,
-  `p39-w1-catalog-design.md`, `p39-acceptance.md`) are deleted too.
-  Nothing ever called the deleted surface, so diagnostic output is
-  unchanged.
-- **LSP no longer advertises `textDocument/documentHighlight`**: the
-  capability, its handler, and its AST walker are gone. Highlighting
-  matched identifiers purely by spelling with no binding or scope
-  resolution, and every editor already highlights same-name tokens from
-  its own R grammar — the server's scope is the diagnostics `ry check`
-  produces (issue #87). This completes the clear-cut removals begun with
-  `textDocument/foldingRange` and `textDocument/selectionRange` above;
-  none of the three was ever shipped in a release, so no released
-  capability schema changes.
-- **Deleted the dead `WorkspaceContext::native_registrations` plumbing
-  (#90)**: ry-workspace populated the per-file native-routine map and the
-  CLI forwarded it into `CheckInput`, but `check_project` never applied
-  it — ry-checker's `Project` has no setter for it, and the names already
-  reach the checker through `external_bindings`. The field, its
-  population, and the forwarding are gone; diagnostics are unchanged.
-- **Dissolved the `ry-analysis` crate (#108)**: what remained after the
-  reduction above — the shared check pipeline (`CheckInput`,
-  `CheckOutput`, `check_project`,
-  `check_project_with_scope_capture`) — moved verbatim into ry-cli
-  (`crates/ry-cli/src/check.rs`), its only consumer since ry-lsp began
-  coordinating `ry_checker::Project` directly. The crate directory, its
-  workspace member entry, and every dependency edge naming it are
-  deleted. Nothing outside ry-cli referenced it, so diagnostic output
-  is unchanged.
-- **LSP no longer advertises the outline/navigation family**:
-  `textDocument/hover`, `textDocument/definition`,
-  `textDocument/references`, `textDocument/documentSymbol`, and
-  `workspace/symbol` are removed end-to-end — handlers, capability
-  advertisements, the `ident`/`navigation`/`symbols` helper modules
-  (~800 lines), and their unit tests (issue #87, step two of the diet).
-  All five resolved symbols by spelling rather than by binding — the
-  same unsafe identity heuristic that made `documentHighlight` and
-  `rename` incorrect — and outline/search duplicate what every
-  tree-sitter-based R editor integration already provides. The kept
-  interactive surface is exactly `inlayHint` (the checker's output
-  rendered inline), `codeAction` (suppressions), `completion`, and
-  `signatureHelp`, all scoped to open documents; the
-  background file index is untouched so far and loses its remaining
-  consumers in a later step of the diet. None of the five capabilities
-  ever shipped in a release, so no released capability schema changes.
-- **LSP no longer advertises `textDocument/completion` or
-  `textDocument/signatureHelp`**, completing the #87 diet of the
-  advertised surface to "report what `ry check` reports" before 0.9.0
-  ships: handlers, capability advertisements, the completion and
-  signature-table helpers in `hints.rs`, the
-  `eligible_open_documents`/`same_folder_root` fallback search (whose
-  only consumer was signature help), the now-unused
-  `utf16_col_to_byte` util, and the unit tests that exercised them.
-  Diagnostics are unchanged. The kept interactive surface is exactly
-  `inlayHint` and `codeAction` (suppressions), both scoped to open
-  documents; real completion and signature help belong to dedicated R
-  editor integrations, not a checker frontend. The cross-root
-  request-isolation guarantee formerly pinned on signature help is
-  re-pinned on `inlayHint`. The background file index **stays**: its
-  remaining and standing consumer is `publish_diagnostics`, which
-  merges indexed disk files with open documents so the editor sees the
-  whole project exactly as `ry check` reports it. Neither capability
-  ever shipped in a release, so no released capability schema changes.
+- **Slimmed language-server capabilities**: the server no longer
+  advertises `textDocument/rename`/`prepareRename`,
+  `textDocument/documentHighlight`, `textDocument/foldingRange`,
+  `textDocument/selectionRange`, `textDocument/hover`,
+  `textDocument/definition`, `textDocument/references`,
+  `textDocument/documentSymbol`, `workspace/symbol`,
+  `textDocument/completion`, and `textDocument/signatureHelp`. Rename,
+  highlighting, and navigation resolved identifiers purely by spelling,
+  which is unsafe in R (NSE, `assign()`/`get()`, S3 dispatch by naming
+  convention, `$` on lists/environments, formulas, and `library()`
+  masking). Folding, selection ranges, outline, and symbol search
+  duplicate what every tree-sitter-based R editor integration already
+  provides. Cross-file hover, definition, references, completion, and
+  signature help never worked as shipped (requests collapsed to empty
+  ranges). Real completion and signature help belong to dedicated R
+  editor integrations, and rename will return once real cross-file symbol
+  resolution lands.
+- **Remaining language-server surface**: exactly `textDocument/inlayHint`
+  (the checker's output rendered inline) and `textDocument/codeAction`
+  (inserting suppression comments), both scoped to open documents. The
+  background file index stays, so published diagnostics continue to merge
+  on-disk files with open documents and the editor sees the whole project
+  exactly as `ry check` reports it. None of the removed capabilities ever
+  shipped in a release, so released capability schemas are unchanged.
 
 ### Fixed
 
-- The `p36_contract.rs` file header still claimed every test in the file
-  is `#[ignore]`'d (#90); none are — the attributes were removed as
-  P36-W2 through W7 landed. The header now records that the tests run as
-  ordinary (passing) contract gates.
-- The Zed extension's cache-precedence test asserted only that a
-  constructed release path ends in "ry" (#90, the #82 test-theater
-  family), so it passed with the cache branch deleted outright. Binary
-  resolution now runs through an extracted `BinarySource` precedence
-  function whose tests pin settings > PATH lookup > previous download >
-  download and require the cached file to still exist on disk
-  (editors/zed/src/lib.rs).
-- The P36-W6 many-files test's drain loop stopped at the first silent
-  500 ms window (#90), so a loaded machine could end collection before
-  the background index plus the publish debounce had emitted anything,
-  failing the sentinel assertions with no production defect. The loop
-  now drains until both sentinel files have published, bounded by a
-  total deadline instead of a per-message gap
-  (ry-lsp/tests/p36_contract.rs).
-- `ecosystem/check-ledger.py` compared each summary block per observed
-  key only (#90), so a negative entry for an unseen label offset by a
-  positive one preserved both the total and every observed count. Each
-  summary is now compared over the union of summary and observed keys;
-  zero-valued entries for categories no finding carries remain valid
-  (the classification taxonomy is fixed), and any other mismatch fails.
-- Tests that could not fail were fixed or deleted (#82): the ry-analysis
-  workspace-context test now asserts the rlang/RY070 flip in both
-  directions (check.rs), the same-name symbol test asserted reference
-  indexing instead of an unobservable resolution claim (later removed
-  with its module, see Removed), the property tests wrote distinct
-  per-apply content and claimed only final-contents equivalence (later
-  removed with their module, see Removed), and the w8 session model
-  rotates corrected-operation targets across candidate slots with
-  the stale coverage eprintln (which miscounted invalid ops as
-  corrections and claimed it should stay zero) removed
-  (ry-lsp/tests/w8_session.rs).
-- `Checker::check` now resets the function table and return slots before each
-  run, so a reused single-file `Checker` no longer leaks inference state
-  (functions, known-vars) from a previous file into the current check. This
-  accumulated-diagnostics defect is gated by the P35-W9 reset/non-interference
-  property tests.
-- The w10 session convergence failure (#81) was a race in the test harness,
-  not the checker: the close's clearing `[]` publication can be written after
-  a subsequent request's response, so the harness matched the stale `[]` as
-  the reopened document's publication. `Close` in the model now consumes its
-  own clearing publication, and a deterministic close/reopen regression test
-  pins the behaviour.
-- Deleted `Project::force_full_recollection` and its call in the LSP check
-  cycle. The workaround forced a full project re-collection on every
-  keystroke and did not prevent the failure it was added for.
+- Parsing no longer panics when a string literal ends inside a multi-byte
+  UTF-8 character.
+- Re-running the checker on a single file no longer leaks inference state
+  (functions, known variables) from the previous run into the next, so
+  diagnostics no longer accumulate across files.
+- The VS Code extension's language server now uses the binary path
+  resolved by the extension itself, and untrusted workspaces can no
+  longer execute arbitrary binaries via checked-in `ry.path` settings.
+- Editing no longer forces a full project re-collection on every
+  keystroke; the removed workaround did not prevent the failure it was
+  added for.
+- VS Code extension publishing: fixed the duplicate `needs: version` key
+  in the release workflow, made its version and core-tag inputs explicit,
+  replaced the empty pull-request build workflow with a required one, and
+  standardized the publisher identity to `sims1253.ry`.
 
 ## [0.8.0] - 2026-08-04
 

@@ -1141,7 +1141,7 @@ fn degraded_scope_is_reported_once_per_file_not_per_reader() {
     );
 }
 
-/// Plan 31 W6. `useDynLib(pkg, .registration = TRUE)` binds every routine in
+/// `useDynLib(pkg, .registration = TRUE)` binds every routine in
 /// the package's `R_registerRoutines` table into the namespace. ry does not
 /// read `src/`, so a name the package itself passes as an FFI entry point is
 /// the evidence that it is one of them — which is what lets rlang's

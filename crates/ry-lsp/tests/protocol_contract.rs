@@ -1,12 +1,12 @@
-//! P36-W1: Red contract matrix — deterministic failing cases for every
-//! remaining LSP contract gap addressed by Plan 36.
+//! Red contract matrix — deterministic failing cases for every
+//! remaining LSP contract gap.
 //!
-//! Every case in this file was authored `#[ignore]`'d while P36-W2 through
-//! W7 were unimplemented; those attributes were removed as the workstreams
+//! Every case in this file was authored `#[ignore]`'d while their behaviors were
+//! W7 were unimplemented; those attributes were removed as the features
 //! landed, and the tests now run as ordinary (passing) contract gates. Each
-//! test's doc-comment names the specific workstream (and issue) it covers.
+//! test's doc-comment names the behavior (and issue) it covers.
 //!
-//! Shared infrastructure reuses Plan 35's `ry-testkit` (`FixtureProject`,
+//! Shared infrastructure reuses `ry-testkit` (`FixtureProject`,
 //! `LspSession`, `AsyncJsonRpcClient`) and the `ry_lsp::run_with` in-memory
 //! server seam. The CLI comparison helpers mirror `tests/protocol.rs` so the
 //! contract is "LSP published diagnostics equal `ry check` run independently
@@ -155,7 +155,7 @@ fn published_from_lsp(message: &Value, path: &Path, root: &Path) -> Vec<Publishe
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// P36-W2a — Per-folder editor settings (#44)
+// Per-folder editor settings (#44)
 //
 // Bug being pinned: the server stored a single server-wide `folder_settings`
 // (`State::folder_settings`) taken from the first `initializationOptions`
@@ -163,14 +163,14 @@ fn published_from_lsp(message: &Value, path: &Path, root: &Path) -> Vec<Publishe
 // with per-root values.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// P36-W2a (#44): two roots with different editor settings must produce
+/// (#44): two roots with different editor settings must produce
 /// per-file CLI/LSP parity. Root A ignores RY002 (both in `ry.toml` and
 /// editor settings); root B does not. Both files trigger RY002.
 ///
 /// Before W2a, root A's ignore list was applied server-wide and wrongly
 /// suppressed RY002 in root B, diverging from `ry check` run there.
 #[test]
-fn p36_w2a_two_roots_different_editor_settings_differential() {
+fn two_roots_different_editor_settings_differential() {
     let fixture = FixtureProject::empty().unwrap();
     // Root A: ry.toml ignores RY002.
     fixture
@@ -312,7 +312,7 @@ fn p36_w2a_two_roots_different_editor_settings_differential() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// P36-W2b — Per-folder typeshed isolation (#54)
+// Per-folder typeshed isolation (#54)
 //
 // Bug being pinned: stubs were loaded only for the root URI, so in a
 // multi-root workspace two roots defining the same package differently
@@ -320,7 +320,7 @@ fn p36_w2a_two_roots_different_editor_settings_differential() {
 // longest-prefix ownership.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// P36-W2b (#54): two roots define the same stub package (`localdep`) with
+/// (#54): two roots define the same stub package (`localdep`) with
 /// different return types for `my_func`. Root A's stub returns integer (no
 /// diagnostic); root B's stub returns character (RY001 — `if` condition is
 /// character). Each root's LSP output must equal its independent CLI run.
@@ -328,7 +328,7 @@ fn p36_w2a_two_roots_different_editor_settings_differential() {
 /// Before W2b, neither root loaded its local stubs: `my_func` had an
 /// unknown return type and neither root produced RY001.
 #[test]
-fn p36_w2b_colliding_local_stubs_isolation() {
+fn colliding_local_stubs_isolation() {
     let fixture = FixtureProject::empty().unwrap();
 
     for (root, return_mode) in [("root-a", "integer"), ("root-b", "character")] {
@@ -467,19 +467,19 @@ fn p36_w2b_colliding_local_stubs_isolation() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// P36-W2c — Honor the configuration override (#56)
+// Honor the configuration override (#56)
 //
 // Bug being pinned: `FolderSettings::configuration` was deserialized but
 // never read. The fix resolves it relative to the workspace root and loads
 // that file instead of directory discovery.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// P36-W2c (#56): a folder whose `ry.toml` lives at a custom path
+/// (#56): a folder whose `ry.toml` lives at a custom path
 /// (`config/custom.toml`) should honor the `configuration` editor setting.
 /// The custom config ignores RY002; the source triggers RY002. Asserts
 /// RY002 is absent, proving the override was honored.
 #[test]
-fn p36_w2c_per_folder_custom_config_path() {
+fn per_folder_custom_config_path() {
     let fixture = FixtureProject::empty().unwrap();
     fixture
         .write_file("config/custom.toml", "ignore = [\"RY002\"]\n")
@@ -572,18 +572,18 @@ fn p36_w2c_per_folder_custom_config_path() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// P36-W3 — Workspace-folder mutation converges to cold state (#55)
+// Workspace-folder mutation converges to cold state (#55)
 //
 // Bug being pinned: `did_change_workspace_folders` updated
 // `workspace_folders` but left behind `disk_files`, trees, diagnostics,
 // and contexts owned by removed roots.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// P36-W3 (#55): add and remove a workspace folder. After each mutation the
+/// (#55): add and remove a workspace folder. After each mutation the
 /// final diagnostics must equal a fresh server initialized on the same final
 /// roots. Removed roots must leave no reachable state.
 #[test]
-fn p36_w3_workspace_folder_add_remove_convergence() {
+fn workspace_folder_add_remove_convergence() {
     use ry_testkit::LspSession;
 
     let fixture = FixtureProject::empty().unwrap();
@@ -708,7 +708,7 @@ fn p36_w3_workspace_folder_add_remove_convergence() {
     });
 }
 
-/// P36-W4 (#53): a stale parse result must not replace a newer tree cache
+/// (#53): a stale parse result must not replace a newer tree cache
 /// entry. The forced sequence is:
 ///   1. parse version N starts;
 ///   2. `didChange` installs N+1;
@@ -721,7 +721,7 @@ fn p36_w3_workspace_folder_add_remove_convergence() {
 /// policy (version-stamped tree rejection) is production code in
 /// `backend::parsed_file` and `State::store_tree`/`State::tree_for`.
 #[test]
-fn p36_w4_version_stamped_tree_cache_rejects_stale_parse() {
+fn version_stamped_tree_cache_rejects_stale_parse() {
     use ry_testkit::LspSession;
 
     let fixture = FixtureProject::empty().unwrap();
@@ -811,7 +811,7 @@ fn p36_w4_version_stamped_tree_cache_rejects_stale_parse() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// P36-W5 — Cache baseline/config state outside the hot lock (#45)
+// Cache baseline/config state outside the hot lock (#45)
 //
 // The baseline and effective config are loaded into each
 // `FolderAnalysisContext` during initialize; the publish/inlay-hint
@@ -826,7 +826,7 @@ fn p36_w4_version_stamped_tree_cache_rejects_stale_parse() {
 // ──────────────────────────────────────────────────────────────────────────
 static BASELINE_IO_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// P36-W5 (#45): a failed baseline reload must retain the last valid
+/// (#45): a failed baseline reload must retain the last valid
 /// context, not silently clear the baseline. The test:
 ///   1. Sets up a baseline that suppresses RY002.
 ///   2. Verifies the LSP suppresses RY002.
@@ -837,7 +837,7 @@ static BASELINE_IO_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// initialize and reloaded outside the write lock on watch events; when the
 /// reload fails (`load_baseline` → error), the last valid baseline is kept.
 #[test]
-fn p36_w5_baseline_reload_retains_context_on_corruption() {
+fn baseline_reload_retains_context_on_corruption() {
     use ry_testkit::LspSession;
     // Serialize against the other W5 tests so the global baseline-read
     // counter is not polluted by a concurrently-running server.
@@ -924,7 +924,7 @@ fn p36_w5_baseline_reload_retains_context_on_corruption() {
     });
 }
 
-/// P36-W5 (#45): a *successful* baseline reload must converge to the new
+/// (#45): a *successful* baseline reload must converge to the new
 /// value, matching a cold server started fresh against the same files.
 ///
 /// The test:
@@ -936,7 +936,7 @@ fn p36_w5_baseline_reload_retains_context_on_corruption() {
 ///   6. Spawns a FRESH server against the same fixture and asserts both
 ///      servers publish identical diagnostics.
 #[test]
-fn p36_w5_baseline_reload_converges_to_new_value() {
+fn baseline_reload_converges_to_new_value() {
     use ry_testkit::LspSession;
     // Serialize against the other W5 tests so the global baseline-read
     // counter is not polluted by a concurrently-running server.
@@ -1089,11 +1089,11 @@ fn p36_w5_baseline_reload_converges_to_new_value() {
     );
 }
 
-/// P36-W5 (#45): the publish/inlay-hint hot path performs ZERO
+/// (#45): the publish/inlay-hint hot path performs ZERO
 /// baseline file reads. `baseline_disk_reads()` counts every disk read by
 /// the context loader; a publish that touches it betrays a regression.
 #[test]
-fn p36_w5_publish_path_performs_no_baseline_disk_io() {
+fn publish_path_performs_no_baseline_disk_io() {
     use ry_testkit::LspSession;
     // Serialize against the other W5 tests so the global baseline-read
     // counter is not polluted by a concurrently-running server.
@@ -1193,7 +1193,7 @@ fn p36_w5_publish_path_performs_no_baseline_disk_io() {
 /// opens a trigger document, and verifies that all published diagnostics
 /// are byte-for-byte correct.
 #[test]
-fn p36_w6_many_files_flat_filter_construction() {
+fn many_files_flat_filter_construction() {
     let fixture = FixtureProject::empty().unwrap();
     // Create 32 files, each with a diagnostic (RY090).
     for i in 0..32u8 {
@@ -1212,7 +1212,7 @@ fn p36_w6_many_files_flat_filter_construction() {
         let (client_stream, server_stream) = tokio::io::duplex(256 * 1024);
         let (client_reader, client_writer) = tokio::io::split(client_stream);
         let (server_reader, server_writer) = tokio::io::split(server_stream);
-        // P37-W6 (#46): drive this server through `run_with_counters` so the
+        // (#46): drive this server through `run_with_counters` so the
         // "zero compiles during publish" assertion below reads this server's
         // own per-instance counter, not a process global shared with parallel
         // test servers.
@@ -1316,14 +1316,14 @@ fn p36_w6_many_files_flat_filter_construction() {
         assert_eq!(first_diags[0].path, "file_00.R");
         assert_eq!(last_diags[0].path, "file_31.R");
 
-        // P37-W6 (#46): Assert filter/glob construction count is flat
+        // (#46): Assert filter/glob construction count is flat
         // during the publish cycle. The per-server `counters` handle records
         // the delta observed during the most recent publish_diagnostics call
         // on this server only. It must be zero with precomputation.
         let compile_during_publish = counters.compile_during_last_publish();
         assert_eq!(
             compile_during_publish, 0,
-            "P37-W6: filter/glob construction count during publish must be \
+            "filter/glob construction count during publish must be \
              zero (got {}); precomputation not working",
             compile_during_publish
         );
@@ -1331,7 +1331,7 @@ fn p36_w6_many_files_flat_filter_construction() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// P36-W7 — Shared, bounded discovery (#48)
+// Shared, bounded discovery (#48)
 //
 // Bug being pinned: the CLI (`collect_r_files`) and LSP
 // (`index::discover_r_files`) used different discovery rules — for example,
@@ -1339,12 +1339,12 @@ fn p36_w6_many_files_flat_filter_construction() {
 // behind a shared module so both modes agree.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// P36-W7 (#48): the same fixture tree must produce the same discovered path
+/// (#48): the same fixture tree must produce the same discovered path
 /// set in CLI and LSP. The fixture includes a `target/` directory, a hidden
 /// directory (both skip), and a normal file. Every file has a diagnostic so
 /// the discovery set is observable through published diagnostic paths.
 #[test]
-fn p36_w7_cli_lsp_discovery_set_equality() {
+fn cli_lsp_discovery_set_equality() {
     let fixture = FixtureProject::empty().unwrap();
     // Normal file with a diagnostic.
     fixture.write_file("normal.R", "length(xx = 1L)\n").unwrap();

@@ -702,7 +702,7 @@ impl Checker {
         // enclosing function body) shadows both the flat project table and
         // the typeshed/base signature, so neither is consulted for it —
         // checking `inherits("x")` against `base::inherits` is a lookup-order
-        // bug, not a missing argument (Plan 31 W7).
+        // bug, not a missing argument.
         if self.validate_user_call_arguments {
             if let Some(user_function) = user_function.as_ref() {
                 self.check_user_call_arguments(&lookup_name, user_function, args, span);

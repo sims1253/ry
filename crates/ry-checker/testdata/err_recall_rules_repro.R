@@ -1,5 +1,5 @@
 # expect: RY102, RY103, RY105
-# Plan 31 W18 recall rules: each line is the minimal form of a real defect
+# Recall rules: each line is the minimal form of a real defect
 # the 62-package Posit corpus audit found and 0.8.0 missed entirely.
 #
 #

@@ -1088,7 +1088,7 @@ fn build_input_edit_multiline_replacement() {
 /// Integration test: cold-vs-incremental equivalence across a sequence
 /// of add, update, and remove operations.
 ///
-/// This is the most important invariant in Plan 33: after any sequence
+/// This is the most important invariant: after any sequence
 /// of operations, incremental diagnostics must match a fresh cold check.
 #[test]
 fn cold_vs_incremental_equivalence_sequence() {

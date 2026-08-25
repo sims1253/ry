@@ -20,7 +20,7 @@ audit records summarized in [`plan34-measurement.md`](plan34-measurement.md).
 ## Parser invariant evidence
 
 [`parser-option-audit-0.9.md`](parser-option-audit-0.9.md) records the complete
-P35-W4 audit of parser `?`, `.ok()?`, and `None` propagation. Its executable R1
+parser-option audit of `?`, `.ok()?`, and `None` propagation. Its executable R1
 and R6 gates live in `crates/ry-checker/tests/invariants.rs` and cover all
 checker fixtures plus a deterministic sample of the vendored ecosystem sources.
 

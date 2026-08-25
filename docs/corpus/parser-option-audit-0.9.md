@@ -1,9 +1,9 @@
 # Parser `Option` propagation audit (0.9)
 
-Plan 35 W4 requires every `?`, `.ok()?`, and `None` path in the production R
+The audit requires every `?`, `.ok()?`, and `None` path in the production R
 parser to have an owner. This audit covers `crates/ry-core/src/parser.rs` from
 `RParser::new` through `namespace_op` (tests and the byte-column utility are not
-parser lowering). It was performed against P35-W1 plus P35-W4.
+parser lowering). It was performed against the production parser at the 0.9 release candidate.
 
 The inventory contains **56 `?` operators on 45 source lines**, including the
 single `.ok()?`, and every production `None` return/construction/match arm.
@@ -84,7 +84,7 @@ use site:
 2. **Float literal conversion (historical, `619e61e`)** — an R hex float such
    as `0x1.8p2` now becomes `Expr::Unknown` if Rust's decimal `f64` parser
    rejects it, rather than using `.ok()?` and erasing its statement.
-3. **Nested brace lowering (P35-W4)** — `lower_braced_as_stmt` used to overwrite
+3. **Nested brace lowering ** — `lower_braced_as_stmt` used to overwrite
    `last` for each child. It both intentionally discarded earlier valid
    statements and could replace a preserved child with `None`. It now returns a
    total `Stmt::Expr(Expr::Block)` containing every lowered child.

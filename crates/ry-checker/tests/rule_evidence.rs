@@ -1,4 +1,4 @@
-//! P35-W12: Rule reachability, targeted mutations, and verdicts.
+//! Rule reachability, targeted mutations, and verdicts.
 //!
 //! Three deliverables:
 //!
@@ -479,7 +479,7 @@ fn mutation_pilot_distinguishes_broken_rule_from_broken_mutation() {
     }
 }
 
-/// RY032 standing case: P34-W2 policy is that unknown parameter length is
+/// RY032 standing case: policy is that unknown parameter length is
 /// not evidence that &&/|| discards elements. R7 reports RY032 as
 /// parameter-unreachable and that report IS the expected outcome.
 #[test]
@@ -488,7 +488,7 @@ fn ry032_standing_case_parameter_is_not_literal_only_actionable() {
     let codes = check_codes(src);
     assert!(
         !codes.contains("RY032"),
-        "RY032 fired on bare parameter with unknown length -- violates P34-W2 policy: {codes:?}"
+        "RY032 fired on bare parameter with unknown length -- violates policy: {codes:?}"
     );
 
     let lit_src = "x <- c(TRUE, FALSE)\nbad <- x && TRUE\n";
@@ -559,7 +559,7 @@ const VERDICTS: &[Verdict] = &[
     Verdict {
         code: "RY032",
         verdict: "keep",
-        rationale: "Standing case P34-W2; 1 TP / 47 FP. Literal-only by policy.",
+        rationale: "Standing case; 1 TP / 47 FP. Literal-only by policy.",
     },
     Verdict {
         code: "RY033",

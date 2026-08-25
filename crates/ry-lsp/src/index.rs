@@ -3,7 +3,7 @@
 //! Delegates directory discovery to the shared [`ry_workspace`] module so
 //! the CLI (`ry check .`) and the LSP use identical eligibility, extension,
 //! hidden-directory, symlink, exclude, test-fixture, and bounded-cap rules
-//! (P36-W7 / issue #48).
+//! (issue #48).
 //!
 //! Open documents shadow on-disk contents because the editor's buffer
 //! is authoritative — a file being edited may have unsaved changes.
@@ -165,7 +165,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// P36-W7 (#48): the LSP must skip `target/` directories just like
+    /// (#48): the LSP must skip `target/` directories just like
     /// the CLI, so both modes discover the same file set.
     #[test]
     fn skips_target_directory_like_cli() {
@@ -185,13 +185,13 @@ mod tests {
         assert!(paths.iter().any(|p| p.ends_with("keep.R")), "keep.R found");
         assert!(
             !paths.iter().any(|p| p.ends_with("skip.R")),
-            "target/ must be skipped (P36-W7)"
+            "target/ must be skipped"
         );
 
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// P36-W7 (#48): truncated state must be exposed to tests.
+    /// (#48): truncated state must be exposed to tests.
     #[test]
     fn exposes_truncation_when_max_files_hit() {
         let dir = std::env::temp_dir().join(format!("ry_index_cap_{}", std::process::id()));

@@ -423,7 +423,7 @@ async fn utf16_transcript() {
 }
 
 // ---------------------------------------------------------------------------
-// P35-W10 — Shrinkable LSP session model
+// Shrinkable LSP session model
 //
 // A proptest property that generates sequences of LSP operations (initialize,
 // open, full/incremental Unicode edits, save, close, restart) and verifies
@@ -446,7 +446,7 @@ async fn utf16_transcript() {
 // `publication_mark` captures only future arrivals.  This is the pattern
 // documented on `LspSession::publication_mark`.
 //
-// The gated alphabet covers only behavior specified in Plans 33–35.  Plan 36
+// The gated alphabet covers only behavior specified in earlier suites.  The state-machine property
 // extends it with workspace-folder mutation, configuration reload, file
 // creation/deletion, controlled parse races, and discovery caps.
 // ---------------------------------------------------------------------------

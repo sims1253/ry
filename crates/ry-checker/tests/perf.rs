@@ -93,7 +93,7 @@ fn hundred_file_project_checks_quickly() {
 /// file and call `check_incremental()`. The budget catches regressions
 /// in the incremental path that the cold-check tests cannot see.
 ///
-/// See Plan 33 W0: the incremental path (`update_file` +
+/// The incremental path (`update_file` +
 /// `check_incremental`) is the hot path the LSP exercises on every
 /// keystroke. This test guards its wall-clock cost.
 #[test]
@@ -135,7 +135,7 @@ fn warm_edit_checks_quickly() {
 }
 
 // ===========================================================================
-// P35-W8 — Complexity scaling rather than only wall-clock budgets
+// Complexity scaling rather than only wall-clock budgets
 //
 // The three budget tests above guard absolute latency. They are
 // timing-sensitive: a single `< 4` ratio on a 2× size step sits exactly

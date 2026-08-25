@@ -7,7 +7,7 @@ is designed to be safe for untrusted workspaces and broad real-world code.
 This document records the corpus evidence behind those defaults and the
 policy decisions for each rule.
 
-## Corpus baseline (Plan 34, reconciled P37-W5)
+## Corpus baseline (reconciled by CI gate)
 
 | Metric | Value |
 | :-- | --: |
@@ -53,6 +53,6 @@ the same project (the differential test contract).
 
 ## Future improvements
 
-Plan 39 (external semantic catalog) targets the dominant RY010 false-positive
+A future external semantic catalog targets the dominant RY010 false-positive
 sources through catalog-driven package binding resolution. The precision
-target for the post-Plan-39 default profile is 50%.
+target for the post-catalog default profile is 50%.

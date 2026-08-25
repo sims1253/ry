@@ -11,8 +11,8 @@ Before starting any release:
    - `cargo test --workspace`
    - `cargo test -p ry-core`
    - `cargo +nightly fuzz run parse -- -max_total_time=300 -max_len=4096`
-   - `cargo test -p ry-lsp --test p36_contract`
-   - `cargo test -p ry-lsp --test w8_session -- --ignored`
+   - `cargo test -p ry-lsp --test protocol_contract`
+   - `cargo test -p ry-lsp --test session_state_machine -- --ignored`
    - `ecosystem/run.sh --check --manifest ecosystem/posit-packages.txt --ledger docs/corpus/posit-0.9.0.json --tier fast`
    - `ecosystem/test-drift-detection.sh`
    - `ecosystem/test-posit-drift-detection.sh`

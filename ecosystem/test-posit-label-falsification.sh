@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# P35-W11: Corpus reconciliation falsification.
+# Corpus reconciliation falsification.
 #
 # Prove the ecosystem check actually fails when a true_positive finding
 # disappears and a false_positive is added without updating the ledger.

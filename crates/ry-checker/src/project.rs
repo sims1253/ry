@@ -98,7 +98,7 @@ pub struct Project {
     /// Previous pass-2 refined return types, keyed by function name.
     /// Used to seed the next fixpoint iteration so already-converged
     /// entries start from their refined value rather than re-converging
-    /// from scratch (Plan 33 W2).
+    /// from scratch.
     prev_fn_returns: HashMap<String, ry_core::RType>,
     /// Previous caller-visible parameter signatures, keyed by function name.
     /// Return slots alone are insufficient: argument names, order, required
@@ -577,7 +577,7 @@ impl Project {
         self.fn_table = fn_table;
         self.return_slots = return_slots;
 
-        // --- Dirty-set computation (Plan 33 W1) ---
+        // --- Dirty-set computation ---
         //
         // Determine which files' diagnostics can actually have changed,
         // and re-emit only those. A file must be re-emitted when:
@@ -828,7 +828,7 @@ impl Project {
     }
 }
 
-/// File classification — re-exported from ry-workspace (P38-W3).
+/// File classification — re-exported from ry-workspace.
 pub use ry_workspace::{PackageFileKind, package_file_kind};
 
 /// Whether a file is directly under a package's `R/` directory.

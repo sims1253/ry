@@ -1,8 +1,8 @@
-# Rule evidence for 0.9 after Plan 35 W12
+# Rule evidence for 0.9
 
-This is the final evidence-backed verdict table. Plan 34 established the
-measured corpus baseline, semantic-claim oracle, and probe direction. Plan 35
-W12 adds the R7 literal-to-parameter lifting report, targeted mutation pilot,
+This is the final evidence-backed verdict table. The corpus audit established the
+measured corpus baseline, semantic-claim oracle, and probe direction. The closing pass
+adds the R7 literal-to-parameter lifting report, targeted mutation pilot,
 and per-rule verdicts. Every rule has an executed verdict backed by multiple
 independent kinds of evidence; no single column determines the verdict.
 
@@ -28,7 +28,7 @@ value is a literal call argument (`f(literal)`) versus a parameter default
   value requires a complex expression (e.g. `c(TRUE, FALSE)`) that
   `infer_literal_default` resolves as unknown, so the known type never
   reaches the checker inside a function body. RY032 is the standing case:
-  P34-W2 decided as policy that unknown parameter length is not evidence
+  policy decided that unknown parameter length is not evidence
   that `&&`/`||` discards elements. R7 confirming RY032 as
   param-unreachable IS the expected outcome, not a finding.
 - **consistent**: the rule fires identically in both forms (syntactic
@@ -81,7 +81,7 @@ determines the verdict.
 | `RY021` unary-not-type | 0/0 | yes | `unary_not_type_claim.R` | lift-reachable | - | - | keep | Valid claim; 0 corpus findings. Lift-reachable through scalar defaults. |
 | `RY030` invalid-comparison | 0/25 | yes | `invalid_comparison_claim.R` | param-unreachable | - | - | keep | Valid claim; 0 TP / 25 FP. Parameter-unreachable (triggering types are non-scalar). FP from typeshed coverage gaps. |
 | `RY031` invalid-logical-op | 0/2 | yes | `invalid_logical_op_claim.R` | lift-reachable | - | - | keep | Valid claim; 0 TP / 2 FP. Known gap in inconsistent_superassignment.R. Lift-reachable through scalar defaults. |
-| `RY032` scalar-logical-length | 1/47 | yes | `unknown_short_circuit_parameter.R` | param-unreachable | piloted | yes | keep | Standing case (P34-W2 policy): 1 TP / 47 FP. Fires on non-literal parameter-dependent expressions (47 FP in corpus) but the P34-W2 policy determined unknown parameter length is not actionable. R7 confirms param-unreachable for c() defaults. |
+| `RY032` scalar-logical-length | 1/47 | yes | `unknown_short_circuit_parameter.R` | param-unreachable | piloted | yes | keep | Standing case policy: 1 TP / 47 FP. Fires on non-literal parameter-dependent expressions (47 FP in corpus) but policy determined unknown parameter length is not actionable. R7 confirms param-unreachable for c() defaults. |
 | `RY033` comparison-mode-mismatch | 6/35 | yes | `comparison_mode_mismatch_claim.R` | lift-reachable | - | - | keep | Valid claim; 6 TP / 35 FP. Lift-reachable through scalar defaults. |
 | `RY034` compare-na | 3/0 | yes | `compare_na.R` | consistent | - | yes | keep | Valid claim; 3 TP / 0 FP. Consistent under R7 lifting. |
 | `RY040` invalid-arithmetic | 0/23 | yes | `arith_character.R` | lift-reachable | piloted | - | keep | Valid claim; 0 TP / 23 FP. Lift-reachable through scalar defaults. FP from typeshed coverage gaps. |
@@ -132,4 +132,4 @@ Code-level verdicts are enforced by `crates/ry-checker/tests/rule_evidence.rs`:
   consistent, or n/a).
 - Mutation pilot: 4 rule families piloted (RY032, RY040, RY093, RY103).
 - Corpus values are identity counts from the hermetic ledger.
-- Verdicts: 33 keep, 1 default-off (RY003), 0 retire (RY095 retired in Plan 31).
+- Verdicts: 33 keep, 1 default-off (RY003), 0 retire (RY095 retired during the audit response).

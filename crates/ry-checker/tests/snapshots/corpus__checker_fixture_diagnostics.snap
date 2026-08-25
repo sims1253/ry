@@ -251,32 +251,6 @@ expression: snapshots
         start: 54
   fixture: err_partial_column_indexed_assignment.R
 - diagnostics:
-    - code: RY102
-      message: "`<-` inside `list()` assigns `github-ref` and leaves the element unnamed; write `\"github-ref\" = ...` to name it"
-      severity: warning
-      span:
-        column: 21
-        end: 302
-        line: 6
-        start: 283
-    - code: RY103
-      message: "`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `!inherits(df[[1]], t)`"
-      severity: warning
-      span:
-        column: 21
-        end: 530
-        line: 10
-        start: 511
-    - code: RY105
-      message: "`u_dl` is a length-1 double, so `length(...)` is 1 here and this zero-length guard is always TRUE"
-      severity: warning
-      span:
-        column: 13
-        end: 1355
-        line: 30
-        start: 1339
-  fixture: err_plan31_recall_repro.R
-- diagnostics:
     - code: RY080
       message: "`map_dbl` expects `double` returns but the callback returns `character`; R will coerce silently"
       severity: warning
@@ -286,6 +260,32 @@ expression: snapshots
         line: 5
         start: 236
   fixture: err_purrr_map_dbl_type_mismatch.R
+- diagnostics:
+    - code: RY102
+      message: "`<-` inside `list()` assigns `github-ref` and leaves the element unnamed; write `\"github-ref\" = ...` to name it"
+      severity: warning
+      span:
+        column: 21
+        end: 290
+        line: 6
+        start: 271
+    - code: RY103
+      message: "`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `!inherits(df[[1]], t)`"
+      severity: warning
+      span:
+        column: 21
+        end: 518
+        line: 10
+        start: 499
+    - code: RY105
+      message: "`u_dl` is a length-1 double, so `length(...)` is 1 here and this zero-length guard is always TRUE"
+      severity: warning
+      span:
+        column: 13
+        end: 1343
+        line: 30
+        start: 1327
+  fixture: err_recall_rules_repro.R
 - diagnostics:
     - code: RY098
       message: "parameter `x` has a self-referential default that recurses when forced"
@@ -637,8 +637,6 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_pipe_placeholder.R
 - diagnostics: []
-  fixture: ok_plan31_recall_negative_controls.R
-- diagnostics: []
   fixture: ok_purrr_in_parallel.R
 - diagnostics: []
   fixture: ok_purrr_map_dbl.R
@@ -652,6 +650,8 @@ expression: snapshots
   fixture: ok_r6_class_body_bindings.R
 - diagnostics: []
   fixture: ok_raw_operations.R
+- diagnostics: []
+  fixture: ok_recall_rules_negative_controls.R
 - diagnostics: []
   fixture: ok_recursion.R
 - diagnostics: []

@@ -1,10 +1,10 @@
-//! Recall rules from plan 31 workstream W18.
+//! Recall rules.
 //!
-//! Plan 31 ("Posit corpus audit response") sketched four new rules aimed at
+//! Four rules were sketched during the Posit corpus audit response, aimed at
 //! the false-negative half of the corpus audit. Two ship whole, one ships in
 //! half, and one does not ship at all.
 //!
-//! | plan name | code | shape |
+//! | rule name | code | shape |
 //! |---|---|---|
 //! | `named-list-element-arrow` | `RY102` | `list("a" <- 1)` |
 //! | `class-equality` | `RY103` | `if (class(x) == "y")` |
@@ -30,7 +30,7 @@
 //! stays open rather than being traded for one.
 //!
 //! Every rule is asserted against the corpus reproduction committed at
-//! `testdata/err_plan31_recall_repro.R`, which 0.8.0 checked completely clean.
+//! `testdata/err_recall_rules_repro.R`, which 0.8.0 checked completely clean.
 
 use ry_checker::Checker;
 use ry_core::RParser;
@@ -38,8 +38,8 @@ use ry_core::RParser;
 /// Codes emitted by the single-file checker for `src`.
 fn codes(src: &str) -> Vec<&'static str> {
     let mut parser = RParser::new().expect("parser init");
-    let file = parser.parse("plan31.R", src).expect("parse");
-    let mut checker = Checker::new("plan31.R");
+    let file = parser.parse("recall.R", src).expect("parse");
+    let mut checker = Checker::new("recall.R");
     checker.check(&file);
     checker
         .take_diagnostics()
@@ -51,8 +51,8 @@ fn codes(src: &str) -> Vec<&'static str> {
 /// `(code, 1-based line)` pairs emitted for `src`.
 fn code_lines(src: &str) -> Vec<(&'static str, usize)> {
     let mut parser = RParser::new().expect("parser init");
-    let file = parser.parse("plan31.R", src).expect("parse");
-    let mut checker = Checker::new("plan31.R");
+    let file = parser.parse("recall.R", src).expect("parse");
+    let mut checker = Checker::new("recall.R");
     checker.check(&file);
     checker
         .take_diagnostics()
@@ -68,7 +68,7 @@ fn fires(src: &str, code: &str) -> bool {
 /// The plan's committed reproduction of the audit's false negatives.
 fn repro_source() -> String {
     let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/err_plan31_recall_repro.R");
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/err_recall_rules_repro.R");
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"))
 }
 
@@ -300,12 +300,12 @@ fn ry105_normalizes_operand_order_for_constant_outcome() {
     let mut parser = RParser::new().expect("parser init");
     let file = parser
         .parse(
-            "plan31.R",
+            "recall.R",
             "f <- function(v) if (0 > length(sum(v))) 1
 ",
         )
         .expect("parse");
-    let mut checker = Checker::new("plan31.R");
+    let mut checker = Checker::new("recall.R");
     checker.check(&file);
     let diags = checker.take_diagnostics();
     assert!(
@@ -318,12 +318,12 @@ fn ry105_normalizes_operand_order_for_constant_outcome() {
     // `0 < length(sum(v))` is `0 < 1`, which is TRUE.
     let file = parser
         .parse(
-            "plan31.R",
+            "recall.R",
             "f <- function(v) if (0 < length(sum(v))) 1
 ",
         )
         .expect("parse");
-    let mut checker = Checker::new("plan31.R");
+    let mut checker = Checker::new("recall.R");
     checker.check(&file);
     let diags = checker.take_diagnostics();
     assert!(
@@ -374,7 +374,7 @@ fn ry105_respects_local_shadowing_of_scalar_reduction() {
 // `not-before-comparison` is deliberately NOT implemented
 // ---------------------------------------------------------------------------
 
-/// Plan 31 W18 asked for a `not-before-comparison` rule on the premise that
+/// The audit-response sketch asked for a `not-before-comparison` rule on the premise that
 /// "`!` binds tighter, so `!x >= y` is `(!x) >= y`". That premise is false.
 /// R's `?Syntax` places unary `!` *below* the comparison operators, so
 /// `!x >= y` parses as `!(x >= y)` — verified with
@@ -422,7 +422,7 @@ fn ry095_stays_out_of_the_registry() {
 // ---------------------------------------------------------------------------
 
 /// Each shipped rule must fire on its line of the committed reproduction.
-/// This is plan 31's acceptance criterion: "Every new rule in W18 ships with
+/// The acceptance criterion from that sketch: "Every new rule ships with
 /// the corpus repro as a test fixture and fires on it."
 #[test]
 fn corpus_repro_fires_every_shipped_rule() {

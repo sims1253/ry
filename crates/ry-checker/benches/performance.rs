@@ -124,7 +124,7 @@ fn check_single_synthetic(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
-// Incremental benchmarks (Plan 33 W0)
+// Incremental benchmarks
 //
 // These measure the warm `check_incremental` path — the one the LSP
 // server exercises on every debounce tick. Each bench primes a
@@ -222,7 +222,7 @@ fn warm_edit_leaf(c: &mut Criterion) {
 
 /// Benchmark: warm `check_incremental` after adding/removing a
 /// `library()` call. This invalidates project-wide because `loaded`
-/// is a project-wide union (see Plan 33 K2).
+/// is a project-wide union.
 fn warm_edit_library(c: &mut Criterion) {
     let (mut project, sources, mut parser) = primed_project();
     let (edited_path, original) = find_source(&sources, "utils.R");

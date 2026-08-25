@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Assert that forbidden internal Cargo dependency edges do not exist.
 
-P38-W3 requirement: ry-config and ry-workspace must not depend on ry-checker.
+Requirement: ry-config and ry-workspace must not depend on ry-checker.
 """
 
 import subprocess

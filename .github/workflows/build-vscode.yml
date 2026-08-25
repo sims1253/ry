@@ -1,6 +1,6 @@
 name: Build VS Code extension
 
-# P37-W3a: Required PR workflow for the VS Code extension.
+# Required PR workflow for the VS Code extension.
 # Runs frozen install, formatting, lint, type-check, unit tests,
 # compile, package inspection, and E2E activation.
 on:
@@ -70,7 +70,7 @@ jobs:
       - name: Run E2E tests (xvfb)
         run: xvfb-run -a bun run test
 
-  # P37-W3b: Publisher identity consistency check
+  # Publisher identity consistency check
   publisher-consistency:
     runs-on: ubuntu-latest
     # The workflow-level default working-directory is editors/code; this job

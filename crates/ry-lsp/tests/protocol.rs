@@ -267,7 +267,7 @@ fn cli_and_run_with_publish_the_same_single_root_matrix() {
     }
 }
 
-/// P37-W6 (#46): diagnostics for indexed files that were never opened use
+/// (#46): diagnostics for indexed files that were never opened use
 /// the checked source for their UTF-16 ranges, not the (absent) in-memory
 /// document text.
 #[test]
@@ -431,7 +431,7 @@ fn package_import_from_value_position_is_clean_in_both_modes() {
     );
 }
 
-/// P35-W11: cross-mode subprocess framing is correct over a multi-message
+/// cross-mode subprocess framing is correct over a multi-message
 /// exchange with the real `ry server` process.
 ///
 /// The existing `actual_ry_server_stdio_is_clean_json_rpc` test proves the

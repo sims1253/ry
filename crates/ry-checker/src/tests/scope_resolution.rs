@@ -531,7 +531,6 @@ fn vector_string_subset_preserves_non_scalar_length() {
     assert_ne!(y.length, Length::One);
 }
 
-// ---- Cross-file variable resolution (known_vars) ---------------
 #[test]
 fn s4_terra_named_vector_dispatch_fixture_is_clean() {
     let diagnostics = check(include_str!("../../testdata/ok_s4_terra_named_vector.R"));
@@ -596,6 +595,8 @@ fn unknown_vector_names_do_not_fabricate_data_frame_schema() {
         "unknown names must produce an opaque data-frame schema: {diagnostics:?}"
     );
 }
+
+// ---- Cross-file variable resolution (known_vars) ---------------
 
 #[test]
 fn s4_generics_and_methods_resolve_cross_file() {

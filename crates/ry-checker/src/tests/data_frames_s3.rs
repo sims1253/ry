@@ -322,7 +322,7 @@ fn list_named_args_become_schema() {
     assert_eq!(schema.names(), vec!["a", "b"]);
     // Accessing a missing column on a PLAIN list is silent: in R
     // `l$missing` returns NULL, so RY060 is scoped to data frames
-    //. Only data-frame misses fire RY060.
+    // Only data-frame misses fire RY060.
     let diags = check("l <- list(a = 1L)\nbad <- l$missing\n");
     assert!(
         diags.iter().all(|d| d.code != "RY060"),
@@ -355,13 +355,12 @@ fn list_dots_produces_an_incomplete_schema() {
         "a field supplied through dots is not known NULL: {diagnostics:?}"
     );
 
-    let (_, scope) = check_with_scope("x <- list(a = 1L)\nx$missing + 1L\n");
+    let (diagnostics, scope) = check_with_scope("x <- list(a = 1L)\nx$missing + 1L\n");
     let x = scope.get("x").expect("x should be bound");
     assert!(
         x.columns.as_ref().is_some_and(|schema| schema.complete),
         "enumerable list arguments must retain a complete schema"
     );
-    let diagnostics = check("x <- list(a = 1L)\nx$missing + 1L\n");
     assert!(
         diagnostics
             .iter()

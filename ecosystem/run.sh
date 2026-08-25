@@ -26,8 +26,8 @@ Usage: ecosystem/run.sh [--check] [--local] [--manifest FILE]
 
 A manifest may carry a `# ledger: <path-relative-to-repo>` directive selecting
 the corpus its hermetic root reports reconcile against, and a `# === full tier`
-marker separating the fast-tier packages from the rest. Multiple ledgers (including the historical posit-0.8.0 transcript and the
-strict posit-0.9.0 gate) coexist and are selected explicitly by manifests.
+marker separating the fast-tier packages from the rest. Ledgers coexist and are
+selected explicitly by manifests (for example the strict docs/corpus/posit-0.9.0.json gate).
 EOF
 }
 

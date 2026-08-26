@@ -9,7 +9,7 @@
 //! `tests/recall_rules.rs` pins both the positive and the negative
 //! direction of each rule.
 //!
-//! Two of the plan's sketches are deliberately **not** implemented.
+//! Two of the original sketches are deliberately **not** implemented.
 //!
 //! `not-before-comparison` was premised on `!x >= y` parsing as
 //! `(!x) >= y`, but R's `?Syntax` places unary `!` *below* the comparison
@@ -17,7 +17,7 @@
 //! That is the precise model error that retired `RY095` in 0.4.1.
 //!
 //! `constant-condition`'s `any(v) == 0` half (glue `R/utils.R:32`) is a real
-//! bug — `any(lengths == 0)` was meant — but the plan's justification for
+//! bug — `any(lengths == 0)` was meant — but the sketch's justification for
 //! flagging it, "is always FALSE", is wrong: `any()` yields a logical and
 //! `FALSE == 0` is `TRUE`. The shape is also indistinguishable from
 //! diffobj's legitimate `!all(diff(x)) == 1L`, pinned as must-stay-silent in

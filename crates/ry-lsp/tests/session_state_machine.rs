@@ -107,7 +107,7 @@ fn source_strategy() -> impl Strategy<Value = Source> {
 
 #[derive(Clone, Debug)]
 enum Operation {
-    // W10 alphabet
+    // Base alphabet
     Open {
         file: u8,
         source: Source,
@@ -176,7 +176,7 @@ fn file_slot() -> BoxedStrategy<u8> {
 
 fn operation_strategy() -> BoxedStrategy<Operation> {
     prop_oneof![
-        // W10 alphabet (higher weight: these are the bread-and-butter ops)
+        // Base alphabet (higher weight: these are the bread-and-butter ops)
         3 => (file_slot(), source_strategy())
             .prop_map(|(f, s)| Operation::Open { file: f, source: s }),
         2 => (file_slot(), source_strategy())
@@ -623,7 +623,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
         // files exist on disk.
 
         match &operation {
-            // ── W10 alphabet ──
+            // ── Base alphabet ──
             Operation::Open { file, source } => {
                 if model.is_open(*file) {
                     continue;
@@ -1040,7 +1040,7 @@ fn run_deterministic_seed(seed: u64) {
     });
     match result {
         Ok(()) => {}
-        Err(e) => panic!("W8 seed {seed:#018x} failed:\n{e}"),
+        Err(e) => panic!("seed {seed:#018x} failed:\n{e}"),
     }
 }
 
@@ -1084,7 +1084,7 @@ fn nightly_session_seeds() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Historical bug regression: every P36 bug caught by a deterministic case
+// Historical bug regression: every pre-release bug caught by a deterministic case
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Helper: build an explicit operation sequence and run it. Used for

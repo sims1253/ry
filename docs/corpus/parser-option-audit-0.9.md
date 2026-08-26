@@ -84,7 +84,7 @@ use site:
 2. **Float literal conversion (historical, `619e61e`)** — an R hex float such
    as `0x1.8p2` now becomes `Expr::Unknown` if Rust's decimal `f64` parser
    rejects it, rather than using `.ok()?` and erasing its statement.
-3. **Nested brace lowering ** — `lower_braced_as_stmt` used to overwrite
+3. **Nested brace lowering** — `lower_braced_as_stmt` used to overwrite
    `last` for each child. It both intentionally discarded earlier valid
    statements and could replace a preserved child with `None`. It now returns a
    total `Stmt::Expr(Expr::Block)` containing every lowered child.

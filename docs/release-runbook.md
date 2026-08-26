@@ -7,7 +7,7 @@ VS Code extension, and the Zed extension. Follow these steps in order.
 
 Before starting any release:
 
-1. **All P37 gates green:**
+1. **All gates green:**
    - `cargo test --workspace`
    - `cargo test -p ry-core`
    - `cargo +nightly fuzz run parse -- -max_total_time=300 -max_len=4096`

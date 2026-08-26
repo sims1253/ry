@@ -13,7 +13,7 @@ removing one finding can never be silently mistaken for removing another.
 
 Two historical ledgers were removed as generated artifacts: the 0.8.0
 audit transcript (1,142 identities, reconciliation `audit-transcript`) and
-the Plan 34 pre-change baseline (729 identities, hermetic, measured on the
+the pre-change baseline (729 identities, hermetic, measured on the
 audited starting tree). Neither gated CI; both are re-derivable from the
 audit records summarized in [`plan34-measurement.md`](plan34-measurement.md).
 
@@ -59,7 +59,7 @@ real bug disappearing is always surfaced.
 
 ## The moving 0.9 ledger
 
-Plan 34 rebuilt `ry` from the audited starting commit, generated hermetic
+The audit response rebuilt `ry` from the audited starting commit, generated hermetic
 message-free root reports for all 62 pinned packages, and measured the
 pre-change baseline (see [`plan34-measurement.md`](plan34-measurement.md);
 the intermediate snapshot itself was removed as a generated artifact). After

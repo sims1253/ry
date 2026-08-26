@@ -154,7 +154,9 @@ fn namespace_string_rhs_multibyte_no_panic() {
     // produces a `string` node whose raw text is `"\nÿ` (5 bytes);
     // `raw.len() - 1` = 4 lands inside ÿ (bytes 3–4), causing a panic.
     let src = "a::\"\\nÿ";
-    let file = p.parse("p37_w1.R", src).expect("parse must not panic");
+    let file = p
+        .parse("utf8_boundary.R", src)
+        .expect("parse must not panic");
     // The parser must return a result, not panic.  The exact AST for
     // malformed input may vary; we only assert no panic here.
     assert!(
@@ -183,7 +185,9 @@ fn namespace_string_rhs_three_byte_unterminated_no_panic() {
     let mut p = ry_core::RParser::new().expect("parser init");
     // `\n` (backslash-n) followed by 中 (U+4E2D, three bytes 0xE4 0xB8 0xAD).
     let src = "a::\"\\n中";
-    let file = p.parse("p37_w1.R", src).expect("parse must not panic");
+    let file = p
+        .parse("utf8_boundary.R", src)
+        .expect("parse must not panic");
     assert!(
         !file.stmts.is_empty(),
         "parser must produce at least one statement"
@@ -197,7 +201,9 @@ fn namespace_string_rhs_four_byte_unterminated_no_panic() {
     let mut p = ry_core::RParser::new().expect("parser init");
     // `\n` followed by 😀 (U+1F600, four bytes 0xF0 0x9F 0x98 0x80).
     let src = "a::\"\\n😀";
-    let file = p.parse("p37_w1.R", src).expect("parse must not panic");
+    let file = p
+        .parse("utf8_boundary.R", src)
+        .expect("parse must not panic");
     assert!(
         !file.stmts.is_empty(),
         "parser must produce at least one statement"

@@ -438,7 +438,7 @@ impl zed::Extension for RyExtension {
 zed::register_extension!(RyExtension);
 
 #[cfg(test)]
-mod p37_w4_tests {
+mod unit_tests {
     /// SHA-256 known-answer test (NIST FIPS 180-4).
     #[test]
     fn sha256_empty_string() {

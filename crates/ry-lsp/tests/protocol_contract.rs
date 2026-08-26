@@ -1,8 +1,8 @@
 //! Red contract matrix — deterministic failing cases for every
 //! remaining LSP contract gap.
 //!
-//! Every case in this file was authored `#[ignore]`'d while their behaviors were
-//! W7 were unimplemented; those attributes were removed as the features
+//! Every case in this file was authored `#[ignore]`'d while its behavior was
+//! unimplemented; those attributes were removed as the features
 //! landed, and the tests now run as ordinary (passing) contract gates. Each
 //! test's doc-comment names the behavior (and issue) it covers.
 //!
@@ -820,7 +820,7 @@ fn version_stamped_tree_cache_rejects_stale_parse() {
 // atomically; a failed reload retains the last valid context and emits a
 // visible error.
 //
-// `ry_lsp::baseline_disk_reads()` is a process-global counter. Only the W5
+// `ry_lsp::baseline_disk_reads()` is a process-global counter. Only the baseline-reload
 // tests configure a baseline, so they serialize on this guard so the
 // no-I/O assertion sees only its own server's reads.
 // ──────────────────────────────────────────────────────────────────────────
@@ -839,7 +839,7 @@ static BASELINE_IO_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 #[test]
 fn baseline_reload_retains_context_on_corruption() {
     use ry_testkit::LspSession;
-    // Serialize against the other W5 tests so the global baseline-read
+    // Serialize against the other baseline-I/O tests so the global baseline-read
     // counter is not polluted by a concurrently-running server.
     let _io_guard = BASELINE_IO_TEST_GUARD
         .lock()
@@ -915,7 +915,7 @@ fn baseline_reload_retains_context_on_corruption() {
         drop(live);
         let _ = tokio::time::timeout(std::time::Duration::from_secs(3), server).await;
 
-        // W5 contract: a failed reload retains the last valid context.
+        // Baseline contract: a failed reload retains the last valid context.
         // The cached baseline is kept when the corrupt file fails to reload.
         assert!(
             !codes3.contains(&"RY002"),
@@ -938,7 +938,7 @@ fn baseline_reload_retains_context_on_corruption() {
 #[test]
 fn baseline_reload_converges_to_new_value() {
     use ry_testkit::LspSession;
-    // Serialize against the other W5 tests so the global baseline-read
+    // Serialize against the other baseline-I/O tests so the global baseline-read
     // counter is not polluted by a concurrently-running server.
     let _io_guard = BASELINE_IO_TEST_GUARD
         .lock()
@@ -1095,7 +1095,7 @@ fn baseline_reload_converges_to_new_value() {
 #[test]
 fn publish_path_performs_no_baseline_disk_io() {
     use ry_testkit::LspSession;
-    // Serialize against the other W5 tests so the global baseline-read
+    // Serialize against the other baseline-I/O tests so the global baseline-read
     // counter is not polluted by a concurrently-running server.
     let _io_guard = BASELINE_IO_TEST_GUARD
         .lock()

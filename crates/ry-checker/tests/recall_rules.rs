@@ -398,7 +398,7 @@ fn negation_before_comparison_is_not_diagnosed() {
             !emitted.contains(&"RY095"),
             "RY095 is retired and must never be reinstated: {src:?} emitted {emitted:?}"
         );
-        // Nor may any of the W18 codes stand in for it.
+        // Nor may any of these codes stand in for it.
         for code in ["RY102", "RY103", "RY105"] {
             assert!(
                 !emitted.contains(&code),
@@ -441,12 +441,12 @@ fn corpus_repro_fires_every_shipped_rule() {
     }
     assert!(
         missing.is_empty(),
-        "repro/31/fn.R did not fire: {missing:?}\nemitted: {hits:?}"
+        "repro did not fire on: {missing:?}\nemitted: {hits:?}"
     );
 }
 
-/// The reproduction must gain *only* the W18 codes. Anything else is a
-/// pre-existing false negative that W18 did not claim, or a new false
+/// The reproduction must gain *only* these codes. Anything else is a
+/// pre-existing false negative these rules did not claim, or a new false
 /// positive introduced by these rules.
 #[test]
 fn corpus_repro_emits_nothing_beyond_the_shipped_rules() {
@@ -457,6 +457,6 @@ fn corpus_repro_emits_nothing_beyond_the_shipped_rules() {
         .collect();
     assert!(
         unexpected.is_empty(),
-        "repro/31/fn.R gained non-W18 diagnostics: {unexpected:?}"
+        "repro gained diagnostics beyond the shipped rules: {unexpected:?}"
     );
 }

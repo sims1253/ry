@@ -511,7 +511,7 @@ impl SourceVariant {
     }
 }
 
-/// The gated operation alphabet for W10.  Versioned operations carry the
+/// The gated operation alphabet.  Versioned operations carry the
 /// exact `textDocument/version` they send, and `Restart` carries the
 /// `(file, version)` pairs used to re-open the documents that were open when
 /// the previous session ended — so the entire protocol stream a sequence

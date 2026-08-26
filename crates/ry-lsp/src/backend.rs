@@ -149,7 +149,7 @@ pub(super) struct State {
     /// package differently never collide (#54). Keyed by root path string.
     folder_projects: HashMap<String, Arc<Mutex<ProjectCache>>>,
     /// On-disk `.R`/`.r` files discovered by the background indexer
-    ///. Keyed by absolute path. Open documents shadow
+    /// Keyed by absolute path. Open documents shadow
     /// these — when a path exists in both `docs` and `disk_files`,
     /// the open document's content is authoritative.
     disk_files: HashMap<String, Arc<SourceFile>>,
@@ -282,7 +282,7 @@ fn compute_folder_filter(
 /// the same reason. Each folder mirrors `rebuild_folder_context` (the
 /// folder config is both the exclude source and the severity fallback);
 /// the root mirrors `initialize`. This stays OUT of `publish_diagnostics`:
-/// the  contract asserts zero filter compilations *during a
+/// the publish-cycle contract asserts zero filter compilations *during a
 /// publish cycle*; recomputing on a configuration change is the same
 /// off-publish treatment the push-based path already uses.
 fn refresh_cached_folder_filters(state: &mut State) {
@@ -954,7 +954,7 @@ impl LanguageServer for Backend {
                 // min_confidence / excludes through the shared
                 // `refresh_cached_folder_filters` helper so the push and
                 // pull paths share one refresh and cannot drift. This stays
-                // OUT of `publish_diagnostics`: the  contract
+                // OUT of `publish_diagnostics`: the publish-cycle contract
                 // asserts zero filter compilations *during a publish cycle*.
                 refresh_cached_folder_filters(&mut state);
             }
@@ -1018,7 +1018,7 @@ impl LanguageServer for Backend {
         {
             let mut state = self.state.lock().await;
 
-            //  step 3: Remove disk_files, trees, diagnostics, and
+            // step 3: Remove disk_files, trees, diagnostics, and
             // contexts owned by removed roots BEFORE rebuilding, so stale
             // state never enters the next check.
             state.disk_files.retain(|p, _| {
@@ -1614,7 +1614,7 @@ impl Backend {
     /// paths cannot drift. One item is sent per folder root (scoped to that
     /// root); a final root-scoped item updates the server-wide fallback,
     /// matching the pre-fix single-item pull. The recompute stays here —
-    /// outside `publish_diagnostics` — preserving the  contract
+    /// outside `publish_diagnostics` — preserving the publish-cycle contract
     /// of zero filter compilations during a publish cycle.
     async fn pull_folder_settings(&self) {
         // One item per folder root scope, then a root-scoped item for the

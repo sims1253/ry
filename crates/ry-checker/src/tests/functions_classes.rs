@@ -270,7 +270,7 @@ fn dynlib_prefix_resolves_only_with_nonempty_remainder() {
     assert!(checker.take_diagnostics().iter().any(|d| d.code == "RY010"));
 }
 
-/// Plan 31 W6. `call_with_cleanup(native_symbol, ...)` is the cleancall
+/// `call_with_cleanup(native_symbol, ...)` is the cleancall
 /// wrapper purrr, cli and rlang vendor; its first argument is a registered
 /// native routine, not a variable. It is an ordinary R function, so the
 /// suppression is licensed by `useDynLib(..., .registration = TRUE)` and
@@ -562,7 +562,7 @@ fn r6_non_portable_active_member_is_a_value_not_a_function() {
 
 #[test]
 fn r6_portable_default_leaves_bare_field_unbound() {
-    // Negative control (W19 recall guard). R6 defaults to `portable = TRUE`,
+    // Negative control (recall guard). R6 defaults to `portable = TRUE`,
     // where method enclosures do not contain the members: a bare `.dir`
     // genuinely fails at runtime and must still be reported.
     let diags = check(
@@ -587,7 +587,7 @@ fn r6_portable_default_leaves_bare_field_unbound() {
 
 #[test]
 fn r6_explicit_portable_true_leaves_bare_field_unbound() {
-    // Negative control (W19 recall guard), explicit spelling.
+    // Negative control (recall guard), explicit spelling.
     let diags = check(
         r#"Thing <- R6::R6Class(
   "Thing",

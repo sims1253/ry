@@ -871,7 +871,7 @@ impl LanguageServer for Backend {
             }
         }
 
-        // W4: Spawn a background indexer to discover and parse all .R/.r
+        // Spawn a background indexer to discover and parse all .R/.r
         // files under the workspace root(s).
         self.spawn_background_index().await;
     }
@@ -894,7 +894,7 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri.clone();
         let path = uri_to_path(&uri);
         let version = params.text_document.version;
-        // Incremental sync (W6): process each change event, applying
+        // Incremental sync: process each change event, applying
         // range-based edits to the old text and building a tree-sitter
         // InputEdit for incremental reparse.
         //
@@ -1042,7 +1042,7 @@ impl LanguageServer for Backend {
                     .any(|r| std::path::Path::new(p.as_str()).starts_with(r))
             });
 
-            //  step 1: Rebuild the sorted folder contexts from
+            // step 1: Rebuild the sorted folder contexts from
             // the surviving + added roots, using the shared builder so
             // added folders get per-folder settings and config.
             let added_paths_ref: Vec<(usize, PathBuf)> = params
@@ -1112,12 +1112,12 @@ impl LanguageServer for Backend {
                 .map(|ctx| (ctx.root.clone(), ctx.config.clone()))
                 .collect();
 
-            //  step 5: Bump index generation so results from the
+            // step 5: Bump index generation so results from the
             // old folder set are discarded.
             state.index_generation = state.index_generation.wrapping_add(1);
         }
 
-        //  step 2: Load contexts and start indexing for the new
+        // step 2: Load contexts and start indexing for the new
         // folder set. Skip when no folder contexts remain (all removed)
         // so state.root does not re-index a removed directory.
         let has_contexts = !self.state.lock().await.folder_contexts.is_empty();
@@ -1125,7 +1125,7 @@ impl LanguageServer for Backend {
             self.spawn_background_index().await;
         }
 
-        //  step 3 continued: Clear diagnostics for documents owned
+        // step 3 continued: Clear diagnostics for documents owned
         // by removed roots.
         for uri in &docs_to_clear {
             self.client
@@ -1133,7 +1133,7 @@ impl LanguageServer for Backend {
                 .await;
         }
 
-        //  step 4: Republish only after the new state is installed.
+        // step 4: Republish only after the new state is installed.
         for uri in &docs_to_republish {
             self.schedule_diagnostics(uri.clone()).await;
         }
@@ -1894,7 +1894,7 @@ impl Backend {
         );
     }
 
-    /// W4: Discover and parse all `.R`/`.r` files under the workspace root(s)
+    /// Discover and parse all `.R`/`.r` files under the workspace root(s)
     /// in a background task. Results are stored in `state.disk_files` and a
     /// diagnostic refresh is triggered so cross-file calls into unopened
     /// files resolve on the next check.
@@ -2003,7 +2003,7 @@ impl Backend {
                 }
                 let cap_hit = !truncated.is_empty();
                 let mut state = self.state.lock().await;
-                //  step 5: Discard results from an index generation
+                // step 5: Discard results from an index generation
                 // belonging to the old folder set.
                 if state.index_generation != index_gen {
                     tracing::debug!(

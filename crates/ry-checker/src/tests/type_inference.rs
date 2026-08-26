@@ -1171,7 +1171,7 @@ fn dollar_on_all_atomic_union_emits_ry061() {
 
 #[test]
 fn early_return_joins_trailing_if_tail_type() {
-    // W8: an early `return()` must join, not replace, the trailing
+    // An early `return()` must join, not replace, the trailing
     // `if`-expression type. When the union contains a non-atomic member
     // (here the opaque `fromJSON` result), `$` must not fire RY061.
     let diags = check(
@@ -1182,7 +1182,7 @@ fn early_return_joins_trailing_if_tail_type() {
 
 #[test]
 fn early_return_with_all_atomic_trailing_if_still_reports() {
-    // W8 correctness guard: when every branch of the joined union IS
+    // Correctness guard: when every branch of the joined union IS
     // atomic, `$` is a real runtime error and RY061 must still fire.
     let diags = check(
         "a <- function(req, raw) {\n  if (req == 204) return(TRUE)\n  if (raw) 1 else 2\n}\nb <- function(x) a(x, FALSE)$k\n",

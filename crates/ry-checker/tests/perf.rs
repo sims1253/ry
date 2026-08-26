@@ -232,7 +232,7 @@ fn timed_median(mut body: impl FnMut()) -> Duration {
 ///
 /// Computed from `(size, time_seconds)` pairs. Uses **all** geometric
 /// points (multi-ratio evidence), unlike a single consecutive ratio
-/// which the plan calls out as unreliable on the quadratic boundary.
+/// known to be unreliable on the quadratic boundary.
 fn log_log_slope(points: &[(f64, f64)]) -> f64 {
     let n = points.len() as f64;
     let (sx, sy, sxx, sxy) =

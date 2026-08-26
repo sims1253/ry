@@ -202,7 +202,7 @@ pub(crate) fn extract_builtin_type_narrowing(cond: &Expr) -> Narrowing {
             // `is.null(x)` (non-negated): fall through to Positive with
             // target = NULL. The Positive arm narrows `var` to NULL in the
             // then branch and narrows it AWAY from NULL in the else branch
-            // (the case the plan calls out: `if (is.null(x)) ... else x()`).
+            // (the motivating case: `if (is.null(x)) ... else x()`).
             Narrowing::Positive { var, target }
         }
         Expr::UnaryOp {

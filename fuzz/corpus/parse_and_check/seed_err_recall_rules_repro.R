@@ -12,7 +12,7 @@ k <- function(df, t) {
 }
 # A7 — glue R/utils.R:32. A real bug: the author meant `any(lengths == 0)`,
 # which the same package writes correctly at R/glue.R:139. Deliberately still
-# MISSED. The plan justified a rule here with "is always FALSE", which is
+# MISSED. A proposed rule here was justified with "is always FALSE", which is
 # wrong -- `any()` returns a logical and `FALSE == 0` is TRUE -- and the shape
 # cannot be told apart from diffobj's legitimate `!all(diff(x)) == 1L`, pinned
 # as must-stay-silent in ry095_ry096_real_shapes.R. Left open rather than

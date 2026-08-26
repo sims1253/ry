@@ -549,7 +549,7 @@ impl Project {
         // the shared table stabilizes. A single Checker drives the
         // fixpoint loop; its table is then handed back to the Project.
         //
-        // W2 optimization: seed the fixpoint with the previous run's
+        // Optimization: seed the fixpoint with the previous run's
         // refined return types (keyed by function name). Already-converged
         // entries keep their refined value, so the loop needs fewer
         // iterations to re-stabilize after a small edit.
@@ -564,7 +564,7 @@ impl Project {
         refiner.set_user_stubs(Arc::clone(&self.user_stubs));
         refiner.seed_return_types(&self.prev_fn_returns);
 
-        // W2 scoping: refine only functions whose return type can have
+        // Scoping: refine only functions whose return type can have
         // changed, rather than the entire project. On the first call or
         // when `loaded` changed, fall back to refining everything.
         refiner.seed_caller_visible_signatures(&self.prev_fn_signatures, fixpoint_scope.as_ref());
@@ -674,7 +674,7 @@ impl Project {
         // passes 1/2), so only the refcount is bumped per file, not the
         // tables themselves.
         //
-        // W1 optimization: only emit files in the dirty set. Files not in
+        // Optimization: only emit files in the dirty set. Files not in
         // the set keep their previously-emitted diagnostics unchanged.
         let fn_table = Arc::new(std::mem::take(&mut self.fn_table));
         let package_known_vars = Arc::new(fn_table.known_vars.clone());

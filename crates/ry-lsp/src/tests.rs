@@ -768,7 +768,7 @@ fn effective_filter_explicit_empty_editor_select_disables_default_rules() {
 
 #[test]
 fn server_settings_deserialize_from_initialization_options() {
-    // Verify the initializationOptions shape that the plan specifies:
+    // Verify the specified initializationOptions shape:
     // { settings: [{ lint: { ignore: [...] } }], globalSettings: { ... } }
     let json = serde_json::json!({
         "settings": [
@@ -873,7 +873,7 @@ fn file_added_after_initial_check_is_emitted() {
 /// Integration test: a function defined in an added file must be visible
 /// to calls in an already-checked file after the next incremental check.
 ///
-/// This is the W4 acceptance criterion: opening one file in a package
+/// This is the indexing acceptance criterion: opening one file in a package
 /// resolves calls into unopened files.
 #[test]
 fn added_file_resolves_cross_file_calls() {

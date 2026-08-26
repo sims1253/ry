@@ -27,7 +27,7 @@ pub struct ServerSettings {
 ///
 /// Every field is `Option<T>` so that "unset" (fall back to `ry.toml`
 /// or built-in default) is distinguishable from "set to the default
-/// value". This is the precedence rule from the plan:
+/// value". This is the precedence rule:
 /// editor setting > `ry.toml` > built-in default.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]

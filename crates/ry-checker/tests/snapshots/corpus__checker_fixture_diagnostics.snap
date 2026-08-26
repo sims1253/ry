@@ -282,9 +282,9 @@ expression: snapshots
       severity: warning
       span:
         column: 13
-        end: 1343
+        end: 1347
         line: 30
-        start: 1327
+        start: 1331
   fixture: err_recall_rules_repro.R
 - diagnostics:
     - code: RY098

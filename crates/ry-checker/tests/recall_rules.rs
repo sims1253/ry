@@ -12,7 +12,7 @@
 //! | `constant-condition` (a) | — | **not shipped**, see below |
 //! | `not-before-comparison` | — | **not shipped**, see the module test |
 //!
-//! `not-before-comparison` rests on the plan's claim that "`!` binds
+//! `not-before-comparison` rests on the original claim that "`!` binds
 //! tighter, so `!x >= y` is `(!x) >= y`". R parses it the other way:
 //! `quote(!x == y)` is a call to `!` whose argument is `x == y`, because
 //! negation binds *looser* than comparison. That is the same wrong
@@ -20,7 +20,7 @@
 //! `testdata/ry095_ry096_real_shapes.R` exists to pin it.
 //!
 //! `constant-condition`'s first half (`any(v) == 0`, glue `R/utils.R:32`)
-//! is dropped for a related reason. The plan justifies it with "is always
+//! is dropped for a related reason. The original sketch justifies it with "is always
 //! FALSE", which is not true: `any()` returns a logical, and `FALSE == 0`
 //! is `TRUE`. glue's line is a real bug — the author meant
 //! `any(lengths == 0)` — but the *shape* is indistinguishable from
@@ -65,7 +65,7 @@ fn fires(src: &str, code: &str) -> bool {
     codes(src).contains(&code)
 }
 
-/// The plan's committed reproduction of the audit's false negatives.
+/// The committed reproduction of the audit's false negatives.
 fn repro_source() -> String {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/err_recall_rules_repro.R");

@@ -136,7 +136,7 @@ fn user_infix_preserves_operator_and_operands() {
     );
 }
 
-/// P37-W1: Regression for the UTF-8 boundary panic in `lower_namespace`.
+/// Regression for the UTF-8 boundary panic in `lower_namespace`.
 ///
 /// When the RHS of a `::`/`:::` node is a string token whose last byte
 /// falls inside a multi-byte character (e.g. an unterminated string with
@@ -154,7 +154,9 @@ fn namespace_string_rhs_multibyte_no_panic() {
     // produces a `string` node whose raw text is `"\nÿ` (5 bytes);
     // `raw.len() - 1` = 4 lands inside ÿ (bytes 3–4), causing a panic.
     let src = "a::\"\\nÿ";
-    let file = p.parse("p37_w1.R", src).expect("parse must not panic");
+    let file = p
+        .parse("utf8_boundary.R", src)
+        .expect("parse must not panic");
     // The parser must return a result, not panic.  The exact AST for
     // malformed input may vary; we only assert no panic here.
     assert!(
@@ -163,7 +165,7 @@ fn namespace_string_rhs_multibyte_no_panic() {
     );
 }
 
-/// P37-W1: Well-formed multibyte namespace strings produce the correct name.
+/// Well-formed multibyte namespace strings produce the correct name.
 #[test]
 fn namespace_string_rhs_multibyte_well_formed() {
     let file = parse("pkg::\"ÿ\"\n");
@@ -176,28 +178,32 @@ fn namespace_string_rhs_multibyte_well_formed() {
     );
 }
 
-/// P37-W1: Minimized fuzz crash input — three-byte UTF-8 character in
+/// Minimized fuzz crash input — three-byte UTF-8 character in
 /// an unterminated namespace string RHS.
 #[test]
 fn namespace_string_rhs_three_byte_unterminated_no_panic() {
     let mut p = ry_core::RParser::new().expect("parser init");
     // `\n` (backslash-n) followed by 中 (U+4E2D, three bytes 0xE4 0xB8 0xAD).
     let src = "a::\"\\n中";
-    let file = p.parse("p37_w1.R", src).expect("parse must not panic");
+    let file = p
+        .parse("utf8_boundary.R", src)
+        .expect("parse must not panic");
     assert!(
         !file.stmts.is_empty(),
         "parser must produce at least one statement"
     );
 }
 
-/// P37-W1: Four-byte UTF-8 character (emoji) in an unterminated
+/// Four-byte UTF-8 character (emoji) in an unterminated
 /// namespace string RHS must not panic either.
 #[test]
 fn namespace_string_rhs_four_byte_unterminated_no_panic() {
     let mut p = ry_core::RParser::new().expect("parser init");
     // `\n` followed by 😀 (U+1F600, four bytes 0xF0 0x9F 0x98 0x80).
     let src = "a::\"\\n😀";
-    let file = p.parse("p37_w1.R", src).expect("parse must not panic");
+    let file = p
+        .parse("utf8_boundary.R", src)
+        .expect("parse must not panic");
     assert!(
         !file.stmts.is_empty(),
         "parser must produce at least one statement"

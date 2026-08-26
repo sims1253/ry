@@ -24,14 +24,14 @@ use tower_lsp::lsp_types::Diagnostic as LspDiagnostic;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
-/// P36-W5 (#45): counts baseline file reads performed by `load_folder_baseline`
+/// Counts baseline file reads performed by `load_folder_baseline`
 /// (the only baseline disk-read site in the LSP). Reads of publish/inlay-hint
 /// state use the cached [`FolderAnalysisContext`] and never touch
 /// this counter. Exposed via [`baseline_disk_reads`] so integration tests can
 /// assert hot-path I/O is absent rather than infer it from timing.
 static BASELINE_DISK_READS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// P36-W5 (#45): number of baseline file reads since process start. A
+/// number of baseline file reads since process start. A
 /// publish/inlay-hint that does not change this value performs
 /// zero baseline disk I/O.
 pub fn baseline_disk_reads() -> usize {
@@ -70,7 +70,7 @@ pub(super) struct State {
     /// is still the latest. A newer edit during the
     /// sleep window wins and the stale task aborts.
     diag_generation: u64,
-    /// P36-W3 (#55): Index generation stamp. Bumped every time
+    /// Index generation stamp. Bumped every time
     /// `spawn_background_index` starts so that results from a prior
     /// folder set are discarded. The background task captures the
     /// generation at dispatch and checks it before writing.
@@ -97,7 +97,7 @@ pub(super) struct State {
     /// workspace root. Stored so the severity filter and baseline can
     /// be applied in `publish_diagnostics` without re-reading the file.
     file_config: ry_config::Config,
-    /// P36-W5 (#45): Root-level baseline cached at initialize so the
+    /// Root-level baseline cached at initialize so the
     /// fallback publish path (documents outside every folder root) performs
     /// no disk access. Reloaded alongside the root config on watch events.
     root_baseline: Option<ry_config::Baseline>,
@@ -117,7 +117,7 @@ pub(super) struct State {
     /// `initializationOptions`, `workspace/configuration`, or
     /// `didChangeConfiguration`.
     folder_settings: FolderSettings,
-    /// P36-W3 (#55): The full server settings envelope received at
+    /// The full server settings envelope received at
     /// initialize. Retained so dynamically added workspace folders can
     /// be built through the same `build_folder_contexts` path as initial
     /// folders (finding from PR #69 review: default settings instead of
@@ -139,9 +139,9 @@ pub(super) struct State {
     workspace_folders: Vec<(PathBuf, ry_config::Config)>,
     /// Filesystem-derived resolution state, ordered by longest root prefix.
     workspace_contexts: Vec<(PathBuf, ry_workspace::WorkspaceContext)>,
-    // --- P36-W2: per-folder analysis context ---
+    // --- per-folder analysis context ---
     /// Per-root analysis context holding effective config, editor settings,
-    /// local typesheds, and the Plan 35 workspace context. Ordered by root
+    /// local typesheds, and the workspace context. Ordered by root
     /// path length descending for longest-prefix ownership (issue #44/#54/#56).
     folder_contexts: Vec<FolderAnalysisContext>,
     /// Per-folder project caches for isolated checking. Each workspace
@@ -149,30 +149,30 @@ pub(super) struct State {
     /// package differently never collide (#54). Keyed by root path string.
     folder_projects: HashMap<String, Arc<Mutex<ProjectCache>>>,
     /// On-disk `.R`/`.r` files discovered by the background indexer
-    /// (Plan 33 W4). Keyed by absolute path. Open documents shadow
+    /// Keyed by absolute path. Open documents shadow
     /// these — when a path exists in both `docs` and `disk_files`,
     /// the open document's content is authoritative.
     disk_files: HashMap<String, Arc<SourceFile>>,
-    /// P36-W4 (#53): Version-stamped tree-sitter trees for incremental
-    /// parsing (Plan 33 W6). Each entry stores the document version
+    /// Version-stamped tree-sitter trees for incremental
+    /// parsing. Each entry stores the document version
     /// (generation) the tree was produced from. A parse result may
     /// replace the cache only if its version still matches the current
     /// document version; a cache read returns the tree only under the
     /// same invariant, so no cached tree can ever be served for a
     /// different document generation.
     trees: HashMap<String, (i32, ry_core::Tree)>,
-    /// P37-W6 (#46): per-server counter for filter/glob construction events.
+    /// per-server counter for filter/glob construction events.
     /// Incremented each time a filter or exclude set is compiled from config.
     /// Scoped to this server (not process-global) so parallel integration
     /// tests each observe only their own compilations, never a sibling's.
     pub(super) filter_compile_count: Arc<std::sync::atomic::AtomicU64>,
-    /// P37-W6 (#46): compile-count delta observed during this server's most
+    /// compile-count delta observed during this server's most
     /// recent `publish_diagnostics` cycle. Tests assert it is zero
     /// (precomputed values are borrowed, never recompiled mid-publish).
     pub(super) compile_during_last_publish: Arc<std::sync::atomic::AtomicU64>,
 }
 
-/// P36-W2: One per-folder analysis context (#44/#54/#56).
+/// One per-folder analysis context (#44/#54/#56).
 ///
 /// Factored from longest-prefix ownership so every analysis channel
 /// resolves config, editor settings, local typesheds, and package
@@ -190,25 +190,25 @@ pub(super) struct FolderAnalysisContext {
     pub folder_settings: FolderSettings,
     /// Local typeshed stubs loaded from this folder's `ry.toml` (#54).
     pub stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
-    /// Plan 35 workspace resolution context for package metadata.
+    /// Workspace resolution context for package metadata.
     pub workspace_context: Option<ry_workspace::WorkspaceContext>,
-    /// P36-W5 (#45): The baseline loaded from `ry.toml`/editor settings,
+    /// The baseline loaded from `ry.toml`/editor settings,
     /// cached during context construction so the publish path performs no
     /// disk access. Reloaded outside the state lock on watch events; a
     /// failed reload retains the last valid value (see
     /// `rebuild_folder_context`).
     pub baseline: Option<ry_config::Baseline>,
-    /// P37-W6 (#46): Precomputed severity filter for this folder,
+    /// Precomputed severity filter for this folder,
     /// compiled once during context construction instead of per-file
     /// in the publish loop.
     pub filter: ry_checker::SeverityFilter,
-    /// P37-W6 (#46): Precomputed minimum confidence threshold.
+    /// Precomputed minimum confidence threshold.
     pub min_confidence: Option<ry_checker::Confidence>,
-    /// P37-W6 (#46): Precompiled exclude glob patterns.
+    /// Precompiled exclude glob patterns.
     pub excludes: ry_config::Excludes,
 }
 
-/// P37-W6 (#46): Compute the precomputed filter, min_confidence, and
+/// Compute the precomputed filter, min_confidence, and
 /// excludes for a folder from its config and settings. This replaces
 /// the per-file reconstruction that previously happened inside
 /// `publish_diagnostics`.
@@ -282,7 +282,7 @@ fn compute_folder_filter(
 /// the same reason. Each folder mirrors `rebuild_folder_context` (the
 /// folder config is both the exclude source and the severity fallback);
 /// the root mirrors `initialize`. This stays OUT of `publish_diagnostics`:
-/// the P37-W6 (#46) contract asserts zero filter compilations *during a
+/// the publish-cycle contract asserts zero filter compilations *during a
 /// publish cycle*; recomputing on a configuration change is the same
 /// off-publish treatment the push-based path already uses.
 fn refresh_cached_folder_filters(state: &mut State) {
@@ -508,7 +508,7 @@ impl State {
     /// Merge editor lint settings over a given `ry.toml` config: for
     /// each `ignore`/`error`/`warn` field, an editor-provided list
     /// replaces the config value; `settings` supplies per-folder editor
-    /// values (P36-W2a/#44), falling back to the server-wide
+    /// values, falling back to the server-wide
     /// `folder_settings`. Test-only.
     #[cfg(test)]
     #[allow(dead_code)]
@@ -555,7 +555,7 @@ impl State {
         self.merge_filter(&self.file_config, None)
     }
 
-    /// P36-W2: Find the owning [`FolderAnalysisContext`] for a document path
+    /// Find the owning [`FolderAnalysisContext`] for a document path
     /// using longest-prefix matching against folder context roots.
     pub(super) fn folder_context_for_path(&self, doc_path: &str) -> Option<&FolderAnalysisContext> {
         let path = std::path::Path::new(doc_path);
@@ -565,7 +565,7 @@ impl State {
     }
 
     /// S4: Find the owning workspace folder config for a document path.
-    /// Uses longest-prefix matching against folder context roots (P36-W2)
+    /// Uses longest-prefix matching against folder context roots
     /// and falls back to the legacy `workspace_folders` vec.
     /// Returns None if no workspace folder owns the path.
     /// Test helper for folder config lookup.
@@ -607,7 +607,7 @@ impl State {
         {
             return ry_workspace::is_file_eligible(path, root, config);
         }
-        // P36-W3 (#55): Fall back to the server root only when the path is
+        // Fall back to the server root only when the path is
         // actually inside it. After a folder removal, files under the removed
         // root must not remain eligible via this fallback.
         match &self.root {
@@ -620,13 +620,13 @@ impl State {
 
     /// Return the cached effective baseline for a document path.
     ///
-    /// P36-W5 (#45): this is a pure cache read — it performs no disk access.
+    /// This is a pure cache read — it performs no disk access.
     /// The baseline is loaded into each [`FolderAnalysisContext`] (and the
     /// root-level fallback) during [`initialize`](Backend::initialize) and
     /// reloaded *outside* the state lock on watch events by
     /// [`rebuild_folder_contexts`]. Editor setting takes precedence over
     /// `ry.toml`; both were resolved relative to the owning folder root at
-    /// load time (P36-W2).
+    /// load time.
     pub(super) fn effective_baseline_for_path(
         &self,
         doc_path: &str,
@@ -678,7 +678,7 @@ impl LanguageServer for Backend {
             .and_then(|f| f.dynamic_registration)
             .unwrap_or(false);
 
-        // P36-W2: Build per-folder analysis contexts. Each workspace
+        // Build per-folder analysis contexts. Each workspace
         // folder (or `root_uri` when no folders are supplied) gets its own
         // config, editor settings, and local typesheds. This is the
         // single longest-prefix ownership operation for every channel.
@@ -695,7 +695,7 @@ impl LanguageServer for Backend {
                     .collect()
             })
             .unwrap_or_default();
-        // P37-W6 (#46): Clone this server's per-instance compile counter so
+        // Clone this server's per-instance compile counter so
         // the free-function builders below increment it instead of a process
         // global. Parallel test servers keep independent tallies.
         let filter_compile_count = self.state.lock().await.filter_compile_count.clone();
@@ -724,7 +724,7 @@ impl LanguageServer for Backend {
             .and_then(|r| ry_config::Config::load_from_dir(r).ok().flatten())
             .unwrap_or_default();
 
-        // P36-W5 (#45): Cache the root-level baseline so the fallback publish
+        // Cache the root-level baseline so the fallback publish
         // path (documents outside every folder root) performs no disk access.
         // Built outside the lock alongside `file_config`.
         let root_baseline =
@@ -775,7 +775,7 @@ impl LanguageServer for Backend {
         state.server_settings = server_settings;
         state.supports_workspace_configuration = supports_workspace_configuration;
         state.supports_did_change_watched_files = supports_did_change_watched_files;
-        // P36-W2: Install per-folder analysis contexts and project caches.
+        // Install per-folder analysis contexts and project caches.
         state.folder_contexts = folder_contexts;
         state.folder_projects = folder_projects;
         // Longest-prefix matching in `folder_config_for_path` requires
@@ -789,7 +789,7 @@ impl LanguageServer for Backend {
                 // it explicitly instead of relying on the protocol default.
                 position_encoding: Some(PositionEncodingKind::UTF16),
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
-                    // Incremental sync (Plan 33 W6): the client sends
+                    // Incremental sync: the client sends
                     // only the edited range, which we use to build a
                     // tree-sitter InputEdit for incremental reparse.
                     TextDocumentSyncKind::INCREMENTAL,
@@ -871,7 +871,7 @@ impl LanguageServer for Backend {
             }
         }
 
-        // W4: Spawn a background indexer to discover and parse all .R/.r
+        // Spawn a background indexer to discover and parse all .R/.r
         // files under the workspace root(s).
         self.spawn_background_index().await;
     }
@@ -894,7 +894,7 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri.clone();
         let path = uri_to_path(&uri);
         let version = params.text_document.version;
-        // Incremental sync (W6): process each change event, applying
+        // Incremental sync: process each change event, applying
         // range-based edits to the old text and building a tree-sitter
         // InputEdit for incremental reparse.
         //
@@ -911,7 +911,7 @@ impl LanguageServer for Backend {
             }
         }
         self.schedule_diagnostics(uri).await;
-        // P36-W4 (#53): test-only scheduling seam. Signals that the
+        // test-only scheduling seam. Signals that the
         // document version has been bumped and diagnostics re-scheduled,
         // so a waiting test can release the parse barrier knowing the
         // version-stamped cache will reject the stale parse. When no test
@@ -945,7 +945,7 @@ impl LanguageServer for Backend {
             if let Ok(settings) = serde_json::from_value::<FolderSettings>(ry_section.clone()) {
                 let mut state = self.state.lock().await;
                 state.folder_settings = settings.clone();
-                // P36-W3 / PR #69 review: Propagate to folder contexts.
+                // PR #69 review: Propagate to folder contexts.
                 for ctx in &mut state.folder_contexts {
                     ctx.folder_settings = settings.clone();
                 }
@@ -954,7 +954,7 @@ impl LanguageServer for Backend {
                 // min_confidence / excludes through the shared
                 // `refresh_cached_folder_filters` helper so the push and
                 // pull paths share one refresh and cannot drift. This stays
-                // OUT of `publish_diagnostics`: the P37-W6 (#46) contract
+                // OUT of `publish_diagnostics`: the publish-cycle contract
                 // asserts zero filter compilations *during a publish cycle*.
                 refresh_cached_folder_filters(&mut state);
             }
@@ -974,7 +974,7 @@ impl LanguageServer for Backend {
     }
 
     async fn did_change_workspace_folders(&self, params: DidChangeWorkspaceFoldersParams) {
-        // P36-W3 (#55): Rebuild the sorted folder contexts, load contexts and
+        // Rebuild the sorted folder contexts, load contexts and
         // start indexing for added roots, remove all state owned by removed
         // roots, then republish only after the new state is installed.
         let removed_uris: Vec<Url> = params.event.removed.iter().map(|f| f.uri.clone()).collect();
@@ -988,7 +988,7 @@ impl LanguageServer for Backend {
         let (docs_to_clear, docs_to_republish): (Vec<Url>, Vec<Url>) = {
             let state = self.state.lock().await;
 
-            // P36-W3 (#55): Build added folder contexts through the same
+            // Build added folder contexts through the same
             // `build_folder_contexts` path used at initialize, so dynamically
             // added folders get proper per-folder settings and config (PR #69
             // review finding: default settings instead of the builder).
@@ -1018,7 +1018,7 @@ impl LanguageServer for Backend {
         {
             let mut state = self.state.lock().await;
 
-            // P36-W3 (#55) step 3: Remove disk_files, trees, diagnostics, and
+            // step 3: Remove disk_files, trees, diagnostics, and
             // contexts owned by removed roots BEFORE rebuilding, so stale
             // state never enters the next check.
             state.disk_files.retain(|p, _| {
@@ -1042,7 +1042,7 @@ impl LanguageServer for Backend {
                     .any(|r| std::path::Path::new(p.as_str()).starts_with(r))
             });
 
-            // P36-W3 (#55) step 1: Rebuild the sorted folder contexts from
+            // step 1: Rebuild the sorted folder contexts from
             // the surviving + added roots, using the shared builder so
             // added folders get per-folder settings and config.
             let added_paths_ref: Vec<(usize, PathBuf)> = params
@@ -1056,7 +1056,7 @@ impl LanguageServer for Backend {
             // Build new contexts for added folders through build_folder_contexts.
             let new_contexts = if !added_paths_ref.is_empty() {
                 let server_settings = state.server_settings.clone();
-                // P37-W6 (#46): thread this server's compile counter in so
+                // thread this server's compile counter in so
                 // added-folder filter builds count toward it, not a global.
                 let filter_compile_count = Arc::clone(&state.filter_compile_count);
                 tokio::task::spawn_blocking(move || {
@@ -1112,12 +1112,12 @@ impl LanguageServer for Backend {
                 .map(|ctx| (ctx.root.clone(), ctx.config.clone()))
                 .collect();
 
-            // P36-W3 (#55) step 5: Bump index generation so results from the
+            // step 5: Bump index generation so results from the
             // old folder set are discarded.
             state.index_generation = state.index_generation.wrapping_add(1);
         }
 
-        // P36-W3 (#55) step 2: Load contexts and start indexing for the new
+        // step 2: Load contexts and start indexing for the new
         // folder set. Skip when no folder contexts remain (all removed)
         // so state.root does not re-index a removed directory.
         let has_contexts = !self.state.lock().await.folder_contexts.is_empty();
@@ -1125,7 +1125,7 @@ impl LanguageServer for Backend {
             self.spawn_background_index().await;
         }
 
-        // P36-W3 (#55) step 3 continued: Clear diagnostics for documents owned
+        // step 3 continued: Clear diagnostics for documents owned
         // by removed roots.
         for uri in &docs_to_clear {
             self.client
@@ -1133,7 +1133,7 @@ impl LanguageServer for Backend {
                 .await;
         }
 
-        // P36-W3 (#55) step 4: Republish only after the new state is installed.
+        // step 4: Republish only after the new state is installed.
         for uri in &docs_to_republish {
             self.schedule_diagnostics(uri.clone()).await;
         }
@@ -1160,7 +1160,7 @@ impl LanguageServer for Backend {
             return;
         }
 
-        // P36-W5 (#45): A config (`ry.toml`) or baseline (`.json`) change
+        // A config (`ry.toml`) or baseline (`.json`) change
         // requires rebuilding each folder's effective config + baseline.
         // The new contexts are built OUTSIDE the write lock (all disk I/O
         // happens in `rebuild_folder_contexts`), then atomically swapped in.
@@ -1169,7 +1169,7 @@ impl LanguageServer for Backend {
         if config_or_baseline_changed {
             let (old_contexts, root, filter_compile_count) = {
                 let state = self.state.lock().await;
-                // P37-W6 (#46): carry this server's compile counter into the
+                // carry this server's compile counter into the
                 // rebuild so reloaded filters count toward it, not a global.
                 (
                     state.folder_contexts.clone(),
@@ -1195,7 +1195,7 @@ impl LanguageServer for Backend {
                 state.folder_contexts = new_contexts.clone();
                 // Sync the root-level fallback state and the legacy vectors
                 // from the rebuilt contexts so the fallback paths see the new
-                // config/baseline (P36-W3 / PR #69 review).
+                // config/baseline (PR #69 review).
                 for ctx in &new_contexts {
                     if state.root.as_deref() == Some(ctx.root.as_path()) {
                         state.file_config = ctx.config.clone();
@@ -1257,7 +1257,7 @@ impl LanguageServer for Backend {
             state.docs.keys().cloned().collect::<Vec<_>>()
         };
         {
-            // P36-W3 / PR #69 review: Clean up the file in both the root
+            // PR #69 review: Clean up the file in both the root
             // project cache and the owning folder's per-folder cache
             // (finding: Per-folder ProjectCache entries not cleaned up on
             // did_close).
@@ -1381,7 +1381,7 @@ impl LanguageServer for Backend {
 }
 
 impl Backend {
-    /// Apply a single incremental text change (Plan 33 W6).
+    /// Apply a single incremental text change.
     ///
     /// For changes with a range (incremental sync), we:
     /// 1. Apply the edit to the old text to produce the new text
@@ -1511,7 +1511,7 @@ impl Backend {
                 let state = self.state.lock().await;
                 state.tree_for(path)
             };
-            // P36-W4 (#53): test-only scheduling barrier. When armed, the
+            // test-only scheduling barrier. When armed, the
             // parse pauses here — after reading the document text, version,
             // and old tree, but before the expensive parse — so the test can
             // force the interleaving:
@@ -1578,7 +1578,7 @@ impl Backend {
         let mut checker = ry_checker::Checker::new(path);
         let user_stubs = {
             let state = self.state.lock().await;
-            // P36-W2: Use the owning folder's stubs for single-file checks (#54).
+            // Use the owning folder's stubs for single-file checks (#54).
             state
                 .folder_context_for_path(path)
                 .map(|ctx| Arc::clone(&ctx.stubs))
@@ -1614,7 +1614,7 @@ impl Backend {
     /// paths cannot drift. One item is sent per folder root (scoped to that
     /// root); a final root-scoped item updates the server-wide fallback,
     /// matching the pre-fix single-item pull. The recompute stays here —
-    /// outside `publish_diagnostics` — preserving the P37-W6 (#46) contract
+    /// outside `publish_diagnostics` — preserving the publish-cycle contract
     /// of zero filter compilations during a publish cycle.
     async fn pull_folder_settings(&self) {
         // One item per folder root scope, then a root-scoped item for the
@@ -1676,7 +1676,7 @@ impl Backend {
         // before running the checker so a slow check doesn't block
         // other LSP requests (e.g. didOpen of a second file).
         //
-        // P37-W6 (#46): also clone this server's per-instance counters so the
+        // also clone this server's per-instance counters so the
         // compile-count delta measured below is scoped to this server, not the
         // process. `publish_start_count` snapshots the counter at cycle start.
         let (path, doc_paths, versions, filter_compile_count, compile_during_last_publish) = {
@@ -1694,7 +1694,7 @@ impl Backend {
                 Arc::clone(&state.compile_during_last_publish),
             )
         };
-        // P37-W6 (#46): snapshot the compile counter at the start of this
+        // snapshot the compile counter at the start of this
         // publish cycle so we can measure compilations during it.
         let publish_start_count = filter_compile_count.load(std::sync::atomic::Ordering::Relaxed);
         let requested_is_eligible = {
@@ -1799,14 +1799,14 @@ impl Backend {
         }
 
         // Publish diagnostics for every checked file, applying per-folder
-        // filter/confidence/exclude/baseline state (P36-W2a/#44).
+        // filter/confidence/exclude/baseline state.
         for (result,) in &all_results {
             let ProjectCheckResult {
                 diagnostics: per_file,
                 files: checked_files,
             } = result;
             for (diagnostic_path, mut diagnostics) in per_file.clone() {
-                // P37-W6 (#46): Use the precomputed filter/confidence/excludes
+                // Use the precomputed filter/confidence/excludes
                 // from the FolderAnalysisContext instead of reconstructing
                 // them per file inside the publish loop.
                 let (filter, min_confidence, excludes, baseline, folder_root) = {
@@ -1885,7 +1885,7 @@ impl Backend {
                     .await;
             }
         }
-        // P37-W6 (#46): record how many filter compilations happened during
+        // record how many filter compilations happened during
         // this publish cycle. Must be zero with precomputation.
         let publish_end_count = filter_compile_count.load(std::sync::atomic::Ordering::Relaxed);
         compile_during_last_publish.store(
@@ -1894,19 +1894,19 @@ impl Backend {
         );
     }
 
-    /// W4: Discover and parse all `.R`/`.r` files under the workspace root(s)
+    /// Discover and parse all `.R`/`.r` files under the workspace root(s)
     /// in a background task. Results are stored in `state.disk_files` and a
     /// diagnostic refresh is triggered so cross-file calls into unopened
     /// files resolve on the next check.
     async fn spawn_background_index(&self) {
         let (roots_with_config, index_gen) = {
             let mut state = self.state.lock().await;
-            // P36-W3 (#55): Bump the index generation so results from a prior
+            // Bump the index generation so results from a prior
             // folder set are discarded when they arrive.
             state.index_generation = state.index_generation.wrapping_add(1);
             let idx_gen = state.index_generation;
             let roots = if !state.folder_contexts.is_empty() {
-                // P36-W2: Use per-folder stubs for workspace resolution.
+                // Use per-folder stubs for workspace resolution.
                 state
                     .folder_contexts
                     .iter()
@@ -1971,7 +1971,7 @@ impl Backend {
                     files = disk_files.len(),
                     "background workspace index complete"
                 );
-                // P36-W7 (#48): emit a structured tracing event and one
+                // emit a structured tracing event and one
                 // user-visible LSP warning per scan generation when a cap
                 // is hit. A cap hit is never silent.
                 for (root, report) in &truncated {
@@ -2003,7 +2003,7 @@ impl Backend {
                 }
                 let cap_hit = !truncated.is_empty();
                 let mut state = self.state.lock().await;
-                // P36-W3 (#55) step 5: Discard results from an index generation
+                // step 5: Discard results from an index generation
                 // belonging to the old folder set.
                 if state.index_generation != index_gen {
                     tracing::debug!(
@@ -2015,14 +2015,14 @@ impl Backend {
                 }
                 state.disk_files = disk_files;
                 state.workspace_contexts = contexts.clone();
-                // P36-W2: Update each folder context's workspace_context
+                // Update each folder context's workspace_context
                 // with the freshly resolved package metadata.
                 for ctx in &mut state.folder_contexts {
                     if let Some((_, wc)) = contexts.iter().find(|(root, _)| root == &ctx.root) {
                         ctx.workspace_context = Some(wc.clone());
                     }
                 }
-                // P36-W7 (#48): one user-visible warning per scan generation.
+                // one user-visible warning per scan generation.
                 if cap_hit {
                     let _ = self
                         .client
@@ -2116,7 +2116,7 @@ fn load_workspace_stubs(
     Arc::new(merged)
 }
 
-/// P36-W2: Load stubs directly from a loaded config's typeshed directories.
+/// Load stubs directly from a loaded config's typeshed directories.
 /// Used per-folder so two roots defining the same package differently
 /// never collide (#54).
 fn load_stubs_from_config(
@@ -2137,7 +2137,7 @@ fn load_stubs_from_config(
     Arc::new(merged)
 }
 
-/// P36-W2c (#56): Discover the effective `ry.toml` config for a folder.
+/// Discover the effective `ry.toml` config for a folder.
 ///
 /// When the editor supplies a `configuration` override it is resolved
 /// relative to `folder_root` (unless absolute) and loaded directly; on
@@ -2145,7 +2145,7 @@ fn load_stubs_from_config(
 /// `Ok(default)` when no `ry.toml` is found, and `Err` only when discovery
 /// itself fails (I/O or parse error) so callers can decide whether to
 /// retain a previous config. Disk I/O happens here — callers MUST run this
-/// outside the state lock (P36-W5 #45).
+/// outside the state lock.
 fn discover_folder_config(
     folder_settings: &FolderSettings,
     folder_root: &std::path::Path,
@@ -2180,7 +2180,7 @@ fn discover_folder_config(
         .unwrap_or_default())
 }
 
-/// P36-W5 (#45): Resolve the baseline path from editor settings / `ry.toml`
+/// Resolve the baseline path from editor settings / `ry.toml`
 /// and load it from disk.
 ///
 /// Returns `Ok(None)` when no baseline is configured. `Err` signals a
@@ -2216,12 +2216,12 @@ fn load_folder_baseline(
         .map_err(|e| format!("{e}"))
 }
 
-/// P36-W2: Build per-folder analysis contexts for every workspace root.
+/// Build per-folder analysis contexts for every workspace root.
 ///
 /// Each context holds the effective `ry.toml` config (from directory
 /// discovery or the editor `configuration` override, #56), the matching
 /// editor [`FolderSettings`] (#44), local typesheds loaded from that
-/// folder's config (#54), and the cached baseline (P36-W5 #45). When
+/// folder's config (#54), and the cached baseline. When
 /// `workspace_folders` is empty, `root_uri` becomes the single folder.
 fn build_folder_contexts(
     root: Option<&std::path::Path>,
@@ -2247,7 +2247,7 @@ fn build_folder_contexts(
             .cloned()
             .unwrap_or_else(|| server_settings.global_settings.clone());
 
-        // P36-W2c/W5 (#56/#45): Discover config (defaulting on failure) and
+        // Discover config (defaulting on failure) and
         // load the baseline once into the context so the publish path never
         // touches disk.
         let config =
@@ -2271,11 +2271,11 @@ fn build_folder_contexts(
             }
         };
 
-        // P36-W2b (#54): Load stubs from this folder's config so two roots
+        // Load stubs from this folder's config so two roots
         // defining the same package differently are isolated.
         let stubs = load_stubs_from_config(&config);
 
-        // P37-W6 (#46): Precompute filter/min_confidence/excludes once
+        // Precompute filter/min_confidence/excludes once
         // per folder so the publish loop performs one ownership lookup
         // and borrows the compiled values.
         let (filter, min_confidence, excludes) =
@@ -2298,7 +2298,7 @@ fn build_folder_contexts(
     contexts
 }
 
-/// P36-W5 (#45): Rebuild a single folder's analysis context from disk.
+/// Rebuild a single folder's analysis context from disk.
 ///
 /// Each field is reloaded independently. On any sub-failure (config parse,
 /// baseline parse) the **last valid value for that field is retained** and a
@@ -2348,7 +2348,7 @@ fn rebuild_folder_context(
             old.baseline.clone()
         }
     };
-    // P37-W6 (#46): Recompute the precomputed filter/excludes from the
+    // Recompute the precomputed filter/excludes from the
     // reloaded config.
     let (filter, min_confidence, excludes) =
         compute_folder_filter(&config, &old.folder_settings, &config, filter_count);
@@ -2365,7 +2365,7 @@ fn rebuild_folder_context(
     }
 }
 
-/// P36-W5 (#45): Rebuild every folder's analysis context from disk,
+/// Rebuild every folder's analysis context from disk,
 /// returning a replacement `Vec` in the same order as `old`. Used by the
 /// watched-files handler to rebuild outside the write lock and then swap
 /// atomically. Each context is rebuilt independently; a single folder's

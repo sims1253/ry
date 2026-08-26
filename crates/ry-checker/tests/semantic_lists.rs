@@ -1,4 +1,4 @@
-//! Semantic coherence tests for Plan 35 W7.
+//! Semantic coherence tests.
 //!
 //! Two deliverables are exercised here:
 //!

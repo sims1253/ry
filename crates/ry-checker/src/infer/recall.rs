@@ -1,4 +1,4 @@
-//! Recall rules from plan 31 workstream W18 (RY102, RY103, RY105).
+//! Recall rules targeting known false-negative shapes (RY102, RY103, RY105).
 //!
 //! These codes exist to catch real defects the 62-package Posit corpus audit
 //! found and 0.8.0 missed. They are grouped here because they share a
@@ -6,10 +6,10 @@
 //! *shape* of an expression rather than by the inferred type of a value, so
 //! their false-positive surface is bounded by the syntax they match.
 //!
-//! `tests/plan31_recall_rules.rs` pins both the positive and the negative
+//! `tests/recall_rules.rs` pins both the positive and the negative
 //! direction of each rule.
 //!
-//! Two of the plan's sketches are deliberately **not** implemented.
+//! Two of the original sketches are deliberately **not** implemented.
 //!
 //! `not-before-comparison` was premised on `!x >= y` parsing as
 //! `(!x) >= y`, but R's `?Syntax` places unary `!` *below* the comparison
@@ -17,7 +17,7 @@
 //! That is the precise model error that retired `RY095` in 0.4.1.
 //!
 //! `constant-condition`'s `any(v) == 0` half (glue `R/utils.R:32`) is a real
-//! bug — `any(lengths == 0)` was meant — but the plan's justification for
+//! bug — `any(lengths == 0)` was meant — but the sketch's justification for
 //! flagging it, "is always FALSE", is wrong: `any()` yields a logical and
 //! `FALSE == 0` is `TRUE`. The shape is also indistinguishable from
 //! diffobj's legitimate `!all(diff(x)) == 1L`, pinned as must-stay-silent in
@@ -129,7 +129,7 @@ impl Checker {
         };
         // Only base:: versions of these containers carry the name-dropping
         // semantic. Delegate to the canonical base-call resolution operation
-        // so the shadowing order lives in one place (Plan 35 W7).
+        // so the shadowing order lives in one place.
         let lookup_name = crate::semantic_lists::bare_name(name);
         if !self.resolves_to_base_lenient(name, scope) {
             return;
@@ -233,7 +233,7 @@ impl Checker {
         };
         // The callee must be `class` (or `base::class`). Delegate to the
         // canonical base-call resolution operation so the shadowing order
-        // lives in one place (Plan 35 W7).
+        // lives in one place.
         crate::semantic_lists::bare_name(name) == "class" && self.resolves_to_base(name, scope)
     }
 
@@ -247,7 +247,7 @@ impl Checker {
     ///
     /// "Length 1 by construction" means one of two things, both chosen so the
     /// claim does not rest on inference that could be over-narrow (the failure
-    /// mode plan 31 files as W12):
+    /// mode these rules guard against):
     ///
     /// 1. a direct call to a function whose typeshed stub declares a return
     ///    length of exactly 1 (Checker::is_typeshed_scalar_reduction); or
@@ -358,7 +358,7 @@ impl Checker {
         };
         // Use the canonical base-call resolution: if the call does not
         // resolve to base, the user's function may have entirely different
-        // semantics and the typeshed claim does not apply (Plan 35 W7).
+        // semantics and the typeshed claim does not apply.
         let bare = crate::semantic_lists::bare_name(callee);
         if !self.resolves_to_base_lenient(callee, scope) {
             return None;

@@ -1,4 +1,4 @@
-# Plan 34 pre-governance measurement
+# Pre-governance corpus measurement
 
 ## Run provenance
 
@@ -30,9 +30,9 @@ source-report SHA-256 is `602fe749c12cfb2217d96fdb82a93634907a4f1d4f9507a27abb51
 | `R/` precision | 4.20% |
 | Original TP retained | 31 / 34 (91.18%) |
 
-Plan 31 projected approximately 91 total diagnostics, approximately 29%
-overall precision, 43 `R/` diagnostics, and approximately 44% `R/` precision
-after its suppression work. The measured tree instead emits 729 diagnostics
+The audit-response projection was approximately 91 total diagnostics,
+approximately 29% overall precision, 43 `R/` diagnostics, and approximately
+44% `R/` precision after the projected suppression work. The measured tree instead emits 729 diagnostics
 at 5.08% overall precision and 547 `R/` diagnostics at
 4.20% precision. The projection therefore did not materialize under the
 hermetic corpus. Most of the difference is visible rather than hidden: hermetic
@@ -78,7 +78,7 @@ positive identities are:
 The other new identities are classified false positive individually in the
 ledger. RY010 names are imported/generated/data bindings that exist at runtime;
 RY030 sites are dplyr data-mask columns; RY032 reports only unknown parameter
-length (not actionable under P34-W2 policy); the other RY105 sites over-narrow callbacks, vectors, or
+length (not actionable under the parameter-length policy); the other RY105 sites over-narrow callbacks, vectors, or
 intentional assertions.
 
 ## Package refs
@@ -150,15 +150,15 @@ The immutable refs below are the exact refs in the measured manifest.
 | `forcats` | `f83e0e682d9f874d066630ff78eb12586b5b2a32` |
 | `r2d3` | `becfb81989c7fabfe79dee2dde999190025d4ba3` |
 
-## P34-W2 before/after
+## Parameter-length policy before/after
 
-P34-W2 removed the unused `unknown_is_actionable` parameter and unreachable
+The policy change removed the unused `unknown_is_actionable` parameter and unreachable
 `Length::Unknown` emission arm. It retained the narrower, separately implemented
 parameter-pattern heuristic; the claim fixture and checker regression establish
 that a bare unknown-length parameter remains quiet, while a known length greater
 than one diagnoses.
 
 Both the fast (35-package) and full (62-package) hermetic corpus runs reconciled
-against the Plan 34 baseline ledger after the fix. The before/after diagnostic
+against the then-current baseline ledger after the fix. The before/after diagnostic
 identity delta is exactly zero: 729 diagnostics overall, with every baseline
 identity retained and no unowned identity.

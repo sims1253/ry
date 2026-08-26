@@ -1026,7 +1026,7 @@ fn full_output_reports_argument_type_mismatch_with_types() {
 
 #[test]
 fn oversized_sysdata_surfaces_degraded_scope_without_global_ry010_disable() {
-    // W20/W21d end-to-end: an over-cap serialized data file must (1) fall
+    // Over-cap end-to-end: an over-cap serialized data file must (1) fall
     // back to its file-stem binding instead of disabling RY010 project-wide,
     // (2) keep RY010 live for genuinely unbound names, and (3) surface the
     // degraded scope on stderr (never stdout) so the JSON diagnostic stream
@@ -1141,7 +1141,7 @@ fn degraded_scope_is_reported_once_per_file_not_per_reader() {
     );
 }
 
-/// Plan 31 W6. `useDynLib(pkg, .registration = TRUE)` binds every routine in
+/// `useDynLib(pkg, .registration = TRUE)` binds every routine in
 /// the package's `R_registerRoutines` table into the namespace. ry does not
 /// read `src/`, so a name the package itself passes as an FFI entry point is
 /// the evidence that it is one of them — which is what lets rlang's

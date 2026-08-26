@@ -31,7 +31,7 @@
 //! and crash the client. All `tracing` output is routed to stderr via
 //! the CLI's `tracing_subscriber` initialization before `run()` is called.
 
-/// P36-W4 (#53): Test-only scheduler/barrier seam for forcing
+/// (#53): Test-only scheduler/barrier seam for forcing
 /// parse/didChange interleaving. The seam controls scheduling only; cache
 /// policy (version-stamped tree rejection) is production code in
 /// `backend::parsed_file` and `State::store_tree`/`State::tree_for`.
@@ -142,7 +142,7 @@ mod settings;
 mod util;
 
 use backend::{Backend, State};
-// P36-W5 (#45): re-export the baseline disk-read counter so integration
+// (#45): re-export the baseline disk-read counter so integration
 // tests can assert that the publish/inlay-hint hot path performs
 // no baseline file I/O.
 pub use backend::baseline_disk_reads;
@@ -181,7 +181,7 @@ where
     Ok(())
 }
 
-/// P37-W6 (#46): Test-only handle to a single server's filter-compile
+/// (#46): Test-only handle to a single server's filter-compile
 /// counters, returned by [`run_with_counters`]. Because the counters live in
 /// per-server [`State`] (not process globals), each spawned server observes
 /// only its own compilations, so parallel integration tests never trip each

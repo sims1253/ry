@@ -124,16 +124,16 @@ fn check_single_synthetic(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
-// Incremental benchmarks (Plan 33 W0)
+// Incremental benchmarks
 //
 // These measure the warm `check_incremental` path — the one the LSP
 // server exercises on every debounce tick. Each bench primes a
 // Project with a full cold `check()`, then measures only the cost of
 // one incremental edit + `check_incremental()`.
 //
-// The four scenarios from the plan:
+// The four scenarios:
 //   1. Edit a file that other files depend on.
-//   2. Edit a leaf file that nothing depends on (the number W1/W2
+//   2. Edit a leaf file that nothing depends on (the dependency-tracking counters
 //      should move).
 //   3. Add/remove a `library()` call (project-wide invalidation).
 //   4. Cold `check` baseline (already in `check_project_glue` above).
@@ -194,8 +194,8 @@ fn warm_edit_dependent(c: &mut Criterion) {
 
 /// Benchmark: warm `check_incremental` after a one-line edit to a leaf
 /// file that nothing depends on (`zzz.R` is glue's load hook — no other
-/// file references its functions). This is the number W1 and W2 exist
-/// to move.
+/// file references its functions). This is the number the leaf-edit
+/// scenario exists to move.
 fn warm_edit_leaf(c: &mut Criterion) {
     let (mut project, sources, mut parser) = primed_project();
     let (edited_path, original) = find_source(&sources, "zzz.R");
@@ -222,7 +222,7 @@ fn warm_edit_leaf(c: &mut Criterion) {
 
 /// Benchmark: warm `check_incremental` after adding/removing a
 /// `library()` call. This invalidates project-wide because `loaded`
-/// is a project-wide union (see Plan 33 K2).
+/// is a project-wide union.
 fn warm_edit_library(c: &mut Criterion) {
     let (mut project, sources, mut parser) = primed_project();
     let (edited_path, original) = find_source(&sources, "utils.R");

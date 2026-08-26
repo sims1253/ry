@@ -98,7 +98,7 @@ pub struct Project {
     /// Previous pass-2 refined return types, keyed by function name.
     /// Used to seed the next fixpoint iteration so already-converged
     /// entries start from their refined value rather than re-converging
-    /// from scratch (Plan 33 W2).
+    /// from scratch.
     prev_fn_returns: HashMap<String, ry_core::RType>,
     /// Previous caller-visible parameter signatures, keyed by function name.
     /// Return slots alone are insufficient: argument names, order, required
@@ -549,7 +549,7 @@ impl Project {
         // the shared table stabilizes. A single Checker drives the
         // fixpoint loop; its table is then handed back to the Project.
         //
-        // W2 optimization: seed the fixpoint with the previous run's
+        // Optimization: seed the fixpoint with the previous run's
         // refined return types (keyed by function name). Already-converged
         // entries keep their refined value, so the loop needs fewer
         // iterations to re-stabilize after a small edit.
@@ -564,7 +564,7 @@ impl Project {
         refiner.set_user_stubs(Arc::clone(&self.user_stubs));
         refiner.seed_return_types(&self.prev_fn_returns);
 
-        // W2 scoping: refine only functions whose return type can have
+        // Scoping: refine only functions whose return type can have
         // changed, rather than the entire project. On the first call or
         // when `loaded` changed, fall back to refining everything.
         refiner.seed_caller_visible_signatures(&self.prev_fn_signatures, fixpoint_scope.as_ref());
@@ -577,7 +577,7 @@ impl Project {
         self.fn_table = fn_table;
         self.return_slots = return_slots;
 
-        // --- Dirty-set computation (Plan 33 W1) ---
+        // --- Dirty-set computation ---
         //
         // Determine which files' diagnostics can actually have changed,
         // and re-emit only those. A file must be re-emitted when:
@@ -674,7 +674,7 @@ impl Project {
         // passes 1/2), so only the refcount is bumped per file, not the
         // tables themselves.
         //
-        // W1 optimization: only emit files in the dirty set. Files not in
+        // Optimization: only emit files in the dirty set. Files not in
         // the set keep their previously-emitted diagnostics unchanged.
         let fn_table = Arc::new(std::mem::take(&mut self.fn_table));
         let package_known_vars = Arc::new(fn_table.known_vars.clone());
@@ -828,7 +828,7 @@ impl Project {
     }
 }
 
-/// File classification — re-exported from ry-workspace (P38-W3).
+/// File classification — re-exported from ry-workspace.
 pub use ry_workspace::{PackageFileKind, package_file_kind};
 
 /// Whether a file is directly under a package's `R/` directory.

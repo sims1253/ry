@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""P37-W5: Validate that a corpus ledger's summary blocks agree with
+"""Validate that a corpus ledger's summary blocks agree with
 its findings array.
 
 Asserts:

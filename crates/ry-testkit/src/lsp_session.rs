@@ -168,7 +168,7 @@ where
         .await
     }
 
-    /// P36-W8: wait for the target URI's `publishDiagnostics` after `mark`,
+    /// Wait for the target URI's `publishDiagnostics` after `mark`,
     /// then drain every other `publishDiagnostics` that arrives within
     /// `idle_timeout` of the previous message. Returns a `BTreeMap` of
     /// URI → diagnostic array. The initial wait is the quiescence signal

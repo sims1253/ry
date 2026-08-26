@@ -1,10 +1,10 @@
-//! Recall rules from plan 31 workstream W18.
+//! Recall rules.
 //!
-//! Plan 31 ("Posit corpus audit response") sketched four new rules aimed at
+//! Four rules were sketched during the Posit corpus audit response, aimed at
 //! the false-negative half of the corpus audit. Two ship whole, one ships in
 //! half, and one does not ship at all.
 //!
-//! | plan name | code | shape |
+//! | rule name | code | shape |
 //! |---|---|---|
 //! | `named-list-element-arrow` | `RY102` | `list("a" <- 1)` |
 //! | `class-equality` | `RY103` | `if (class(x) == "y")` |
@@ -12,7 +12,7 @@
 //! | `constant-condition` (a) | — | **not shipped**, see below |
 //! | `not-before-comparison` | — | **not shipped**, see the module test |
 //!
-//! `not-before-comparison` rests on the plan's claim that "`!` binds
+//! `not-before-comparison` rests on the original claim that "`!` binds
 //! tighter, so `!x >= y` is `(!x) >= y`". R parses it the other way:
 //! `quote(!x == y)` is a call to `!` whose argument is `x == y`, because
 //! negation binds *looser* than comparison. That is the same wrong
@@ -20,7 +20,7 @@
 //! `testdata/ry095_ry096_real_shapes.R` exists to pin it.
 //!
 //! `constant-condition`'s first half (`any(v) == 0`, glue `R/utils.R:32`)
-//! is dropped for a related reason. The plan justifies it with "is always
+//! is dropped for a related reason. The original sketch justifies it with "is always
 //! FALSE", which is not true: `any()` returns a logical, and `FALSE == 0`
 //! is `TRUE`. glue's line is a real bug — the author meant
 //! `any(lengths == 0)` — but the *shape* is indistinguishable from
@@ -30,7 +30,7 @@
 //! stays open rather than being traded for one.
 //!
 //! Every rule is asserted against the corpus reproduction committed at
-//! `testdata/err_plan31_recall_repro.R`, which 0.8.0 checked completely clean.
+//! `testdata/err_recall_rules_repro.R`, which 0.8.0 checked completely clean.
 
 use ry_checker::Checker;
 use ry_core::RParser;
@@ -38,8 +38,8 @@ use ry_core::RParser;
 /// Codes emitted by the single-file checker for `src`.
 fn codes(src: &str) -> Vec<&'static str> {
     let mut parser = RParser::new().expect("parser init");
-    let file = parser.parse("plan31.R", src).expect("parse");
-    let mut checker = Checker::new("plan31.R");
+    let file = parser.parse("recall.R", src).expect("parse");
+    let mut checker = Checker::new("recall.R");
     checker.check(&file);
     checker
         .take_diagnostics()
@@ -51,8 +51,8 @@ fn codes(src: &str) -> Vec<&'static str> {
 /// `(code, 1-based line)` pairs emitted for `src`.
 fn code_lines(src: &str) -> Vec<(&'static str, usize)> {
     let mut parser = RParser::new().expect("parser init");
-    let file = parser.parse("plan31.R", src).expect("parse");
-    let mut checker = Checker::new("plan31.R");
+    let file = parser.parse("recall.R", src).expect("parse");
+    let mut checker = Checker::new("recall.R");
     checker.check(&file);
     checker
         .take_diagnostics()
@@ -65,10 +65,10 @@ fn fires(src: &str, code: &str) -> bool {
     codes(src).contains(&code)
 }
 
-/// The plan's committed reproduction of the audit's false negatives.
+/// The committed reproduction of the audit's false negatives.
 fn repro_source() -> String {
     let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/err_plan31_recall_repro.R");
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/err_recall_rules_repro.R");
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"))
 }
 
@@ -300,12 +300,12 @@ fn ry105_normalizes_operand_order_for_constant_outcome() {
     let mut parser = RParser::new().expect("parser init");
     let file = parser
         .parse(
-            "plan31.R",
+            "recall.R",
             "f <- function(v) if (0 > length(sum(v))) 1
 ",
         )
         .expect("parse");
-    let mut checker = Checker::new("plan31.R");
+    let mut checker = Checker::new("recall.R");
     checker.check(&file);
     let diags = checker.take_diagnostics();
     assert!(
@@ -318,12 +318,12 @@ fn ry105_normalizes_operand_order_for_constant_outcome() {
     // `0 < length(sum(v))` is `0 < 1`, which is TRUE.
     let file = parser
         .parse(
-            "plan31.R",
+            "recall.R",
             "f <- function(v) if (0 < length(sum(v))) 1
 ",
         )
         .expect("parse");
-    let mut checker = Checker::new("plan31.R");
+    let mut checker = Checker::new("recall.R");
     checker.check(&file);
     let diags = checker.take_diagnostics();
     assert!(
@@ -374,7 +374,7 @@ fn ry105_respects_local_shadowing_of_scalar_reduction() {
 // `not-before-comparison` is deliberately NOT implemented
 // ---------------------------------------------------------------------------
 
-/// Plan 31 W18 asked for a `not-before-comparison` rule on the premise that
+/// The audit-response sketch asked for a `not-before-comparison` rule on the premise that
 /// "`!` binds tighter, so `!x >= y` is `(!x) >= y`". That premise is false.
 /// R's `?Syntax` places unary `!` *below* the comparison operators, so
 /// `!x >= y` parses as `!(x >= y)` — verified with
@@ -398,7 +398,7 @@ fn negation_before_comparison_is_not_diagnosed() {
             !emitted.contains(&"RY095"),
             "RY095 is retired and must never be reinstated: {src:?} emitted {emitted:?}"
         );
-        // Nor may any of the W18 codes stand in for it.
+        // Nor may any of these codes stand in for it.
         for code in ["RY102", "RY103", "RY105"] {
             assert!(
                 !emitted.contains(&code),
@@ -422,7 +422,7 @@ fn ry095_stays_out_of_the_registry() {
 // ---------------------------------------------------------------------------
 
 /// Each shipped rule must fire on its line of the committed reproduction.
-/// This is plan 31's acceptance criterion: "Every new rule in W18 ships with
+/// The acceptance criterion from that sketch: "Every new rule ships with
 /// the corpus repro as a test fixture and fires on it."
 #[test]
 fn corpus_repro_fires_every_shipped_rule() {
@@ -441,12 +441,12 @@ fn corpus_repro_fires_every_shipped_rule() {
     }
     assert!(
         missing.is_empty(),
-        "repro/31/fn.R did not fire: {missing:?}\nemitted: {hits:?}"
+        "repro did not fire on: {missing:?}\nemitted: {hits:?}"
     );
 }
 
-/// The reproduction must gain *only* the W18 codes. Anything else is a
-/// pre-existing false negative that W18 did not claim, or a new false
+/// The reproduction must gain *only* these codes. Anything else is a
+/// pre-existing false negative these rules did not claim, or a new false
 /// positive introduced by these rules.
 #[test]
 fn corpus_repro_emits_nothing_beyond_the_shipped_rules() {
@@ -457,6 +457,6 @@ fn corpus_repro_emits_nothing_beyond_the_shipped_rules() {
         .collect();
     assert!(
         unexpected.is_empty(),
-        "repro/31/fn.R gained non-W18 diagnostics: {unexpected:?}"
+        "repro gained diagnostics beyond the shipped rules: {unexpected:?}"
     );
 }

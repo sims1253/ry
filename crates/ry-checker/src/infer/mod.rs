@@ -1675,7 +1675,7 @@ impl Checker {
                         "comparison with `NA` always produces `NA`; use `is.na()` instead";
                     self.emit(Severity::Warning, *span, "RY034", message);
                 }
-                // Plan 31 W18 shape rules. Both read the operand syntax, so
+                // Syntax-shape rules. Both read the operand syntax, so
                 // they run before `infer` collapses the operands to types.
                 self.check_constant_length_comparison(*op, lhs, rhs, *span, scope);
                 let lt = self.infer(lhs, scope);

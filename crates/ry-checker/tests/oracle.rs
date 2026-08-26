@@ -709,9 +709,9 @@ fn fixture_packages_empty_for_plain_fixtures() {
     assert!(fixture_packages("# oracle: must-flag\nx <- \"a\" + 1\n").is_empty());
 }
 
-// ── P35-W11: R-oracle setup falsification ────────────────────────────────
+// ── R-oracle setup falsification ────────────────────────────────
 
-/// P35-W11: prove the R oracle verification actually fails when a wrong
+/// Prove the R oracle verification actually fails when a wrong
 /// answer is given.
 ///
 /// This is not a meta-test proving an ordinary assertion can fail. It
@@ -746,7 +746,7 @@ fn oracle_r_error_detection_fails_on_wrong_answer() {
 
     assert!(
         r_errored,
-        "P35-W11: r_errors failed to detect that R errors on the          deliberately wrong fixture; R said: {r_message}",
+        "r_errors failed to detect that R errors on the          deliberately wrong fixture; R said: {r_message}",
     );
 
     // The oracle harness's own logic: a `must-pass` fixture with an R error
@@ -763,11 +763,11 @@ fn oracle_r_error_detection_fails_on_wrong_answer() {
     };
     assert!(
         !ok,
-        "P35-W11: the oracle must-pass + r_errored arm should classify as failure",
+        "the oracle must-pass + r_errored arm should classify as failure",
     );
 }
 
-/// P35-W11: prove the oracle's `must-flag` path catches a missing error.
+/// prove the oracle's `must-flag` path catches a missing error.
 ///
 /// A `must-flag` fixture that R does NOT error on means the oracle cannot
 /// assert anything (the `MustFlag, false` arm pushes a failure). This
@@ -790,6 +790,6 @@ fn oracle_must_flag_fails_when_r_does_not_error() {
     };
     assert!(
         !ok,
-        "P35-W11: must-flag + R-success should classify as oracle failure",
+        "must-flag + R-success should classify as oracle failure",
     );
 }

@@ -13,14 +13,14 @@ removing one finding can never be silently mistaken for removing another.
 
 Two historical ledgers were removed as generated artifacts: the 0.8.0
 audit transcript (1,142 identities, reconciliation `audit-transcript`) and
-the Plan 34 pre-change baseline (729 identities, hermetic, measured on the
+the pre-change baseline (729 identities, hermetic, measured on the
 audited starting tree). Neither gated CI; both are re-derivable from the
-audit records summarized in [`plan34-measurement.md`](plan34-measurement.md).
+audit records summarized in [`pre-governance-measurement.md`](pre-governance-measurement.md).
 
 ## Parser invariant evidence
 
 [`parser-option-audit-0.9.md`](parser-option-audit-0.9.md) records the complete
-P35-W4 audit of parser `?`, `.ok()?`, and `None` propagation. Its executable R1
+parser-option audit of `?`, `.ok()?`, and `None` propagation. Its executable R1
 and R6 gates live in `crates/ry-checker/tests/invariants.rs` and cover all
 checker fixtures plus a deterministic sample of the vendored ecosystem sources.
 
@@ -59,15 +59,15 @@ real bug disappearing is always surfaced.
 
 ## The moving 0.9 ledger
 
-Plan 34 rebuilt `ry` from the audited starting commit, generated hermetic
+The audit response rebuilt `ry` from the audited starting commit, generated hermetic
 message-free root reports for all 62 pinned packages, and measured the
-pre-change baseline (see [`plan34-measurement.md`](plan34-measurement.md);
+pre-change baseline (see [`pre-governance-measurement.md`](pre-governance-measurement.md);
 the intermediate snapshot itself was removed as a generated artifact). After
 the RY032 cleanup produced a zero identity delta, that exact full run seeded
 `posit-0.9.0.json`, which — unlike those removed historical snapshots — is a
 strict gate.
 
-Plans 35 and 36 may change diagnostics intentionally. Any such change must
+Checker and LSP changes may alter diagnostics intentionally. Any such change must
 regenerate the reports, update `posit-0.9.0.json` in the same change, preserve
 or manually review every new identity's label, and explain all missing/unowned
 identities. Never weaken `reconciliation: hermetic` to accept a delta.

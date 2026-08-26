@@ -413,7 +413,7 @@ impl Excludes {
 }
 
 /// Compute a hash of the effective config that affects pass-1 collection
-/// output (Plan 33 W5). Includes `exclude`, `packages`, `globals`, and the
+/// output. Includes `exclude`, `packages`, `globals`, and the
 /// full serialized config so any relevant change invalidates the cache.
 pub fn config_hash(config: &Config) -> u64 {
     use std::hash::{Hash, Hasher};

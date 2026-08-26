@@ -370,9 +370,9 @@ mod tests {
         );
     }
 
-    // ── P35-W11: cross-mode subprocess framing ──────────────────────────
+    // ── cross-mode subprocess framing ──────────────────────────
 
-    /// P35-W11: encode/decode round-trip preserves the message exactly.
+    /// Encode/decode round-trip preserves the message exactly.
     ///
     /// Protects the framing seam: if `encode` wrote a wrong Content-Length
     /// or a malformed header terminator, the decoder would produce a
@@ -393,7 +393,7 @@ mod tests {
         }
     }
 
-    /// P35-W11: the Content-Length header matches the body byte length
+    /// the Content-Length header matches the body byte length
     /// exactly, and the header/body separator is the correct CRLFCRLF.
     /// A wrong separator or miscounted length silently truncates or
     /// merges messages across the subprocess boundary.
@@ -431,7 +431,7 @@ mod tests {
         assert_eq!(decoded, message);
     }
 
-    /// P35-W11: multiple framed messages in one buffer decode in sequence.
+    /// multiple framed messages in one buffer decode in sequence.
     ///
     /// The subprocess can write several JSON-RPC messages back-to-back on
     /// stdout (e.g., a log-message notification followed by a response).

@@ -421,7 +421,7 @@ fn empty_files_produce_no_diagnostics() {
 }
 
 // ---------------------------------------------------------------------------
-// Plan 33 W1: dirty-set pass 3
+// Dirty-set pass 3
 // ---------------------------------------------------------------------------
 
 /// A one-line edit to a leaf file (one that no other file depends on) should
@@ -495,7 +495,7 @@ fn dependent_edit_emits_caller() {
     );
 }
 
-/// The cold-vs-incremental equivalence property (Plan 33 W1 invariant):
+/// The cold-vs-incremental equivalence property:
 /// after a sequence of incremental edits, the diagnostics must be identical
 /// to a fresh cold check on the same final state.
 #[test]
@@ -572,7 +572,7 @@ fn incremental_matches_cold_after_edits() {
 }
 
 // ---------------------------------------------------------------------------
-// Plan 35 W3: shrinkable cold-vs-incremental equivalence
+// Shrinkable cold-vs-incremental equivalence
 // ---------------------------------------------------------------------------
 
 use proptest::prelude::*;

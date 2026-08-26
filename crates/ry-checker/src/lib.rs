@@ -882,7 +882,7 @@ impl Checker {
     // anywhere in this file, WITHOUT emitting diagnostics. Returns the
     // set of package names so `Project::check` can union them across
     // files (a `library(dplyr)` in any file makes dplyr NSE verbs work
-    // in every file, matching the plan's cross-file union intent).
+    // in every file, matching the intended cross-file union).
     //
     // Implementation: walk the file in discarding mode so `infer_call`'s
     // library/require recording populates `self.loaded`

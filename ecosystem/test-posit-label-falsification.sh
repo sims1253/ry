@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# P35-W11: Corpus reconciliation falsification.
+# Corpus reconciliation falsification.
 #
 # Prove the ecosystem check actually fails when a true_positive finding
 # disappears and a false_positive is added without updating the ledger.
@@ -12,7 +12,7 @@
 #
 # Both corruptions are in the same run so the test proves the reconciliation
 # gate catches simultaneous TP-disappearance and FP-appearance — the exact
-# silent-degradation scenario W11 names.
+# silent-degradation scenario the reconciliation gate exists to catch.
 #
 # Requires: a built release binary, Rscript + jsonlite, and network access
 # to clone the fast-tier Posit sources (same deps as test-posit-drift-detection.sh).

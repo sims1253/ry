@@ -1048,7 +1048,7 @@ fn lexical_nested_function_shadows_same_named_project_function_signature() {
 
 #[test]
 fn lexical_function_shadows_base_signature() {
-    // W7: a function literal defined inside an enclosing body shadows
+    // A function literal defined inside an enclosing body shadows
     // the typeshed/base signature, so RY090/RY091 must not fire against
     // base::inherits' parameters.
     let diags = check(
@@ -1071,19 +1071,19 @@ fn lexical_function_shadows_base_eval() {
     );
 }
 
-// ===== search-path-unknown audit (W20/W21d) =====
+// ===== search-path-unknown audit =====
 //
 // `mark_search_path_unknown()` suppresses RY010 (unbound-variable) for the
 // rest of a scope. It is a conservative open-search-path flag set whenever a
 // construct can introduce arbitrary bindings. These tests pin every call site
 // so the suppression stays intentional and scoped, and so an accidental
-// widening — e.g. re-introducing the package-global disabling the W20 fix
+// widening — e.g. re-introducing the package-global disabling the over-cap fix
 // removed for oversized serialized data — is caught immediately.
 #[test]
 fn plain_unbound_reference_fires_ry010() {
     // Negative control for the whole audit block: with no search-path-opening
     // construct, a real miss must still fire RY010. This is the invariant the
-    // W20 fix restored (oversized sysdata used to suppress this project-wide).
+    // over-cap fix restored (oversized sysdata used to suppress this project-wide).
     let diags = check("x <- genuinely_unbound_name\n");
     assert!(
         diags.iter().any(|d| d.code == "RY010"),
@@ -1096,7 +1096,7 @@ fn external_unenumerable_marker_suppresses_ry010_for_its_file() {
     // The `SERIALIZED_BINDINGS_UNENUMERABLE` marker still flows from the
     // unstubbed-attached-package path (tests/examples with unstubbed
     // Suggests). It must suppress RY010 for THAT file only — never
-    // project-wide. The W20 fix removed the package-global sysdata route;
+    // project-wide. The over-cap fix removed the package-global sysdata route;
     // this is the remaining legitimate, file-local open search path.
     let mut p = RParser::new().unwrap();
     let f = p.parse("test.R", "x <- genuinely_unbound_name\n").unwrap();

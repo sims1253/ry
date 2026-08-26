@@ -236,7 +236,7 @@ fn purrr_vendor_snapshot() {
     // purrr's own C-backed entry points (map_impl, map2_impl, pmap_impl)
     // are NOT in the snapshot and must stay out: they are passed as bare
     // symbols to `call_with_cleanup`, which the `.registration = TRUE`
-    // declaration licenses (plan 31 W6). Dropping the NAMESPACE, or the
+    // declaration licenses. Dropping the NAMESPACE, or the
     // registration gate, makes all three reappear.
     // -----------------------------------------------------------------
 

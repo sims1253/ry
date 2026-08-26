@@ -1,5 +1,5 @@
 # no-diag
-# Negative controls for the plan 31 W18 recall rules (RY102-RY105). Every
+# Negative controls for these recall rules (RY102-RY105). Every
 # line here is correct R that a too-broad version of one of those rules
 # would flag.
 

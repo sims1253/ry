@@ -1,6 +1,6 @@
-//! P36-W8 — Complete the LSP state-machine property.
+//! LSP state-machine property.
 //!
-//! Extends Plan 35's W10 session convergence property with the full P36
+//! Extends the session convergence property with the full operation
 //! alphabet:
 //!   - add / remove workspace folder
 //!   - edit config (`ry.toml`), baseline, NAMESPACE, DESCRIPTION, typesheds,
@@ -21,11 +21,11 @@
 //! RNG. Each seed drives a `TestRunner` whose RNG is a fixed `ChaCha` seed.
 //! Proptest shrinking is preserved: when a generated case fails, the runner
 //! shrinks it and stores the minimal failing replay in
-//! `w8_session.proptest-regressions`.
+//! `session_state_machine.proptest-regressions`.
 //!
 //! Two lanes:
-//!   - **PR** (`w8_pr_session_seeds`): a bounded seed set, run on every PR.
-//!   - **Nightly** (`w8_nightly_session_seeds`): 1,000 fixed seeds,
+//!   - **PR** (`pr_session_seeds`): a bounded seed set, run on every PR.
+//!   - **Nightly** (`nightly_session_seeds`): 1,000 fixed seeds,
 //!     `#[ignore]`'d because it takes minutes.
 //!
 //! Neither lane uses sleeps or nondeterministic random seeds. Quiescence is
@@ -107,7 +107,7 @@ fn source_strategy() -> impl Strategy<Value = Source> {
 
 #[derive(Clone, Debug)]
 enum Operation {
-    // W10 alphabet
+    // Base alphabet
     Open {
         file: u8,
         source: Source,
@@ -125,7 +125,7 @@ enum Operation {
     },
     Restart,
 
-    // P36-W8 extensions
+    // State-machine extensions
     /// Create an on-disk R file (if the slot is empty).
     CreateFile {
         file: u8,
@@ -176,7 +176,7 @@ fn file_slot() -> BoxedStrategy<u8> {
 
 fn operation_strategy() -> BoxedStrategy<Operation> {
     prop_oneof![
-        // W10 alphabet (higher weight: these are the bread-and-butter ops)
+        // Base alphabet (higher weight: these are the bread-and-butter ops)
         3 => (file_slot(), source_strategy())
             .prop_map(|(f, s)| Operation::Open { file: f, source: s }),
         2 => (file_slot(), source_strategy())
@@ -185,7 +185,7 @@ fn operation_strategy() -> BoxedStrategy<Operation> {
             .prop_map(|(f, s)| Operation::IncrementalEdit { file: f, source: s }),
         1 => file_slot().prop_map(|f| Operation::Close { file: f }),
         1 => Just(Operation::Restart),
-        // P36-W8 extensions: on-disk file lifecycle, config, baseline,
+        // State-machine extensions: on-disk file lifecycle, config, baseline,
         // discovery caps, parse races, and workspace-folder mutation.
         // Metadata edits (NAMESPACE/DESCRIPTION/typesheds) are exercised
         // by dedicated regression tests, not the random alphabet, because
@@ -265,7 +265,7 @@ impl SessionModel {
         self.disk_files.contains_key(&file)
     }
 
-    /// P37-W7c: Check whether an operation is valid against the current
+    /// Check whether an operation is valid against the current
     /// model state. If false, the operation would be silently skipped
     /// by the executor, reducing coverage without signal.
     fn is_valid(&self, op: &Operation) -> bool {
@@ -296,7 +296,7 @@ impl SessionModel {
         }
     }
 
-    /// P37-W7c: Generate a valid alternative for an invalid operation.
+    /// Generate a valid alternative for an invalid operation.
     /// Each correction advances `correction_step` and picks the
     /// `step % len`-th candidate slot, so consecutive corrections
     /// rotate across open docs / free slots instead of all funneling
@@ -593,7 +593,7 @@ async fn sync_barrier(session: &mut ClientSession, uri: &str) {
 /// Core property: after each quiescent step, the live server's diagnostic
 /// snapshot (every URI + discovered-file set) equals a fresh server on the
 /// same workspace.
-async fn w8_convergence_property(operations: Vec<Operation>) -> Result<(), TestCaseError> {
+async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCaseError> {
     let fixture = build_fixture();
     write_config(&fixture, &SessionModel::default());
     write_baseline(&fixture, &SessionModel::default());
@@ -623,7 +623,7 @@ async fn w8_convergence_property(operations: Vec<Operation>) -> Result<(), TestC
         // files exist on disk.
 
         match &operation {
-            // ── W10 alphabet ──
+            // ── Base alphabet ──
             Operation::Open { file, source } => {
                 if model.is_open(*file) {
                     continue;
@@ -706,7 +706,7 @@ async fn w8_convergence_property(operations: Vec<Operation>) -> Result<(), TestC
                 }
             }
 
-            // ── P36-W8 extensions ──
+            // ── state-machine extensions ──
             Operation::CreateFile { file, source } => {
                 if model.has_disk(*file) {
                     continue;
@@ -1036,11 +1036,11 @@ fn run_deterministic_seed(seed: u64) {
             .enable_all()
             .build()
             .unwrap();
-        runtime.block_on(w8_convergence_property(operations))
+        runtime.block_on(convergence_property(operations))
     });
     match result {
         Ok(()) => {}
-        Err(e) => panic!("W8 seed {seed:#018x} failed:\n{e}"),
+        Err(e) => panic!("seed {seed:#018x} failed:\n{e}"),
     }
 }
 
@@ -1067,24 +1067,24 @@ const PR_SEEDS: &[u64] = &[
 ];
 
 #[test]
-fn w8_pr_session_seeds() {
+fn pr_session_seeds() {
     for &seed in PR_SEEDS {
         run_deterministic_seed(seed);
     }
 }
 
 /// 1,000 fixed nightly seeds. `#[ignore]`'d because it takes minutes.
-/// Run with: `cargo test -p ry-lsp --test w8_session -- --ignored w8_nightly`
+/// Run with: `cargo test -p ry-lsp --test session_state_machine -- --ignored nightly`
 #[test]
-#[ignore = "P36-W8 nightly: 1,000 fixed seeds — run explicitly"]
-fn w8_nightly_session_seeds() {
+#[ignore = "Nightly: 1,000 fixed seeds — run explicitly"]
+fn nightly_session_seeds() {
     for i in 1..=1000u64 {
         run_deterministic_seed(i);
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Historical bug regression: every P36 bug caught by a deterministic case
+// Historical bug regression: every pre-release bug caught by a deterministic case
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Helper: build an explicit operation sequence and run it. Used for
@@ -1095,7 +1095,7 @@ fn run_explicit_sequence(operations: Vec<Operation>) {
         .build()
         .unwrap();
     runtime
-        .block_on(w8_convergence_property(operations))
+        .block_on(convergence_property(operations))
         .unwrap_or_else(|e| panic!("explicit sequence failed: {e:?}"));
 }
 
@@ -1103,7 +1103,7 @@ fn run_explicit_sequence(operations: Vec<Operation>) {
 /// from older generations. A regression that serves stale trees produces
 /// wrong diagnostics that diverge from a fresh server.
 #[test]
-fn w8_catches_issue_53_stale_parse() {
+fn catches_issue_53_stale_parse() {
     run_explicit_sequence(vec![
         Operation::Open {
             file: 0,
@@ -1123,7 +1123,7 @@ fn w8_catches_issue_53_stale_parse() {
 /// #55 (workspace-folder mutation): removing a folder must clear its
 /// diagnostics. A regression leaves stale diagnostics from the removed root.
 #[test]
-fn w8_catches_issue_55_folder_mutation() {
+fn catches_issue_55_folder_mutation() {
     run_explicit_sequence(vec![
         Operation::AddFolder,
         Operation::RemoveFolder,
@@ -1137,7 +1137,7 @@ fn w8_catches_issue_55_folder_mutation() {
 /// #45 (baseline reload): editing the baseline must converge to the new
 /// value. A regression that retains stale baseline state diverges.
 #[test]
-fn w8_catches_issue_45_baseline_reload() {
+fn catches_issue_45_baseline_reload() {
     run_explicit_sequence(vec![
         Operation::Open {
             file: 0,
@@ -1155,7 +1155,7 @@ fn w8_catches_issue_45_baseline_reload() {
 /// file set. A regression that ignores the cap discovers more files than a
 /// fresh server with the same cap.
 #[test]
-fn w8_catches_issue_48_discovery_caps() {
+fn catches_issue_48_discovery_caps() {
     run_explicit_sequence(vec![
         Operation::EditDiscoveryCaps { max_files: 2 },
         Operation::Open {
@@ -1169,7 +1169,7 @@ fn w8_catches_issue_48_discovery_caps() {
 /// filtering. A regression that doesn't reload config diverges from a
 /// fresh server.
 #[test]
-fn w8_catches_config_reload() {
+fn catches_config_reload() {
     run_explicit_sequence(vec![
         Operation::Open {
             file: 0,
@@ -1187,7 +1187,7 @@ fn w8_catches_config_reload() {
 
 /// On-disk file lifecycle: create, delete, and rename must converge.
 #[test]
-fn w8_catches_disk_file_lifecycle() {
+fn catches_disk_file_lifecycle() {
     run_explicit_sequence(vec![
         Operation::DeleteFile { file: 4 },
         Operation::Open {
@@ -1204,7 +1204,7 @@ fn w8_catches_disk_file_lifecycle() {
 
 /// Server restart must converge to the same state.
 #[test]
-fn w8_catches_restart_convergence() {
+fn catches_restart_convergence() {
     run_explicit_sequence(vec![
         Operation::Open {
             file: 0,
@@ -1221,9 +1221,9 @@ fn w8_catches_restart_convergence() {
 /// Metadata operations (NAMESPACE/DESCRIPTION/typeshed) exercise the
 /// didChangeWatchedFiles resolution-reload path. They are not in the random
 /// alphabet because they require a package-structured fixture, but they are
-/// part of the P36-W8 alphabet and must converge.
+/// part of the state-machine alphabet and must converge.
 #[test]
-fn w8_metadata_edits_converge() {
+fn metadata_edits_converge() {
     run_explicit_sequence(vec![
         Operation::AddFolder,
         Operation::Open {
@@ -1253,7 +1253,7 @@ fn w8_metadata_edits_converge() {
 /// test is self-contained. The shrinking bound (<10 operations) is
 /// verified by the sequence length.
 #[test]
-fn w8_property_shrinks_injected_defect_to_under_ten_ops() {
+fn property_shrinks_injected_defect_to_under_ten_ops() {
     // This deterministic seed produces a sequence that includes a config
     // edit followed by a diagnostic-producing edit. The injected defect
     // (model not updating config) causes a snapshot mismatch.
@@ -1283,6 +1283,6 @@ fn w8_property_shrinks_injected_defect_to_under_ten_ops() {
     // we can't easily inject a model defect without modifying the
     // property, so we verify the property PASSES on the correct model
     // (proving the oracle is sound) and that the explicit regression
-    // case `w8_catches_config_reload` would fail if config reload broke.
+    // case `catches_config_reload` would fail if config reload broke.
     run_explicit_sequence(minimal_failing);
 }

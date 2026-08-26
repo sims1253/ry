@@ -1,8 +1,8 @@
-//! Plan 35 W9: The remaining metamorphic suite, trimmed.
+//! Metamorphic property suite.
 //!
 //! Each relation is implemented first in report mode. A relation is promoted
 //! to a gate only after all reported differences are fixed or prevented by
-//! generator construction (Plan 35 design constraint 5).
+//! generator construction.
 //!
 //! Relations and dispositions:
 //!
@@ -10,9 +10,9 @@
 //! | :-- | :-- |
 //! | R2 deterministic serial/parallel and repeated output | gate |
 //! | R3 inert blank/comment insertion | gate |
-//! | R4 capture-avoiding alpha rename | report (P35-W7 registry) |
+//! | R4 capture-avoiding alpha rename | report (tracked in the rule-evidence ledger) |
 //! | R5 file concatenation union | replaced by reset + non-interference |
-//! | R7 literal-to-parameter lifting | report (feeds P35-W12) |
+//! | R7 literal-to-parameter lifting | report (feeds rule-evidence verdicts) |
 //! | R8 negated branch swap | report |
 //! | R9 unchanged variable across branches | focused branch-join invariant |
 //! | R10 pipe placeholder combinations | generated regression matrix |
@@ -185,9 +185,9 @@ fn r2_incremental_repeated_output_is_identical() {
     }
 }
 
-// ── P35-W11: Fallible orchestration gates ────────────────────────────────
+// ── Fallible orchestration gates ────────────────────────────────
 
-/// Parallel-mode falsification (P35-W11).
+/// Parallel-mode falsification.
 ///
 /// `Project::check()` distributes pass-3 diagnostic emission across rayon
 /// workers via `par_iter().collect()`. If any emitter mutated shared state,
@@ -248,7 +248,7 @@ fn parallel_project_check_matches_serial_across_thread_counts() {
         let parallel = snapshot(threads);
         assert_eq!(
             serial, parallel,
-            "P35-W11: project check diverged between 1-thread (serial) and              {threads}-thread (parallel) pools",
+            "project check diverged between 1-thread (serial) and              {threads}-thread (parallel) pools",
         );
     }
 }
@@ -443,7 +443,7 @@ fn r3_inert_blank_and_comment_insertion_is_diagnostic_neutral() {
 }
 
 // ════════════════════════════════════════════════════════════════════════
-// R4 — Capture-avoiding alpha rename (REPORT, P35-W7 registry)
+// R4 — Capture-avoiding alpha rename (REPORT)
 // ════════════════════════════════════════════════════════════════════════
 
 /// Collect user-defined identifiers from assignment targets. These are the
@@ -703,7 +703,7 @@ fn r5_project_incremental_reset_after_removal() {
 }
 
 // ════════════════════════════════════════════════════════════════════════
-// R7 — Literal-to-parameter lifting (REPORT, feeds P35-W12)
+// R7 — Literal-to-parameter lifting (REPORT; feeds rule-evidence verdicts)
 // ════════════════════════════════════════════════════════════════════════
 
 /// The metamorphic relation: `f <- function(x) body` called as `f(literal)`

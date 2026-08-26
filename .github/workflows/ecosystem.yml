@@ -89,7 +89,7 @@ jobs:
             ecosystem-${{ runner.os }}-
       - name: Build release binary
         run: cargo build --release --locked -p ry-cli --bin ry
-      - name: "P37-W5: Validate ledger summary consistency"
+      - name: "Validate ledger summary consistency"
         run: python3 ecosystem/check-ledger.py docs/corpus/posit-0.9.0.json
       - name: Check Posit corpus
         run: >-
@@ -104,7 +104,7 @@ jobs:
       - name: Posit label falsification integration test
         run: ecosystem/test-posit-label-falsification.sh
 
-  # P38-W3: Dependency direction CI gate
+  # Dependency direction CI gate
   # Asserts that forbidden internal Cargo edges (ry-config -> ry-checker,
   # ry-workspace -> ry-checker) do not exist.
   cargo-edges:

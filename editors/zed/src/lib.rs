@@ -272,7 +272,7 @@ impl RyExtension {
         hash.iter().map(|b| format!("{b:02x}")).collect()
     }
 
-    /// P37-W4: Pure-Rust SHA-256 implementation for WASM compatibility.
+    /// Pure-Rust SHA-256 implementation for WASM compatibility.
     /// Based on FIPS 180-4.
     fn sha256(data: &[u8]) -> [u8; 32] {
         const K: [u32; 64] = [
@@ -363,7 +363,7 @@ impl RyExtension {
         result
     }
 
-    /// P37-W4: Map Zed settings into the server settings envelope.
+    /// Map Zed settings into the server settings envelope.
     /// Rejects malformed values with actionable errors.
     fn map_settings(
         lsp_settings: &LspSettings,
@@ -438,8 +438,8 @@ impl zed::Extension for RyExtension {
 zed::register_extension!(RyExtension);
 
 #[cfg(test)]
-mod p37_w4_tests {
-    /// P37-W4: SHA-256 known-answer test (NIST FIPS 180-4).
+mod unit_tests {
+    /// SHA-256 known-answer test (NIST FIPS 180-4).
     #[test]
     fn sha256_empty_string() {
         let hash = crate::RyExtension::sha256_hex(b"");
@@ -449,7 +449,7 @@ mod p37_w4_tests {
         );
     }
 
-    /// P37-W4: SHA-256 known-answer test for "abc".
+    /// SHA-256 known-answer test for "abc".
     #[test]
     fn sha256_abc() {
         let hash = crate::RyExtension::sha256_hex(b"abc");
@@ -459,7 +459,7 @@ mod p37_w4_tests {
         );
     }
 
-    /// P37-W4: SHA-256 known-answer test for a longer message.
+    /// SHA-256 known-answer test for a longer message.
     #[test]
     fn sha256_long_message() {
         let msg = b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
@@ -470,7 +470,7 @@ mod p37_w4_tests {
         );
     }
 
-    /// P37-W4: Corrupt checksum sidecar must fail.
+    /// Corrupt checksum sidecar must fail.
     /// Simulates parsing of a sidecar with a mismatched hash.
     #[test]
     fn checksum_mismatch_detected() {
@@ -480,7 +480,7 @@ mod p37_w4_tests {
         assert_ne!(actual, expected, "checksum mismatch must be detected");
     }
 
-    /// P37-W4: SHA-256 sidecar line parsing.
+    /// SHA-256 sidecar line parsing.
     /// sha256sum produces "HASH  filename" — only the hash should be extracted.
     #[test]
     fn sha256_sidecar_format_parsing() {

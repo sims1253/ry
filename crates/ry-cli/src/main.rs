@@ -572,7 +572,7 @@ fn run_check(
     let user_stubs = load_user_stubs(&cfg.typeshed);
 
     // Collect the initial file set via the shared bounded discovery
-    // module (P36-W7 / issue #48). CLI and LSP use the same eligibility,
+    // module (issue #48). CLI and LSP use the same eligibility,
     // extension, hidden-directory, symlink, exclude, and test-fixture rules.
     let mut all_paths = Vec::new();
     let search_roots: Vec<PathBuf> = if paths.is_empty() {
@@ -1226,7 +1226,7 @@ fn enclosing_package_root(path: &std::path::Path) -> Option<PathBuf> {
 /// Test-compatible wrapper around the shared bounded discovery module.
 /// Production code calls [`ry_workspace::discover_r_files`] directly with
 /// the effective folder config so CLI and LSP use identical discovery
-/// rules (P36-W7 / issue #48).
+/// rules (issue #48).
 #[cfg(test)]
 fn collect_r_files(path: &std::path::Path, out: &mut Vec<PathBuf>, check_test_fixtures: bool) {
     let result = ry_workspace::discover_r_files(
@@ -1238,7 +1238,7 @@ fn collect_r_files(path: &std::path::Path, out: &mut Vec<PathBuf>, check_test_fi
     out.extend(result.files);
 }
 
-/// Surface a discovery cap hit to the user (P36-W7). A cap hit is never
+/// Surface a discovery cap hit to the user. A cap hit is never
 /// silent: the CLI prints one warning per root when any limit is reached.
 fn report_truncation(report: &ry_workspace::TruncationReport, root: &std::path::Path) {
     if !report.any_hit() {

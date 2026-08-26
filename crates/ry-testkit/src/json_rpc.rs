@@ -372,7 +372,7 @@ mod tests {
 
     // ── cross-mode subprocess framing ──────────────────────────
 
-    /// encode/decode round-trip preserves the message exactly.
+    /// Encode/decode round-trip preserves the message exactly.
     ///
     /// Protects the framing seam: if `encode` wrote a wrong Content-Length
     /// or a malformed header terminator, the decoder would produce a

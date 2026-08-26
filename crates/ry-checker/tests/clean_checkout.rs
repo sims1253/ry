@@ -101,7 +101,7 @@ fn committed_identities() -> BTreeSet<String> {
         .collect()
 }
 
-/// committed local glue report matches live checker output.
+/// Committed local glue report matches live checker output.
 ///
 /// This is the clean-checkout baseline assertion. If the checker changes
 /// behavior on the committed glue source without regenerating the report,

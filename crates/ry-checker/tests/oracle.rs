@@ -711,7 +711,7 @@ fn fixture_packages_empty_for_plain_fixtures() {
 
 // ── R-oracle setup falsification ────────────────────────────────
 
-/// prove the R oracle verification actually fails when a wrong
+/// Prove the R oracle verification actually fails when a wrong
 /// answer is given.
 ///
 /// This is not a meta-test proving an ordinary assertion can fail. It

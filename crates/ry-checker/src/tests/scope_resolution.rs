@@ -1083,7 +1083,7 @@ fn lexical_function_shadows_base_eval() {
 fn plain_unbound_reference_fires_ry010() {
     // Negative control for the whole audit block: with no search-path-opening
     // construct, a real miss must still fire RY010. This is the invariant the
-    // Over-cap fix restored (oversized sysdata used to suppress this project-wide).
+    // over-cap fix restored (oversized sysdata used to suppress this project-wide).
     let diags = check("x <- genuinely_unbound_name\n");
     assert!(
         diags.iter().any(|d| d.code == "RY010"),

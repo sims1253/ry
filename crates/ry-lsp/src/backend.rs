@@ -24,7 +24,7 @@ use tower_lsp::lsp_types::Diagnostic as LspDiagnostic;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
-/// counts baseline file reads performed by `load_folder_baseline`
+/// Counts baseline file reads performed by `load_folder_baseline`
 /// (the only baseline disk-read site in the LSP). Reads of publish/inlay-hint
 /// state use the cached [`FolderAnalysisContext`] and never touch
 /// this counter. Exposed via [`baseline_disk_reads`] so integration tests can
@@ -620,7 +620,7 @@ impl State {
 
     /// Return the cached effective baseline for a document path.
     ///
-    /// this is a pure cache read — it performs no disk access.
+    /// This is a pure cache read — it performs no disk access.
     /// The baseline is loaded into each [`FolderAnalysisContext`] (and the
     /// root-level fallback) during [`initialize`](Backend::initialize) and
     /// reloaded *outside* the state lock on watch events by

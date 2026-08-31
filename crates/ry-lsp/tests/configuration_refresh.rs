@@ -11,6 +11,8 @@
 //! `enable_false_skips_diagnostics_for_the_folder` verifies that a folder
 //! whose settings set `enable: false` is skipped: opening a file there
 //! publishes an empty diagnostics set instead of check results.
+//! `enable_false_skips_inlay_hints_for_the_folder` verifies the on-demand
+//! half: `textDocument/inlayHint` returns null there instead of hints.
 
 use ry_testkit::{FixtureProject, LspSession, file_uri};
 use serde_json::{Value, json};
@@ -237,31 +239,7 @@ fn enable_false_skips_diagnostics_for_the_folder() {
             .write_file("R/diag.R", "z <- length(xx = 1L)\n")
             .unwrap();
 
-        let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
-        let (client_reader, client_writer) = tokio::io::split(client_stream);
-        let (server_reader, server_writer) = tokio::io::split(server_stream);
-        let server = tokio::spawn(async move {
-            let _ = ry_lsp::run_with(server_reader, server_writer).await;
-        });
-        let mut session = LspSession::new(client_reader, client_writer);
-        let root_uri = file_uri(fixture.root()).unwrap();
-        session
-            .request(
-                "initialize",
-                json!({
-                    "processId": null,
-                    "rootUri": root_uri,
-                    "capabilities": {},
-                    "initializationOptions": {
-                        "settings": [{"enable": false}],
-                        "globalSettings": {}
-                    },
-                    "workspaceFolders": [{"uri": root_uri, "name": "fixture"}]
-                }),
-            )
-            .await
-            .unwrap();
-        session.notify("initialized", json!({})).await.unwrap();
+        let (mut session, server) = spawn_disabled_session(fixture.root()).await;
 
         let diag_uri = file_uri(&fixture.path("R/diag.R")).unwrap();
         let mark = session.publication_mark();
@@ -281,6 +259,74 @@ fn enable_false_skips_diagnostics_for_the_folder() {
         assert_eq!(
             count, 0,
             "enable: false must publish an empty diagnostics set; got: {publish}"
+        );
+        let _ = session.shutdown().await;
+        drop(session);
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(3), server).await;
+    })
+}
+
+/// Spawn a session with `enable: false` for the fixture root.
+async fn spawn_disabled_session(root: &Path) -> (Session, tokio::task::JoinHandle<()>) {
+    let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
+    let (client_reader, client_writer) = tokio::io::split(client_stream);
+    let (server_reader, server_writer) = tokio::io::split(server_stream);
+    let server = tokio::spawn(async move {
+        let _ = ry_lsp::run_with(server_reader, server_writer).await;
+    });
+    let mut session = LspSession::new(client_reader, client_writer);
+    let root_uri = file_uri(root).unwrap();
+    session
+        .request(
+            "initialize",
+            json!({
+                "processId": null,
+                "rootUri": root_uri,
+                "capabilities": {},
+                "initializationOptions": {
+                    "settings": [{"enable": false}],
+                    "globalSettings": {}
+                },
+                "workspaceFolders": [{"uri": root_uri, "name": "fixture"}]
+            }),
+        )
+        .await
+        .unwrap();
+    session.notify("initialized", json!({})).await.unwrap();
+    (session, server)
+}
+
+#[test]
+fn enable_false_skips_inlay_hints_for_the_folder() {
+    run(async {
+        let fixture = FixtureProject::empty().unwrap();
+        // `x <- 1L` yields one integer hint when the folder is enabled
+        // (pinned by `inlay_hint_does_not_cross_workspace_roots`).
+        fixture.write_file("R/hint.R", "x <- 1L\n").unwrap();
+
+        let (mut session, server) = spawn_disabled_session(fixture.root()).await;
+
+        let hint_uri = file_uri(&fixture.path("R/hint.R")).unwrap();
+        session.open(&hint_uri, 1, "x <- 1L\n").await.unwrap();
+
+        let result = session
+            .request(
+                "textDocument/inlayHint",
+                json!({
+                    "textDocument": {"uri": hint_uri},
+                    "range": {
+                        "start": {"line": 0, "character": 0},
+                        "end": {"line": 1, "character": 0}
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result,
+            serde_json::Value::Null,
+            "enable: false must return null instead of inlay hints; got: {result}"
         );
         let _ = session.shutdown().await;
         drop(session);

@@ -6,11 +6,15 @@
 //! support `workspace/configuration` pull) receive full per-folder
 //! settings, while VS Code can additionally use the pull mechanism.
 //!
-//! Only settings the server acts on are modeled. Editor-owned settings
-//! (`path`, `importStrategy`, `addExecutableToTerminalPath`, `logLevel`,
-//! `checkTestFixtures`) are resolved by the extension itself; the server
-//! ignores unknown keys, so accepting them here would only pretend to
-//! honor them.
+//! Only settings the server acts on are modeled. The editor owns the
+//! rest, in two groups. `path`, `importStrategy`, and `logLevel` are
+//! resolved by the VS Code extension (binary discovery in
+//! `common/binary.ts`, the `--log-level` launch argument in
+//! `common/server.ts`). `addExecutableToTerminalPath` and
+//! `checkTestFixtures` are read and forwarded by the extension, but
+//! nothing applies them anywhere yet. Either way the server ignores
+//! unknown keys, so accepting them here would only pretend to honor
+//! them.
 
 use serde::{Deserialize, Serialize};
 
@@ -47,7 +51,8 @@ pub struct FolderSettings {
     /// Mirrors `--baseline`.
     pub baseline: Option<String>,
     /// Whether ry is enabled for this folder. When `false`, the server
-    /// skips analysis and publishes no diagnostics for the folder.
+    /// analyzes the folder neither in the background nor on demand: it
+    /// publishes no diagnostics and returns no inlay hints for it.
     pub enable: Option<bool>,
 }
 

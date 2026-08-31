@@ -109,6 +109,12 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Fixed
 
+- RY010 now fires for arguments that bogus or redundant hardcoded NSE
+  entries used to suppress: calls spelled `tidyselect(...)` (a package
+  name, not a function) and rlang defusing helpers (`enexpr`, `ensym`,
+  `enquo`, `enquos`, `ensyms`, `quos`) called unqualified without
+  `library(rlang)`. Loaded or qualified rlang calls keep their quoting
+  behavior through stub metadata.
 - Parsing no longer panics when a string literal ends inside a multi-byte
   UTF-8 character.
 - Re-running the checker on a single file no longer leaks inference state

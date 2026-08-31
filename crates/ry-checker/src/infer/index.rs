@@ -594,28 +594,58 @@ pub(crate) fn extract_literal_int(e: &Expr) -> Option<i64> {
 /// When these are called, the checker does NOT evaluate the arguments
 /// as variable references, preventing spurious RY010 warnings.
 ///
-/// Includes popular package functions commonly used in NSE contexts:
-///   * ggplot2: from_theme, aes, aes_, aes_string, aes_q
-///   * rlang: sym, expr, quo, and other helpers with symbol arguments
-///   * base: quote, substitute, bquote, alist (already in typeshed but also
-///     used as NSE)
+/// This is the FALLBACK half of the NSE knowledge. The stub-driven half
+/// is the per-signature `eval` metadata in the typeshed: a function
+/// whose stub declares `quoted_expression` or `captures_promise`
+/// parameters gets the same suppression without an entry here. Add a
+/// name here only when no stub declares its evaluation mode. The guard
+/// test `nse_symbol_fallback_does_not_overlap_stub_promise_capture`
+/// fails when a member gains stub coverage, so the two halves cannot
+/// drift into silent overlap.
+///
+/// Stub coverage is genuinely absent for every member (issue #41):
+///   * base: `quote`, `substitute`, `bquote`, and `delayedAssign` have
+///     stubs without `eval` fields; `makeActiveBinding` has no stub.
+///   * rlang: the kept names have stubs without `eval` fields.
+///   * ggplot2 and data.table ship no stubs.
+///   * tidyselect's stub does not declare `all_vars` or `peek_vars`.
+pub(crate) const NSE_SYMBOL_FNS: &[&str] = &[
+    // ggplot2 NSE
+    "from_theme",
+    "aes",
+    "aes_",
+    "aes_string",
+    "aes_q",
+    // rlang NSE
+    "sym",
+    "expr",
+    "exprs",
+    "quo",
+    "abort",
+    "inform",
+    "defuse",
+    "tidyeval_data",
+    "new_formula",
+    "new_quosure",
+    // tidyselect package functions
+    "all_vars",
+    "peek_vars",
+    // base NSE helpers
+    "quote",
+    "substitute",
+    "bquote",
+    "delayedAssign",
+    "makeActiveBinding",
+    // data.table NSE
+    "setkey",
+    "setkeyv",
+    "setindex",
+    "setindexv",
+];
+
 pub(crate) fn is_nse_symbol_fn(name: &str) -> bool {
     let name = name.rsplit_once("::").map(|(_, n)| n).unwrap_or(name);
-    matches!(
-        name,
-        // ggplot2 NSE
-        "from_theme" | "aes" | "aes_" | "aes_string" | "aes_q"
-        // rlang NSE
-        | "sym" | "expr" | "enexpr" | "ensym"
-        | "exprs" | "quo" | "quos" | "enquo" | "enquos" | "ensyms" | "abort" | "inform"
-        | "defuse" | "tidyeval_data" | "new_formula" | "new_quosure"
-        // dplyr/tidyselect NSE
-        | "tidyselect" | "all_vars" | "peek_vars"
-        // Common NSE helpers
-        | "quote" | "substitute" | "bquote" | "alist" | "delayedAssign" | "makeActiveBinding"
-        // data.table NSE
-        | "setkey" | "setkeyv" | "setindex" | "setindexv"
-    )
+    NSE_SYMBOL_FNS.contains(&name)
 }
 
 pub(crate) fn is_dplyr_control_arg(name: &str) -> bool {

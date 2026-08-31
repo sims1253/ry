@@ -443,15 +443,13 @@ impl Checker {
             return RType::unknown();
         }
 
-        // NSE-symbol functions: take bare symbol arguments that should
-        // NOT be resolved as variable references. These are commonly
-        // used in metaprogramming and NSE contexts where the argument
-        // is a name, not a value. We return opaque without evaluating
-        // the args as expressions, suppressing spurious RY010.
+        // NSE-symbol functions without stub eval metadata: take bare
+        // symbol arguments that should NOT be resolved as variable
+        // references. We return opaque without evaluating the args as
+        // expressions, suppressing spurious RY010. Functions whose
+        // stubs declare eval modes are NOT listed here; the per-signature
+        // EvalMode loop below handles them (see `is_nse_symbol_fn`).
         if is_nse_symbol_fn(&lookup_name) {
-            if lookup_name == "alist" {
-                return RType::new(Mode::List, Length::Unknown);
-            }
             return RType::unknown();
         }
 
@@ -720,6 +718,12 @@ impl Checker {
             // lexical scope they can actually populate.
             scope.mark_search_path_unknown();
         }
+        // Hardcoded `assert_*_scalar` narrowing. The stub-assertion path
+        // below reads the same knowledge from a signature's `assertion`
+        // field. The two sites are duplicates by necessity: no stub
+        // declares the `assert_*_scalar` helpers yet. Folding them into
+        // the stubs is blocked on r-typeshed (issue #41); see
+        // `assertion_call_target`.
         if let Some(target) = assertion_call_target(&lookup_name) {
             if let Some(Expr::Ident { name: var, .. }) = args.first().map(|a| &a.value) {
                 scope.insert(var.clone(), target);

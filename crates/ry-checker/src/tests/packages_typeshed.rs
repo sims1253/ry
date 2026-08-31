@@ -309,3 +309,26 @@ fn function_alias_semantics_are_cleared_by_reassignment() {
         "overwriting an alias with a local function must clear quote semantics: {diags:?}"
     );
 }
+
+#[test]
+fn nse_symbol_fallback_does_not_overlap_stub_promise_capture() {
+    // `is_nse_symbol_fn` is the hardcoded half of the NSE knowledge. The
+    // stub promise-capture index is the source of truth. A member listed
+    // in both is a dead fallback entry: the stub path already suppresses
+    // RY010 for it. Delete the member so the stubs stay authoritative
+    // (issue #41).
+    let stub_covered = crate::collect::promise_capture_index();
+    let overlap: Vec<&str> = crate::infer::NSE_SYMBOL_FNS
+        .iter()
+        .copied()
+        .filter(|name| {
+            stub_covered
+                .get(*name)
+                .is_some_and(|&(named, dots)| named || dots)
+        })
+        .collect();
+    assert!(
+        overlap.is_empty(),
+        "is_nse_symbol_fn members already covered by stub promise-capture metadata; delete them: {overlap:?}"
+    );
+}

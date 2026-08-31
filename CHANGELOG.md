@@ -411,6 +411,8 @@ reported diagnostics.
 - RY100 subsumes the condition-type diagnostic on the same span (no
   double reporting).
 
+## [0.5.0] - 2026-07-16
+
 Driven by the ranks-301-500 audit (ry 0.4.0 on the top-500 CRAN packages).
 Minor bump: RY050's dispatch semantics, RY097's collapse criteria, and the
 new binding/quoting/narrowing rules intentionally change reported
@@ -464,6 +466,8 @@ diagnostics between versions.
   `coef.glm`. Consequently RY050 can no longer fire for generics that
   have a `.default` method (such as `print`) — dispatch always succeeds
   for them.
+
+## [0.4.1] - 2026-07-14
 
 ### Removed
 

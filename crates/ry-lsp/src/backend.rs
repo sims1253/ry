@@ -83,13 +83,13 @@ pub(super) struct State {
     /// lock used by latency-sensitive LSP requests.
     project: Arc<Mutex<ProjectCache>>,
     /// Counts every actual parse (`RParser::parse`) performed by
-    /// `parsed_file` -- i.e. every cache MISS. The E1 acceptance test
+    /// `parsed_file` -- i.e. every cache MISS. The cache acceptance test
     /// asserts that editing one file in a multi-file workspace parses
     /// only that file, so this counter must NOT rise for cache hits.
     #[cfg(test)]
     pub(super) parse_count: Arc<std::sync::atomic::AtomicUsize>,
 
-    // --- S2: settings channel ---
+    // --- settings channel ---
     /// The workspace root directory (from `root_uri`), used for
     /// `ry.toml` discovery and relative path resolution.
     root: Option<PathBuf>,
@@ -120,33 +120,30 @@ pub(super) struct State {
     /// The full server settings envelope received at
     /// initialize. Retained so dynamically added workspace folders can
     /// be built through the same `build_folder_contexts` path as initial
-    /// folders (finding from PR #69 review: default settings instead of
-    /// the proper builder).
+    /// folders.
     server_settings: ServerSettings,
     /// Whether the client supports the `workspace/configuration`
     /// pull request. When true, `didChangeConfiguration` re-pulls
     /// instead of parsing the notification payload.
     supports_workspace_configuration: bool,
     /// Whether the client supports dynamic registration of
-    /// `workspace/didChangeWatchedFiles` (S3).
+    /// `workspace/didChangeWatchedFiles`.
     supports_did_change_watched_files: bool,
 
-    // --- S4: multi-root workspace folders ---
+    // --- multi-root workspace folders ---
     /// Workspace folder roots, each with its own loaded `ry.toml` config.
     /// Empty when only a single `root_uri` is provided. Each entry is
     /// (folder_root, file_config), ordered by root path length descending
     /// so that longest-prefix matching finds the most specific folder first.
     workspace_folders: Vec<(PathBuf, ry_config::Config)>,
-    /// Filesystem-derived resolution state, ordered by longest root prefix.
-    workspace_contexts: Vec<(PathBuf, ry_workspace::WorkspaceContext)>,
     // --- per-folder analysis context ---
     /// Per-root analysis context holding effective config, editor settings,
     /// local typesheds, and the workspace context. Ordered by root
-    /// path length descending for longest-prefix ownership (issue #44/#54/#56).
+    /// path length descending for longest-prefix ownership.
     folder_contexts: Vec<FolderAnalysisContext>,
     /// Per-folder project caches for isolated checking. Each workspace
     /// folder gets its own `ProjectCache` so two roots defining the same
-    /// package differently never collide (#54). Keyed by root path string.
+    /// package differently never collide. Keyed by root path string.
     folder_projects: HashMap<String, Arc<Mutex<ProjectCache>>>,
     /// On-disk `.R`/`.r` files discovered by the background indexer
     /// Keyed by absolute path. Open documents shadow
@@ -172,7 +169,7 @@ pub(super) struct State {
     pub(super) compile_during_last_publish: Arc<std::sync::atomic::AtomicU64>,
 }
 
-/// One per-folder analysis context (#44/#54/#56).
+/// One per-folder analysis context.
 ///
 /// Factored from longest-prefix ownership so every analysis channel
 /// resolves config, editor settings, local typesheds, and package
@@ -184,11 +181,11 @@ pub(super) struct FolderAnalysisContext {
     /// The workspace folder root directory.
     pub root: PathBuf,
     /// Effective `ry.toml` config: loaded from directory discovery or
-    /// the editor `configuration` override resolved relative to `root` (#56).
+    /// the editor `configuration` override resolved relative to `root`.
     pub config: ry_config::Config,
-    /// Editor-supplied per-folder settings (#44).
+    /// Editor-supplied per-folder settings.
     pub folder_settings: FolderSettings,
-    /// Local typeshed stubs loaded from this folder's `ry.toml` (#54).
+    /// Local typeshed stubs loaded from this folder's `ry.toml`.
     pub stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
     /// Workspace resolution context for package metadata.
     pub workspace_context: Option<ry_workspace::WorkspaceContext>,
@@ -272,9 +269,9 @@ fn compute_folder_filter(
     (filter, min_confidence, excludes)
 }
 
-/// PR #79 round 3: Recompute the cached filter / min_confidence /
-/// excludes for every folder context and the root-level fallback from
-/// their (already installed) `folder_settings`.
+/// Recompute the cached filter / min_confidence / excludes for every
+/// folder context and the root-level fallback from their (already
+/// installed) `folder_settings`.
 ///
 /// Factored out so the initial pull in `initialized` and the refresh pull
 /// in `did_change_configuration` share one cache-refresh path and cannot
@@ -322,14 +319,6 @@ pub(super) struct ProjectCheckResult {
     /// their owned source and comments, never a separately-read document.
     files: HashMap<String, Arc<SourceFile>>,
 }
-
-/// Per-folder root with its config and stubs, used by the background indexer.
-#[allow(dead_code)]
-type FolderRoot = (
-    PathBuf,
-    ry_config::Config,
-    Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
-);
 
 /// Partitioned project files with the owning folder context (if any).
 type FolderPartition = (
@@ -469,7 +458,7 @@ impl State {
 
     /// Drop the cached parse and scope for `path`, mirroring the
     /// cache-invalidation half of `Backend::update_doc`. Test-only;
-    /// lets the E1 acceptance test simulate a `did_change` on a bare
+    /// lets the cache acceptance test simulate a `did_change` on a bare
     /// `State` without a `tower_lsp::Client`.
     #[cfg(test)]
     pub(super) fn invalidate_parse(&mut self, path: &str) {
@@ -503,7 +492,7 @@ impl State {
         &mut self.file_config
     }
 
-    // --- S2: effective config computation ---
+    // --- effective config computation ---
 
     /// Merge editor lint settings over a given `ry.toml` config: for
     /// each `ignore`/`error`/`warn` field, an editor-provided list
@@ -564,41 +553,20 @@ impl State {
             .find(|ctx| path.starts_with(&ctx.root))
     }
 
-    /// S4: Find the owning workspace folder config for a document path.
-    /// Uses longest-prefix matching against folder context roots
-    /// and falls back to the legacy `workspace_folders` vec.
-    /// Returns None if no workspace folder owns the path.
-    /// Test helper for folder config lookup.
-    #[cfg(test)]
-    #[allow(dead_code)]
-    pub(super) fn folder_config_for_path(&self, doc_path: &str) -> Option<&ry_config::Config> {
-        if let Some(ctx) = self.folder_context_for_path(doc_path) {
-            return Some(&ctx.config);
-        }
-        let path = std::path::Path::new(doc_path);
-        for (folder_root, config) in &self.workspace_folders {
-            if path.starts_with(folder_root) {
-                return Some(config);
-            }
-        }
-        None
-    }
-
-    #[allow(dead_code)]
-    fn workspace_context_for_path(&self, doc_path: &str) -> Option<ry_workspace::WorkspaceContext> {
-        if let Some(ctx) = self.folder_context_for_path(doc_path) {
-            return ctx.workspace_context.clone();
-        }
-        let path = std::path::Path::new(doc_path);
-        self.workspace_contexts
-            .iter()
-            .find_map(|(root, context)| path.starts_with(root).then(|| context.clone()))
-    }
-
+    /// Whether the server should analyze and publish diagnostics for
+    /// `doc_path`. A folder whose editor settings set `enable: false`
+    /// is skipped entirely; otherwise eligibility follows the owning
+    /// folder's discovery rules.
     fn eligibility_for_path(&self, doc_path: &str) -> bool {
         let path = std::path::Path::new(doc_path);
         if let Some(ctx) = self.folder_context_for_path(doc_path) {
+            if ctx.folder_settings.enable == Some(false) {
+                return false;
+            }
             return ry_workspace::is_file_eligible(path, &ctx.root, &ctx.config);
+        }
+        if self.folder_settings.enable == Some(false) {
+            return false;
         }
         if let Some((root, config)) = self
             .workspace_folders
@@ -643,7 +611,7 @@ impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> LspResult<InitializeResult> {
         let root = params.root_uri.and_then(|uri| uri.to_file_path().ok());
 
-        // S2: Read initializationOptions if present. This is the only
+        // Read initializationOptions if present. This is the only
         // settings channel Zed can drive, so it must be sufficient on
         // its own. The shape mirrors ruff-vscode's: an array of
         // per-folder settings plus a global fallback.
@@ -736,7 +704,7 @@ impl LanguageServer for Backend {
                 }
             };
 
-        // S4: Extract per-folder configs from folder_contexts for the
+        // Extract per-folder configs from folder_contexts for the
         // legacy workspace_folders field (still used as fallback).
         let ws_folders: Vec<(PathBuf, ry_config::Config)> = folder_contexts
             .iter()
@@ -778,8 +746,9 @@ impl LanguageServer for Backend {
         // Install per-folder analysis contexts and project caches.
         state.folder_contexts = folder_contexts;
         state.folder_projects = folder_projects;
-        // Longest-prefix matching in `folder_config_for_path` requires
-        // the most specific root first.
+        // Longest-prefix matching in `eligibility_for_path`'s legacy
+        // `workspace_folders` fallback requires the most specific root
+        // first.
         let mut ws_sorted = ws_folders;
         ws_sorted.sort_by_key(|(p, _)| std::cmp::Reverse(p.as_os_str().len()));
         state.workspace_folders = ws_sorted;
@@ -800,7 +769,7 @@ impl LanguageServer for Backend {
                 // Quick fixes that insert `# ry: ignore[CODE]` line
                 // suppressions, plus a file-level `# ry: ignore-file` action.
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
-                // S4: Advertise workspace folder support so clients send
+                // Advertise workspace folder support so clients send
                 // multi-root workspace folders and change notifications.
                 workspace: Some(WorkspaceServerCapabilities {
                     workspace_folders: Some(WorkspaceFoldersServerCapabilities {
@@ -821,7 +790,7 @@ impl LanguageServer for Backend {
     async fn initialized(&self, _: InitializedParams) {
         tracing::info!("ry LSP initialized");
 
-        // S2: If the client supports workspace/configuration, pull the
+        // If the client supports workspace/configuration, pull the
         // `ry.*` section now. This is the primary settings path for VS
         // Code and supersedes whatever was in initializationOptions.
         let should_pull = {
@@ -829,14 +798,10 @@ impl LanguageServer for Backend {
             state.supports_workspace_configuration
         };
         if should_pull {
-            // PR #79 round 3: pull per-folder settings and recompute the
-            // cached filter / min_confidence / excludes through the shared
+            // Pull per-folder settings and recompute the cached filter /
+            // min_confidence / excludes through the shared
             // `pull_folder_settings` helper (also used by
             // `did_change_configuration`) so the two pull paths cannot drift.
-            // The pre-fix initial pull stored only into the server-wide
-            // `folder_settings` and never wrote each context's settings nor
-            // refreshed its cached values, so the initial configuration had
-            // no effect until a filesystem rebuild or server restart.
             self.pull_folder_settings().await;
         }
 
@@ -905,7 +870,7 @@ impl LanguageServer for Backend {
         for change in params.content_changes {
             if !self.apply_incremental_change(&path, change, version).await {
                 tracing::error!(
-                    "aborting remaining changes in didChange batch for {path};                      server and client text will desynchronize until a full sync is received"
+                    "aborting remaining changes in didChange batch for {path}; server and client text will desynchronize until a full sync is received"
                 );
                 break;
             }
@@ -920,7 +885,7 @@ impl LanguageServer for Backend {
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
-        // S2: Configuration changed. If the client supports pull
+        // Configuration changed. If the client supports pull
         // configuration, re-pull the `ry.*` section. Otherwise parse
         // the settings blob sent in the notification.
         let should_pull = {
@@ -929,13 +894,10 @@ impl LanguageServer for Backend {
         };
 
         if should_pull {
-            // PR #79 round 3: pull per-folder settings and recompute the
-            // cached filter / min_confidence / excludes through the shared
+            // Pull per-folder settings and recompute the cached filter /
+            // min_confidence / excludes through the shared
             // `pull_folder_settings` helper (also used by `initialized`)
-            // so the two pull paths cannot drift. The pre-fix pull stored
-            // only into the server-wide `folder_settings` /
-            // `global_settings` and left each context's `folder_settings`
-            // — and thus its cached values — unchanged.
+            // so the two pull paths cannot drift.
             self.pull_folder_settings().await;
         } else {
             // The client sent settings inline. They may be wrapped in
@@ -945,17 +907,17 @@ impl LanguageServer for Backend {
             if let Ok(settings) = serde_json::from_value::<FolderSettings>(ry_section.clone()) {
                 let mut state = self.state.lock().await;
                 state.folder_settings = settings.clone();
-                // PR #69 review: Propagate to folder contexts.
+                // Propagate to folder contexts.
                 for ctx in &mut state.folder_contexts {
                     ctx.folder_settings = settings.clone();
                 }
                 state.server_settings.global_settings = settings;
-                // PR #79 round 3: recompute the cached filter /
-                // min_confidence / excludes through the shared
-                // `refresh_cached_folder_filters` helper so the push and
-                // pull paths share one refresh and cannot drift. This stays
-                // OUT of `publish_diagnostics`: the publish-cycle contract
-                // asserts zero filter compilations *during a publish cycle*.
+                // Recompute the cached filter / min_confidence / excludes
+                // through the shared `refresh_cached_folder_filters` helper
+                // so the push and pull paths share one refresh and cannot
+                // drift. This stays out of `publish_diagnostics`: the
+                // publish-cycle contract asserts zero filter compilations
+                // *during a publish cycle*.
                 refresh_cached_folder_filters(&mut state);
             }
         }
@@ -990,8 +952,7 @@ impl LanguageServer for Backend {
 
             // Build added folder contexts through the same
             // `build_folder_contexts` path used at initialize, so dynamically
-            // added folders get proper per-folder settings and config (PR #69
-            // review finding: default settings instead of the builder).
+            // added folders get proper per-folder settings and config.
             let docs_to_clear: Vec<Url> = state
                 .docs
                 .keys()
@@ -1195,7 +1156,7 @@ impl LanguageServer for Backend {
                 state.folder_contexts = new_contexts.clone();
                 // Sync the root-level fallback state and the legacy vectors
                 // from the rebuilt contexts so the fallback paths see the new
-                // config/baseline (PR #69 review).
+                // config/baseline.
                 for ctx in &new_contexts {
                     if state.root.as_deref() == Some(ctx.root.as_path()) {
                         state.file_config = ctx.config.clone();
@@ -1257,10 +1218,8 @@ impl LanguageServer for Backend {
             state.docs.keys().cloned().collect::<Vec<_>>()
         };
         {
-            // PR #69 review: Clean up the file in both the root
-            // project cache and the owning folder's per-folder cache
-            // (finding: Per-folder ProjectCache entries not cleaned up on
-            // did_close).
+            // Clean up the file in both the root project cache and the
+            // owning folder's per-folder cache.
             let (root_project, folder_project_opt) = {
                 let state = self.state.lock().await;
                 let root = Arc::clone(&state.project);
@@ -1558,12 +1517,11 @@ impl Backend {
         // Fast path: cached scope with matching version.
         {
             let state = self.state.lock().await;
-            if let Some(version) = state.versions.get(path).copied() {
-                if let Some((cached_v, scope)) = state.scopes.get(path) {
-                    if *cached_v == version {
-                        return Some(scope.clone());
-                    }
-                }
+            if let Some(version) = state.versions.get(path).copied()
+                && let Some((cached_v, scope)) = state.scopes.get(path)
+                && *cached_v == version
+            {
+                return Some(scope.clone());
             }
         }
         // Cache miss: parse (via the parse cache) + check, then store.
@@ -1578,7 +1536,7 @@ impl Backend {
         let mut checker = ry_checker::Checker::new(path);
         let user_stubs = {
             let state = self.state.lock().await;
-            // Use the owning folder's stubs for single-file checks (#54).
+            // Use the owning folder's stubs for single-file checks.
             state
                 .folder_context_for_path(path)
                 .map(|ctx| Arc::clone(&ctx.stubs))
@@ -1603,7 +1561,7 @@ impl Backend {
         Some(scope)
     }
 
-    /// PR #79 round 3: Pull `ry` settings per folder scope via
+    /// Pull `ry` settings per folder scope via
     /// `workspace/configuration`, install each result into the matching
     /// [`FolderAnalysisContext`]'s `folder_settings`, update the root-level
     /// fallback, then recompute the cached filter / min_confidence /
@@ -1612,10 +1570,10 @@ impl Backend {
     /// Shared by the initial pull in [`Backend::initialized`] and the
     /// refresh pull in [`Backend::did_change_configuration`] so the two
     /// paths cannot drift. One item is sent per folder root (scoped to that
-    /// root); a final root-scoped item updates the server-wide fallback,
-    /// matching the pre-fix single-item pull. The recompute stays here —
-    /// outside `publish_diagnostics` — preserving the publish-cycle contract
-    /// of zero filter compilations during a publish cycle.
+    /// root); a final root-scoped item updates the server-wide fallback.
+    /// The recompute stays here — outside `publish_diagnostics` —
+    /// preserving the publish-cycle contract of zero filter compilations
+    /// during a publish cycle.
     async fn pull_folder_settings(&self) {
         // One item per folder root scope, then a root-scoped item for the
         // server-wide fallback. Built under the lock, then sent without it.
@@ -1658,7 +1616,7 @@ impl Backend {
             }
         }
         // Root-scoped result (the item after the per-folder entries) updates
-        // the server-wide fallback, matching the pre-fix single-item pull.
+        // the server-wide fallback.
         if let Some(value) = values.get(folder_count)
             && let Ok(settings) = serde_json::from_value::<FolderSettings>(value.clone())
         {
@@ -1717,11 +1675,17 @@ impl Backend {
             };
             project_files.push((doc_path.clone(), version, file));
         }
+        // Disk files never shadow open documents, and files in disabled
+        // folders are dropped by the same eligibility rule as open ones.
         let disk_files = {
             let state = self.state.lock().await;
-            state.disk_files.clone()
+            state
+                .disk_files
+                .iter()
+                .filter(|(p, _)| state.eligibility_for_path(p))
+                .map(|(p, file)| (p.clone(), Arc::clone(file)))
+                .collect::<HashMap<String, Arc<SourceFile>>>()
         };
-        // Disk files never shadow open documents.
         let open_paths: std::collections::HashSet<String> =
             project_files.iter().map(|(p, _, _)| p.clone()).collect();
         for (p, file) in &disk_files {
@@ -1733,7 +1697,7 @@ impl Backend {
 
         // Partition files by owning folder and check each folder
         // independently so two roots defining the same package differently
-        // never collide (#54). Each folder gets its own ProjectCache, stubs,
+        // never collide. Each folder gets its own ProjectCache, stubs,
         // and workspace context.
         let (folder_contexts, folder_project_handles, root_project, user_stubs) = {
             let state = self.state.lock().await;
@@ -1770,7 +1734,7 @@ impl Backend {
         }
 
         // Check each folder partition independently.
-        let mut all_results: Vec<(ProjectCheckResult,)> = Vec::new();
+        let mut all_results: Vec<ProjectCheckResult> = Vec::new();
         for (key, (ctx_opt, files)) in &per_folder {
             let (stubs, workspace_context, project_handle) = match ctx_opt {
                 Some(ctx) => (
@@ -1786,7 +1750,7 @@ impl Backend {
             let mut project = project_handle.lock().await;
             let result =
                 project.check_with_workspace(files.clone(), stubs, workspace_context.as_ref());
-            all_results.push((result,));
+            all_results.push(result);
         }
 
         // An edit that arrived while parsing/checking invalidates this whole
@@ -1800,7 +1764,7 @@ impl Backend {
 
         // Publish diagnostics for every checked file, applying per-folder
         // filter/confidence/exclude/baseline state.
-        for (result,) in &all_results {
+        for result in &all_results {
             let ProjectCheckResult {
                 diagnostics: per_file,
                 files: checked_files,
@@ -1960,7 +1924,6 @@ impl Backend {
                 }
                 all_disk_files.extend(outcome.files);
             }
-            contexts.sort_by_key(|(root, _)| std::cmp::Reverse(root.as_os_str().len()));
             (all_disk_files, contexts, all_truncated)
         })
         .await;
@@ -2014,7 +1977,6 @@ impl Backend {
                     return;
                 }
                 state.disk_files = disk_files;
-                state.workspace_contexts = contexts.clone();
                 // Update each folder context's workspace_context
                 // with the freshly resolved package metadata.
                 for ctx in &mut state.folder_contexts {
@@ -2028,7 +1990,7 @@ impl Backend {
                         .client
                         .log_message(
                             tower_lsp::lsp_types::MessageType::WARNING,
-                            "ry: discovery cap reached; some R files were not indexed.                              See server logs for details (index.max-files /                              index.max-file-bytes / index.max-depth).",
+                            "ry: discovery cap reached; some R files were not indexed. See server logs for details (index.max-files / index.max-file-bytes / index.max-depth).",
                         )
                         .await;
                 }
@@ -2118,7 +2080,7 @@ fn load_workspace_stubs(
 
 /// Load stubs directly from a loaded config's typeshed directories.
 /// Used per-folder so two roots defining the same package differently
-/// never collide (#54).
+/// never collide.
 fn load_stubs_from_config(
     config: &ry_config::Config,
 ) -> Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>> {
@@ -2219,9 +2181,9 @@ fn load_folder_baseline(
 /// Build per-folder analysis contexts for every workspace root.
 ///
 /// Each context holds the effective `ry.toml` config (from directory
-/// discovery or the editor `configuration` override, #56), the matching
-/// editor [`FolderSettings`] (#44), local typesheds loaded from that
-/// folder's config (#54), and the cached baseline. When
+/// discovery or the editor `configuration` override), the matching
+/// editor [`FolderSettings`], local typesheds loaded from that
+/// folder's config, and the cached baseline. When
 /// `workspace_folders` is empty, `root_uri` becomes the single folder.
 fn build_folder_contexts(
     root: Option<&std::path::Path>,
@@ -2240,7 +2202,7 @@ fn build_folder_contexts(
 
     let mut contexts = Vec::with_capacity(folders.len());
     for (settings_idx, folder_root) in &folders {
-        // Per-folder editor settings: index-correlated entry or global fallback (#44).
+        // Per-folder editor settings: index-correlated entry or global fallback.
         let folder_settings = server_settings
             .settings
             .get(*settings_idx)
@@ -2336,7 +2298,7 @@ fn rebuild_folder_context(
     } else {
         new_stubs
     };
-    // Reload baseline; on failure retain the last valid baseline (#45).
+    // Reload baseline; on failure retain the last valid baseline.
     let baseline = match load_folder_baseline(&old.folder_settings, &config, Some(&old.root)) {
         Ok(opt) => opt,
         Err(error) => {

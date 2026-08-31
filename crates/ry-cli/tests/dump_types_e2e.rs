@@ -608,3 +608,43 @@ fn exit_code_nonzero_only_for_usage_and_io_failures() {
     let output = run(&["dump-types"]);
     assert!(!output.status.success());
 }
+
+/// An unreadable-but-discovered file aborts the dump: exactly one
+/// `ry: <path>: <error>` line on stderr, exit code 1, nothing on stdout.
+/// This is the abort arm of `dump_parse_failure`, distinct from the
+/// missing-input failure (the `!root.exists()` guard in `run_dump_types`
+/// rejects that earlier, so only this test pins the read-error path).
+/// Root ignores file modes, so the test skips itself when the mode-0
+/// file is still readable.
+#[cfg(unix)]
+#[test]
+fn unreadable_discovered_file_aborts_with_single_stderr_line() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    fs::write(temp.path().join("good.R"), "a <- 1L\n").unwrap();
+    let secret = temp.path().join("unreadable.R");
+    fs::write(&secret, "b <- 2L\n").unwrap();
+    fs::set_permissions(&secret, fs::Permissions::from_mode(0o000)).unwrap();
+    // Root (or an exotic filesystem) reads mode-0 files anyway; without a
+    // real read failure there is no abort path to pin.
+    if fs::read_to_string(&secret).is_ok() {
+        return;
+    }
+
+    let output = run(&["dump-types", temp.path().to_str().unwrap()]);
+    assert_eq!(output.status.code(), Some(1), "{}", output.status);
+    assert!(
+        output.stdout.is_empty(),
+        "aborted dump must not emit JSON: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let lines: Vec<&str> = stderr.lines().collect();
+    assert_eq!(lines.len(), 1, "exactly one stderr line: {stderr}");
+    assert!(
+        lines[0].starts_with(&format!("ry: {}", secret.display())),
+        "unexpected error line: {stderr}"
+    );
+}

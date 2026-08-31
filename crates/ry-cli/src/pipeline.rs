@@ -163,7 +163,7 @@ fn parse_one(path: &Path) -> Result<ParsedFile, ParseFailure> {
 ///
 /// R accepts Latin-1 source files, so retry an invalid UTF-8 decode by mapping
 /// every input byte directly to the corresponding Unicode code point.
-pub(crate) fn read_r_source(path: &Path) -> std::io::Result<String> {
+fn read_r_source(path: &Path) -> std::io::Result<String> {
     match std::fs::read_to_string(path) {
         Ok(source) => Ok(source),
         Err(error) if error.kind() == std::io::ErrorKind::InvalidData => {
@@ -175,7 +175,7 @@ pub(crate) fn read_r_source(path: &Path) -> std::io::Result<String> {
 
 /// Nearest ancestor directory (starting at the path itself for
 /// directories, at the parent for files) holding a DESCRIPTION file.
-pub(crate) fn enclosing_package_root(path: &Path) -> Option<PathBuf> {
+fn enclosing_package_root(path: &Path) -> Option<PathBuf> {
     let start = if path.is_dir() { path } else { path.parent()? };
     start
         .ancestors()

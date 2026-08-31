@@ -834,6 +834,18 @@ pub(crate) fn collect_forwarded_calls_in_expr(
 }
 
 impl Checker {
+    /// Cached defusing helpers. The set is derived from `fn_table.fns`, whose
+    /// quoting and defusing facts are frozen once collection ends, so it is
+    /// rebuilt only when a new collection round clears the cache.
+    fn trusted_defusers(&mut self) -> Arc<HashSet<String>> {
+        if let Some(cached) = &self.trusted_defusers {
+            return Arc::clone(cached);
+        }
+        let built = Arc::new(build_trusted_defusers(&self.fn_table));
+        self.trusted_defusers = Some(Arc::clone(&built));
+        built
+    }
+
     /// Diagnose the narrow, provable lazy-default ordering bug where a
     /// parameter is used by an earlier top-level statement than the direct
     /// body assignment needed by its default expression.
@@ -844,19 +856,7 @@ impl Checker {
         assigned: &HashSet<String>,
     ) {
         let formals: HashSet<&str> = params.iter().map(|param| param.name.as_str()).collect();
-        let mut trusted_defusers: HashSet<String> =
-            DEFUSING_CALLS.iter().map(|s| s.to_string()).collect();
-        for (name, function) in &self.fn_table.fns {
-            if function
-                .params
-                .iter()
-                .all(|param| param.quoting || param.defused)
-            {
-                trusted_defusers.insert(name.clone());
-            } else {
-                trusted_defusers.remove(name);
-            }
-        }
+        let trusted_defusers = self.trusted_defusers();
 
         for param in params {
             let Some(default) = &param.default else {
@@ -919,6 +919,25 @@ impl Checker {
             }
         }
     }
+}
+
+/// The defusing call set RY098 trusts: the base allowlist, plus every
+/// collected function whose formals are all quoting or defused. A collected
+/// function of the same name that does not qualify drops the allowlist entry.
+fn build_trusted_defusers(fn_table: &FnTable) -> HashSet<String> {
+    let mut trusted: HashSet<String> = DEFUSING_CALLS.iter().map(|s| s.to_string()).collect();
+    for (name, function) in &fn_table.fns {
+        if function
+            .params
+            .iter()
+            .all(|param| param.quoting || param.defused)
+        {
+            trusted.insert(name.clone());
+        } else {
+            trusted.remove(name);
+        }
+    }
+    trusted
 }
 
 fn guaranteed_force_before_replacement(
@@ -1324,8 +1343,17 @@ pub(crate) fn bound_argument_index(
     formal: &str,
 ) -> Option<usize> {
     let names: Vec<_> = params.iter().map(|param| param.name.as_str()).collect();
+    bound_argument_index_matched(params, &match_arguments(&names, args), formal)
+}
+
+/// `bound_argument_index` over a match already computed for this call.
+pub(crate) fn bound_argument_index_matched(
+    params: &[ParamSpec],
+    bindings: &ArgumentMatch,
+    formal: &str,
+) -> Option<usize> {
     let formal_index = params.iter().position(|param| param.name == formal)?;
-    match_arguments(&names, args)
+    bindings
         .param_for_arg
         .iter()
         .position(|bound| *bound == Some(formal_index))
@@ -1647,14 +1675,17 @@ pub(crate) fn expected_type_label(expected: &RType) -> String {
         .join(" or ")
 }
 
-pub(crate) fn argument_eval_mode(
+/// Eval mode declared for the argument at `index`.
+///
+/// `names` and `bindings` come from one `match_arguments` call shared by the
+/// whole call site, so a loop over arguments does not re-match per argument.
+pub(crate) fn eval_mode_for_arg(
     sig: &FunctionSig,
-    args: &[Arg],
+    names: &[&str],
+    bindings: &ArgumentMatch,
     index: usize,
 ) -> Option<EvalMode> {
-    args.get(index)?;
-    let names: Vec<&str> = sig.param_names().collect();
-    let bindings = match_arguments(&names, args);
+    bindings.param_for_arg.get(index)?;
     let parameter = bindings.param_for_arg[index]
         .and_then(|parameter_index| names.get(parameter_index).copied())
         .unwrap_or("...");
@@ -1662,6 +1693,15 @@ pub(crate) fn argument_eval_mode(
         .get(parameter)
         .copied()
         .or_else(|| sig.eval.get("...").copied())
+}
+
+pub(crate) fn argument_eval_mode(
+    sig: &FunctionSig,
+    args: &[Arg],
+    index: usize,
+) -> Option<EvalMode> {
+    let names: Vec<&str> = sig.param_names().collect();
+    eval_mode_for_arg(sig, &names, &match_arguments(&names, args), index)
 }
 
 /// Locate the supplied argument named by a signature's data-mask source.

@@ -668,6 +668,10 @@ pub struct Checker {
     // the refcount is >1); passes 1/2 own their tables uniquely, and pass
     // 3 only reads, so the COW clone never actually fires in practice.
     pub(crate) fn_table: Arc<FnTable>,
+    /// Defusing helpers RY098 trusts, derived from `fn_table`. Built on first
+    /// use and cleared by `collect_fns`, the only pass that mutates
+    /// `fn_table.fns`.
+    trusted_defusers: Option<Arc<HashSet<String>>>,
     /// Top-level bindings that may suppress RY010 for the file being
     /// emitted. Project checking installs either a package R/ pool or the
     /// current script's own bindings.
@@ -834,6 +838,7 @@ impl Checker {
             discarding: false,
             validate_user_call_arguments: true,
             fn_table,
+            trusted_defusers: None,
             known_vars: Arc::new(HashSet::new()),
             return_slots,
             inferring: Vec::new(),

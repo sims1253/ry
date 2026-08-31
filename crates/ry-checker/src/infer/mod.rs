@@ -18,6 +18,28 @@ pub(crate) enum ConditionDiagnostic {
     Numeric,
 }
 
+/// The statement form a condition appears in. It fixes the noun used in
+/// RY001/RY003 messages and whether RY002 applies.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConditionContext {
+    If,
+    Loop,
+}
+
+impl ConditionContext {
+    fn noun(self) -> &'static str {
+        match self {
+            ConditionContext::If => "`if`",
+            ConditionContext::Loop => "loop",
+        }
+    }
+
+    /// RY002 is an `if`-only rule; see `emit_condition_diagnostics`.
+    fn allows_length_rule(self) -> bool {
+        matches!(self, ConditionContext::If)
+    }
+}
+
 /// Classify a condition without losing the member-level information carried
 /// by unions. In particular, `integer | double` is numeric truthiness, while
 /// `integer | character` can still fail at runtime and is invalid.
@@ -56,10 +78,6 @@ pub(crate) fn condition_diagnostic(t: &RType) -> Option<ConditionDiagnostic> {
         }
         _ => Some(ConditionDiagnostic::Invalid),
     }
-}
-
-pub(crate) fn list_binding_origin(name: &str, scope: &Scope) -> bool {
-    scope.has_list_origin(name)
 }
 
 fn expression_has_list_origin(expression: &Expr, scope: &Scope) -> bool {
@@ -278,56 +296,14 @@ impl Checker {
                 // without this walk almost all real R code would go
                 // unchecked.
                 if let Expr::Function { params, body, span } = value {
-                    let mut fn_scope = scope.clone();
-                    if let Some(captures) = self.deferred_captures.last() {
-                        for capture in captures {
-                            if fn_scope.get(capture).is_none() {
-                                fn_scope.insert(capture.clone(), RType::unknown());
-                            }
-                        }
-                    }
-                    if let Some(name) = binding_name(target) {
-                        insert_s3_dispatch_context(name, &mut fn_scope, &self.typeshed.globals);
-                    }
-                    for parameter in params {
-                        fn_scope.insert_parameter(parameter.name.clone(), RType::unknown());
-                    }
-                    let assigned = assigned_names_in_body(body);
-                    self.check_lazy_default_reachability(params, body, &assigned);
-                    let mut default_scope = fn_scope.clone();
-                    for name in &assigned {
-                        default_scope.insert(name.clone(), RType::unknown());
-                    }
-                    for p in params {
-                        let t = match &p.default {
-                            Some(e) => {
-                                let _ = self.infer(e, &mut default_scope);
-                                binding_name(target)
-                                    .map(|function| {
-                                        self.diagnostic_parameter_type(function, p, params, e)
-                                    })
-                                    .unwrap_or_else(RType::unknown)
-                            }
-                            None => RType::unknown(),
-                        };
-                        if p.default.is_some() {
-                            fn_scope.insert_parameter_default(p.name.clone(), t);
-                        } else {
-                            fn_scope.insert_parameter(p.name.clone(), t);
-                        }
-                    }
-                    self.deferred_captures.push(assigned);
-                    self.push_enclosing_formals(params);
-                    self.vector_intent_parameters
-                        .push(vector_intent_parameters(params, body));
-                    self.check_discarded_branch_results(body);
-                    for s in body {
-                        self.walk_stmt(s, &mut fn_scope, None);
-                    }
-                    self.record_scope(binding_name(target), *span, params, &fn_scope);
-                    self.vector_intent_parameters.pop();
-                    self.enclosing_formals.pop();
-                    self.deferred_captures.pop();
+                    self.enter_function_body(
+                        binding_name(target),
+                        true,
+                        params,
+                        body,
+                        *span,
+                        scope,
+                    );
                 }
             }
             Stmt::Expr(e) => {
@@ -375,47 +351,13 @@ impl Checker {
                 self.check_class_equality_operand(cond, scope);
                 let diagnostic_start = self.diagnostics.len();
                 let ct = self.infer(cond, scope);
-                let has_ry100 = self.diagnostics[diagnostic_start..]
-                    .iter()
-                    .any(|diagnostic| diagnostic.code == "RY100");
-                if matches!(
-                    condition_diagnostic(&ct),
-                    Some(ConditionDiagnostic::Invalid)
-                ) && !has_ry100
-                {
-                    self.emit(
-                        Severity::Error,
-                        span_of(cond),
-                        "RY001",
-                        format!("`if` condition is `{}`, expected length-1 logical", ct),
-                    );
-                } else if matches!(
-                    condition_diagnostic(&ct),
-                    Some(ConditionDiagnostic::Numeric)
-                ) && !has_ry100
-                    && !is_numeric_truthiness_idiom(cond, scope)
-                {
-                    self.emit(
-                        Severity::Info,
-                        span_of(cond),
-                        "RY003",
-                        format!("`if` condition is `{}`; R coerces nonzero to TRUE", ct.mode),
-                    );
-                } else if matches!(ct.mode, Mode::Logical) {
-                    if let Length::Known(n) = ct.length {
-                        if n > 1 {
-                            self.emit(
-                                Severity::Warning,
-                                span_of(cond),
-                                "RY002",
-                                format!(
-                                    "`if` condition has length {}; R requires a length-1 condition",
-                                    n
-                                ),
-                            );
-                        }
-                    }
-                }
+                self.emit_condition_diagnostics(
+                    cond,
+                    ct,
+                    scope,
+                    diagnostic_start,
+                    ConditionContext::If,
+                );
                 let narrowing = self.extract_type_narrowing(cond, scope);
                 let has_else = else_.is_some();
                 let (then_scope, else_scope, narrowed) = apply_narrowing(scope, &narrowing);
@@ -481,33 +423,13 @@ impl Checker {
                 self.check_class_equality_operand(cond, scope);
                 let diagnostic_start = self.diagnostics.len();
                 let ct = self.infer(cond, scope);
-                let has_ry100 = self.diagnostics[diagnostic_start..]
-                    .iter()
-                    .any(|diagnostic| diagnostic.code == "RY100");
-                if matches!(
-                    condition_diagnostic(&ct),
-                    Some(ConditionDiagnostic::Invalid)
-                ) && !has_ry100
-                {
-                    self.emit(
-                        Severity::Error,
-                        span_of(cond),
-                        "RY001",
-                        format!("loop condition is `{}`, expected length-1 logical", ct),
-                    );
-                } else if matches!(
-                    condition_diagnostic(&ct),
-                    Some(ConditionDiagnostic::Numeric)
-                ) && !has_ry100
-                    && !is_numeric_truthiness_idiom(cond, scope)
-                {
-                    self.emit(
-                        Severity::Info,
-                        span_of(cond),
-                        "RY003",
-                        format!("loop condition is `{}`; R coerces nonzero to TRUE", ct.mode),
-                    );
-                }
+                self.emit_condition_diagnostics(
+                    cond,
+                    ct,
+                    scope,
+                    diagnostic_start,
+                    ConditionContext::Loop,
+                );
                 let mut inner = scope.clone();
                 self.insert_loop_carried_bindings(body, &mut inner);
                 for s in body {
@@ -535,56 +457,7 @@ impl Checker {
                 if let Some(n) = name {
                     scope.insert(n.clone(), vt);
                 }
-                let mut fn_scope = scope.clone();
-                if let Some(captures) = self.deferred_captures.last() {
-                    for capture in captures {
-                        if fn_scope.get(capture).is_none() {
-                            fn_scope.insert(capture.clone(), RType::unknown());
-                        }
-                    }
-                }
-                for parameter in params {
-                    fn_scope.insert_parameter(parameter.name.clone(), RType::unknown());
-                }
-                let assigned = assigned_names_in_body(body);
-                self.check_lazy_default_reachability(params, body, &assigned);
-                let mut default_scope = fn_scope.clone();
-                for name in &assigned {
-                    default_scope.insert(name.clone(), RType::unknown());
-                }
-                for p in params {
-                    let t = match &p.default {
-                        Some(e) => {
-                            let _ = self.infer(e, &mut default_scope);
-                            name.as_deref()
-                                .map(|function| {
-                                    self.diagnostic_parameter_type(function, p, params, e)
-                                })
-                                .unwrap_or_else(RType::unknown)
-                        }
-                        None => RType::unknown(),
-                    };
-                    if p.default.is_some() {
-                        fn_scope.insert_parameter_default(p.name.clone(), t);
-                    } else {
-                        fn_scope.insert_parameter(p.name.clone(), t);
-                    }
-                }
-                self.deferred_captures.push(assigned);
-                self.push_enclosing_formals(params);
-                self.vector_intent_parameters
-                    .push(vector_intent_parameters(params, body));
-                self.check_discarded_branch_results(body);
-                for s in body {
-                    self.walk_stmt(s, &mut fn_scope, None);
-                }
-                // Statement-position literals are anonymous (`name` is
-                // always `None` today, but honor it if the parser ever
-                // names them).
-                self.record_scope(name.as_deref(), *span, params, &fn_scope);
-                self.vector_intent_parameters.pop();
-                self.enclosing_formals.pop();
-                self.deferred_captures.pop();
+                self.enter_function_body(name.as_deref(), false, params, body, *span, scope);
             }
             Stmt::Return { value, .. } => {
                 if let Some(v) = value {
@@ -597,6 +470,139 @@ impl Checker {
                 }
                 scope.unreachable = true;
             }
+        }
+    }
+
+    /// Enter a function literal's body and walk it for diagnostics.
+    ///
+    /// Both statement forms reach this: `f <- function(...) ...` and a bare
+    /// `function(...) ...` statement. `named_binding` marks the first form,
+    /// which is the only one that installs an S3 dispatch context. A
+    /// statement-position literal is anonymous (`name` is always `None`
+    /// today, but the parser's name is honored if it ever supplies one).
+    fn enter_function_body(
+        &mut self,
+        function_name: Option<&str>,
+        named_binding: bool,
+        params: &[Param],
+        body: &[Stmt],
+        span: Span,
+        scope: &Scope,
+    ) {
+        let mut fn_scope = scope.clone();
+        if let Some(captures) = self.deferred_captures.last() {
+            for capture in captures {
+                if fn_scope.get(capture).is_none() {
+                    fn_scope.insert(capture.clone(), RType::unknown());
+                }
+            }
+        }
+        if named_binding && let Some(name) = function_name {
+            insert_s3_dispatch_context(name, &mut fn_scope, &self.typeshed.globals);
+        }
+        for parameter in params {
+            fn_scope.insert_parameter(parameter.name.clone(), RType::unknown());
+        }
+        let assigned = assigned_names_in_body(body);
+        self.check_lazy_default_reachability(params, body, &assigned);
+        let mut default_scope = fn_scope.clone();
+        for name in &assigned {
+            default_scope.insert(name.clone(), RType::unknown());
+        }
+        for p in params {
+            let t = match &p.default {
+                Some(e) => {
+                    let _ = self.infer(e, &mut default_scope);
+                    function_name
+                        .map(|function| self.diagnostic_parameter_type(function, p, params, e))
+                        .unwrap_or_else(RType::unknown)
+                }
+                None => RType::unknown(),
+            };
+            if p.default.is_some() {
+                fn_scope.insert_parameter_default(p.name.clone(), t);
+            } else {
+                fn_scope.insert_parameter(p.name.clone(), t);
+            }
+        }
+        self.deferred_captures.push(assigned);
+        self.push_enclosing_formals(params);
+        self.vector_intent_parameters
+            .push(vector_intent_parameters(params, body));
+        self.check_discarded_branch_results(body);
+        for s in body {
+            self.walk_stmt(s, &mut fn_scope, None);
+        }
+        self.record_scope(function_name, span, params, &fn_scope);
+        self.vector_intent_parameters.pop();
+        self.enclosing_formals.pop();
+        self.deferred_captures.pop();
+    }
+
+    /// Emit RY001/RY003/RY002 for a condition already inferred as `ct`.
+    ///
+    /// `diagnostic_start` is the `diagnostics` length captured before that
+    /// inference. An RY100 reported inside the condition already covers the
+    /// same span, so it suppresses this family.
+    ///
+    /// RY002 fires for `ConditionContext::If` only. The rule table scopes that
+    /// code to `if` conditions, and the `while` arm has never carried it.
+    fn emit_condition_diagnostics(
+        &mut self,
+        cond: &Expr,
+        ct: RType,
+        scope: &Scope,
+        diagnostic_start: usize,
+        ctx: ConditionContext,
+    ) {
+        let has_ry100 = self.diagnostics[diagnostic_start..]
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY100");
+        if matches!(
+            condition_diagnostic(&ct),
+            Some(ConditionDiagnostic::Invalid)
+        ) && !has_ry100
+        {
+            self.emit(
+                Severity::Error,
+                span_of(cond),
+                "RY001",
+                format!(
+                    "{} condition is `{}`, expected length-1 logical",
+                    ctx.noun(),
+                    ct
+                ),
+            );
+        } else if matches!(
+            condition_diagnostic(&ct),
+            Some(ConditionDiagnostic::Numeric)
+        ) && !has_ry100
+            && !is_numeric_truthiness_idiom(cond, scope)
+        {
+            self.emit(
+                Severity::Info,
+                span_of(cond),
+                "RY003",
+                format!(
+                    "{} condition is `{}`; R coerces nonzero to TRUE",
+                    ctx.noun(),
+                    ct.mode
+                ),
+            );
+        } else if ctx.allows_length_rule()
+            && matches!(ct.mode, Mode::Logical)
+            && let Length::Known(n) = ct.length
+            && n > 1
+        {
+            self.emit(
+                Severity::Warning,
+                span_of(cond),
+                "RY002",
+                format!(
+                    "`if` condition has length {}; R requires a length-1 condition",
+                    n
+                ),
+            );
         }
     }
 

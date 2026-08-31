@@ -173,15 +173,7 @@ impl Checker {
                 span: comparison_span,
                 ..
             }) = args.first().map(|arg| &arg.value)
-            && matches!(
-                op,
-                BinOpKind::Lt
-                    | BinOpKind::Le
-                    | BinOpKind::Gt
-                    | BinOpKind::Ge
-                    | BinOpKind::Eq
-                    | BinOpKind::Ne
-            )
+            && is_comparison(*op)
         {
             let message = format!(
                 "comparison is inside `{lookup_name}()`; compare `{lookup_name}(x)` instead"
@@ -211,15 +203,7 @@ impl Checker {
             span: comparison_span,
             ..
         }) = args.first().map(|arg| &arg.value)
-            && matches!(
-                op,
-                BinOpKind::Lt
-                    | BinOpKind::Le
-                    | BinOpKind::Gt
-                    | BinOpKind::Ge
-                    | BinOpKind::Eq
-                    | BinOpKind::Ne
-            )
+            && is_comparison(*op)
         {
             let message = "comparison directly inside a numeric math function is usually a parenthesization mistake; compare the math result instead";
             self.emit(Severity::Warning, *comparison_span, "RY100", message);
@@ -632,17 +616,11 @@ impl Checker {
                 arg_types.push(self.infer(&a.value, &mut local));
                 continue;
             }
-            if supplied_data_mask_source
+            if let Some((_, data)) = supplied_data_mask_source
                 .as_ref()
-                .is_some_and(|(source_index, _)| *source_index == index)
+                .filter(|(source_index, _)| *source_index == index)
             {
-                arg_types.push(
-                    supplied_data_mask_source
-                        .as_ref()
-                        .expect("checked data-mask source")
-                        .1
-                        .clone(),
-                );
+                arg_types.push(data.clone());
                 continue;
             }
             if let Some(mode) = declared_mode {
@@ -815,7 +793,7 @@ impl Checker {
                     continue;
                 }
                 let narrowing = self.extract_type_narrowing(&argument.value, scope);
-                let (positive_scope, _, _) = apply_narrowing(scope, &narrowing, false);
+                let (positive_scope, _, _) = apply_narrowing(scope, &narrowing);
                 *scope = positive_scope;
             }
         }
@@ -933,7 +911,7 @@ impl Checker {
             return self.infer_data_frame(&arg_types, args, span);
         }
 
-        if matches!(lookup_name.as_str(), "t") {
+        if lookup_name == "t" {
             return arg_types.first().cloned().unwrap_or_else(RType::unknown);
         }
 
@@ -1349,7 +1327,7 @@ impl Checker {
         &mut self,
         args: &[Arg],
         scope: &mut Scope,
-        span: Span,
+        _span: Span,
     ) -> RType {
         // The base value is the first positional argument (or the
         // `x = ...` named argument). The first such positional-or-`x`
@@ -1385,7 +1363,6 @@ impl Checker {
                 }
             }
         }
-        let _ = span;
         base_type
     }
 }

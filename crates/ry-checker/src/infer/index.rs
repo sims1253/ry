@@ -530,16 +530,7 @@ pub(crate) fn is_numeric_truthiness_idiom(cond: &Expr, scope: &Scope) -> bool {
                     Expr::Ident { name, .. } => scope
                         .get(name)
                         .is_some_and(|ty| matches!(ty.mode, Mode::Logical)),
-                    Expr::BinOp { op, .. } => matches!(
-                        op,
-                        BinOpKind::Lt
-                            | BinOpKind::Le
-                            | BinOpKind::Gt
-                            | BinOpKind::Ge
-                            | BinOpKind::Eq
-                            | BinOpKind::Ne
-                            | BinOpKind::In
-                    ),
+                    Expr::BinOp { op, .. } => is_comparison(*op) || matches!(op, BinOpKind::In),
                     Expr::Call { func, .. } => {
                         ident_name(func).is_some_and(|predicate| predicate.starts_with("is."))
                     }

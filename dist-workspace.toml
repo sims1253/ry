@@ -38,7 +38,10 @@ runner = "windows-2022"
 [dist.github-custom-runners.aarch64-pc-windows-msvc]
 runner = "ubuntu-latest"
 host = "x86_64-unknown-linux-gnu"
-container = { image = "messense/cargo-xwin", host = "x86_64-unknown-linux-musl", package_manager = "apt" }
+# Digest-pinned so a retag of cargo-xwin can't reach the release build
+# (zizmor: unpinned-images; release.yml only sees the runtime plan matrix).
+# To update: resolve the new digest and re-run `dist generate`.
+container = { image = "messense/cargo-xwin@sha256:9856b895265d4966f212228ba64802cf89337e2a2a537aa2533c1b8784cbc81b", host = "x86_64-unknown-linux-musl", package_manager = "apt" }
 
 # Pin the GitHub Actions dist references in the generated release.yml to
 # immutable commit SHAs (zizmor: unpinned-uses). Update by changing the SHA

@@ -105,6 +105,9 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Fixed
 
+- The test harness's async JSON-RPC decoder now applies the same 16 MiB
+  message cap as the blocking decoder, rejecting oversized headers instead
+  of buffering them without limit.
 - Parsing no longer panics when a string literal ends inside a multi-byte
   UTF-8 character.
 - Re-running the checker on a single file no longer leaks inference state

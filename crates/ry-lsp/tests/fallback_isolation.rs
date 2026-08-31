@@ -79,8 +79,10 @@ fn inlay_hint_does_not_cross_workspace_roots() {
             .await
             .unwrap();
         client.notify("initialized", json!({})).await.unwrap();
-        // Let the background indexer settle.
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        // No settle wait for the background indexer: inlay hints read the
+        // open document's parse and its folder's stubs, neither of which
+        // the indexer touches. The hint response wait below is bounded, so
+        // a failure stays diagnosable.
 
         let a_uri = file_uri(&fixture.path("root-a/R/a.R")).unwrap();
         let b_uri = file_uri(&fixture.path("root-b/R/b.R")).unwrap();
@@ -126,10 +128,14 @@ fn inlay_hint_does_not_cross_workspace_roots() {
             .await
             .unwrap();
         // Drop open/index diagnostic noise; keep the matching response.
-        let response = client
-            .receive_until(|m| m.get("id") == Some(&json!(hint_id)), 128)
-            .await
-            .unwrap();
+        // Bounded poll instead of a fixed sleep: pass or fail within 2s.
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            client.receive_until(|m| m.get("id") == Some(&json!(hint_id)), 128),
+        )
+        .await
+        .expect("timed out waiting for the inlayHint response")
+        .unwrap();
         let result = response.get("result").cloned().unwrap_or(Value::Null);
 
         let hints = result

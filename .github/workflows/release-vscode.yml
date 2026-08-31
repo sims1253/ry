@@ -55,7 +55,7 @@ jobs:
           echo "version=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
 
   build:
-    name: Build ${{ matrix.target }}
+    name: Build ${{ matrix.code-target }}
     needs: version
     runs-on: ubuntu-latest
     strategy:

@@ -1766,9 +1766,11 @@ impl Backend {
     }
 
     /// Discover and parse all `.R`/`.r` files under the workspace root(s)
-    /// in a background task. Results are stored in `state.disk_files` and a
-    /// diagnostic refresh is triggered so cross-file calls into unopened
-    /// files resolve on the next check.
+    /// in a background task and store the results in `state.disk_files`.
+    /// This function never publishes diagnostics itself: callers await it
+    /// and then republish (e.g. `did_change_watched_files`), which is what
+    /// makes cross-file calls into unopened files resolve on the next
+    /// check.
     async fn spawn_background_index(&self) {
         let (roots_with_config, index_gen) = {
             let mut state = self.state.lock().await;

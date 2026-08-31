@@ -25,7 +25,8 @@ type Session = LspSession<
 
 /// Spawn an LSP server and return a connected session: initialize, then
 /// hand the session to the test. No settle wait for the background
-/// indexer: its completion publishes nothing, and open documents shadow
+/// indexer: it never publishes diagnostics itself (its caller
+/// republishes, and no document is open here), and open documents shadow
 /// disk files, so each test's `published_diagnostics_after` await (which
 /// has its own timeout) is the only synchronization needed.
 async fn spawn_session(root: &Path) -> (Session, tokio::task::JoinHandle<()>) {

@@ -200,6 +200,20 @@ fn bquote_dot_marks_its_parameter_as_quoting() {
 }
 
 #[test]
+fn bquote_dot_in_a_braced_body_still_quotes() {
+    let diagnostics = check(
+        "quoted <- function(x) bquote({ 1 == .(x) })\n\
+         quoted(unbound_name)\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "bquote({{ .(x) }}) must quote x: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn rlang_capture_functions_mark_formals_as_quoting() {
     let diagnostics = check(
         "f <- function(x) rlang::enexpr(x)\n\

@@ -723,16 +723,7 @@ fn is_dots_promise_capture(function: &Expr) -> bool {
 }
 
 fn bquote_references_parameter(expression: &Expr, parameter: &str) -> bool {
-    match expression {
-        // This arm alone does not use the family's own predicate: it
-        // delegates to the quotes-parameter statement walk. Every other
-        // arm tests `unquotes_parameter`. Kept as-is; see the commit that
-        // introduced `stmt_any` for the arm-by-arm diff.
-        Expr::Block { body, .. } => body
-            .iter()
-            .any(|statement| stmt_any(statement, &|e| quotes_parameter(e, parameter))),
-        _ => expr_any(expression, &|e| unquotes_parameter(e, parameter)),
-    }
+    expr_any(expression, &|e| unquotes_parameter(e, parameter))
 }
 
 /// Leaf predicate for `stmt_any`: the call is a bquote unquote `.(...)`

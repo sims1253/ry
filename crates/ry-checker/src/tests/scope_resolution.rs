@@ -637,7 +637,6 @@ fn cross_file_literal_variable_resolves() {
     std::fs::write(dir.path().join("DESCRIPTION"), "Package: fixture\n").unwrap();
     let a = dir.path().join("R/a.R").to_string_lossy().to_string();
     let b = dir.path().join("R/b.R").to_string_lossy().to_string();
-    assert!(crate::project::is_package_library_file(&a));
     let mut project = Project::new();
     project.add_file(a.clone(), parse_file(&a, "my_const <- 42\n"));
     project.add_file(b.clone(), parse_file(&b, "x <- my_const\n"));

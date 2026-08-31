@@ -13,12 +13,20 @@
 //! and RY101 reword theirs; RY031/RY032 escape `|` as `&#124;` and `>` as
 //! `\>`). The stable contract is code, name, and severity, plus a non-empty
 //! summary cell so a truncated row cannot pass.
+//!
+//! The same guard covers the curated rule table in the "## Default profile
+//! policy" section of docs/editor-defaults.md. That table drifted too
+//! (RY020, RY030, RY040, and RY090 carried wrong names, and RY032 was
+//! documented as a disabled "test fixture" rule while the registry ships it
+//! enabled). Unlike the README table, it lists a curated subset of rules, so
+//! the test asserts row correctness — code, name, severity, and
+//! enabled-by-default — against the registry, not full parity.
 
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
-use ry_checker::rules::RULES;
+use ry_checker::rules::{RULES, enabled_by_default};
 
 const EXPECTED_COLUMNS: [&str; 4] = ["code", "name", "severity", "summary"];
 
@@ -208,6 +216,178 @@ fn readme_rule_table_matches_rule_registry() {
     assert!(
         problems.is_empty(),
         "README.md rule table (## Rules) is out of sync with \
+         ry_checker::rules::RULES ({} problem(s)):\n  - {}",
+        problems.len(),
+        problems.join("\n  - ")
+    );
+}
+
+/// Expected columns of the docs/editor-defaults.md rule table.
+const EDITOR_DEFAULTS_COLUMNS: [&str; 5] = ["Rule", "Severity", "Default", "Verdict", "Evidence"];
+
+/// One data row of the docs/editor-defaults.md rule table.
+struct EditorDefaultsRow {
+    code: String,
+    name: String,
+    severity: String,
+    default_enabled: String,
+    /// 1-based docs/editor-defaults.md line, for actionable failure messages.
+    line: usize,
+}
+
+/// Parse the curated rule table out of the "## Default profile policy"
+/// section of docs/editor-defaults.md.
+///
+/// The first cell is `RY010 (unbound-variable)`: the registry code, then the
+/// registry name in parentheses. Every row must be a rule row — the table
+/// holds no config rows — so a row that does not fit the shape fails here
+/// instead of slipping past the registry comparison.
+fn editor_defaults_rule_rows() -> Vec<EditorDefaultsRow> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/editor-defaults.md");
+    let doc = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let lines: Vec<&str> = doc.lines().collect();
+
+    let heading = lines
+        .iter()
+        .position(|l| l.trim() == "## Default profile policy")
+        .unwrap_or_else(|| {
+            panic!("docs/editor-defaults.md has no '## Default profile policy' section")
+        });
+
+    let section_end = lines[heading + 1..]
+        .iter()
+        .position(|l| l.starts_with('#'))
+        .map(|i| heading + 1 + i)
+        .unwrap_or(lines.len());
+
+    // The rule table is the first contiguous run of `|`-prefixed lines in
+    // the section; collection stops at the table's first non-table line.
+    let mut table: Vec<(usize, &str)> = Vec::new();
+    for (offset, line) in lines[heading + 1..section_end].iter().enumerate() {
+        if line.starts_with('|') {
+            table.push((heading + 2 + offset, line));
+        } else if !table.is_empty() {
+            break; // the first contiguous table has ended
+        }
+    }
+
+    assert!(
+        table.len() >= 3,
+        "docs/editor-defaults.md '## Default profile policy' section has no rule table \
+         (expected header, alignment, and data rows)"
+    );
+
+    let header = cells(table[0].1);
+    assert_eq!(
+        header, EDITOR_DEFAULTS_COLUMNS,
+        "unexpected column header for the docs/editor-defaults.md rule table"
+    );
+    assert!(
+        is_alignment_row(&cells(table[1].1)),
+        "expected an alignment row right after the docs/editor-defaults.md rule table header"
+    );
+
+    table[2..]
+        .iter()
+        .map(|(line, raw)| {
+            let cells = cells(raw);
+            assert_eq!(
+                cells.len(),
+                5,
+                "docs/editor-defaults.md rule table row at line {line} has {} cells \
+                 (Rule, Severity, Default, Verdict, Evidence expected); an unescaped '|' \
+                 in a cell splits the row",
+                cells.len()
+            );
+            let (code, name) = split_rule_cell(&cells[0], *line);
+            EditorDefaultsRow {
+                code,
+                name,
+                severity: cells[1].clone(),
+                default_enabled: cells[2].clone(),
+                line: *line,
+            }
+        })
+        .collect()
+}
+
+/// Split a `RY010 (unbound-variable)` rule cell into code and name.
+fn split_rule_cell(cell: &str, line: usize) -> (String, String) {
+    let (code, rest) = cell.split_once(' ').unwrap_or_else(|| {
+        panic!(
+            "docs/editor-defaults.md rule table row at line {line}: rule cell `{cell}` is not \
+             `CODE (name)`; the table holds only rule rows"
+        )
+    });
+    let name = rest
+        .strip_prefix('(')
+        .and_then(|r| r.strip_suffix(')'))
+        .unwrap_or_else(|| {
+            panic!(
+                "docs/editor-defaults.md rule table row at line {line}: rule cell `{cell}` does \
+                 not wrap the rule name in parentheses"
+            )
+        });
+    (code.to_string(), name.to_string())
+}
+
+#[test]
+fn editor_defaults_rule_table_matches_rule_registry() {
+    let rows = editor_defaults_rule_rows();
+    let mut problems: Vec<String> = Vec::new();
+
+    // The table is a curated subset, so each row must be checked on its own:
+    // an unknown rule, a wrong name or severity, or a wrong enabled-by-default
+    // status would otherwise pass unnoticed, and a pasted-duplicate row must
+    // be caught too.
+    let mut seen: HashSet<&str> = HashSet::new();
+    for row in &rows {
+        let Some(rule) = RULES.iter().find(|r| r.code == row.code) else {
+            problems.push(format!(
+                "unknown row: docs/editor-defaults.md line {} documents {} (`{}`) but no rule \
+                 with that code is registered; remove the row or fix the code",
+                row.line, row.code, row.name
+            ));
+            continue;
+        };
+        if row.name != rule.name {
+            problems.push(format!(
+                "name mismatch: docs/editor-defaults.md line {} calls {} `{}` but the registry \
+                 calls it `{}`",
+                row.line, row.code, row.name, rule.name
+            ));
+        }
+        let severity = rule.default_severity.as_str();
+        if row.severity != severity {
+            problems.push(format!(
+                "severity mismatch: docs/editor-defaults.md line {} lists {} as `{}` but its \
+                 registry default severity is `{}`",
+                row.line, row.code, row.severity, severity
+            ));
+        }
+        let default = if enabled_by_default(&row.code) {
+            "Enabled"
+        } else {
+            "Disabled"
+        };
+        if row.default_enabled != default {
+            problems.push(format!(
+                "default mismatch: docs/editor-defaults.md line {} lists {} as `{}` but the \
+                 registry default is `{}`",
+                row.line, row.code, row.default_enabled, default
+            ));
+        }
+        if !seen.insert(row.code.as_str()) {
+            problems.push(format!(
+                "duplicate row: docs/editor-defaults.md line {} repeats {} ({})",
+                row.line, row.code, row.name
+            ));
+        }
+    }
+
+    assert!(
+        problems.is_empty(),
+        "docs/editor-defaults.md rule table (## Default profile policy) is out of sync with \
          ry_checker::rules::RULES ({} problem(s)):\n  - {}",
         problems.len(),
         problems.join("\n  - ")

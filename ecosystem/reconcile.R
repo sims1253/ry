@@ -95,7 +95,7 @@ reconcile <- function(corpus_path, reports_dir, processed) {
       ), stderr())
       return(0L)
     } else {
-      writeLines(sprintf("ecosystem: update %s with the reviewed workstream delta", corpus_path), stderr())
+      writeLines(sprintf("ecosystem: update %s with the reviewed findings delta", corpus_path), stderr())
       return(1L)
     }
   }

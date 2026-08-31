@@ -71,6 +71,9 @@ jobs:
   # so a packaging failure does not hide a test failure.
   test:
     runs-on: ubuntu-latest
+    # Observed at ~3 min (cold cargo release build plus E2E); 15 keeps a
+    # 5x ceiling over that and matches `build`.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

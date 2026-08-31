@@ -518,7 +518,7 @@ fn parameter_is_quoted(body: &[Stmt], params: &[Param], parameter: &str) -> bool
 }
 
 /// Generic statement walker shared by the quoting-capture predicates.
-/// Tests `pred` at every expression node and recurses into compound
+/// Tests `pred` at every call node and recurses into compound
 /// statements. Short-circuits on the first hit. `Expr::Function` bodies
 /// and `Stmt::FunctionDef` are opaque: quoting inside a nested function
 /// belongs to that function's own formals.
@@ -544,8 +544,10 @@ fn stmt_any(statement: &Stmt, pred: &impl Fn(&Expr) -> bool) -> bool {
     }
 }
 
-/// Expression half of `stmt_any`. `pred` is tested at the node itself,
-/// then the traversal recurses into the callee and every argument.
+/// Expression half of `stmt_any`. Tests `pred` at call nodes; every
+/// other expression recurses into its children. The quoting-capture
+/// predicates all early-return on non-call nodes, so testing at call
+/// nodes alone is equivalent to testing at every node.
 fn expr_any(expression: &Expr, pred: &impl Fn(&Expr) -> bool) -> bool {
     match expression {
         Expr::Call { func, args, .. } => {

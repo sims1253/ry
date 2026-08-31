@@ -117,6 +117,11 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Fixed
 
+- **`bquote` quotes unquotes inside braced bodies**: a `.(x)` in
+  `bquote({ 1 == .(x) })` was not recognized as quoting, so the
+  argument passed at the call site was treated as eagerly evaluated and
+  an unbound name there got `RY010` (`unbound-variable`). Braced bodies
+  now get the same unquote scan as the rest of the template.
 - **`-vv` now enables trace logging**: the CLI mapped every verbosity
   level above `-v` to `ry=debug`, so the trace tier promised by the help
   text never activated. `-vv` and higher now set `ry=trace`; `-v` and the

@@ -418,8 +418,7 @@ impl Checker {
                 }
                 let narrowing = self.extract_type_narrowing(cond, scope);
                 let has_else = else_.is_some();
-                let (then_scope, else_scope, narrowed) =
-                    apply_narrowing(scope, &narrowing, has_else);
+                let (then_scope, else_scope, narrowed) = apply_narrowing(scope, &narrowing);
                 let mut then_scope = then_scope;
                 let mut else_scope = else_scope;
                 for s in then {
@@ -434,13 +433,7 @@ impl Checker {
                 // assignments inside an `if` branch leak to the enclosing
                 // scope, so a name bound conditionally must still be visible
                 // after the `if` (otherwise uses fire RY010 false positives).
-                self.merge_branch_bindings(
-                    scope,
-                    then_scope.clone(),
-                    else_scope.clone(),
-                    has_else,
-                    &narrowed,
-                );
+                self.merge_branch_bindings(scope, &then_scope, &else_scope, has_else, &narrowed);
                 // Refinements normally remain branch-local (see
                 // `apply_narrowing`). A diverging arm is the exception: the
                 // continuation is reachable only through its sibling, so its
@@ -673,8 +666,8 @@ impl Checker {
     pub(crate) fn merge_branch_bindings(
         &self,
         scope: &mut Scope,
-        then_scope: Scope,
-        else_scope: Scope,
+        then_scope: &Scope,
+        else_scope: &Scope,
         has_else: bool,
         narrowed: &HashSet<String>,
     ) {
@@ -684,11 +677,7 @@ impl Checker {
         let then_reaches = !then_scope.unreachable;
         let else_reaches = has_else && !else_scope.unreachable;
         if has_else && then_reaches != else_reaches {
-            let continuation = if then_reaches {
-                &then_scope
-            } else {
-                &else_scope
-            };
+            let continuation = if then_reaches { then_scope } else { else_scope };
             for (name, ty) in &continuation.bindings {
                 if narrowed.contains(name) && continuation.narrowed_bindings.contains(name) {
                     continue;

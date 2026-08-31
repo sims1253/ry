@@ -44,15 +44,7 @@ impl Checker {
         if let Some(dispatched) = self.try_s3_binop_dispatch(op, &lt, &rt) {
             return dispatched;
         }
-        let is_compare = matches!(
-            op,
-            BinOpKind::Lt
-                | BinOpKind::Le
-                | BinOpKind::Gt
-                | BinOpKind::Ge
-                | BinOpKind::Eq
-                | BinOpKind::Ne
-        );
+        let is_compare = is_comparison(op);
         let is_logic = matches!(
             op,
             BinOpKind::And | BinOpKind::AndAnd | BinOpKind::Or | BinOpKind::OrOr
@@ -66,8 +58,8 @@ impl Checker {
             // R compares atomic list leaves element-wise for both equality
             // and ordering (`list(1, 2) > 1`). Unknown list element shapes
             // stay opaque; only proven-invalid leaves may produce RY030.
-            let comparable_lt = equality_list_leaf_type(op, &lt).unwrap_or_else(|| lt.clone());
-            let comparable_rt = equality_list_leaf_type(op, &rt).unwrap_or_else(|| rt.clone());
+            let comparable_lt = equality_list_leaf_type(&lt).unwrap_or_else(|| lt.clone());
+            let comparable_rt = equality_list_leaf_type(&rt).unwrap_or_else(|| rt.clone());
             if let Some(t) = comparable_lt.compare(comparable_rt) {
                 // RY033: warn about comparing a character value with a
                 // non-character one. R coerces the numeric operand to
@@ -187,67 +179,14 @@ impl Checker {
         RType::unknown()
     }
 
-    pub(crate) fn try_s3_binop_dispatch(
-        &self,
-        op: BinOpKind,
-        lhs: &RType,
-        rhs: &RType,
-    ) -> Option<RType> {
-        let symbol = op_symbol(op);
-        if symbol == "?"
-            || matches!(
-                op,
-                BinOpKind::In | BinOpKind::Colon | BinOpKind::PipeForward | BinOpKind::PipeNative
-            )
-        {
-            return None;
-        }
-        for operand in [lhs, rhs] {
-            if operand.class.is_unknown() && !matches!(operand.mode, Mode::Opaque | Mode::Union) {
-                return Some(RType::unknown());
-            }
-            for class in operand
-                .class
-                .names
-                .iter()
-                .take(operand.class.len as usize)
-                .flatten()
-            {
-                for generic in [symbol, "Ops"] {
-                    if self
-                        .external_s3_methods
-                        .contains(&(generic.to_string(), class.to_string()))
-                    {
-                        return Some(RType::unknown());
-                    }
-                    if let Some(slot) = self
-                        .fn_table
-                        .s3_methods
-                        .get(&(generic.to_string(), class.to_string()))
-                    {
-                        // A specific operator method has an inferable return;
-                        // a group method only promises that this operator is
-                        // supported, not its result shape.
-                        return Some(if generic == symbol {
-                            self.return_slots.get(*slot)
-                        } else {
-                            RType::unknown()
-                        });
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    pub(crate) fn try_s3_unary_dispatch(&self, op: UnaryOpKind, operand: &RType) -> Option<RType> {
+    /// Resolve operator S3 dispatch for one operand. An unknown class on a
+    /// concrete mode means any class vector may apply, so the result is
+    /// unknowable. Each known class is tried against the operator's own
+    /// method, then the `Ops` group generic.
+    fn s3_dispatch_on_operand(&self, symbol: &str, operand: &RType) -> Option<RType> {
         if operand.class.is_unknown() && !matches!(operand.mode, Mode::Opaque | Mode::Union) {
             return Some(RType::unknown());
         }
-        let symbol = match op {
-            UnaryOpKind::Neg => "-",
-            UnaryOpKind::Not => "!",
-        };
         for class in operand
             .class
             .names
@@ -267,6 +206,9 @@ impl Checker {
                     .s3_methods
                     .get(&(generic.to_string(), class.to_string()))
                 {
+                    // A specific operator method has an inferable return;
+                    // a group method only promises that this operator is
+                    // supported, not its result shape.
                     return Some(if generic == symbol {
                         self.return_slots.get(*slot)
                     } else {
@@ -276,6 +218,37 @@ impl Checker {
             }
         }
         None
+    }
+
+    pub(crate) fn try_s3_binop_dispatch(
+        &self,
+        op: BinOpKind,
+        lhs: &RType,
+        rhs: &RType,
+    ) -> Option<RType> {
+        let symbol = op_symbol(op);
+        if symbol == "?"
+            || matches!(
+                op,
+                BinOpKind::In | BinOpKind::Colon | BinOpKind::PipeForward | BinOpKind::PipeNative
+            )
+        {
+            return None;
+        }
+        for operand in [lhs, rhs] {
+            if let Some(dispatched) = self.s3_dispatch_on_operand(symbol, operand) {
+                return Some(dispatched);
+            }
+        }
+        None
+    }
+
+    pub(crate) fn try_s3_unary_dispatch(&self, op: UnaryOpKind, operand: &RType) -> Option<RType> {
+        let symbol = match op {
+            UnaryOpKind::Neg => "-",
+            UnaryOpKind::Not => "!",
+        };
+        self.s3_dispatch_on_operand(symbol, operand)
     }
 
     pub(crate) fn infer_short_circuit_binop(
@@ -293,7 +266,7 @@ impl Checker {
         self.check_class_equality_operand(lhs, scope);
         let lt = self.infer(lhs, scope);
         let narrowing = self.extract_type_narrowing(lhs, scope);
-        let (then_scope, else_scope, _) = apply_narrowing(scope, &narrowing, true);
+        let (then_scope, else_scope, _) = apply_narrowing(scope, &narrowing);
         let rhs_parameter_vector = self.short_circuit_parameter_vector(op, lhs, rhs, scope);
         let rt = match op {
             BinOpKind::AndAnd => {
@@ -442,15 +415,7 @@ impl Checker {
 /// a scalar counterpart; otherwise it retains column names but not column
 /// element types.
 fn data_frame_binop_result(op: BinOpKind, lhs: &RType, rhs: &RType) -> Option<RType> {
-    let is_compare = matches!(
-        op,
-        BinOpKind::Lt
-            | BinOpKind::Le
-            | BinOpKind::Gt
-            | BinOpKind::Ge
-            | BinOpKind::Eq
-            | BinOpKind::Ne
-    );
+    let is_compare = is_comparison(op);
     let is_logic = matches!(
         op,
         BinOpKind::And | BinOpKind::AndAnd | BinOpKind::Or | BinOpKind::OrOr

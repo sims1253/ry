@@ -59,6 +59,10 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Changed
 
+- **Less work per `if` during checking**: a condition that proves no type
+  refinement skips the narrowing machinery, and merging branch bindings no
+  longer copies the branch scopes. Diagnostics and inferred types are
+  unchanged.
 - **JSON diagnostics no longer suggest fixes**: the `fix` payload is gone
   from `ry check --output-format json` and from the `data` field of
   published editor diagnostics. Nothing ever applied these suggestions —

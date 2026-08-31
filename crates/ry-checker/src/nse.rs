@@ -14,7 +14,7 @@ impl Checker {
         name: &str,
         args: &[Arg],
         scope: &mut Scope,
-        span: Span,
+        _span: Span,
     ) -> Option<RType> {
         let sig = self.resolve_schema_sig(name)?;
         let effect = sig.schema_effect?;
@@ -97,7 +97,6 @@ impl Checker {
             SchemaEffect::Pivot => RType::new(Mode::List, Length::Unknown)
                 .with_class(ClassVector::single("data.frame")),
         };
-        let _ = span;
         Some(result)
     }
 

@@ -66,10 +66,11 @@ When inference is uncertain, return `unknown` and say nothing.
 ## Typeshed changes
 
 Never add a function name you have not verified against R.
-`scripts/audit_typeshed.R` checks every declared name with `exists()`
-(base) or against the package namespace (package files) and runs in CI.
-`scripts/gen_typeshed.R <pkg>` drafts a stub file from a package's
-exports for hand-refinement.
+Stubs live in the standalone
+[r-typeshed](https://github.com/sims1253/r-typeshed) repository. Its CI
+runs the auditing and stub generation.
+`scripts/sync_typeshed.sh <checkout>` vendors a snapshot into
+`crates/ry-typeshed/vendor` and validates it with `ry typeshed validate`.
 
 ## Editor extensions
 

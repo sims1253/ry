@@ -609,7 +609,7 @@ fn edit_one_file_in_workspace_reparses_only_that_file() {
 }
 
 #[test]
-fn editing_utils_updates_cross_file_analysis_diagnostics() {
+fn edited_return_type_updates_dependent_diagnostics() {
     let mut parser = RParser::new().unwrap();
     let utils_path = "/ws/utils.R";
     let analysis_path = "/ws/analysis.R";
@@ -676,7 +676,7 @@ fn editing_utils_updates_cross_file_analysis_diagnostics() {
     );
 }
 
-// === S2: LSP settings channel tests ===
+// === LSP settings channel tests ===
 
 #[test]
 fn effective_filter_uses_editor_ignore_setting() {
@@ -799,14 +799,12 @@ fn folder_settings_deserialize_camel_case() {
     let json = serde_json::json!({
         "minConfidence": "high",
         "baseline": "/path/to/baseline.json",
-        "checkTestFixtures": true,
-        "logLevel": "debug"
+        "enable": false
     });
     let settings: crate::settings::FolderSettings = serde_json::from_value(json).unwrap();
     assert_eq!(settings.min_confidence.as_deref(), Some("high"));
     assert_eq!(settings.baseline.as_deref(), Some("/path/to/baseline.json"));
-    assert_eq!(settings.check_test_fixtures, Some(true));
-    assert_eq!(settings.log_level.as_deref(), Some("debug"));
+    assert_eq!(settings.enable, Some(false));
 }
 
 #[test]

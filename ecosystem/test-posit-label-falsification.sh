@@ -57,7 +57,7 @@ fabricated <- list(
   line = 9999L,
   column = 9999L,
   label = "true_positive",
-  workstream = "falsification"
+  audit_group = "falsification"
 )
 findings <- c(findings, list(fabricated))
 

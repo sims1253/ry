@@ -88,9 +88,11 @@ pub struct Project {
     /// The `loaded` set from the previous emit, used to detect project-wide
     /// invalidation (a new `library()` call changes diagnostics everywhere).
     prev_loaded: Option<HashSet<String>>,
-    /// Return-type slots from the previous emit, used to detect which
-    /// functions' inferred return types changed during pass 2 refinement.
-    prev_return_slots: Option<Vec<ry_core::RType>>,
+    /// Whether `refine_and_emit` has completed at least once. Separates
+    /// the first check (refine and emit everything) from incremental
+    /// ones. The compared values live in `prev_fn_returns` and
+    /// `prev_fn_signatures`.
+    has_prev_emit: bool,
     /// Per-file set of function names called (from `call_sites`), cached
     /// so the dirty-set computation in `refine_and_emit` can check whether
     /// a file references any function whose return slot changed.
@@ -156,7 +158,7 @@ impl Project {
             dirty_paths: HashSet::new(),
             invalidated_fns: HashSet::new(),
             prev_loaded: None,
-            prev_return_slots: None,
+            has_prev_emit: false,
             file_called_fns: HashMap::new(),
             prev_fn_returns: HashMap::new(),
             prev_fn_signatures: HashMap::new(),
@@ -375,7 +377,7 @@ impl Project {
         // state (if any) is discarded.
         self.dirty_paths = self.files.iter().map(|(p, _)| p.clone()).collect();
         self.prev_loaded = None;
-        self.prev_return_slots = None;
+        self.has_prev_emit = false;
         self.prev_fn_returns.clear();
         self.prev_fn_signatures.clear();
         self.prev_known_vars.clear();
@@ -448,7 +450,9 @@ impl Project {
     /// transitive callers via the reverse call graph.
     fn compute_fixpoint_scope(&self) -> Option<HashSet<String>> {
         // First call → refine everything.
-        self.prev_return_slots.as_ref()?;
+        if !self.has_prev_emit {
+            return None;
+        }
         // If loaded changed (library() calls appeared/disappeared), the stub
         // environment changed — full refinement is needed because package
         // signatures affect return types.
@@ -499,24 +503,8 @@ impl Project {
         affected.extend(affected_generics);
 
         // Transitive closure: if function G's defining file calls function F,
-        // and F is affected, then G is also affected. Iterate until fixpoint.
-        let mut changed = true;
-        while changed {
-            changed = false;
-            for (path, collected) in &self.collected_files {
-                let Some(calls) = self.file_called_fns.get(path) else {
-                    continue;
-                };
-                // Does this file call any affected function?
-                if !calls.iter().any(|name| affected.contains(name)) {
-                    continue;
-                }
-                // All functions defined in this file are potential callers.
-                for fn_name in collected.fn_table.fns.keys() {
-                    changed |= affected.insert(fn_name.clone());
-                }
-            }
-        }
+        // and F is affected, then G is also affected.
+        let affected = self.with_transitive_callers(affected);
 
         Some(affected)
     }
@@ -637,10 +625,10 @@ impl Project {
         // Combine: a file is dirty if it was content-changed, if loaded
         // changed at all, or if it calls any function whose return slot
         // changed. When loaded changes, every file is dirty.
-        // On the first call (prev_return_slots is None), every file must be
-        // emitted. Otherwise, use the incremental dirty set.
+        // On the first call, every file must be emitted. Otherwise, use
+        // the incremental dirty set.
         let known_vars_changed = self.prev_known_vars != self.fn_table.known_vars;
-        let first_call = self.prev_return_slots.is_none();
+        let first_call = !self.has_prev_emit;
         let must_emit: HashSet<&str> = if first_call || loaded_changed || known_vars_changed {
             self.files.iter().map(|(p, _)| p.as_str()).collect()
         } else {
@@ -783,7 +771,7 @@ impl Project {
 
         // Record state for the next incremental check.
         self.prev_loaded = Some(self.loaded.clone());
-        self.prev_return_slots = Some(self.return_slots.0.clone());
+        self.has_prev_emit = true;
         self.prev_known_vars = self.fn_table.known_vars.clone();
         // Save refined return types keyed by function name for the next
         // fixpoint seeding.
@@ -830,12 +818,6 @@ impl Project {
 
 /// File classification — re-exported from ry-workspace.
 pub use ry_workspace::{PackageFileKind, package_file_kind};
-
-/// Whether a file is directly under a package's `R/` directory.
-#[cfg(test)]
-pub(crate) fn is_package_library_file(path: &str) -> bool {
-    package_file_kind(std::path::Path::new(path)) == PackageFileKind::Library
-}
 
 #[cfg(test)]
 mod tests {

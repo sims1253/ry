@@ -1,8 +1,8 @@
 //! R oracle harness.
 //!
 //! The complete fixture matrix is `#[ignore]`'d by default; run it with
-//! `cargo test -p ry-checker --test oracle -- --ignored --nocapture`
-//! (or `scripts/oracle.sh`). Registered `# oracle-claim: RYxxx` fixtures run
+//! `cargo test -p ry-checker --test oracle -- --ignored --nocapture`.
+//! Registered `# oracle-claim: RYxxx` fixtures run
 //! in the default test gate, and their registry coverage is always checked.
 //!
 //! For each fixture in `testdata/oracle/`, if `Rscript` is on PATH, runs

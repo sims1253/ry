@@ -140,20 +140,17 @@ impl RyExtension {
             )
             .map_err(|error| format!("Failed to download file: {error}"))?;
 
-            // NOTE: downloaded binaries are NOT integrity-checked yet.
+            // NOTE: downloaded binaries are NOT integrity-verified yet.
+            // Issue #80 tracks that work.
             //
-            // A previous version of this code called `verify_checksum(None, ..)`,
-            // which returns `Ok(())` unconditionally, while the surrounding
-            // comments and the error text claimed tamper detection. The claim
-            // was removed rather than left in place; see issue #80.
-            //
-            // The blocker is that releases publish `.sha256` sidecars for the
-            // *archive* (`ry-cli-<target>.tar.gz.sha256`), but this code path
-            // only ever holds the *extracted* executable — `download_file`
-            // extracts in the same call that fetches. Verifying the archive
-            // digest here would compare two different artifacts. The fix is to
-            // publish a digest of the executable itself and check that; the
-            // helper below (`sha256_hex`) is retained for it.
+            // Releases publish `.sha256` sidecars for the *archive*
+            // (`ry-cli-<target>.tar.gz.sha256`), but this code path
+            // only ever holds the *extracted* executable:
+            // `download_file` extracts in the same call that fetches.
+            // Checking the archive digest here would compare two
+            // different artifacts. The fix is to publish a digest of
+            // the executable itself and check that. `sha256_hex` below
+            // is retained for that fix.
 
             // Clean out other entries in our personal extension directory;
             // this may include outdated versions of the extension, so it is
@@ -260,12 +257,13 @@ impl RyExtension {
         fs::metadata(path).is_ok_and(|stat| stat.is_file())
     }
 
-    /// Compute SHA-256 hash and return as lowercase hex string.
-    /// Uses a pure-Rust implementation that works in WASM.
+    /// Compute the SHA-256 digest of `data` as a lowercase hex string.
+    /// Pure Rust, so it runs in WASM.
     ///
-    /// Currently exercised only by tests: the download path does not verify
-    /// integrity yet (issue #80). Retained because the fix needs exactly this
-    /// primitive, and it is already covered by FIPS 180-4 vectors below.
+    /// No production code path calls this yet. Integrity verification of
+    /// downloaded binaries is unimplemented; issue #80 tracks it. Keep
+    /// this function for that work. The FIPS 180-4 vectors below cover
+    /// it in the meantime.
     #[allow(dead_code)]
     fn sha256_hex(data: &[u8]) -> String {
         let hash = Self::sha256(data);
@@ -276,27 +274,21 @@ impl RyExtension {
     /// Based on FIPS 180-4.
     fn sha256(data: &[u8]) -> [u8; 32] {
         const K: [u32; 64] = [
-            0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
-            0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-            0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
-            0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-            0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc,
-            0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-            0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
-            0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-            0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
-            0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-            0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
-            0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-            0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5,
-            0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-            0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
-            0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+            0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
+            0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
+            0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
+            0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+            0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+            0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+            0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
+            0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+            0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+            0xc67178f2,
         ];
 
         let mut h: [u32; 8] = [
-            0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-            0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+            0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+            0x5be0cd19,
         ];
 
         // Pre-processing: padding
@@ -322,7 +314,10 @@ impl RyExtension {
             for i in 16..64 {
                 let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
                 let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
-                w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
+                w[i] = w[i - 16]
+                    .wrapping_add(s0)
+                    .wrapping_add(w[i - 7])
+                    .wrapping_add(s1);
             }
 
             let (mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut hh) =
@@ -331,7 +326,11 @@ impl RyExtension {
             for i in 0..64 {
                 let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
                 let ch = (e & f) ^ ((!e) & g);
-                let temp1 = hh.wrapping_add(s1).wrapping_add(ch).wrapping_add(K[i]).wrapping_add(w[i]);
+                let temp1 = hh
+                    .wrapping_add(s1)
+                    .wrapping_add(ch)
+                    .wrapping_add(K[i])
+                    .wrapping_add(w[i]);
                 let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
                 let maj = (a & b) ^ (a & c) ^ (b & c);
                 let temp2 = s0.wrapping_add(maj);
@@ -365,9 +364,7 @@ impl RyExtension {
 
     /// Map Zed settings into the server settings envelope.
     /// Rejects malformed values with actionable errors.
-    fn map_settings(
-        lsp_settings: &LspSettings,
-    ) -> Result<zed_extension_api::serde_json::Value> {
+    fn map_settings(lsp_settings: &LspSettings) -> Result<zed_extension_api::serde_json::Value> {
         let settings = lsp_settings.settings.clone().unwrap_or_default();
 
         // Validate known settings fields if present.
@@ -430,7 +427,9 @@ impl zed::Extension for RyExtension {
                 let settings = Self::map_settings(&ls)?;
                 Ok(Some(settings))
             }
-            None => Ok(Some(zed_extension_api::serde_json::Value::Object(Default::default()))),
+            None => Ok(Some(zed_extension_api::serde_json::Value::Object(
+                Default::default(),
+            ))),
         }
     }
 }
@@ -469,40 +468,15 @@ mod unit_tests {
             "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
         );
     }
-
-    /// Corrupt checksum sidecar must fail.
-    /// Simulates parsing of a sidecar with a mismatched hash.
-    #[test]
-    fn checksum_mismatch_detected() {
-        // The SHA-256 of "abc" is ba7816bf... but we compare against a wrong hash.
-        let actual = crate::RyExtension::sha256_hex(b"abc");
-        let expected = "0000000000000000000000000000000000000000000000000000000000000000";
-        assert_ne!(actual, expected, "checksum mismatch must be detected");
-    }
-
-    /// SHA-256 sidecar line parsing.
-    /// sha256sum produces "HASH  filename" — only the hash should be extracted.
-    #[test]
-    fn sha256_sidecar_format_parsing() {
-        let line = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  ry-cli-x86_64-unknown-linux-gnu.tar.gz";
-        let hash = line.split_whitespace().next().unwrap();
-        assert_eq!(
-            hash,
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-        );
-    }
 }
 
 #[cfg(test)]
 mod test {
     use crate::{BinarySource, GithubReleaseDetails, RyExtension};
 
-    /// Binary resolution precedence: the user-specified path, a PATH hit,
-    /// and a previous download win in that order; only when no candidate
-    /// exists does the extension fall back to a download. The predecessor
-    /// of this test (`cached_path_precedence`, swept in #90) asserted only
-    /// that a constructed release path ends in "ry", which passes even if
-    /// the cache branch is deleted outright.
+    /// Binary resolution precedence: the user-specified path, then a PATH
+    /// hit, then a previous download. Only when no candidate exists does
+    /// the extension fall back to a download.
     #[test]
     fn binary_source_precedence() {
         let cached = "ry-0.9.0/ry-cli-x86_64-unknown-linux-gnu/ry";
@@ -516,11 +490,7 @@ mod test {
             BinarySource::Settings("/opt/ry".into())
         );
         assert_eq!(
-            RyExtension::resolve_binary_source(
-                None,
-                Some("/usr/bin/ry".into()),
-                Some(cached),
-            ),
+            RyExtension::resolve_binary_source(None, Some("/usr/bin/ry".into()), Some(cached),),
             BinarySource::PathLookup("/usr/bin/ry".into())
         );
         assert_eq!(
@@ -541,7 +511,9 @@ mod test {
     #[test]
     fn cached_binary_on_disk_requires_a_file() {
         let directory = std::env::temp_dir();
-        assert!(!RyExtension::cached_binary_on_disk(directory.to_str().unwrap()));
+        assert!(!RyExtension::cached_binary_on_disk(
+            directory.to_str().unwrap()
+        ));
 
         let file = std::env::temp_dir().join(format!("ry-zed-cache-{}", std::process::id()));
         std::fs::write(&file, b"").unwrap();
@@ -549,7 +521,9 @@ mod test {
         assert!(RyExtension::cached_binary_on_disk(path));
         std::fs::remove_file(&file).unwrap();
         assert!(!RyExtension::cached_binary_on_disk(path));
-        assert!(!RyExtension::cached_binary_on_disk("ry-no-such-cached-binary"));
+        assert!(!RyExtension::cached_binary_on_disk(
+            "ry-no-such-cached-binary"
+        ));
     }
 
     /// Tests path construction for all six cargo-dist targets, locking down

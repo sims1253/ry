@@ -1,7 +1,7 @@
 use super::*;
+use crate::semantic_lists::DEFUSING_CALLS;
 
-pub(crate) fn equality_list_leaf_type(op: BinOpKind, value: &RType) -> Option<RType> {
-    let _ = op;
+pub(crate) fn equality_list_leaf_type(value: &RType) -> Option<RType> {
     if !matches!(value.mode, Mode::List) {
         return None;
     }
@@ -100,7 +100,7 @@ pub(crate) fn modes_compatible(mode: &Mode, target: &Mode) -> bool {
 }
 
 /// Return the R source symbol for a binary operator, for use in
-/// diagnostic messages. Returns `?` for unknown ops.
+/// diagnostic messages.
 pub(crate) fn op_symbol(op: BinOpKind) -> &'static str {
     match op {
         BinOpKind::Add => "+",
@@ -129,6 +129,19 @@ pub(crate) fn op_symbol(op: BinOpKind) -> &'static str {
         BinOpKind::PipeTee => "%T>%",
         BinOpKind::PipeAssign => "%<>%",
     }
+}
+
+/// Whether `op` is one of R's six comparison operators.
+pub(crate) fn is_comparison(op: BinOpKind) -> bool {
+    matches!(
+        op,
+        BinOpKind::Lt
+            | BinOpKind::Le
+            | BinOpKind::Gt
+            | BinOpKind::Ge
+            | BinOpKind::Eq
+            | BinOpKind::Ne
+    )
 }
 
 /// A type refinement extracted from an `if` condition. Represents the
@@ -174,29 +187,41 @@ pub(crate) enum Narrowing {
 ///     `is.list(x)` / `is.function(x)` / `is.null(x)`
 ///   * negated forms of all the predicates above
 ///
+/// The variable named by a predicate's first argument, if that argument is
+/// a bare identifier.
+fn first_arg_ident(args: &[Arg]) -> Option<String> {
+    args.first().and_then(|a| match &a.value {
+        Expr::Ident { name, .. } => Some(name.clone()),
+        _ => None,
+    })
+}
+
+/// The `RType` a predicate call tests for. `inherits(x, "foo")` reads its
+/// class from the second argument; every other name maps through
+/// `predicate_target`, then the `is.<class>` fallback.
+fn predicate_call_target(name: &str, args: &[Arg]) -> Option<RType> {
+    if name == "inherits" {
+        args.get(1).and_then(|arg| match &arg.value {
+            Expr::String(class, _) if !class.is_empty() => {
+                Some(RType::unknown().with_class(ClassVector::single(class)))
+            }
+            _ => None,
+        })
+    } else {
+        predicate_target(name).or_else(|| s3_predicate_target(name))
+    }
+}
+
 pub(crate) fn extract_builtin_type_narrowing(cond: &Expr) -> Narrowing {
     match cond {
         Expr::Call { func, args, .. } => {
             let Expr::Ident { name, .. } = func.as_ref() else {
                 return Narrowing::None;
             };
-            let target = if name == "inherits" {
-                args.get(1).and_then(|arg| match &arg.value {
-                    Expr::String(class, _) if !class.is_empty() => {
-                        Some(RType::unknown().with_class(ClassVector::single(class)))
-                    }
-                    _ => None,
-                })
-            } else {
-                predicate_target(name).or_else(|| s3_predicate_target(name))
-            };
-            let Some(target) = target else {
+            let Some(target) = predicate_call_target(name, args) else {
                 return Narrowing::None;
             };
-            let Some(var) = args.first().and_then(|a| match &a.value {
-                Expr::Ident { name, .. } => Some(name.clone()),
-                _ => None,
-            }) else {
+            let Some(var) = first_arg_ident(args) else {
                 return Narrowing::None;
             };
             // `is.null(x)` (non-negated): fall through to Positive with
@@ -219,23 +244,10 @@ pub(crate) fn extract_builtin_type_narrowing(cond: &Expr) -> Narrowing {
             let Expr::Ident { name, .. } = func.as_ref() else {
                 return Narrowing::None;
             };
-            let Some(var) = args.first().and_then(|a| match &a.value {
-                Expr::Ident { name, .. } => Some(name.clone()),
-                _ => None,
-            }) else {
+            let Some(var) = first_arg_ident(args) else {
                 return Narrowing::None;
             };
-            let target = if name == "inherits" {
-                args.get(1).and_then(|arg| match &arg.value {
-                    Expr::String(class, _) if !class.is_empty() => {
-                        Some(RType::unknown().with_class(ClassVector::single(class)))
-                    }
-                    _ => None,
-                })
-            } else {
-                predicate_target(name).or_else(|| s3_predicate_target(name))
-            };
-            let Some(target) = target else {
+            let Some(target) = predicate_call_target(name, args) else {
                 return Narrowing::None;
             };
             Narrowing::Negative { var, target }
@@ -368,10 +380,7 @@ fn length_guard_var(expr: &Expr) -> Option<String> {
     if !matches!(func.as_ref(), Expr::Ident { name, .. } if name == "length") {
         return None;
     }
-    match &args.first()?.value {
-        Expr::Ident { name, .. } => Some(name.clone()),
-        _ => None,
-    }
+    first_arg_ident(args)
 }
 
 fn is_zero_literal(expr: &Expr) -> bool {
@@ -395,10 +404,7 @@ fn predicate_var(expr: &Expr) -> Option<String> {
     if name != "is.na" && predicate_target(name).is_none() && name != "inherits" {
         return None;
     }
-    match &args.first()?.value {
-        Expr::Ident { name, .. } => Some(name.clone()),
-        _ => None,
-    }
+    first_arg_ident(args)
 }
 
 /// Map a type predicate name to the `RType` it tests for. Group
@@ -483,6 +489,18 @@ pub(crate) fn narrow_away_from_null(t: &RType) -> Option<RType> {
     }
 }
 
+/// Record in `scope` that `var` is non-null: narrow its binding away from
+/// NULL and mark the name branch-local. Does nothing when the binding has
+/// no NULL member to remove.
+fn narrow_away_from_null_in(scope: &mut Scope, var: &str, narrowed: &mut HashSet<String>) {
+    if let Some(existing) = scope.get(var).cloned()
+        && let Some(n) = narrow_away_from_null(&existing)
+    {
+        scope.insert_narrowed(var.to_string(), n);
+        narrowed.insert(var.to_string());
+    }
+}
+
 /// Apply a narrowing to produce separate scopes for the `then` and
 /// `else_` branches. Returns `(then_scope, else_scope)` where each is
 /// a clone of `base` with the appropriate binding updated.
@@ -490,8 +508,10 @@ pub(crate) fn narrow_away_from_null(t: &RType) -> Option<RType> {
 pub(crate) fn apply_narrowing(
     base: &Scope,
     narrowing: &Narrowing,
-    _has_else: bool,
 ) -> (Scope, Scope, HashSet<String>) {
+    if matches!(narrowing, Narrowing::None) {
+        return (base.clone(), base.clone(), HashSet::new());
+    }
     let (mut then_scope, mut else_scope) = (base.clone(), base.clone());
     // Names refined by narrowing (in either branch). These must NOT be
     // merged back into the parent by `merge_branch_bindings`: a refinement
@@ -569,12 +589,7 @@ pub(crate) fn apply_narrowing(
             // scope even without an explicit `else`: a diverging guard can
             // make it the continuation scope.
             if target.mode == Mode::Null {
-                if let Some(existing) = else_scope.get(var).cloned() {
-                    if let Some(n) = narrow_away_from_null(&existing) {
-                        else_scope.insert_narrowed(var.clone(), n);
-                        narrowed.insert(var.clone());
-                    }
-                }
+                narrow_away_from_null_in(&mut else_scope, var, &mut narrowed);
             }
         }
         Narrowing::Negative { var, target } => {
@@ -582,31 +597,16 @@ pub(crate) fn apply_narrowing(
             // complements are not representable in the current lattice, so
             // leave them conservative and retain the useful else fact below.
             if target.mode == Mode::Null {
-                if let Some(existing) = then_scope.get(var).cloned() {
-                    if let Some(n) = narrow_away_from_null(&existing) {
-                        then_scope.insert_narrowed(var.clone(), n);
-                        narrowed.insert(var.clone());
-                    }
-                }
+                narrow_away_from_null_in(&mut then_scope, var, &mut narrowed);
             }
             install_positive_narrowing(&mut else_scope, var, target, &mut narrowed);
         }
         Narrowing::NonNullElse { var } => {
-            if let Some(existing) = else_scope.get(var).cloned() {
-                if let Some(n) = narrow_away_from_null(&existing) {
-                    else_scope.insert_narrowed(var.clone(), n);
-                    narrowed.insert(var.clone());
-                }
-            }
+            narrow_away_from_null_in(&mut else_scope, var, &mut narrowed);
         }
         Narrowing::Else { var, target } => {
-            if let Some(existing) = else_scope.get(var).cloned()
-                && let Some(n) = narrow_away_from_null(&existing)
-            {
-                debug_assert_eq!(target.mode, Mode::Null);
-                else_scope.insert_narrowed(var.clone(), n);
-                narrowed.insert(var.clone());
-            }
+            debug_assert_eq!(target.mode, Mode::Null);
+            narrow_away_from_null_in(&mut else_scope, var, &mut narrowed);
         }
         Narrowing::ScalarElse { var, target } => {
             if let Some(existing) = else_scope.get(var).cloned() {
@@ -832,8 +832,6 @@ pub(crate) fn collect_forwarded_calls_in_expr(
         | Expr::Unknown(_) => {}
     }
 }
-
-use crate::semantic_lists::DEFUSING_CALLS;
 
 impl Checker {
     /// Diagnose the narrow, provable lazy-default ordering bug where a
@@ -1858,19 +1856,7 @@ fn json_rtype_scalar(jt: &JsonRType) -> RType {
             RType::union(Arc::from(members))
         };
     }
-    let mode = match JsonMode::parse(&jt.mode) {
-        Some(JsonMode::Logical) => Mode::Logical,
-        Some(JsonMode::Integer) => Mode::Integer,
-        Some(JsonMode::Double) => Mode::Double,
-        Some(JsonMode::Character) => Mode::Character,
-        Some(JsonMode::Complex) => Mode::Complex,
-        Some(JsonMode::Raw) => Mode::Raw,
-        Some(JsonMode::List) => Mode::List,
-        Some(JsonMode::Null) => Mode::Null,
-        Some(JsonMode::Function) => Mode::Function,
-        Some(JsonMode::Opaque) => Mode::Opaque,
-        _ => Mode::Opaque,
-    };
+    let mode = concrete_json_mode(&jt.mode).unwrap_or(Mode::Opaque);
     let class = if jt.class.is_empty() {
         ClassVector::empty()
     } else {
@@ -1880,7 +1866,10 @@ fn json_rtype_scalar(jt: &JsonRType) -> RType {
     RType::new(mode, length).with_class(class)
 }
 
-fn concrete_json_mode(mode: &str) -> Option<Mode> {
+/// Map a typeshed mode string to the concrete `Mode` it names. Returns
+/// `None` for `union`, the compound arg-derived specs, and unrecognized
+/// strings; callers decide their own fallback for those.
+pub(crate) fn concrete_json_mode(mode: &str) -> Option<Mode> {
     Some(match JsonMode::parse(mode)? {
         JsonMode::Logical => Mode::Logical,
         JsonMode::Integer => Mode::Integer,

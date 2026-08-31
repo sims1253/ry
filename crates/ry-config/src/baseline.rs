@@ -38,11 +38,9 @@ pub fn load_baseline(path: &Path) -> Result<Baseline> {
 
 pub fn diagnostic_path(path: &str, repo_root: Option<&Path>) -> String {
     let path = Path::new(path);
-    let root = repo_root
-        .map(std::path::Path::to_path_buf)
-        .or_else(|| std::env::current_dir().ok());
-    root.as_deref()
-        .and_then(|root| path.strip_prefix(root).ok())
+    let current_dir = std::env::current_dir().ok();
+    let root = repo_root.or(current_dir.as_deref());
+    root.and_then(|root| path.strip_prefix(root).ok())
         .unwrap_or(path)
         .to_string_lossy()
         .replace(std::path::MAIN_SEPARATOR, "/")

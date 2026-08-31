@@ -1,18 +1,31 @@
 name: Build VS Code extension
 
-# Required PR workflow for the VS Code extension.
-# Runs frozen install, formatting, lint, type-check, unit tests,
-# compile, package inspection, and E2E activation.
+# Required PR workflow for the VS Code extension. The build job runs the
+# frozen install, formatting, lint, type-check, compile, and package
+# inspection. The test job builds the ry binary and runs the unit and
+# E2E tests against it, so core-only changes still exercise the
+# extension. This workflow absorbed test-code.yml: the E2E suite now
+# runs once per PR instead of twice.
 on:
   push:
     branches: [main]
     paths:
       - "editors/code/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - ".github/workflows/build-vscode.yml"
   pull_request:
     paths:
       - "editors/code/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - ".github/workflows/build-vscode.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -24,6 +37,42 @@ defaults:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Format check
+        run: bun run fmt-check
+
+      - name: Lint
+        run: bun run lint
+
+      - name: TypeScript type-check
+        run: bun run tsc
+
+      - name: Compile
+        run: bun run compile
+
+      - name: Package VSIX
+        run: bun run vsce-package
+
+      - name: Verify VSIX exists
+        run: test -f ry.vsix
+
+  # Builds the ry release binary and runs every test that needs it:
+  # the binary unit tests and the E2E suite. Kept separate from `build`
+  # so a packaging failure does not hide a test failure.
+  test:
+    runs-on: ubuntu-latest
+    # Observed at ~3 min (cold cargo release build plus E2E); 15 keeps a
+    # 5x ceiling over that and matches `build`.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -46,26 +95,8 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Format check
-        run: bun run fmt-check
-
-      - name: Lint
-        run: bun run lint
-
-      - name: TypeScript type-check
-        run: bun run tsc
-
       - name: Unit tests
         run: bun test src/test/binary.test.ts
-
-      - name: Compile
-        run: bun run compile
-
-      - name: Package VSIX
-        run: bun run vsce-package
-
-      - name: Verify VSIX exists
-        run: test -f ry.vsix
 
       - name: Run E2E tests (xvfb)
         run: xvfb-run -a bun run test

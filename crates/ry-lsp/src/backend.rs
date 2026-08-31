@@ -1159,6 +1159,16 @@ impl LanguageServer for Backend {
         let path = uri_to_path(&uri);
         let range = params.range;
 
+        // Inlay hints are on-demand analysis, so the same eligibility
+        // gate as the publish path applies: a folder set to `enable:
+        // false` (or a discovery-excluded file) gets no hints.
+        {
+            let state = self.state.lock().await;
+            if !state.eligibility_for_path(&path) {
+                return Ok(None);
+            }
+        }
+
         // Parse the document (cached). On any parse
         // failure we return `None` (no hints) rather than erroring, so
         // the editor simply shows nothing instead of a broken state.

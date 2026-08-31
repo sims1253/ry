@@ -59,6 +59,14 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Changed
 
+- **`enable` is honored per folder**: a workspace folder whose settings
+  set `enable: false` is skipped: the language server publishes no
+  diagnostics and returns no inlay hints for it. The setting was
+  accepted and ignored before. The server also stops modeling the five
+  settings it never read (`path`, `importStrategy`,
+  `addExecutableToTerminalPath`, `logLevel`, `checkTestFixtures`); the
+  editor extensions own those, and the server ignores unknown settings
+  keys either way.
 - **JSON diagnostics no longer suggest fixes**: the `fix` payload is gone
   from `ry check --output-format json` and from the `data` field of
   published editor diagnostics. Nothing ever applied these suggestions —

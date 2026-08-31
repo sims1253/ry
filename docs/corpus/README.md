@@ -3,8 +3,17 @@
 Each ledger pins the *identities* (package, rule code, path, line, column) of
 every diagnostic `ry` emitted on an audited package corpus, together with the
 independent classification (`true_positive` / `false_positive` / `uncertain`)
-and a `workstream` label. Pinning identities — not aggregate counts — means
+and an `audit_group` label. Pinning identities — not aggregate counts — means
 removing one finding can never be silently mistaken for removing another.
+
+The `audit_group` field groups reviewed findings by how the audit explained
+each label. `posit-0.9.0.json` has 12 groups; most name a cause
+(`type-narrowing`, `test-fixture`), one an owner (`upstream-package`), and
+the largest, `manual-audit` (390 of 728 findings), is the manually
+classified batch. `tidyverse-0.7.1.json` has 17 groups: 16 are batch ids
+from its audit (`P2`, `P3a`, `plan-32-33`), kept verbatim because the
+planning records that defined them were local-only and no longer exist;
+the other, `upstream-ggplot2`, names the upstream package.
 
 | Ledger | `ry` | Packages | Diagnostics | TP / FP / Unc | Reconciliation |
 | :-- | :-- | :-- | ---: | :-- | :-- |

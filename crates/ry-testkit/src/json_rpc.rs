@@ -93,10 +93,6 @@ impl JsonRpcProcess {
             format!("no matching JSON-RPC message in {message_limit} messages"),
         ))
     }
-
-    pub fn child_id(&self) -> u32 {
-        self.child.id()
-    }
 }
 
 impl Drop for JsonRpcProcess {

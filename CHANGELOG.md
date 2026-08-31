@@ -108,7 +108,8 @@ suppression actions — and fixes a parser panic plus several editor issues.
 - **`-vv` now enables trace logging**: the CLI mapped every verbosity
   level above `-v` to `ry=debug`, so the trace tier promised by the help
   text never activated. `-vv` and higher now set `ry=trace`; `-v` and the
-  quiet flags are unchanged.
+  quiet flags are unchanged. The help text also claimed `-v` selects
+  debug; it now says info, matching the filter `init_tracing` applies.
 - **Oversized-file warning no longer contains stray spaces**: the
   `index.max-file-bytes` warning printed a wide run of stray spaces
   inside the sentence. The message now uses single spaces.

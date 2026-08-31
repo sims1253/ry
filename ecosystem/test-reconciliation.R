@@ -44,8 +44,8 @@ run_reconcile <- function(corpus, report_entries) {
   reconcile(corpus_path, tmp, "pkg")
 }
 
-tp <- list(package = "pkg", code = "RY010", path = "R/a.R", line = 1, column = 1, label = "true_positive", workstream = "w1")
-fp <- list(package = "pkg", code = "RY033", path = "R/b.R", line = 2, column = 3, label = "false_positive", workstream = "w2")
+tp <- list(package = "pkg", code = "RY010", path = "R/a.R", line = 1, column = 1, label = "true_positive", audit_group = "group-a")
+fp <- list(package = "pkg", code = "RY033", path = "R/b.R", line = 2, column = 3, label = "false_positive", audit_group = "group-b")
 
 cat("Test 1: clean tree (all findings present) -> exit 0\n")
 stopifnot(run_reconcile(make_corpus(list(tp, fp)), list(pkg = list(tp, fp))) == 0L)
@@ -68,7 +68,7 @@ stopifnot(run_reconcile(make_corpus(list(tp, fp), "audit-transcript"), list(pkg 
 cat("  PASS\n")
 
 cat("Test 6: unowned finding appears in hermetic mode -> exit 1\n")
-extra <- list(package = "pkg", code = "RY040", path = "R/c.R", line = 5, column = 1, label = "false_positive", workstream = "w3")
+extra <- list(package = "pkg", code = "RY040", path = "R/c.R", line = 5, column = 1, label = "false_positive", audit_group = "group-c")
 stopifnot(run_reconcile(make_corpus(list(tp, fp)), list(pkg = list(tp, fp, extra))) == 1L)
 cat("  PASS\n")
 

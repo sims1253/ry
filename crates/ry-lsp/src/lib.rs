@@ -1,5 +1,3 @@
-#![allow(clippy::collapsible_if)]
-
 //! ry language server. Publishes diagnostics for R files.
 //!
 //! This crate is a v1 LSP server built on top of `tower-lsp`. It supports:
@@ -17,7 +15,7 @@
 //! features built on the same spelling-match identity were removed
 //! with it (the `hover`, `definition`, `references`, `documentSymbol`,
 //! `workspace/symbol`, `completion`, and `signatureHelp`
-//! capabilities — see issue #87).
+//! capabilities).
 //!
 //! Architecture: this file is intentionally small --
 //! module declarations + the `run()` entry point. All request-handler
@@ -31,7 +29,7 @@
 //! and crash the client. All `tracing` output is routed to stderr via
 //! the CLI's `tracing_subscriber` initialization before `run()` is called.
 
-/// (#53): Test-only scheduler/barrier seam for forcing
+/// Test-only scheduler/barrier seam for forcing
 /// parse/didChange interleaving. The seam controls scheduling only; cache
 /// policy (version-stamped tree rejection) is production code in
 /// `backend::parsed_file` and `State::store_tree`/`State::tree_for`.
@@ -142,7 +140,7 @@ mod settings;
 mod util;
 
 use backend::{Backend, State};
-// (#45): re-export the baseline disk-read counter so integration
+// Re-export the baseline disk-read counter so integration
 // tests can assert that the publish/inlay-hint hot path performs
 // no baseline file I/O.
 pub use backend::baseline_disk_reads;
@@ -181,14 +179,13 @@ where
     Ok(())
 }
 
-/// (#46): Test-only handle to a single server's filter-compile
-/// counters, returned by [`run_with_counters`]. Because the counters live in
-/// per-server [`State`] (not process globals), each spawned server observes
+/// Test-only handle to a single server's publish-window compile
+/// counter, returned by [`run_with_counters`]. Because the counter lives in
+/// per-server [`State`] (not a process global), each spawned server observes
 /// only its own compilations, so parallel integration tests never trip each
 /// other's "zero compiles during publish" assertion.
 pub struct ServerCounters {
     compile_during_last_publish: Arc<std::sync::atomic::AtomicU64>,
-    filter_compile_count: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl ServerCounters {
@@ -197,14 +194,6 @@ impl ServerCounters {
     /// precomputed and borrowed in the publish loop.
     pub fn compile_during_last_publish(&self) -> u64 {
         self.compile_during_last_publish
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    /// Total filter/glob compilations this server has performed. Exposed for
-    /// symmetry; the publish-window assertion uses
-    /// [`compile_during_last_publish`](Self::compile_during_last_publish).
-    pub fn filter_compile_count(&self) -> u64 {
-        self.filter_compile_count
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 }
@@ -225,7 +214,6 @@ where
     let state = State::default();
     let counters = ServerCounters {
         compile_during_last_publish: Arc::clone(&state.compile_during_last_publish),
-        filter_compile_count: Arc::clone(&state.filter_compile_count),
     };
     let (service, socket) = LspService::build(|client| Backend {
         client,

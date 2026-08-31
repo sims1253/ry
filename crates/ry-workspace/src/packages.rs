@@ -103,14 +103,15 @@ pub fn namespace_metadata(file: &SourceFile) -> NamespaceMetadata {
                     .extend(args.iter().filter_map(|arg| static_name(&arg.value)));
             }
             "S3method" => {
-                if let Some(generic) = args.first().and_then(|arg| static_name(&arg.value)) {
-                    metadata.s3_generics.insert(generic);
+                let generic = args.first().and_then(|arg| static_name(&arg.value));
+                if let Some(generic) = &generic {
+                    metadata.s3_generics.insert(generic.clone());
                 }
                 if let (Some(generic), Some(class)) = (
-                    args.first().and_then(|arg| static_name(&arg.value)),
+                    &generic,
                     args.get(1).and_then(|arg| static_name(&arg.value)),
                 ) {
-                    metadata.s3_methods.insert((generic, class));
+                    metadata.s3_methods.insert((generic.clone(), class));
                 }
             }
             _ => {}

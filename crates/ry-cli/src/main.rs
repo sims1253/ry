@@ -83,7 +83,7 @@ impl ColorChoice {
 struct Cli {
     #[command(subcommand)]
     cmd: Option<Cmd>,
-    /// Increase verbosity. Use -v for debug, -vv for trace.
+    /// Increase verbosity. Use -v for info, -vv for trace.
     #[arg(short, long, action = clap::ArgAction::Count, global = true)]
     verbose: u8,
     /// Decrease verbosity. Use -q for quiet, -qq for silent.

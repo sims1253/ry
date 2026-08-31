@@ -263,15 +263,7 @@ impl Checker {
         span: Span,
         scope: &Scope,
     ) {
-        if !matches!(
-            op,
-            BinOpKind::Eq
-                | BinOpKind::Ne
-                | BinOpKind::Lt
-                | BinOpKind::Le
-                | BinOpKind::Gt
-                | BinOpKind::Ge
-        ) {
+        if !is_comparison(op) {
             return;
         }
         fn length_operand(expr: &Expr) -> Option<&Expr> {

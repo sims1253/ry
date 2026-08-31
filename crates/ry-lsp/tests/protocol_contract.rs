@@ -1181,10 +1181,9 @@ fn publish_path_performs_no_baseline_disk_io() {
 // ──────────────────────────────────────────────────────────────────────────
 // Precompute filters once per folder (#46)
 //
-// `folder_config_for_path` plus filter/confidence/exclude construction runs
-// inside the per-file publish loop. The fix compiles these once while
-// building each `FolderAnalysisContext` and borrows the compiled values in
-// the loop. A construction-count test hook lets this test assert the count
+// Filter, confidence, and exclude values are compiled once while building
+// each `FolderAnalysisContext` and borrowed inside the per-file publish
+// loop. A construction-count test hook lets this test assert the count
 // directly instead of inferring it from wall time.
 // ──────────────────────────────────────────────────────────────────────────
 

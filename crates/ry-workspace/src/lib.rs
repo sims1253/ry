@@ -325,11 +325,6 @@ fn is_test_or_script_file(path: &Path) -> bool {
     )
 }
 
-/// Bindings introduced by R's literal-name namespace helpers. These calls are
-/// deliberately collected from every source file below `R/`, rather than only
-/// the files being checked: package load hooks commonly call a helper defined
-/// in a different file. We never evaluate source, and only retain literal
-/// names, so an unknown dynamic name cannot mask an unresolved variable.
 /// What a scan of a package's own `R/` sources establishes.
 #[derive(Default, Clone)]
 struct SourceBindings {
@@ -351,6 +346,12 @@ fn source_package_namespace_bindings(root: &Path) -> SourceBindings {
     found
 }
 
+/// Collect the bindings introduced by R's literal-name namespace helpers.
+/// These calls are deliberately collected from every source file below `R/`,
+/// rather than only the files being checked: package load hooks commonly call
+/// a helper defined in a different file. We never evaluate source, and only
+/// retain literal names, so an unknown dynamic name cannot mask an unresolved
+/// variable.
 fn source_package_dynamic_bindings(root: &Path) -> SourceBindings {
     let mut found = SourceBindings::default();
     let mut paths = Vec::new();
@@ -739,9 +740,12 @@ fn serialized_inventory(path: &Path, cap: u64) -> SerializedInventory {
         .unwrap_or_default();
     let stamp: Stamp = (metadata.len(), modified, cap);
     let cache = CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    // A panic in another thread poisons this mutex. The cache guards no
+    // invariant, so recover the map instead of cascading the panic into
+    // the LSP.
     if let Some(inventory) = cache
         .lock()
-        .expect("serialized cache poisoned")
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
         .get(path)
         .filter(|(cached, _)| *cached == stamp)
         .map(|(_, inventory)| inventory.clone())
@@ -755,7 +759,7 @@ fn serialized_inventory(path: &Path, cap: u64) -> SerializedInventory {
     // Replacing the entry bounds the cache by the number of distinct files.
     cache
         .lock()
-        .expect("serialized cache poisoned")
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
         .insert(path.to_path_buf(), (stamp, inventory.clone()));
     inventory
 }
@@ -778,44 +782,37 @@ fn serialized_inventory_uncached(path: &Path, cap: u64) -> SerializedInventory {
         Ok(bytes) => bytes,
         Err(_) => return empty(),
     };
-    let bytes = if bytes.starts_with(b"BZh") {
-        let mut decoded = Vec::new();
-        let decoder = bzip2::read::BzDecoder::new(bytes.as_slice());
-        if decoder.take(read_cap).read_to_end(&mut decoded).is_err() {
-            return empty();
-        }
-        if decoded.len() as u64 > cap {
-            return degraded(path);
-        }
-        decoded
+    let compression = if bytes.starts_with(b"BZh") {
+        Some(Compression::Bzip2)
     } else if bytes.starts_with(&[0x1f, 0x8b]) {
-        let mut decoded = Vec::new();
-        let decoder = flate2::read::GzDecoder::new(bytes.as_slice());
-        if decoder.take(read_cap).read_to_end(&mut decoded).is_err() {
-            return empty();
-        }
-        if decoded.len() as u64 > cap {
-            return degraded(path);
-        }
-        decoded
+        Some(Compression::Gzip)
     } else if bytes.starts_with(&[0xfd, b'7', b'z', b'X', b'Z', 0x00]) {
-        let mut decoded = Vec::new();
-        let decoder = xz2::read::XzDecoder::new(bytes.as_slice());
-        if decoder.take(read_cap).read_to_end(&mut decoded).is_err() {
-            return empty();
-        }
-        if decoded.len() as u64 > cap {
-            return degraded(path);
-        }
-        decoded
+        Some(Compression::Xz)
     } else {
-        // An uncompressed file already has a known size from `metadata.len()`
-        // checked in the cached wrapper. Short-circuit before parsing if it
-        // exceeds the cap — no need to read the whole payload.
-        if bytes.len() as u64 > cap {
-            return degraded(path);
+        None
+    };
+    let bytes = match compression {
+        Some(format) => {
+            let decoder: Box<dyn std::io::Read> = match format {
+                Compression::Bzip2 => Box::new(bzip2::read::BzDecoder::new(bytes.as_slice())),
+                Compression::Gzip => Box::new(flate2::read::GzDecoder::new(bytes.as_slice())),
+                Compression::Xz => Box::new(xz2::read::XzDecoder::new(bytes.as_slice())),
+            };
+            match decode_capped(decoder, read_cap, cap) {
+                Decoded::Bytes(decoded) => decoded,
+                Decoded::OverCap => return degraded(path),
+                Decoded::Failed => return empty(),
+            }
         }
-        bytes
+        None => {
+            // An uncompressed file already has a known size from `metadata.len()`
+            // checked in the cached wrapper. Short-circuit before parsing if it
+            // exceeds the cap — no need to read the whole payload.
+            if bytes.len() as u64 > cap {
+                return degraded(path);
+            }
+            bytes
+        }
     };
     let payload = bytes
         .strip_prefix(b"RDX2\n")
@@ -835,6 +832,38 @@ fn serialized_inventory_uncached(path: &Path, cap: u64) -> SerializedInventory {
         bindings,
         degraded: false,
     }
+}
+
+/// Container format of a compressed serialization, detected by magic bytes.
+#[derive(Clone, Copy)]
+enum Compression {
+    Bzip2,
+    Gzip,
+    Xz,
+}
+
+/// Outcome of decoding a compressed serialization under the byte cap.
+enum Decoded {
+    /// Payload decoded and fits within the cap.
+    Bytes(Vec<u8>),
+    /// Payload exceeds the cap.
+    OverCap,
+    /// Stream is unreadable or corrupt.
+    Failed,
+}
+
+/// Decode `decoder` fully, stopping once the payload provably exceeds
+/// `cap`. Reading at most `read_cap` (`cap + 1`) bytes distinguishes an
+/// exact-cap payload from a larger one without decoding all of it.
+fn decode_capped(decoder: impl std::io::Read, read_cap: u64, cap: u64) -> Decoded {
+    let mut decoded = Vec::new();
+    if decoder.take(read_cap).read_to_end(&mut decoded).is_err() {
+        return Decoded::Failed;
+    }
+    if decoded.len() as u64 > cap {
+        return Decoded::OverCap;
+    }
+    Decoded::Bytes(decoded)
 }
 
 /// Per-file `load()` resolution result. `per_span` maps each `load()`
@@ -1172,7 +1201,7 @@ pub fn is_file_eligible(path: &Path, root: &Path, config: &ry_config::Config) ->
 
 /// Check file eligibility with an already-compiled exclude matcher.
 /// Directory walkers should build this once per owning configuration.
-pub fn is_file_eligible_with_excludes(
+fn is_file_eligible_with_excludes(
     path: &Path,
     root: &Path,
     excludes: &ry_config::Excludes,

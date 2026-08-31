@@ -48,5 +48,5 @@ container = { image = "messense/cargo-xwin@sha256:9856b895265d4966f212228ba64802
 # and re-running `dist generate` (the dist-check CI job enforces byte-match).
 [dist.github-action-commits]
 "actions/checkout" = "3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
-"actions/upload-artifact" = "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7
-"actions/download-artifact" = "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" # v8
+"actions/upload-artifact" = "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
+"actions/download-artifact" = "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" # v8.0.1

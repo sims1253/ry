@@ -227,12 +227,10 @@ impl Checker {
         rhs: &RType,
     ) -> Option<RType> {
         let symbol = op_symbol(op);
-        if symbol == "?"
-            || matches!(
-                op,
-                BinOpKind::In | BinOpKind::Colon | BinOpKind::PipeForward | BinOpKind::PipeNative
-            )
-        {
+        if matches!(
+            op,
+            BinOpKind::In | BinOpKind::Colon | BinOpKind::PipeForward | BinOpKind::PipeNative
+        ) {
             return None;
         }
         for operand in [lhs, rhs] {

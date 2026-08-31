@@ -36,8 +36,9 @@ pub use diagnostics::{
     parse_suppressions_from_comments,
 };
 
-// Configuration-driven filter builders moved here from ry-config
-// to break the ry-config → ry-checker dependency.
+// These builders construct a `SeverityFilter`, a checker type, from a
+// config's rule lists. They live here because ry-checker depends on
+// ry-config; the reverse direction would be a cycle.
 
 /// Build a [`SeverityFilter`] from the `error`, `warn`, and `ignore`
 /// rule lists in a config.
@@ -482,7 +483,8 @@ impl UserFn {
         }
     }
 
-    fn seed_caller_visible_signature(&mut self, signature: &CallerVisibleSignature) {
+    /// Returns whether the seed wrote any parameter metadata.
+    fn seed_caller_visible_signature(&mut self, signature: &CallerVisibleSignature) -> bool {
         // A function outside the incremental fixpoint scope has an unchanged
         // definition. Still guard the identity shape so a bad scope can never
         // copy metadata onto different formals.
@@ -493,7 +495,7 @@ impl UserFn {
                 .zip(&signature.parameters)
                 .any(|(current, previous)| current.name != previous.name)
         {
-            return;
+            return false;
         }
         for (current, previous) in self.params.iter_mut().zip(&signature.parameters) {
             current.type_ = previous.type_.clone();
@@ -501,6 +503,7 @@ impl UserFn {
             current.defused = previous.defused;
             current.quoting = previous.quoting;
         }
+        true
     }
 }
 
@@ -669,8 +672,9 @@ pub struct Checker {
     // 3 only reads, so the COW clone never actually fires in practice.
     pub(crate) fn_table: Arc<FnTable>,
     /// Defusing helpers RY098 trusts, derived from `fn_table`. Built on first
-    /// use and cleared by `collect_fns`, the only pass that mutates
-    /// `fn_table.fns`.
+    /// use and cleared by every writer of the flags it reads: `collect_fns`,
+    /// `propagate_s3_generic_quoting`, `propagate_forwarded_quoting`, and
+    /// `seed_caller_visible_signatures`.
     trusted_defusers: Option<Arc<HashSet<String>>>,
     /// Top-level bindings that may suppress RY010 for the file being
     /// emitted. Project checking installs either a package R/ pool or the
@@ -935,13 +939,17 @@ impl Checker {
         scope: Option<&HashSet<String>>,
     ) {
         let table = Arc::make_mut(&mut self.fn_table);
+        let mut applied = false;
         for (name, function) in &mut table.fns {
             if scope.is_some_and(|scope| scope.contains(name)) {
                 continue;
             }
             if let Some(signature) = seed.get(name) {
-                function.seed_caller_visible_signature(signature);
+                applied |= function.seed_caller_visible_signature(signature);
             }
+        }
+        if applied {
+            self.trusted_defusers = None;
         }
     }
 
@@ -1089,6 +1097,9 @@ impl Checker {
                 changed = true;
             }
         }
+        if changed {
+            self.trusted_defusers = None;
+        }
         changed
     }
 
@@ -1224,6 +1235,9 @@ impl Checker {
                     changed = true;
                 }
             }
+        }
+        if changed {
+            self.trusted_defusers = None;
         }
         changed
     }

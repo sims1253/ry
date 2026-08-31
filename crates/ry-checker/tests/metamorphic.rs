@@ -69,6 +69,16 @@ fn check_source(src: &str) -> Vec<Diagnostic> {
     checker.take_diagnostics()
 }
 
+/// The inferred type of `name` in the final top-level scope, read through
+/// `check_with_scope` (the same scope the LSP inlay hints use).
+fn inferred_binding(src: &str, name: &str) -> Option<ry_core::RType> {
+    let mut parser = RParser::new().expect("parser init");
+    let file = parser.parse("test.R", src).expect("parse");
+    let mut checker = Checker::new("test.R");
+    let (_, scope) = checker.check_with_scope(&file);
+    scope.get(name).cloned()
+}
+
 /// Full diagnostic tuple including span, for exact comparison.
 fn diag_full(
     d: &Diagnostic,
@@ -884,22 +894,30 @@ fn r9_complementary_narrowing_joins_consistently() {
 // R10 — Pipe placeholder combinations (generated regression matrix)
 // ════════════════════════════════════════════════════════════════════════
 
-/// A regression matrix over pipe placeholder combinations. Each entry is a
-/// concrete R source exercising a different placeholder/pipe combination.
-/// The gate asserts the checker does not panic and produces a deterministic,
-/// finite diagnostic set. This is NOT a universal relation: it is a curated
-/// matrix of known pipe shapes.
+/// A regression matrix over pipe placeholder combinations. It spans both
+/// pipe forms (native `|>` and magrittr `%>%`), both placeholders (native
+/// `_`, R 4.2+; magrittr `.`), and implicit first-argument insertion. Each
+/// entry is a concrete R source exercising one shape. The gate asserts the
+/// checker does not panic and produces a deterministic, finite diagnostic
+/// set. This is NOT a universal relation: it is a curated matrix of known
+/// pipe shapes.
 #[test]
 fn r10_pipe_placeholder_matrix_no_panic_deterministic() {
     let cases: &[&str] = &[
         // Native pipe, no placeholder.
         "x <- 1L\ny <- x |> identity()\n",
+        // Native pipe with the `_` placeholder (R 4.2+).
+        "x <- 1L\ny <- x |> list(y = _)\n",
         // No pipe control: named-argument call.
         "x <- 1L\ny <- identity(z = x)\n",
         // Native pipe with no explicit extra arguments.
         "x <- 1L\ny <- x |> sum()\n",
+        // Magrittr pipe with implicit first-argument insertion.
+        "x <- 1L\ny <- x %>% sum()\n",
         // Native pipe into a data-frame call.
         "df <- data.frame(a = 1L)\nresult <- df |> nrow()\n",
+        // Magrittr pipe with the `.` placeholder.
+        "df <- data.frame(a = 1L)\nresult <- df %>% nrow(.)\n",
         // Chained pipes.
         "x <- c(1L, 2L, 3L)\ny <- x |> sum() |> identity()\n",
         // Pipe into a function with multiple arguments.
@@ -925,15 +943,45 @@ fn r10_pipe_placeholder_matrix_no_panic_deterministic() {
     }
 
     // Equivalent formulations: `x |> f()` should produce the same diagnostics
-    // as `f(x)` when f is a simple function.
-    let pairs = [
-        ("x <- 1L\ny <- x |> sum()\n", "x <- 1L\ny <- sum(x)\n"),
+    // as `f(x)` when f is a simple function. The same holds for magrittr
+    // `%>%` (implicit insertion and the `.` placeholder) and the native `_`
+    // placeholder: each desugars to the direct call.
+    //
+    // Each pair compares diagnostic codes and the piped binding's inferred
+    // type. The type matters because codes alone cannot always see a broken
+    // desugaring: `sum()` and `sum(1L)` both infer `double<len=1>`, so the
+    // implicit-insertion pair uses `nchar`, whose argument is required — a
+    // dropped LHS surfaces as RY091 instead of a coincidence.
+    //
+    // (piped, direct, binding) — `binding` is the pipe result's target.
+    let pairs: &[(&str, &str, &str)] = &[
+        // Native pipe, no placeholder.
+        ("x <- 1L\ny <- x |> sum()\n", "x <- 1L\ny <- sum(x)\n", "y"),
         (
             "x <- 1L\ny <- x |> identity()\n",
             "x <- 1L\ny <- identity(x)\n",
+            "y",
+        ),
+        // Magrittr pipe with implicit first-argument insertion.
+        (
+            "x <- 1L\ny <- x %>% nchar()\n",
+            "x <- 1L\ny <- nchar(x)\n",
+            "y",
+        ),
+        // Magrittr pipe with the `.` placeholder.
+        (
+            "df <- data.frame(a = 1L)\nresult <- df %>% nrow(.)\n",
+            "df <- data.frame(a = 1L)\nresult <- nrow(df)\n",
+            "result",
+        ),
+        // Native pipe with the `_` placeholder (R 4.2+).
+        (
+            "x <- 1L\ny <- x |> list(y = _)\n",
+            "x <- 1L\ny <- list(y = x)\n",
+            "y",
         ),
     ];
-    for (piped, direct) in &pairs {
+    for (piped, direct, binding) in pairs {
         let piped_diags = check_source(piped);
         let direct_diags = check_source(direct);
         let piped_codes: BTreeSet<String> =
@@ -943,6 +991,13 @@ fn r10_pipe_placeholder_matrix_no_panic_deterministic() {
         assert_eq!(
             piped_codes, direct_codes,
             "R10: pipe form and direct call form diverge\n  pipe:   {piped_codes:?}\n  direct: {direct_codes:?}\n  source: {piped}",
+        );
+
+        let piped_type = inferred_binding(piped, binding);
+        let direct_type = inferred_binding(direct, binding);
+        assert_eq!(
+            piped_type, direct_type,
+            "R10: pipe form and direct call form infer different types for `{binding}`\n  pipe:   {piped_type:?}\n  direct: {direct_type:?}\n  source: {piped}",
         );
     }
 }

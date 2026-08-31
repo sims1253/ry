@@ -482,7 +482,7 @@ if (length(missing) || length(unowned)) {
       sprintf("ecosystem: to update the ledger, re-audit the %s corpus and regenerate it from the audit results (see docs/corpus/README.md).", corpus$corpus[[1L]])
     ), stderr())
   } else {
-    writeLines(sprintf("ecosystem: update %s with the reviewed workstream delta", corpus_path), stderr())
+    writeLines(sprintf("ecosystem: update %s with the reviewed findings delta", corpus_path), stderr())
     quit(status = 1L)
   }
 }

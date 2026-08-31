@@ -268,44 +268,39 @@ pub struct HigherOrderSpec {
 }
 
 pub const SOURCE: &str = include_str!("../vendor/SOURCE");
-pub const BASE_JSON: &str = include_str!("../vendor/base/base.json");
-pub const DPLYR_JSON: &str = include_str!("../vendor/dplyr/dplyr.json");
-pub const DBPLYR_JSON: &str = include_str!("../vendor/dbplyr/dbplyr.json");
-pub const TIDYR_JSON: &str = include_str!("../vendor/tidyr/tidyr.json");
-pub const TIDYSELECT_JSON: &str = include_str!("../vendor/tidyselect/tidyselect.json");
-pub const TESTTHAT_JSON: &str = include_str!("../vendor/testthat/testthat.json");
-pub const TINYTEST_JSON: &str = include_str!("../vendor/tinytest/tinytest.json");
-pub const RCPP_JSON: &str = include_str!("../vendor/rcpp/Rcpp.json");
-pub const PURRR_JSON: &str = include_str!("../vendor/purrr/purrr.json");
-pub const IGRAPH_JSON: &str = include_str!("../vendor/igraph/igraph.json");
-pub const RECIPES_JSON: &str = include_str!("../vendor/recipes/recipes.json");
-pub const BENCH_JSON: &str = include_str!("../vendor/bench/bench.json");
-pub const BOX_JSON: &str = include_str!("../vendor/box/box.json");
-pub const PATRICK_JSON: &str = include_str!("../vendor/patrick/patrick.json");
-pub const REX_JSON: &str = include_str!("../vendor/rex/rex.json");
-pub const RLIST_JSON: &str = include_str!("../vendor/rlist/rlist.json");
-pub const MIRAI_JSON: &str = include_str!("../vendor/mirai/mirai.json");
-pub const SURVIVAL_JSON: &str = include_str!("../vendor/survival/survival.json");
-pub const BRMS_JSON: &str = include_str!("../vendor/brms/brms.json");
-pub const POSTERIOR_JSON: &str = include_str!("../vendor/posterior/posterior.json");
-pub const LOO_JSON: &str = include_str!("../vendor/loo/loo.json");
-pub const BAYESPLOT_JSON: &str = include_str!("../vendor/bayesplot/bayesplot.json");
-pub const CMDSTANR_JSON: &str = include_str!("../vendor/cmdstanr/cmdstanr.json");
-pub const ZEALLOT_JSON: &str = include_str!("../vendor/zeallot/zeallot.json");
-pub const FUTURE_JSON: &str = include_str!("../vendor/future/future.json");
-pub const FOREACH_JSON: &str = include_str!("../vendor/foreach/foreach.json");
-pub const SHINY_JSON: &str = include_str!("../vendor/shiny/shiny.json");
-pub const WITHR_JSON: &str = include_str!("../vendor/withr/withr.json");
-pub const R6_JSON: &str = include_str!("../vendor/R6/R6.json");
-pub const S7_JSON: &str = include_str!("../vendor/s7/S7.json");
-pub const RLANG_JSON: &str = include_str!("../vendor/rlang/rlang.json");
-pub const CLI_JSON: &str = include_str!("../vendor/cli/cli.json");
-pub const VCTRS_JSON: &str = include_str!("../vendor/vctrs/vctrs.json");
-/// Legacy Bayesian stub document. New code should load a named package via
-/// [`load_package`]; the standalone typeshed no longer publishes a combined
-/// multi-package document.
-#[deprecated(note = "use load_package with a Bayesian package name")]
-pub const BAYES_JSON: &str = BRMS_JSON;
+const BASE_JSON: &str = include_str!("../vendor/base/base.json");
+const DPLYR_JSON: &str = include_str!("../vendor/dplyr/dplyr.json");
+const DBPLYR_JSON: &str = include_str!("../vendor/dbplyr/dbplyr.json");
+const TIDYR_JSON: &str = include_str!("../vendor/tidyr/tidyr.json");
+const TIDYSELECT_JSON: &str = include_str!("../vendor/tidyselect/tidyselect.json");
+const TESTTHAT_JSON: &str = include_str!("../vendor/testthat/testthat.json");
+const TINYTEST_JSON: &str = include_str!("../vendor/tinytest/tinytest.json");
+const RCPP_JSON: &str = include_str!("../vendor/rcpp/Rcpp.json");
+const PURRR_JSON: &str = include_str!("../vendor/purrr/purrr.json");
+const IGRAPH_JSON: &str = include_str!("../vendor/igraph/igraph.json");
+const RECIPES_JSON: &str = include_str!("../vendor/recipes/recipes.json");
+const BENCH_JSON: &str = include_str!("../vendor/bench/bench.json");
+const BOX_JSON: &str = include_str!("../vendor/box/box.json");
+const PATRICK_JSON: &str = include_str!("../vendor/patrick/patrick.json");
+const REX_JSON: &str = include_str!("../vendor/rex/rex.json");
+const RLIST_JSON: &str = include_str!("../vendor/rlist/rlist.json");
+const MIRAI_JSON: &str = include_str!("../vendor/mirai/mirai.json");
+const SURVIVAL_JSON: &str = include_str!("../vendor/survival/survival.json");
+const BRMS_JSON: &str = include_str!("../vendor/brms/brms.json");
+const POSTERIOR_JSON: &str = include_str!("../vendor/posterior/posterior.json");
+const LOO_JSON: &str = include_str!("../vendor/loo/loo.json");
+const BAYESPLOT_JSON: &str = include_str!("../vendor/bayesplot/bayesplot.json");
+const CMDSTANR_JSON: &str = include_str!("../vendor/cmdstanr/cmdstanr.json");
+const ZEALLOT_JSON: &str = include_str!("../vendor/zeallot/zeallot.json");
+const FUTURE_JSON: &str = include_str!("../vendor/future/future.json");
+const FOREACH_JSON: &str = include_str!("../vendor/foreach/foreach.json");
+const SHINY_JSON: &str = include_str!("../vendor/shiny/shiny.json");
+const WITHR_JSON: &str = include_str!("../vendor/withr/withr.json");
+const R6_JSON: &str = include_str!("../vendor/R6/R6.json");
+const S7_JSON: &str = include_str!("../vendor/s7/S7.json");
+const RLANG_JSON: &str = include_str!("../vendor/rlang/rlang.json");
+const CLI_JSON: &str = include_str!("../vendor/cli/cli.json");
+const VCTRS_JSON: &str = include_str!("../vendor/vctrs/vctrs.json");
 
 #[derive(Clone, Copy)]
 struct PackageSpec {
@@ -615,13 +610,6 @@ pub struct InjectSpec {
     pub names: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct FunctionSigWithKey {
-    pub name: String,
-    #[serde(flatten)]
-    pub sig: FunctionSig,
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Globals {
@@ -907,8 +895,7 @@ pub fn load_base_cached() -> Result<&'static Typeshed, TypeshedError> {
     // `get_or_try_init` is still unstable, so initialize eagerly via
     // `get_or_init`. The embedded JSON always parses; a failure here is
     // a build-time data bug, not a runtime condition, so panicking
-    // during first access is acceptable (and matches the existing
-    // `load_base().expect()` callers).
+    // during first access is acceptable.
     if let Some(cached) = CACHE.get() {
         return Ok(cached);
     }
@@ -934,7 +921,9 @@ pub fn load_base_cached() -> Result<&'static Typeshed, TypeshedError> {
 /// are compile-time-embedded and never change), so repeated lookups are
 /// cheap.
 pub fn load_package(name: &str) -> Option<&'static Typeshed> {
-    let _ = PACKAGE_SPECS.iter().find(|spec| spec.name == name)?;
+    if !is_known_package(name) {
+        return None;
+    }
     static PACKAGES: std::sync::OnceLock<std::collections::BTreeMap<&'static str, Typeshed>> =
         std::sync::OnceLock::new();
     let packages = PACKAGES.get_or_init(|| {
@@ -997,9 +986,9 @@ pub fn load_stub_dir_with_warnings(
     Ok((stubs, errors))
 }
 
-/// Discover the files accepted by [`load_stub_dir`]. This is public so tools
-/// such as `ry typeshed validate` use exactly the runtime loader's layouts.
-pub fn discover_stub_files(dir: &Path) -> Result<Vec<PathBuf>, TypeshedError> {
+/// Discover the files accepted by [`load_stub_dir`], in both flat and
+/// nested layouts.
+fn discover_stub_files(dir: &Path) -> Result<Vec<PathBuf>, TypeshedError> {
     let entries = std::fs::read_dir(dir).map_err(|source| TypeshedError::Io {
         path: dir.to_path_buf(),
         source,
@@ -1030,7 +1019,7 @@ pub fn discover_stub_files(dir: &Path) -> Result<Vec<PathBuf>, TypeshedError> {
 }
 
 /// Load one stub through the normative parser used by the runtime loader.
-pub fn load_stub_file(path: &Path) -> Result<Typeshed, TypeshedError> {
+fn load_stub_file(path: &Path) -> Result<Typeshed, TypeshedError> {
     load_stub_file_with_order(path).map(|(typeshed, _)| typeshed)
 }
 

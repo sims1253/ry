@@ -93,7 +93,7 @@ impl RParser {
         ))
     }
 
-    fn span(&self, n: Node, _src: &str) -> Span {
+    fn span(&self, n: Node) -> Span {
         let start = n.start_byte();
         let end = n.end_byte();
         let pos = n.start_position();
@@ -117,11 +117,11 @@ impl RParser {
             // flow analyses can recognize their terminating effect.
             "break" | "next" => Some(Stmt::Expr(Expr::Ident {
                 name: n.kind().to_string(),
-                span: self.span(n, src),
+                span: self.span(n),
             })),
             "identifier" => Some(Stmt::Expr(Expr::Ident {
                 name: text(n, src)?,
-                span: self.span(n, src),
+                span: self.span(n),
             })),
             "if_statement" => self.lower_if(n, src),
             "for_statement" => self.lower_for(n, src),
@@ -174,7 +174,7 @@ impl RParser {
         let value = if op_text.as_str() == "<<-" {
             // Re-wrap the RHS so the SuperAssign marker survives in a form
             // downstream code already understands.
-            let span = self.span(n, src);
+            let span = self.span(n);
             Expr::BinOp {
                 op: BinOpKind::SuperAssign,
                 lhs: Box::new(target.clone()),
@@ -187,7 +187,7 @@ impl RParser {
         Some(Stmt::Assign {
             target,
             value,
-            span: self.span(n, src),
+            span: self.span(n),
         })
     }
 
@@ -202,7 +202,7 @@ impl RParser {
             cond,
             then,
             else_,
-            span: self.span(n, src),
+            span: self.span(n),
         })
     }
 
@@ -229,7 +229,7 @@ impl RParser {
             cond: Box::new(cond),
             then: Box::new(then),
             else_,
-            span: self.span(n, src),
+            span: self.span(n),
         })
     }
 
@@ -240,34 +240,34 @@ impl RParser {
         let body = self.lower_block(n.child_by_field_name("body")?, src);
         Some(Stmt::For {
             name,
-            name_span: self.span(variable, src),
+            name_span: self.span(variable),
             iter,
             body,
-            span: self.span(n, src),
+            span: self.span(n),
         })
     }
 
     fn lower_while(&self, n: Node, src: &str, repeat_: bool) -> Stmt {
         let body = self.lower_block(n.child_by_field_name("body").unwrap_or(n), src);
         let cond = if repeat_ {
-            Expr::Logical(true, self.span(n, src))
+            Expr::Logical(true, self.span(n))
         } else {
             self.lower_expr(n.child_by_field_name("condition").unwrap_or(n), src)
-                .unwrap_or(Expr::Unknown(self.span(n, src)))
+                .unwrap_or(Expr::Unknown(self.span(n)))
         };
         Stmt::While {
             cond,
             body,
-            span: self.span(n, src),
+            span: self.span(n),
         }
     }
 
     fn lower_repeat(&self, n: Node, src: &str) -> Stmt {
         let body = self.lower_block(n.child_by_field_name("body").unwrap_or(n), src);
         Stmt::While {
-            cond: Expr::Logical(true, self.span(n, src)),
+            cond: Expr::Logical(true, self.span(n)),
             body,
-            span: self.span(n, src),
+            span: self.span(n),
         }
     }
 
@@ -278,7 +278,7 @@ impl RParser {
     fn lower_braced_as_stmt(&self, n: Node, src: &str) -> Stmt {
         Stmt::Expr(Expr::Block {
             body: self.lower_block(n, src),
-            span: self.span(n, src),
+            span: self.span(n),
         })
     }
 
@@ -304,7 +304,7 @@ impl RParser {
             name: None,
             params,
             body,
-            span: self.span(n, src),
+            span: self.span(n),
         })
     }
 
@@ -321,7 +321,7 @@ impl RParser {
                 out.push(Param {
                     name,
                     default,
-                    span: self.span(ch, src),
+                    span: self.span(ch),
                 });
             }
         }
@@ -330,17 +330,17 @@ impl RParser {
 
     fn lower_expr(&self, n: Node, src: &str) -> Option<Expr> {
         match n.kind() {
-            "true" => Some(Expr::Logical(true, self.span(n, src))),
-            "false" => Some(Expr::Logical(false, self.span(n, src))),
-            "null" => Some(Expr::Null(self.span(n, src))),
+            "true" => Some(Expr::Logical(true, self.span(n))),
+            "false" => Some(Expr::Logical(false, self.span(n))),
+            "null" => Some(Expr::Null(self.span(n))),
             "identifier" | "dots" => Some(Expr::Ident {
                 name: text(n, src)?,
-                span: self.span(n, src),
+                span: self.span(n),
             }),
             "integer" => {
                 let raw = text(n, src)?;
                 let stripped = raw.trim_end_matches('L').trim_end_matches('l');
-                let span = self.span(n, src);
+                let span = self.span(n);
                 // Integer literals that don't fit `i64` (e.g. `1e5L`,
                 // `0x10L` for non-hex, very large values) must NOT vanish
                 // via `?`-propagation and take the enclosing statement
@@ -355,7 +355,7 @@ impl RParser {
             }
             "float" | "nan" | "inf" => {
                 let raw = text(n, src)?;
-                let span = self.span(n, src);
+                let span = self.span(n);
                 let parsed = match raw.as_str() {
                     "Inf" | "inf" => f64::INFINITY,
                     "-Inf" | "-inf" => f64::NEG_INFINITY,
@@ -370,10 +370,10 @@ impl RParser {
                 };
                 Some(Expr::Double(parsed, span))
             }
-            "complex" => Some(Expr::Unknown(self.span(n, src))),
+            "complex" => Some(Expr::Unknown(self.span(n))),
             "string" => {
                 let raw = text(n, src)?;
-                Some(Expr::String(unquote_r_string(&raw), self.span(n, src)))
+                Some(Expr::String(unquote_r_string(&raw), self.span(n)))
             }
             "na" => {
                 let raw = text(n, src)?;
@@ -385,7 +385,7 @@ impl RParser {
                     "NA_character_" => crate::types::RType::scalar(crate::types::Mode::Character),
                     _ => crate::types::RType::unknown(),
                 };
-                Some(Expr::Na(t, self.span(n, src)))
+                Some(Expr::Na(t, self.span(n)))
             }
             "call" => self.lower_call(n, src),
             "binary_operator" => self.lower_binary(n, src),
@@ -404,7 +404,7 @@ impl RParser {
             }
             "braced_expression" => {
                 let body = self.lower_block(n, src);
-                let span = self.span(n, src);
+                let span = self.span(n);
                 if text(n, src).is_some_and(|source| {
                     let source = source.trim();
                     source.starts_with("{{") && source.ends_with("}}")
@@ -419,7 +419,7 @@ impl RParser {
             "if_statement" => self.lower_if_expr(n, src),
             _ => {
                 tracing::trace!(kind = n.kind(), "unhandled expr");
-                Some(Expr::Unknown(self.span(n, src)))
+                Some(Expr::Unknown(self.span(n)))
             }
         }
     }
@@ -430,14 +430,14 @@ impl RParser {
         Some(Expr::Call {
             func: Box::new(func),
             args,
-            span: self.span(n, src),
+            span: self.span(n),
         })
     }
 
     fn lower_index(&self, n: Node, src: &str, kind: IndexKind) -> Option<Expr> {
         // subset/subset2 share the same shape as call: `function` + `arguments`.
         let base = self.lower_expr(n.child_by_field_name("function")?, src)?;
-        let span = self.span(n, src);
+        let span = self.span(n);
         let mut args = self.lower_arguments(n.child_by_field_name("arguments"), src);
         // tree-sitter does not expose a named `argument` node for an empty
         // matrix/data-frame index. Preserve it explicitly so `x[, j]` stays
@@ -487,7 +487,7 @@ impl RParser {
     }
 
     fn lower_arg(&self, n: Node, src: &str) -> Arg {
-        let span = self.span(n, src);
+        let span = self.span(n);
         if let Some(name_node) = n.child_by_field_name("name")
             && let Some(value_node) = n.child_by_field_name("value")
         {
@@ -517,7 +517,7 @@ impl RParser {
     fn lower_binary(&self, n: Node, src: &str) -> Option<Expr> {
         let op_node = n.child_by_field_name("operator")?;
         let op_text = text(op_node, src)?;
-        let span = self.span(n, src);
+        let span = self.span(n);
         let lhs = self.lower_expr(n.child_by_field_name("lhs")?, src)?;
         let rhs = self.lower_expr(n.child_by_field_name("rhs")?, src)?;
         let op = match op_text.as_str() {
@@ -567,7 +567,7 @@ impl RParser {
                 return Some(Expr::Call {
                     func: Box::new(Expr::Ident {
                         name: op_text,
-                        span: self.span(op_node, src),
+                        span: self.span(op_node),
                     }),
                     args: vec![
                         Arg {
@@ -602,7 +602,7 @@ impl RParser {
             .child_by_field_name("operand")
             .or_else(|| n.child_by_field_name("rhs"))?;
         let expr = self.lower_expr(expr_node, src)?;
-        let span = self.span(n, src);
+        let span = self.span(n);
         let op = match op_text.as_str() {
             "-" => UnaryOpKind::Neg,
             "+" => return Some(expr),
@@ -623,7 +623,7 @@ impl RParser {
         let base = self.lower_expr(n.child_by_field_name("lhs")?, src)?;
         let rhs = n.child_by_field_name("rhs")?;
         let name = text(rhs, src).unwrap_or_default();
-        let span = self.span(n, src);
+        let span = self.span(n);
         Some(Expr::Index {
             base: Box::new(base),
             kind: IndexKind::Dollar,
@@ -652,7 +652,7 @@ impl RParser {
     /// Both `::` (exported) and `:::` (internal/unexported) are
     /// preserved as written so the original spelling is recoverable.
     fn lower_namespace(&self, n: Node, src: &str) -> Option<Expr> {
-        let span = self.span(n, src);
+        let span = self.span(n);
         let lhs = match n.child_by_field_name("lhs") {
             Some(lhs) => lhs,
             None => {
@@ -704,7 +704,7 @@ impl RParser {
         Some(Expr::Function {
             params,
             body,
-            span: self.span(n, src),
+            span: self.span(n),
         })
     }
 }
@@ -1052,15 +1052,9 @@ fn namespace_op(n: Node, src: &str) -> Option<&'static str> {
 /// `line_start` is the byte offset of the start of the line containing the
 /// column, and `byte_col` is the byte offset of the target within that line.
 pub fn byte_col_to_char_col(line: &str, byte_col: usize) -> usize {
-    let mut col = 0usize;
-    for (b, ch) in line.char_indices() {
-        if b >= byte_col {
-            break;
-        }
-        let _ = ch;
-        col += 1;
-    }
-    col
+    line.char_indices()
+        .take_while(|(b, _)| *b < byte_col)
+        .count()
 }
 
 #[cfg(test)]

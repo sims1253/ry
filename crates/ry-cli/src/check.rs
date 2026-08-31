@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 /// Input for a unified diagnostics check.
 pub struct CheckInput {
-    /// Parsed source files as (path, version, SourceFile) tuples.
-    pub files: Vec<(String, i32, Arc<ry_core::SourceFile>)>,
+    /// Parsed source files as (path, SourceFile) tuples.
+    pub files: Vec<(String, Arc<ry_core::SourceFile>)>,
     /// User typeshed stubs.
     pub user_stubs: Arc<BTreeMap<String, ry_typeshed::Typeshed>>,
     /// Workspace context (package metadata, bindings).
@@ -33,7 +33,7 @@ pub fn check_project(input: CheckInput) -> CheckOutput {
         &input.user_stubs,
     );
 
-    for (path, _, file) in &input.files {
+    for (path, file) in &input.files {
         project.add_file(path.clone(), (**file).clone());
     }
 
@@ -59,7 +59,7 @@ pub fn check_project_with_scope_capture(
         input.workspace.as_ref(),
         &input.user_stubs,
     );
-    for (path, _, file) in &input.files {
+    for (path, file) in &input.files {
         project.add_file(path.clone(), (**file).clone());
     }
     project.enable_scope_capture();
@@ -96,7 +96,7 @@ mod tests {
         let mut parser = ry_core::RParser::new().unwrap();
         let file = parser.parse("test.R", "x <- 1\n").unwrap();
         let input = CheckInput {
-            files: vec![("test.R".to_string(), 0, Arc::new(file))],
+            files: vec![("test.R".to_string(), Arc::new(file))],
             user_stubs: Arc::new(BTreeMap::new()),
             workspace: None,
         };
@@ -111,7 +111,7 @@ mod tests {
         let mut parser = ry_core::RParser::new().unwrap();
         let file = parser.parse("test.R", "undefined_var\n").unwrap();
         let input = CheckInput {
-            files: vec![("test.R".to_string(), 0, Arc::new(file))],
+            files: vec![("test.R".to_string(), Arc::new(file))],
             user_stubs: Arc::new(BTreeMap::new()),
             workspace: None,
         };
@@ -133,7 +133,7 @@ mod tests {
             let mut parser = ry_core::RParser::new().unwrap();
             let file = parser.parse("test.R", src).unwrap();
             let output = check_project(CheckInput {
-                files: vec![("test.R".to_string(), 0, Arc::new(file))],
+                files: vec![("test.R".to_string(), Arc::new(file))],
                 user_stubs: Arc::new(BTreeMap::new()),
                 workspace,
             });
@@ -167,8 +167,8 @@ mod tests {
         let file_b = parser.parse("b.R", "shared_fn(42)\n").unwrap();
         let input = CheckInput {
             files: vec![
-                ("a.R".to_string(), 0, Arc::new(file_a)),
-                ("b.R".to_string(), 0, Arc::new(file_b)),
+                ("a.R".to_string(), Arc::new(file_a)),
+                ("b.R".to_string(), Arc::new(file_b)),
             ],
             user_stubs: Arc::new(BTreeMap::new()),
             workspace: None,
@@ -191,7 +191,7 @@ mod tests {
             .parse("a.R", "f <- function(x = 1L) { y <- x\n y }\n")
             .unwrap();
         let records = check_project_with_scope_capture(CheckInput {
-            files: vec![("a.R".to_string(), 0, Arc::new(file))],
+            files: vec![("a.R".to_string(), Arc::new(file))],
             user_stubs: Arc::new(BTreeMap::new()),
             workspace: None,
         });

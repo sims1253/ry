@@ -1,5 +1,3 @@
-#![allow(clippy::collapsible_if)]
-
 //! `ry` project configuration and diagnostic-filtering pipeline.
 //!
 //! This crate houses the types and logic that both the CLI (`ry check`)

@@ -835,8 +835,12 @@ pub(crate) fn collect_forwarded_calls_in_expr(
 
 impl Checker {
     /// Cached defusing helpers. The set is derived from `fn_table.fns`, whose
-    /// quoting and defusing facts are frozen once collection ends, so it is
-    /// rebuilt only when a new collection round clears the cache.
+    /// quoting and defusing facts keep moving after collection: the fixpoint
+    /// walks (which build this cache) run before each round of quoting
+    /// propagation. The cache is therefore cleared by `collect_fns` and by
+    /// every later writer of those flags (`propagate_s3_generic_quoting`,
+    /// `propagate_forwarded_quoting`, `seed_caller_visible_signatures`), so a
+    /// rebuilt set always reflects the post-propagation table.
     fn trusted_defusers(&mut self) -> Arc<HashSet<String>> {
         if let Some(cached) = &self.trusted_defusers {
             return Arc::clone(cached);

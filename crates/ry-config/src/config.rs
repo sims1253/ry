@@ -26,12 +26,14 @@ pub const DEFAULT_OUTPUT_FORMAT: &str = "full";
 
 /// The on-disk filename ry looks for.
 pub const CONFIG_FILENAME: &str = "ry.toml";
-pub const DEFAULT_MAX_SERIALIZED_BYTES: u64 = 2 * 1024 * 1024;
+
+/// Default cap on serialized artifacts (workspace caches).
+const DEFAULT_MAX_SERIALIZED_BYTES: u64 = 2 * 1024 * 1024;
 
 /// Defaults for bounded directory discovery.
-pub const DEFAULT_INDEX_MAX_FILES: u64 = 20_000;
-pub const DEFAULT_INDEX_MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
-pub const DEFAULT_INDEX_MAX_DEPTH: u64 = 64;
+const DEFAULT_INDEX_MAX_FILES: u64 = 20_000;
+const DEFAULT_INDEX_MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
+const DEFAULT_INDEX_MAX_DEPTH: u64 = 64;
 
 /// Bounded directory discovery limits. Applies to both CLI directory
 /// discovery and LSP background indexing so the two modes discover
@@ -230,10 +232,10 @@ impl Config {
                 *dir = root.join(&*dir);
             }
         }
-        if let Some(baseline) = &mut cfg.baseline {
-            if baseline.is_relative() {
-                *baseline = root.join(&*baseline);
-            }
+        if let Some(baseline) = &mut cfg.baseline
+            && baseline.is_relative()
+        {
+            *baseline = root.join(&*baseline);
         }
         cfg.validate().map_err(|field| ConfigError::InvalidIndex {
             path: path.to_path_buf(),
@@ -412,21 +414,6 @@ impl Excludes {
     }
 }
 
-/// Compute a hash of the effective config that affects pass-1 collection
-/// output. Includes `exclude`, `packages`, `globals`, and the
-/// full serialized config so any relevant change invalidates the cache.
-pub fn config_hash(config: &Config) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    config.exclude.hash(&mut hasher);
-    config.packages.hash(&mut hasher);
-    config.globals.hash(&mut hasher);
-    if let Ok(json) = serde_json::to_string(config) {
-        json.hash(&mut hasher);
-    }
-    hasher.finish()
-}
-
 /// Errors that can occur while reading or parsing a `ry.toml`.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -447,7 +434,7 @@ pub enum ConfigError {
     /// A bounded discovery limit was set to zero, which is a
     /// configuration error.
     #[error(
-        "config file {path} has invalid value for {field}:              bounded discovery limits must be positive integers,              zero is not permitted"
+        "config file {path} has invalid value for {field}: bounded discovery limits must be positive integers, zero is not permitted"
     )]
     InvalidIndex { path: PathBuf, field: &'static str },
 }

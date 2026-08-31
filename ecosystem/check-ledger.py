@@ -4,10 +4,10 @@ its findings array.
 
 Asserts:
   - sum(classification.values()) == len(findings)
-  - sum(workstream_counts.values()) == len(findings)
+  - sum(audit_group_counts.values()) == len(findings)
   - every classification entry equals the actual label count (entries for
     categories no finding carries must be 0)
-  - every workstream_counts entry equals the actual workstream count,
+  - every audit_group_counts entry equals the actual audit group count,
     likewise
 
 Comparing per key over the union of summary and observed labels rejects
@@ -63,17 +63,17 @@ def check_ledger(path: str) -> int:
     label_counts = Counter(f.get("label") for f in findings)
     compare_summary("classification", classification, label_counts, errors)
 
-    # Check workstream counts
-    ws_counts = data.get("workstream_counts", {})
-    ws_sum = sum(ws_counts.values())
-    if ws_sum != n:
+    # Check audit group counts
+    group_counts = data.get("audit_group_counts", {})
+    group_sum = sum(group_counts.values())
+    if group_sum != n:
         errors.append(
-            f"workstream_counts sum ({ws_sum}) != findings length ({n})"
+            f"audit_group_counts sum ({group_sum}) != findings length ({n})"
         )
 
-    # Check workstream counts match exactly
-    actual_ws = Counter(f.get("workstream") for f in findings)
-    compare_summary("workstream_counts", ws_counts, actual_ws, errors)
+    # Check audit group counts match exactly
+    actual_groups = Counter(f.get("audit_group") for f in findings)
+    compare_summary("audit_group_counts", group_counts, actual_groups, errors)
 
     if errors:
         print(f"FAIL: {path}")
@@ -81,7 +81,7 @@ def check_ledger(path: str) -> int:
             print(f"  {e}")
         return 1
 
-    print(f"OK: {path} — {n} findings, classification and workstream sums match")
+    print(f"OK: {path} — {n} findings, classification and audit group sums match")
     return 0
 
 

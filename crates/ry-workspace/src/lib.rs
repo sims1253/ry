@@ -739,9 +739,12 @@ fn serialized_inventory(path: &Path, cap: u64) -> SerializedInventory {
         .unwrap_or_default();
     let stamp: Stamp = (metadata.len(), modified, cap);
     let cache = CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    // A panic in another thread poisons this mutex. The cache guards no
+    // invariant, so recover the map instead of cascading the panic into
+    // the LSP.
     if let Some(inventory) = cache
         .lock()
-        .expect("serialized cache poisoned")
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
         .get(path)
         .filter(|(cached, _)| *cached == stamp)
         .map(|(_, inventory)| inventory.clone())
@@ -755,7 +758,7 @@ fn serialized_inventory(path: &Path, cap: u64) -> SerializedInventory {
     // Replacing the entry bounds the cache by the number of distinct files.
     cache
         .lock()
-        .expect("serialized cache poisoned")
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
         .insert(path.to_path_buf(), (stamp, inventory.clone()));
     inventory
 }

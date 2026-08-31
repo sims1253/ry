@@ -105,6 +105,9 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Fixed
 
+- The language server no longer panics on every later check when a worker
+  thread panicked once: the serialized-workspace cache recovers from a
+  poisoned mutex instead of propagating the panic.
 - The test harness's async JSON-RPC decoder now applies the same 16 MiB
   message cap as the blocking decoder, rejecting oversized headers instead
   of buffering them without limit.

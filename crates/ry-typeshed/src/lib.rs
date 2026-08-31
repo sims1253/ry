@@ -215,6 +215,14 @@ pub enum JsonLength {
 }
 
 impl JsonLength {
+    /// The literal lengths that appear in the vendored stubs. A new one is
+    /// deliberate: add it to the data and here together.
+    const KNOWN: &[usize] = &[
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 15, 19, 20, 21, 24, 26, 30, 31, 32, 35, 39, 43, 47,
+        48, 49, 50, 54, 60, 64, 66, 70, 71, 72, 84, 88, 98, 100, 132, 141, 150, 153, 176, 240, 248,
+        272, 289, 468, 578, 1000, 2820,
+    ];
+
     pub fn parse(value: &str) -> Option<Self> {
         Some(match value {
             "arg0" => Self::Arg0,
@@ -225,13 +233,8 @@ impl JsonLength {
             "test" => Self::Test,
             "unknown" => Self::Unknown,
             value => {
-                const KNOWN: &[usize] = &[
-                    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 15, 19, 20, 21, 24, 26, 30, 31, 32, 35,
-                    39, 43, 47, 48, 49, 50, 54, 60, 64, 66, 70, 71, 72, 84, 88, 98, 100, 132, 141,
-                    150, 153, 176, 240, 248, 272, 289, 468, 578, 1000, 2820,
-                ];
                 let parsed = value.parse().ok()?;
-                if !KNOWN.contains(&parsed) {
+                if !Self::KNOWN.contains(&parsed) {
                     return None;
                 }
                 Self::Known(parsed)
@@ -563,8 +566,11 @@ pub enum ReturnSpec {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FunctionSig {
     pub params: Vec<ParamSpec>,
+    /// Serialized as `return`: the JSON field name is a Rust keyword.
+    #[serde(rename = "return")]
     pub return_: ReturnSpec,
     #[serde(default)]
     pub aliases: Vec<String>,
@@ -663,88 +669,26 @@ pub struct Typeshed {
     pub s3_methods: std::collections::BTreeMap<(String, String), FunctionSig>,
 }
 
-/// Wrapper to handle the JSON shape where the key "return" is reserved
-/// (it's a Rust keyword). We deserialize via a serde alias.
-mod _fwd {
-    use serde::{Deserialize, Serialize};
-    #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-    #[serde(deny_unknown_fields)]
-    pub struct _FunctionSig {
-        pub params: Vec<super::ParamSpec>,
-        #[serde(rename = "return")]
-        pub return_: super::ReturnSpec,
-        #[serde(default)]
-        pub aliases: Vec<String>,
-        #[serde(default)]
-        pub eval: std::collections::BTreeMap<String, super::EvalMode>,
-        #[serde(default)]
-        pub no_return: bool,
-        #[serde(default)]
-        pub data_mask_source: Option<String>,
-        #[serde(default)]
-        pub schema_effect: Option<super::SchemaEffect>,
-        #[serde(default)]
-        pub scope_effect: Option<super::ScopeEffect>,
-        #[serde(default)]
-        pub conditional_scope_effect: Option<super::ConditionalScopeEffect>,
-        #[serde(default)]
-        pub predicate: Option<super::PredicateSpec>,
-        #[serde(default)]
-        pub assertion: Option<super::AssertionSpec>,
-        #[serde(default)]
-        pub return_length: Option<super::ReturnLengthSpec>,
-        #[serde(default)]
-        pub higher_order: Option<super::HigherOrderSpec>,
-        #[serde(default)]
-        pub injects: Vec<super::InjectSpec>,
-        #[serde(default)]
-        pub source_relative_path_arg: Option<usize>,
-    }
-}
-
-/// JSON shape for a single S3 method entry in `base_r.json`. The
-/// `(generic, class)` pair becomes the BTreeMap key after deserialization.
+/// One `s3_methods` entry: the `(generic, class)` key that becomes the
+/// BTreeMap key, plus the shared signature shape.
+///
+/// `deny_unknown_fields` here is load-bearing. Under `flatten` serde
+/// ignores that attribute on the flattened struct, so only this one
+/// rejects an unknown field.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawS3Method {
     generic: String,
     class: String,
-    params: Vec<ParamSpec>,
-    #[serde(rename = "return")]
-    return_: ReturnSpec,
-    #[serde(default)]
-    aliases: Vec<String>,
-    #[serde(default)]
-    eval: BTreeMap<String, EvalMode>,
-    #[serde(default)]
-    no_return: bool,
-    #[serde(default)]
-    data_mask_source: Option<String>,
-    #[serde(default)]
-    schema_effect: Option<SchemaEffect>,
-    #[serde(default)]
-    scope_effect: Option<ScopeEffect>,
-    #[serde(default)]
-    conditional_scope_effect: Option<ConditionalScopeEffect>,
-    #[serde(default)]
-    predicate: Option<PredicateSpec>,
-    #[serde(default)]
-    assertion: Option<AssertionSpec>,
-    #[serde(default)]
-    return_length: Option<ReturnLengthSpec>,
-    #[serde(default)]
-    higher_order: Option<HigherOrderSpec>,
-    #[serde(default)]
-    injects: Vec<InjectSpec>,
-    #[serde(default)]
-    source_relative_path_arg: Option<usize>,
+    #[serde(flatten)]
+    signature: FunctionSig,
 }
 
 pub fn load_base() -> Result<Typeshed, TypeshedError> {
     parse_typeshed(BASE_JSON, Path::new("<embedded base>"))
 }
 
-struct RawFunctions(Vec<(String, _fwd::_FunctionSig)>);
+struct RawFunctions(Vec<(String, FunctionSig)>);
 
 impl<'de> Deserialize<'de> for RawFunctions {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -817,50 +761,11 @@ fn parse_typeshed_with_order(
         .map(|(name, _)| name.clone())
         .collect();
     for (k, v) in raw.functions.0 {
-        functions.insert(
-            k,
-            FunctionSig {
-                params: v.params,
-                return_: v.return_,
-                aliases: v.aliases,
-                eval: v.eval,
-                no_return: v.no_return,
-                data_mask_source: v.data_mask_source,
-                schema_effect: v.schema_effect,
-                scope_effect: v.scope_effect,
-                conditional_scope_effect: v.conditional_scope_effect,
-                predicate: v.predicate,
-                assertion: v.assertion,
-                return_length: v.return_length,
-                higher_order: v.higher_order,
-                injects: v.injects,
-                source_relative_path_arg: v.source_relative_path_arg,
-            },
-        );
+        functions.insert(k, v);
     }
     let mut s3_methods = std::collections::BTreeMap::new();
     for m in raw.s3_methods {
-        let key = (m.generic, m.class);
-        s3_methods.insert(
-            key,
-            FunctionSig {
-                params: m.params,
-                return_: m.return_,
-                aliases: m.aliases,
-                eval: m.eval,
-                no_return: m.no_return,
-                data_mask_source: m.data_mask_source,
-                schema_effect: m.schema_effect,
-                scope_effect: m.scope_effect,
-                conditional_scope_effect: m.conditional_scope_effect,
-                predicate: m.predicate,
-                assertion: m.assertion,
-                return_length: m.return_length,
-                higher_order: m.higher_order,
-                injects: m.injects,
-                source_relative_path_arg: m.source_relative_path_arg,
-            },
-        );
+        s3_methods.insert((m.generic, m.class), m.signature);
     }
     Ok((
         Typeshed {
@@ -1687,15 +1592,49 @@ mod tests {
     }
 
     #[test]
+    fn known_literal_lengths_mirror_the_vendored_data() {
+        fn collect(value: &serde_json::Value, lengths: &mut std::collections::BTreeSet<usize>) {
+            match value {
+                serde_json::Value::Object(fields) => {
+                    for (key, value) in fields {
+                        if key == "length"
+                            && let serde_json::Value::String(text) = value
+                            && let Ok(parsed) = text.parse::<usize>()
+                        {
+                            lengths.insert(parsed);
+                        }
+                        collect(value, lengths);
+                    }
+                }
+                serde_json::Value::Array(items) => {
+                    for item in items {
+                        collect(item, lengths);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut lengths = std::collections::BTreeSet::new();
+        for json in std::iter::once(BASE_JSON).chain(PACKAGE_SPECS.iter().map(|spec| spec.json)) {
+            collect(&serde_json::from_str(json).unwrap(), &mut lengths);
+        }
+        assert_eq!(
+            lengths.into_iter().collect::<Vec<_>>(),
+            JsonLength::KNOWN,
+            "the vendored data and `JsonLength::KNOWN` drifted apart"
+        );
+    }
+
+    #[test]
     fn unknown_return_slot_is_rejected() {
         let json = r#"{"params":[],"return":"arg_0"}"#;
-        assert!(serde_json::from_str::<_fwd::_FunctionSig>(json).is_err());
+        assert!(serde_json::from_str::<FunctionSig>(json).is_err());
     }
 
     #[test]
     fn params_accept_legacy_names_and_typed_objects() {
         let json = r#"{"params":["x",{"name":"trim","type":{"mode":"logical","length":"1"},"required":true,"default":false}],"return":"arg0"}"#;
-        let signature: _fwd::_FunctionSig = serde_json::from_str(json).unwrap();
+        let signature: FunctionSig = serde_json::from_str(json).unwrap();
         assert_eq!(signature.params[0].name, "x");
         assert!(!signature.params[0].required);
         assert_eq!(signature.params[1].name, "trim");
@@ -1707,7 +1646,7 @@ mod tests {
     #[test]
     fn function_injects_are_parsed() {
         let json = r#"{"params":["new","code"],"injects":[{"into":["code"],"strings_from":["new"],"names":["self"]}],"return":{"mode":"opaque","length":"unknown"}}"#;
-        let signature: _fwd::_FunctionSig = serde_json::from_str(json).unwrap();
+        let signature: FunctionSig = serde_json::from_str(json).unwrap();
         assert_eq!(signature.injects.len(), 1);
         assert_eq!(signature.injects[0].into, ["code"]);
         assert_eq!(signature.injects[0].strings_from, ["new"]);
@@ -1717,7 +1656,49 @@ mod tests {
     #[test]
     fn param_objects_reject_unknown_fields() {
         let json = r#"{"params":[{"name":"x","optional":true}],"return":"arg0"}"#;
-        assert!(serde_json::from_str::<_fwd::_FunctionSig>(json).is_err());
+        assert!(serde_json::from_str::<FunctionSig>(json).is_err());
+    }
+
+    #[test]
+    fn signatures_reject_unknown_fields() {
+        let json = r#"{"params":[],"return":"arg0","returns":null}"#;
+        assert!(serde_json::from_str::<FunctionSig>(json).is_err());
+    }
+
+    #[test]
+    fn s3_entries_reject_unknown_fields() {
+        let json = r#"{"schema_version":"1","package":"p","version":"test","functions":{},"s3_methods":[{"generic":"print","class":"foo","params":["x"],"return":"arg0","typo":true}]}"#;
+        let error = parse_typeshed(json, Path::new("p.json")).unwrap_err();
+        assert!(
+            error.to_string().contains("unknown field `typo`"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn s3_entries_split_the_dispatch_key_from_the_signature() {
+        let json = r#"{"schema_version":"1","package":"p","version":"test","functions":{},"s3_methods":[{"generic":"print","class":"foo","params":["x"],"no_return":true,"return":{"mode":"null","length":"0"}}]}"#;
+        let typeshed = parse_typeshed(json, Path::new("p.json")).unwrap();
+        let signature = &typeshed.s3_methods[&("print".to_string(), "foo".to_string())];
+        assert_eq!(signature.param_names().collect::<Vec<_>>(), ["x"]);
+        assert!(signature.no_return);
+    }
+
+    #[test]
+    fn signatures_round_trip_through_json() {
+        let base = load_base().expect("loads");
+        for signature in base.functions.values().chain(base.s3_methods.values()) {
+            let json = serde_json::to_string(signature).unwrap();
+            assert!(
+                json.contains("\"return\":"),
+                "field must stay `return`: {json}"
+            );
+            assert!(!json.contains("\"return_\":"), "{json}");
+            assert_eq!(
+                &serde_json::from_str::<FunctionSig>(&json).unwrap(),
+                signature
+            );
+        }
     }
 
     #[test]

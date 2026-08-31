@@ -46,7 +46,10 @@ jobs:
       - name: Performance regression tests
         run: cargo test -p ry-checker --test perf --release -- --ignored
       - name: Clippy (deny warnings)
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        # RUSTFLAGS in the env block denies warnings workflow-wide; cargo
+        # forwards it to the clippy driver, so a step-level flag is
+        # redundant.
+        run: cargo clippy --workspace --all-targets
       - name: rustfmt
         run: cargo fmt --all -- --check
 
@@ -122,8 +125,10 @@ jobs:
       - name: Oracle suite
         run: cargo test -p ry-checker --test oracle -- --ignored --nocapture
 
-  # E6: Zed extension has its own lockfile and must NOT be built with
-  # --workspace (R1 constraint). Separate job, separate lockfile.
+  # The Zed extension is excluded from the root workspace because
+  # zed_extension_api does not follow ry's MSRV (CONTRIBUTING.md), so
+  # --workspace cannot build it. It keeps its own Cargo.lock; this job
+  # builds and tests it through its own manifest.
   zed-extension:
     name: Zed extension
     runs-on: ubuntu-latest

@@ -147,9 +147,6 @@ where
     /// Mark the currently routed transcript. Pair with
     /// `published_diagnostics_after` to require a publication caused by a
     /// later action rather than reusing an already-routed one.
-    /// Mark the currently routed transcript. Pair with
-    /// `published_diagnostics_after` to require a publication caused by a
-    /// later action rather than reusing an already-routed one.
     ///
     /// This counts read order, not server-side arrival order. A message
     /// already written by the server but not yet read receives a sequence

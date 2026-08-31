@@ -38,9 +38,15 @@ rules:
   #   outputs computed over the repo's own dist-workspace.toml
   #   (pr-run-mode = "skip": the workflow has no pull_request trigger),
   #   so no untrusted input reaches these run blocks.
+  # - unpinned-images: the `container:` value is dist's runtime plan
+  #   matrix expression, which zizmor cannot expand; the image it
+  #   resolves to is digest-pinned in dist-workspace.toml.
   excessive-permissions:
     ignore:
       - release.yml
   template-injection:
+    ignore:
+      - release.yml
+  unpinned-images:
     ignore:
       - release.yml

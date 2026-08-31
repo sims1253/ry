@@ -884,22 +884,30 @@ fn r9_complementary_narrowing_joins_consistently() {
 // R10 — Pipe placeholder combinations (generated regression matrix)
 // ════════════════════════════════════════════════════════════════════════
 
-/// A regression matrix over pipe placeholder combinations. Each entry is a
-/// concrete R source exercising a different placeholder/pipe combination.
-/// The gate asserts the checker does not panic and produces a deterministic,
-/// finite diagnostic set. This is NOT a universal relation: it is a curated
-/// matrix of known pipe shapes.
+/// A regression matrix over pipe placeholder combinations. It spans both
+/// pipe forms (native `|>` and magrittr `%>%`), both placeholders (native
+/// `_`, R 4.2+; magrittr `.`), and implicit first-argument insertion. Each
+/// entry is a concrete R source exercising one shape. The gate asserts the
+/// checker does not panic and produces a deterministic, finite diagnostic
+/// set. This is NOT a universal relation: it is a curated matrix of known
+/// pipe shapes.
 #[test]
 fn r10_pipe_placeholder_matrix_no_panic_deterministic() {
     let cases: &[&str] = &[
         // Native pipe, no placeholder.
         "x <- 1L\ny <- x |> identity()\n",
+        // Native pipe with the `_` placeholder (R 4.2+).
+        "x <- 1L\ny <- x |> list(y = _)\n",
         // No pipe control: named-argument call.
         "x <- 1L\ny <- identity(z = x)\n",
         // Native pipe with no explicit extra arguments.
         "x <- 1L\ny <- x |> sum()\n",
+        // Magrittr pipe with implicit first-argument insertion.
+        "x <- 1L\ny <- x %>% sum()\n",
         // Native pipe into a data-frame call.
         "df <- data.frame(a = 1L)\nresult <- df |> nrow()\n",
+        // Magrittr pipe with the `.` placeholder.
+        "df <- data.frame(a = 1L)\nresult <- df %>% nrow(.)\n",
         // Chained pipes.
         "x <- c(1L, 2L, 3L)\ny <- x |> sum() |> identity()\n",
         // Pipe into a function with multiple arguments.

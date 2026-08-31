@@ -259,7 +259,7 @@ impl Checker {
         cond: &Expr,
         then: &Expr,
         else_: &Option<Box<Expr>>,
-        span: Span,
+        _span: Span,
         scope: &mut Scope,
     ) -> RType {
         // RY103: an `if` used in expression position still requires a
@@ -320,14 +320,12 @@ impl Checker {
         // expression-position assignment is rare and merging here would
         // require plumbing owned branch scopes back to the caller.
         let narrowing = self.extract_type_narrowing(cond, scope);
-        let (then_scope, else_scope, _narrowed) =
-            apply_narrowing(scope, &narrowing, else_.is_some());
-        let then_t = self.infer(then, &mut then_scope.clone());
+        let (mut then_scope, mut else_scope, _narrowed) = apply_narrowing(scope, &narrowing);
+        let then_t = self.infer(then, &mut then_scope);
         let else_t = match else_ {
-            Some(e) => self.infer(e, &mut else_scope.clone()),
+            Some(e) => self.infer(e, &mut else_scope),
             None => RType::new(Mode::Null, Length::Zero),
         };
-        let _ = span;
         then_t.join(else_t)
     }
 
@@ -345,7 +343,7 @@ impl Checker {
         &mut self,
         args: &[Arg],
         scope: &mut Scope,
-        span: Span,
+        _span: Span,
     ) -> RType {
         // The first argument is the selector; infer it for diagnostics.
         if let Some(first) = args.first() {
@@ -356,7 +354,6 @@ impl Checker {
         for a in args.iter().skip(1) {
             alt_types.push(self.infer(&a.value, scope));
         }
-        let _ = span;
         if alt_types.is_empty() {
             return RType::unknown();
         }
@@ -380,7 +377,7 @@ impl Checker {
         &mut self,
         args: &[Arg],
         scope: &mut Scope,
-        span: Span,
+        _span: Span,
     ) -> RType {
         let mut types: Vec<RType> = Vec::new();
         for (i, a) in args.iter().enumerate() {
@@ -402,7 +399,6 @@ impl Checker {
                 let _ = self.infer(&a.value, scope);
             }
         }
-        let _ = span;
         if types.is_empty() {
             return RType::unknown();
         }

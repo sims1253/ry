@@ -398,7 +398,7 @@ impl Checker {
 
     pub(crate) fn apply_sig(
         &mut self,
-        name: &str,
+        _name: &str,
         sig: &FunctionSig,
         arg_types: &[RType],
         args: &[Arg],
@@ -436,50 +436,46 @@ impl Checker {
                 result
             }
             ReturnSpec::Concrete(c) => {
-                let mode = match JsonMode::parse(&c.mode) {
-                    Some(JsonMode::Logical) => Mode::Logical,
-                    Some(JsonMode::Integer) => Mode::Integer,
-                    Some(JsonMode::Double) => Mode::Double,
-                    Some(JsonMode::Character) => Mode::Character,
-                    Some(JsonMode::Complex) => Mode::Complex,
-                    Some(JsonMode::Raw) => Mode::Raw,
-                    Some(JsonMode::List) => Mode::List,
-                    Some(JsonMode::Null) => Mode::Null,
-                    Some(JsonMode::Function) => Mode::Function,
-                    Some(JsonMode::Opaque) => Mode::Opaque,
-                    Some(JsonMode::Union) => {
-                        return json_rtype_to_rtype(c);
-                    }
-                    // Compound specs that pick by arg type. For v1 we
-                    // approximate "double_or_int" as the first arg's mode if
-                    // it's already integer, else double.
-                    Some(JsonMode::DoubleOrInt) => {
-                        if matches!(first.mode, Mode::Integer) {
-                            Mode::Integer
-                        } else {
-                            Mode::Double
+                let mode = if let Some(mode) = concrete_json_mode(&c.mode) {
+                    mode
+                } else {
+                    match JsonMode::parse(&c.mode) {
+                        Some(JsonMode::Union) => {
+                            return json_rtype_to_rtype(c);
                         }
-                    }
-                    // "arg0" as a mode spec: use the first param's mode.
-                    Some(JsonMode::Arg0) => first.mode,
-                    // "arg2" as a mode spec: use the third param's mode.
-                    Some(JsonMode::Arg2) => matched.get(2).map(|t| t.mode).unwrap_or(Mode::Opaque),
-                    // "yes_or_no": join of the second and third params'
-                    // modes (for `ifelse(test, yes, no)`). The join may be
-                    // a union; taking `.mode` drops the members and would
-                    // build a malformed union below, so collapse a union
-                    // mode to opaque.
-                    Some(JsonMode::YesOrNo) => {
-                        let yes = matched.get(1).cloned().unwrap_or(RType::unknown());
-                        let no = matched.get(2).cloned().unwrap_or(RType::unknown());
-                        let joined = yes.join(no).mode;
-                        if matches!(joined, Mode::Union) {
-                            Mode::Opaque
-                        } else {
-                            joined
+                        // Compound specs that pick by arg type. For v1 we
+                        // approximate "double_or_int" as the first arg's mode
+                        // if it's already integer, else double.
+                        Some(JsonMode::DoubleOrInt) => {
+                            if matches!(first.mode, Mode::Integer) {
+                                Mode::Integer
+                            } else {
+                                Mode::Double
+                            }
                         }
+                        // "arg0" as a mode spec: use the first param's mode.
+                        Some(JsonMode::Arg0) => first.mode,
+                        // "arg2" as a mode spec: use the third param's mode.
+                        Some(JsonMode::Arg2) => {
+                            matched.get(2).map(|t| t.mode).unwrap_or(Mode::Opaque)
+                        }
+                        // "yes_or_no": join of the second and third params'
+                        // modes (for `ifelse(test, yes, no)`). The join may be
+                        // a union; taking `.mode` drops the members and would
+                        // build a malformed union below, so collapse a union
+                        // mode to opaque.
+                        Some(JsonMode::YesOrNo) => {
+                            let yes = matched.get(1).cloned().unwrap_or(RType::unknown());
+                            let no = matched.get(2).cloned().unwrap_or(RType::unknown());
+                            let joined = yes.join(no).mode;
+                            if matches!(joined, Mode::Union) {
+                                Mode::Opaque
+                            } else {
+                                joined
+                            }
+                        }
+                        _ => Mode::Opaque,
                     }
-                    None => Mode::Opaque,
                 };
                 // The arg-N mode specs copy a param's mode verbatim; if a
                 // caller passes a union there, that mode is `Mode::Union`
@@ -515,7 +511,6 @@ impl Checker {
                     arg_types,
                 )
                 .unwrap_or(length);
-                let _ = name;
                 let mut result = RType::new(mode, length);
                 if !c.class.is_empty() {
                     let refs: Vec<&str> = c.class.iter().map(String::as_str).collect();

@@ -20,7 +20,7 @@ replacement for `lintr`’s style rules. It focuses on type- and
 scope-driven diagnostics that need a whole-program view.
 
 > [!IMPORTANT]
-> ry is, as of now, mostly a playground for GLM and me, meaning large portions of the project are ai generated.
+> ry is, as of now, mostly a playground for GLM and me, meaning large portions of the project are AI-generated.
 > Should you like to change that, I'd love for someone to join in on the fun.
 
 ## Install

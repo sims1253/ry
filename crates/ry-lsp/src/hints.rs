@@ -42,9 +42,8 @@ fn collect_inlay_hints_from_stmt(
     hints: &mut Vec<InlayHint>,
 ) {
     match stmt {
-        // Destructure the target directly so clippy's `collapsible_match`
-        // lint stays quiet: only bare-identifier targets become hints.
-        // Complex targets (`df$col <- 1`, `x[1] <- 2`) fall through to
+        // Match only bare-identifier targets in this arm. Complex
+        // targets (`df$col <- 1`, `x[1] <- 2`) fall through to
         // the second `Stmt::Assign` arm below and contribute nothing.
         Stmt::Assign {
             target: Expr::Ident { name, span },

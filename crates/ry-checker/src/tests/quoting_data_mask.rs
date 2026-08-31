@@ -268,6 +268,50 @@ fn unloaded_rlang_helpers_evaluate_their_arguments() {
 }
 
 #[test]
+fn all_vars_goes_through_dplyr_data_mask_metadata() {
+    // dplyr's stub declares all_vars' `expr` parameter as data_mask. The
+    // stub path must resolve that metadata for qualified and loaded
+    // calls; no hardcoded fallback entry shadows it.
+    let qualified = check("dplyr::all_vars(unbound_col == other_col)\n");
+    assert!(
+        qualified
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "a data-masked expression must not resolve columns lexically: {qualified:?}"
+    );
+
+    let loaded = check("library(dplyr)\nall_vars(unbound_col == other_col)\n");
+    assert!(
+        loaded.iter().all(|diagnostic| diagnostic.code != "RY010"),
+        "a loaded dplyr call must reach the same mask metadata: {loaded:?}"
+    );
+
+    // Data-mask inference still runs on the argument: a literal type
+    // error inside the masked expression fires, where the removed
+    // fallback skipped the argument entirely.
+    let checked = check("dplyr::all_vars(\"a\" + 1L)\n");
+    assert!(
+        checked.iter().any(|diagnostic| diagnostic.code == "RY040"),
+        "the masked expression must still be inferred: {checked:?}"
+    );
+}
+
+#[test]
+fn unloaded_all_vars_evaluates_its_argument() {
+    // Without library(dplyr) and without a package qualifier, no stub
+    // resolves all_vars. Its argument is an ordinary read, so an
+    // unbound name reports RY010. dplyr metadata requires dplyr; the
+    // removed fallback entry hid that boundary.
+    let diagnostics = check("all_vars(unbound_name)\n");
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "RY010" && diagnostic.message.contains("`unbound_name`")
+        }),
+        "an unresolved all_vars call must evaluate its argument: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn alist_stub_metadata_quotes_dots_and_keeps_the_list_type() {
     // The base stub declares alist's dots as quoted_expression. The
     // stub path must suppress RY010 and keep the list result that the

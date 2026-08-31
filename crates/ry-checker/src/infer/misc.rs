@@ -1640,10 +1640,11 @@ pub(crate) fn standalone_check_provably_rejects(actual: &RType, expected: &RType
 /// Whether `function_name` is an S3 generic whose stub parameter types
 /// method dispatch can defeat: a classed or NULL argument may route to a
 /// method that accepts it, so RY092 stays quiet. The names come from the
-/// same `typeshed.globals.s3_generics` list the dispatch path in
-/// `infer_call` consults. The fallback keeps five names the stub list
-/// omits: `round`, `mean`, `log`, `sqrt`, and `exp`. r-typeshed adding
-/// them lets the fallback shrink (issue #41).
+/// same two sources the dispatch path in `infer_call` consults:
+/// `typeshed.globals.s3_generics` and `s3_group_generic` (the Math and
+/// Summary groups, which cover `round`, `log`, `sqrt`, and `exp`). The
+/// fallback keeps one name both sources omit: `mean`. r-typeshed adding
+/// it lets the fallback shrink (issue #41).
 fn generic_argument_may_dispatch(
     globals: &ry_typeshed::Globals,
     function_name: &str,
@@ -1653,7 +1654,8 @@ fn generic_argument_may_dispatch(
         .s3_generics
         .iter()
         .any(|generic| generic == function_name)
-        || matches!(function_name, "round" | "mean" | "log" | "sqrt" | "exp");
+        || crate::higher_order::s3_group_generic(function_name).is_some()
+        || function_name == "mean";
     generic && (actual.class.has_known_class() || actual.mode == Mode::Null)
 }
 

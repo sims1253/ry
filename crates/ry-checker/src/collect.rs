@@ -826,9 +826,8 @@ fn signature_captures_promises(signature: &FunctionSig, dots: bool) -> bool {
 /// function name -> (named-parameter capture, `...` capture). Built
 /// lazily on first use; `is_promise_capture` consults it for
 /// unqualified names instead of re-scanning every package's function
-/// table on every call-site check. The consistency guard in `tests`
-/// reads it to keep the hardcoded NSE fallback honest.
-pub(crate) fn promise_capture_index() -> &'static std::collections::HashMap<String, (bool, bool)> {
+/// table on every call-site check.
+fn promise_capture_index() -> &'static std::collections::HashMap<String, (bool, bool)> {
     static INDEX: std::sync::OnceLock<std::collections::HashMap<String, (bool, bool)>> =
         std::sync::OnceLock::new();
     INDEX.get_or_init(|| {

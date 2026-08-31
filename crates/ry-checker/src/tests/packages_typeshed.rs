@@ -311,24 +311,54 @@ fn function_alias_semantics_are_cleared_by_reassignment() {
 }
 
 #[test]
-fn nse_symbol_fallback_does_not_overlap_stub_promise_capture() {
+fn nse_symbol_fallback_does_not_overlap_stub_eval_modes() {
     // `is_nse_symbol_fn` is the hardcoded half of the NSE knowledge. The
-    // stub promise-capture index is the source of truth. A member listed
-    // in both is a dead fallback entry: the stub path already suppresses
-    // RY010 for it. Delete the member so the stubs stay authoritative
-    // (issue #41).
-    let stub_covered = crate::collect::promise_capture_index();
-    let overlap: Vec<&str> = crate::infer::NSE_SYMBOL_FNS
+    // stub `eval` metadata is the source of truth. The fallback
+    // intercepts before signature resolution, so a member listed in both
+    // shadows its stub silently. Delete the member so the stubs stay
+    // authoritative (issue #41).
+    //
+    // `quoted_expression`, `captures_promise`, and `quoted_symbol` skip
+    // ordinary argument inference; `data_mask` and `tidy_select` still
+    // infer arguments under a mask. Both kinds overlap the fallback. A
+    // `data_mask`/`tidy_select` member may stay only when listed in
+    // `data_mask_exemptions` with a reason. The list is a local test
+    // fixture, not checker knowledge, so it stays out of the semantic
+    // list registry.
+    let data_mask_exemptions: &[&str] = &[
+        // Empty today. dplyr's stub declares all_vars' `expr` as
+        // data_mask, so all_vars left the fallback list.
+    ];
+    use ry_typeshed::EvalMode;
+    let mut stub_eval = std::collections::HashMap::new();
+    let mut add_typeshed = |typeshed: &ry_typeshed::Typeshed| {
+        for (name, signature) in &typeshed.functions {
+            for mode in signature.eval.values() {
+                if *mode != EvalMode::Normal {
+                    stub_eval.insert(name.clone(), *mode);
+                }
+            }
+        }
+    };
+    if let Ok(base) = ry_typeshed::load_base_cached() {
+        add_typeshed(base);
+    }
+    for package in ry_typeshed::known_packages() {
+        if let Some(typeshed) = ry_typeshed::load_package(package) {
+            add_typeshed(typeshed);
+        }
+    }
+    let overlap: Vec<String> = crate::infer::NSE_SYMBOL_FNS
         .iter()
-        .copied()
-        .filter(|name| {
-            stub_covered
-                .get(*name)
-                .is_some_and(|&(named, dots)| named || dots)
+        .filter_map(|name| {
+            let mode = stub_eval.get(*name)?;
+            let exempted = matches!(mode, EvalMode::DataMask | EvalMode::TidySelect)
+                && data_mask_exemptions.contains(name);
+            (!exempted).then(|| format!("{name} ({mode:?})"))
         })
         .collect();
     assert!(
         overlap.is_empty(),
-        "is_nse_symbol_fn members already covered by stub promise-capture metadata; delete them: {overlap:?}"
+        "is_nse_symbol_fn members already covered by stub eval metadata; delete them or add a documented exemption: {overlap:?}"
     );
 }

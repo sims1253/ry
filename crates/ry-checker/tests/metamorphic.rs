@@ -933,12 +933,27 @@ fn r10_pipe_placeholder_matrix_no_panic_deterministic() {
     }
 
     // Equivalent formulations: `x |> f()` should produce the same diagnostics
-    // as `f(x)` when f is a simple function.
+    // as `f(x)` when f is a simple function. The same holds for magrittr
+    // `%>%` (implicit insertion and the `.` placeholder) and the native `_`
+    // placeholder: each desugars to the direct call.
     let pairs = [
+        // Native pipe, no placeholder.
         ("x <- 1L\ny <- x |> sum()\n", "x <- 1L\ny <- sum(x)\n"),
         (
             "x <- 1L\ny <- x |> identity()\n",
             "x <- 1L\ny <- identity(x)\n",
+        ),
+        // Magrittr pipe with implicit first-argument insertion.
+        ("x <- 1L\ny <- x %>% sum()\n", "x <- 1L\ny <- sum(x)\n"),
+        // Magrittr pipe with the `.` placeholder.
+        (
+            "df <- data.frame(a = 1L)\nresult <- df %>% nrow(.)\n",
+            "df <- data.frame(a = 1L)\nresult <- nrow(df)\n",
+        ),
+        // Native pipe with the `_` placeholder (R 4.2+).
+        (
+            "x <- 1L\ny <- x |> list(y = _)\n",
+            "x <- 1L\ny <- list(y = x)\n",
         ),
     ];
     for (piped, direct) in &pairs {

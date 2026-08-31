@@ -1,4 +1,4 @@
-//! Configuration-refresh behavior for the LSP.
+//! Configuration-refresh and enable behavior for the LSP.
 //!
 //! `did_change_configuration_refreshes_cached_filters` verifies that a
 //! `workspace/didChangeConfiguration` raising `ry.minConfidence` changes the
@@ -7,6 +7,10 @@
 //! outside the publish loop on every configuration change; without that
 //! refresh a stale cached value would persist until a filesystem rebuild or
 //! server restart.
+//!
+//! `enable_false_skips_diagnostics_for_the_folder` verifies that a folder
+//! whose settings set `enable: false` is skipped: opening a file there
+//! publishes an empty diagnostics set instead of check results.
 
 use ry_testkit::{FixtureProject, LspSession, file_uri};
 use serde_json::{Value, json};
@@ -217,5 +221,69 @@ fn did_change_configuration_pull_applies_per_folder_settings() {
             "RY090 should be suppressed after the pull raises minConfidence; got: {:?}",
             after["params"]["diagnostics"]
         );
+    })
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// `enable: false` skips analysis and publishing for the folder
+// ════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn enable_false_skips_diagnostics_for_the_folder() {
+    run(async {
+        let fixture = FixtureProject::empty().unwrap();
+        // RY090 would fire at the default confidence when enabled.
+        fixture
+            .write_file("R/diag.R", "z <- length(xx = 1L)\n")
+            .unwrap();
+
+        let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
+        let (client_reader, client_writer) = tokio::io::split(client_stream);
+        let (server_reader, server_writer) = tokio::io::split(server_stream);
+        let server = tokio::spawn(async move {
+            let _ = ry_lsp::run_with(server_reader, server_writer).await;
+        });
+        let mut session = LspSession::new(client_reader, client_writer);
+        let root_uri = file_uri(fixture.root()).unwrap();
+        session
+            .request(
+                "initialize",
+                json!({
+                    "processId": null,
+                    "rootUri": root_uri,
+                    "capabilities": {},
+                    "initializationOptions": {
+                        "settings": [{"enable": false}],
+                        "globalSettings": {}
+                    },
+                    "workspaceFolders": [{"uri": root_uri, "name": "fixture"}]
+                }),
+            )
+            .await
+            .unwrap();
+        session.notify("initialized", json!({})).await.unwrap();
+
+        let diag_uri = file_uri(&fixture.path("R/diag.R")).unwrap();
+        let mark = session.publication_mark();
+        session
+            .open(&diag_uri, 1, "z <- length(xx = 1L)\n")
+            .await
+            .unwrap();
+        let publish = session
+            .published_diagnostics_after(&diag_uri, mark)
+            .await
+            .unwrap();
+
+        let count = publish["params"]["diagnostics"]
+            .as_array()
+            .map(|diags| diags.len())
+            .unwrap_or(0);
+        assert_eq!(
+            count, 0,
+            "enable: false must publish an empty diagnostics set; got: {publish}"
+        );
+        let _ = session.shutdown().await;
+        drop(session);
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(3), server).await;
     })
 }

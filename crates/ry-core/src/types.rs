@@ -456,14 +456,6 @@ impl RType {
         }
     }
 
-    /// Return a copy of `self` with the union members replaced.
-    pub fn with_members(self, members: Arc<[RType]>) -> Self {
-        RType {
-            members: Some(members),
-            ..self
-        }
-    }
-
     /// Checked constructor for a `Mode::Union` type. All union construction
     /// must go through here so a malformed union (`mode == Union`,
     /// `members == None`) cannot be built. Downstream inference relies on

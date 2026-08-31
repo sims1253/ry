@@ -121,6 +121,12 @@ suppression actions — and fixes a parser panic plus several editor issues.
 - **Oversized-file warning no longer contains stray spaces**: the
   `index.max-file-bytes` warning printed a wide run of stray spaces
   inside the sentence. The message now uses single spaces.
+- The language server no longer panics on every later check when a worker
+  thread panicked once: the serialized-workspace cache recovers from a
+  poisoned mutex instead of propagating the panic.
+- The test harness's async JSON-RPC decoder now applies the same 16 MiB
+  message cap as the blocking decoder, rejecting oversized headers instead
+  of buffering them without limit.
 - Parsing no longer panics when a string literal ends inside a multi-byte
   UTF-8 character.
 - Re-running the checker on a single file no longer leaks inference state

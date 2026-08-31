@@ -503,183 +503,150 @@ fn ry032_standing_case_parameter_is_not_literal_only_actionable() {
 // Deliverable 3: Verdict enforcement
 // =======================================================================
 
-#[allow(dead_code)]
+// Evidence rationale for each verdict lives in
+// `docs/corpus/rule-evidence-0.9.md`; only the enforced fields are
+// kept here.
 struct Verdict {
     code: &'static str,
     verdict: &'static str,
-    rationale: &'static str,
 }
 
 const VERDICTS: &[Verdict] = &[
     Verdict {
         code: "RY000",
         verdict: "keep",
-        rationale: "True syntax errors; 2 TP / 4 FP.",
     },
     Verdict {
         code: "RY001",
         verdict: "keep",
-        rationale: "Valid claim; 6 TP / 23 FP. Lift-reachable.",
     },
     Verdict {
         code: "RY002",
         verdict: "keep",
-        rationale: "Valid claim; 0 TP / 3 FP. Param-unreachable for c() defaults.",
     },
     Verdict {
         code: "RY003",
         verdict: "default-off",
-        rationale: "Style advice; 0 corpus. Already Info, disabled by enabled_by_default.",
     },
     Verdict {
         code: "RY010",
         verdict: "keep",
-        rationale: "Core reachability; 4 TP / 472 FP from resolution gaps.",
     },
     Verdict {
         code: "RY020",
         verdict: "keep",
-        rationale: "Valid claim; 0 corpus. Lift-reachable.",
     },
     Verdict {
         code: "RY021",
         verdict: "keep",
-        rationale: "Valid claim; 0 corpus. Lift-reachable.",
     },
     Verdict {
         code: "RY030",
         verdict: "keep",
-        rationale: "Valid claim; 0 TP / 25 FP from typeshed gaps.",
     },
     Verdict {
         code: "RY031",
         verdict: "keep",
-        rationale: "Valid claim; 0 TP / 2 FP. Known gap. Lift-reachable.",
     },
     Verdict {
         code: "RY032",
         verdict: "keep",
-        rationale: "Standing case; 1 TP / 47 FP. Literal-only by policy.",
     },
     Verdict {
         code: "RY033",
         verdict: "keep",
-        rationale: "Valid claim; 6 TP / 35 FP. Lift-reachable.",
     },
     Verdict {
         code: "RY034",
         verdict: "keep",
-        rationale: "Valid claim; 3 TP / 0 FP. Consistent under R7.",
     },
     Verdict {
         code: "RY040",
         verdict: "keep",
-        rationale: "Valid claim; 0 TP / 23 FP. Lift-reachable.",
     },
     Verdict {
         code: "RY041",
         verdict: "keep",
-        rationale: "Valid claim; 0 corpus.",
     },
     Verdict {
         code: "RY042",
         verdict: "keep",
-        rationale: "Valid claim; 0 corpus.",
     },
     Verdict {
         code: "RY050",
         verdict: "keep",
-        rationale: "Valid claim; 0 corpus.",
     },
     Verdict {
         code: "RY060",
         verdict: "keep",
-        rationale: "Valid claim; 0 TP / 5 FP.",
     },
     Verdict {
         code: "RY061",
         verdict: "keep",
-        rationale: "Valid claim; 0 TP / 21 FP.",
     },
     Verdict {
         code: "RY070",
         verdict: "keep",
-        rationale: "Valid claim; 2 TP / 6 FP.",
     },
     Verdict {
         code: "RY080",
         verdict: "keep",
-        rationale: "Valid claim; 0 TP / 2 FP.",
     },
     Verdict {
         code: "RY090",
         verdict: "keep",
-        rationale: "Valid syntactic claim; 0 TP / 4 FP.",
     },
     Verdict {
         code: "RY091",
         verdict: "keep",
-        rationale: "Valid claim; 1 TP / 4 FP.",
     },
     Verdict {
         code: "RY092",
         verdict: "keep",
-        rationale: "Valid claim; 0 TP / 3 FP.",
     },
     Verdict {
         code: "RY093",
         verdict: "keep",
-        rationale: "Valid claim; 4 TP / 0 FP. Consistent under R7.",
     },
     Verdict {
         code: "RY094",
         verdict: "keep",
-        rationale: "Valid claim; 0 corpus.",
     },
     Verdict {
         code: "RY096",
         verdict: "keep",
-        rationale: "Valid claim; 0 corpus.",
     },
     Verdict {
         code: "RY097",
         verdict: "keep",
-        rationale: "CLI file heuristic; 0 corpus. Probe via CLI exclusion.",
     },
     Verdict {
         code: "RY098",
         verdict: "keep",
-        rationale: "Valid claim; 0 TP / 1 FP.",
     },
     Verdict {
         code: "RY099",
         verdict: "keep",
-        rationale: "Valid claim; 0 corpus. Consistent under R7.",
     },
     Verdict {
         code: "RY100",
         verdict: "keep",
-        rationale: "Valid claim; 4 TP / 0 FP. Consistent under R7.",
     },
     Verdict {
         code: "RY101",
         verdict: "keep",
-        rationale: "Valid claim; 0 corpus.",
     },
     Verdict {
         code: "RY102",
         verdict: "keep",
-        rationale: "Valid claim; 1 TP / 0 FP.",
     },
     Verdict {
         code: "RY103",
         verdict: "keep",
-        rationale: "Valid claim; 2 TP / 0 FP. Consistent under R7.",
     },
     Verdict {
         code: "RY105",
         verdict: "keep",
-        rationale: "Valid claim; 1 TP / 11 FP.",
     },
 ];
 

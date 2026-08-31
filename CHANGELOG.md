@@ -105,6 +105,13 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Fixed
 
+- **`-vv` now enables trace logging**: the CLI mapped every verbosity
+  level above `-v` to `ry=debug`, so the trace tier promised by the help
+  text never activated. `-vv` and higher now set `ry=trace`; `-v` and the
+  quiet flags are unchanged.
+- **Oversized-file warning no longer contains stray spaces**: the
+  `index.max-file-bytes` warning printed a wide run of stray spaces
+  inside the sentence. The message now uses single spaces.
 - Parsing no longer panics when a string literal ends inside a multi-byte
   UTF-8 character.
 - Re-running the checker on a single file no longer leaks inference state

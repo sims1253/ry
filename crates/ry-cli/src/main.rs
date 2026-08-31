@@ -380,7 +380,7 @@ fn init_tracing(verbose: u8, quiet: u8) {
         match verbose {
             0 => "ry=warn",
             1 => "ry=info",
-            _ => "ry=debug",
+            _ => "ry=trace",
         }
     };
     let _ = tracing_subscriber::fmt()
@@ -457,16 +457,8 @@ fn render_diagnostics(
     ry_checker::format::render_with_color(diagnostics, format, srcs, color)
 }
 
-/// Compute the path of `file` relative to `root`, as a forward-slash
-/// string suitable for matching against `ry.toml` `exclude` patterns.
-///
-/// Both inputs are first canonicalized so that a relative `ry check
-/// ./src` invocation still matches patterns written against the
-/// project-relative form (e.g. `src/**`). If canonicalization fails
-/// (e.g. a missing path), we fall back to a best-effort strip of the
-/// root prefix from the literal path, and finally to the file's full
-/// display string, so exclude matching degrades gracefully rather than
-/// panicking.
+/// Drive `ry check`: merge the CLI flags with `ry.toml`, discover the
+/// R files, check them once, and keep re-checking in watch mode.
 #[allow(clippy::too_many_arguments)]
 fn run_check(
     paths: Vec<PathBuf>,
@@ -656,12 +648,7 @@ fn run_check(
         sort_and_deduplicate_paths(&mut current_paths);
 
         // Check for any file modification or file set change.
-        let mut changed = current_paths.len() != all_paths.len();
-        if !changed {
-            if current_paths != all_paths {
-                changed = true;
-            }
-        }
+        let mut changed = current_paths != all_paths;
         if !changed {
             for p in &current_paths {
                 if let Ok(meta) = std::fs::metadata(p) {
@@ -1001,10 +988,9 @@ fn run_check_once(
 
     let rendered = render_diagnostics(&all_diagnostics, format, &srcs, color);
     if !rendered.is_empty() {
-        // Diagnostics go to STDOUT (matches ruff/ty): `ry check > log`
+        // Diagnostics go to stdout (matches ruff/ty): `ry check > log`
         // captures the diagnostics, while the summary line and watch-
-        // mode chrome go to stderr. Machine formats (json/github/...)
-        // already used stdout; human formats (concise/full) now do too.
+        // mode chrome go to stderr.
         print!("{}", rendered);
     }
 
@@ -1044,7 +1030,6 @@ fn sort_and_deduplicate_diagnostics(diagnostics: &mut Vec<ry_checker::Diagnostic
                 .then(a.span.start.cmp(&b.span.start))
                 .then(a.span.end.cmp(&b.span.end))
                 .then(a.code.cmp(b.code))
-                .then(a.confidence.cmp(&b.confidence))
                 .then(a.severity.as_str().cmp(b.severity.as_str()))
                 .then(a.message.cmp(&b.message)),
         )
@@ -1252,7 +1237,7 @@ fn report_truncation(report: &ry_workspace::TruncationReport, root: &std::path::
     }
     for (path, size) in &report.oversized_files {
         eprintln!(
-            "ry: warning: {} ({} bytes) exceeds the per-file size cap              (index.max-file-bytes) and was not discovered",
+            "ry: warning: {} ({} bytes) exceeds the per-file size cap (index.max-file-bytes) and was not discovered",
             path.display(),
             size
         );

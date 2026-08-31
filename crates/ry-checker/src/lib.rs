@@ -36,8 +36,9 @@ pub use diagnostics::{
     parse_suppressions_from_comments,
 };
 
-// Configuration-driven filter builders moved here from ry-config
-// to break the ry-config → ry-checker dependency.
+// These builders construct a `SeverityFilter`, a checker type, from a
+// config's rule lists. They live here because ry-checker depends on
+// ry-config; the reverse direction would be a cycle.
 
 /// Build a [`SeverityFilter`] from the `error`, `warn`, and `ignore`
 /// rule lists in a config.

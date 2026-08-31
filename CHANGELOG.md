@@ -59,6 +59,18 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Changed
 
+- **`enable` is honored per folder**: a workspace folder whose settings
+  set `enable: false` is skipped: the language server publishes no
+  diagnostics and returns no inlay hints for it. The setting was
+  accepted and ignored before. The server also stops modeling the five
+  settings it never read (`path`, `importStrategy`,
+  `addExecutableToTerminalPath`, `logLevel`, `checkTestFixtures`); the
+  editor extensions own those, and the server ignores unknown settings
+  keys either way.
+- **Less work per `if` during checking**: a condition that proves no type
+  refinement skips the narrowing machinery, and merging branch bindings no
+  longer copies the branch scopes. Diagnostics and inferred types are
+  unchanged.
 - **JSON diagnostics no longer suggest fixes**: the `fix` payload is gone
   from `ry check --output-format json` and from the `data` field of
   published editor diagnostics. Nothing ever applied these suggestions —
@@ -105,6 +117,14 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Fixed
 
+- **`-vv` now enables trace logging**: the CLI mapped every verbosity
+  level above `-v` to `ry=debug`, so the trace tier promised by the help
+  text never activated. `-vv` and higher now set `ry=trace`; `-v` and the
+  quiet flags are unchanged. The help text also claimed `-v` selects
+  debug; it now says info, matching the filter `init_tracing` applies.
+- **Oversized-file warning no longer contains stray spaces**: the
+  `index.max-file-bytes` warning printed a wide run of stray spaces
+  inside the sentence. The message now uses single spaces.
 - The language server no longer panics on every later check when a worker
   thread panicked once: the serialized-workspace cache recovers from a
   poisoned mutex instead of propagating the panic.
@@ -126,6 +146,15 @@ suppression actions — and fixes a parser panic plus several editor issues.
   in the release workflow, made its version and core-tag inputs explicit,
   replaced the empty pull-request build workflow with a required one, and
   standardized the publisher identity to `sims1253.ry`.
+- **Corrected rule table in `docs/editor-defaults.md`**: RY020, RY030,
+  RY040, and RY090 now carry their registry names (`unary-minus-type`,
+  `invalid-comparison`, `invalid-arithmetic`, `unknown-argument`). RY032
+  is documented as the enabled `scalar-logical-length` warning it is, with
+  its measured 1 TP / 47 FP, instead of a disabled "test fixture" rule.
+  RY003 is documented as the only default-off rule. The baseline-findings
+  table now points at `docs/corpus/0.9-release-evidence.md` instead of
+  duplicating it, and the drift check that guards the README rule table
+  (#107) now also guards this table.
 
 ## [0.8.0] - 2026-08-04
 
@@ -408,6 +437,8 @@ reported diagnostics.
 - RY100 subsumes the condition-type diagnostic on the same span (no
   double reporting).
 
+## [0.5.0] - 2026-07-16
+
 Driven by the ranks-301-500 audit (ry 0.4.0 on the top-500 CRAN packages).
 Minor bump: RY050's dispatch semantics, RY097's collapse criteria, and the
 new binding/quoting/narrowing rules intentionally change reported
@@ -461,6 +492,8 @@ diagnostics between versions.
   `coef.glm`. Consequently RY050 can no longer fire for generics that
   have a `.default` method (such as `print`) — dispatch always succeeds
   for them.
+
+## [0.4.1] - 2026-07-14
 
 ### Removed
 

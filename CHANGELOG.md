@@ -120,6 +120,15 @@ suppression actions — and fixes a parser panic plus several editor issues.
   in the release workflow, made its version and core-tag inputs explicit,
   replaced the empty pull-request build workflow with a required one, and
   standardized the publisher identity to `sims1253.ry`.
+- **Corrected rule table in `docs/editor-defaults.md`**: RY020, RY030,
+  RY040, and RY090 now carry their registry names (`unary-minus-type`,
+  `invalid-comparison`, `invalid-arithmetic`, `unknown-argument`). RY032
+  is documented as the enabled `scalar-logical-length` warning it is, with
+  its measured 1 TP / 47 FP, instead of a disabled "test fixture" rule.
+  RY003 is documented as the only default-off rule. The baseline-findings
+  table now points at `docs/corpus/0.9-release-evidence.md` instead of
+  duplicating it, and the drift check that guards the README rule table
+  (#107) now also guards this table.
 
 ## [0.8.0] - 2026-08-04
 

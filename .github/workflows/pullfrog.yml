@@ -26,7 +26,16 @@ jobs:
         with:
           fetch-depth: 1
       - name: Run agent
-        uses: pullfrog/pullfrog@v0
+        # @v0 by recorded choice, not a SHA: pullfrog documents this action
+        # as a thin bootstrap — the agent resolves from npm at runtime, so
+        # the ref pins only action.yml and the `post:` cleanup step, and a
+        # SHA buys no reproducibility. The vendor also endorses SHA +
+        # Dependabot for security policies; this repo runs weekly Dependabot
+        # on github-actions and takes the vendor-recommended moving tag,
+        # accepting tag-move exposure on the wrapper (bounded by the agent's
+        # own short-lived OIDC tokens). See
+        # https://docs.pullfrog.com/versioning.
+        uses: pullfrog/pullfrog@v0 # zizmor: ignore[unpinned-uses]
         with:
           prompt: ${{ inputs.prompt }}
         env:

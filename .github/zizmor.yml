@@ -14,14 +14,18 @@ rules:
     ignore:
       - pullfrog.yml
 
-  # unpinned-uses, pullfrog.yml: the vendor documents the action as a thin
-  # bootstrap — the agent resolves from npm at runtime, so the ref pins only
-  # action.yml and the `post:` cleanup step. A commit SHA freezes that
-  # cleanup step while the agent keeps moving, which pullfrog warns can fail
-  # every run after the agent's work is done, and buys no reproducibility
-  # because the reviewed code is never the wrapper. `@v0` tracks the wrapper
-  # contract, which is the vendor's recommendation. See
-  # https://docs.pullfrog.com/versioning.
+  # unpinned-uses, pullfrog.yml: a deliberate, recorded choice to use
+  # the vendor-recommended moving tag for this one action. Pullfrog
+  # documents the action as a thin bootstrap — the agent resolves from
+  # npm at runtime, so a ref pins only action.yml and the `post:`
+  # cleanup step, and a SHA therefore buys little reproducibility. The
+  # vendor also endorses SHA + Dependabot for security policies, and
+  # this repo runs weekly Dependabot on github-actions, so that option
+  # stays open if this choice is revisited. The accepted trade-off of
+  # @v0 is tag-move exposure on the wrapper, bounded by the agent's
+  # token model: it mints short-lived OIDC installation tokens and
+  # never consumes the workflow's GITHUB_TOKEN (see artipacked above).
+  # See https://docs.pullfrog.com/versioning.
   unpinned-uses:
     ignore:
       - pullfrog.yml

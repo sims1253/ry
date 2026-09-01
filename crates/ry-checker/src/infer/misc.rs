@@ -443,6 +443,12 @@ pub(crate) fn s3_predicate_target(name: &str) -> Option<RType> {
     Some(RType::unknown().with_class(ClassVector::single(class)))
 }
 
+/// Narrowing targets for `assert_*_scalar` calls. This map and the
+/// stub-driven assertion machinery in `infer_call` (a signature's
+/// `assertion` field, e.g. rlang's `check_bool`) encode the same
+/// knowledge: a call that asserts narrows its subject binding. The map
+/// exists only because no stub declares these functions yet; folding it
+/// into the stubs is blocked on r-typeshed (issue #41).
 pub(crate) fn assertion_call_target(name: &str) -> Option<RType> {
     match name {
         "assert_character_scalar" => Some(RType::scalar(Mode::Character)),
@@ -1434,7 +1440,7 @@ impl Checker {
             let Some(actual) = arg_types.get(argument_index) else {
                 continue;
             };
-            if generic_argument_may_dispatch(function_name, actual) {
+            if generic_argument_may_dispatch(&self.typeshed.globals, function_name, actual) {
                 continue;
             }
             if types_provably_incompatible(actual, &expected) {
@@ -1631,9 +1637,26 @@ pub(crate) fn standalone_check_provably_rejects(actual: &RType, expected: &RType
     })
 }
 
-fn generic_argument_may_dispatch(function_name: &str, actual: &RType) -> bool {
-    matches!(function_name, "round" | "mean" | "log" | "sqrt" | "exp")
-        && (actual.class.has_known_class() || actual.mode == Mode::Null)
+/// Whether `function_name` is an S3 generic whose stub parameter types
+/// method dispatch can defeat: a classed or NULL argument may route to a
+/// method that accepts it, so RY092 stays quiet. The names come from the
+/// same two sources the dispatch path in `infer_call` consults:
+/// `typeshed.globals.s3_generics` and `s3_group_generic` (the Math and
+/// Summary groups, which cover `round`, `log`, `sqrt`, and `exp`). The
+/// fallback keeps one name both sources omit: `mean`. r-typeshed adding
+/// it lets the fallback shrink (issue #41).
+fn generic_argument_may_dispatch(
+    globals: &ry_typeshed::Globals,
+    function_name: &str,
+    actual: &RType,
+) -> bool {
+    let generic = globals
+        .s3_generics
+        .iter()
+        .any(|generic| generic == function_name)
+        || crate::higher_order::s3_group_generic(function_name).is_some()
+        || function_name == "mean";
+    generic && (actual.class.has_known_class() || actual.mode == Mode::Null)
 }
 
 fn known_modes(rtype: &RType) -> Option<Vec<Mode>> {

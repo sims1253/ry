@@ -234,6 +234,134 @@ fn rlang_capture_functions_mark_formals_as_quoting() {
 }
 
 #[test]
+fn rlang_defusing_helpers_suppress_ry010_through_stub_metadata() {
+    // enexpr, ensym, enquo, enquos, ensyms, and quos are promise-capture
+    // stubs. A resolved signature evaluates their arguments in
+    // captures_promise mode. No hardcoded fallback entry is involved.
+    let loaded = check(
+        "library(rlang)\n\
+         enexpr(unbound_one)\n\
+         ensym(unbound_two)\n\
+         enquo(unbound_three)\n\
+         enquos(unbound_four, unbound_five)\n\
+         ensyms(unbound_six, unbound_seven)\n\
+         quos(named = unbound_eight)\n",
+    );
+    assert!(
+        loaded.iter().all(|diagnostic| diagnostic.code != "RY010"),
+        "loaded rlang metadata must capture defused arguments: {loaded:?}"
+    );
+
+    let qualified = check(
+        "rlang::enexpr(unbound_one)\n\
+         rlang::ensym(unbound_two)\n\
+         rlang::enquo(unbound_three)\n\
+         rlang::enquos(unbound_four, unbound_five)\n\
+         rlang::ensyms(unbound_six, unbound_seven)\n\
+         rlang::quos(named = unbound_eight)\n",
+    );
+    assert!(
+        qualified
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "a qualified call resolves the stub without library(): {qualified:?}"
+    );
+}
+
+#[test]
+fn unloaded_rlang_helpers_evaluate_their_arguments() {
+    // Without library(rlang) and without a package qualifier, no stub
+    // resolves a defusing helper. Its argument is an ordinary read, so
+    // an unbound name reports RY010. Package metadata requires the
+    // package; the former hardcoded entries hid that boundary.
+    let diagnostics = check("enquo(unbound_name)\n");
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "RY010" && diagnostic.message.contains("`unbound_name`")
+        }),
+        "an unresolved defusing call must evaluate its argument: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn all_vars_goes_through_dplyr_data_mask_metadata() {
+    // dplyr's stub declares all_vars' `expr` parameter as data_mask. The
+    // stub path must resolve that metadata for qualified and loaded
+    // calls; no hardcoded fallback entry shadows it.
+    let qualified = check("dplyr::all_vars(unbound_col == other_col)\n");
+    assert!(
+        qualified
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "a data-masked expression must not resolve columns lexically: {qualified:?}"
+    );
+
+    let loaded = check("library(dplyr)\nall_vars(unbound_col == other_col)\n");
+    assert!(
+        loaded.iter().all(|diagnostic| diagnostic.code != "RY010"),
+        "a loaded dplyr call must reach the same mask metadata: {loaded:?}"
+    );
+
+    // Data-mask inference still runs on the argument: a literal type
+    // error inside the masked expression fires, where the removed
+    // fallback skipped the argument entirely.
+    let checked = check("dplyr::all_vars(\"a\" + 1L)\n");
+    assert!(
+        checked.iter().any(|diagnostic| diagnostic.code == "RY040"),
+        "the masked expression must still be inferred: {checked:?}"
+    );
+}
+
+#[test]
+fn unloaded_all_vars_evaluates_its_argument() {
+    // Without library(dplyr) and without a package qualifier, no stub
+    // resolves all_vars. Its argument is an ordinary read, so an
+    // unbound name reports RY010. dplyr metadata requires dplyr; the
+    // removed fallback entry hid that boundary.
+    let diagnostics = check("all_vars(unbound_name)\n");
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "RY010" && diagnostic.message.contains("`unbound_name`")
+        }),
+        "an unresolved all_vars call must evaluate its argument: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn alist_stub_metadata_quotes_dots_and_keeps_the_list_type() {
+    // The base stub declares alist's dots as quoted_expression. The
+    // stub path must suppress RY010 and keep the list result that the
+    // removed hardcoded entry used to produce.
+    let (diagnostics, scope) = check_with_scope("args <- alist(a = unbound_name, unbound_sym)\n");
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY010"),
+        "alist's quoted dots must not resolve captured names: {diagnostics:?}"
+    );
+    assert_eq!(
+        scope.get("args").map(|ty| ty.mode),
+        Some(Mode::List),
+        "alist must keep its stub return type: {:?}",
+        scope.get("args")
+    );
+}
+
+#[test]
+fn a_literal_tidyselect_call_evaluates_its_arguments() {
+    // tidyselect is a package name, not a function. A call spelled
+    // tidyselect(...) is not a real call target. The bogus fallback
+    // entry suppressed RY010 on it; the arguments are ordinary reads.
+    let diagnostics = check("tidyselect(unbound_name)\n");
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "RY010" && diagnostic.message.contains("`unbound_name`")
+        }),
+        "a package-name call must not gain NSE suppression: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn s3_generic_inherits_quoting_from_its_methods() {
     let diagnostics = check(
         "tabyl <- function(d, ...) UseMethod(\"tabyl\")\n\

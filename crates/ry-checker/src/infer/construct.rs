@@ -98,15 +98,7 @@ impl Checker {
         }
 
         // Compute the common column length (max of known lengths).
-        let mut common_len: Length = Length::One;
-        for t in &filtered_types {
-            common_len = match (common_len, t.length) {
-                (Length::Zero, x) | (x, Length::Zero) => x,
-                (Length::One, x) | (x, Length::One) => x,
-                (Length::Known(a), Length::Known(b)) => Length::Known(a.max(b)),
-                _ => Length::Unknown,
-            };
-        }
+        let common_len = longest_arg_length(&filtered_types);
 
         // Build per-column types with the coerced length.
         let coerced_types: Vec<RType> = filtered_types
@@ -236,41 +228,21 @@ impl Checker {
         let each = find_idx("each", 2)
             .and_then(|i| args.get(i))
             .map(|a| extract_literal_int(&a.value));
-        // Resolve `times`. Non-supplied -> 1; non-literal -> Unknown;
-        // negative literal -> Unknown (R errors or recycles in ways we
-        // can't model, so we stay conservative rather than pin a wrong
-        // length).
-        let times_n: usize = match times {
-            None => 1usize,
-            Some(Some(n)) if n < 0 => {
-                return RType {
-                    length: Length::Unknown,
-                    ..x_type
-                };
-            }
-            Some(Some(n)) => n as usize,
-            Some(None) => {
-                return RType {
-                    length: Length::Unknown,
-                    ..x_type
-                };
-            }
+        // Resolve `times` and `each` through the shared count resolver.
+        // Unsupplied -> 1; a non-literal or negative literal -> the length is
+        // unknown (R errors or recycles in ways we can't model, so we stay
+        // conservative rather than pin a wrong length).
+        let Some(times_n) = rep_count(times) else {
+            return RType {
+                length: Length::Unknown,
+                ..x_type
+            };
         };
-        let each_n: usize = match each {
-            None => 1usize,
-            Some(Some(n)) if n < 0 => {
-                return RType {
-                    length: Length::Unknown,
-                    ..x_type
-                };
-            }
-            Some(Some(n)) => n as usize,
-            Some(None) => {
-                return RType {
-                    length: Length::Unknown,
-                    ..x_type
-                };
-            }
+        let Some(each_n) = rep_count(each) else {
+            return RType {
+                length: Length::Unknown,
+                ..x_type
+            };
         };
         // Compute the total length, normalizing so we never emit
         // `Length::Known(0)` (which violates the `Known(n > 1)`
@@ -531,6 +503,19 @@ impl Checker {
                 result
             }
         }
+    }
+}
+
+/// Resolve a `rep` repetition count.
+///
+/// `None` (argument not supplied) is R's default of 1. A supplied non-literal
+/// or negative literal has no count we can pin, so it yields `None` and the
+/// caller reports an unknown length.
+fn rep_count(value: Option<Option<i64>>) -> Option<usize> {
+    match value {
+        None => Some(1),
+        Some(Some(n)) if n >= 0 => Some(n as usize),
+        Some(_) => None,
     }
 }
 

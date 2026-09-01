@@ -240,7 +240,7 @@ impl Checker {
         {
             let base_type = self.infer(base, scope);
             let list_origin = matches!(base_type.mode, Mode::List)
-                || matches!(base.as_ref(), Expr::Ident { name, .. } if list_binding_origin(name, scope));
+                || matches!(base.as_ref(), Expr::Ident { name, .. } if scope.has_list_origin(name));
             if list_origin {
                 let message = "single-bracket list subset remains a list, so `identical()` with an atomic scalar is always FALSE; use `[[` to extract the element";
                 self.emit(Severity::Warning, indexed.span, "RY101", message);
@@ -580,11 +580,21 @@ impl Checker {
                 .collect();
             match_arguments(&names, args)
         });
+        // One match for the resolved signature; the loop below used to redo it
+        // for every argument.
+        let declared_binding = resolved_sig.as_ref().map(|signature| {
+            let names: Vec<&str> = signature.param_names().collect();
+            let bindings = match_arguments(&names, args);
+            (signature, names, bindings)
+        });
         let mut arg_types: Vec<RType> = Vec::with_capacity(args.len());
         for (index, a) in args.iter().enumerate() {
-            let declared_mode = resolved_sig
-                .as_ref()
-                .and_then(|signature| argument_eval_mode(signature, args, index));
+            let declared_mode =
+                declared_binding
+                    .as_ref()
+                    .and_then(|(signature, names, bindings)| {
+                        eval_mode_for_arg(signature, names, bindings, index)
+                    });
             let user_dispatch = inherited_s3_metadata
                 || user_function.is_some()
                 || arg_types
@@ -725,8 +735,16 @@ impl Checker {
                 .flatten()
                 .and_then(|typeshed| typeshed.functions.get(&lookup_name))
         });
+        // The assertion path consults the argument match three times. Build it
+        // once, and only for signatures that actually declare an assertion.
+        let assertion_binding = assertion_signature
+            .filter(|signature| signature.assertion.is_some())
+            .map(|signature| {
+                let names: Vec<&str> = signature.param_names().collect();
+                (signature, match_arguments(&names, args))
+            });
         if (name.contains("::") || !locally_shadows_stub || user_function.is_some())
-            && let Some(signature) = assertion_signature
+            && let Some((signature, bindings)) = assertion_binding
             && let Some(assertion) = signature.assertion.as_ref()
             && assertion_is_provenanced(signature, assertion)
             && user_function.as_ref().is_none_or(|function| {
@@ -742,7 +760,7 @@ impl Checker {
                     })
             })
             && let Some(subject_index) =
-                bound_argument_index(&signature.params, args, &assertion.subject_param)
+                bound_argument_index_matched(&signature.params, &bindings, &assertion.subject_param)
             && let Some(Expr::Ident { name: var, .. }) =
                 args.get(subject_index).map(|arg| &arg.value)
         {
@@ -759,7 +777,7 @@ impl Checker {
                 ),
             ] {
                 if let (Some(param), Some(weakening)) = (param, null_target)
-                    && bound_argument_index(&signature.params, args, param)
+                    && bound_argument_index_matched(&signature.params, &bindings, param)
                         .is_some_and(|index| !matches!(args[index].value, Expr::Logical(false, _)))
                 {
                     target = target.join(weakening);
@@ -1042,17 +1060,9 @@ impl Checker {
         Some(self.return_slots.get(*slot))
     }
 
-    // Infer the type of `structure(x, class = "...")`. We model only
-    // the literal class forms; everything else returns the first
-    // argument's type with `ClassVector::unknown()` (so we neither lie
-    // about a class nor spuriously trigger RY050).
-    //
-    // The base value's column schema is preserved: `RType::with_class`
-    // is `RType { class, ..self }`, so a `structure(list(a = 1L),
-    // class = "foo")` call yields a value whose columns are still
-    // `[("a", integer<1>)]` and whose class is `["foo"]`. This lets
-    // `$a` resolve correctly on user-defined classes built on top of
-    // a list-shaped payload.
+    /// Infer a call whose signature declares injected names (`injects`):
+    /// stub-driven NSE such as `R6Class()` and formula interfaces. Returns
+    /// `None` when no reachable signature declares an injection.
     fn infer_injected_call(
         &mut self,
         name: &str,
@@ -1093,7 +1103,7 @@ impl Checker {
         for (index, argument) in args.iter().enumerate() {
             let parameter = matches.param_for_arg[index].and_then(|index| params.get(index));
             let quoted_expression = matches!(
-                argument_eval_mode(&signature, args, index),
+                eval_mode_for_arg(&signature, &params, &matches, index),
                 Some(EvalMode::QuotedExpression)
             );
             let specs: Vec<_> = signature
@@ -1323,6 +1333,17 @@ impl Checker {
         }
     }
 
+    /// Infer the type of `structure(x, class = "...")`. We model only
+    /// the literal class forms; everything else returns the first
+    /// argument's type with `ClassVector::unknown()` (so we neither lie
+    /// about a class nor spuriously trigger RY050).
+    ///
+    /// The base value's column schema is preserved: `RType::with_class`
+    /// is `RType { class, ..self }`, so a `structure(list(a = 1L),
+    /// class = "foo")` call yields a value whose columns are still
+    /// `[("a", integer<1>)]` and whose class is `["foo"]`. This lets
+    /// `$a` resolve correctly on user-defined classes built on top of
+    /// a list-shaped payload.
     pub(crate) fn infer_structure_call(
         &mut self,
         args: &[Arg],

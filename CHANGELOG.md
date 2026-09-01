@@ -71,6 +71,12 @@ suppression actions — and fixes a parser panic plus several editor issues.
   refinement skips the narrowing machinery, and merging branch bindings no
   longer copies the branch scopes. Diagnostics and inferred types are
   unchanged.
+- **Less duplicate work per call and per function entry**: a call site now
+  matches its arguments against the callee's formals once instead of once per
+  argument query, function bodies are entered through a single walker path,
+  and the RY098 defusing-helper set is built once per collection round
+  instead of per function literal. Diagnostics and inferred types are
+  unchanged.
 - **JSON diagnostics no longer suggest fixes**: the `fix` payload is gone
   from `ry check --output-format json` and from the `data` field of
   published editor diagnostics. Nothing ever applied these suggestions —

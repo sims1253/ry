@@ -267,47 +267,7 @@ impl Checker {
         self.check_class_equality_operand(cond, scope);
         let diagnostic_start = self.diagnostics.len();
         let ct = self.infer(cond, scope);
-        let has_ry100 = self.diagnostics[diagnostic_start..]
-            .iter()
-            .any(|diagnostic| diagnostic.code == "RY100");
-        if matches!(
-            condition_diagnostic(&ct),
-            Some(ConditionDiagnostic::Invalid)
-        ) && !has_ry100
-        {
-            self.emit(
-                Severity::Error,
-                span_of(cond),
-                "RY001",
-                format!("`if` condition is `{}`, expected length-1 logical", ct),
-            );
-        } else if matches!(
-            condition_diagnostic(&ct),
-            Some(ConditionDiagnostic::Numeric)
-        ) && !has_ry100
-            && !is_numeric_truthiness_idiom(cond, scope)
-        {
-            self.emit(
-                Severity::Info,
-                span_of(cond),
-                "RY003",
-                format!("`if` condition is `{}`; R coerces nonzero to TRUE", ct.mode),
-            );
-        } else if matches!(ct.mode, Mode::Logical) {
-            if let Length::Known(n) = ct.length {
-                if n > 1 {
-                    self.emit(
-                        Severity::Warning,
-                        span_of(cond),
-                        "RY002",
-                        format!(
-                            "`if` condition has length {}; R requires a length-1 condition",
-                            n
-                        ),
-                    );
-                }
-            }
-        }
+        self.emit_condition_diagnostics(cond, ct, scope, diagnostic_start, ConditionContext::If);
         // Flow-sensitive type narrowing for the expression form too.
         //
         // Limitation: the branch scopes here are clones, and

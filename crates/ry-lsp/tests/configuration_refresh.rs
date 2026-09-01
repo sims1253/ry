@@ -24,8 +24,11 @@ type Session = LspSession<
 >;
 
 /// Spawn an LSP server and return a connected session: initialize, then
-/// briefly sleep so the background indexer settles before the test drives
-/// the server.
+/// hand the session to the test. No settle wait for the background
+/// indexer: it never publishes diagnostics itself (its caller
+/// republishes, and no document is open here), and open documents shadow
+/// disk files, so each test's `published_diagnostics_after` await (which
+/// has its own timeout) is the only synchronization needed.
 async fn spawn_session(root: &Path) -> (Session, tokio::task::JoinHandle<()>) {
     let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
     let (client_reader, client_writer) = tokio::io::split(client_stream);
@@ -35,8 +38,6 @@ async fn spawn_session(root: &Path) -> (Session, tokio::task::JoinHandle<()>) {
     });
     let mut session = LspSession::new(client_reader, client_writer);
     session.initialize(root).await.unwrap();
-    // Wait for background indexing to populate disk_files.
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     (session, server)
 }
 
@@ -150,8 +151,6 @@ async fn spawn_pull_session(root: &Path) -> (Session, tokio::task::JoinHandle<()
         .respond_to_request("workspace/configuration", json!([{}, {}]))
         .await
         .unwrap();
-    // Wait for background indexing to populate disk_files.
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     (session, server)
 }
 

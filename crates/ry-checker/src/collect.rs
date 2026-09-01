@@ -3,6 +3,10 @@ use crate::infer::*;
 
 impl Checker {
     pub(crate) fn collect_fns(&mut self, stmts: &[Stmt]) {
+        // Collection rewrites `fn_table.fns`, which the cached defuser set is
+        // derived from; the quoting propagators and signature seeding clear it
+        // after collection. Starting a collection round drops it.
+        self.trusted_defusers = None;
         for s in stmts {
             self.collect_fns_stmt(s);
         }

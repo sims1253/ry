@@ -949,6 +949,47 @@ fn exclusively_defused_dots_are_opaque_at_call_sites() {
 }
 
 #[test]
+fn defuser_cache_reflects_propagated_quoting() {
+    // `g`'s `x` turns quoting only through S3 propagation from its method.
+    // The nested lazy-default literal builds the cached defuser set during
+    // fixpoint iteration 1, before propagation flips the flag, so the cache
+    // must be dropped when a propagation round changes the table.
+    let source = "g <- function(x) UseMethod(\"g\")\n\
+                  g.foo <- function(x) enquo(x)\n\
+                  wrapper <- function() {\n\
+                    inner <- function(a = a) {\n\
+                      a <- g(a)\n\
+                      a\n\
+                    }\n\
+                    inner\n\
+                  }\n\
+                  wrapper()\n";
+    let mut parser = RParser::new().unwrap();
+    let file = parser.parse("test.R", source).unwrap();
+    let mut checker = Checker::new("test.R");
+    checker.collect_fns(&file.stmts);
+    checker.run_fixpoint();
+    assert!(
+        checker.fn_table.fns["g"].params[0].quoting,
+        "S3 propagation must mark the generic's formal quoting"
+    );
+    if let Some(cached) = &checker.trusted_defusers {
+        assert!(
+            cached.contains("g"),
+            "cached defuser set predates quoting propagation: {cached:?}"
+        );
+    }
+
+    let diagnostics = check(source);
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY098"),
+        "a propagated-quoting generic defuses its argument, so the lazy default stays safe: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn normally_used_dots_remain_eager_at_call_sites() {
     let diagnostics = check("g <- function(...) sum(...)\ng(not_a_binding)\n");
     assert!(diagnostics.iter().any(|diagnostic| {

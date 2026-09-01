@@ -10,13 +10,9 @@ use std::process::ExitCode;
 
 use miette::{IntoDiagnostic, Result};
 
-use ry_config as config;
-
 use crate::check;
-use crate::{
-    enclosing_package_root, load_user_stubs, read_r_source, report_truncation,
-    sort_and_deduplicate_paths,
-};
+use crate::pipeline;
+use crate::{load_user_stubs, report_truncation, sort_and_deduplicate_paths};
 
 #[derive(serde::Serialize)]
 struct TypesDump {
@@ -584,6 +580,26 @@ fn enclosing_binding_span(
     None
 }
 
+/// dump-types' parse-failure policy: an unparseable file is warned
+/// about and omitted from the dump; an unreadable file aborts the run.
+/// The abort is reported by the caller after the join, so exactly one
+/// read error is printed per run.
+fn dump_parse_failure(
+    path: &std::path::Path,
+    error: &pipeline::ParseError,
+) -> pipeline::FailureAction {
+    match error {
+        pipeline::ParseError::Read(_) => pipeline::FailureAction::Abort,
+        pipeline::ParseError::Parse(message) => {
+            eprintln!(
+                "ry: {}: parse error: {message}; file omitted from dump",
+                path.display()
+            );
+            pipeline::FailureAction::Skip
+        }
+    }
+}
+
 pub(crate) fn run_dump_types(
     files: Vec<PathBuf>,
     project_root: Option<PathBuf>,
@@ -597,19 +613,17 @@ pub(crate) fn run_dump_types(
         ));
     }
 
-    // Config discovery mirrors `ry check`: anchored at the first input,
+    // Config discovery mirrors `ry check` through the shared helper:
     // missing config is fine, malformed config aborts. The config's
     // directory is kept as `config_root` — it anchors the `exclude`
     // patterns below and is the resolution-root fallback for non-package
-    // files, exactly as in `run_check`.
+    // files, exactly as in `run_check`. The anchor differs from
+    // `ry check` on purpose: dump-types requires files, and discovery
+    // starts at the first input itself, not at its parent.
     let search_start = files.first().cloned().unwrap_or_else(|| PathBuf::from("."));
-    let (config_root, cfg) = match config::Config::discover(&search_start) {
-        Ok(Some((path, cfg))) => (path.parent().map(PathBuf::from), cfg),
-        Ok(None) => (None, config::Config::defaults()),
-        Err(e) => {
-            eprintln!("ry: {}", e);
-            return Ok(ExitCode::FAILURE);
-        }
+    let (config_root, cfg) = match pipeline::discover_config(&search_start) {
+        Ok(found) => found,
+        Err(code) => return Ok(code),
     };
 
     let mut all_paths = Vec::new();
@@ -629,56 +643,16 @@ pub(crate) fn run_dump_types(
     }
     sort_and_deduplicate_paths(&mut all_paths);
 
-    // Parallel parsing with the same thread-local parser pool as
-    // `ry check` (tree-sitter parsers are not Send).
-    thread_local! {
-        static DUMP_PARSER: std::cell::RefCell<Option<ry_core::RParser>> =
-            const { std::cell::RefCell::new(None) };
-    }
-    use rayon::prelude::*;
-    // Ok(Some(..)) = parsed; Ok(None) = unparseable (warned and skipped;
-    // the dump still covers every parseable file); Err(..) = unreadable
-    // (fatal, reported after the join).
-    type ParseOutcome = Result<Option<(String, String, ry_core::SourceFile)>, String>;
-    let results: Vec<ParseOutcome> = all_paths
-        .par_iter()
-        .map(|path| {
-            let src = match read_r_source(path) {
-                Ok(src) => src,
-                Err(e) => return Err(format!("{}: {}", path.display(), e)),
-            };
-            let path_str = path.to_string_lossy().to_string();
-            let file = DUMP_PARSER.with(|cell| {
-                let mut slot = cell.borrow_mut();
-                let parser = slot.get_or_insert_with(|| {
-                    ry_core::RParser::new().expect("parser init (thread-local)")
-                });
-                parser.parse(&path_str, &src)
-            });
-            match file {
-                Ok(file) => Ok(Some((path_str, src, file))),
-                Err(e) => {
-                    eprintln!(
-                        "ry: {}: parse error: {e}; file omitted from dump",
-                        path.display()
-                    );
-                    Ok(None)
-                }
-            }
-        })
-        .collect();
-
-    let mut parsed: Vec<(String, String, ry_core::SourceFile)> = Vec::new();
-    for result in results {
-        match result {
-            Err(read_error) => {
-                eprintln!("ry: {read_error}");
-                return Ok(ExitCode::FAILURE);
-            }
-            Ok(Some(entry)) => parsed.push(entry),
-            Ok(None) => {}
+    // Parallel parsing through the same thread-local parser pool as
+    // `ry check` (tree-sitter parsers are not Send); see
+    // `pipeline::parse_files`. Input order is preserved.
+    let parsed = match pipeline::parse_files(&all_paths, dump_parse_failure) {
+        Ok(parsed) => parsed,
+        Err(failure) => {
+            eprintln!("ry: {}: {}", failure.path.display(), failure.error);
+            return Ok(ExitCode::FAILURE);
         }
-    }
+    };
 
     let user_stubs = load_user_stubs(&cfg.typeshed);
 
@@ -687,14 +661,7 @@ pub(crate) fn run_dump_types(
     // rooted at --project-root, else the config root (the directory
     // owning the discovered ry.toml), else the working directory —
     // `run_check_once`'s fallback chain with --project-root overriding.
-    let mut groups: std::collections::BTreeMap<Option<PathBuf>, Vec<usize>> =
-        std::collections::BTreeMap::new();
-    for (index, (path, _, _)) in parsed.iter().enumerate() {
-        groups
-            .entry(enclosing_package_root(std::path::Path::new(path)))
-            .or_default()
-            .push(index);
-    }
+    let groups = pipeline::group_by_package_root(parsed.iter().map(|file| file.path.as_str()));
 
     let mut records_by_path: HashMap<String, Vec<ry_checker::ScopeRecord>> = HashMap::new();
     for (group_root, indices) in &groups {
@@ -707,7 +674,7 @@ pub(crate) fn run_dump_types(
             &resolution_root,
             &cfg,
             ry_workspace::ResolutionEnvironment {
-                files: indices.iter().map(|index| &parsed[*index].2).collect(),
+                files: indices.iter().map(|index| &parsed[*index].file).collect(),
                 user_stubs: &user_stubs,
             },
         )
@@ -715,27 +682,23 @@ pub(crate) fn run_dump_types(
         let analysis_files: Vec<_> = indices
             .iter()
             .map(|index| {
-                let (path, _, file) = &parsed[*index];
-                (path.clone(), 0, std::sync::Arc::new(file.clone()))
+                let parsed_file = &parsed[*index];
+                (
+                    parsed_file.path.clone(),
+                    std::sync::Arc::new(parsed_file.file.clone()),
+                )
             })
             .collect();
+        let (workspace, degraded_scopes) = pipeline::workspace_context(package_scope);
         let check_input = check::CheckInput {
             files: analysis_files,
             user_stubs: std::sync::Arc::clone(&user_stubs),
-            workspace: Some(ry_workspace::WorkspaceContext {
-                attached_packages: package_scope.attached_packages,
-                bare_bindings: package_scope.bare_bindings,
-                external_bindings: package_scope.external_bindings,
-                imported_bindings: package_scope.imported_bindings,
-                s3_methods: package_scope.s3_methods,
-                load_bindings: package_scope.load_bindings,
-                degraded_scopes: Vec::new(),
-            }),
+            workspace: Some(workspace),
         };
         // `ry check` prints one summary line per degraded scope; keep the
         // note on stderr here too so a dump over the same project reports
         // the same precision loss without polluting the JSON on stdout.
-        for (path, reason) in &package_scope.degraded_scopes {
+        for (path, reason) in &degraded_scopes {
             eprintln!(
                 "ry: {}: degraded scope ({reason}); serialized data file(s) over the byte cap fell back to file stems",
                 path.display()
@@ -749,9 +712,11 @@ pub(crate) fn run_dump_types(
     let dump = TypesDump {
         files: parsed
             .iter()
-            .map(|(path, _src, file)| {
-                let records = records_by_path.remove(path).unwrap_or_default();
-                assemble_file_dump(path, file, records, &positions)
+            .map(|parsed_file| {
+                let records = records_by_path
+                    .remove(&parsed_file.path)
+                    .unwrap_or_default();
+                assemble_file_dump(&parsed_file.path, &parsed_file.file, records, &positions)
             })
             .collect(),
     };

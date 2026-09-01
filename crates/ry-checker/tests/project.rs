@@ -1238,3 +1238,61 @@ fn removed_function_matches_cold() {
 
     assert_eq!(incremental, cold);
 }
+
+/// Issue #90: renaming a function must invalidate the old name with the
+/// replaced pass-1 entry. The old name is absent from the new function
+/// table, so only the retained name seeds the reverse call graph. Without
+/// it, the fixpoint keeps the previous refined return type of every
+/// function that reached the old name, and transitive callers keep
+/// diagnostics derived from the stale type.
+#[test]
+fn renamed_function_matches_cold_for_transitive_callers() {
+    let mut project = Project::new();
+    project.add_file(
+        "leaf.R".to_string(),
+        parse("leaf.R", "helper <- function() \"s\"\n"),
+    );
+    project.add_file(
+        "middle.R".to_string(),
+        parse("middle.R", "mid <- function() helper()\n"),
+    );
+    project.add_file(
+        "top.R".to_string(),
+        parse("top.R", "result <- mid() + 1L\n"),
+    );
+    let before = project.check_incremental();
+    let before_top = before
+        .iter()
+        .find(|(path, _)| path == "top.R")
+        .expect("top.R checked");
+    assert!(
+        before_top
+            .1
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY040"),
+        "the character return should reach the transitive caller: {before_top:?}",
+    );
+
+    project.update_file(
+        "leaf.R".to_string(),
+        Arc::new(parse("leaf.R", "renamed <- function() \"s\"\n")),
+    );
+    let incremental = project.check_incremental();
+
+    let mut cold = Project::new();
+    cold.add_file(
+        "leaf.R".to_string(),
+        parse("leaf.R", "renamed <- function() \"s\"\n"),
+    );
+    cold.add_file(
+        "middle.R".to_string(),
+        parse("middle.R", "mid <- function() helper()\n"),
+    );
+    cold.add_file(
+        "top.R".to_string(),
+        parse("top.R", "result <- mid() + 1L\n"),
+    );
+    let cold = cold.check();
+
+    assert_eq!(incremental, cold);
+}

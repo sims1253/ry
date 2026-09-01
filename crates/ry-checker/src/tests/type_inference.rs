@@ -319,19 +319,36 @@ fn for_loop_var_is_element_type() {
 }
 
 #[test]
-fn pipe_desugars_to_call() {
-    // `c(1,2,3) %>% mean()` desugars to `mean(c(1,2,3))`, which is
-    // well-typed: no diagnostics.
-    let diags = check("result <- c(1, 2, 3) %>% mean()\n");
-    assert!(diags.is_empty(), "got {:?}", diags);
-}
-
-#[test]
-fn pipe_chain_infers() {
-    // A two-step pipe composes: `mean() -> double_or_int<1>`, then
-    // `round(<double>, digits = 2)` resolves against the typeshed.
-    let diags = check("a <- c(1, 2, 3) %>% mean() %>% round(2)\n");
-    assert!(diags.is_empty(), "got {:?}", diags);
+fn pipe_forms_desugar_to_well_typed_calls() {
+    // Every supported pipe form desugars to an ordinary call that
+    // type-checks cleanly: magrittr `%>%` (call rhs, bare function
+    // name, `.` placeholder argument, `%T>%` tee) and the native
+    // base-R `|>`.
+    for (src, note) in [
+        ("result <- c(1, 2, 3) %>% mean()\n", "call rhs"),
+        (
+            "a <- c(1, 2, 3) %>% mean() %>% round(2)\n",
+            "two-step chain",
+        ),
+        ("a <- c(1, 2, 3) |> mean()\n", "native |>"),
+        ("x <- 1L\ny <- x %>% abs\n", "bare function name rhs"),
+        (
+            "result <- c(1, 2, 3) %>% round(., digits = 2)\n",
+            "placeholder argument",
+        ),
+        (
+            "result <- c(1, 2, 3) %T>% print()\n",
+            "tee returns the lhs type",
+        ),
+    ] {
+        let diags = check(src);
+        assert!(
+            diags.is_empty(),
+            "{note} (`{}`): got {:?}",
+            src.trim(),
+            diags
+        );
+    }
 }
 
 #[test]
@@ -359,60 +376,37 @@ fn long_else_if_force_flow_completes() {
     src.push_str(r#" else { stop("nope") } }"#);
     src.push('\n');
 
-    let _ = check(&src);
+    let diags = check(&src);
+    assert!(diags.is_empty(), "got {diags:?}");
 }
 
 #[test]
-fn pipe_base_r_infers() {
-    // Base-R `|>` desugars identically to magrittr `%>%`.
-    let diags = check("a <- c(1, 2, 3) |> mean()\n");
-    assert!(diags.is_empty(), "got {:?}", diags);
-}
-
-#[test]
-fn pipe_bare_function() {
-    // Bare `rhs` becomes a one-arg call: `x %>% abs` -> `abs(x)`.
-    let diags = check("x <- 1L\ny <- x %>% abs\n");
-    assert!(diags.is_empty(), "got {:?}", diags);
-}
-
-#[test]
-fn pipe_placeholder_substitutes() {
-    // The first `.` is replaced with the LHS; `round(., digits = 2)`
-    // becomes `round(c(1,2,3), digits = 2)`.
-    let diags = check("result <- c(1, 2, 3) %>% round(., digits = 2)\n");
-    assert!(diags.is_empty(), "got {:?}", diags);
-}
-
-#[test]
-fn pipe_tee_returns_lhs_type() {
-    // `%T>%` returns the LHS; the RHS is walked for diagnostics only.
-    // `c(1,2,3) %T>% print()` should be a length-3 double vector.
-    let diags = check("result <- c(1, 2, 3) %T>% print()\n");
-    assert!(diags.is_empty(), "got {:?}", diags);
-}
-
-#[test]
-fn pipe_dot_pronoun_dollar_column() {
-    // `df %>% .$mpg` resolves `.` to the piped LHS (`mtcars`) and
-    // then indexes by column name, so `col` should be `double<32>`
-    // (the type of `mtcars$mpg`). We assert the inferred type
-    // directly via the test scope and also check that no RY010
-    // (unbound `.`) leaks out.
-    let (diags, scope) = check_with_scope("df <- mtcars\ncol <- df %>% .$mpg\n");
-    assert!(
-        diags.iter().all(|d| d.code != "RY010"),
-        "dot pronoun should not emit RY010 (unbound `.`), got {:?}",
-        diags
-    );
-    let col = scope.get("col").expect("col should be bound");
-    assert_eq!(
-        col.mode,
-        Mode::Double,
-        "df %>% .$mpg must infer double, got {:?}",
-        col
-    );
-    assert_eq!(col.length, Length::Known(32), "mpg has 32 rows");
+fn pipe_dot_pronoun_extracts_typed_column() {
+    // `df %>% .$mpg` and `df %>% .[["mpg"]]` resolve `.` to the
+    // piped LHS (`mtcars`) and index by column name -- `[[` with a
+    // string literal mirrors `$` semantics -- so `col` should be
+    // `double<32>` (the type of `mtcars$mpg`). We assert the
+    // inferred type directly via the test scope and also check that
+    // no RY010 (unbound `.`) leaks out.
+    for (label, access) in [("dollar", ".$mpg"), ("double-bracket", ".[[\"mpg\"]]")] {
+        let src = format!("df <- mtcars\ncol <- df %>% {access}\n");
+        let (diags, scope) = check_with_scope(&src);
+        assert!(
+            diags.iter().all(|d| d.code != "RY010"),
+            "{label}: dot pronoun should not emit RY010 (unbound `.`), got {:?}",
+            diags
+        );
+        let col = scope
+            .get("col")
+            .unwrap_or_else(|| panic!("{label}: col should be bound"));
+        assert_eq!(
+            col.mode,
+            Mode::Double,
+            "{label}: must infer double, got {:?}",
+            col
+        );
+        assert_eq!(col.length, Length::Known(32), "{label}: mpg has 32 rows");
+    }
 }
 
 #[test]
@@ -535,21 +529,6 @@ fn pipe_placeholders_are_specific_to_their_pipe_form() {
             diags
         );
     }
-}
-
-#[test]
-fn pipe_dot_pronoun_double_bracket() {
-    // `df %>% .[["mpg"]]` resolves `.` to the LHS and indexes by
-    // string-literal column name via `[[`, mirroring `$` semantics.
-    let (diags, scope) = check_with_scope("df <- mtcars\ncol <- df %>% .[[\"mpg\"]]\n");
-    assert!(
-        diags.iter().all(|d| d.code != "RY010"),
-        "dot pronoun should not emit RY010, got {:?}",
-        diags
-    );
-    let col = scope.get("col").expect("col should be bound");
-    assert_eq!(col.mode, Mode::Double, ".[[\"mpg\"]] must infer double");
-    assert_eq!(col.length, Length::Known(32), "mpg has 32 rows");
 }
 
 #[test]
@@ -768,203 +747,76 @@ fn neg_preserves_na_flag_and_mode() {
 // ---- Literal-based length inference: `:`, `rep`, `seq` ----
 //
 // These exercise the literal-arg fast paths that pin the result
-// length exactly instead of returning `Length::Unknown`. The
-// common pattern: build the expression, assert the inferred
-// `RType` has `Length::Known(n)` with the expected `n`, then do a
-// behavioral check that downstream code sees the precise length
-// (e.g. mixing with a character fires RY040).
+// length exactly instead of returning `Length::Unknown`, and their
+// behavioral payoff: a precisely typed vector mixed with a character
+// operand is a diagnosed type error (RY040), where an opaque result
+// would stay silent. Non-literal operands must stay `Unknown` (no
+// false precision). `mode` pins only what each case asserted.
 #[test]
-fn colon_literals_pin_length() {
-    // `1:10` has 10 elements; both endpoints are integer-valued
-    // literals so the literal-based path fires.
-    let (diags, scope) = check_with_scope("x <- 1:10\n");
-    assert!(diags.is_empty(), "got {:?}", diags);
-    let x = scope.get("x").expect("x should be bound");
-    assert_eq!(x.mode, Mode::Integer, "got {:?}", x);
-    assert_eq!(x.length, Length::Known(10), "got {:?}", x);
+fn literal_constructors_pin_exact_lengths() {
+    for (src, mode, length) in [
+        // `:` with integer-valued literal endpoints (whole-number
+        // doubles included) yields an integer vector; `5:5` is the
+        // single-element case; a non-literal LHS stays Unknown.
+        ("x <- 1:10\n", Some(Mode::Integer), Length::Known(10)),
+        ("x <- 10:1\n", Some(Mode::Integer), Length::Known(10)),
+        ("x <- 1.0:5.0\n", Some(Mode::Integer), Length::Known(5)),
+        ("x <- 5:5\n", None, Length::Known(1)),
+        ("n <- 1L\nx <- n:10\n", Some(Mode::Integer), Length::Unknown),
+        // `rep`: positional, named (`times =`), and `each =`
+        // multipliers; `rep(0, 5)` keeps double (`0` has no `L`);
+        // a non-literal `times` stays Unknown.
+        ("x <- rep(1:3, 2)\n", Some(Mode::Integer), Length::Known(6)),
+        ("x <- rep(0, 5)\n", Some(Mode::Double), Length::Known(5)),
+        ("x <- rep(c(1, 2), times = 3)\n", None, Length::Known(6)),
+        ("x <- rep(c(1, 2, 3), each = 2)\n", None, Length::Known(6)),
+        ("x <- rep(c(1, 2), 3, each = 2)\n", None, Length::Known(12)),
+        ("n <- 2\nx <- rep(1:3, n)\n", None, Length::Unknown),
+        // `seq`/`seq.int`: `by`, `length.out`, and the by-one
+        // default; whole-number double `by` still pins; a
+        // non-literal endpoint stays Unknown.
+        ("x <- seq(1, 10, 2)\n", None, Length::Known(5)),
+        ("x <- seq(1, 5, length.out = 3)\n", None, Length::Known(3)),
+        ("x <- seq(1, 5)\n", None, Length::Known(5)),
+        (
+            "x <- seq.int(1L, 10L, 2L)\n",
+            Some(Mode::Integer),
+            Length::Known(5),
+        ),
+        ("x <- seq.int(2, 10, 2.0)\n", None, Length::Known(5)),
+        ("n <- 10\nx <- seq(1, n, 1)\n", None, Length::Unknown),
+    ] {
+        let (diags, scope) = check_with_scope(src);
+        assert!(diags.is_empty(), "`{src}`: got {diags:?}");
+        let x = scope
+            .get("x")
+            .unwrap_or_else(|| panic!("`{src}`: x should be bound"));
+        if let Some(mode) = mode {
+            assert_eq!(x.mode, mode, "`{src}`: got {x:?}");
+        }
+        assert_eq!(x.length, length, "`{src}`: got {x:?}");
+    }
 }
 
 #[test]
-fn colon_literals_descending_pin_length() {
-    // `10:1` is c(10, 9, ..., 1): length 10, mode integer.
-    let (_, scope) = check_with_scope("x <- 10:1\n");
-    let x = scope.get("x").expect("x should be bound");
-    assert_eq!(x.mode, Mode::Integer, "got {:?}", x);
-    assert_eq!(x.length, Length::Known(10), "got {:?}", x);
-}
-
-#[test]
-fn colon_double_literals_pin_length() {
-    // `1.0:5.0` - whole-number doubles also trigger the literal
-    // path; R returns integer for whole-number endpoints.
-    let (_, scope) = check_with_scope("x <- 1.0:5.0\n");
-    let x = scope.get("x").expect("x should be bound");
-    assert_eq!(x.mode, Mode::Integer, "got {:?}", x);
-    assert_eq!(x.length, Length::Known(5), "got {:?}", x);
-}
-
-#[test]
-fn colon_single_element_pin_length_one() {
-    // `5:5` is a length-1 integer vector c(5).
-    let (_, scope) = check_with_scope("x <- 5:5\n");
-    let x = scope.get("x").expect("x should be bound");
-    assert_eq!(x.length, Length::Known(1), "got {:?}", x);
-}
-
-#[test]
-fn colon_literals_fire_ry040_on_char_mix() {
-    // `1:10` is integer<10>; adding a character is a type error
-    // (RY040). This is the headline benefit of precise length
-    // inference: the checker sees a real vector, not an opaque.
-    let diags = check("x <- 1:10\nbad <- x + \"hello\"\n");
-    assert!(
-        diags.iter().any(|d| d.code == "RY040"),
-        "expected RY040 for integer<10> + character, got {:?}",
-        diags
-    );
-}
-
-#[test]
-fn colon_non_literal_stays_unknown() {
-    // `n:10` where `n` is a variable: LHS isn't a literal, so the
-    // length stays Unknown (no false precision).
-    let (_, scope) = check_with_scope("n <- 1L\nx <- n:10\n");
-    let x = scope.get("x").expect("x should be bound");
-    assert_eq!(x.mode, Mode::Integer, "got {:?}", x);
-    assert_eq!(x.length, Length::Unknown, "got {:?}", x);
-}
-
-#[test]
-fn rep_literal_times_pin_length() {
-    // `rep(1:3, 2)` = c(1,2,3,1,2,3): length 6, mode integer.
-    let (diags, scope) = check_with_scope("x <- rep(1:3, 2)\n");
-    assert!(diags.is_empty(), "got {:?}", diags);
-    let x = scope.get("x").expect("x should be bound");
-    assert_eq!(x.mode, Mode::Integer, "got {:?}", x);
-    assert_eq!(x.length, Length::Known(6), "got {:?}", x);
-}
-
-#[test]
-fn rep_scalar_x_literal_times_pin_length() {
-    // `rep(0, 5)` = c(0,0,0,0,0): length 5. `0` is a double
-    // literal in R (no `L` suffix), so the mode stays double.
-    let (diags, scope) = check_with_scope("x <- rep(0, 5)\n");
-    assert!(diags.is_empty(), "got {:?}", diags);
-    let x = scope.get("x").expect("x should be bound");
-    assert_eq!(x.mode, Mode::Double, "got {:?}", x);
-    assert_eq!(x.length, Length::Known(5), "got {:?}", x);
-}
-
-#[test]
-fn rep_named_times_arg_pin_length() {
-    // `rep(c(1, 2), times = 3)` = c(1,2,1,2,1,2): length 6.
-    let (_, scope) = check_with_scope("x <- rep(c(1, 2), times = 3)\n");
-    let x = scope.get("x").expect("x should be bound");
-    assert_eq!(x.length, Length::Known(6), "got {:?}", x);
-}
-
-#[test]
-fn rep_each_arg_pin_length() {
-    // `rep(c(1, 2, 3), each = 2)` = c(1,1,2,2,3,3): length 6.
-    let (_, scope) = check_with_scope("x <- rep(c(1, 2, 3), each = 2)\n");
-    let x = scope.get("x").expect("x should be bound");
-    assert_eq!(x.length, Length::Known(6), "got {:?}", x);
-}
-
-#[test]
-fn rep_times_and_each_pin_length() {
-    // `rep(c(1, 2), 3, each = 2)`: each element twice, then the
-    // whole thing 3 times = 2 * 2 * 3 = 12.
-    let (_, scope) = check_with_scope("x <- rep(c(1, 2), 3, each = 2)\n");
-    let x = scope.get("x").expect("x should be bound");
-    assert_eq!(x.length, Length::Known(12), "got {:?}", x);
-}
-
-#[test]
-fn rep_non_literal_times_stays_unknown() {
-    // `rep(1:3, n)` where `n` is a variable: `times` isn't a
-    // literal, so the length stays Unknown.
-    let (_, scope) = check_with_scope("n <- 2\nx <- rep(1:3, n)\n");
-    let x = scope.get("x").expect("x should be bound");
-    assert_eq!(x.length, Length::Unknown, "got {:?}", x);
-}
-
-#[test]
-fn rep_literal_fire_ry040_on_char_mix() {
-    // `rep(c(1, 2), 3)` is double<6>; adding a character fires RY040.
-    let diags = check("x <- rep(c(1, 2), 3)\nbad <- x + \"hello\"\n");
-    assert!(
-        diags.iter().any(|d| d.code == "RY040"),
-        "expected RY040 for double<6> + character, got {:?}",
-        diags
-    );
-}
-
-#[test]
-fn seq_literal_by_pin_length() {
-    // `seq(1, 10, 2)` = c(1, 3, 5, 7, 9): length 5.
-    let (diags, scope) = check_with_scope("x <- seq(1, 10, 2)\n");
-    assert!(diags.is_empty(), "got {:?}", diags);
-    let x = scope.get("x").expect("x should be bound");
-    assert_eq!(x.length, Length::Known(5), "got {:?}", x);
-}
-
-#[test]
-fn seq_length_out_pin_length() {
-    // `seq(1, 5, length.out = 3)` = c(1, 3, 5): length 3.
-    let (diags, scope) = check_with_scope("x <- seq(1, 5, length.out = 3)\n");
-    assert!(diags.is_empty(), "got {:?}", diags);
-    let x = scope.get("x").expect("x should be bound");
-    assert_eq!(x.length, Length::Known(3), "got {:?}", x);
-}
-
-#[test]
-fn seq_default_by_one_pin_length() {
-    // `seq(1, 5)` (no `by`, no `length.out`): R uses by = 1, so
-    // length = 5.
-    let (_, scope) = check_with_scope("x <- seq(1, 5)\n");
-    let x = scope.get("x").expect("x should be bound");
-    assert_eq!(x.length, Length::Known(5), "got {:?}", x);
-}
-
-#[test]
-fn seq_int_literal_by_pin_length() {
-    // `seq.int(1L, 10L, 2L)` = c(1L, 3L, 5L, 7L, 9L): length 5,
-    // mode integer (all integer literals).
-    let (diags, scope) = check_with_scope("x <- seq.int(1L, 10L, 2L)\n");
-    assert!(diags.is_empty(), "got {:?}", diags);
-    let x = scope.get("x").expect("x should be bound");
-    assert_eq!(x.mode, Mode::Integer, "got {:?}", x);
-    assert_eq!(x.length, Length::Known(5), "got {:?}", x);
-}
-
-#[test]
-fn seq_int_double_by_pin_length() {
-    // `seq.int(2, 10, 2.0)` uses whole-number double for `by`:
-    // extract_literal_int accepts it, length = 5.
-    let (_, scope) = check_with_scope("x <- seq.int(2, 10, 2.0)\n");
-    let x = scope.get("x").expect("x should be bound");
-    assert_eq!(x.length, Length::Known(5), "got {:?}", x);
-}
-
-#[test]
-fn seq_non_literal_stays_unknown() {
-    // `seq(1, n, 1)` where `n` is a variable: `to` isn't a
-    // literal, so the length stays Unknown.
-    let (_, scope) = check_with_scope("n <- 10\nx <- seq(1, n, 1)\n");
-    let x = scope.get("x").expect("x should be bound");
-    assert_eq!(x.length, Length::Unknown, "got {:?}", x);
-}
-
-#[test]
-fn seq_literal_fire_ry040_on_char_mix() {
-    // `seq(1, 10, 2)` is double<5>; adding a character fires RY040.
-    let diags = check("x <- seq(1, 10, 2)\nbad <- x + \"hello\"\n");
-    assert!(
-        diags.iter().any(|d| d.code == "RY040"),
-        "expected RY040 for double<5> + character, got {:?}",
-        diags
-    );
+fn literal_constructors_fire_ry040_on_char_mix() {
+    // The precise types are visible to downstream arithmetic:
+    // `1:10` is integer<10>, `rep(c(1, 2), 3)` is double<6>, and
+    // `seq(1, 10, 2)` is double<5>, so each mixed character
+    // addition must fire RY040.
+    for (src, vector) in [
+        ("x <- 1:10\nbad <- x + \"hello\"\n", "integer<10>"),
+        ("x <- rep(c(1, 2), 3)\nbad <- x + \"hello\"\n", "double<6>"),
+        ("x <- seq(1, 10, 2)\nbad <- x + \"hello\"\n", "double<5>"),
+    ] {
+        let diags = check(src);
+        assert!(
+            diags.iter().any(|d| d.code == "RY040"),
+            "expected RY040 for {vector} + character in `{}`, got {:?}",
+            src.trim(),
+            diags
+        );
+    }
 }
 
 // ---- Pass-2 propagation + rep/seq edge cases ----

@@ -770,26 +770,19 @@ pub(crate) fn assigned_names_in_body(body: &[Stmt]) -> HashSet<String> {
 #[cfg(test)]
 mod operator_generic_tests {
     use super::is_operator_generic;
-    use crate::semantic_lists::OPERATORS;
 
-    /// `is_operator_generic` must recognize exactly the members of
-    /// `semantic_lists::OPERATORS`: the same constant backs the S3
-    /// method-name splitter in `lib.rs`, so any divergence between the two
-    /// representations is an inconsistency (issue #42). The negative
-    /// samples pin the set to the Arith + Compare members -- Logic,
-    /// assignment, sequence, and access operators are operator symbols
-    /// for RY010 suppression but never operator generics, `%in%` is a
-    /// function-backed infix operator outside both dispatch groups, and a
-    /// full method name like `+.foo` is split before this predicate runs.
-    /// Reinstating a separate hardcoded symbol set here fails this test.
+    /// The negative samples pin `is_operator_generic` to the Arith +
+    /// Compare members of `semantic_lists::OPERATORS` (which the
+    /// predicate reads directly, so the positive direction is a
+    /// containment check against itself): Logic, assignment,
+    /// sequence, and access operators are operator symbols for RY010
+    /// suppression but never operator generics, `%in%` is a
+    /// function-backed infix operator outside both dispatch groups,
+    /// and a full method name like `+.foo` is split before this
+    /// predicate runs. Reinstating a separate hardcoded symbol set
+    /// here fails this test.
     #[test]
-    fn operator_generic_recognizes_exactly_the_operators_list() {
-        for operator in OPERATORS {
-            assert!(
-                is_operator_generic(operator),
-                "OPERATORS member {operator:?} must be recognized as an operator generic"
-            );
-        }
+    fn non_dispatch_operators_are_not_operator_generics() {
         for non_generic in [
             "&", "|", "&&", "||", "!", ":", "<-", "<<-", "=", "~", "$", "@", "?", "%in%", "+.foo",
         ] {

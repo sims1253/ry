@@ -1,5 +1,4 @@
 use super::*;
-use ry_core::RParser;
 
 #[test]
 fn package_loading_calls_have_distinct_return_types() {

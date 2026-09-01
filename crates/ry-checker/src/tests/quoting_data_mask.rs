@@ -1,5 +1,4 @@
 use super::*;
-use ry_core::RParser;
 
 #[test]
 fn confidence_defaults_follow_rule_precision_and_info_severity() {

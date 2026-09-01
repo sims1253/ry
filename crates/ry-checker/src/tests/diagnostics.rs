@@ -1,5 +1,4 @@
 use super::*;
-use ry_core::RParser;
 
 // ---- inline suppression comment tests ----
 #[test]

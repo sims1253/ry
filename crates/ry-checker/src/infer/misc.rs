@@ -40,25 +40,11 @@ pub(crate) fn is_ffi_primitive(name: &str) -> bool {
 mod ffi_primitives_tests {
     use super::*;
 
-    /// Every entry in [`FFI_PRIMITIVES`] must cause the checker to treat its
-    /// first argument as a native entry-point symbol (skip RY010), matching
-    /// the convention for .Call/.C/.Fortran/.External: the first argument is
-    /// a bare identifier or backtick name, not a variable reference.
-    ///
-    /// A function that does NOT follow this convention (e.g. .Internal, whose
-    /// first argument is a *call*) must not be in the list.
-    #[test]
-    fn every_ffi_primitive_is_recognized() {
-        for &primitive in ry_core::FFI_PRIMITIVES {
-            assert!(
-                is_ffi_primitive(primitive),
-                "`{primitive}` is in FFI_PRIMITIVES but is_ffi_primitive returned false"
-            );
-        }
-    }
-
     /// .Internal must NOT be in FFI_PRIMITIVES: its first argument is a
-    /// call expression, not a bare entry-point symbol.
+    /// call expression, not a bare entry-point symbol. (Every listed
+    /// primitive is trivially "recognized" -- `is_ffi_primitive` is a
+    /// containment check against that very list -- so only non-members
+    /// pin the convention.)
     #[test]
     fn internal_is_not_an_ffi_primitive() {
         assert!(

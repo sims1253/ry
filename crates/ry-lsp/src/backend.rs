@@ -131,12 +131,6 @@ pub(super) struct State {
     supports_did_change_watched_files: bool,
 
     // --- multi-root workspace folders ---
-    /// Workspace folder roots, each with its own loaded `ry.toml` config.
-    /// Empty when only a single `root_uri` is provided. Each entry is
-    /// (folder_root, file_config), ordered by root path length descending
-    /// so that longest-prefix matching finds the most specific folder first.
-    workspace_folders: Vec<(PathBuf, ry_config::Config)>,
-    // --- per-folder analysis context ---
     /// Per-root analysis context holding effective config, editor settings,
     /// local typesheds, and the workspace context. Ordered by root
     /// path length descending for longest-prefix ownership.
@@ -208,7 +202,8 @@ pub(super) struct FolderAnalysisContext {
 /// Compute the precomputed filter, min_confidence, and
 /// excludes for a folder from its config and settings. This replaces
 /// the per-file reconstruction that previously happened inside
-/// `publish_diagnostics`.
+/// `publish_diagnostics`. The folder config is both the exclude source
+/// and the severity fallback.
 ///
 /// `filter_count` is this server's [`State::filter_compile_count`]; the
 /// increment is threaded in explicitly (rather than touching a process
@@ -216,7 +211,6 @@ pub(super) struct FolderAnalysisContext {
 fn compute_folder_filter(
     config: &ry_config::Config,
     folder_settings: &FolderSettings,
-    file_config: &ry_config::Config,
     filter_count: &std::sync::atomic::AtomicU64,
 ) -> (
     ry_checker::SeverityFilter,
@@ -226,24 +220,12 @@ fn compute_folder_filter(
     filter_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
     let lint = &folder_settings.lint;
-    let error = lint
-        .error
-        .clone()
-        .unwrap_or_else(|| file_config.error.clone());
-    let warn = lint
-        .warn
-        .clone()
-        .unwrap_or_else(|| file_config.warn.clone());
-    let ignore = lint
-        .ignore
-        .clone()
-        .unwrap_or_else(|| file_config.ignore.clone());
+    let error = lint.error.clone().unwrap_or_else(|| config.error.clone());
+    let warn = lint.warn.clone().unwrap_or_else(|| config.warn.clone());
+    let ignore = lint.ignore.clone().unwrap_or_else(|| config.ignore.clone());
     let mut filter = ry_checker::build_filter(&error, &warn, &ignore);
-    let select = lint.select.as_ref().or(file_config.select.as_ref());
-    let extend_select = lint
-        .extend_select
-        .as_ref()
-        .unwrap_or(&file_config.extend_select);
+    let select = lint.select.as_ref().or(config.select.as_ref());
+    let extend_select = lint.extend_select.as_ref().unwrap_or(&config.extend_select);
     if let Some(select) = select {
         filter.begin_selection();
         for rule in select {
@@ -285,20 +267,14 @@ fn compute_folder_filter(
 fn refresh_cached_folder_filters(state: &mut State) {
     let filter_count = Arc::clone(&state.filter_compile_count);
     for ctx in &mut state.folder_contexts {
-        let (filter, min_confidence, excludes) = compute_folder_filter(
-            &ctx.config,
-            &ctx.folder_settings,
-            &ctx.config,
-            &filter_count,
-        );
+        let (filter, min_confidence, excludes) =
+            compute_folder_filter(&ctx.config, &ctx.folder_settings, &filter_count);
         ctx.filter = filter;
         ctx.min_confidence = min_confidence;
         ctx.excludes = excludes;
     }
-    let file_config = state.file_config.clone();
-    let folder_settings = state.folder_settings.clone();
     let (root_filter, root_min_confidence, root_excludes) =
-        compute_folder_filter(&file_config, &folder_settings, &file_config, &filter_count);
+        compute_folder_filter(&state.file_config, &state.folder_settings, &filter_count);
     state.root_filter = root_filter;
     state.root_min_confidence = root_min_confidence;
     state.root_excludes = root_excludes;
@@ -494,54 +470,18 @@ impl State {
 
     // --- effective config computation ---
 
-    /// Merge editor lint settings over a given `ry.toml` config: for
-    /// each `ignore`/`error`/`warn` field, an editor-provided list
-    /// replaces the config value; `settings` supplies per-folder editor
-    /// values, falling back to the server-wide
-    /// `folder_settings`. Test-only.
-    #[cfg(test)]
-    #[allow(dead_code)]
-    pub(super) fn merge_filter(
-        &self,
-        file_config: &ry_config::Config,
-        settings: Option<&FolderSettings>,
-    ) -> ry_checker::SeverityFilter {
-        let lint = &settings.unwrap_or(&self.folder_settings).lint;
-        let error = lint
-            .error
-            .clone()
-            .unwrap_or_else(|| file_config.error.clone());
-        let warn = lint
-            .warn
-            .clone()
-            .unwrap_or_else(|| file_config.warn.clone());
-        let ignore = lint
-            .ignore
-            .clone()
-            .unwrap_or_else(|| file_config.ignore.clone());
-        let mut filter = ry_checker::build_filter(&error, &warn, &ignore);
-        let select = lint.select.as_ref().or(file_config.select.as_ref());
-        let extend_select = lint
-            .extend_select
-            .as_ref()
-            .unwrap_or(&file_config.extend_select);
-        if let Some(select) = select {
-            filter.begin_selection();
-            for rule in select {
-                filter.add_select(rule);
-            }
-        }
-        for rule in extend_select {
-            filter.add_extend_select(rule);
-        }
-        filter
-    }
-
     /// Test helper: compute the effective `SeverityFilter` from editor
-    /// settings merged over the root `ry.toml`.
+    /// settings merged over the root `ry.toml`, through the same
+    /// [`compute_folder_filter`] the production paths use (excludes and
+    /// min_confidence are discarded here; the tests assert the filter).
     #[cfg(test)]
     pub(super) fn effective_filter(&self) -> ry_checker::SeverityFilter {
-        self.merge_filter(&self.file_config, None)
+        compute_folder_filter(
+            &self.file_config,
+            &self.folder_settings,
+            &self.filter_compile_count,
+        )
+        .0
     }
 
     /// Find the owning [`FolderAnalysisContext`] for a document path
@@ -568,16 +508,10 @@ impl State {
         if self.folder_settings.enable == Some(false) {
             return false;
         }
-        if let Some((root, config)) = self
-            .workspace_folders
-            .iter()
-            .find(|(root, _)| path.starts_with(root))
-        {
-            return ry_workspace::is_file_eligible(path, root, config);
-        }
-        // Fall back to the server root only when the path is
-        // actually inside it. After a folder removal, files under the removed
-        // root must not remain eligible via this fallback.
+        // No folder owns the path. Fall back to the server root only
+        // when the path is actually inside it. After a folder removal,
+        // files under the removed root must not remain eligible via
+        // this fallback.
         match &self.root {
             Some(root) if path.starts_with(root) => {
                 ry_workspace::is_file_eligible(path, root, &self.file_config)
@@ -704,13 +638,6 @@ impl LanguageServer for Backend {
                 }
             };
 
-        // Extract per-folder configs from folder_contexts for the
-        // legacy workspace_folders field (still used as fallback).
-        let ws_folders: Vec<(PathBuf, ry_config::Config)> = folder_contexts
-            .iter()
-            .map(|ctx| (ctx.root.clone(), ctx.config.clone()))
-            .collect();
-
         // Initialize per-folder project caches.
         let folder_projects: HashMap<String, Arc<Mutex<ProjectCache>>> = folder_contexts
             .iter()
@@ -724,12 +651,8 @@ impl LanguageServer for Backend {
 
         // Precompute the root-level filter alongside the per-folder ones, so
         // the publish loop borrows compiled values and never recompiles.
-        let (root_filter, root_min_confidence, root_excludes) = compute_folder_filter(
-            &file_config,
-            &folder_settings,
-            &file_config,
-            &filter_compile_count,
-        );
+        let (root_filter, root_min_confidence, root_excludes) =
+            compute_folder_filter(&file_config, &folder_settings, &filter_compile_count);
 
         let mut state = self.state.lock().await;
         state.user_stubs = user_stubs;
@@ -746,12 +669,6 @@ impl LanguageServer for Backend {
         // Install per-folder analysis contexts and project caches.
         state.folder_contexts = folder_contexts;
         state.folder_projects = folder_projects;
-        // Longest-prefix matching in `eligibility_for_path`'s legacy
-        // `workspace_folders` fallback requires the most specific root
-        // first.
-        let mut ws_sorted = ws_folders;
-        ws_sorted.sort_by_key(|(p, _)| std::cmp::Reverse(p.as_os_str().len()));
-        state.workspace_folders = ws_sorted;
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 // All position conversion in this server is UTF-16. Advertise
@@ -926,13 +843,7 @@ impl LanguageServer for Backend {
 
         // Republish diagnostics for every open document so the new
         // settings take effect immediately.
-        let open_uris: Vec<Url> = {
-            let state = self.state.lock().await;
-            state.docs.keys().map(|p| path_to_uri(p)).collect()
-        };
-        for uri in open_uris {
-            self.schedule_diagnostics(uri).await;
-        }
+        self.republish_all_open_documents().await;
     }
 
     async fn did_change_workspace_folders(&self, params: DidChangeWorkspaceFoldersParams) {
@@ -1066,13 +977,6 @@ impl LanguageServer for Backend {
                     .or_insert_with(|| Arc::new(Mutex::new(ProjectCache::default())));
             }
 
-            // Legacy workspace_folders sync: rebuild from folder_contexts.
-            state.workspace_folders = state
-                .folder_contexts
-                .iter()
-                .map(|ctx| (ctx.root.clone(), ctx.config.clone()))
-                .collect();
-
             // step 5: Bump index generation so results from the
             // old folder set are discarded.
             state.index_generation = state.index_generation.wrapping_add(1);
@@ -1094,7 +998,11 @@ impl LanguageServer for Backend {
                 .await;
         }
 
-        // step 4: Republish only after the new state is installed.
+        // step 4: Republish only after the new state is installed. Not
+        // `republish_all_open_documents`: documents under removed roots
+        // were just cleared above and must stay cleared. They fall back
+        // to root-level eligibility, so a blanket reschedule would
+        // re-publish check results for them.
         for uri in &docs_to_republish {
             self.schedule_diagnostics(uri.clone()).await;
         }
@@ -1154,8 +1062,8 @@ impl LanguageServer for Backend {
             {
                 let mut state = self.state.lock().await;
                 state.folder_contexts = new_contexts.clone();
-                // Sync the root-level fallback state and the legacy vectors
-                // from the rebuilt contexts so the fallback paths see the new
+                // Sync the root-level fallback state from the rebuilt
+                // contexts so the fallback paths see the new
                 // config/baseline.
                 for ctx in &new_contexts {
                     if state.root.as_deref() == Some(ctx.root.as_path()) {
@@ -1166,13 +1074,6 @@ impl LanguageServer for Backend {
                         state.root_filter = ctx.filter.clone();
                         state.root_min_confidence = ctx.min_confidence;
                         state.root_excludes = ctx.excludes.clone();
-                    }
-                    if let Some((_, folder_config)) = state
-                        .workspace_folders
-                        .iter_mut()
-                        .find(|(folder_root, _)| folder_root == &ctx.root)
-                    {
-                        *folder_config = ctx.config.clone();
                     }
                 }
                 tracing::info!("workspace config/baseline reloaded");
@@ -1193,13 +1094,7 @@ impl LanguageServer for Backend {
 
         // Republish diagnostics for every open document so the new
         // config/baseline takes effect immediately.
-        let open_uris: Vec<Url> = {
-            let state = self.state.lock().await;
-            state.docs.keys().map(|p| path_to_uri(p)).collect()
-        };
-        for uri in open_uris {
-            self.schedule_diagnostics(uri).await;
-        }
+        self.republish_all_open_documents().await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -1536,13 +1431,6 @@ impl Backend {
         }
         // Cache miss: parse (via the parse cache) + check, then store.
         let (file, _) = self.parsed_file(path).await?;
-        let parsed_version = {
-            let state = self.state.lock().await;
-            state
-                .parsed
-                .get(path)
-                .and_then(|(version, cached)| Arc::ptr_eq(cached, &file).then_some(*version))
-        };
         let mut checker = ry_checker::Checker::new(path);
         let user_stubs = {
             let state = self.state.lock().await;
@@ -1554,15 +1442,22 @@ impl Backend {
         };
         checker.set_user_stubs(user_stubs);
         let (_, scope) = checker.check_with_scope(&file);
-        let mut state = self.state.lock().await;
-        if let Some(version) = parsed_version {
-            let same_parse = state
-                .parsed
-                .get(path)
-                .is_some_and(|(cached_version, cached)| {
-                    *cached_version == version && Arc::ptr_eq(cached, &file)
-                });
-            if state.versions.get(path).copied() == Some(version) && same_parse {
+        // Cache only when the parse behind this scope is still current.
+        // One post-check suffices: the parse cache still holds `file`
+        // (Arc identity) tagged with a version equal to the live
+        // document version. `record_parse` stamps that pairing at store
+        // time, and a superseded entry can never re-install an older
+        // `Arc` (every miss parses into a fresh `Arc`), so checking
+        // before the check run would only re-derive what this check
+        // already proves.
+        {
+            let mut state = self.state.lock().await;
+            let current_version = state.parsed.get(path).and_then(|(cached_version, cached)| {
+                (Arc::ptr_eq(cached, &file)
+                    && state.versions.get(path).copied() == Some(*cached_version))
+                .then_some(*cached_version)
+            });
+            if let Some(version) = current_version {
                 state
                     .scopes
                     .insert(path.to_string(), (version, scope.clone()));
@@ -1647,7 +1542,9 @@ impl Backend {
         // also clone this server's per-instance counters so the
         // compile-count delta measured below is scoped to this server, not the
         // process. `publish_start_count` snapshots the counter at cycle start.
-        let (path, doc_paths, versions, filter_compile_count, compile_during_last_publish) = {
+        // Only the eligible documents' versions are snapshotted, not the
+        // whole `versions` map.
+        let (path, doc_versions, filter_compile_count, compile_during_last_publish) = {
             let state = self.state.lock().await;
             (
                 uri_to_path(&uri),
@@ -1655,9 +1552,14 @@ impl Backend {
                     .docs
                     .keys()
                     .filter(|p| state.eligibility_for_path(p))
-                    .cloned()
+                    .filter_map(|p| {
+                        state
+                            .versions
+                            .get(p)
+                            .copied()
+                            .map(|version| (p.clone(), version))
+                    })
                     .collect::<Vec<_>>(),
-                state.versions.clone(),
                 Arc::clone(&state.filter_compile_count),
                 Arc::clone(&state.compile_during_last_publish),
             )
@@ -1675,35 +1577,29 @@ impl Backend {
                 .await;
         }
 
-        let mut project_files = Vec::with_capacity(doc_paths.len());
-        for doc_path in &doc_paths {
+        let mut project_files = Vec::with_capacity(doc_versions.len());
+        for (doc_path, version) in &doc_versions {
             let Some((file, _)) = self.parsed_file(doc_path).await else {
                 continue;
             };
-            let Some(version) = versions.get(doc_path).copied() else {
-                continue;
-            };
-            project_files.push((doc_path.clone(), version, file));
+            project_files.push((doc_path.clone(), *version, file));
         }
         // Disk files never shadow open documents, and files in disabled
         // folders are dropped by the same eligibility rule as open ones.
-        let disk_files = {
+        // Each entry is cloned once, straight into the check input.
+        let disk_entries: Vec<(String, i32, Arc<SourceFile>)> = {
             let state = self.state.lock().await;
+            let open_paths: std::collections::HashSet<&str> =
+                project_files.iter().map(|(p, _, _)| p.as_str()).collect();
             state
                 .disk_files
                 .iter()
                 .filter(|(p, _)| state.eligibility_for_path(p))
-                .map(|(p, file)| (p.clone(), Arc::clone(file)))
-                .collect::<HashMap<String, Arc<SourceFile>>>()
+                .filter(|(p, _)| !open_paths.contains(p.as_str()))
+                .map(|(p, file)| (p.clone(), 0, Arc::clone(file)))
+                .collect()
         };
-        let open_paths: std::collections::HashSet<String> =
-            project_files.iter().map(|(p, _, _)| p.clone()).collect();
-        for (p, file) in &disk_files {
-            if open_paths.contains(p) {
-                continue;
-            }
-            project_files.push((p.clone(), 0, Arc::clone(file)));
-        }
+        project_files.extend(disk_entries);
 
         // Partition files by owning folder and check each folder
         // independently so two roots defining the same package differently
@@ -1743,23 +1639,23 @@ impl Backend {
             }
         }
 
-        // Check each folder partition independently.
+        // Check each folder partition independently. `per_folder` is
+        // consumed: each partition's files go into its check by value.
         let mut all_results: Vec<ProjectCheckResult> = Vec::new();
-        for (key, (ctx_opt, files)) in &per_folder {
+        for (key, (ctx_opt, files)) in per_folder {
             let (stubs, workspace_context, project_handle) = match ctx_opt {
                 Some(ctx) => (
                     Arc::clone(&ctx.stubs),
                     ctx.workspace_context.clone(),
                     folder_project_handles
-                        .get(key)
+                        .get(&key)
                         .cloned()
                         .unwrap_or_else(|| Arc::clone(&root_project)),
                 ),
                 None => (Arc::clone(&user_stubs), None, Arc::clone(&root_project)),
             };
             let mut project = project_handle.lock().await;
-            let result =
-                project.check_with_workspace(files.clone(), stubs, workspace_context.as_ref());
+            let result = project.check_with_workspace(files, stubs, workspace_context.as_ref());
             all_results.push(result);
         }
 
@@ -1773,13 +1669,14 @@ impl Backend {
         }
 
         // Publish diagnostics for every checked file, applying per-folder
-        // filter/confidence/exclude/baseline state.
-        for result in &all_results {
+        // filter/confidence/exclude/baseline state. Results are consumed:
+        // each file's diagnostic vec is taken, not cloned.
+        for result in all_results {
             let ProjectCheckResult {
                 diagnostics: per_file,
                 files: checked_files,
             } = result;
-            for (diagnostic_path, mut diagnostics) in per_file.clone() {
+            for (diagnostic_path, mut diagnostics) in per_file {
                 // Use the precomputed filter/confidence/excludes
                 // from the FolderAnalysisContext instead of reconstructing
                 // them per file inside the publish loop.
@@ -1869,9 +1766,11 @@ impl Backend {
     }
 
     /// Discover and parse all `.R`/`.r` files under the workspace root(s)
-    /// in a background task. Results are stored in `state.disk_files` and a
-    /// diagnostic refresh is triggered so cross-file calls into unopened
-    /// files resolve on the next check.
+    /// in a background task and store the results in `state.disk_files`.
+    /// This function never publishes diagnostics itself: callers await it
+    /// and then republish (e.g. `did_change_watched_files`), which is what
+    /// makes cross-file calls into unopened files resolve on the next
+    /// check.
     async fn spawn_background_index(&self) {
         let (roots_with_config, index_gen) = {
             let mut state = self.state.lock().await;
@@ -1885,14 +1784,6 @@ impl Backend {
                     .folder_contexts
                     .iter()
                     .map(|ctx| (ctx.root.clone(), ctx.config.clone(), Arc::clone(&ctx.stubs)))
-                    .collect()
-            } else if !state.workspace_folders.is_empty() {
-                state
-                    .workspace_folders
-                    .iter()
-                    .map(|(root, config)| {
-                        (root.clone(), config.clone(), Arc::clone(&state.user_stubs))
-                    })
                     .collect()
             } else if let Some(root) = &state.root {
                 vec![(
@@ -2009,10 +1900,23 @@ impl Backend {
         }
     }
 
+    /// Schedule a diagnostics republish for every open document. Used
+    /// after a global state change (settings, watched files) so the new
+    /// state takes effect immediately without waiting for an edit.
+    async fn republish_all_open_documents(&self) {
+        let open_uris: Vec<Url> = {
+            let state = self.state.lock().await;
+            state.docs.keys().map(|p| path_to_uri(p)).collect()
+        };
+        for uri in open_uris {
+            self.schedule_diagnostics(uri).await;
+        }
+    }
+
     /// Debounce diagnostics for `uri`: bump the workspace generation counter
     /// and spawn a task that sleeps ~180ms, then publishes diagnostics
-    /// ONLY if its generation is still the latest. A newer edit during
-    /// the sleep window bumps the counter and the stale task aborts, so
+    /// ONLY if its generation is still the latest. A newer edit during the
+    /// sleep window bumps the counter and the stale task aborts, so
     /// a burst of keystrokes triggers a single check rather than one per
     /// keystroke.
     async fn schedule_diagnostics(&self, uri: Url) {
@@ -2251,7 +2155,7 @@ fn build_folder_contexts(
         // per folder so the publish loop performs one ownership lookup
         // and borrows the compiled values.
         let (filter, min_confidence, excludes) =
-            compute_folder_filter(&config, &folder_settings, &config, filter_count);
+            compute_folder_filter(&config, &folder_settings, filter_count);
         contexts.push(FolderAnalysisContext {
             root: folder_root.clone(),
             config,
@@ -2323,7 +2227,7 @@ fn rebuild_folder_context(
     // Recompute the precomputed filter/excludes from the
     // reloaded config.
     let (filter, min_confidence, excludes) =
-        compute_folder_filter(&config, &old.folder_settings, &config, filter_count);
+        compute_folder_filter(&config, &old.folder_settings, filter_count);
     FolderAnalysisContext {
         root: old.root.clone(),
         config,

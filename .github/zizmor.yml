@@ -4,13 +4,12 @@
 rules:
   # artipacked:
   # - pullfrog.yml: the workflow keeps pullfrog's generated reference
-  #   shape; only the provider env area was trimmed and the action
-  #   pinned by SHA, the parts the file header marks as editable. The
-  #   persisted checkout credential is inert under pullfrog's documented
-  #   model: the agent mints its own short-lived OIDC installation
-  #   tokens for every API call and never consumes the workflow's
-  #   GITHUB_TOKEN, and the job's token is contents: read only. See
-  #   https://docs.pullfrog.com/security.
+  #   shape; only the provider env area was trimmed, the part the file
+  #   header marks as editable. The persisted checkout credential is
+  #   inert under pullfrog's documented model: the agent mints its own
+  #   short-lived OIDC installation tokens for every API call and never
+  #   consumes the workflow's GITHUB_TOKEN, and the job's token is
+  #   contents: read only. See https://docs.pullfrog.com/security.
   artipacked:
     ignore:
       - pullfrog.yml

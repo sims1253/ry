@@ -624,6 +624,8 @@ fn captures_promise_parameter(expression: &Expr, parameter: &str) -> bool {
         || (is_dots_promise_capture(func) && parameter == "...")
 }
 
+/// Whether any use of `parameter` in `body` reads it as an ordinary value,
+/// as opposed to a quoted, defused, or promise-captured use.
 fn parameter_has_normal_use(body: &[Stmt], parameter: &str) -> bool {
     let mut uses = ParameterUses::default();
     for statement in body {
@@ -716,14 +718,20 @@ fn promise_capture_index() -> &'static std::collections::HashMap<String, (bool, 
     })
 }
 
+/// Whether the callee is a stub-declared promise-capture helper for a
+/// single named formal.
 fn is_single_promise_capture(function: &Expr) -> bool {
     is_promise_capture(function, false)
 }
 
+/// Whether the callee is a stub-declared promise-capture helper for the
+/// `...` dots argument.
 fn is_dots_promise_capture(function: &Expr) -> bool {
     is_promise_capture(function, true)
 }
 
+/// Whether a `.(parameter)` unquote anywhere inside the expression —
+/// including inside braced statement blocks — references `parameter`.
 fn bquote_references_parameter(expression: &Expr, parameter: &str) -> bool {
     expr_any(expression, &|e| unquotes_parameter(e, parameter))
 }

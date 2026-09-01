@@ -199,6 +199,8 @@ fn bquote_dot_marks_its_parameter_as_quoting() {
     );
 }
 
+/// An unquote inside a braced body still quotes: the walker must recurse
+/// through `Expr::Block` statements, not treat the block as opaque.
 #[test]
 fn bquote_dot_in_a_braced_body_still_quotes() {
     let diagnostics = check(

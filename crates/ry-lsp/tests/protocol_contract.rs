@@ -743,29 +743,19 @@ fn version_stamped_tree_cache_rejects_stale_parse() {
         let mut live = LspSession::new(cr, cw);
         live.initialize(fixture.root()).await.unwrap();
 
-        // ── Force the interleaving (#53): ──
-        //   1. parse version N=1 starts
-        //   2. didChange installs N+1=2
-        //   3. parse N=1 finishes
-        //   4. stale result is rejected by the version-stamped tree cache
-        //   5. diagnostics equal a fresh parse of N+1=2
-
-        // Arm the test-only scheduler barrier. The next `parsed_file` cache
-        // miss pauses after reading the document text/version/tree but before
-        // parsing. The barrier also arms a didChange-processed notification
-        // so the test can confirm the new version is installed before
-        // releasing the paused parse.
+        // Force the parse/didChange interleaving (#53); the sequence is
+        // documented at the `maybe_pause` call site in `backend::parsed_file`.
         ry_lsp::test_seam::arm();
 
         // Open version 1. `schedule_diagnostics` debounces 180 ms, then
         // `publish_diagnostics` calls `parsed_file` → barrier pauses.
         live.open(&main_uri, 1, source_v1).await.unwrap();
 
-        // Wait for the parse of version 1 to start (step 1): `parsed_file`
-        // has read the v1 text/version/tree and is now paused.
+        // Wait for the parse of version 1 to start: `parsed_file` has read
+        // the v1 text/version/tree and is now paused.
         ry_lsp::test_seam::wait_arrived().await;
 
-        // Install version 2 while the version-1 parse is paused (step 2).
+        // Install version 2 while the version-1 parse is paused.
         live.change(&main_uri, 2, json!([{"text": source_v2}]))
             .await
             .unwrap();
@@ -777,15 +767,14 @@ fn version_stamped_tree_cache_rejects_stale_parse() {
         // update and the stale parse would not be detected.
         ry_lsp::test_seam::wait_did_change().await;
 
-        // Release the barrier: the version-1 parse finishes (step 3). Its
-        // tree is rejected by `store_tree` (version 1 ≠ current version 2)
-        // and its `SourceFile` is rejected by `record_parse` (step 4). The
-        // retry loop then parses version 2 fresh.
+        // Release the barrier: the version-1 parse finishes, its tree is
+        // rejected by `store_tree` (version 1 ≠ current version 2) and its
+        // `SourceFile` by `record_parse`, and the retry loop parses
+        // version 2 fresh.
         ry_lsp::test_seam::release_barrier();
 
-        // Collect diagnostics for version 2 (step 5). The didChange
-        // triggered `schedule_diagnostics(gen=2)`, which publishes after
-        // the debounce.
+        // Collect diagnostics for version 2. The didChange triggered
+        // `schedule_diagnostics(gen=2)`, which publishes after the debounce.
         let mark = live.publication_mark();
         let publish_v2 = live
             .published_diagnostics_after(&main_uri, mark)

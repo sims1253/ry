@@ -29,10 +29,11 @@
 //! and crash the client. All `tracing` output is routed to stderr via
 //! the CLI's `tracing_subscriber` initialization before `run()` is called.
 
-/// Test-only scheduler/barrier seam for forcing
-/// parse/didChange interleaving. The seam controls scheduling only; cache
-/// policy (version-stamped tree rejection) is production code in
-/// `backend::parsed_file` and `State::store_tree`/`State::tree_for`.
+/// Test-only scheduler/barrier seam for forcing parse/didChange
+/// interleaving (the forced sequence is documented at the `maybe_pause`
+/// call site in `backend::parsed_file`). The seam controls scheduling
+/// only; cache policy (version-stamped tree rejection) is production
+/// code in `backend::parsed_file` and `State::store_tree`/`State::tree_for`.
 ///
 /// The barrier is **thread-local**: each test creates a single-threaded
 /// (`new_current_thread`) tokio runtime, so the server and its spawned
@@ -75,36 +76,31 @@ pub mod test_seam {
         PARSE_BARRIER.with(|b| b.clone())
     }
 
-    /// Arm the barrier so the next `parsed_file` cache miss pauses after
-    /// reading the document text/version/tree but before parsing. Also
-    /// arms the `didChange` notification so the test can confirm the new
-    /// version is installed before releasing the paused parse. Both flags
-    /// are consumed atomically (once each); subsequent calls proceed
-    /// normally.
+    /// Arm the barrier so the next `parsed_file` cache miss pauses before
+    /// parsing, and arm the `didChange`-processed notification. Both flags
+    /// are consumed atomically (once each).
     pub fn arm() {
         let b = barrier();
         b.armed.store(true, Ordering::Release);
         b.did_change_waiting.store(true, Ordering::Release);
     }
 
-    /// Wait for `parsed_file` to arrive at the barrier. Returns once the
-    /// server-side parse has read the document but has not yet parsed it,
-    /// so the test can install a new version before the parse completes.
+    /// Wait for `parsed_file` to arrive at the barrier: it has read the
+    /// document but not yet parsed it.
     pub async fn wait_arrived() {
         barrier().arrived.notified().await;
     }
 
-    /// Wait for a `didChange` to be fully processed: document updated,
-    /// version bumped, and diagnostics re-scheduled. The test calls this
-    /// after sending `didChange` and before releasing the barrier, so the
-    /// version-stamped cache rejection is exercised deterministically.
+    /// Wait for a `didChange` to be fully processed (document updated,
+    /// version bumped, diagnostics re-scheduled); call before releasing
+    /// the barrier so the version-stamped cache rejection is exercised
+    /// deterministically.
     pub async fn wait_did_change() {
         barrier().did_change_fired.notified().await;
     }
 
-    /// Release the paused parse so it can finish. The stale result is
-    /// rejected by the version-stamped tree cache; the retry loop in
-    /// `parsed_file` then parses the current version fresh.
+    /// Release the paused parse; the version-stamped cache and the retry
+    /// loop in `backend::parsed_file` handle the rest.
     pub fn release_barrier() {
         barrier().release.notify_one();
     }
@@ -122,7 +118,7 @@ pub mod test_seam {
 
     /// Called by `did_change` after the document is updated and diagnostics
     /// are re-scheduled. Only fires when a test has armed the notification
-    /// (via `arm`). The flag is consumed atomically so only the first
+    /// via `arm`; the flag is consumed atomically so only the first
     /// `didChange` after arming signals.
     pub(crate) fn note_did_change() {
         let b = barrier();

@@ -2,6 +2,7 @@
 
 mod check;
 mod dump;
+mod pipeline;
 
 use std::collections::HashMap;
 use std::io::IsTerminal;
@@ -11,21 +12,23 @@ use std::sync::Arc;
 
 use clap::parser::ValueSource;
 use clap::{
-    ArgMatches, CommandFactory, FromArgMatches, Parser as ClapParser, Subcommand, ValueEnum,
+    ArgMatches, Args, CommandFactory, FromArgMatches, Parser as ClapParser, Subcommand, ValueEnum,
 };
 use miette::{IntoDiagnostic, Result};
 
 use ry_config as config;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 enum ColorChoice {
+    #[default]
     Auto,
     Always,
     Never,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 enum ConfidenceChoice {
+    #[default]
     Low,
     Medium,
     High,
@@ -88,59 +91,95 @@ struct Cli {
     quiet: u8,
 }
 
+/// Default `--output-format` of `ry check`. One source for the clap
+/// default and for [`CheckArgs::default`], which backs the no-subcommand
+/// `ry` invocation.
+const DEFAULT_CHECK_OUTPUT_FORMAT: &str = "full";
+
+/// Arguments of `ry check` — and of a bare `ry`, which runs `ry check`.
+///
+/// Flag defaults live in one place. Empty vecs, unset flags, and absent
+/// options default through their types. The three scalar defaults come
+/// from [`DEFAULT_CHECK_OUTPUT_FORMAT`] and the enums' `Default` impls,
+/// which the clap attributes read from too, so the derive and
+/// [`CheckArgs::default`] cannot drift apart.
+#[derive(Debug, Args)]
+struct CheckArgs {
+    /// Files or directories to check. Defaults to the current working
+    /// directory, mirroring `ty check` semantics.
+    paths: Vec<PathBuf>,
+    /// Treat the given rule as severity 'error'. Accepts a rule code
+    /// (RY040), a rule name (invalid-arithmetic), or 'all'. Repeatable.
+    #[arg(long)]
+    error: Vec<String>,
+    /// Treat the given rule as severity 'warn'. Same syntax as --error.
+    #[arg(long)]
+    warn: Vec<String>,
+    /// Disable the rule entirely. Same syntax as --error.
+    #[arg(long)]
+    ignore: Vec<String>,
+    /// Load package stubs from this directory. Repeatable; later
+    /// directories replace same-named packages from earlier ones.
+    #[arg(long, value_name = "DIR")]
+    typeshed: Vec<PathBuf>,
+    /// Use exit code 1 if there are any warning-level diagnostics.
+    #[arg(long)]
+    error_on_warning: bool,
+    /// Always use exit code 0, even if there are error-level diagnostics.
+    #[arg(long)]
+    exit_zero: bool,
+    /// Output format. One of: full, concise, json, github, gitlab, junit.
+    /// `full` is the default (matches ty); `concise` is available for a
+    /// one-line-per-diagnostic view.
+    #[arg(long, value_name = "FORMAT", default_value_t = DEFAULT_CHECK_OUTPUT_FORMAT.to_string())]
+    output_format: String,
+    /// Control ANSI color in human-readable output.
+    #[arg(long, value_enum, default_value_t = ColorChoice::default())]
+    color: ColorChoice,
+    /// Watch for file changes and re-check automatically.
+    /// Uses polling (500ms interval). Press Ctrl+C to stop.
+    #[arg(short = 'W', long)]
+    watch: bool,
+    /// Print per-rule diagnostic counts after the run (ruff's
+    /// `--statistics`). Useful for corpus research and triage.
+    #[arg(long)]
+    statistics: bool,
+    /// Write the current diagnostics as a line-number-free JSON baseline.
+    #[arg(long, value_name = "PATH", conflicts_with = "baseline")]
+    write_baseline: Option<PathBuf>,
+    /// Suppress diagnostics matching entries in this baseline file.
+    #[arg(long, value_name = "PATH")]
+    baseline: Option<PathBuf>,
+    /// Only show diagnostics at or above this confidence tier.
+    #[arg(long, value_enum, default_value_t = ConfidenceChoice::default())]
+    min_confidence: ConfidenceChoice,
+}
+
+impl Default for CheckArgs {
+    fn default() -> Self {
+        Self {
+            paths: Vec::new(),
+            error: Vec::new(),
+            warn: Vec::new(),
+            ignore: Vec::new(),
+            typeshed: Vec::new(),
+            error_on_warning: false,
+            exit_zero: false,
+            output_format: DEFAULT_CHECK_OUTPUT_FORMAT.to_string(),
+            color: ColorChoice::default(),
+            watch: false,
+            statistics: false,
+            write_baseline: None,
+            baseline: None,
+            min_confidence: ConfidenceChoice::default(),
+        }
+    }
+}
+
 #[derive(Debug, Subcommand)]
 enum Cmd {
     /// Check a project (or files) for type errors.
-    Check {
-        /// Files or directories to check. Defaults to the current working
-        /// directory, mirroring `ty check` semantics.
-        paths: Vec<PathBuf>,
-        /// Treat the given rule as severity 'error'. Accepts a rule code
-        /// (RY040), a rule name (invalid-arithmetic), or 'all'. Repeatable.
-        #[arg(long)]
-        error: Vec<String>,
-        /// Treat the given rule as severity 'warn'. Same syntax as --error.
-        #[arg(long)]
-        warn: Vec<String>,
-        /// Disable the rule entirely. Same syntax as --error.
-        #[arg(long)]
-        ignore: Vec<String>,
-        /// Load package stubs from this directory. Repeatable; later
-        /// directories replace same-named packages from earlier ones.
-        #[arg(long, value_name = "DIR")]
-        typeshed: Vec<PathBuf>,
-        /// Use exit code 1 if there are any warning-level diagnostics.
-        #[arg(long)]
-        error_on_warning: bool,
-        /// Always use exit code 0, even if there are error-level diagnostics.
-        #[arg(long)]
-        exit_zero: bool,
-        /// Output format. One of: full, concise, json, github, gitlab, junit.
-        /// `full` is the default (matches ty); `concise` is available for a
-        /// one-line-per-diagnostic view.
-        #[arg(long, value_name = "FORMAT", default_value = "full")]
-        output_format: String,
-        /// Control ANSI color in human-readable output.
-        #[arg(long, value_enum, default_value_t = ColorChoice::Auto)]
-        color: ColorChoice,
-        /// Watch for file changes and re-check automatically.
-        /// Uses polling (500ms interval). Press Ctrl+C to stop.
-        #[arg(short = 'W', long)]
-        watch: bool,
-        /// Print per-rule diagnostic counts after the run (ruff's
-        /// `--statistics`). Useful for corpus research and triage.
-        #[arg(long)]
-        statistics: bool,
-        /// Write the current diagnostics as a line-number-free JSON baseline.
-        #[arg(long, value_name = "PATH", conflicts_with = "baseline")]
-        write_baseline: Option<PathBuf>,
-        /// Suppress diagnostics matching entries in this baseline file.
-        #[arg(long, value_name = "PATH")]
-        baseline: Option<PathBuf>,
-        /// Only show diagnostics at or above this confidence tier.
-        #[arg(long, value_enum, default_value_t = ConfidenceChoice::Low)]
-        min_confidence: ConfidenceChoice,
-    },
+    Check(CheckArgs),
     /// Dump inferred types for every lexical scope in R files, as JSON on
     /// stdout. Non-interactive counterpart of the LSP's inline type
     /// hints: bindings map to the same type strings. Downstream tooling
@@ -256,22 +295,7 @@ fn main() -> Result<ExitCode> {
 
     let cmd = match cli.cmd {
         Some(c) => c,
-        None => Cmd::Check {
-            paths: Vec::new(),
-            error: Vec::new(),
-            warn: Vec::new(),
-            ignore: Vec::new(),
-            typeshed: Vec::new(),
-            error_on_warning: false,
-            exit_zero: false,
-            output_format: "full".to_string(),
-            color: ColorChoice::Auto,
-            watch: false,
-            statistics: false,
-            write_baseline: None,
-            baseline: None,
-            min_confidence: ConfidenceChoice::Low,
-        },
+        None => Cmd::Check(CheckArgs::default()),
     };
 
     // Subcommand matches are nested under the subcommand's name. We
@@ -280,40 +304,7 @@ fn main() -> Result<ExitCode> {
     let check_matches = matches.subcommand_matches("check");
 
     match cmd {
-        Cmd::Check {
-            paths,
-            error,
-            warn,
-            ignore,
-            typeshed,
-            error_on_warning,
-            exit_zero,
-            output_format,
-            color,
-            watch,
-            statistics,
-            write_baseline,
-            baseline,
-            min_confidence,
-        } => run_check(
-            paths,
-            error,
-            warn,
-            ignore,
-            typeshed,
-            error_on_warning,
-            exit_zero,
-            &output_format,
-            color,
-            cli.verbose,
-            cli.quiet,
-            check_matches,
-            watch,
-            statistics,
-            write_baseline,
-            baseline,
-            min_confidence,
-        ),
+        Cmd::Check(args) => run_check(args, cli.verbose, cli.quiet, check_matches),
         Cmd::DumpTypes {
             files,
             project_root,
@@ -459,30 +450,35 @@ fn render_diagnostics(
 
 /// Drive `ry check`: merge the CLI flags with `ry.toml`, discover the
 /// R files, check them once, and keep re-checking in watch mode.
-#[allow(clippy::too_many_arguments)]
 fn run_check(
-    paths: Vec<PathBuf>,
-    error: Vec<String>,
-    warn: Vec<String>,
-    ignore: Vec<String>,
-    typeshed: Vec<PathBuf>,
-    error_on_warning: bool,
-    exit_zero: bool,
-    output_format: &str,
-    color: ColorChoice,
+    args: CheckArgs,
     cli_verbose: u8,
     cli_quiet: u8,
     check_matches: Option<&ArgMatches>,
-    watch: bool,
-    statistics: bool,
-    write_baseline: Option<PathBuf>,
-    baseline: Option<PathBuf>,
-    min_confidence: ConfidenceChoice,
 ) -> Result<ExitCode> {
+    let CheckArgs {
+        paths,
+        error,
+        warn,
+        ignore,
+        typeshed,
+        error_on_warning,
+        exit_zero,
+        output_format,
+        color,
+        watch,
+        statistics,
+        write_baseline,
+        baseline,
+        min_confidence,
+    } = args;
+
     // Determine the search start directory for config discovery. If the
     // user passed a path, anchor discovery at the first path's parent
     // (for files) or at the path itself (for directories). With no
     // paths, discovery starts from the current working directory.
+    // `dump-types` anchors at the first input itself instead; see
+    // `run_dump_types`.
     let search_start: PathBuf = paths
         .first()
         .map(|p| {
@@ -496,21 +492,9 @@ fn run_check(
         })
         .unwrap_or_else(|| PathBuf::from("."));
 
-    // Discover a ry.toml by walking up from the search start. A missing
-    // config is not an error; we fall back to `Config::defaults()`. A
-    // present-but-malformed config IS an error: surface it and abort so
-    // the user notices the typo rather than silently running with
-    // defaults.
-    let (config_root, base_cfg) = match config::Config::discover(&search_start) {
-        Ok(Some((path, cfg))) => {
-            tracing::debug!(config = %path.display(), "loaded ry.toml");
-            (path.parent().map(|p| p.to_path_buf()), cfg)
-        }
-        Ok(None) => (None, config::Config::defaults()),
-        Err(e) => {
-            eprintln!("ry: {}", e);
-            return Ok(ExitCode::FAILURE);
-        }
+    let (config_root, base_cfg) = match pipeline::discover_config(&search_start) {
+        Ok(found) => found,
+        Err(code) => return Ok(code),
     };
 
     // Forward `None` for scalars the CLI did not set explicitly, so the
@@ -589,17 +573,20 @@ fn run_check(
         return Ok(ExitCode::SUCCESS);
     }
 
-    let result = run_check_once(
-        &all_paths,
-        &filter,
+    // The stable inputs of every pass. Only the file set changes across
+    // watch iterations, so it stays a parameter of `run_check_once`.
+    let ctx = CheckContext {
+        filter: &filter,
         format,
-        &cfg,
-        Arc::clone(&user_stubs),
+        resolution_config: &cfg,
+        user_stubs: Arc::clone(&user_stubs),
         color,
-        baseline.as_ref(),
-        config_root.as_deref(),
-        min_confidence.into(),
-    )?;
+        baseline: baseline.as_ref(),
+        repo_root: config_root.as_deref(),
+        min_confidence: min_confidence.into(),
+    };
+
+    let result = run_check_once(&all_paths, &ctx)?;
     if let Some(path) = write_baseline.as_deref() {
         config::write_baseline_file(path, &result.diagnostics, config_root.as_deref())?;
     }
@@ -678,17 +665,7 @@ fn run_check(
             // Using ANSI escape sequences rather than `clear` command
             // for portability (no external process spawn).
             eprint!("\x1b[2J\x1b[H");
-            let result = run_check_once(
-                &all_paths,
-                &filter,
-                format,
-                &cfg,
-                Arc::clone(&user_stubs),
-                color,
-                baseline.as_ref(),
-                config_root.as_deref(),
-                min_confidence.into(),
-            )?;
+            let result = run_check_once(&all_paths, &ctx)?;
             result.print_summary(format, statistics);
         }
     }
@@ -817,21 +794,40 @@ impl CheckResult {
     }
 }
 
+/// The resolved inputs of one check pass: the config-derived settings
+/// the file set is checked under. The file set itself stays a parameter
+/// of `run_check_once` because watch iterations change it.
+struct CheckContext<'a> {
+    filter: &'a ry_checker::SeverityFilter,
+    format: ry_checker::format::OutputFormat,
+    resolution_config: &'a config::Config,
+    user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
+    color: bool,
+    baseline: Option<&'a config::Baseline>,
+    repo_root: Option<&'a std::path::Path>,
+    min_confidence: ry_checker::Confidence,
+}
+
+/// check's parse-failure policy: report every unreadable or unparseable
+/// file on stderr and keep going. Failed files drop out of the pass and
+/// count as parse errors, which fail the run's exit code.
+fn report_check_parse_failure(
+    path: &std::path::Path,
+    error: &pipeline::ParseError,
+) -> pipeline::FailureAction {
+    match error {
+        pipeline::ParseError::Read(error) => eprintln!("ry: {}: {}", path.display(), error),
+        pipeline::ParseError::Parse(message) => {
+            eprintln!("ry: {}: parse error: {}", path.display(), message)
+        }
+    }
+    pipeline::FailureAction::Skip
+}
+
 /// Core check logic: parse all files, run the project checker, apply
 /// the severity filter, print diagnostics, and return a summary. Used
 /// by both one-shot `ry check` and `ry check --watch` iterations.
-#[allow(clippy::too_many_arguments)]
-fn run_check_once(
-    all_paths: &[PathBuf],
-    filter: &ry_checker::SeverityFilter,
-    format: ry_checker::format::OutputFormat,
-    resolution_config: &config::Config,
-    user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
-    color: bool,
-    baseline: Option<&config::Baseline>,
-    repo_root: Option<&std::path::Path>,
-    min_confidence: ry_checker::Confidence,
-) -> Result<CheckResult> {
+fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> {
     let mut all_diagnostics: Vec<ry_checker::Diagnostic> = Vec::new();
     let mut srcs: HashMap<String, String> = HashMap::new();
     let mut comments: HashMap<String, Vec<ry_core::ast::Comment>> = HashMap::new();
@@ -842,117 +838,70 @@ fn run_check_once(
     // sorted for a stable summary. Keyed on the formatted `path (reason)`.
     let mut degraded: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
-    // Parallel file parsing. tree-sitter parsers are
-    // NOT `Send`, so each rayon thread keeps its own `RParser` in a
-    // `thread_local!` (the grammar is loaded once per thread; the
-    // thread pool is reused across this run). Parsed files come back in
-    // arbitrary thread order; we re-sort to input path order for stable
-    // diagnostic output. The single-parser optimization (reusing one
-    // parser across documents) is preserved within each thread.
-    thread_local! {
-        static PARSER: std::cell::RefCell<Option<ry_core::RParser>> =
-            const { std::cell::RefCell::new(None) };
-    }
-    let parse_one = |path: &std::path::Path| -> Result<(String, String, ry_core::SourceFile), ()> {
-        let src = match read_r_source(path) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("ry: {}: {}", path.display(), e);
-                return Err(());
+    // Parallel parsing through the shared thread-local parser pool.
+    let parsed = pipeline::parse_files(paths, report_check_parse_failure)
+        .expect("check's parse-failure policy never aborts");
+    parse_errors += paths.len() - parsed.len();
+    let parsed: Vec<pipeline::ParsedFile> = parsed
+        .into_iter()
+        .filter(|parsed_file| {
+            file_count += 1;
+            srcs.insert(parsed_file.path.clone(), parsed_file.src.clone());
+            if is_probably_not_r_source(&parsed_file.file) {
+                not_r_diagnostics.push(ry_checker::Diagnostic::new(
+                    ry_checker::Severity::Info,
+                    ry_core::Span::new(0, 1, 0, 0),
+                    &parsed_file.path,
+                    "RY097",
+                    "File does not appear to be R source; diagnostics suppressed.",
+                ));
+                false
+            } else {
+                true
             }
-        };
-        let path_str = path.to_string_lossy().to_string();
-        let file = PARSER.with(|cell| {
-            let mut slot = cell.borrow_mut();
-            let parser = slot.get_or_insert_with(|| {
-                ry_core::RParser::new().expect("parser init (thread-local)")
-            });
-            parser.parse(&path_str, &src)
-        });
-        match file {
-            Ok(f) => Ok((path_str, src, f)),
-            Err(e) => {
-                eprintln!("ry: {}: parse error: {}", path.display(), e);
-                Err(())
-            }
-        }
-    };
-    // Parallel collect, tracking input index for a stable re-sort.
-    use rayon::prelude::*;
-    let mut parsed: Vec<(usize, String, String, ry_core::SourceFile)> = all_paths
-        .par_iter()
-        .enumerate()
-        .filter_map(|(i, path)| parse_one(path).ok().map(|(p, s, f)| (i, p, s, f)))
+        })
         .collect();
-    parse_errors += all_paths.len() - parsed.len();
-    parsed.sort_by_key(|(i, _, _, _)| *i);
-    parsed.retain(|(_, path, src, file)| {
-        file_count += 1;
-        srcs.insert(path.clone(), src.clone());
-        if is_probably_not_r_source(file) {
-            not_r_diagnostics.push(ry_checker::Diagnostic::new(
-                ry_checker::Severity::Info,
-                ry_core::Span::new(0, 1, 0, 0),
-                path,
-                "RY097",
-                "File does not appear to be R source; diagnostics suppressed.",
-            ));
-            false
-        } else {
-            true
-        }
-    });
-    // Each R package is a separate library scope. Pooling multiple package
-    // roots into one Project lets top-level bindings and inferred functions
-    // leak between namespaces, which can both hide real RY010 findings and
-    // activate the wrong NSE model. Non-package scripts remain one project so
-    // ordinary multi-file workflows keep their source()-style visibility.
-    let mut groups: std::collections::BTreeMap<Option<PathBuf>, Vec<usize>> =
-        std::collections::BTreeMap::new();
-    for (index, (_, path, _, _)) in parsed.iter().enumerate() {
-        groups
-            .entry(enclosing_package_root(std::path::Path::new(path)))
-            .or_default()
-            .push(index);
-    }
+
+    // Same per-package grouping as `ry dump-types` (see
+    // `pipeline::group_by_package_root`).
+    let groups = pipeline::group_by_package_root(parsed.iter().map(|file| file.path.as_str()));
 
     let mut per_file_diagnostics = Vec::new();
     for (group_root, indices) in &groups {
+        // Non-package files resolve against the config root, else the
+        // working directory. (`dump-types` offers --project-root as an
+        // extra override here; check has no such flag.)
         let resolution_root = group_root
             .clone()
-            .or_else(|| repo_root.map(PathBuf::from))
+            .or_else(|| ctx.repo_root.map(PathBuf::from))
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
         let package_scope = ry_workspace::resolve_workspace_context(
             &resolution_root,
-            resolution_config,
+            ctx.resolution_config,
             ry_workspace::ResolutionEnvironment {
-                files: indices.iter().map(|index| &parsed[*index].3).collect(),
-                user_stubs: &user_stubs,
+                files: indices.iter().map(|index| &parsed[*index].file).collect(),
+                user_stubs: &ctx.user_stubs,
             },
         )
         .map_err(|error| miette::miette!(error))?;
         let mut analysis_files = Vec::new();
         for index in indices {
-            let (_, path, _, file) = &parsed[*index];
-            analysis_files.push((path.clone(), 0, std::sync::Arc::new(file.clone())));
-            comments.insert(path.clone(), file.comments.clone());
+            let parsed_file = &parsed[*index];
+            analysis_files.push((
+                parsed_file.path.clone(),
+                std::sync::Arc::new(parsed_file.file.clone()),
+            ));
+            comments.insert(parsed_file.path.clone(), parsed_file.file.comments.clone());
         }
+        let (workspace, degraded_scopes) = pipeline::workspace_context(package_scope);
         let check_input = check::CheckInput {
             files: analysis_files,
-            user_stubs: Arc::clone(&user_stubs),
-            workspace: Some(ry_workspace::WorkspaceContext {
-                attached_packages: package_scope.attached_packages,
-                bare_bindings: package_scope.bare_bindings,
-                external_bindings: package_scope.external_bindings,
-                imported_bindings: package_scope.imported_bindings,
-                s3_methods: package_scope.s3_methods,
-                load_bindings: package_scope.load_bindings,
-                degraded_scopes: Vec::new(),
-            }),
+            user_stubs: Arc::clone(&ctx.user_stubs),
+            workspace: Some(workspace),
         };
         let check_output = check::check_project(check_input);
         per_file_diagnostics.extend(check_output.diagnostics);
-        for (path, reason) in package_scope.degraded_scopes {
+        for (path, reason) in degraded_scopes {
             degraded.insert(format!("{} ({})", path.display(), reason));
         }
     }
@@ -970,23 +919,23 @@ fn run_check_once(
     }
 
     for (_path, diags) in &mut per_file_diagnostics {
-        ry_checker::apply_filter_to_diagnostics(diags, filter);
+        ry_checker::apply_filter_to_diagnostics(diags, ctx.filter);
     }
-    ry_checker::apply_filter_to_diagnostics(&mut not_r_diagnostics, filter);
+    ry_checker::apply_filter_to_diagnostics(&mut not_r_diagnostics, ctx.filter);
     all_diagnostics.append(&mut not_r_diagnostics);
     for (_path, diags) in per_file_diagnostics {
         all_diagnostics.extend(diags);
     }
 
-    demote_non_source_paths(&mut all_diagnostics, repo_root);
-    if let Some(baseline) = baseline {
-        config::subtract_baseline(&mut all_diagnostics, baseline, repo_root);
+    demote_non_source_paths(&mut all_diagnostics, ctx.repo_root);
+    if let Some(baseline) = ctx.baseline {
+        config::subtract_baseline(&mut all_diagnostics, baseline, ctx.repo_root);
     }
-    all_diagnostics.retain(|diagnostic| diagnostic.confidence >= min_confidence);
+    all_diagnostics.retain(|diagnostic| diagnostic.confidence >= ctx.min_confidence);
 
     sort_and_deduplicate_diagnostics(&mut all_diagnostics);
 
-    let rendered = render_diagnostics(&all_diagnostics, format, &srcs, color);
+    let rendered = render_diagnostics(&all_diagnostics, ctx.format, &srcs, ctx.color);
     if !rendered.is_empty() {
         // Diagnostics go to stdout (matches ruff/ty): `ry check > log`
         // captures the diagnostics, while the summary line and watch-
@@ -1186,28 +1135,6 @@ fn run_shell_completion(shell: &str) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Read an R source file, accepting both UTF-8 and Latin-1 encodings.
-///
-/// R accepts Latin-1 source files, so retry an invalid UTF-8 decode by mapping
-/// every input byte directly to the corresponding Unicode code point.
-fn read_r_source(path: &std::path::Path) -> std::io::Result<String> {
-    match std::fs::read_to_string(path) {
-        Ok(source) => Ok(source),
-        Err(error) if error.kind() == std::io::ErrorKind::InvalidData => {
-            std::fs::read(path).map(|bytes| bytes.into_iter().map(char::from).collect())
-        }
-        Err(error) => Err(error),
-    }
-}
-
-fn enclosing_package_root(path: &std::path::Path) -> Option<PathBuf> {
-    let start = if path.is_dir() { path } else { path.parent()? };
-    start
-        .ancestors()
-        .find(|ancestor| ancestor.join("DESCRIPTION").is_file())
-        .map(std::path::Path::to_path_buf)
-}
-
 /// Test-compatible wrapper around the shared bounded discovery module.
 /// Production code calls [`ry_workspace::discover_r_files`] directly with
 /// the effective folder config so CLI and LSP use identical discovery
@@ -1262,12 +1189,13 @@ mod tests {
         Baseline, BaselineEntry, load_baseline, subtract_baseline, write_baseline_file,
     };
     use super::{
-        ColorChoice, collect_r_files, demote_non_source_paths, run_check_once,
-        sort_and_deduplicate_diagnostics,
+        CheckContext, CheckResult, ColorChoice, collect_r_files, demote_non_source_paths,
+        run_check_once, sort_and_deduplicate_diagnostics,
     };
     use ry_checker::format::OutputFormat;
     use ry_checker::{Diagnostic, Severity};
     use ry_core::Span;
+    use std::path::PathBuf;
 
     fn diag(path: &str, line: usize, col: usize, code: &'static str) -> Diagnostic {
         Diagnostic::new(
@@ -1277,6 +1205,29 @@ mod tests {
             code,
             "same message",
         )
+    }
+
+    /// `run_check_once` with the tail every test shares: JSON output,
+    /// default config and severity filter, no stubs, no color, no
+    /// baseline, lowest confidence. Tests supply the paths and the repo
+    /// root; anything else they vary themselves.
+    fn check_files(paths: &[PathBuf], repo_root: Option<&std::path::Path>) -> CheckResult {
+        let filter = ry_checker::SeverityFilter::default();
+        let resolution_config = ry_config::Config::defaults();
+        run_check_once(
+            paths,
+            &CheckContext {
+                filter: &filter,
+                format: OutputFormat::Json,
+                resolution_config: &resolution_config,
+                user_stubs: std::sync::Arc::new(std::collections::BTreeMap::new()),
+                color: false,
+                baseline: None,
+                repo_root,
+                min_confidence: ry_checker::Confidence::Low,
+            },
+        )
+        .unwrap()
     }
 
     #[test]
@@ -1422,18 +1373,7 @@ mod tests {
         let mut paths = Vec::new();
         collect_r_files(temp.path(), &mut paths, false);
         paths.sort();
-        let result = run_check_once(
-            &paths,
-            &ry_checker::SeverityFilter::default(),
-            OutputFormat::Json,
-            &ry_config::Config::defaults(),
-            std::sync::Arc::new(std::collections::BTreeMap::new()),
-            false,
-            None,
-            Some(temp.path()),
-            ry_checker::Confidence::Low,
-        )
-        .unwrap();
+        let result = check_files(&paths, Some(temp.path()));
         assert!(result.diagnostics.iter().any(|diagnostic| {
             diagnostic.code == "RY010"
                 && diagnostic.path.contains("second")
@@ -1552,18 +1492,7 @@ mod tests {
 
         assert_eq!(paths, vec![source.clone()]);
 
-        let result = run_check_once(
-            &paths,
-            &ry_checker::SeverityFilter::default(),
-            OutputFormat::Json,
-            &ry_config::Config::defaults(),
-            std::sync::Arc::new(std::collections::BTreeMap::new()),
-            false,
-            None,
-            Some(root),
-            ry_checker::Confidence::Low,
-        )
-        .unwrap();
+        let result = check_files(&paths, Some(root));
         assert!(
             result
                 .diagnostics
@@ -1688,18 +1617,7 @@ mod tests {
         let mut paths = Vec::new();
         collect_r_files(root, &mut paths, false);
         paths.sort();
-        let result = run_check_once(
-            &paths,
-            &ry_checker::SeverityFilter::default(),
-            OutputFormat::Json,
-            &ry_config::Config::defaults(),
-            std::sync::Arc::new(std::collections::BTreeMap::new()),
-            false,
-            None,
-            Some(root),
-            ry_checker::Confidence::Low,
-        )
-        .unwrap();
+        let result = check_files(&paths, Some(root));
         let unresolved: Vec<_> = result
             .diagnostics
             .iter()
@@ -1736,18 +1654,7 @@ mod tests {
         let mut paths = Vec::new();
         collect_r_files(root, &mut paths, false);
         paths.sort();
-        let result = run_check_once(
-            &paths,
-            &ry_checker::SeverityFilter::default(),
-            OutputFormat::Json,
-            &ry_config::Config::defaults(),
-            std::sync::Arc::new(std::collections::BTreeMap::new()),
-            false,
-            None,
-            Some(root),
-            ry_checker::Confidence::Low,
-        )
-        .unwrap();
+        let result = check_files(&paths, Some(root));
         let unresolved: Vec<_> = result
             .diagnostics
             .iter()
@@ -1766,18 +1673,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let file = temp.path().join("ratfor.r");
         std::fs::write(&file, "if )\nfor )\nwhile )\nfunction )\n").unwrap();
-        let result = run_check_once(
-            &[file],
-            &ry_checker::SeverityFilter::default(),
-            OutputFormat::Json,
-            &ry_config::Config::defaults(),
-            std::sync::Arc::new(std::collections::BTreeMap::new()),
-            false,
-            None,
-            Some(temp.path()),
-            ry_checker::Confidence::Low,
-        )
-        .unwrap();
+        let result = check_files(&[file], Some(temp.path()));
         assert_eq!(result.diagnostics.len(), 1);
         assert_eq!(result.diagnostics[0].code, "RY097");
         assert_eq!(result.diagnostics[0].severity, Severity::Info);
@@ -1793,18 +1689,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = run_check_once(
-            &[file],
-            &ry_checker::SeverityFilter::default(),
-            OutputFormat::Json,
-            &ry_config::Config::defaults(),
-            std::sync::Arc::new(std::collections::BTreeMap::new()),
-            false,
-            None,
-            Some(temp.path()),
-            ry_checker::Confidence::Low,
-        )
-        .unwrap();
+        let result = check_files(&[file], Some(temp.path()));
         assert_eq!(result.diagnostics.len(), 1);
         assert_eq!(result.diagnostics[0].code, "RY097");
     }
@@ -1819,18 +1704,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = run_check_once(
-            &[file],
-            &ry_checker::SeverityFilter::default(),
-            OutputFormat::Json,
-            &ry_config::Config::defaults(),
-            std::sync::Arc::new(std::collections::BTreeMap::new()),
-            false,
-            None,
-            Some(temp.path()),
-            ry_checker::Confidence::Low,
-        )
-        .unwrap();
+        let result = check_files(&[file], Some(temp.path()));
         assert_eq!(result.diagnostics.len(), 1);
         assert_eq!(result.diagnostics[0].code, "RY097");
     }
@@ -1841,18 +1715,7 @@ mod tests {
         let file = temp.path().join("latin1.R");
         std::fs::write(&file, b"# Caf\xe9\nmissing_name\n").unwrap();
 
-        let result = run_check_once(
-            &[file],
-            &ry_checker::SeverityFilter::default(),
-            OutputFormat::Json,
-            &ry_config::Config::defaults(),
-            std::sync::Arc::new(std::collections::BTreeMap::new()),
-            false,
-            None,
-            Some(temp.path()),
-            ry_checker::Confidence::Low,
-        )
-        .unwrap();
+        let result = check_files(&[file], Some(temp.path()));
 
         assert_eq!(result.file_count, 1);
         assert_eq!(result.parse_errors, 0);
@@ -1872,18 +1735,7 @@ mod tests {
         source.push_str("if )\nif )\nif )\n");
         std::fs::write(&file, source).unwrap();
 
-        let result = run_check_once(
-            &[file],
-            &ry_checker::SeverityFilter::default(),
-            OutputFormat::Json,
-            &ry_config::Config::defaults(),
-            std::sync::Arc::new(std::collections::BTreeMap::new()),
-            false,
-            None,
-            Some(temp.path()),
-            ry_checker::Confidence::Low,
-        )
-        .unwrap();
+        let result = check_files(&[file], Some(temp.path()));
         assert!(
             result
                 .diagnostics
@@ -1904,18 +1756,7 @@ mod tests {
         let file = temp.path().join("small.R");
         std::fs::write(&file, "a <- 1\nb <- 2\nc <- 3\nd <- 4\nif )\n").unwrap();
 
-        let result = run_check_once(
-            &[file],
-            &ry_checker::SeverityFilter::default(),
-            OutputFormat::Json,
-            &ry_config::Config::defaults(),
-            std::sync::Arc::new(std::collections::BTreeMap::new()),
-            false,
-            None,
-            Some(temp.path()),
-            ry_checker::Confidence::Low,
-        )
-        .unwrap();
+        let result = check_files(&[file], Some(temp.path()));
         assert!(
             result
                 .diagnostics

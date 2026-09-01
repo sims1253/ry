@@ -4,14 +4,25 @@
 rules:
   # artipacked:
   # - pullfrog.yml: the workflow keeps pullfrog's generated reference
-  #   shape; only the provider env area was trimmed and the action
-  #   pinned by SHA, the parts the file header marks as editable. The
-  #   persisted checkout credential is inert under pullfrog's documented
-  #   model: the agent mints its own short-lived OIDC installation
-  #   tokens for every API call and never consumes the workflow's
-  #   GITHUB_TOKEN, and the job's token is contents: read only. See
-  #   https://docs.pullfrog.com/security.
+  #   shape; only the provider env area was trimmed, the part the file
+  #   header marks as editable. The persisted checkout credential is
+  #   inert under pullfrog's documented model: the agent mints its own
+  #   short-lived OIDC installation tokens for every API call and never
+  #   consumes the workflow's GITHUB_TOKEN, and the job's token is
+  #   contents: read only. See https://docs.pullfrog.com/security.
   artipacked:
+    ignore:
+      - pullfrog.yml
+
+  # unpinned-uses, pullfrog.yml: the vendor documents the action as a thin
+  # bootstrap — the agent resolves from npm at runtime, so the ref pins only
+  # action.yml and the `post:` cleanup step. A commit SHA freezes that
+  # cleanup step while the agent keeps moving, which pullfrog warns can fail
+  # every run after the agent's work is done, and buys no reproducibility
+  # because the reviewed code is never the wrapper. `@v0` tracks the wrapper
+  # contract, which is the vendor's recommendation. See
+  # https://docs.pullfrog.com/versioning.
+  unpinned-uses:
     ignore:
       - pullfrog.yml
 

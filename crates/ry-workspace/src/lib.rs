@@ -1243,19 +1243,11 @@ impl DiscoveryLimits {
     }
 }
 
-impl Default for DiscoveryLimits {
-    fn default() -> Self {
-        Self::from_config(&ry_config::Config::default())
-    }
-}
-
 /// Structured report when a discovery cap is hit.
 /// A cap hit is never silent: the caller emits a tracing event,
 /// LSP warning, or CLI warning based on this report.
 #[derive(Clone, Debug, Default)]
 pub struct TruncationReport {
-    /// The root at which the cap was hit.
-    pub root: PathBuf,
     /// `true` when `max-files` stopped discovery before exhausting the tree.
     pub max_files_hit: bool,
     /// Files omitted because they exceeded `max-file-bytes` (path, size).
@@ -1310,20 +1302,14 @@ pub fn discover_r_files(
     if walk_root.is_file() {
         return DiscoveryResult {
             files: vec![walk_root.to_path_buf()],
-            truncated: TruncationReport {
-                root: walk_root.parent().unwrap_or(walk_root).to_path_buf(),
-                ..Default::default()
-            },
+            truncated: TruncationReport::default(),
         };
     }
     let limits = DiscoveryLimits::from_config(config);
     let excludes = ry_config::Excludes::from_config(config);
     let has_excludes = !excludes.is_empty();
     let mut files = Vec::new();
-    let mut truncated = TruncationReport {
-        root: walk_root.to_path_buf(),
-        ..Default::default()
-    };
+    let mut truncated = TruncationReport::default();
     let package_root = walk_root
         .ancestors()
         .find(|ancestor| ancestor.join("DESCRIPTION").is_file())

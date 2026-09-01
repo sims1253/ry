@@ -245,9 +245,6 @@ enum Cmd {
         #[command(subcommand)]
         command: TypeshedCmd,
     },
-    /// Show the embedded typeshed (debug).
-    #[command(hide = true)]
-    ExplainTypeshed,
     /// Generate shell completions.
     GenerateShellCompletion {
         /// Target shell.
@@ -357,7 +354,6 @@ fn main() -> Result<ExitCode> {
         Cmd::Typeshed {
             command: TypeshedCmd::Validate { dirs },
         } => run_typeshed_validate(&dirs, cli.quiet > 0),
-        Cmd::ExplainTypeshed => run_explain_typeshed(),
         Cmd::GenerateShellCompletion { shell } => run_shell_completion(&shell),
     }
 }
@@ -569,7 +565,12 @@ fn run_check(
     sort_and_deduplicate_paths(&mut all_paths);
 
     if all_paths.is_empty() {
-        eprintln!("ry: no .R / .r files found in {:?}", search_roots);
+        let roots = search_roots
+            .iter()
+            .map(|root| root.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        eprintln!("ry: no .R / .r files found in {roots}");
         return Ok(ExitCode::SUCCESS);
     }
 

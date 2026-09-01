@@ -16,8 +16,8 @@ import {
   getRyVersion,
   checkVersionCapability,
   type ResolvedBinary,
-  MINIMUM_VERSION,
 } from "./common/binary";
+import { MINIMUM_SETTINGS_CHANNEL_VERSION } from "./common/version";
 import { StatusItem } from "./common/status";
 import { debugInformationCommand, explainRuleCommand } from "./common/commands";
 
@@ -74,7 +74,7 @@ export async function activate(
   if (version) {
     const versionError = checkVersionCapability(
       resolvedBinary,
-      MINIMUM_VERSION,
+      MINIMUM_SETTINGS_CHANNEL_VERSION,
       "settings channel",
     );
     if (versionError) {

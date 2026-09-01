@@ -1,23 +1,11 @@
 /**
- * Command implementations — `ry.showLogs`, `ry.showServerLogs`,
- * `ry.debugInformation`, `ry.explainRule`.
+ * Command implementations — `ry.debugInformation`, `ry.explainRule`.
  */
 
 import * as vscode from "vscode";
 import * as cp from "child_process";
-import { Logger } from "./logger";
 import { ResolvedBinary } from "./binary";
 import { type ISettings } from "./settings";
-
-export function showLogsCommand(logger: Logger): void {
-  logger.channel.show();
-}
-
-export function showServerLogsCommand(
-  serverChannel: vscode.OutputChannel,
-): void {
-  serverChannel.show();
-}
 
 export async function debugInformationCommand(
   binary: ResolvedBinary | undefined,

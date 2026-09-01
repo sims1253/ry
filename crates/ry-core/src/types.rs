@@ -248,23 +248,6 @@ impl ClassVector {
         out.known = true;
         out
     }
-
-    /// Set the class on an existing `RType`, returning a new `RType`.
-    /// Used by the checker when it sees `structure(x, class = "foo")`.
-    pub fn with_class(mut self, names: &[&str]) -> Self {
-        self.names = [None, None, None, None];
-        if names.is_empty() {
-            self.len = 0;
-            self.known = true;
-            return self;
-        }
-        for (i, n) in names.iter().take(4).enumerate() {
-            self.names[i] = Some(Arc::from(*n));
-        }
-        self.len = names.len().min(4) as u8;
-        self.known = true;
-        self
-    }
 }
 
 /// Schema for a record-like value (data frame, list with known shape).

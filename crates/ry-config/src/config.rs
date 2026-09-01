@@ -133,9 +133,6 @@ pub struct Config {
     pub verbose: u8,
     /// Quiet count (cumulative with -q). Default: 0.
     pub quiet: u8,
-    /// Reserved for future use; accepted but currently ignored.
-    #[serde(alias = "r-version")]
-    pub r_version: Option<String>,
     /// Packages treated as loaded for NSE gating, as if the script
     /// began with `library(<pkg>)` for each entry. Lets users declare
     /// their dependencies in `ry.toml` so dplyr-style NSE verbs resolve
@@ -189,7 +186,6 @@ impl Config {
             output_format: DEFAULT_OUTPUT_FORMAT.to_string(),
             verbose: 0,
             quiet: 0,
-            r_version: None,
             packages: Vec::new(),
             globals: Vec::new(),
             max_serialized_bytes: DEFAULT_MAX_SERIALIZED_BYTES,
@@ -356,7 +352,6 @@ impl Config {
             // stays within u8 rather than panicking on overflow.
             verbose: self.verbose.saturating_add(cli_verbose),
             quiet: self.quiet.saturating_add(cli_quiet),
-            r_version: self.r_version,
             // Config-only (no CLI flag): passes through unchanged.
             packages: self.packages,
             globals: self.globals,
@@ -460,7 +455,6 @@ mod tests {
         assert_eq!(d.output_format, DEFAULT_OUTPUT_FORMAT);
         assert_eq!(d.verbose, 0);
         assert_eq!(d.quiet, 0);
-        assert!(d.r_version.is_none());
         assert!(d.packages.is_empty(), "packages defaults to empty");
         assert!(d.globals.is_empty(), "globals defaults to empty");
         assert!(d.baseline.is_none());
@@ -491,7 +485,6 @@ check-test-fixtures = true
 output-format = "json"
 verbose = 1
 quiet = 2
-r-version = "4.3"
 packages = ["dplyr", "tidyverse"]
 globals = ["runtime_data", "generated_lookup"]
 typeshed = ["stubs"]
@@ -510,7 +503,6 @@ baseline = "diagnostics.json"
         assert_eq!(cfg.output_format, "json");
         assert_eq!(cfg.verbose, 1);
         assert_eq!(cfg.quiet, 2);
-        assert_eq!(cfg.r_version.as_deref(), Some("4.3"));
         assert_eq!(cfg.packages, vec!["dplyr", "tidyverse"]);
         assert_eq!(cfg.globals, vec!["runtime_data", "generated_lookup"]);
         assert_eq!(cfg.typeshed, vec![PathBuf::from("stubs")]);

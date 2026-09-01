@@ -21,7 +21,6 @@ export interface ISettings {
   baseline?: string;
   checkTestFixtures?: boolean;
   logLevel?: string;
-  addExecutableToTerminalPath: boolean;
 }
 
 export interface ILintSettings {
@@ -76,10 +75,6 @@ export function getWorkspaceSettings(
     baseline: config.get<string>("baseline"),
     checkTestFixtures: config.get<boolean>("checkTestFixtures"),
     logLevel: config.get<string>("logLevel"),
-    addExecutableToTerminalPath: config.get<boolean>(
-      "addExecutableToTerminalPath",
-      true,
-    ),
   };
 }
 
@@ -104,10 +99,6 @@ export function getGlobalSettings(namespace: string): ISettings {
     baseline: config.get<string>("baseline"),
     checkTestFixtures: config.get<boolean>("checkTestFixtures"),
     logLevel: config.get<string>("logLevel"),
-    addExecutableToTerminalPath: config.get<boolean>(
-      "addExecutableToTerminalPath",
-      true,
-    ),
   };
 }
 
@@ -137,29 +128,4 @@ export function checkIfConfigurationChanged(
     oldSettings.configuration !== newSettings.configuration ||
     oldSettings.logLevel !== newSettings.logLevel
   );
-}
-
-/**
- * Resolve VS Code variables in path-shaped settings:
- * ${workspaceFolder}, ${userHome}, ${env:VAR}, etc.
- */
-export function resolveVariables(
-  value: string | undefined,
-  folder?: vscode.WorkspaceFolder,
-): string | undefined {
-  if (!value) return undefined;
-  let resolved = value;
-  if (folder) {
-    resolved = resolved.replace(/\$\{workspaceFolder\}/g, folder.uri.fsPath);
-  }
-  resolved = resolved.replace(
-    /\$\{userHome\}/g,
-    process.env.HOME ?? process.env.USERPROFILE ?? "",
-  );
-  resolved = resolved.replace(/\$\{cwd\}/g, process.cwd());
-  resolved = resolved.replace(
-    /\$\{env:(\w+)\}/g,
-    (_, name) => process.env[name] ?? "",
-  );
-  return resolved;
 }

@@ -47,10 +47,6 @@ export class StatusItem {
     this.item.detail = message;
   }
 
-  setCommand(command: string, title: string): void {
-    this.item.command = { command, title, arguments: [] };
-  }
-
   dispose(): void {
     this.item.dispose();
   }

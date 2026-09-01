@@ -391,7 +391,7 @@ impl Checker {
             return false;
         };
         matches!(
-            sig.return_(),
+            &sig.return_,
             ReturnSpec::Concrete(rt) if rt.length == "1"
         )
     }

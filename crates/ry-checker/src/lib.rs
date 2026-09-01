@@ -16,7 +16,6 @@ pub mod format;
 mod higher_order;
 mod infer;
 mod nse;
-pub mod packages;
 pub mod project;
 pub mod rules;
 pub mod semantic_lists;
@@ -31,8 +30,7 @@ pub use project::Project;
 // `ry_checker::{Severity, Diagnostic, ...}` directly).
 pub use diagnostics::{
     Confidence, Diagnostic, Severity, SeverityFilter, Suppression, apply_filter_to_diagnostics,
-    filter_default_disabled, filter_suppressed, filter_suppressed_with_comments,
-    has_file_suppression, has_file_suppression_from_comments, is_suppressed, parse_suppressions,
+    filter_suppressed_with_comments, has_file_suppression_from_comments, is_suppressed,
     parse_suppressions_from_comments,
 };
 

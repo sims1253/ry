@@ -18,8 +18,7 @@
 
 use crate::infer::semantic_argument_name;
 use crate::{
-    CallerVisibleSignature, Checker, Diagnostic, FnTable, ReturnSlots, SeverityFilter,
-    apply_filter_to_diagnostics, usemethod_generic_name,
+    CallerVisibleSignature, Checker, Diagnostic, FnTable, ReturnSlots, usemethod_generic_name,
 };
 use rayon::prelude::*;
 use ry_core::SourceFile;
@@ -47,7 +46,8 @@ pub struct Project {
     /// (diagnostic emission) has each file's AST in hand.
     files: Vec<(String, Arc<SourceFile>)>,
     /// Cached per-file diagnostics from the most recent `check()` call.
-    /// Kept so `apply_filter` can run after `check()` without re-parsing.
+    /// Serves `check_incremental`, which reuses them for files outside
+    /// the dirty set instead of re-checking those files.
     diagnostics: Vec<(String, Vec<Diagnostic>)>,
     /// Packages declared in `ry.toml`'s `packages` key, unioned at
     /// `check()` time with packages attached via `library`/`require` in
@@ -329,10 +329,6 @@ impl Project {
     /// Run the three-pass check across all added files. Returns a map
     /// (as a `Vec<(path, Vec<Diagnostic>)>` preserving input order)
     /// from each file's path to the diagnostics emitted for that file.
-    ///
-    /// The returned vec is also cached on the `Project` so a follow-up
-    /// call to [`apply_filter`](Self::apply_filter) can adjust
-    /// severities without re-checking.
     ///
     /// Calling `check` twice on the same `Project` is safe but
     /// wasteful: each call re-collects and re-refines from scratch.
@@ -799,20 +795,6 @@ impl Project {
             .values()
             .flat_map(|known_vars| known_vars.iter().cloned())
             .collect()
-    }
-
-    /// Apply a severity filter to the diagnostics cached from the most
-    /// recent `check()` call. If `check()` has not been called yet,
-    /// this is a no-op.
-    ///
-    /// This mirrors `Checker::apply_filter` but operates across every
-    /// file's diagnostic vec. Callers that hold their own per-file vec
-    /// (e.g. the CLI, after collecting `check()`'s return value) can
-    /// instead use [`apply_filter_to_diagnostics`] directly.
-    pub fn apply_filter(&mut self, filter: &SeverityFilter) {
-        for (_path, diags) in &mut self.diagnostics {
-            apply_filter_to_diagnostics(diags, filter);
-        }
     }
 }
 

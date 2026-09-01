@@ -19,9 +19,6 @@ pub const NATIVE_ROUTINE_PREFIX_SENTINEL: &str = "\0useDynLib:";
 /// native-call argument position.
 pub const NATIVE_REGISTRATION_SENTINEL: &str = "\0useDynLibRegistration";
 
-/// Re-export FFI primitives from ry-core for convenience.
-pub use ry_core::FFI_PRIMITIVES;
-
 /// Bindings and whole-package imports declared by an R package NAMESPACE.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct NamespaceMetadata {

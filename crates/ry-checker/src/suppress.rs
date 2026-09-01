@@ -433,12 +433,6 @@ impl Checker {
         Some(self.return_slots.get(slot))
     }
 
-    // Apply a `SeverityFilter` to the diagnostics collected so far,
-    // mutating severities (or dropping suppressed ones) in place.
-    pub fn apply_filter(&mut self, filter: &SeverityFilter) {
-        apply_filter_to_diagnostics(&mut self.diagnostics, filter);
-    }
-
     pub(crate) fn emit(
         &mut self,
         severity: Severity,

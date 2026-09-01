@@ -23,22 +23,21 @@ Install from Open VSX via Positron's extension gallery.
 
 ## Settings
 
-| Setting                          | Default           | Description                                                     |
-| :------------------------------- | :---------------- | :-------------------------------------------------------------- |
-| `ry.enable`                      | `true`            | Enable/disable the language server                              |
-| `ry.path`                        | `[]`              | Ordered list of candidate `ry` executables; first existing wins |
-| `ry.importStrategy`              | `fromEnvironment` | `fromEnvironment` or `useBundled`                               |
-| `ry.configuration`               |                   | Path to a `ry.toml`, overriding discovery                       |
-| `ry.lint.select`                 | `[]`              | Rules to select (replaces defaults)                             |
-| `ry.lint.extendSelect`           | `[]`              | Additional rules to enable                                      |
-| `ry.lint.ignore`                 | `[]`              | Rules to suppress                                               |
-| `ry.lint.error`                  | `[]`              | Rules to treat as errors                                        |
-| `ry.lint.warn`                   | `[]`              | Rules to treat as warnings                                      |
-| `ry.minConfidence`               | `low`             | Minimum confidence (`low`, `medium`, `high`)                    |
-| `ry.baseline`                    |                   | Path to a baseline diagnostics file                             |
-| `ry.checkTestFixtures`           | `false`           | Check fixture data under `tests/`                               |
-| `ry.logLevel`                    | `warn`            | Server log level                                                |
-| `ry.addExecutableToTerminalPath` | `true`            | Add `ry` to terminal `PATH`                                     |
+| Setting                | Default           | Description                                                     |
+| :--------------------- | :---------------- | :-------------------------------------------------------------- |
+| `ry.enable`            | `true`            | Enable/disable the language server                              |
+| `ry.path`              | `[]`              | Ordered list of candidate `ry` executables; first existing wins |
+| `ry.importStrategy`    | `fromEnvironment` | `fromEnvironment` or `useBundled`                               |
+| `ry.configuration`     |                   | Path to a `ry.toml`, overriding discovery                       |
+| `ry.lint.select`       | `[]`              | Rules to select (replaces defaults)                             |
+| `ry.lint.extendSelect` | `[]`              | Additional rules to enable                                      |
+| `ry.lint.ignore`       | `[]`              | Rules to suppress                                               |
+| `ry.lint.error`        | `[]`              | Rules to treat as errors                                        |
+| `ry.lint.warn`         | `[]`              | Rules to treat as warnings                                      |
+| `ry.minConfidence`     | `low`             | Minimum confidence (`low`, `medium`, `high`)                    |
+| `ry.baseline`          |                   | Path to a baseline diagnostics file                             |
+| `ry.checkTestFixtures` | `false`           | Check fixture data under `tests/`                               |
+| `ry.logLevel`          | `warn`            | Server log level                                                |
 
 ## Commands
 

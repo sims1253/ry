@@ -120,6 +120,10 @@ suppression actions — and fixes a parser panic plus several editor issues.
   on-disk files with open documents and the editor sees the whole project
   exactly as `ry check` reports it. None of the removed capabilities ever
   shipped in a release, so released capability schemas are unchanged.
+- **`r-version` config key**: the no-op key, reserved for future use and
+  accepted but ignored, is gone. `ry.toml` files that still set it now
+  fail config parsing (`deny_unknown_fields` rejects unknown keys), so
+  delete the line when upgrading.
 
 ### Fixed
 

@@ -777,41 +777,61 @@ impl Checker {
         if body.is_empty() {
             return None;
         }
-        // Signature building is a PURE return-type computation: it must
-        // never emit diagnostics (the diagnostic walk of a function body
-        // happens via check_stmt's function-body arm in pass 3). Force
-        // discarding mode for this walk regardless of the caller's mode.
-        let prev_discarding = self.discarding;
-        self.discarding = true;
-        let result = self.build_function_signature_inner(params, body, captured_scope, depth);
-        self.discarding = prev_discarding;
-        result
+        // Layer the inner function's params on top of the captured
+        // scope: each param's type comes from its default literal
+        // (`x = 1L` -> integer) or is unknown, and a defaulted param
+        // keeps its default-marker binding so narrowing can treat it
+        // as caller-replaceable.
+        let mut param_types: Vec<RType> = Vec::with_capacity(params.len());
+        let return_type = self.walk_literal_returns(body, captured_scope, depth, |scope| {
+            for p in params {
+                let t = match &p.default {
+                    Some(e) => infer_literal_default(e),
+                    None => RType::unknown(),
+                };
+                if p.default.is_some() {
+                    scope.insert_parameter_default(p.name.clone(), t.clone());
+                } else {
+                    scope.insert(p.name.clone(), t.clone());
+                }
+                param_types.push(t);
+            }
+        })?;
+        Some(Arc::new(FunctionSignature {
+            params: param_types,
+            return_type: Box::new(return_type),
+        }))
     }
 
-    pub(crate) fn build_function_signature_inner(
+    /// The closure-return inference walk shared by signature building
+    /// ([`build_function_signature`]) and higher-order callback
+    /// inference ([`crate::higher_order`]'s `callback_literal_return`):
+    /// clone the captured scope, let `bind_params` layer the literal's
+    /// parameters on top (their types come from declared defaults in
+    /// the former, from the caller's argument types in the latter),
+    /// walk the body in source order collecting each explicit
+    /// `return(...)`/`invisible(...)` type, add the trailing
+    /// statement's implicit value, and join everything. Returns `None`
+    /// when nothing contributes a type or the join collapses to
+    /// opaque.
+    ///
+    /// The walk is a PURE return-type computation: it forces discarding
+    /// mode so it never emits diagnostics itself (a named function
+    /// body's diagnostics come from the pass-3 `check_stmt` walk, a
+    /// callback body's from `walk_callback_for_diagnostics`).
+    pub(crate) fn walk_literal_returns(
         &mut self,
-        params: &[Param],
         body: &[Stmt],
         captured_scope: &Scope,
         depth: usize,
-    ) -> Option<Arc<FunctionSignature>> {
-        // Layer the inner function's params on top of the captured
-        // scope. We start from a clone of the captured scope so the
-        // body can reference enclosing bindings (`make_adder`'s `x`).
+        bind_params: impl FnOnce(&mut Scope),
+    ) -> Option<RType> {
+        let prev_discarding = self.discarding;
+        self.discarding = true;
+        // Start from a clone of the captured scope so the body can
+        // reference enclosing bindings (`make_adder`'s `x`).
         let mut scope = captured_scope.clone();
-        let mut param_types: Vec<RType> = Vec::with_capacity(params.len());
-        for p in params {
-            let t = match &p.default {
-                Some(e) => infer_literal_default(e),
-                None => RType::unknown(),
-            };
-            if p.default.is_some() {
-                scope.insert_parameter_default(p.name.clone(), t.clone());
-            } else {
-                scope.insert(p.name.clone(), t.clone());
-            }
-            param_types.push(t);
-        }
+        bind_params(&mut scope);
         // Walk the body in source order, simulating each statement's
         // effect on the scope so later statements (notably the trailing
         // return expression) can reference bindings established earlier
@@ -838,17 +858,12 @@ impl Checker {
         if let Some(t) = self.trailing_return_type(body, &mut scope, depth + 1) {
             returns.push(t);
         }
+        self.discarding = prev_discarding;
         if returns.is_empty() {
             return None;
         }
         let joined = join_all(returns.into_iter());
-        if matches!(joined.mode, Mode::Opaque) {
-            return None;
-        }
-        Some(Arc::new(FunctionSignature {
-            params: param_types,
-            return_type: Box::new(joined),
-        }))
+        (!matches!(joined.mode, Mode::Opaque)).then_some(joined)
     }
 
     /// Extract the implicit return type of a function body's trailing

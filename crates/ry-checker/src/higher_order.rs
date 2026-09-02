@@ -430,10 +430,12 @@ impl Checker {
     }
 
     /// Walk an anonymous function literal's body to infer its return
-    /// type, given the argument types the caller will pass. Similar to
-    /// `build_function_signature` but takes explicit argument
-    /// types rather than inferring from defaults. Used by
-    /// `callback_return_type` for the inline-literal case.
+    /// type, given the argument types the caller will pass. The shared
+    /// walk is [`Checker::walk_literal_returns`]; this layers the
+    /// callback's params, bound to the call-site argument types, on the
+    /// captured scope (whereas `build_function_signature` binds them
+    /// from declared defaults). Used by `callback_return_type` for the
+    /// inline-literal case.
     pub(crate) fn callback_literal_return(
         &mut self,
         params: &[Param],
@@ -445,32 +447,12 @@ impl Checker {
         if body.is_empty() || depth >= MAX_CLOSURE_DEPTH {
             return None;
         }
-        // Pure return-type computation: force discarding so this does not
-        // double-emit diagnostics (the callback body's diagnostics come
-        // from walk_callback_for_diagnostics in pass 3).
-        let prev_discarding = self.discarding;
-        self.discarding = true;
-        let mut scope = captured_scope.clone();
-        for (i, p) in params.iter().enumerate() {
-            let t = call_arg_types.get(i).cloned().unwrap_or(RType::unknown());
-            scope.insert(p.name.clone(), t);
-        }
-        let mut returns: Vec<RType> = Vec::new();
-        for s in body {
-            self.walk_stmt(s, &mut scope, Some(&mut returns));
-        }
-        if let Some(t) = self.trailing_return_type(body, &mut scope, depth + 1) {
-            returns.push(t);
-        }
-        self.discarding = prev_discarding;
-        if returns.is_empty() {
-            return None;
-        }
-        let joined = join_all(returns.into_iter());
-        if matches!(joined.mode, Mode::Opaque) {
-            return None;
-        }
-        Some(joined)
+        self.walk_literal_returns(body, captured_scope, depth, |scope| {
+            for (i, p) in params.iter().enumerate() {
+                let t = call_arg_types.get(i).cloned().unwrap_or(RType::unknown());
+                scope.insert(p.name.clone(), t);
+            }
+        })
     }
 
     /// Walk the callback body of a higher-order function call for

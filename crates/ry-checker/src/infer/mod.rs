@@ -122,12 +122,6 @@ fn discarded_value_expression(expression: &Expr) -> bool {
     }
 }
 
-// The T7b "mutually-exclusive branch" loop refinement was removed after two
-// rounds of corpus regressions (it ended up flagging loop iterators inside
-// their own bodies). Loop bodies pre-bind every name assigned anywhere
-// in the body before walking; a use-before-first-assignment inside a loop is
-// statically indistinguishable from a legitimate loop-carried binding.
-
 impl Checker {
     /// The unified statement walker. Handles both diagnostic emission
     /// (gated by `self.discarding`) and return-type collection (when
@@ -725,10 +719,8 @@ impl Checker {
         }
     }
 
-    /// runs the single diagnostic `infer` with `discarding` enabled, so
-    /// the type computation (including the full `Expr::Ident` resolution
-    /// ladder, all `Expr::Call` cases, narrowing, etc.) is shared between
-    /// the pure and the diagnostic walks.
+    /// Run `infer` with emission suppressed so callers needing only the
+    /// type share the full resolution ladder with the diagnostic walk.
     pub(crate) fn infer_discarding(&mut self, e: &Expr, scope: &mut Scope) -> RType {
         let prev = self.discarding;
         self.discarding = true;
@@ -850,8 +842,6 @@ impl Checker {
             return None;
         }
         let joined = join_all(returns.into_iter());
-        // If we couldn't infer anything useful (joined is UNKNOWN),
-        // there's no point attaching an empty signature.
         if matches!(joined.mode, Mode::Opaque) {
             return None;
         }

@@ -205,7 +205,6 @@ impl Checker {
                 self.infer_pipe_call(rhs, &new_args, lhs, lhs_t.clone(), scope, span)
             }
             _ => {
-                // Unknown rhs form: infer rhs for diagnostics, give up on type.
                 let _ = self.infer(rhs, scope);
                 RType::unknown()
             }
@@ -237,7 +236,6 @@ impl Checker {
     /// the value flows through as the LHS.
     pub(crate) fn infer_pipe_tee(&mut self, lhs: &Expr, rhs: &Expr, scope: &mut Scope) -> RType {
         let lhs_t = self.infer(lhs, scope);
-        // Still walk the RHS so any diagnostics on its body fire.
         let _ = self.infer_pipe_with_lhs_type(
             lhs,
             rhs,
@@ -296,11 +294,9 @@ impl Checker {
     /// can't know which branch will execute at runtime). Each
     /// alternative is also walked for diagnostics.
     pub(crate) fn infer_switch_call(&mut self, args: &[Arg], scope: &mut Scope) -> RType {
-        // The first argument is the selector; infer it for diagnostics.
         if let Some(first) = args.first() {
             let _ = self.infer(&first.value, scope);
         }
-        // Join the types of all remaining arguments (the alternatives).
         let mut alt_types: Vec<RType> = Vec::new();
         for a in args.iter().skip(1) {
             alt_types.push(self.infer(&a.value, scope));
@@ -326,20 +322,14 @@ impl Checker {
         let mut types: Vec<RType> = Vec::new();
         for (i, a) in args.iter().enumerate() {
             if i == 0 {
-                // Main expression.
                 types.push(self.infer(&a.value, scope));
             } else if a.name.is_some() {
-                // Named handler: `error = function(e) ...`. Infer the
-                // handler function's return type.
                 if let Some(rt) = self.callback_return_type(&a.value, &[RType::unknown()], scope) {
                     types.push(rt);
                 } else {
-                    // Couldn't infer handler return: infer for
-                    // diagnostics and use opaque.
                     let _ = self.infer(&a.value, scope);
                 }
             } else {
-                // Extra positional arg (rare): infer for diagnostics.
                 let _ = self.infer(&a.value, scope);
             }
         }

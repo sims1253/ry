@@ -4,10 +4,6 @@
 //! offset. These helpers convert between byte offsets (what tree-sitter
 //! and ry's `Span` use) and LSP `Position`s, counting UTF-16 code units
 //! so non-ASCII (including astral-plane) characters resolve correctly.
-//!
-//! Extracted from `lib.rs` because they
-//! are pure functions with no dependency on the `Backend`/`State` and
-//! are reused across every LSP handler.
 
 use tower_lsp::lsp_types::Position;
 

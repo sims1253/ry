@@ -578,25 +578,20 @@ fn reassigned_parameter_can_make_standalone_check_impossible() {
 
 #[test]
 fn project_standalone_checks_do_not_reject_incompatible_parameter_defaults() {
-    let mut parser = RParser::new().unwrap();
     let mut project = Project::new();
     project.add_file(
         "R/check.R".to_string(),
-        parser
-            .parse(
-                "R/check.R",
-                "check_string <- function(x, what = NULL, ..., allow_null = FALSE, allow_na = FALSE, arg = caller_arg(x), call = caller_env()) invisible(NULL)\n",
-            )
-            .unwrap(),
+        parse_file(
+            "R/check.R",
+            "check_string <- function(x, what = NULL, ..., allow_null = FALSE, allow_na = FALSE, arg = caller_arg(x), call = caller_env()) invisible(NULL)\n",
+        ),
     );
     project.add_file(
         "R/bind.R".to_string(),
-        parser
-            .parse(
-                "R/bind.R",
-                "bind <- function(.id = NULL) { check_string(.id) }\n",
-            )
-            .unwrap(),
+        parse_file(
+            "R/bind.R",
+            "bind <- function(.id = NULL) { check_string(.id) }\n",
+        ),
     );
     let diagnostics: Vec<_> = project
         .check()
@@ -797,34 +792,24 @@ fn typeshed_predicate_uses_exact_callee_provenance_and_formal_binding() {
         "a negated schema predicate must narrow its true branch: {diagnostics:?}"
     );
 
-    let mut parser = RParser::new().unwrap();
-    let file = parser
-        .parse(
-            "test.R",
-            "x <- NULL\nif (is_null(x)) stop(\"missing\")\nx()\n",
-        )
-        .unwrap();
-    let mut checker = Checker::new("test.R");
-    checker.set_loaded(HashSet::from(["rlang".to_string()]));
-    checker.check(&file);
+    let diagnostics = check_with("x <- NULL\nif (is_null(x)) stop(\"missing\")\nx()\n", |c| {
+        c.set_loaded(HashSet::from(["rlang".to_string()]))
+    });
     assert!(
-        checker
-            .diagnostics
+        diagnostics
             .iter()
             .all(|diagnostic| diagnostic.code != "RY070"),
         "an attached package predicate must not count the same origin twice: {:?}",
-        checker.diagnostics
+        diagnostics
     );
 
-    let mut checker = Checker::new("test.R");
-    checker.check(&file);
+    let diagnostics = check("x <- NULL\nif (is_null(x)) stop(\"missing\")\nx()\n");
     assert!(
-        checker
-            .diagnostics
+        diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "RY070"),
         "an unattached package predicate must not establish bare-call provenance: {:?}",
-        checker.diagnostics
+        diagnostics
     );
 
     for source in [

@@ -658,25 +658,21 @@ fn if_expr_nested() {
 }
 
 #[test]
-fn negative_integer_literal_infers_integer() {
-    // `-1L` is unary minus applied to an integer literal. The result
-    // must be integer (same mode as the operand), length 1, non-NA.
-    let (diags, scope) = check_with_scope("x <- -1L\n");
-    assert!(diags.is_empty(), "got {:?}", diags);
-    let x = scope.get("x").expect("x should be bound");
-    assert_eq!(x.mode, Mode::Integer, "got {:?}", x);
-    assert_eq!(x.length, Length::One, "got {:?}", x);
-}
-
-#[test]
-fn negative_double_literal_infers_double() {
-    // `-3.14` is unary minus applied to a double literal; result is
-    // double, length 1, non-NA.
-    let (diags, scope) = check_with_scope("y <- -3.14\n");
-    assert!(diags.is_empty(), "got {:?}", diags);
-    let y = scope.get("y").expect("y should be bound");
-    assert_eq!(y.mode, Mode::Double, "got {:?}", y);
-    assert_eq!(y.length, Length::One, "got {:?}", y);
+fn negative_literals_infer_operand_mode() {
+    // Unary minus on a numeric literal preserves the operand's mode:
+    // `-1L` stays integer, `-3.14` stays double; length is one.
+    for (src, mode) in [
+        ("x <- -1L\n", Mode::Integer),
+        ("x <- -3.14\n", Mode::Double),
+    ] {
+        let (diags, scope) = check_with_scope(src);
+        assert!(diags.is_empty(), "`{}`: got {:?}", src.trim(), diags);
+        let x = scope
+            .get("x")
+            .unwrap_or_else(|| panic!("`{}`: x should be bound", src.trim()));
+        assert_eq!(x.mode, mode, "`{}`: got {:?}", src.trim(), x);
+        assert_eq!(x.length, Length::One, "`{}`: got {:?}", src.trim(), x);
+    }
 }
 
 #[test]
@@ -897,23 +893,18 @@ fn rep_zero_times_yields_length_zero() {
 }
 
 #[test]
-fn calling_integer_emits_ry070() {
-    let diags = check("x <- 42\ny <- x(10)\n");
-    assert!(
-        diags.iter().any(|d| d.code == "RY070"),
-        "expected RY070 for calling integer, got {:?}",
-        diags
-    );
-}
-
-#[test]
-fn calling_character_emits_ry070() {
-    let diags = check("x <- \"paste\"\ny <- x(1)\n");
-    assert!(
-        diags.iter().any(|d| d.code == "RY070"),
-        "expected RY070 for calling character, got {:?}",
-        diags
-    );
+fn calling_non_function_values_emits_ry070() {
+    for (src, kind) in [
+        ("x <- 42\ny <- x(10)\n", "integer"),
+        ("x <- \"paste\"\ny <- x(1)\n", "character"),
+    ] {
+        let diags = check(src);
+        assert!(
+            diags.iter().any(|d| d.code == "RY070"),
+            "expected RY070 for calling {kind}, got {:?}",
+            diags
+        );
+    }
 }
 
 #[test]
@@ -983,15 +974,21 @@ fn calling_index_expression_stays_silent() {
 }
 
 #[test]
-fn dollar_on_integer_emits_ry061() {
-    let diags = check("x <- 1:10\nval <- x$col\n");
-    assert!(diags.iter().any(|d| d.code == "RY061"), "got {:?}", diags);
-}
-
-#[test]
-fn dollar_on_character_emits_ry061() {
-    let diags = check("x <- c(\"a\", \"b\")\nval <- x$col\n");
-    assert!(diags.iter().any(|d| d.code == "RY061"), "got {:?}", diags);
+fn dollar_on_atomic_vectors_emits_ry061() {
+    // `$` subset assignment only exists for recursive (list-like)
+    // objects; R raises "$ operator is invalid for atomic vectors".
+    for src in [
+        "x <- 1:10\nval <- x$col\n",
+        "x <- c(\"a\", \"b\")\nval <- x$col\n",
+    ] {
+        let diags = check(src);
+        assert!(
+            diags.iter().any(|d| d.code == "RY061"),
+            "`{}`: got {:?}",
+            src.trim(),
+            diags
+        );
+    }
 }
 
 #[test]

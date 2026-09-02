@@ -1,3 +1,6 @@
+//! Typeshed and package signature/value resolution, plus the checker's
+//! diagnostic emit helpers.
+
 use super::*;
 use crate::infer::json_rtype_to_rtype;
 

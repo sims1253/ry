@@ -72,20 +72,8 @@ impl Checker {
                         let _ = self.record_fn(name.to_string(), params, body.clone());
                     }
                     self.collect_forwarded_calls(name, params, body);
-                    // Recurse into the function body so nested
-                    // `inner <- function(...) ...` definitions are
-                    // recorded with a mangled name. The mangled name is
-                    // an internal implementation detail (not user-facing)
-                    // used only so the fixpoint can refine the inner
-                    // function's return type independently. Callers that
-                    // close over the inner function via a captured
-                    // `Function`-typed value go through `fn_sig` on the
-                    // outer function's return type, not through this
-                    // table entry.
                     self.collect_nested_fns_in_body(name, body);
                 }
-                // Non-function assignments: nothing further to record
-                // (the name is already in `known_vars`).
             }
             Stmt::If { then, else_, .. } => {
                 for s in then {
@@ -301,7 +289,9 @@ impl Checker {
     // `<outer>$<inner>`. The mangled name is internal: it exists so
     // the fixpoint can refine the inner function's return type, which
     // `refine_fn_return` reads back when building the outer function's
-    // `fn_sig`. Users never see this name.
+    // `fn_sig`. Callers that close over the inner function via a
+    // captured `Function`-typed value go through that `fn_sig`, not
+    // through the table entry. Users never see the mangled name.
     //
     // Recursion is bounded by the AST's literal nesting (small in
     // practice). The inference depth is separately bounded by

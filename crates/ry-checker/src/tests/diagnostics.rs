@@ -2,22 +2,9 @@ use super::*;
 
 // ---- inline suppression comment tests ----
 
-/// Synthesize the comment list for `src` the way the parser collects it:
-/// one `Comment` per line containing a `#`, with the `#` byte column and
-/// the text after it as the body. None of these fixtures puts a `#`
-/// inside a string literal, so a plain line scan reproduces the parser's
-/// output exactly.
 fn scan_comments(src: &str) -> Vec<ry_core::ast::Comment> {
-    src.lines()
-        .enumerate()
-        .filter_map(|(line, text)| {
-            text.find('#').map(|col| ry_core::ast::Comment {
-                line,
-                col,
-                body: text[col + 1..].to_string(),
-            })
-        })
-        .collect()
+    let mut parser = RParser::new().unwrap();
+    parser.parse("test.R", src).unwrap().comments
 }
 
 #[test]
@@ -275,10 +262,7 @@ fn public_check_with_scope_surfaces_ry000_on_broken_file() {
     // Regression: `check_with_scope` used to clear diagnostics
     // AFTER emitting parse errors, wiping the RY000s. It must now
     // surface them.
-    let mut p = RParser::new().unwrap();
-    let f = p.parse("test.R", "f <- function( { 1 }\n").unwrap();
-    let mut c = Checker::new("test.R");
-    let (diags, _scope) = c.check_with_scope(&f);
+    let (diags, _scope) = check_with_scope("f <- function( { 1 }\n");
     assert!(
         diags.iter().any(|d| d.code == "RY000"),
         "check_with_scope must surface RY000 on a broken file, got {:?}",
@@ -288,8 +272,7 @@ fn public_check_with_scope_surfaces_ry000_on_broken_file() {
 
 #[test]
 fn public_check_emits_each_parse_error_once() {
-    let mut parser = RParser::new().unwrap();
-    let file = parser.parse("test.R", "f <- function( { 1 }\n").unwrap();
+    let file = parse_file("test.R", "f <- function( { 1 }\n");
     let expected = file.parse_errors.len();
     assert!(expected > 0, "fixture must contain a parse error");
     let mut checker = Checker::new("test.R");

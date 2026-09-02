@@ -52,7 +52,9 @@ impl Checker {
     /// Infer the type of `structure(x, class = "...")`. We model only
     /// the literal class forms; everything else returns the first
     /// argument's type with `ClassVector::unknown()` (so we neither lie
-    /// about a class nor spuriously trigger RY050).
+    /// about a class nor spuriously trigger RY050). The base value is the
+    /// first positional or `x =` argument; later candidates are inferred
+    /// for diagnostics only.
     ///
     /// The base value's column schema is preserved: `RType::with_class`
     /// is `RType { class, ..self }`, so a `structure(list(a = 1L),
@@ -61,9 +63,6 @@ impl Checker {
     /// `$a` resolve correctly on user-defined classes built on top of
     /// a list-shaped payload.
     pub(crate) fn infer_structure_call(&mut self, args: &[Arg], scope: &mut Scope) -> RType {
-        // The base value is the first positional argument (or the
-        // `x = ...` named argument). The first such positional-or-`x`
-        // arg wins; later ones are inferred for diagnostics only.
         let mut base_type = RType::unknown();
         let mut class_expr: Option<&Expr> = None;
         for a in args {
@@ -214,15 +213,12 @@ impl Checker {
         RType::new(if saw_union { Mode::Opaque } else { mode }, length)
     }
 
-    // Infer the type of `list(...)`. The result is always a list whose
-    // length equals the argument count; if at least one argument is
-    // named, we additionally build a column schema from the named
-    // args (positional args get R's auto-generated `[[i]]` names).
-    //
-    // We build the schema even when only some args are named: that
-    // mirrors R's `list(a = 1, "x")` which produces names `c("a", "2")`.
-    // The schema is what powers `df$col` / `df[["col"]]` resolution
-    // downstream.
+    /// Infer the type of `list(...)`: a list whose length equals the
+    /// argument count, plus a column schema from named args (positional
+    /// args get R's auto-generated `[[i]]` names). The schema is built
+    /// even when only some args are named, mirroring R's
+    /// `list(a = 1, "x")` producing names `c("a", "2")`; it is what
+    /// powers `df$col` / `df[["col"]]` resolution downstream.
     pub(crate) fn infer_list(&mut self, arg_types: &[RType], args: &[Arg]) -> RType {
         let length = Length::Known(arg_types.len());
         let base = RType::new(Mode::List, length);
@@ -245,20 +241,14 @@ impl Checker {
         base.with_columns(Arc::new(schema))
     }
 
-    // Infer the type of `data.frame(...)`. Same column-schema logic as
-    // `list(...)`, but:
-    // * The result is classed `"data.frame"`.
-    // * Column lengths are coerced to a common length (R recycles). For
-    //   v1 we take the max of the known lengths (or Unknown if any
-    //   column's length is Unknown), and propagate that length onto
-    //   each column so `df$col` returns a vector of the right length.
-    // * Special arguments like `row.names = ...`, `check.names = ...`
-    //   are NOT columns and are dropped from the schema. We recognize
-    //   the common ones by name.
+    /// Infer the type of `data.frame(...)`: the same column-schema logic
+    /// as `list(...)`, but the result is classed `"data.frame"` and
+    /// column lengths are coerced to a common length (R recycles; v1
+    /// takes the max of the known lengths and propagates it onto each
+    /// column so `df$col` returns a vector of the right length). Known
+    /// metadata arguments (`row.names`, `check.names`, ...) are not
+    /// columns and are dropped from the schema.
     pub(crate) fn infer_data_frame(&mut self, arg_types: &[RType], args: &[Arg]) -> RType {
-        // Filter out non-column named arguments first. Positional args
-        // are kept (they become columns); known metadata args are dropped
-        // so they don't pollute the schema.
         use crate::semantic_lists::METADATA_ARGS;
         let mut filtered_types: Vec<RType> = Vec::with_capacity(arg_types.len());
         let mut filtered_args: Vec<Arg> = Vec::with_capacity(args.len());
@@ -272,10 +262,8 @@ impl Checker {
             filtered_args.push(a.clone());
         }
 
-        // Compute the common column length (max of known lengths).
         let common_len = longest_arg_length(&filtered_types);
 
-        // Build per-column types with the coerced length.
         let coerced_types: Vec<RType> = filtered_types
             .iter()
             .map(|t| RType {
@@ -349,26 +337,15 @@ impl Checker {
         RType::new(mode, length)
     }
 
+    /// Infer `rep(x, times, each)`: length is `length(x) * times * each`
+    /// with unsupplied counts defaulting to 1, keeping `x`'s mode, class,
+    /// and schema. `length.out` takes precedence in R but is not modeled.
+    /// `times`/`each` are read from the raw AST, not the inferred
+    /// `RType`, because the type lattice discards the runtime value (a
+    /// supplied non-literal means `Length::Unknown`). `x` is matched by
+    /// name or first unnamed position, because named `times`/`each` can
+    /// precede it in the call.
     pub(crate) fn infer_rep(&self, args: &[Arg], arg_types: &[RType]) -> RType {
-        // Infer `rep(x, times, each)`: length = `length(x) * times * each`
-        // with `times`/`each` defaulting to 1, and the result keeping
-        // `x`'s mode, class, and schema (so `rep(factor(...), 3)` stays
-        // a factor). `length.out` is not modeled: in R it takes
-        // precedence over `times`, but the length here ignores it.
-        //
-        // `times`/`each` come from the raw AST, not the inferred
-        // `RType`, because the type lattice discards the runtime value:
-        // a supplied non-literal means `Length::Unknown`; an unsupplied
-        // one defaults to 1.
-        //
-        // `find_arg`'s `pos` counts only unnamed args, so
-        // `rep(each = 2, c(1,2,3), 1)` matches `x` at 0 and `times`
-        // at 1 (mirrors `infer_seq`).
-        //
-        // `x` is the first positional arg (pos 0) or a named `x = ...`.
-        // We must look it up by index rather than `arg_types.first()`
-        // because named `times`/`each` args can precede `x` in the
-        // call (e.g. `rep(each = 2, c(1,2,3), 1)`).
         let x_type = find_arg(args, "x", 0)
             .and_then(|i| arg_types.get(i).cloned())
             .unwrap_or(RType::unknown());
@@ -425,18 +402,14 @@ impl Checker {
         RType { length, ..x_type }
     }
 
-    // Infer the result type of `seq(from, to, by)` / `seq.int(...)`.
-    // Two literal forms let us pin the result length exactly:
-    //   * `seq(from, to, by)`: length = `|to - from| / |by| + 1`
-    //     (R rounds to the nearest whole step that stays in range).
-    //   * `seq(from, to, length.out = n)`: length = `n`.
-    //   * `seq(from, to)` (no `by`, no `length.out`): R defaults
-    //     `by` to +/-1, so length = `|to - from| + 1`.
-    //
-    // When `length.out` is present it wins (R documents this as
-    // taking precedence over `by`). When we can't pin the length, we
-    // still report the right mode (integer when the first arg is an
-    // integer literal, else double) with `Length::Unknown`.
+    /// Infer the result type of `seq(from, to, by)` / `seq.int(...)`.
+    /// Literal forms pin the length exactly: `|to - from| / |by| + 1`
+    /// (R rounds to the nearest whole step in range), `length.out = n`
+    /// when supplied (it wins over `by`, as R documents), or
+    /// `|to - from| + 1` when `by` is absent (R defaults it to +/-1).
+    /// Otherwise the mode is still reported — integer when the first
+    /// argument is an integer literal, else double — with
+    /// `Length::Unknown`.
     pub(crate) fn infer_seq(&self, args: &[Arg], arg_types: &[RType]) -> RType {
         // Helper: find (was_supplied, literal_value) for a named or
         // positional argument. Named args win over positional. The

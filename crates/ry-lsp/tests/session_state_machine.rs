@@ -36,16 +36,18 @@
 use proptest::collection;
 use proptest::prelude::*;
 use proptest::test_runner::{Config, RngAlgorithm, TestCaseError, TestRng, TestRunner};
-use ry_testkit::{FixtureProject, LspSession, file_uri};
+use ry_testkit::{FixtureProject, file_uri};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-type ClientSession = LspSession<
-    tokio::io::ReadHalf<tokio::io::DuplexStream>,
-    tokio::io::WriteHalf<tokio::io::DuplexStream>,
->;
+mod harness;
+
+use harness::{
+    ClientSession, SourceVariant, apply_incremental_edit, first_line_utf16_len, join_session,
+    sorted_diagnostics, spawn_session, sync_barrier,
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Fixture layout
@@ -69,35 +71,14 @@ const DRAIN_IDLE: Duration = Duration::from_millis(60);
 // Source variants
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Source {
-    /// No diagnostics.
-    Clean,
-    /// Triggers RY090 (partial argument name).
-    Diagnostic,
-    /// Triggers RY090 with a Unicode (astral) prefix.
-    Unicode,
-}
+// The variants live in `harness` (`SourceVariant`); the diagnostic
+// variants differ only in the Unicode class of the bound name on line 0.
 
-impl Source {
-    fn text(self) -> &'static str {
-        match self {
-            Self::Clean => "x <- 1L\ny <- 2L\n",
-            Self::Diagnostic => "z <- length(xx = 1L)\nw <- 2L\n",
-            Self::Unicode => "\u{1f600} <- length(xx = 1L)\nw <- 2L\n",
-        }
-    }
-
-    fn first_line(self) -> &'static str {
-        self.text().lines().next().unwrap()
-    }
-}
-
-fn source_strategy() -> impl Strategy<Value = Source> {
+fn source_strategy() -> impl Strategy<Value = SourceVariant> {
     prop_oneof![
-        Just(Source::Clean),
-        Just(Source::Diagnostic),
-        Just(Source::Unicode)
+        Just(SourceVariant::Clean),
+        Just(SourceVariant::AsciiDiagnostic),
+        Just(SourceVariant::AstralDiagnostic)
     ]
 }
 
@@ -110,15 +91,15 @@ enum Operation {
     // Base alphabet
     Open {
         file: u8,
-        source: Source,
+        source: SourceVariant,
     },
     FullEdit {
         file: u8,
-        source: Source,
+        source: SourceVariant,
     },
     IncrementalEdit {
         file: u8,
-        source: Source,
+        source: SourceVariant,
     },
     Close {
         file: u8,
@@ -129,7 +110,7 @@ enum Operation {
     /// Create an on-disk R file (if the slot is empty).
     CreateFile {
         file: u8,
-        source: Source,
+        source: SourceVariant,
     },
     /// Delete an on-disk R file (if the slot has a file).
     DeleteFile {
@@ -162,7 +143,7 @@ enum Operation {
     /// controlled parse completion from an older generation.
     RapidEdit {
         file: u8,
-        source: Source,
+        source: SourceVariant,
     },
     /// Add the secondary workspace folder.
     AddFolder,
@@ -371,30 +352,6 @@ impl SessionModel {
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-fn first_line_utf16_len(text: &str) -> u32 {
-    let end = text.find('\n').unwrap_or(text.len());
-    text[..end].encode_utf16().count() as u32
-}
-
-fn apply_incremental_edit(old: &str, source: Source) -> String {
-    let first_line_end_byte = old.find('\n').unwrap_or(old.len());
-    let mut result = String::with_capacity(old.len() + source.first_line().len());
-    result.push_str(source.first_line());
-    result.push_str(&old[first_line_end_byte..]);
-    result
-}
-
-/// Sort diagnostics for order-independent comparison.
-fn normalize_diagnostics(diagnostics: &[Value]) -> Vec<Value> {
-    let mut diags: Vec<Value> = diagnostics.to_vec();
-    diags.sort_by(|a, b| {
-        serde_json::to_string(a)
-            .unwrap_or_default()
-            .cmp(&serde_json::to_string(b).unwrap_or_default())
-    });
-    diags
-}
-
 /// Build the fixture: primary root with five R files, `ry.toml`,
 /// `baseline.json`, and a secondary package root for folder ops.
 fn build_fixture() -> FixtureProject {
@@ -452,47 +409,6 @@ fn file_uri_str(fixture: &FixtureProject, slot: u8) -> String {
     file_uri(&file_path(fixture, slot)).unwrap()
 }
 
-/// Spawn a fresh server and initialize with the given roots.
-async fn spawn_session(roots: &[&Path]) -> (ClientSession, tokio::task::JoinHandle<()>) {
-    let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
-    let (client_reader, client_writer) = tokio::io::split(client_stream);
-    let (server_reader, server_writer) = tokio::io::split(server_stream);
-    let server = tokio::spawn(async move {
-        let _ = ry_lsp::run_with(server_reader, server_writer).await;
-    });
-    let mut session = LspSession::new(client_reader, client_writer);
-    let root_uri = file_uri(roots[0]).unwrap();
-    let ws_folders: Vec<Value> = roots
-        .iter()
-        .map(|r| {
-            json!({
-                "uri": file_uri(r).unwrap(),
-                "name": r.file_name().unwrap().to_string_lossy()
-            })
-        })
-        .collect();
-    session
-        .request(
-            "initialize",
-            json!({
-                "processId": null,
-                "rootUri": root_uri,
-                "capabilities": {},
-                "workspaceFolders": ws_folders
-            }),
-        )
-        .await
-        .unwrap();
-    session.notify("initialized", json!({})).await.unwrap();
-    (session, server)
-}
-
-async fn join_session(mut session: ClientSession, server: tokio::task::JoinHandle<()>) {
-    let _ = session.shutdown().await;
-    drop(session);
-    let _ = tokio::time::timeout(Duration::from_secs(3), server).await;
-}
-
 /// Write the current model's `ry.toml` to disk.
 fn write_config(fixture: &FixtureProject, model: &SessionModel) {
     let mut toml = String::new();
@@ -530,7 +446,7 @@ async fn collect_snapshot(
         .await
         .unwrap_or_default();
     raw.into_iter()
-        .map(|(uri, diags)| (uri, normalize_diagnostics(&diags)))
+        .map(|(uri, diags)| (uri, sorted_diagnostics(&diags)))
         .collect()
 }
 
@@ -570,20 +486,6 @@ async fn fresh_server_snapshot(
     let snapshot = collect_snapshot(&mut session, &target_uri, mark).await;
     join_session(session, server).await;
     snapshot
-}
-
-/// Sync barrier: a request/response round-trip that drains leftover
-/// publications from the previous step's multi-URI broadcast.
-async fn sync_barrier(session: &mut ClientSession, uri: &str) {
-    let _ = session
-        .request(
-            "textDocument/inlayHint",
-            json!({
-                "textDocument": {"uri": uri},
-                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}}
-            }),
-        )
-        .await;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1107,15 +1009,15 @@ fn catches_issue_53_stale_parse() {
     run_explicit_sequence(vec![
         Operation::Open {
             file: 0,
-            source: Source::Clean,
+            source: SourceVariant::Clean,
         },
         Operation::RapidEdit {
             file: 0,
-            source: Source::Diagnostic,
+            source: SourceVariant::AsciiDiagnostic,
         },
         Operation::IncrementalEdit {
             file: 0,
-            source: Source::Diagnostic,
+            source: SourceVariant::AsciiDiagnostic,
         },
     ]);
 }
@@ -1129,7 +1031,7 @@ fn catches_issue_55_folder_mutation() {
         Operation::RemoveFolder,
         Operation::Open {
             file: 0,
-            source: Source::Diagnostic,
+            source: SourceVariant::AsciiDiagnostic,
         },
     ]);
 }
@@ -1141,12 +1043,12 @@ fn catches_issue_45_baseline_reload() {
     run_explicit_sequence(vec![
         Operation::Open {
             file: 0,
-            source: Source::Diagnostic,
+            source: SourceVariant::AsciiDiagnostic,
         },
         Operation::EditBaseline { suppress: true },
         Operation::FullEdit {
             file: 0,
-            source: Source::Diagnostic,
+            source: SourceVariant::AsciiDiagnostic,
         },
     ]);
 }
@@ -1160,7 +1062,7 @@ fn catches_issue_48_discovery_caps() {
         Operation::EditDiscoveryCaps { max_files: 2 },
         Operation::Open {
             file: 0,
-            source: Source::Diagnostic,
+            source: SourceVariant::AsciiDiagnostic,
         },
     ]);
 }
@@ -1173,14 +1075,14 @@ fn catches_config_reload() {
     run_explicit_sequence(vec![
         Operation::Open {
             file: 0,
-            source: Source::Diagnostic,
+            source: SourceVariant::AsciiDiagnostic,
         },
         Operation::EditConfig {
             ignore_diagnostic: true,
         },
         Operation::FullEdit {
             file: 0,
-            source: Source::Diagnostic,
+            source: SourceVariant::AsciiDiagnostic,
         },
     ]);
 }
@@ -1192,11 +1094,11 @@ fn catches_disk_file_lifecycle() {
         Operation::DeleteFile { file: 4 },
         Operation::Open {
             file: 0,
-            source: Source::Diagnostic,
+            source: SourceVariant::AsciiDiagnostic,
         },
         Operation::CreateFile {
             file: 4,
-            source: Source::Diagnostic,
+            source: SourceVariant::AsciiDiagnostic,
         },
         Operation::RenameFile { from: 4, to: 3 },
     ]);
@@ -1208,12 +1110,12 @@ fn catches_restart_convergence() {
     run_explicit_sequence(vec![
         Operation::Open {
             file: 0,
-            source: Source::Diagnostic,
+            source: SourceVariant::AsciiDiagnostic,
         },
         Operation::Restart,
         Operation::IncrementalEdit {
             file: 0,
-            source: Source::Unicode,
+            source: SourceVariant::AstralDiagnostic,
         },
     ]);
 }
@@ -1228,14 +1130,14 @@ fn metadata_edits_converge() {
         Operation::AddFolder,
         Operation::Open {
             file: 0,
-            source: Source::Clean,
+            source: SourceVariant::Clean,
         },
         Operation::EditNamespace,
         Operation::EditDescription,
         Operation::EditTypeshed,
         Operation::IncrementalEdit {
             file: 0,
-            source: Source::Diagnostic,
+            source: SourceVariant::AsciiDiagnostic,
         },
     ]);
 }

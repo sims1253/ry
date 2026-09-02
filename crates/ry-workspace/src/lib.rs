@@ -1801,31 +1801,6 @@ mod shared_tests {
 
     #[test]
     fn discovery_includes_all_r_source_extensions() {
-        let dir = tempfile::tempdir().unwrap();
-        for ext in &["R", "r", "S", "s", "q"] {
-            std::fs::write(
-                dir.path().join(format!("source.{ext}")),
-                "value <- 1
-",
-            )
-            .unwrap();
-        }
-        std::fs::write(
-            dir.path().join("source.txt"),
-            "not R
-",
-        )
-        .unwrap();
-        let result = discover_r_files(dir.path(), None, &ry_config::Config::default(), false);
-        assert_eq!(
-            result.files.len(),
-            5,
-            "R, r, S, s, q discovered; .txt excluded"
-        );
-    }
-
-    #[test]
-    fn collection_includes_all_supported_r_source_extensions() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
         for extension in ["R", "r", "S", "s", "q"] {

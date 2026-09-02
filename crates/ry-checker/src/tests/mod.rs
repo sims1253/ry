@@ -20,6 +20,18 @@ fn check(src: &str) -> Vec<Diagnostic> {
     c.take_diagnostics()
 }
 
+/// `check` plus a setup step on the `Checker` before the run, for tests
+/// that configure external bindings, loaded packages, imported-from
+/// metadata, or user stubs.
+fn check_with(src: &str, setup: impl FnOnce(&mut Checker)) -> Vec<Diagnostic> {
+    let mut p = RParser::new().unwrap();
+    let f = p.parse("test.R", src).unwrap();
+    let mut c = Checker::new("test.R");
+    setup(&mut c);
+    c.check(&f);
+    c.take_diagnostics()
+}
+
 /// Test-only variant of `check` that also returns the final
 /// top-level scope so tests can assert on the inferred `RType` of a
 /// binding (mode, length, class, columns). Delegates to the public
@@ -32,9 +44,9 @@ fn check_with_scope(src: &str) -> (Vec<Diagnostic>, Scope) {
     c.check_with_scope(&f)
 }
 
-/// Parse helper for project-mode tests, mirroring the one in
-/// `project::tests`.
-fn parse_file(path: &str, src: &str) -> SourceFile {
+/// Parse helper for tests that check a `SourceFile` under a custom path
+/// (project mode, non-`test.R` names). Also used by `project::tests`.
+pub(super) fn parse_file(path: &str, src: &str) -> SourceFile {
     let mut p = RParser::new().unwrap();
     p.parse(path, src).unwrap()
 }

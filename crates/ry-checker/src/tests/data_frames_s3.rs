@@ -55,17 +55,10 @@ fn registered_unexported_s3_method_in_stub_satisfies_dispatch() {
     )
     .unwrap();
     let stubs = Arc::new(ry_typeshed::load_stub_dir(dir.path()).unwrap());
-    let mut parser = RParser::new().unwrap();
-    let file = parser
-        .parse(
-            "registered.R",
-            "x <- structure(list(), class = \"unexported\")\nprint(x)\n",
-        )
-        .unwrap();
-    let mut checker = Checker::new("registered.R");
-    checker.set_user_stubs(stubs);
-    checker.check(&file);
-    let diagnostics = checker.take_diagnostics();
+    let diagnostics = check_with(
+        "x <- structure(list(), class = \"unexported\")\nprint(x)\n",
+        |c| c.set_user_stubs(stubs),
+    );
     assert!(
         diagnostics
             .iter()
@@ -235,13 +228,9 @@ fn structure_call_sets_class() {
     // public `Checker` API by relying on the fact that a missing
     // `Summary.foo` method would emit RY050 only if the class was
     // actually attached.
-    let mut parser = RParser::new().unwrap();
-    let src =
-        "Summary.other <- function(...) 1L\nx <- structure(list(), class = \"foo\")\nSummary(x)\n";
-    let f = parser.parse("test.R", src).unwrap();
-    let mut c = Checker::new("test.R");
-    c.check(&f);
-    let diags = c.take_diagnostics();
+    let diags = check(
+        "Summary.other <- function(...) 1L\nx <- structure(list(), class = \"foo\")\nSummary(x)\n",
+    );
     assert!(
         diags.iter().any(|d| d.code == "RY050"),
         "expected RY050 proving class was attached, got {:?}",

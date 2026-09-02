@@ -1862,7 +1862,7 @@ impl Checker {
     }
 
     fn is_aliasable_function(&self, name: &str) -> bool {
-        matches!(name, "~" | "expression" | "vars")
+        crate::semantic_lists::is_quoting_form(name)
             || is_nse_symbol_fn(name)
             || self.resolve_typeshed_sig(name).is_some()
             || self

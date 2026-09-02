@@ -38,16 +38,34 @@ fn r_eval(expr: &str) -> String {
     String::from_utf8_lossy(&output.stdout).to_string()
 }
 
-/// Load the embedded base typeshed functions as a name set.
+/// Load every name the embedded base typeshed declares: function
+/// signatures, ambient functions, and S3-generic globals. A list member
+/// is "in the typeshed" if it appears in any of them (the S3 Math group,
+/// for example, keeps `acosh`/`asinh`/`atanh` as ambient functions, and
+/// the group names themselves live in the S3-generic globals).
 fn base_typeshed_names() -> HashSet<String> {
     let typeshed = ry_typeshed::load_base().expect("base typeshed loads");
-    typeshed.functions.keys().cloned().collect()
+    typeshed
+        .functions
+        .keys()
+        .chain(typeshed.globals.ambient_functions.iter())
+        .chain(typeshed.globals.s3_generics.iter())
+        .cloned()
+        .collect()
 }
 
-/// Load the embedded rlang vendor typeshed functions.
+/// Load every name the embedded rlang vendor typeshed declares.
 fn rlang_typeshed_names() -> Option<HashSet<String>> {
     let typeshed = ry_typeshed::load_package("rlang")?;
-    Some(typeshed.functions.keys().cloned().collect())
+    Some(
+        typeshed
+            .functions
+            .keys()
+            .chain(typeshed.globals.ambient_functions.iter())
+            .chain(typeshed.globals.s3_generics.iter())
+            .cloned()
+            .collect(),
+    )
 }
 
 /// Parse and check R source, returning diagnostic codes.
@@ -224,6 +242,68 @@ fn builtin_environment_bindings_match_r_oracle() {
             "unexpected BUILTIN_ENVIRONMENT_BINDINGS member: {binding}"
         );
     }
+}
+
+/// S7_OBJECT_CONSTRUCTORS: all three are exported constructor entry points
+/// of the S7 package.
+#[test]
+fn s7_object_constructors_match_r_oracle() {
+    if !rscript_available() {
+        eprintln!("Rscript not on PATH; skipping oracle check");
+        return;
+    }
+    let output = r_eval("cat(requireNamespace(\"S7\", quietly=TRUE), \"\\n\")");
+    if !output.trim().starts_with("TRUE") {
+        eprintln!("S7 not installed; skipping oracle check");
+        return;
+    }
+    for constructor in semantic_lists::S7_OBJECT_CONSTRUCTORS {
+        let Some(bare) = constructor.strip_prefix("S7::") else {
+            panic!("S7_OBJECT_CONSTRUCTORS member {constructor:?} is not S7-qualified");
+        };
+        let check = r_eval(&format!(
+            "cat(exists(\"{bare}\", where = asNamespace(\"S7\"), inherits = FALSE), \"\\n\")"
+        ));
+        assert!(
+            check.trim().starts_with("TRUE"),
+            "S7 does not export constructor {constructor:?}"
+        );
+    }
+}
+
+/// QUOTING_FORMS: each member accepts a bare, undefined symbol without
+/// evaluating it -- the quoting behaviour that makes names inside these
+/// calls safe to skip during inference. `~` and `expression` are checked
+/// against vanilla R; `vars` is ggplot2's and is checked only when
+/// ggplot2 is installed.
+#[test]
+fn quoting_forms_match_r_oracle() {
+    if !rscript_available() {
+        eprintln!("Rscript not on PATH; skipping oracle check");
+        return;
+    }
+    let expression_check =
+        r_eval("e <- expression(undefined_ry_probe); cat(is.expression(e), \"\\n\")");
+    assert!(
+        expression_check.trim().starts_with("TRUE"),
+        "expression() does not quote its argument"
+    );
+    let formula_check =
+        r_eval("f <- `~`(undefined_ry_probe); cat(inherits(f, \"formula\"), \"\\n\")");
+    assert!(
+        formula_check.trim().starts_with("TRUE"),
+        "~ does not quote its argument"
+    );
+    let output = r_eval("cat(requireNamespace(\"ggplot2\", quietly=TRUE), \"\\n\")");
+    if !output.trim().starts_with("TRUE") {
+        eprintln!("ggplot2 not installed; skipping vars() oracle check");
+        return;
+    }
+    let vars_check = r_eval("v <- ggplot2::vars(undefined_ry_probe); cat(is.list(v), \"\\n\")");
+    assert!(
+        vars_check.trim().starts_with("TRUE"),
+        "vars() does not quote its argument"
+    );
 }
 
 /// No hardcoded semantic list escapes the registry.

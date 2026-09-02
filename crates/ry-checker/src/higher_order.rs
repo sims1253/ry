@@ -1,19 +1,14 @@
 use super::*;
 use crate::infer::*;
 
-fn matched_argument_index(argument_match: &ArgumentMatch, formal_index: usize) -> Option<usize> {
-    argument_match
-        .param_for_arg
-        .iter()
-        .position(|matched| *matched == Some(formal_index))
-}
-
 fn matched_argument_type<'a>(
     arg_types: &'a [RType],
     argument_match: &ArgumentMatch,
     formal_index: usize,
 ) -> Option<&'a RType> {
-    matched_argument_index(argument_match, formal_index).and_then(|index| arg_types.get(index))
+    argument_match
+        .arg_for_param(formal_index)
+        .and_then(|index| arg_types.get(index))
 }
 
 fn argument_bound_to_formal<'a>(
@@ -21,7 +16,9 @@ fn argument_bound_to_formal<'a>(
     argument_match: &ArgumentMatch,
     formal_index: usize,
 ) -> Option<&'a Arg> {
-    matched_argument_index(argument_match, formal_index).and_then(|index| args.get(index))
+    argument_match
+        .arg_for_param(formal_index)
+        .and_then(|index| args.get(index))
 }
 
 /// With a `...` formal, every unmatched actual is part of dots (one

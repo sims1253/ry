@@ -1167,6 +1167,19 @@ pub(crate) struct ArgumentMatch {
     pub(crate) dots: Option<usize>,
 }
 
+impl ArgumentMatch {
+    /// The actual argument bound to formal parameter `formal_index`
+    /// under ordinary R matching, if any: the reverse of
+    /// `param_for_arg` (each formal binds at most one actual).
+    /// Semantic metadata must go through this rather than raw call
+    /// positions.
+    pub(crate) fn arg_for_param(&self, formal_index: usize) -> Option<usize> {
+        self.param_for_arg
+            .iter()
+            .position(|bound| *bound == Some(formal_index))
+    }
+}
+
 /// Match R call arguments in the same three passes as `match.call`: exact
 /// names, unambiguous partial names, then unnamed arguments positionally.
 /// Partial and positional matching stop at `...`; exact names may still bind
@@ -1282,20 +1295,8 @@ pub(crate) fn bound_argument_index(
     args: &[Arg],
     formal: &str,
 ) -> Option<usize> {
-    bound_argument_index_matched(params, &match_params(params, args), formal)
-}
-
-/// `bound_argument_index` over a match already computed for this call.
-pub(crate) fn bound_argument_index_matched(
-    params: &[ParamSpec],
-    bindings: &ArgumentMatch,
-    formal: &str,
-) -> Option<usize> {
     let formal_index = params.iter().position(|param| param.name == formal)?;
-    bindings
-        .param_for_arg
-        .iter()
-        .position(|bound| *bound == Some(formal_index))
+    match_params(params, args).arg_for_param(formal_index)
 }
 
 pub(crate) fn match_args_to_params(
@@ -1305,11 +1306,12 @@ pub(crate) fn match_args_to_params(
 ) -> Vec<RType> {
     let bindings = match_params(sig_params, args);
     let mut matched = vec![RType::unknown(); sig_params.len()];
-    for (argument_index, parameter_index) in bindings.param_for_arg.iter().enumerate() {
-        if let Some(parameter_index) = parameter_index
-            && let Some(argument_type) = arg_types.get(argument_index)
+    for (formal_index, slot) in matched.iter_mut().enumerate() {
+        if let Some(argument_type) = bindings
+            .arg_for_param(formal_index)
+            .and_then(|argument_index| arg_types.get(argument_index))
         {
-            matched[*parameter_index] = argument_type.clone();
+            *slot = argument_type.clone();
         }
     }
     matched
@@ -1675,10 +1677,7 @@ pub(crate) fn data_mask_source_arg(sig: &FunctionSig, args: &[Arg]) -> Option<us
     let source = sig.data_mask_source.as_deref()?;
     let bindings = match_params(&sig.params, args);
     let source_parameter = sig.params.iter().position(|param| param.name == source)?;
-    bindings
-        .param_for_arg
-        .iter()
-        .position(|parameter| *parameter == Some(source_parameter))
+    bindings.arg_for_param(source_parameter)
 }
 
 /// If `e` is a literal expression (`42`, `"x"`, `TRUE`, `NULL`, `NA`),

@@ -1117,8 +1117,11 @@ impl Checker {
                             .any(|param| param.name == *fingerprint)
                     })
             })
-            && let Some(subject_index) =
-                bound_argument_index_matched(&signature.params, &bindings, &assertion.subject_param)
+            && let Some(subject_index) = signature
+                .params
+                .iter()
+                .position(|param| param.name == assertion.subject_param)
+                .and_then(|formal_index| bindings.arg_for_param(formal_index))
             && let Some(Expr::Ident { name: var, .. }) =
                 args.get(subject_index).map(|arg| &arg.value)
         {
@@ -1135,7 +1138,11 @@ impl Checker {
                 ),
             ] {
                 if let (Some(param), Some(weakening)) = (param, null_target)
-                    && bound_argument_index_matched(&signature.params, &bindings, param)
+                    && signature
+                        .params
+                        .iter()
+                        .position(|candidate| candidate.name == param)
+                        .and_then(|formal_index| bindings.arg_for_param(formal_index))
                         .is_some_and(|index| !matches!(args[index].value, Expr::Logical(false, _)))
                 {
                     target = target.join(weakening);

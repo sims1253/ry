@@ -120,6 +120,10 @@ suppression actions — and fixes a parser panic plus several editor issues.
   on-disk files with open documents and the editor sees the whole project
   exactly as `ry check` reports it. None of the removed capabilities ever
   shipped in a release, so released capability schemas are unchanged.
+- **`r-version` config key**: the no-op key, reserved for future use and
+  accepted but ignored, is gone. `ry.toml` files that still set it now
+  fail config parsing (`deny_unknown_fields` rejects unknown keys), so
+  delete the line when upgrading.
 
 ### Fixed
 
@@ -136,6 +140,12 @@ suppression actions — and fixes a parser panic plus several editor issues.
 - **Oversized-file warning no longer contains stray spaces**: the
   `index.max-file-bytes` warning printed a wide run of stray spaces
   inside the sentence. The message now uses single spaces.
+- **Corrected garbled messages**: RY032's `||`/`&&` operand-length
+  warning now ends "R errors at runtime for vector operands" instead of
+  "current R errors for vectors"; the `ry dump-types --format` error
+  says "only `json` is supported" instead of "expected one of: json";
+  and `ry check` with no R files prints its search roots with normal
+  path formatting instead of Rust debug output.
 - The language server no longer panics on every later check when a worker
   thread panicked once: the serialized-workspace cache recovers from a
   poisoned mutex instead of propagating the panic.

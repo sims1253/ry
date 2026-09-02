@@ -302,7 +302,7 @@ impl Checker {
                 .any(|diagnostic| diagnostic.code == "RY032")
         {
             let message = format!(
-                "`{}` operand depends on a parameter whose length is not known to be 1; current R errors for vectors",
+                "`{}` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands",
                 op_symbol(op)
             );
             self.emit(Severity::Warning, span, "RY032", message);

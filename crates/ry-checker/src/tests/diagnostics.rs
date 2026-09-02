@@ -2,9 +2,29 @@ use super::*;
 use ry_core::RParser;
 
 // ---- inline suppression comment tests ----
+
+/// Synthesize the comment list for `src` the way the parser collects it:
+/// one `Comment` per line containing a `#`, with the `#` byte column and
+/// the text after it as the body. None of these fixtures puts a `#`
+/// inside a string literal, so a plain line scan reproduces the parser's
+/// output exactly.
+fn scan_comments(src: &str) -> Vec<ry_core::ast::Comment> {
+    src.lines()
+        .enumerate()
+        .filter_map(|(line, text)| {
+            text.find('#').map(|col| ry_core::ast::Comment {
+                line,
+                col,
+                body: text[col + 1..].to_string(),
+            })
+        })
+        .collect()
+}
+
 #[test]
 fn parse_trailing_ignore_comment() {
-    let supps = parse_suppressions("x <- bad  # ry: ignore\n");
+    let src = "x <- bad  # ry: ignore\n";
+    let supps = parse_suppressions_from_comments(&scan_comments(src), src);
     assert_eq!(supps.len(), 1);
     assert_eq!(supps[0].line, 0);
     assert!(supps[0].rules.is_empty()); // suppress all
@@ -12,14 +32,16 @@ fn parse_trailing_ignore_comment() {
 
 #[test]
 fn parse_specific_rule_ignore() {
-    let supps = parse_suppressions("x <- \"a\" * 3  # ry: ignore[RY040]\n");
+    let src = "x <- \"a\" * 3  # ry: ignore[RY040]\n";
+    let supps = parse_suppressions_from_comments(&scan_comments(src), src);
     assert_eq!(supps.len(), 1);
     assert_eq!(supps[0].rules, vec!["RY040"]);
 }
 
 #[test]
 fn parse_multiple_rules() {
-    let supps = parse_suppressions("x <- bad  # ry: ignore[RY040, RY010]\n");
+    let src = "x <- bad  # ry: ignore[RY040, RY010]\n";
+    let supps = parse_suppressions_from_comments(&scan_comments(src), src);
     assert_eq!(supps.len(), 1);
     assert!(supps[0].rules.contains(&"RY040".to_string()));
     assert!(supps[0].rules.contains(&"RY010".to_string()));
@@ -28,7 +50,7 @@ fn parse_multiple_rules() {
 #[test]
 fn parse_standalone_comment_applies_to_next_line() {
     let src = "# ry: ignore\nx <- bad\n";
-    let supps = parse_suppressions(src);
+    let supps = parse_suppressions_from_comments(&scan_comments(src), src);
     assert_eq!(supps.len(), 1);
     assert_eq!(supps[0].line, 1);
 }
@@ -36,64 +58,78 @@ fn parse_standalone_comment_applies_to_next_line() {
 #[test]
 fn parse_standalone_comment_skips_blank_lines() {
     let src = "# ry: ignore\n\nx <- bad\n";
-    let supps = parse_suppressions(src);
+    let supps = parse_suppressions_from_comments(&scan_comments(src), src);
     assert_eq!(supps.len(), 1);
     assert_eq!(supps[0].line, 2);
 }
 
 #[test]
 fn parse_noqa_alias() {
-    let supps = parse_suppressions("x <- bad  # noqa: RY010\n");
+    let src = "x <- bad  # noqa: RY010\n";
+    let supps = parse_suppressions_from_comments(&scan_comments(src), src);
     assert_eq!(supps.len(), 1);
     assert!(supps[0].rules.contains(&"RY010".to_string()));
 }
 
 #[test]
 fn parse_bare_noqa_suppresses_all() {
-    let supps = parse_suppressions("x <- bad  # noqa\n");
+    let src = "x <- bad  # noqa\n";
+    let supps = parse_suppressions_from_comments(&scan_comments(src), src);
     assert_eq!(supps.len(), 1);
     assert!(supps[0].rules.is_empty());
 }
 
 #[test]
 fn parse_noqa_bracket_form() {
-    let supps = parse_suppressions("x <- bad  # noqa[RY010]\n");
+    let src = "x <- bad  # noqa[RY010]\n";
+    let supps = parse_suppressions_from_comments(&scan_comments(src), src);
     assert_eq!(supps.len(), 1);
     assert!(supps[0].rules.contains(&"RY010".to_string()));
 }
 
 #[test]
 fn parse_compact_ry_ignore_no_space() {
-    let supps = parse_suppressions("x <- bad  # ry:ignore[RY010]\n");
+    let src = "x <- bad  # ry:ignore[RY010]\n";
+    let supps = parse_suppressions_from_comments(&scan_comments(src), src);
     assert_eq!(supps.len(), 1);
     assert!(supps[0].rules.contains(&"RY010".to_string()));
 }
 
 #[test]
 fn parse_case_insensitive_marker() {
-    let supps = parse_suppressions("x <- bad  # RY: IGNORE[ry010]\n");
+    let src = "x <- bad  # RY: IGNORE[ry010]\n";
+    let supps = parse_suppressions_from_comments(&scan_comments(src), src);
     assert_eq!(supps.len(), 1);
     assert!(supps[0].rules.contains(&"RY010".to_string()));
 }
 
 #[test]
 fn parse_non_suppression_comment_is_ignored() {
-    let supps = parse_suppressions("# just a regular comment\nx <- bad\n");
+    let src = "# just a regular comment\nx <- bad\n";
+    let supps = parse_suppressions_from_comments(&scan_comments(src), src);
     assert!(supps.is_empty());
 }
 
 #[test]
 fn parse_file_level_suppression() {
-    assert!(has_file_suppression("# ry: ignore-file\nx <- bad\n"));
-    assert!(has_file_suppression("# ry:ignore-file\nx <- bad\n"));
-    assert!(!has_file_suppression("# ry: ignore\nx <- bad\n"));
+    assert!(has_file_suppression_from_comments(&scan_comments(
+        "# ry: ignore-file\nx <- bad\n"
+    )));
+    assert!(has_file_suppression_from_comments(&scan_comments(
+        "# ry:ignore-file\nx <- bad\n"
+    )));
+    assert!(!has_file_suppression_from_comments(&scan_comments(
+        "# ry: ignore\nx <- bad\n"
+    )));
 }
 
 #[test]
 fn file_level_marker_not_treated_as_line_level() {
     // `# ry: ignore-file` must NOT also register as a line-level
-    // "ignore all" (it's handled by has_file_suppression instead).
-    let supps = parse_suppressions("# ry: ignore-file\nx <- bad\n");
+    // "ignore all" (it's handled by has_file_suppression_from_comments
+    // instead).
+    let src = "# ry: ignore-file\nx <- bad\n";
+    let supps = parse_suppressions_from_comments(&scan_comments(src), src);
     assert!(
         supps.is_empty(),
         "ignore-file should not produce line-level suppressions, got {:?}",
@@ -163,7 +199,7 @@ fn filter_suppressed_end_to_end() {
     // Trailing `# ry: ignore[RY010]` on the offending line drops RY010.
     let src = "x <- undefined_var  # ry: ignore[RY010]\n";
     let diags = check(src);
-    let filtered = filter_suppressed(diags, src);
+    let filtered = filter_suppressed_with_comments(diags, &scan_comments(src), src);
     assert!(
         filtered.iter().all(|d| d.code != "RY010"),
         "RY010 should be suppressed, got {:?}",
@@ -175,7 +211,7 @@ fn filter_suppressed_end_to_end() {
 fn filter_suppressed_file_level_drops_everything() {
     let src = "# ry: ignore-file\nx <- undefined_var\n";
     let diags = check(src);
-    let filtered = filter_suppressed(diags, src);
+    let filtered = filter_suppressed_with_comments(diags, &scan_comments(src), src);
     assert!(
         filtered.is_empty(),
         "file-level suppression should drop all diagnostics, got {:?}",
@@ -188,7 +224,7 @@ fn filter_suppressed_other_rules_still_fire() {
     // Suppressing RY010 on line 0 should NOT affect RY040 on line 1.
     let src = "x <- undefined_var  # ry: ignore[RY010]\ny <- \"a\" * 3L\n";
     let diags = check(src);
-    let filtered = filter_suppressed(diags, src);
+    let filtered = filter_suppressed_with_comments(diags, &scan_comments(src), src);
     assert!(
         filtered.iter().any(|d| d.code == "RY040"),
         "RY040 should still fire (it's on a different line), got {:?}",

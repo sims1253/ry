@@ -13,7 +13,7 @@ pub struct Baseline {
     pub entries: Vec<BaselineEntry>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BaselineEntry {
     pub path: String,
     pub code: String,

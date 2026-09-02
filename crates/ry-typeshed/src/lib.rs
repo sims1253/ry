@@ -305,153 +305,49 @@ const RLANG_JSON: &str = include_str!("../vendor/rlang/rlang.json");
 const CLI_JSON: &str = include_str!("../vendor/cli/cli.json");
 const VCTRS_JSON: &str = include_str!("../vendor/vctrs/vctrs.json");
 
-#[derive(Clone, Copy)]
-struct PackageSpec {
-    name: &'static str,
-    json: &'static str,
-}
-
 /// Single source of truth for embedded non-base packages, in signature
 /// resolution order. Every package maps one-to-one to its vendored file.
-const PACKAGE_SPECS: &[PackageSpec] = &[
-    PackageSpec {
-        name: "dplyr",
-        json: DPLYR_JSON,
-    },
-    PackageSpec {
-        name: "dbplyr",
-        json: DBPLYR_JSON,
-    },
-    PackageSpec {
-        name: "tidyr",
-        json: TIDYR_JSON,
-    },
-    PackageSpec {
-        name: "tidyselect",
-        json: TIDYSELECT_JSON,
-    },
-    PackageSpec {
-        name: "purrr",
-        json: PURRR_JSON,
-    },
-    PackageSpec {
-        name: "igraph",
-        json: IGRAPH_JSON,
-    },
-    PackageSpec {
-        name: "recipes",
-        json: RECIPES_JSON,
-    },
-    PackageSpec {
-        name: "bench",
-        json: BENCH_JSON,
-    },
-    PackageSpec {
-        name: "box",
-        json: BOX_JSON,
-    },
-    PackageSpec {
-        name: "patrick",
-        json: PATRICK_JSON,
-    },
-    PackageSpec {
-        name: "rex",
-        json: REX_JSON,
-    },
-    PackageSpec {
-        name: "rlist",
-        json: RLIST_JSON,
-    },
-    PackageSpec {
-        name: "mirai",
-        json: MIRAI_JSON,
-    },
-    PackageSpec {
-        name: "survival",
-        json: SURVIVAL_JSON,
-    },
-    PackageSpec {
-        name: "testthat",
-        json: TESTTHAT_JSON,
-    },
-    PackageSpec {
-        name: "tinytest",
-        json: TINYTEST_JSON,
-    },
-    PackageSpec {
-        name: "Rcpp",
-        json: RCPP_JSON,
-    },
-    PackageSpec {
-        name: "brms",
-        json: BRMS_JSON,
-    },
-    PackageSpec {
-        name: "posterior",
-        json: POSTERIOR_JSON,
-    },
-    PackageSpec {
-        name: "loo",
-        json: LOO_JSON,
-    },
-    PackageSpec {
-        name: "bayesplot",
-        json: BAYESPLOT_JSON,
-    },
-    PackageSpec {
-        name: "cmdstanr",
-        json: CMDSTANR_JSON,
-    },
-    PackageSpec {
-        name: "zeallot",
-        json: ZEALLOT_JSON,
-    },
-    PackageSpec {
-        name: "future",
-        json: FUTURE_JSON,
-    },
-    PackageSpec {
-        name: "foreach",
-        json: FOREACH_JSON,
-    },
-    PackageSpec {
-        name: "shiny",
-        json: SHINY_JSON,
-    },
-    PackageSpec {
-        name: "withr",
-        json: WITHR_JSON,
-    },
-    PackageSpec {
-        name: "R6",
-        json: R6_JSON,
-    },
-    PackageSpec {
-        name: "S7",
-        json: S7_JSON,
-    },
-    PackageSpec {
-        name: "rlang",
-        json: RLANG_JSON,
-    },
-    PackageSpec {
-        name: "cli",
-        json: CLI_JSON,
-    },
-    PackageSpec {
-        name: "vctrs",
-        json: VCTRS_JSON,
-    },
+const PACKAGE_SPECS: &[(&str, &str)] = &[
+    ("dplyr", DPLYR_JSON),
+    ("dbplyr", DBPLYR_JSON),
+    ("tidyr", TIDYR_JSON),
+    ("tidyselect", TIDYSELECT_JSON),
+    ("purrr", PURRR_JSON),
+    ("igraph", IGRAPH_JSON),
+    ("recipes", RECIPES_JSON),
+    ("bench", BENCH_JSON),
+    ("box", BOX_JSON),
+    ("patrick", PATRICK_JSON),
+    ("rex", REX_JSON),
+    ("rlist", RLIST_JSON),
+    ("mirai", MIRAI_JSON),
+    ("survival", SURVIVAL_JSON),
+    ("testthat", TESTTHAT_JSON),
+    ("tinytest", TINYTEST_JSON),
+    ("Rcpp", RCPP_JSON),
+    ("brms", BRMS_JSON),
+    ("posterior", POSTERIOR_JSON),
+    ("loo", LOO_JSON),
+    ("bayesplot", BAYESPLOT_JSON),
+    ("cmdstanr", CMDSTANR_JSON),
+    ("zeallot", ZEALLOT_JSON),
+    ("future", FUTURE_JSON),
+    ("foreach", FOREACH_JSON),
+    ("shiny", SHINY_JSON),
+    ("withr", WITHR_JSON),
+    ("R6", R6_JSON),
+    ("S7", S7_JSON),
+    ("rlang", RLANG_JSON),
+    ("cli", CLI_JSON),
+    ("vctrs", VCTRS_JSON),
 ];
 
 pub fn known_packages() -> impl Iterator<Item = &'static str> {
-    PACKAGE_SPECS.iter().map(|spec| spec.name)
+    PACKAGE_SPECS.iter().map(|&(name, _)| name)
 }
 
 #[derive(Debug, Error)]
 pub enum TypeshedError {
-    #[error("typeshed parse error: {0}")]
-    Json(#[from] serde_json::Error),
     #[error("failed to read typeshed `{path}`: {source}", path = path.display())]
     Io {
         path: PathBuf,
@@ -630,16 +526,8 @@ pub struct Globals {
 }
 
 impl FunctionSig {
-    pub fn params(&self) -> &[ParamSpec] {
-        &self.params
-    }
-
     pub fn param_names(&self) -> impl Iterator<Item = &str> {
         self.params.iter().map(|param| param.name.as_str())
-    }
-
-    pub fn return_(&self) -> &ReturnSpec {
-        &self.return_
     }
 }
 
@@ -834,10 +722,10 @@ pub fn load_package(name: &str) -> Option<&'static Typeshed> {
     let packages = PACKAGES.get_or_init(|| {
         PACKAGE_SPECS
             .iter()
-            .map(|spec| {
-                let typeshed = parse_typeshed(spec.json, Path::new(spec.name))
+            .map(|&(name, json)| {
+                let typeshed = parse_typeshed(json, Path::new(name))
                     .expect("embedded package typeshed must parse");
-                (spec.name, typeshed)
+                (name, typeshed)
             })
             .collect()
     });
@@ -849,7 +737,7 @@ pub fn load_package(name: &str) -> Option<&'static Typeshed> {
 /// signatures (unknown packages are still recorded as loaded for NSE
 /// gating, e.g. `tidyverse`, but contribute no function signatures).
 pub fn is_known_package(name: &str) -> bool {
-    PACKAGE_SPECS.iter().any(|spec| spec.name == name)
+    PACKAGE_SPECS.iter().any(|&(known, _)| known == name)
 }
 
 /// Load stub files from a user-supplied directory. Both flat
@@ -1004,7 +892,6 @@ pub fn validate_stub_dirs(dirs: &[PathBuf]) -> ValidationReport {
 
 fn validation_error_message(error: &TypeshedError) -> String {
     match error {
-        TypeshedError::Json(source) => format!("typeshed parse error: {source}"),
         TypeshedError::Io { source, .. } => format!("failed to read typeshed: {source}"),
         TypeshedError::JsonAtPath { source, .. } => format!("typeshed parse error: {source}"),
         TypeshedError::UnsupportedSchema { schema_version, .. } => {
@@ -1615,7 +1502,7 @@ mod tests {
             }
         }
         let mut lengths = std::collections::BTreeSet::new();
-        for json in std::iter::once(BASE_JSON).chain(PACKAGE_SPECS.iter().map(|spec| spec.json)) {
+        for json in std::iter::once(BASE_JSON).chain(PACKAGE_SPECS.iter().map(|&(_, json)| json)) {
             collect(&serde_json::from_str(json).unwrap(), &mut lengths);
         }
         assert_eq!(

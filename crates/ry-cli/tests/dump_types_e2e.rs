@@ -594,7 +594,7 @@ fn exit_code_nonzero_only_for_usage_and_io_failures() {
     // Unknown format is a usage failure.
     let output = run(&["dump-types", &file, "--format", "yaml"]);
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("expected one of: json"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("only `json` is supported"));
 
     // Missing file is an IO failure.
     let output = run(&["dump-types", &temp.path().join("nope.R").to_string_lossy()]);

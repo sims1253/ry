@@ -35,7 +35,7 @@
       "line": 618,
       "column": 7,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "blogdown::RY105::R/hugo.R:380:9": {
       "package": "blogdown",
@@ -116,7 +116,7 @@
       "line": 459,
       "column": 9,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "broom::RY032::R/utilities.R:485:9": {
       "package": "broom",
@@ -125,7 +125,7 @@
       "line": 485,
       "column": 9,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "broom::RY032::R/utilities.R:501:9": {
       "package": "broom",
@@ -134,7 +134,7 @@
       "line": 501,
       "column": 9,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "broom::RY033::R/deprecated-0-7-0.R:290:11": {
       "package": "broom",
@@ -917,7 +917,7 @@
       "line": 165,
       "column": 7,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "cli::RY032::R/containers.R:45:7": {
       "package": "cli",
@@ -926,7 +926,7 @@
       "line": 45,
       "column": 7,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "cli::RY032::R/rules.R:187:14": {
       "package": "cli",
@@ -935,7 +935,7 @@
       "line": 187,
       "column": 14,
       "severity": "warning",
-      "message": "`&&` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "cli::RY032::R/status-bar.R:256:7": {
       "package": "cli",
@@ -944,7 +944,7 @@
       "line": 256,
       "column": 7,
       "severity": "warning",
-      "message": "`&&` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "cli::RY032::R/status-bar.R:259:7": {
       "package": "cli",
@@ -953,7 +953,7 @@
       "line": 259,
       "column": 7,
       "severity": "warning",
-      "message": "`&&` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "cli::RY032::R/status-bar.R:262:7": {
       "package": "cli",
@@ -962,7 +962,7 @@
       "line": 262,
       "column": 7,
       "severity": "warning",
-      "message": "`&&` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "cli::RY032::R/status-bar.R:364:7": {
       "package": "cli",
@@ -971,7 +971,7 @@
       "line": 364,
       "column": 7,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "cli::RY032::R/status-bar.R:451:7": {
       "package": "cli",
@@ -980,7 +980,7 @@
       "line": 451,
       "column": 7,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "cli::RY033::R/onload.R:44:22": {
       "package": "cli",
@@ -1880,7 +1880,7 @@
       "line": 79,
       "column": 7,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "flexdashboard::RY001::R/flex_dashboard.R:381:11": {
       "package": "flexdashboard",
@@ -3293,7 +3293,7 @@
       "line": 117,
       "column": 9,
       "severity": "warning",
-      "message": "`&&` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "gt::RY032::R/opts.R:121:9": {
       "package": "gt",
@@ -3302,7 +3302,7 @@
       "line": 121,
       "column": 9,
       "severity": "warning",
-      "message": "`&&` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "gt::RY032::R/render_as_i_html.R:922:7": {
       "package": "gt",
@@ -3311,7 +3311,7 @@
       "line": 922,
       "column": 7,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "gt::RY032::R/utils_render_latex.R:44:7": {
       "package": "gt",
@@ -3320,7 +3320,7 @@
       "line": 44,
       "column": 7,
       "severity": "warning",
-      "message": "`&&` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "gt::RY032::R/utils_render_rtf.R:795:7": {
       "package": "gt",
@@ -3329,7 +3329,7 @@
       "line": 795,
       "column": 7,
       "severity": "warning",
-      "message": "`&&` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "gt::RY032::R/utils_render_xml.R:744:7": {
       "package": "gt",
@@ -3338,7 +3338,7 @@
       "line": 744,
       "column": 7,
       "severity": "warning",
-      "message": "`&&` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "gt::RY061::R/utils_render_latex.R:2149:47": {
       "package": "gt",
@@ -3383,7 +3383,7 @@
       "line": 57,
       "column": 7,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "httr::RY070::R/callback.R:100:5": {
       "package": "httr",
@@ -3527,7 +3527,7 @@
       "line": 315,
       "column": 7,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "leaflet::RY032::R/colors.R:326:7": {
       "package": "leaflet",
@@ -3536,7 +3536,7 @@
       "line": 326,
       "column": 7,
       "severity": "warning",
-      "message": "`&&` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "leaflet::RY032::R/colors.R:333:14": {
       "package": "leaflet",
@@ -3545,7 +3545,7 @@
       "line": 333,
       "column": 14,
       "severity": "warning",
-      "message": "`&&` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "leaflet::RY032::R/layers.R:349:13": {
       "package": "leaflet",
@@ -3554,7 +3554,7 @@
       "line": 349,
       "column": 13,
       "severity": "warning",
-      "message": "`&&` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "learnr::RY010::R/question_text.R:122:7": {
       "package": "learnr",
@@ -3617,7 +3617,7 @@
       "line": 583,
       "column": 7,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "lintr::RY032::R/utils.R:183:7": {
       "package": "lintr",
@@ -3626,7 +3626,7 @@
       "line": 183,
       "column": 7,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "lintr::RY034::tests/testthat/dummy_packages/package/R/default_linter_testcode.R:25:73": {
       "package": "lintr",
@@ -4148,7 +4148,7 @@
       "line": 1360,
       "column": 7,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "plumber::RY033::R/plumber.R:474:82": {
       "package": "plumber",
@@ -4166,7 +4166,7 @@
       "line": 34,
       "column": 7,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "purrr::RY080::tests/testthat/test-map.R:82:20": {
       "package": "purrr",
@@ -4886,7 +4886,7 @@
       "line": 685,
       "column": 7,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "renv::RY032::R/bootstrap.R:981:7": {
       "package": "renv",
@@ -4895,7 +4895,7 @@
       "line": 981,
       "column": 7,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "renv::RY032::R/json-write.R:60:12": {
       "package": "renv",
@@ -4904,7 +4904,7 @@
       "line": 60,
       "column": 12,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "renv::RY032::R/type.R:5:7": {
       "package": "renv",
@@ -4913,7 +4913,7 @@
       "line": 5,
       "column": 7,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "renv::RY032::R/utils.R:24:7": {
       "package": "renv",
@@ -4922,7 +4922,7 @@
       "line": 24,
       "column": 7,
       "severity": "warning",
-      "message": "`&&` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "renv::RY032::inst/resources/activate.R:1141:9": {
       "package": "renv",
@@ -4931,7 +4931,7 @@
       "line": 1141,
       "column": 9,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "renv::RY070::R/package.R:367:12": {
       "package": "renv",
@@ -4985,7 +4985,7 @@
       "line": 36,
       "column": 5,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "reticulate::RY032::R/py_require.R:591:9": {
       "package": "reticulate",
@@ -4994,7 +4994,7 @@
       "line": 591,
       "column": 9,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "reticulate::RY032::tests/testthat/test-python-pandas.R:382:27": {
       "package": "reticulate",
@@ -5003,7 +5003,7 @@
       "line": 382,
       "column": 27,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "rlang::RY001::R/cnd-abort.R:548:7": {
       "package": "rlang",
@@ -5183,7 +5183,7 @@
       "line": 210,
       "column": 38,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "rmarkdown::RY032::R/pandoc.R:653:33": {
       "package": "rmarkdown",
@@ -5192,7 +5192,7 @@
       "line": 653,
       "column": 33,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "rmarkdown::RY105::R/html_dependencies.R:245:9": {
       "package": "rmarkdown",
@@ -5651,7 +5651,7 @@
       "line": 154,
       "column": 7,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "shiny-r::RY032::R/runapp.R:375:7": {
       "package": "shiny-r",
@@ -5660,7 +5660,7 @@
       "line": 375,
       "column": 7,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "shiny-r::RY033::R/bookmark-state.R:138:18": {
       "package": "shiny-r",
@@ -6038,7 +6038,7 @@
       "line": 273,
       "column": 7,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "sparklyr::RY032::R/spark_submit.R:34:7": {
       "package": "sparklyr",
@@ -6047,7 +6047,7 @@
       "line": 34,
       "column": 7,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "sparklyr::RY033::R/tidiers_utils.R:74:11": {
       "package": "sparklyr",
@@ -6146,7 +6146,7 @@
       "line": 428,
       "column": 6,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "tensorflow::RY061::R/generics.R:805:34": {
       "package": "tensorflow",
@@ -6317,7 +6317,7 @@
       "line": 195,
       "column": 7,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "tinytex::RY032::R/install.R:324:9": {
       "package": "tinytex",
@@ -6326,7 +6326,7 @@
       "line": 324,
       "column": 9,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "torch::RY010::R/codegen-utils.R:12:21": {
       "package": "torch",
@@ -6542,7 +6542,7 @@
       "line": 171,
       "column": 22,
       "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "usethis::RY032::R/utils.R:64:3": {
       "package": "usethis",
@@ -6551,7 +6551,7 @@
       "line": 64,
       "column": 3,
       "severity": "warning",
-      "message": "`&&` operand depends on a parameter whose length is not known to be 1; current R errors for vectors"
+      "message": "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "usethis::RY092::R/utils-github.R:131:20": {
       "package": "usethis",

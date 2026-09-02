@@ -71,11 +71,6 @@ impl Diagnostic {
         }
     }
 
-    pub fn with_confidence(mut self, confidence: Confidence) -> Self {
-        self.confidence = confidence;
-        self
-    }
-
     /// Look up the rule metadata for this diagnostic's code, if any.
     pub fn rule(&self) -> Option<&'static rules::Rule> {
         rules::find(self.code)
@@ -118,63 +113,12 @@ pub struct Suppression {
     pub rules: Vec<String>,
 }
 
-/// Scan source text for `# ry: ignore` / `# noqa` comments and return
-/// one [`Suppression`] per directive found.
-///
-/// File-level directives (`# ry: ignore-file`) are NOT included here;
-/// use [`has_file_suppression`] to detect those.
-pub fn parse_suppressions(src: &str) -> Vec<Suppression> {
-    // Legacy path: scan source text line-by-line. Used by callers that
-    // don't have a parsed SourceFile handy (e.g. tests). Real callers
-    // should prefer parse_suppressions_from_comments, which is lexical
-    // (a `#` inside a string literal is NOT mistaken for a comment).
-    let mut suppressions = Vec::new();
-    // A standalone `# ry: ignore` line defers until the next code line.
-    let mut pending: Option<Suppression> = None;
-
-    for (line_num, line) in src.lines().enumerate() {
-        let trimmed = line.trim();
-
-        if let Some(codes) = parse_ignore_comment(trimmed) {
-            // If the line has code before the comment, it's a trailing
-            // suppression (applies to this line). Otherwise it's a
-            // standalone comment that applies to the next code line.
-            let code_before = line_before_comment(line);
-            if code_before.trim().is_empty() {
-                pending = Some(Suppression {
-                    line: 0, // filled in when we reach the target line
-                    rules: codes,
-                });
-            } else {
-                suppressions.push(Suppression {
-                    line: line_num,
-                    rules: codes,
-                });
-            }
-            continue;
-        }
-
-        // Resolve a pending standalone suppression against the next
-        // non-blank, non-comment line. Blank lines and further comment
-        // lines don't consume the pending suppression.
-        if let Some(mut supp) = pending.take() {
-            if !trimmed.is_empty() && !trimmed.starts_with('#') {
-                supp.line = line_num;
-                suppressions.push(supp);
-            } else {
-                pending = Some(supp);
-            }
-        }
-    }
-
-    suppressions
-}
-
-/// Lexical variant of `parse_suppressions`: consumes the parser's
-/// collected `Comment` list (see `SourceFile::comments`) so that a `#`
+/// Scan the parser's collected `Comment` list (see
+/// `SourceFile::comments`) for `# ry: ignore` / `# noqa` directives and
+/// return one [`Suppression`] per directive found. Working from the
+/// comment list rather than scanning source lines for `#` means a `#`
 /// appearing INSIDE a string literal is not mistaken for a suppression
-/// directive (the legacy `parse_suppressions(&str)` scans source lines
-/// for `#`, which falsely matches `x <- "# noqa"`).
+/// directive (so `x <- "# noqa"` does not suppress anything).
 ///
 /// Standalone-vs-trailing is decided by the comment's column: a comment
 /// at column 0 (no code before it on the line) defers to the next code
@@ -183,8 +127,7 @@ pub fn parse_suppressions(src: &str) -> Vec<Suppression> {
 /// Resolving a standalone directive to "the next code line" requires the
 /// source text: blank lines and comment-only lines in between must be
 /// skipped, which cannot be determined from the comment list alone. Pass
-/// the full source so the resolution matches the legacy
-/// `parse_suppressions(&str)` behavior exactly.
+/// the full source so the resolution can find the target line.
 pub fn parse_suppressions_from_comments(
     comments: &[ry_core::ast::Comment],
     src: &str,
@@ -250,9 +193,14 @@ fn next_code_line(lines: &[&str], start: usize) -> Option<usize> {
     None
 }
 
-/// Parse a single comment line for an ignore directive. Returns
-/// `Some(codes)` (empty vec = suppress all) when the line contains a
-/// recognized directive, or `None` otherwise.
+/// Parse a comment body for an ignore directive. Returns `Some(codes)`
+/// (empty vec = suppress all) when the body contains a recognized
+/// directive, or `None` otherwise.
+///
+/// The body is the comment text AFTER the leading `#`; leading
+/// whitespace is trimmed here. The marker must START the body, which
+/// prevents false matches on prose like `# See docs for ry: ignore` or
+/// `# TODO: add ry: ignore`.
 ///
 /// Recognized forms (case-insensitive on the `ry:` / `noqa` markers):
 ///   - `# ry: ignore`
@@ -262,19 +210,6 @@ fn next_code_line(lines: &[&str], start: usize) -> Option<usize> {
 ///   - `# noqa`
 ///   - `# noqa: RY040`
 ///   - `# noqa[RY040]`
-fn parse_ignore_comment(line: &str) -> Option<Vec<String>> {
-    let comment_start = line.find('#')?;
-    let comment = &line[comment_start..];
-    // Strip the '#' and whitespace so the marker must be at the START
-    // of the comment body. This prevents false matches on prose like
-    // `# See docs for ry: ignore` or `# TODO: add ry: ignore`.
-    let body = comment[1..].trim_start();
-    parse_ignore_comment_body(body)
-}
-
-/// Body-only variant: the comment text AFTER the leading `#` (already
-/// trimmed of leading whitespace by the caller or here). Shared by the
-/// legacy line-scanning parser and the lexical comment-based parser.
 fn parse_ignore_comment_body(body: &str) -> Option<Vec<String>> {
     let body = body.trim_start();
     let body_lower = body.to_lowercase();
@@ -327,39 +262,11 @@ fn parse_rule_codes(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// Return the portion of a line before its first `#` (the code part).
-/// If the line has no comment, the whole line is returned.
-fn line_before_comment(line: &str) -> &str {
-    match line.find('#') {
-        Some(pos) => &line[..pos],
-        None => line,
-    }
-}
-
-/// Returns `true` if the source contains a file-level suppression
+/// Returns `true` if any collected comment is a file-level suppression
 /// directive (`# ry: ignore-file`). When true, every diagnostic in the
-/// file should be suppressed.
-pub fn has_file_suppression(src: &str) -> bool {
-    // Legacy line-scanning path. The marker must START the comment body
-    // (after the `#` and whitespace) -- NOT appear as a substring -- so
-    // prose like `# see also ry: ignore-file` does not trigger a
-    // file-wide suppression. Prefer has_file_suppression_from_comments
-    // for callers with a parsed SourceFile (it also avoids mistaking
-    // a `#` inside a string literal for a comment).
-    for line in src.lines() {
-        if let Some(hash_pos) = line.find('#') {
-            let body = line[hash_pos + 1..].trim_start();
-            let lower = body.to_lowercase();
-            if lower.starts_with("ry: ignore-file") || lower.starts_with("ry:ignore-file") {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// Lexical variant of `has_file_suppression` using the parser's
-/// collected comments. Avoids the string-literal `#` false positive.
+/// file should be suppressed. Working from the parser's collected
+/// comments avoids mistaking a `#` inside a string literal for a
+/// comment.
 pub fn has_file_suppression_from_comments(comments: &[ry_core::ast::Comment]) -> bool {
     for c in comments {
         let body = c.body.trim_start();
@@ -387,22 +294,10 @@ pub fn is_suppressed(diag: &Diagnostic, suppressions: &[Suppression]) -> bool {
 /// Convenience: drop every diagnostic that is suppressed, either by a
 /// per-line `# ry: ignore` / `# noqa` directive or by a file-level
 /// `# ry: ignore-file`. This is the filter the CLI and LSP call after
-/// running the checker.
-pub fn filter_suppressed(diags: Vec<Diagnostic>, src: &str) -> Vec<Diagnostic> {
-    if has_file_suppression(src) {
-        return Vec::new();
-    }
-    let supps = parse_suppressions(src);
-    diags
-        .into_iter()
-        .filter(|d| !is_suppressed(d, &supps))
-        .collect()
-}
-
-/// Lexical variant of `filter_suppressed`: uses the parser's collected
-/// comments so a `#` inside a string literal is not mistaken for a
-/// suppression directive. The source text is required to resolve
-/// standalone `# ry: ignore` directives to their target code line.
+/// running the checker. Uses the parser's collected comments so a `#`
+/// inside a string literal is not mistaken for a suppression directive.
+/// The source text is required to resolve standalone `# ry: ignore`
+/// directives to their target code line.
 pub fn filter_suppressed_with_comments(
     diags: Vec<Diagnostic>,
     comments: &[ry_core::ast::Comment],
@@ -499,19 +394,6 @@ impl SeverityFilter {
         ) || self.extended_selection.contains(&code);
         selected.then_some(default)
     }
-}
-
-/// Drop diagnostics whose rule is off by default (see
-/// [`rules::enabled_by_default`]).
-///
-/// This is the severity-neutral half of [`apply_filter_to_diagnostics`]:
-/// it never rewrites an instance's severity, so a confidence-based
-/// downgrade survives. Callers that have no user severity configuration to
-/// apply — the LSP, which publishes straight from `Project::check` — use it
-/// to enforce the same default rule set the CLI ships, instead of silently
-/// reporting opt-in rules that `ry check` would not.
-pub fn filter_default_disabled(diagnostics: &mut Vec<Diagnostic>) {
-    diagnostics.retain(|diagnostic| rules::enabled_by_default(diagnostic.code));
 }
 
 /// Apply a [`SeverityFilter`] to a vec of diagnostics in place:

@@ -1498,7 +1498,7 @@ impl Checker {
                     }
                     if self.external_bindings.iter().any(|binding| {
                         binding
-                            .strip_prefix(crate::packages::NATIVE_ROUTINE_PREFIX_SENTINEL)
+                            .strip_prefix(ry_workspace::packages::NATIVE_ROUTINE_PREFIX_SENTINEL)
                             .is_some_and(|prefix| {
                                 name.strip_prefix(prefix)
                                     .is_some_and(|rest| !rest.is_empty())

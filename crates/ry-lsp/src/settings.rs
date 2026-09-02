@@ -10,11 +10,10 @@
 //! rest, in two groups. `path`, `importStrategy`, and `logLevel` are
 //! resolved by the VS Code extension (binary discovery in
 //! `common/binary.ts`, the `--log-level` launch argument in
-//! `common/server.ts`). `addExecutableToTerminalPath` and
-//! `checkTestFixtures` are read and forwarded by the extension, but
-//! nothing applies them anywhere yet. Either way the server ignores
-//! unknown keys, so accepting them here would only pretend to honor
-//! them.
+//! `common/server.ts`). `checkTestFixtures` is read and forwarded by
+//! the extension, but nothing applies it anywhere yet. Either way the
+//! server ignores unknown keys, so accepting them here would only
+//! pretend to honor them.
 
 use serde::{Deserialize, Serialize};
 

@@ -21,7 +21,6 @@ import {
   VersionInfo,
   versionFromString,
   versionGte,
-  MINIMUM_SETTINGS_CHANNEL_VERSION,
   versionToString,
 } from "./version";
 import { ISettings } from "./settings";
@@ -125,12 +124,10 @@ export function checkVersionCapability(
   capabilityName: string,
 ): string | undefined {
   if (!binary.version) {
-    return `Could not determine the version of ry at ${binary.path}. ${capabilityName} requires version ${versionToString(minimum)} or later.`;
+    return `Could not determine the version of ry at ${binary.path}. The ${capabilityName} requires version ${versionToString(minimum)} or later.`;
   }
   if (!versionGte(binary.version, minimum)) {
-    return `Found ry version ${versionToString(binary.version)} at ${binary.path}. ${capabilityName} requires version ${versionToString(minimum)} or later. Please update ry.`;
+    return `Found ry version ${versionToString(binary.version)} at ${binary.path}. The ${capabilityName} requires version ${versionToString(minimum)} or later. Please update ry.`;
   }
   return undefined;
 }
-
-export const MINIMUM_VERSION = MINIMUM_SETTINGS_CHANNEL_VERSION;

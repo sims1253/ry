@@ -197,12 +197,6 @@
           "markdownDescription": "Server tracing filter level.",
           "scope": "window",
           "type": "string"
-        },
-        "ry.addExecutableToTerminalPath": {
-          "default": true,
-          "markdownDescription": "Add the resolved `ry` binary to the integrated terminal `PATH`.",
-          "scope": "machine-overridable",
-          "type": "boolean"
         }
       }
     },

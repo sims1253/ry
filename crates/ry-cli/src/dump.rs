@@ -608,7 +608,7 @@ pub(crate) fn run_dump_types(
 ) -> Result<ExitCode> {
     if format != "json" {
         return Err(miette::miette!(
-            "unknown --format `{}`; expected one of: json",
+            "unknown --format `{}`; only `json` is supported",
             format
         ));
     }

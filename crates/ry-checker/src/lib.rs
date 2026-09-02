@@ -117,6 +117,26 @@ fn is_na_literal(expr: &Expr) -> bool {
     matches!(expr, Expr::Na(_, _))
 }
 
+/// The package a `library()` / `require()` call attaches, given its
+/// argument list. Mirrors `infer_call`'s recording rule: the first
+/// argument names the package as a bare symbol — unless
+/// `character.only = TRUE` restricts it to a string literal. `None`
+/// when no literal package name is available (a computed argument
+/// attaches an unknown set of bindings; the inference walk marks the
+/// search path unknown in that case, which pass 1 does not model).
+fn attached_package_name(args: &[Arg]) -> Option<String> {
+    let first = args.first()?;
+    let character_only = args.iter().any(|argument| {
+        argument.name.as_deref() == Some("character.only")
+            && matches!(argument.value, Expr::Logical(true, _))
+    });
+    match &first.value {
+        Expr::Ident { name, .. } if !character_only => Some(name.clone()),
+        Expr::String(name, _) => Some(name.clone()),
+        _ => None,
+    }
+}
+
 fn non_divisible_recycling(lhs: Length, rhs: Length) -> Option<(usize, usize)> {
     let known = |length| match length {
         Length::One => Some(1),
@@ -897,34 +917,55 @@ impl Checker {
     }
 
     // Pass 1: collect function definitions from this file into the
-    // shared `FnTable`. Does NOT emit diagnostics. `Project::check`
-    // calls this once per file before running the fixpoint.
-    pub(crate) fn collect_file_fns(&mut self, file: &SourceFile) {
+    // shared `FnTable` and, in the same pass, harvest the packages it
+    // attaches via `library()`/`require()`. Does NOT emit diagnostics.
+    // Returns the attached-package set so `Project::check` can union it
+    // across files (a `library(dplyr)` in any file makes dplyr NSE
+    // verbs work in every file, matching the intended cross-file
+    // union). One collection pass per file instead of the previous
+    // discarding inference walk plus a fn-collection walk (issue #178).
+    pub(crate) fn collect_file_fns(&mut self, file: &SourceFile) -> HashSet<String> {
         self.path = file.path.clone();
         self.collect_fns(&file.stmts);
+        self.harvest_attached_packages(&file.stmts)
     }
 
-    // Collect packages attached by `library`/`require`
-    // anywhere in this file, WITHOUT emitting diagnostics. Returns the
-    // set of package names so `Project::check` can union them across
-    // files (a `library(dplyr)` in any file makes dplyr NSE verbs work
-    // in every file, matching the intended cross-file union).
-    //
-    // Implementation: walk the file in discarding mode so `infer_call`'s
-    // library/require recording populates `self.loaded`
-    // via the same code path used during real checking; we then take
-    // the set. Discarding mode guarantees no diagnostics are emitted
-    // even though we run the full inference walker.
-    pub(crate) fn collect_file_loaded(&mut self, file: &SourceFile) -> HashSet<String> {
-        self.path = file.path.clone();
-        let prev = self.discarding;
-        self.discarding = true;
-        let mut scope = self.top_level_scope();
-        for s in &file.stmts {
-            self.check_stmt(s, &mut scope);
-        }
-        self.discarding = prev;
-        Arc::unwrap_or_clone(std::mem::take(&mut self.loaded))
+    /// Packages attached anywhere in `stmts` by `library(pkg)` /
+    /// `require(pkg)`, collected on the shared walker (pure syntax, no
+    /// inference). Mirrors the recording `infer_call` performs for the
+    /// same calls during a real check: the callee must be the bare name
+    /// `library`/`require` (a string call head is R-legal and treated
+    /// the same), and the package is the first argument's identifier —
+    /// unless `character.only = TRUE` restricts it to a string literal.
+    /// Unlike the inference walk this replaces, it also sees calls the
+    /// walker proves unreachable (after a `stop()`), which is the safe
+    /// direction for a project-wide attachment union.
+    fn harvest_attached_packages(&mut self, stmts: &[Stmt]) -> HashSet<String> {
+        use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
+        use std::ops::ControlFlow;
+
+        let mut attached = HashSet::new();
+        let _ = walk_stmts(
+            stmts,
+            Walk::ALL,
+            |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+                if let AstNode::Expr(Expr::Call { func, args, .. }) = node {
+                    let bare_callee = match func.as_ref() {
+                        Expr::Ident { name, .. } | Expr::String(name, _) => {
+                            name == "library" || name == "require"
+                        }
+                        _ => false,
+                    };
+                    if bare_callee
+                        && let Some(package) = attached_package_name(args)
+                    {
+                        attached.insert(package);
+                    }
+                }
+                ControlFlow::Continue(Descend::Into)
+            },
+        );
+        attached
     }
 
     /// Overlay previously-refined return types onto the current return slots.

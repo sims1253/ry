@@ -17,8 +17,10 @@ pub use ry_core::FFI_PRIMITIVES;
 use ry_core::SERIALIZED_BINDINGS_UNENUMERABLE;
 use ry_core::SourceFile;
 use ry_core::ast::{Expr, Stmt};
+use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Read;
+use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
 /// Inputs which describe the analysis environment without evaluating R code.
@@ -361,9 +363,7 @@ fn source_package_dynamic_bindings(root: &Path) -> SourceBindings {
         let Ok(file) = parser.parse(&path.to_string_lossy(), &source) else {
             continue;
         };
-        for statement in &file.stmts {
-            collect_dynamic_bindings_stmt(statement, 0, &mut found);
-        }
+        collect_dynamic_bindings_stmts(&file.stmts, &mut found);
     }
     found
 }
@@ -389,142 +389,59 @@ fn collect_r_source_files(directory: &Path, paths: &mut Vec<PathBuf>) {
     }
 }
 
-fn collect_dynamic_bindings_stmt(
-    statement: &Stmt,
-    function_depth: usize,
-    found: &mut SourceBindings,
-) {
-    match statement {
-        Stmt::Assign { target, value, .. } => {
-            collect_dynamic_bindings_expr(target, function_depth, found);
-            collect_dynamic_bindings_expr(value, function_depth, found);
+/// Collect the dynamic-binding calls from one file's statements.
+/// Walks every subtree including function bodies; the walker's
+/// `fn_depth` (number of enclosing function bodies) decides whether a
+/// bare two-argument `assign("x", v)` still targets the namespace:
+/// only the file's top level does.
+fn collect_dynamic_bindings_stmts(stmts: &[Stmt], found: &mut SourceBindings) {
+    let _ = walk_stmts(stmts, Walk::ALL, |node: AstNode<'_>, fn_depth: usize| {
+        let AstNode::Expr(Expr::Call { func, args, .. }) = node else {
+            return ControlFlow::<(), Descend>::Continue(Descend::Into);
+        };
+        let Expr::Ident { name, .. } = func.as_ref() else {
+            return ControlFlow::<(), Descend>::Continue(Descend::Into);
+        };
+        // `.Call(ffi_enquo, ...)` proves `ffi_enquo` names a native
+        // routine, not a variable. rlang then passes the same symbol
+        // as an ordinary value (`capture_arg = ffi_enquo`), which the
+        // call-position rule alone cannot see. Record the witness so
+        // every later use of the name resolves.
+        if FFI_PRIMITIVES.contains(&name.as_str())
+            && let Some(Expr::Ident { name: symbol, .. }) = args
+                .first()
+                .filter(|arg| arg.name.is_none())
+                .map(|arg| &arg.value)
+        {
+            found.native_symbols.insert(symbol.clone());
         }
-        Stmt::Expr(expr) => collect_dynamic_bindings_expr(expr, function_depth, found),
-        Stmt::If {
-            cond, then, else_, ..
-        } => {
-            collect_dynamic_bindings_expr(cond, function_depth, found);
-            for statement in then {
-                collect_dynamic_bindings_stmt(statement, function_depth, found);
-            }
-            if let Some(else_) = else_ {
-                for statement in else_ {
-                    collect_dynamic_bindings_stmt(statement, function_depth, found);
-                }
-            }
+        let has_named_environment = args.iter().any(|argument| {
+            matches!(
+                argument.name.as_deref(),
+                Some("envir" | "env" | "assign.env")
+            )
+        });
+        // The environment parameter is commonly passed positionally
+        // from .onLoad helpers (for example `assign("x", value,
+        // env)`). Treat only its documented position as explicit;
+        // a two-argument assign inside a function remains local.
+        let has_positional_environment = match name.as_str() {
+            "assign" | "makeActiveBinding" => args.get(2).is_some_and(|arg| arg.name.is_none()),
+            "delayedAssign" => args.get(3).is_some_and(|arg| arg.name.is_none()),
+            _ => false,
+        };
+        if matches!(
+            name.as_str(),
+            "assign" | "makeActiveBinding" | "delayedAssign"
+        ) && (has_named_environment
+            || has_positional_environment
+            || (name == "assign" && fn_depth == 0))
+            && let Some(Expr::String(binding, _)) = args.first().map(|argument| &argument.value)
+        {
+            found.bindings.insert(binding.clone());
         }
-        Stmt::For { iter, body, .. } => {
-            collect_dynamic_bindings_expr(iter, function_depth, found);
-            for statement in body {
-                collect_dynamic_bindings_stmt(statement, function_depth, found);
-            }
-        }
-        Stmt::While { cond, body, .. } => {
-            collect_dynamic_bindings_expr(cond, function_depth, found);
-            for statement in body {
-                collect_dynamic_bindings_stmt(statement, function_depth, found);
-            }
-        }
-        Stmt::FunctionDef { body, .. } => {
-            for statement in body {
-                collect_dynamic_bindings_stmt(statement, function_depth + 1, found);
-            }
-        }
-        Stmt::Return { value, .. } => {
-            if let Some(value) = value {
-                collect_dynamic_bindings_expr(value, function_depth, found);
-            }
-        }
-    }
-}
-
-fn collect_dynamic_bindings_expr(expr: &Expr, function_depth: usize, found: &mut SourceBindings) {
-    match expr {
-        Expr::Call { func, args, .. } => {
-            if let Expr::Ident { name, .. } = func.as_ref() {
-                // `.Call(ffi_enquo, ...)` proves `ffi_enquo` names a native
-                // routine, not a variable. rlang then passes the same symbol
-                // as an ordinary value (`capture_arg = ffi_enquo`), which the
-                // call-position rule alone cannot see. Record the witness so
-                // every later use of the name resolves.
-                if FFI_PRIMITIVES.contains(&name.as_str())
-                    && let Some(Expr::Ident { name: symbol, .. }) = args
-                        .first()
-                        .filter(|arg| arg.name.is_none())
-                        .map(|arg| &arg.value)
-                {
-                    found.native_symbols.insert(symbol.clone());
-                }
-                let has_named_environment = args.iter().any(|argument| {
-                    matches!(
-                        argument.name.as_deref(),
-                        Some("envir" | "env" | "assign.env")
-                    )
-                });
-                // The environment parameter is commonly passed positionally
-                // from .onLoad helpers (for example `assign("x", value,
-                // env)`). Treat only its documented position as explicit;
-                // a two-argument assign inside a function remains local.
-                let has_positional_environment = match name.as_str() {
-                    "assign" | "makeActiveBinding" => {
-                        args.get(2).is_some_and(|arg| arg.name.is_none())
-                    }
-                    "delayedAssign" => args.get(3).is_some_and(|arg| arg.name.is_none()),
-                    _ => false,
-                };
-                if matches!(
-                    name.as_str(),
-                    "assign" | "makeActiveBinding" | "delayedAssign"
-                ) && (has_named_environment
-                    || has_positional_environment
-                    || (name == "assign" && function_depth == 0))
-                    && let Some(Expr::String(binding, _)) =
-                        args.first().map(|argument| &argument.value)
-                {
-                    found.bindings.insert(binding.clone());
-                }
-            }
-            collect_dynamic_bindings_expr(func, function_depth, found);
-            for argument in args {
-                collect_dynamic_bindings_expr(&argument.value, function_depth, found);
-            }
-        }
-        Expr::BinOp { lhs, rhs, .. } => {
-            collect_dynamic_bindings_expr(lhs, function_depth, found);
-            collect_dynamic_bindings_expr(rhs, function_depth, found);
-        }
-        Expr::UnaryOp { expr, .. } => collect_dynamic_bindings_expr(expr, function_depth, found),
-        Expr::Index { base, args, .. } => {
-            collect_dynamic_bindings_expr(base, function_depth, found);
-            for argument in args {
-                collect_dynamic_bindings_expr(&argument.value, function_depth, found);
-            }
-        }
-        Expr::Function { body, .. } | Expr::Block { body, .. } => {
-            let function_depth =
-                function_depth + usize::from(matches!(expr, Expr::Function { .. }));
-            for statement in body {
-                collect_dynamic_bindings_stmt(statement, function_depth, found);
-            }
-        }
-        Expr::If {
-            cond, then, else_, ..
-        } => {
-            collect_dynamic_bindings_expr(cond, function_depth, found);
-            collect_dynamic_bindings_expr(then, function_depth, found);
-            if let Some(else_) = else_ {
-                collect_dynamic_bindings_expr(else_, function_depth, found);
-            }
-        }
-        Expr::Logical(_, _)
-        | Expr::Integer(_, _)
-        | Expr::Double(_, _)
-        | Expr::String(_, _)
-        | Expr::Null(_)
-        | Expr::Na(_, _)
-        | Expr::Ident { .. }
-        | Expr::Unknown(_) => {}
-    }
+        ControlFlow::<(), Descend>::Continue(Descend::Into)
+    });
 }
 
 #[derive(Default)]

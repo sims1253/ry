@@ -1,4 +1,6 @@
 use super::*;
+use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
+use std::ops::ControlFlow;
 
 fn atomic_mode(member: &RType) -> bool {
     matches!(
@@ -672,85 +674,54 @@ pub(crate) fn insert_s3_dispatch_context(method_name: &str, scope: &mut Scope, g
     }
 }
 
+/// Names assigned anywhere in a body, for closure-capture candidates.
+/// Skips function bodies, assignment targets, control tests (if/while
+/// conditions, for iterators), and every expression form except blocks,
+/// `if`, and assignment operators.
 pub(crate) fn assigned_names_in_body(body: &[Stmt]) -> HashSet<String> {
-    fn visit(statement: &Stmt, names: &mut HashSet<String>) {
-        match statement {
-            Stmt::Assign { target, value, .. } => {
-                if let Expr::Ident { name, .. } = target {
-                    names.insert(name.clone());
-                }
-                // A nested closure has its own locals; do not leak them into
-                // the enclosing closure's capture candidates.
-                if !matches!(value, Expr::Function { .. }) {
-                    visit_expr(value, names);
-                }
-            }
-            Stmt::If { then, else_, .. } => {
-                for statement in then {
-                    visit(statement, names);
-                }
-                if let Some(else_) = else_ {
-                    for statement in else_ {
-                        visit(statement, names);
+    let mut names = HashSet::new();
+    let _ = walk_stmts(
+        body,
+        Walk {
+            assign_targets: false,
+            assign_operands: false,
+            fn_bodies: false,
+            control_tests: false,
+            ..Walk::ALL
+        },
+        |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+            match node {
+                AstNode::Stmt(Stmt::Assign { target, .. }) => {
+                    if let Expr::Ident { name, .. } = target {
+                        names.insert(name.clone());
                     }
                 }
-            }
-            Stmt::For { name, body, .. } => {
-                names.insert(name.clone());
-                for statement in body {
-                    visit(statement, names);
-                }
-            }
-            Stmt::While { body, .. } => {
-                for statement in body {
-                    visit(statement, names);
-                }
-            }
-            Stmt::FunctionDef { name, .. } => {
-                if let Some(name) = name {
+                AstNode::Stmt(Stmt::For { name, .. }) => {
                     names.insert(name.clone());
                 }
-            }
-            Stmt::Expr(expr) => visit_expr(expr, names),
-            Stmt::Return { value, .. } => {
-                if let Some(value) = value {
-                    visit_expr(value, names);
-                }
-            }
-        }
-    }
-    fn visit_expr(expr: &Expr, names: &mut HashSet<String>) {
-        match expr {
-            Expr::BinOp {
-                op: BinOpKind::Assign | BinOpKind::SuperAssign,
-                lhs,
-                rhs,
-                ..
-            } => {
-                if let Expr::Ident { name, .. } = lhs.as_ref() {
+                AstNode::Stmt(Stmt::FunctionDef {
+                    name: Some(name), ..
+                }) => {
                     names.insert(name.clone());
                 }
-                visit_expr(rhs, names);
-            }
-            Expr::Block { body, .. } => {
-                for statement in body {
-                    visit(statement, names);
+                AstNode::Expr(Expr::BinOp {
+                    op: BinOpKind::Assign | BinOpKind::SuperAssign,
+                    lhs,
+                    ..
+                }) => {
+                    if let Expr::Ident { name, .. } = lhs.as_ref() {
+                        names.insert(name.clone());
+                    }
                 }
+                // Only blocks and `if` can carry further statements, and
+                // only assignment operators bind from expression position;
+                // calls, indexing, and literals cannot introduce names.
+                AstNode::Expr(_) => return ControlFlow::Continue(Descend::Skip),
+                AstNode::Stmt(_) => {}
             }
-            Expr::If { then, else_, .. } => {
-                visit_expr(then, names);
-                if let Some(else_) = else_ {
-                    visit_expr(else_, names);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let mut names = HashSet::new();
-    for statement in body {
-        visit(statement, &mut names);
-    }
+            ControlFlow::Continue(Descend::Into)
+        },
+    );
     names
 }
 

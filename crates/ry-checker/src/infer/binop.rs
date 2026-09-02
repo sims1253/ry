@@ -1,4 +1,6 @@
 use super::*;
+use ry_core::walk::{AstNode, Descend, Walk, walk_expr};
+use std::ops::ControlFlow;
 
 impl Checker {
     pub(crate) fn infer_binop(
@@ -470,61 +472,39 @@ fn merge_condition_assignments(scope: &mut Scope, evaluated: &Scope, expr: &Expr
     }
 }
 
+/// Skips assignment targets, function bodies, and (inside value blocks)
+/// every statement form other than plain assignments and expressions.
 fn collect_condition_assignment_names(expr: &Expr, names: &mut HashSet<String>) {
-    match expr {
-        Expr::BinOp { op, lhs, rhs, .. } => {
-            if matches!(op, BinOpKind::Assign | BinOpKind::SuperAssign)
-                && let Expr::Ident { name, .. } = lhs.as_ref()
-            {
-                names.insert(name.clone());
-            }
-            collect_condition_assignment_names(lhs, names);
-            collect_condition_assignment_names(rhs, names);
-        }
-        Expr::Call { func, args, .. } => {
-            collect_condition_assignment_names(func, names);
-            for arg in args {
-                collect_condition_assignment_names(&arg.value, names);
-            }
-        }
-        Expr::UnaryOp { expr, .. } => collect_condition_assignment_names(expr, names),
-        Expr::Index { base, args, .. } => {
-            collect_condition_assignment_names(base, names);
-            for arg in args {
-                collect_condition_assignment_names(&arg.value, names);
-            }
-        }
-        Expr::Block { body, .. } => {
-            for stmt in body {
-                match stmt {
-                    Stmt::Assign { target, value, .. } => {
-                        if let Expr::Ident { name, .. } = target {
-                            names.insert(name.clone());
-                        }
-                        collect_condition_assignment_names(value, names);
+    let _ = walk_expr(
+        expr,
+        Walk {
+            assign_targets: false,
+            fn_bodies: false,
+            ..Walk::ALL
+        },
+        |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+            match node {
+                AstNode::Expr(Expr::BinOp {
+                    op: BinOpKind::Assign | BinOpKind::SuperAssign,
+                    lhs,
+                    ..
+                }) => {
+                    if let Expr::Ident { name, .. } = lhs.as_ref() {
+                        names.insert(name.clone());
                     }
-                    Stmt::Expr(expr) => collect_condition_assignment_names(expr, names),
-                    _ => {}
                 }
+                AstNode::Stmt(Stmt::Assign {
+                    target: Expr::Ident { name, .. },
+                    ..
+                }) => {
+                    names.insert(name.clone());
+                }
+                // Inside a `{ ... }` value, only assignments and bare
+                // expressions can bind a name in the current environment.
+                AstNode::Stmt(_) => return ControlFlow::Continue(Descend::Skip),
+                _ => {}
             }
-        }
-        Expr::If {
-            cond, then, else_, ..
-        } => {
-            collect_condition_assignment_names(cond, names);
-            collect_condition_assignment_names(then, names);
-            if let Some(else_) = else_ {
-                collect_condition_assignment_names(else_, names);
-            }
-        }
-        Expr::Ident { .. }
-        | Expr::Logical(_, _)
-        | Expr::Integer(_, _)
-        | Expr::Double(_, _)
-        | Expr::String(_, _)
-        | Expr::Null(_)
-        | Expr::Na(_, _)
-        | Expr::Function { .. }
-        | Expr::Unknown(_) => {}
-    }
+            ControlFlow::Continue(Descend::Into)
+        },
+    );
 }

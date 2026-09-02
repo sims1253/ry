@@ -1,5 +1,7 @@
 use super::*;
 use crate::higher_order::s3_group_generic;
+use ry_core::walk::{AstNode, Descend, Walk, walk_expr};
+use std::ops::ControlFlow;
 
 impl Checker {
     pub(crate) fn infer_call(
@@ -1435,88 +1437,29 @@ fn r6_rebound_members(member_lists: &[&Expr]) -> HashSet<String> {
             _ => {}
         }
     }
-    fn visit_stmt(statement: &Stmt, names: &mut HashSet<String>) {
-        match statement {
-            Stmt::Assign { target, value, .. } => {
-                record_target(target, names);
-                visit_expr(value, names);
-            }
-            Stmt::Expr(expr) => visit_expr(expr, names),
-            Stmt::If {
-                cond, then, else_, ..
-            } => {
-                visit_expr(cond, names);
-                for statement in then.iter().chain(else_.iter().flatten()) {
-                    visit_stmt(statement, names);
-                }
-            }
-            Stmt::For { iter, body, .. } => {
-                visit_expr(iter, names);
-                for statement in body {
-                    visit_stmt(statement, names);
-                }
-            }
-            Stmt::While { cond, body, .. } => {
-                visit_expr(cond, names);
-                for statement in body {
-                    visit_stmt(statement, names);
-                }
-            }
-            Stmt::FunctionDef { body, .. } => {
-                for statement in body {
-                    visit_stmt(statement, names);
-                }
-            }
-            Stmt::Return { value, .. } => {
-                if let Some(value) = value {
-                    visit_expr(value, names);
-                }
-            }
-        }
-    }
-    fn visit_expr(expr: &Expr, names: &mut HashSet<String>) {
-        match expr {
-            Expr::BinOp { op, lhs, rhs, .. } => {
-                if matches!(op, BinOpKind::Assign | BinOpKind::SuperAssign) {
-                    record_target(lhs, names);
-                } else {
-                    visit_expr(lhs, names);
-                }
-                visit_expr(rhs, names);
-            }
-            Expr::Call { func, args, .. } => {
-                visit_expr(func, names);
-                for argument in args {
-                    visit_expr(&argument.value, names);
-                }
-            }
-            Expr::Index { base, args, .. } => {
-                visit_expr(base, names);
-                for argument in args {
-                    visit_expr(&argument.value, names);
-                }
-            }
-            Expr::UnaryOp { expr, .. } => visit_expr(expr, names),
-            Expr::Function { body, .. } | Expr::Block { body, .. } => {
-                for statement in body {
-                    visit_stmt(statement, names);
-                }
-            }
-            Expr::If {
-                cond, then, else_, ..
-            } => {
-                visit_expr(cond, names);
-                visit_expr(then, names);
-                if let Some(else_) = else_ {
-                    visit_expr(else_, names);
-                }
-            }
+    let mut names = HashSet::new();
+    // Skips assignment targets (recorded by `record_target` instead);
+    // walks nested function bodies, where activators and methods do
+    // their rebinding.
+    let policy = Walk {
+        assign_targets: false,
+        assign_operands: false,
+        ..Walk::ALL
+    };
+    let mut visit = |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+        match node {
+            AstNode::Stmt(Stmt::Assign { target, .. }) => record_target(target, &mut names),
+            AstNode::Expr(Expr::BinOp {
+                op: BinOpKind::Assign | BinOpKind::SuperAssign,
+                lhs,
+                ..
+            }) => record_target(lhs, &mut names),
             _ => {}
         }
-    }
-    let mut names = HashSet::new();
+        ControlFlow::Continue(Descend::Into)
+    };
     for list in member_lists {
-        visit_expr(list, &mut names);
+        let _ = walk_expr(list, policy, &mut visit);
     }
     names
 }

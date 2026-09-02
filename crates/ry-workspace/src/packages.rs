@@ -6,7 +6,9 @@
 
 use ry_core::SourceFile;
 use ry_core::ast::{Expr, Stmt};
+use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
 use std::collections::{HashMap, HashSet};
+use std::ops::ControlFlow;
 
 /// External-binding sentinel carrying a `useDynLib(..., .fixes = "prefix")`
 /// prefix. Any name starting with the prefix resolves to a native routine.
@@ -120,12 +122,20 @@ pub fn namespace_metadata(file: &SourceFile) -> NamespaceMetadata {
 /// Find packages attached by `library()` or `require()` calls.
 ///
 /// `requireNamespace()` is deliberately excluded: it makes `pkg::name`
-/// available but does not place `name` on R's search path.
+/// available but does not place `name` on R's search path. Walks every
+/// subtree including function bodies: an attachment counts wherever the
+/// call appears.
 pub fn attached_packages(file: &SourceFile) -> HashSet<String> {
     let mut packages = HashSet::new();
-    for stmt in &file.stmts {
-        visit_stmt_for_attachments(stmt, &mut packages);
-    }
+    let _ = walk_stmts(&file.stmts, Walk::ALL, |node: AstNode<'_>, _: usize| {
+        if let AstNode::Expr(Expr::Call { func, args, .. }) = node
+            && matches!(func.as_ref(), Expr::Ident { name, .. } if name == "library" || name == "require")
+            && let Some(package) = args.first().and_then(|arg| static_name(&arg.value))
+        {
+            packages.insert(package);
+        }
+        ControlFlow::<(), Descend>::Continue(Descend::Into)
+    });
     packages
 }
 
@@ -133,99 +143,6 @@ fn static_name(expr: &Expr) -> Option<String> {
     match expr {
         Expr::Ident { name, .. } | Expr::String(name, _) => Some(name.clone()),
         _ => None,
-    }
-}
-
-fn visit_stmt_for_attachments(stmt: &Stmt, packages: &mut HashSet<String>) {
-    match stmt {
-        Stmt::Assign { target, value, .. } => {
-            visit_expr_for_attachments(target, packages);
-            visit_expr_for_attachments(value, packages);
-        }
-        Stmt::Expr(expr) => visit_expr_for_attachments(expr, packages),
-        Stmt::If {
-            cond, then, else_, ..
-        } => {
-            visit_expr_for_attachments(cond, packages);
-            for stmt in then {
-                visit_stmt_for_attachments(stmt, packages);
-            }
-            if let Some(else_) = else_ {
-                for stmt in else_ {
-                    visit_stmt_for_attachments(stmt, packages);
-                }
-            }
-        }
-        Stmt::For { iter, body, .. }
-        | Stmt::While {
-            cond: iter, body, ..
-        } => {
-            visit_expr_for_attachments(iter, packages);
-            for stmt in body {
-                visit_stmt_for_attachments(stmt, packages);
-            }
-        }
-        Stmt::FunctionDef { body, .. } => {
-            for stmt in body {
-                visit_stmt_for_attachments(stmt, packages);
-            }
-        }
-        Stmt::Return { value, .. } => {
-            if let Some(value) = value {
-                visit_expr_for_attachments(value, packages);
-            }
-        }
-    }
-}
-
-#[allow(clippy::collapsible_if)]
-fn visit_expr_for_attachments(expr: &Expr, packages: &mut HashSet<String>) {
-    match expr {
-        Expr::Call { func, args, .. } => {
-            if matches!(func.as_ref(), Expr::Ident { name, .. } if name == "library" || name == "require")
-            {
-                if let Some(package) = args.first().and_then(|arg| static_name(&arg.value)) {
-                    packages.insert(package);
-                }
-            }
-            visit_expr_for_attachments(func, packages);
-            for arg in args {
-                visit_expr_for_attachments(&arg.value, packages);
-            }
-        }
-        Expr::BinOp { lhs, rhs, .. } => {
-            visit_expr_for_attachments(lhs, packages);
-            visit_expr_for_attachments(rhs, packages);
-        }
-        Expr::UnaryOp { expr, .. } => visit_expr_for_attachments(expr, packages),
-        Expr::Index { base, args, .. } => {
-            visit_expr_for_attachments(base, packages);
-            for arg in args {
-                visit_expr_for_attachments(&arg.value, packages);
-            }
-        }
-        Expr::Function { body, .. } | Expr::Block { body, .. } => {
-            for stmt in body {
-                visit_stmt_for_attachments(stmt, packages);
-            }
-        }
-        Expr::If {
-            cond, then, else_, ..
-        } => {
-            visit_expr_for_attachments(cond, packages);
-            visit_expr_for_attachments(then, packages);
-            if let Some(else_) = else_ {
-                visit_expr_for_attachments(else_, packages);
-            }
-        }
-        Expr::Logical(..)
-        | Expr::Integer(..)
-        | Expr::Double(..)
-        | Expr::String(..)
-        | Expr::Null(..)
-        | Expr::Na(..)
-        | Expr::Ident { .. }
-        | Expr::Unknown(..) => {}
     }
 }
 

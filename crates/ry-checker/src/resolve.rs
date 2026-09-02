@@ -70,14 +70,13 @@ impl Checker {
                 .filter(|sig| has_schema_semantics(sig))
                 .cloned();
         }
-        if let Some(package) = self.imported_from.get(name) {
-            if let Some(sig) = self
+        if let Some(package) = self.imported_from.get(name)
+            && let Some(sig) = self
                 .package_typeshed(package)
                 .and_then(|typeshed| typeshed.functions.get(name))
                 .filter(|sig| has_schema_semantics(sig))
-            {
-                return Some(sig.clone());
-            }
+        {
+            return Some(sig.clone());
         }
         if let Some(sig) = self
             .typeshed
@@ -198,10 +197,11 @@ impl Checker {
             {
                 return Some(sig.clone());
             }
-            if let Some(t) = self.package_typeshed(pkg) {
-                if let Some(sig) = t.functions.get(fun) {
-                    return Some(sig.clone());
-                }
+            if let Some(sig) = self
+                .package_typeshed(pkg)
+                .and_then(|typeshed| typeshed.functions.get(fun))
+            {
+                return Some(sig.clone());
             }
             // A qualified callee has exact provenance. In particular, do
             // not borrow a same-named base or attached-package signature:
@@ -212,13 +212,12 @@ impl Checker {
         // priority order; see the comment on masking below).
         // An importFrom binding carries exact provenance without attaching
         // unrelated exports from that package.
-        if let Some(package) = self.imported_from.get(name) {
-            if let Some(signature) = self
+        if let Some(package) = self.imported_from.get(name)
+            && let Some(signature) = self
                 .package_typeshed(package)
                 .and_then(|typeshed| typeshed.functions.get(name).cloned())
-            {
-                return Some(signature);
-            }
+        {
+            return Some(signature);
         }
         if let Some(sig) = self.typeshed.functions.get(name) {
             return Some(sig.clone());
@@ -278,12 +277,11 @@ impl Checker {
     // somewhere). Mirrors [`resolve_typeshed_sig`] plus the FnTable.
     pub(crate) fn has_function_anywhere(&self, name: &str) -> bool {
         // Qualified: check the named package.
-        if let Some((pkg, fun)) = split_qualified(name) {
-            if let Some(t) = self.package_typeshed(pkg) {
-                if t.functions.contains_key(fun) {
-                    return true;
-                }
-            }
+        if let Some((pkg, fun)) = split_qualified(name)
+            && let Some(t) = self.package_typeshed(pkg)
+            && t.functions.contains_key(fun)
+        {
+            return true;
         }
         if self.typeshed.functions.contains_key(name) {
             return true;
@@ -365,10 +363,10 @@ impl Checker {
         if scope.is_lexical_function(name) {
             return false;
         }
-        if let Some(ty) = scope.get(name) {
-            if matches!(ty.mode, ry_core::types::Mode::Function) || scope.is_parameter(name) {
-                return false;
-            }
+        if let Some(ty) = scope.get(name)
+            && (matches!(ty.mode, ry_core::types::Mode::Function) || scope.is_parameter(name))
+        {
+            return false;
         }
 
         // (c) fn_table shadowing.

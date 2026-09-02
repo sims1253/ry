@@ -5,9 +5,13 @@
 //!
 //! v2 additions: interprocedural function-return inference via a
 //! module-level FnTable and a fixpoint loop. The first pass collects
-//! function definitions; subsequent passes refine each function's
-//! inferred return type until stable (or the depth cap is hit).
+//! function definitions; subsequent passes refine each function's inferred
+//! return type until stable (or the depth cap is hit).
 
+// Not vestigial: 21 collapsible-if sites remain in infer/,
+// higher_order.rs, and collect.rs (outside the file scope of the
+// cleanup/checker-core-markers branch). The resolve.rs and project.rs
+// sites were collapsed under #185; lift this allow together with those.
 #![allow(clippy::collapsible_if)]
 
 mod collect;

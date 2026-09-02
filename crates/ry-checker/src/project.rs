@@ -625,13 +625,12 @@ impl Project {
                     continue;
                 }
                 // Does this file call any function whose return type changed?
-                if let Some(called) = self.file_called_fns.get(path) {
-                    if called
+                if let Some(called) = self.file_called_fns.get(path)
+                    && called
                         .iter()
                         .any(|name| changed_fns.contains(name.as_str()))
-                    {
-                        dirty.insert(path.as_str());
-                    }
+                {
+                    dirty.insert(path.as_str());
                 }
                 // Conservatively: if any S3/S4 method slot changed, emit
                 // this file. S3 dispatch is dynamic; we cannot cheaply

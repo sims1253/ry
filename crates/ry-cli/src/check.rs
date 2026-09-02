@@ -256,14 +256,14 @@ pub(crate) fn run_check(
         let mut changed = current_paths != all_paths;
         if !changed {
             for p in &current_paths {
-                if let Ok(meta) = std::fs::metadata(p) {
-                    if let Ok(mtime) = meta.modified() {
-                        let prev = stamps.get(p).copied();
-                        if prev != Some(mtime) {
-                            changed = true;
-                            stamps.insert(p.clone(), mtime);
-                            break;
-                        }
+                if let Ok(meta) = std::fs::metadata(p)
+                    && let Ok(mtime) = meta.modified()
+                {
+                    let prev = stamps.get(p).copied();
+                    if prev != Some(mtime) {
+                        changed = true;
+                        stamps.insert(p.clone(), mtime);
+                        break;
                     }
                 }
             }
@@ -629,15 +629,15 @@ pub(crate) fn demote_non_source_paths(
         let mut package_root = absolute.parent();
         while let Some(root) = package_root {
             if root.join("DESCRIPTION").is_file() {
-                if let Ok(relative) = absolute.strip_prefix(root) {
-                    if relative.components().any(|component| {
+                if let Ok(relative) = absolute.strip_prefix(root)
+                    && relative.components().any(|component| {
                         component
                             .as_os_str()
                             .to_str()
                             .is_some_and(|name| DEMOTED.contains(&name))
-                    }) {
-                        diagnostic.confidence = diagnostic.confidence.demote();
-                    }
+                    })
+                {
+                    diagnostic.confidence = diagnostic.confidence.demote();
                 }
                 break;
             }
@@ -727,10 +727,10 @@ fn rescan(
 /// Record the current mtime of every path into `stamps`.
 fn sync_stamps(paths: &[PathBuf], stamps: &mut HashMap<PathBuf, std::time::SystemTime>) {
     for p in paths {
-        if let Ok(meta) = std::fs::metadata(p) {
-            if let Ok(mtime) = meta.modified() {
-                stamps.insert(p.clone(), mtime);
-            }
+        if let Ok(meta) = std::fs::metadata(p)
+            && let Ok(mtime) = meta.modified()
+        {
+            stamps.insert(p.clone(), mtime);
         }
     }
 }

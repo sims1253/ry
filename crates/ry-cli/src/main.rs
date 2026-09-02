@@ -1,5 +1,3 @@
-#![allow(clippy::collapsible_if)]
-
 mod check;
 mod dump;
 mod pipeline;

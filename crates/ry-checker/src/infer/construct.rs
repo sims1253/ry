@@ -1,6 +1,191 @@
 use super::*;
 
 impl Checker {
+    /// The class-constructor stage of `infer_call`: `structure(x, class =
+    /// ...)`, `factor(x)`, and S4 `new("Class", ...)` attach a class to a
+    /// payload value.
+    pub(crate) fn infer_class_constructor_call(
+        &mut self,
+        semantic_name: &str,
+        lookup_name: &str,
+        args: &[Arg],
+        scope: &mut Scope,
+        span: Span,
+    ) -> Option<RType> {
+        // `structure(x, class = "...")` is R's class constructor. We
+        // model only the common literal forms:
+        //   * `class = "foo"` attaches a single class.
+        //   * `class = c("a", "b", ...)` attaches a class vector.
+        // Non-literal or unparseable forms fall through to opaque
+        // inference with `ClassVector::unknown()` so RY050 stays quiet.
+        if semantic_name == "structure" {
+            return Some(self.infer_structure_call(args, scope, span));
+        }
+        // `factor(x)` returns an integer vector with class "factor".
+        // (And often also "ordered" if `ordered = TRUE`, but we keep v1
+        // to the base case.)
+        if semantic_name == "factor" {
+            // Infer args so unbound-variable diagnostics still fire.
+            self.infer_args_for_diagnostics(args, scope);
+            return Some(
+                RType::new(Mode::Integer, Length::Unknown)
+                    .with_class(ClassVector::single("factor")),
+            );
+        }
+        if lookup_name == "new" {
+            for argument in args.iter().skip(1) {
+                let _ = self.infer(&argument.value, scope);
+            }
+            return Some(
+                args.first()
+                    .and_then(|argument| match &argument.value {
+                        Expr::String(class, _) => {
+                            Some(RType::unknown().with_class(ClassVector::single(class)))
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(RType::unknown),
+            );
+        }
+        None
+    }
+
+    /// Infer the type of `structure(x, class = "...")`. We model only
+    /// the literal class forms; everything else returns the first
+    /// argument's type with `ClassVector::unknown()` (so we neither lie
+    /// about a class nor spuriously trigger RY050).
+    ///
+    /// The base value's column schema is preserved: `RType::with_class`
+    /// is `RType { class, ..self }`, so a `structure(list(a = 1L),
+    /// class = "foo")` call yields a value whose columns are still
+    /// `[("a", integer<1>)]` and whose class is `["foo"]`. This lets
+    /// `$a` resolve correctly on user-defined classes built on top of
+    /// a list-shaped payload.
+    pub(crate) fn infer_structure_call(
+        &mut self,
+        args: &[Arg],
+        scope: &mut Scope,
+        _span: Span,
+    ) -> RType {
+        // The base value is the first positional argument (or the
+        // `x = ...` named argument). The first such positional-or-`x`
+        // arg wins; later ones are inferred for diagnostics only.
+        let mut base_type = RType::unknown();
+        let mut class_expr: Option<&Expr> = None;
+        for a in args {
+            if matches!(a.name.as_deref(), Some("class")) {
+                class_expr = Some(&a.value);
+                continue;
+            }
+            let is_base = matches!(a.name.as_deref(), None | Some("x"))
+                && matches!(base_type.mode, Mode::Opaque);
+            if is_base {
+                base_type = self.infer(&a.value, scope);
+            } else {
+                let _ = self.infer(&a.value, scope);
+            }
+        }
+        if let Some(ce) = class_expr {
+            match parse_class_literal(ce) {
+                ClassLiteral::Single(name) => {
+                    return base_type.with_class(ClassVector::single(&name));
+                }
+                ClassLiteral::Multi(names) => {
+                    let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+                    return base_type.with_class(ClassVector::from_slice(&refs));
+                }
+                ClassLiteral::Unknown => {
+                    // Class is dynamic; keep base type but mark class as
+                    // undetermined so RY050 stays quiet.
+                    return base_type.with_class(ClassVector::unknown());
+                }
+            }
+        }
+        base_type
+    }
+
+    /// The atomic-constructor stage of `infer_call`: `c`, `list`,
+    /// `data.frame`, `t`, and `as.data.frame`.
+    pub(crate) fn infer_atomic_constructor_call(
+        &mut self,
+        lookup_name: &str,
+        args: &[Arg],
+        arg_types: &[RType],
+        span: Span,
+    ) -> Option<RType> {
+        // Built-in: `c(...)` concatenates and produces the common mode.
+        if lookup_name == "c" {
+            let result = self.infer_c(args, arg_types, span);
+            if let Some(schema) = build_named_schema(arg_types, args)
+                .filter(|_| args.iter().any(|argument| argument.name.is_some()))
+            {
+                return Some(result.with_columns(Arc::new(schema)));
+            }
+            return Some(result);
+        }
+        if lookup_name == "list" {
+            return Some(self.infer_list(arg_types, args, span));
+        }
+        // `data.frame(...)`: a record constructor. Same column-schema
+        // logic as `list(...)`, but the result is classed
+        // "data.frame" and column lengths are coerced to a common
+        // length (R recycles; for v1 we take the max of the known
+        // lengths).
+        if lookup_name == "data.frame" {
+            if args.len() == 1
+                && args[0].name.is_none()
+                && let Some(schema) = arg_types[0].columns.clone()
+            {
+                return Some(
+                    RType::new(Mode::List, Length::Known(schema.columns.len()))
+                        .with_class(ClassVector::single("data.frame"))
+                        .with_columns(schema),
+                );
+            }
+            return Some(self.infer_data_frame(arg_types, args, span));
+        }
+
+        if lookup_name == "t" {
+            return Some(arg_types.first().cloned().unwrap_or_else(RType::unknown));
+        }
+
+        if lookup_name == "as.data.frame"
+            && let Some(input) = arg_types.first()
+            && let Some(schema) = input.columns.clone()
+            && !schema.is_empty()
+        {
+            return Some(
+                RType::new(Mode::List, Length::Known(schema.columns.len()))
+                    .with_class(ClassVector::single("data.frame"))
+                    .with_columns(schema),
+            );
+        }
+        None
+    }
+
+    /// The literal-length constructor stage of `infer_call`: `vector`,
+    /// `rep`, `seq`, and `seq.int` pin their result length from literal
+    /// arguments; the typeshed entries for these names conservatively
+    /// return `Length::Unknown`.
+    pub(crate) fn infer_literal_length_call(
+        &self,
+        lookup_name: &str,
+        args: &[Arg],
+        arg_types: &[RType],
+        span: Span,
+    ) -> Option<RType> {
+        if lookup_name == "vector" {
+            return Some(self.infer_vector(args));
+        }
+        if lookup_name == "rep" {
+            return Some(self.infer_rep(args, arg_types, span));
+        }
+        if lookup_name == "seq" || lookup_name == "seq.int" {
+            return Some(self.infer_seq(args, arg_types, span));
+        }
+        None
+    }
+
     pub(crate) fn infer_c(&mut self, args: &[Arg], arg_types: &[RType], _span: Span) -> RType {
         if arg_types.is_empty() {
             return RType::new(Mode::Null, Length::Zero);

@@ -1280,17 +1280,28 @@ fn is_r_source_name(name: &str) -> bool {
     std::path::Path::new(name)
         .extension()
         .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| matches!(extension, "R" | "r" | "S" | "s" | "q"))
+        .is_some_and(|extension| matches!(extension, "R" | "r"))
 }
 
+/// Whether a `tests/testthat/` file name is runner code under testthat's
+/// documented contract (the "special files" vignette): test files start
+/// with `test-` or `test_`, helper files with `helper`, and setup and
+/// teardown files with `setup` and `teardown`. A name that merely
+/// contains the prefix — `testing.R`, `testthat.R` — is data consumed
+/// by tests, not code the runner executes. (testthat's implementation
+/// regex `^test.*\.[rR]$` is broader than its documentation; ry follows
+/// the documented contract, which classifies strictly fewer files as
+/// executed code.)
 fn is_testthat_code_name(name: &str) -> bool {
     let stem = std::path::Path::new(name)
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or(name);
-    ["test", "helper", "setup", "teardown"]
-        .iter()
-        .any(|prefix| stem.starts_with(prefix))
+    stem.starts_with("test-")
+        || stem.starts_with("test_")
+        || ["helper", "setup", "teardown"]
+            .iter()
+            .any(|prefix| stem.starts_with(prefix))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1617,6 +1628,58 @@ delayedAssign(\"later\", value)",
 mod shared_tests {
     use super::*;
 
+    /// Runner-code names under testthat's documented contract: both
+    /// test-file spellings (`test-`, `test_`) and the helper, setup,
+    /// and teardown prefixes, in both extension cases.
+    #[test]
+    fn testthat_code_names_match_the_documented_prefixes() {
+        for name in [
+            "test-that.R",
+            "test_placeholder.r",
+            "helper-values.R",
+            "helper.R",
+            "setup.R",
+            "setup-db.R",
+            "teardown.R",
+            "teardown-cache.r",
+        ] {
+            assert!(
+                is_testthat_code_name(name),
+                "{name} should classify as runner code"
+            );
+        }
+    }
+
+    /// Names that merely begin with the letters "test" are fixtures:
+    /// the documented contract requires the `test-`/`test_` separator,
+    /// so `testing.R` (the old over-broad rule's canonical false
+    /// positive) and friends never classify as executed code.
+    #[test]
+    fn testthat_code_names_reject_prefix_lookalikes() {
+        for name in ["testing.R", "testthat.R", "test.R", "data.R", "snapshot.txt"] {
+            assert!(
+                !is_testthat_code_name(name),
+                "{name} must not classify as runner code"
+            );
+        }
+    }
+
+    /// Runner classification accepts only the conventional `.R`/`.r`
+    /// spellings; the historical S-dialect extensions remain
+    /// discoverable as R source but never classify as testthat code.
+    #[test]
+    fn runner_classification_requires_r_extension() {
+        for name in ["test-x.R", "helper.r", "setup.R"] {
+            assert!(is_r_source_name(name), "{name} is an R source name");
+        }
+        for name in ["test-x.S", "test-x.s", "test-x.q", "test-x.txt"] {
+            assert!(
+                !is_r_source_name(name),
+                "{name} must not classify as runner R source"
+            );
+        }
+    }
+
     #[test]
     fn eligibility_is_rooted_and_separator_independent() {
         let dir = tempfile::tempdir().unwrap();
@@ -1844,6 +1907,11 @@ mod shared_tests {
             "tests/testthat/teardown-package.R",
             "tests/testthat/fixtures/input.R",
             "tests/testthat/data.R",
+            // Prefix lookalikes the documented contract rejects: a file
+            // merely starting with the letters "test", and a runner
+            // spelling in a historical extension. Both are fixtures.
+            "tests/testthat/testing.R",
+            "tests/testthat/test-legacy.S",
             "tests/testthat/_snaps/output.R",
             "tests/manual/example.R",
             "revdep/other/R/other.R",

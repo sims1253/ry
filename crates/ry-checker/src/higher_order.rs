@@ -32,9 +32,8 @@ fn arguments_bound_to_dots<'a>(
         .iter()
         .enumerate()
         .filter_map(|(index, argument_type)| {
-            // With a `...` formal, every unmatched actual is part of dots.
-            // Preserve actual call order because Map/mapply pass that order
-            // on to the callback.
+            // Preserve actual call order because Map/mapply pass that
+            // order on to the callback.
             (argument_match.dots.is_some()
                 && argument_match
                     .param_for_arg

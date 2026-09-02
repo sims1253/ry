@@ -195,8 +195,8 @@ impl Project {
     }
 
     /// Add a pre-parsed file without wrapping. Use when the caller
-    /// already holds an `Arc<SourceFile>` (e.g. the LSP server, which
-    /// shares parse results across features).
+    /// already holds an `Arc<SourceFile>` and would otherwise deep-clone
+    /// the file just to hand it to [`add_file`](Self::add_file).
     pub fn add_file_arc(&mut self, path: String, file: Arc<SourceFile>) {
         self.dirty_paths.insert(path.clone());
         self.files.push((path, file));
@@ -800,9 +800,6 @@ impl Project {
     }
 }
 
-/// File classification — re-exported from ry-workspace.
-pub use ry_workspace::{PackageFileKind, package_file_kind};
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -942,25 +939,5 @@ mod tests {
         plain.add_file("a.R".to_string(), parse("a.R", src));
         plain.check();
         assert!(plain.take_scope_records().is_empty());
-    }
-
-    #[test]
-    fn scope_snapshot_is_a_plain_scope() {
-        // Compile-level guard: the recorded value is the ordinary `Scope`
-        // type, so dump consumers can use the same accessors as the LSP.
-        use crate::{Scope, ScopeRecordKind};
-        let mut project = Project::new();
-        project.add_file(
-            "a.R".to_string(),
-            parse("a.R", "f <- function(x) { y <- x\n y }\n"),
-        );
-        project.enable_scope_capture();
-        project.check();
-        let records = project.take_scope_records();
-        let _: Option<&Scope> = records[0]
-            .1
-            .iter()
-            .find(|r| r.kind == ScopeRecordKind::Function)
-            .map(|r| &r.scope);
     }
 }

@@ -704,11 +704,6 @@ pub(crate) fn assigned_names_in_body(body: &[Stmt]) -> HashSet<String> {
                 AstNode::Stmt(Stmt::For { name, .. }) => {
                     names.insert(name.clone());
                 }
-                AstNode::Stmt(Stmt::FunctionDef {
-                    name: Some(name), ..
-                }) => {
-                    names.insert(name.clone());
-                }
                 AstNode::Expr(Expr::BinOp {
                     op: BinOpKind::Assign | BinOpKind::SuperAssign,
                     lhs,

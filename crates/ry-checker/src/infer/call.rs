@@ -120,7 +120,7 @@ impl Checker {
         // their expression arguments in a data-mask scope. Must run
         // before the argument-inference stage below, whose eager infer
         // loop would emit spurious RY010 for every column reference.
-        if let Some(t) = self.infer_schema_call(&semantic_name, args, scope, span) {
+        if let Some(t) = self.infer_schema_call(&semantic_name, args, scope) {
             return t;
         }
 

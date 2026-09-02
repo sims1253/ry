@@ -124,6 +124,22 @@ suppression actions — and fixes a parser panic plus several editor issues.
   accepted but ignored, is gone. `ry.toml` files that still set it now
   fail config parsing (`deny_unknown_fields` rejects unknown keys), so
   delete the line when upgrading.
+- **Dead feature and API-surface sweep**: the AST's statement-position
+  `function(...)` literal loses its never-populated `name` field (named
+  functions lower to assignment form), the checker's write-only
+  `vector_intent_parameters` stack is gone, and `Project::add_file_arc`
+  replaces the deep `SourceFile` clones the CLI and the benchmark made
+  just to re-wrap each file in an `Arc`. Public surface trimmed:
+  ry-workspace's `PackageFileKind`/`package_file_kind` (now an internal
+  predicate that classifies the same paths as test fixtures),
+  `TruncationReport::omitted_count` (the adjacent per-file loop already
+  reports oversized files precisely), `SeverityFilter`'s raw token
+  buckets, ry-checker's unused re-export of the package file kinds, and
+  six unused `FixtureProject` builder methods. The CLI drops its unused
+  `thiserror`, `toml`, and `glob` dependencies, and the checker its
+  unused `thiserror`. Tests that duplicated another test or could not
+  fail were deleted rather than kept as theater; diagnostics and
+  inferred types are unchanged.
 
 ### Fixed
 

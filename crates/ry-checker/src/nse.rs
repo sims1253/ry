@@ -14,7 +14,6 @@ impl Checker {
         name: &str,
         args: &[Arg],
         scope: &mut Scope,
-        _span: Span,
     ) -> Option<RType> {
         let sig = self.resolve_schema_sig(name)?;
         let effect = sig.schema_effect?;
@@ -30,7 +29,7 @@ impl Checker {
                     .skip(1)
                     .map(|argument| self.infer(&argument.value, scope)),
             );
-            return Some(self.infer_dplyr_join(&arg_types));
+            return Some(infer_dplyr_join(&arg_types));
         }
 
         let mut local = self.dplyr_data_mask_scope(scope, &data_type);
@@ -81,7 +80,7 @@ impl Checker {
                 .fold(data_type, |result, (name, ty)| {
                     type_with_assigned_column(result, &name, ty)
                 }),
-            SchemaEffect::Select => self.schema_selected_type(data_type, &tidy_args),
+            SchemaEffect::Select => schema_selected_type(data_type, &tidy_args),
             SchemaEffect::Aggregate => {
                 let mut result = RType::new(Mode::List, Length::One)
                     .with_class(ClassVector::single("data.frame"));
@@ -98,83 +97,6 @@ impl Checker {
                 .with_class(ClassVector::single("data.frame")),
         };
         Some(result)
-    }
-
-    fn schema_selected_type(&self, mut data_type: RType, args: &[&Expr]) -> RType {
-        if args.is_empty() {
-            return data_type;
-        }
-        let Some(schema) = data_type.columns.as_ref() else {
-            return data_type;
-        };
-        let mut includes = Vec::new();
-        let mut excludes = Vec::new();
-        for expr in args {
-            if !collect_tidy_selection(expr, false, &mut includes, &mut excludes) {
-                return data_type;
-            }
-        }
-        let columns = if includes.is_empty() {
-            schema
-                .columns
-                .iter()
-                .filter(|(name, _)| !excludes.contains(name))
-                .cloned()
-                .collect()
-        } else {
-            includes
-                .iter()
-                .filter(|name| !excludes.contains(name))
-                .filter_map(|name| {
-                    schema
-                        .columns
-                        .iter()
-                        .find(|(existing, _)| existing == name)
-                        .cloned()
-                })
-                .collect()
-        };
-        data_type.columns = Some(Arc::new(ColumnSchema {
-            columns,
-            complete: schema.complete,
-            locally_constructed: false,
-        }));
-        data_type
-    }
-
-    pub(crate) fn infer_dplyr_join(&self, arg_types: &[RType]) -> RType {
-        let x_type = arg_types.first().cloned().unwrap_or_else(RType::unknown);
-        let y_type = arg_types.get(1).cloned().unwrap_or_else(RType::unknown);
-        let mut result =
-            RType::new(Mode::List, Length::Unknown).with_class(ClassVector::single("data.frame"));
-
-        let mut columns = Vec::new();
-        let mut complete = true;
-        if let Some(schema) = &x_type.columns {
-            columns.extend(schema.columns.iter().cloned());
-            complete &= schema.complete;
-        } else {
-            complete = false;
-        }
-        if let Some(schema) = &y_type.columns {
-            for (name, ty) in &schema.columns {
-                if !columns.iter().any(|(existing, _)| existing == name) {
-                    columns.push((name.clone(), ty.clone()));
-                }
-            }
-            complete &= schema.complete;
-        } else {
-            complete = false;
-        }
-
-        if !columns.is_empty() {
-            result = result.with_columns(Arc::new(ColumnSchema {
-                columns,
-                complete,
-                locally_constructed: false,
-            }));
-        }
-        result
     }
 
     pub(crate) fn infer_tidyselect_expr(&mut self, expr: &Expr, scope: &mut Scope) -> RType {
@@ -202,19 +124,6 @@ impl Checker {
         }
     }
 
-    pub(crate) fn scope_with_columns(
-        &self,
-        base_scope: &Scope,
-        schema: &Arc<ColumnSchema>,
-    ) -> Scope {
-        let mut scope = base_scope.clone();
-        for (name, ty) in &schema.columns {
-            scope.insert(name.clone(), ty.clone());
-            scope.insert(format!("{DATA_MASK_COLUMN_PREFIX}{name}"), RType::unknown());
-        }
-        scope
-    }
-
     pub(crate) fn dplyr_data_mask_scope(&self, base_scope: &Scope, df_type: &RType) -> Scope {
         // Keep a private snapshot of the lexical environment before columns
         // are overlaid. `.env$x` and `{{ x }}` must bypass data-mask column
@@ -225,7 +134,7 @@ impl Checker {
             .map(|(name, ty)| (name.clone(), ty.clone()))
             .collect();
         let mut scope = match &df_type.columns {
-            Some(schema) => self.scope_with_columns(base_scope, schema),
+            Some(schema) => scope_with_columns(base_scope, schema),
             None => base_scope.clone(),
         };
         scope.insert(DATA_MASK_ACTIVE, RType::unknown());
@@ -247,6 +156,92 @@ impl Checker {
         }
         scope
     }
+}
+
+fn schema_selected_type(mut data_type: RType, args: &[&Expr]) -> RType {
+    if args.is_empty() {
+        return data_type;
+    }
+    let Some(schema) = data_type.columns.as_ref() else {
+        return data_type;
+    };
+    let mut includes = Vec::new();
+    let mut excludes = Vec::new();
+    for expr in args {
+        if !collect_tidy_selection(expr, false, &mut includes, &mut excludes) {
+            return data_type;
+        }
+    }
+    let columns = if includes.is_empty() {
+        schema
+            .columns
+            .iter()
+            .filter(|(name, _)| !excludes.contains(name))
+            .cloned()
+            .collect()
+    } else {
+        includes
+            .iter()
+            .filter(|name| !excludes.contains(name))
+            .filter_map(|name| {
+                schema
+                    .columns
+                    .iter()
+                    .find(|(existing, _)| existing == name)
+                    .cloned()
+            })
+            .collect()
+    };
+    data_type.columns = Some(Arc::new(ColumnSchema {
+        columns,
+        complete: schema.complete,
+        locally_constructed: false,
+    }));
+    data_type
+}
+
+fn infer_dplyr_join(arg_types: &[RType]) -> RType {
+    let x_type = arg_types.first().cloned().unwrap_or_else(RType::unknown);
+    let y_type = arg_types.get(1).cloned().unwrap_or_else(RType::unknown);
+    let mut result =
+        RType::new(Mode::List, Length::Unknown).with_class(ClassVector::single("data.frame"));
+
+    let mut columns = Vec::new();
+    let mut complete = true;
+    if let Some(schema) = &x_type.columns {
+        columns.extend(schema.columns.iter().cloned());
+        complete &= schema.complete;
+    } else {
+        complete = false;
+    }
+    if let Some(schema) = &y_type.columns {
+        for (name, ty) in &schema.columns {
+            if !columns.iter().any(|(existing, _)| existing == name) {
+                columns.push((name.clone(), ty.clone()));
+            }
+        }
+        complete &= schema.complete;
+    } else {
+        complete = false;
+    }
+
+    if !columns.is_empty() {
+        result = result.with_columns(Arc::new(ColumnSchema {
+            columns,
+            complete,
+            locally_constructed: false,
+        }));
+    }
+    result
+}
+
+fn scope_with_columns(base_scope: &Scope, schema: &Arc<ColumnSchema>) -> Scope {
+    let mut scope = base_scope.clone();
+    for (name, ty) in &schema.columns {
+        scope.insert(name.clone(), ty.clone());
+        scope.insert(format!("{DATA_MASK_COLUMN_PREFIX}{name}"), RType::unknown());
+    }
+    scope
 }
 
 fn collect_tidy_selection(

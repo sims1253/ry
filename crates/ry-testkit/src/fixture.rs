@@ -55,44 +55,6 @@ impl FixtureProject {
         Ok(path)
     }
 
-    pub fn write_ry_toml(&self, contents: impl AsRef<str>) -> io::Result<PathBuf> {
-        self.write_file("ry.toml", contents.as_ref())
-    }
-
-    pub fn write_description(&self, contents: impl AsRef<str>) -> io::Result<PathBuf> {
-        self.write_file("DESCRIPTION", contents.as_ref())
-    }
-
-    pub fn write_namespace(&self, contents: impl AsRef<str>) -> io::Result<PathBuf> {
-        self.write_file("NAMESPACE", contents.as_ref())
-    }
-
-    pub fn write_typeshed(
-        &self,
-        relative: impl AsRef<Path>,
-        contents: impl AsRef<str>,
-    ) -> io::Result<PathBuf> {
-        let relative = checked_relative(relative.as_ref())?;
-        self.write_file(Path::new("typeshed").join(relative), contents.as_ref())
-    }
-
-    pub fn write_serialized_data(
-        &self,
-        relative: impl AsRef<Path>,
-        contents: impl AsRef<[u8]>,
-    ) -> io::Result<PathBuf> {
-        let relative = checked_relative(relative.as_ref())?;
-        self.write_file(Path::new("data").join(relative), contents)
-    }
-
-    /// Create and return a workspace root below the fixture project.
-    pub fn workspace_root(&self, relative: impl AsRef<Path>) -> io::Result<PathBuf> {
-        let relative = checked_relative(relative.as_ref())?;
-        let path = self.root().join(relative);
-        fs::create_dir_all(&path)?;
-        Ok(path)
-    }
-
     pub fn files(&self) -> io::Result<Vec<PathBuf>> {
         let mut files = Vec::new();
         collect_files(self.root(), &mut files)?;
@@ -150,25 +112,6 @@ fn collect_files(directory: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn builder_materializes_all_owned_fixture_shapes() {
-        let fixture = FixtureProject::empty().unwrap();
-        fixture.write_file("R/main.R", "x <- 1L\n").unwrap();
-        fixture.write_ry_toml("ignore = [\"RY001\"]\n").unwrap();
-        fixture.write_description("Package: fixture\n").unwrap();
-        fixture.write_namespace("export(x)\n").unwrap();
-        fixture.write_typeshed("fixture.json", "{}").unwrap();
-        fixture
-            .write_serialized_data("ordinary.rda", [1, 2, 3])
-            .unwrap();
-        fixture.workspace_root("roots/second").unwrap();
-
-        assert!(fixture.path("R/main.R").is_file());
-        assert!(fixture.path("typeshed/fixture.json").is_file());
-        assert!(fixture.path("data/ordinary.rda").is_file());
-        assert!(fixture.path("roots/second").is_dir());
-    }
 
     #[test]
     fn named_fixture_is_copied_and_isolated() {

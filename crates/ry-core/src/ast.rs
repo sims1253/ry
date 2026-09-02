@@ -82,7 +82,6 @@ pub enum Stmt {
     },
     /// `function(params) body`
     FunctionDef {
-        name: Option<String>,
         params: Vec<Param>,
         body: Vec<Stmt>,
         span: Span,

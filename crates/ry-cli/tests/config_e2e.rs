@@ -343,10 +343,6 @@ fn ry_toml_output_format_json() {
 
     let output = ry_check(tmp.path());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        output.status.success() || !output.status.success(),
-        "exit code is not the point of this test"
-    );
     // JSON output lands on stdout (per main.rs's routing) and must
     // parse as a JSON array containing the RY040 diagnostic.
     assert!(
@@ -423,10 +419,8 @@ fn ry_toml_cli_flag_overrides_config_output_format() {
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
     // concise format goes to stdout and is NOT a
     // JSON array.
-    let _ = stderr;
     assert!(
         stdout.contains("RY040"),
         "expected RY040 on stdout in concise format: {}",

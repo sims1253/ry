@@ -1305,14 +1305,6 @@ mod tests {
     }
 
     #[test]
-    fn high_minimum_hides_medium_confidence() {
-        let mut diagnostics = vec![diag("a.R", 1, 0, "RY010"), diag("a.R", 2, 0, "RY030")];
-        diagnostics.retain(|diagnostic| diagnostic.confidence >= ry_checker::Confidence::High);
-        assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].code, "RY030");
-    }
-
-    #[test]
     fn package_tests_path_demotes_confidence_one_tier() {
         let temp = tempfile::tempdir().unwrap();
         std::fs::write(temp.path().join("DESCRIPTION"), "Package: example\n").unwrap();

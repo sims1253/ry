@@ -34,7 +34,7 @@ pub fn check_project(input: CheckInput) -> CheckOutput {
     );
 
     for (path, file) in &input.files {
-        project.add_file(path.clone(), (**file).clone());
+        project.add_file_arc(path.clone(), Arc::clone(file));
     }
 
     let diagnostics = project.check();
@@ -60,7 +60,7 @@ pub fn check_project_with_scope_capture(
         &input.user_stubs,
     );
     for (path, file) in &input.files {
-        project.add_file(path.clone(), (**file).clone());
+        project.add_file_arc(path.clone(), Arc::clone(file));
     }
     project.enable_scope_capture();
     project.check();

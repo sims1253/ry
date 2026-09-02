@@ -125,7 +125,7 @@ impl RParser {
             })),
             "if_statement" => self.lower_if(n, src),
             "for_statement" => self.lower_for(n, src),
-            "while_statement" => Some(self.lower_while(n, src, false)),
+            "while_statement" => Some(self.lower_while(n, src)),
             "repeat_statement" => Some(self.lower_repeat(n, src)),
             "braced_expression" => Some(self.lower_braced_as_stmt(n, src)),
             "function_definition" => self.lower_function_def_as_stmt(n, src),
@@ -247,14 +247,11 @@ impl RParser {
         })
     }
 
-    fn lower_while(&self, n: Node, src: &str, repeat_: bool) -> Stmt {
+    fn lower_while(&self, n: Node, src: &str) -> Stmt {
         let body = self.lower_block(n.child_by_field_name("body").unwrap_or(n), src);
-        let cond = if repeat_ {
-            Expr::Logical(true, self.span(n))
-        } else {
-            self.lower_expr(n.child_by_field_name("condition").unwrap_or(n), src)
-                .unwrap_or(Expr::Unknown(self.span(n)))
-        };
+        let cond = self
+            .lower_expr(n.child_by_field_name("condition").unwrap_or(n), src)
+            .unwrap_or(Expr::Unknown(self.span(n)));
         Stmt::While {
             cond,
             body,
@@ -301,7 +298,6 @@ impl RParser {
         let params = self.lower_params(n.child_by_field_name("parameters")?, src);
         let body = self.lower_block(n.child_by_field_name("body")?, src);
         Some(Stmt::FunctionDef {
-            name: None,
             params,
             body,
             span: self.span(n),
@@ -1048,9 +1044,6 @@ fn namespace_op(n: Node, src: &str) -> Option<&'static str> {
 /// Used by diagnostic rendering when a human-visible column is needed.
 /// Only the single line containing the column is scanned, never the
 /// whole file.
-///
-/// `line_start` is the byte offset of the start of the line containing the
-/// column, and `byte_col` is the byte offset of the target within that line.
 pub fn byte_col_to_char_col(line: &str, byte_col: usize) -> usize {
     line.char_indices()
         .take_while(|(b, _)| *b < byte_col)

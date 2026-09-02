@@ -322,9 +322,6 @@ pub fn filter_suppressed_with_comments(
 /// re-examining every token against the rule table on every call.
 #[derive(Debug, Clone, Default)]
 pub struct SeverityFilter {
-    pub errors: Vec<String>,
-    pub warns: Vec<String>,
-    pub ignores: Vec<String>,
     expanded_errors: Vec<&'static str>,
     expanded_warns: Vec<&'static str>,
     expanded_ignores: Vec<&'static str>,
@@ -348,15 +345,12 @@ impl SeverityFilter {
     /// Add a token (code / name / "all") to one of the buckets,
     /// pre-expanding it into the cached code list.
     pub fn add_error(&mut self, token: &str) {
-        self.errors.push(token.to_string());
         self.expanded_errors.extend(Self::expand(token));
     }
     pub fn add_warn(&mut self, token: &str) {
-        self.warns.push(token.to_string());
         self.expanded_warns.extend(Self::expand(token));
     }
     pub fn add_ignore(&mut self, token: &str) {
-        self.ignores.push(token.to_string());
         self.expanded_ignores.extend(Self::expand(token));
     }
     /// Replace the default-enabled set with an explicit selection.

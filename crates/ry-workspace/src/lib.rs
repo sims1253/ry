@@ -4,10 +4,8 @@
 //! NAMESPACE files as R syntax, then turn proven imports/exports into opaque
 //! checker bindings.
 
-pub mod file_kind;
 pub mod packages;
 
-pub use file_kind::{PackageFileKind, package_file_kind};
 pub use packages::{
     NATIVE_REGISTRATION_SENTINEL, NATIVE_ROUTINE_PREFIX_SENTINEL, NamespaceMetadata,
     attached_packages, namespace_metadata,
@@ -525,9 +523,6 @@ fn testthat_helper_context(root: &Path) -> TestthatHelperContext {
                 Stmt::Assign {
                     target: Expr::Ident { name, .. },
                     ..
-                } => Some(name.clone()),
-                Stmt::FunctionDef {
-                    name: Some(name), ..
                 } => Some(name.clone()),
                 _ => None,
             }));
@@ -1169,14 +1164,6 @@ impl TruncationReport {
     pub fn any_hit(&self) -> bool {
         self.max_files_hit || !self.oversized_files.is_empty() || !self.depth_pruned_dirs.is_empty()
     }
-
-    /// Total number of files omitted across all caps.
-    pub fn omitted_count(&self) -> usize {
-        // `max_files_hit` means we stopped, so the omitted count is
-        // unbounded from the walker's perspective; the caller reports
-        // the count it can determine. Here we count the known omissions.
-        self.oversized_files.len()
-    }
 }
 
 /// Result of a bounded directory discovery.
@@ -1242,6 +1229,56 @@ pub fn discover_r_files(
     files.sort();
     files.dedup();
     DiscoveryResult { files, truncated }
+}
+
+/// Whether `path` is test data under a package's `tests/` tree rather than
+/// code the package test runner executes. Testthat only sources runner
+/// files at `tests/` root and files with its executable prefixes directly
+/// under `tests/testthat/`; deeper R files are data consumed by tests.
+///
+/// A two-segment `tests/<file>` path is code only for R source names, a
+/// three-segment `tests/testthat/<file>` path only for R source names
+/// with a testthat executable prefix, and every other `tests/` path is a
+/// fixture.
+fn is_test_fixture(path: &Path) -> bool {
+    let Some(root) = path
+        .parent()
+        .and_then(|parent| parent.ancestors().find(|p| p.join("DESCRIPTION").is_file()))
+    else {
+        return false;
+    };
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+    let components: Vec<&str> = relative
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .collect();
+    if components.first() != Some(&"tests") {
+        return false;
+    }
+    match components.as_slice() {
+        [_, file] => !is_r_source_name(file),
+        [_, "testthat", file] => !(is_r_source_name(file) && is_testthat_code_name(file)),
+        _ => true,
+    }
+}
+
+fn is_r_source_name(name: &str) -> bool {
+    std::path::Path::new(name)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| matches!(extension, "R" | "r" | "S" | "s" | "q"))
+}
+
+fn is_testthat_code_name(name: &str) -> bool {
+    let stem = std::path::Path::new(name)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or(name);
+    ["test", "helper", "setup", "teardown"]
+        .iter()
+        .any(|prefix| stem.starts_with(prefix))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1322,8 +1359,7 @@ fn discover_recursive(
         } else if matches!(
             path.extension().and_then(|e| e.to_str()),
             Some("R") | Some("r") | Some("S") | Some("s") | Some("q")
-        ) && (check_test_fixtures
-            || file_kind::package_file_kind(&path) != file_kind::PackageFileKind::TestFixture)
+        ) && (check_test_fixtures || !is_test_fixture(&path))
         {
             // max-files cap.
             if out.len() >= limits.max_files {

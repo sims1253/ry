@@ -533,9 +533,6 @@ enum Operation {
         version: i32,
         source: SourceVariant,
     },
-    Save {
-        file: u8,
-    },
     Close {
         file: u8,
     },
@@ -571,25 +568,23 @@ fn operation_sequence_strategy() -> impl Strategy<Value = Vec<Operation>> {
 
 /// Operation kinds for `resolve_kind`'s weighted residue pick.  The weights
 /// preserve the relative frequencies of the original state-independent
-/// alphabet (4 open, 3 full edit, 3 incremental edit, 1 save, 2 close, 1
-/// restart out of 14).
+/// alphabet (4 open, 3 full edit, 3 incremental edit, 2 close, 1 restart
+/// out of 13).
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum OpKind {
     Open,
     FullEdit,
     IncrementalEdit,
-    Save,
     Close,
     Restart,
 }
 
 impl OpKind {
     /// All kinds in the fixed order `resolve_kind` walks them.
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 5] = [
         Self::Open,
         Self::FullEdit,
         Self::IncrementalEdit,
-        Self::Save,
         Self::Close,
         Self::Restart,
     ];
@@ -599,14 +594,13 @@ impl OpKind {
             Self::Open => 4,
             Self::FullEdit => 3,
             Self::IncrementalEdit => 3,
-            Self::Save => 1,
             Self::Close => 2,
             Self::Restart => 1,
         }
     }
 
     /// Whether the model admits this kind right now.  `Open` needs an
-    /// unopened file; every edit, save, and close needs an open one;
+    /// unopened file; every edit and close needs an open one;
     /// `Restart` is always legal.
     fn is_applicable(self, model: &SessionModel) -> bool {
         match self {
@@ -640,7 +634,7 @@ fn resolve_kind(op: u8, model: &SessionModel) -> OpKind {
 }
 
 /// Resolve a raw file byte for an operation that requires an open document
-/// (edit, save, close).  A pick that names an unopened file falls back to
+/// (edit, close).  A pick that names an unopened file falls back to
 /// the open documents in index order.
 fn resolve_open_file(file: u8, model: &SessionModel) -> u8 {
     let candidate = file % W10_FILES.len() as u8;
@@ -692,9 +686,6 @@ fn resolve_operations(raw: &[RawChoice]) -> Vec<Operation> {
                 version: model.version,
                 source: SourceVariant::from_choice(choice.source),
             },
-            OpKind::Save => Operation::Save {
-                file: resolve_open_file(choice.file, &model),
-            },
             OpKind::Close => Operation::Close {
                 file: resolve_open_file(choice.file, &model),
             },
@@ -731,7 +722,6 @@ fn apply_to_model(model: &mut SessionModel, operation: &Operation) {
             model.open_docs.insert(*file, new_text);
             model.version += 1;
         }
-        Operation::Save { .. } => {}
         Operation::Close { file } => {
             model.open_docs.remove(file);
         }
@@ -964,10 +954,6 @@ fn assert_sequence_is_protocol_valid(operations: &[Operation]) {
                 assert_version_advances(file, *version);
             }
 
-            Operation::Save { file } => {
-                assert!(open.contains(file), "didSave for unopened file {file}");
-            }
-
             Operation::Close { file } => {
                 assert!(open.contains(file), "didClose for unopened file {file}");
                 open.remove(file);
@@ -1107,18 +1093,6 @@ async fn w10_convergence_property(operations: Vec<Operation>) -> Result<(), Test
                     &operation,
                 )
                 .await?;
-            }
-
-            Operation::Save { file } => {
-                // The server has no didSave handler, so this is a
-                // protocol-level no-op.  The sync barrier in the next
-                // step's quiesce drains any leftover publications.
-                live.notify(
-                    "textDocument/didSave",
-                    json!({"textDocument": {"uri": &uris[*file as usize]}}),
-                )
-                .await
-                .unwrap();
             }
 
             Operation::Close { file } => {

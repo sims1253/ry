@@ -693,9 +693,6 @@ pub struct Checker {
     // A stack is required because nested functions replace, rather than
     // inherit, the set of formals relevant to `hasArg()`.
     enclosing_formals: Vec<EnclosingFormals>,
-    /// Formal names whose function-wide use proves vector intent (for
-    /// example `paste(x, collapse=...)`). Kept as a stack for nested bodies.
-    vector_intent_parameters: Vec<HashSet<String>>,
     // Values already inferred before a pipe is desugared into a call. This
     // cache is populated only for the duration of that rewritten call, so it
     // never crosses a scope-changing inference boundary.
@@ -828,7 +825,6 @@ impl Checker {
             load_bindings: HashMap::new(),
             deferred_captures: Vec::new(),
             enclosing_formals: Vec::new(),
-            vector_intent_parameters: Vec::new(),
             pipe_argument_types: HashMap::new(),
             capture_scopes: false,
             scope_records: Vec::new(),

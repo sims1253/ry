@@ -207,31 +207,6 @@ fn settings(fixture: &FixtureProject, relative: &str) -> Value {
 }
 
 #[test]
-fn actual_ry_server_stdio_is_clean_json_rpc() {
-    let fixture = FixtureProject::from_fixture("shared").unwrap();
-    let mut command = Command::new(ry_binary());
-    command.arg("server").current_dir(fixture.root());
-    let mut client = JsonRpcProcess::spawn(&mut command).unwrap();
-    let root_uri = file_uri(fixture.root());
-    let id = client
-        .request(
-            "initialize",
-            json!({
-                "processId": null, "rootUri": root_uri, "capabilities": {}
-            }),
-        )
-        .unwrap();
-    let response = client
-        .receive_until(|m| m.get("id") == Some(&json!(id)), 8)
-        .unwrap();
-    assert_eq!(
-        response.pointer("/result/serverInfo/name"),
-        Some(&json!("ry"))
-    );
-    client.notify("exit", Value::Null).unwrap();
-}
-
-#[test]
 fn cli_and_run_with_publish_the_same_single_root_matrix() {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()

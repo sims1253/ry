@@ -15,7 +15,7 @@ impl Checker {
         }
     }
 
-    pub(crate) fn collect_fns_stmt(&mut self, s: &Stmt) {
+    fn collect_fns_stmt(&mut self, s: &Stmt) {
         self.collect_declared_globals_stmt(s);
         match s {
             Stmt::Assign { target, value, .. } => {
@@ -87,16 +87,6 @@ impl Checker {
                 // Non-function assignments: nothing further to record
                 // (the name is already in `known_vars`).
             }
-            Stmt::FunctionDef { name: Some(n), .. } => {
-                // A bare top-level `function(params) body` literal in
-                // statement position. If the parser gave it a name
-                // (rare but possible for named-form function
-                // definitions), record that name in `known_vars` so
-                // cross-file references to it don't trigger RY010.
-                Arc::make_mut(&mut self.fn_table)
-                    .known_vars
-                    .insert(n.clone());
-            }
             Stmt::If { then, else_, .. } => {
                 for s in then {
                     self.collect_fns_stmt(s);
@@ -118,7 +108,7 @@ impl Checker {
         }
     }
 
-    pub(crate) fn collect_declared_globals_stmt(&mut self, s: &Stmt) {
+    fn collect_declared_globals_stmt(&mut self, s: &Stmt) {
         match s {
             Stmt::Assign { target, value, .. } => {
                 self.collect_declared_globals_expr(target);
@@ -160,7 +150,7 @@ impl Checker {
         }
     }
 
-    pub(crate) fn collect_declared_globals_expr(&mut self, e: &Expr) {
+    fn collect_declared_globals_expr(&mut self, e: &Expr) {
         match e {
             Expr::Call { func, args, .. } => {
                 if let Expr::Ident { name, .. } = func.as_ref() {
@@ -298,12 +288,7 @@ impl Checker {
         }
     }
 
-    pub(crate) fn collect_forwarded_calls(
-        &mut self,
-        caller: &str,
-        params: &[Param],
-        body: &[Stmt],
-    ) {
+    fn collect_forwarded_calls(&mut self, caller: &str, params: &[Param], body: &[Stmt]) {
         let mut calls = Vec::new();
         collect_forwarded_calls_in_stmts(caller, params, body, &mut calls);
         Arc::make_mut(&mut self.fn_table)
@@ -321,7 +306,7 @@ impl Checker {
     // Recursion is bounded by the AST's literal nesting (small in
     // practice). The inference depth is separately bounded by
     // `MAX_CLOSURE_DEPTH` in `build_function_signature`.
-    pub(crate) fn collect_nested_fns_in_body(&mut self, outer: &str, body: &[Stmt]) {
+    fn collect_nested_fns_in_body(&mut self, outer: &str, body: &[Stmt]) {
         for s in body {
             self.collect_nested_fns_stmt(outer, s);
         }
@@ -331,7 +316,7 @@ impl Checker {
     // any `inner <- function(...) ...` under `<outer>$<inner>` and
     // recurses into compound statements so we catch nested defs
     // inside `if` / `for` / `while` blocks too.
-    pub(crate) fn collect_nested_fns_stmt(&mut self, outer: &str, s: &Stmt) {
+    fn collect_nested_fns_stmt(&mut self, outer: &str, s: &Stmt) {
         match s {
             Stmt::Assign { target, value, .. } => {
                 if let (

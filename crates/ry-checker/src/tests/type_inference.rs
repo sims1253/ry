@@ -16,42 +16,66 @@ fn allows_int_plus_double() {
     assert!(diags.is_empty(), "got {:?}", diags);
 }
 
+// Table-driven form of the RY001/RY002/RY003 condition-diagnostic
+// family (the #155 conversion's shape): each row pins which family
+// code one condition source fires, that its sibling codes stay
+// silent, and that RY003 keeps its info-level severity. Absorbs the
+// former single-case `detects_if_on_character` and
+// `detects_long_condition_warning` tests.
 #[test]
-fn detects_if_on_character() {
-    let diags = check(r#"if ("x") print(1)"#);
-    assert!(diags.iter().any(|d| d.code == "RY001"));
+fn condition_rules_fire_their_family_code() {
+    for (note, src, expected) in [
+        ("integer `if` condition", "if (1L) print(1)", "RY003"),
+        (
+            "numeric-union `if` condition",
+            "x <- if (runif(1) > 0.5) 1L else 2.0\nif (x) print(1)",
+            "RY003",
+        ),
+        (
+            "invalid-union `if` condition",
+            "x <- if (runif(1) > 0.5) 1L else \"a\"\nif (x) print(1)",
+            "RY001",
+        ),
+        ("NULL `if` condition", "if (NULL) print(1)", "RY001"),
+        ("character `if` condition", r#"if ("x") print(1)"#, "RY001"),
+        (
+            "integer `while` condition",
+            "n <- 1L\nwhile (n) n <- 0L",
+            "RY003",
+        ),
+        (
+            "length-2 logical `if` condition",
+            "if (c(TRUE, FALSE)) print(1)\n",
+            "RY002",
+        ),
+    ] {
+        let diags = check(src);
+        assert!(
+            diags.iter().any(|d| d.code == expected),
+            "{note}: expected {expected}, got {diags:?}"
+        );
+        for silent in ["RY001", "RY002", "RY003"] {
+            if silent == expected {
+                continue;
+            }
+            assert!(
+                diags.iter().all(|d| d.code != silent),
+                "{note}: {silent} must stay silent, got {diags:?}"
+            );
+        }
+        if expected == "RY003" {
+            assert!(
+                diags.iter().any(|d| d.code == "RY003" && d.severity == Severity::Info),
+                "{note}: RY003 is an info-level nudge, got {diags:?}"
+            );
+        }
+    }
 }
 
-#[test]
-fn numeric_conditions_use_ry003() {
-    let integer = check("if (1L) print(1)");
-    assert!(integer.iter().any(|d| d.code == "RY003"));
-    assert!(integer.iter().all(|d| d.code != "RY001"));
-    assert!(
-        integer
-            .iter()
-            .any(|d| d.code == "RY003" && d.severity == Severity::Info)
-    );
-
-    let numeric_union = check("x <- if (runif(1) > 0.5) 1L else 2.0\nif (x) print(1)");
-    assert!(numeric_union.iter().any(|d| d.code == "RY003"));
-
-    let invalid_union = check("x <- if (runif(1) > 0.5) 1L else \"a\"\nif (x) print(1)");
-    assert!(invalid_union.iter().any(|d| d.code == "RY001"));
-
-    let null = check("if (NULL) print(1)");
-    assert!(null.iter().any(|d| d.code == "RY001"));
-
-    let while_integer = check("n <- 1L\nwhile (n) n <- 0L");
-    assert!(while_integer.iter().any(|d| d.code == "RY003"));
-}
-
-#[test]
-fn detects_long_condition_warning() {
-    let diags = check("if (c(TRUE, FALSE)) print(1)\n");
-    assert!(diags.iter().any(|d| d.code == "RY002"));
-}
-
+// Not folded into a table: this is the only RY010-presence case in
+// type_inference.rs (the file's RY010 tables all assert absence), and
+// the rule's table-driven homes live in test modules outside this
+// cleanup's file ownership, so the single-case form stays.
 #[test]
 fn detects_unbound_var() {
     let diags = check("y <- undefined_thing\n");

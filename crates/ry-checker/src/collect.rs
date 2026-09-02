@@ -1298,6 +1298,11 @@ mod collect_walker_tests {
         assert!(checker.fn_table.fns.is_empty());
         let checker = collect("out <- lapply(xs, function() 1)");
         assert!(!checker.fn_table.fns.contains_key("out"));
+        // A block-valued condition is the one place `control_tests: false`
+        // is load-bearing: with `Walk::ALL` the walker would reach the
+        // block's statements and run the assign collection on them.
+        let checker = collect("if ({ fn_in_cond <- function() 1 }) 1");
+        assert!(!checker.fn_table.fns.contains_key("fn_in_cond"));
     }
 
     /// Nested definitions record under the mangled `<outer>$<inner>`

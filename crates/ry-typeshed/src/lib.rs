@@ -576,6 +576,24 @@ pub fn load_base() -> Result<Typeshed, TypeshedError> {
     parse_typeshed(BASE_JSON, Path::new("<embedded base>"))
 }
 
+/// File-level insertion order of the `functions` map.
+///
+/// This order machinery — this visitor plus the `_with_order` parse
+/// twins — exists ONLY for `validate_stub_file`'s "function keys are not
+/// sorted" style warning; every other consumer reads the `BTreeMap`,
+/// which is inherently sorted (#172).
+///
+/// It is load-bearing, not dead: r-typeshed's generator does not
+/// guarantee sorted keys, and the current vendored snapshot carries
+/// unsorted `functions` maps (base.json `load` > `lm`, rlang.json
+/// `:=` > `!!`, shiny.json `testServer` > `reactive`). The warning
+/// surfaces that during `ry typeshed validate` (run by
+/// `scripts/sync_typeshed.sh` and by r-typeshed's CI, non-gating) and
+/// is exercised by ry-cli's `warns_without_failing_on_unsorted_function_keys`
+/// e2e test. Deleting it requires r-typeshed to emit
+/// sorted keys first; a sortedness check without this visitor needs
+/// either a second JSON library pass or serde_json's `preserve_order`
+/// feature, which would change map ordering workspace-wide.
 struct RawFunctions(Vec<(String, FunctionSig)>);
 
 impl<'de> Deserialize<'de> for RawFunctions {

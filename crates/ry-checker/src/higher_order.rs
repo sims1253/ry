@@ -657,15 +657,18 @@ impl Checker {
 /// S3 group generics used by ordinary function calls. Operator expressions
 /// are handled in `infer/binop.rs`; these names cover calls such as
 /// `abs(x)` and `sum(x)` dispatching to `Math.foo` / `Summary.foo`.
+///
+/// The member sets live in the semantic registry
+/// ([`crate::semantic_lists::S3_MATH_GENERICS`] and
+/// [`crate::semantic_lists::S3_SUMMARY_GENERICS`]), where the coherence
+/// tests pin each member to the embedded base typeshed.
 pub(crate) fn s3_group_generic(generic: &str) -> Option<&'static str> {
-    match generic {
-        "abs" | "acos" | "acosh" | "asin" | "asinh" | "atan" | "atanh" | "ceiling" | "cos"
-        | "cosh" | "exp" | "expm1" | "floor" | "gamma" | "lgamma" | "log" | "log10" | "log1p"
-        | "log2" | "round" | "sign" | "sin" | "sinh" | "sqrt" | "tan" | "tanh" | "trunc" => {
-            Some("Math")
-        }
-        "all" | "any" | "max" | "min" | "prod" | "range" | "sum" => Some("Summary"),
-        _ => None,
+    if crate::semantic_lists::S3_MATH_GENERICS.contains(&generic) {
+        Some("Math")
+    } else if crate::semantic_lists::S3_SUMMARY_GENERICS.contains(&generic) {
+        Some("Summary")
+    } else {
+        None
     }
 }
 

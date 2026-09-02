@@ -344,7 +344,7 @@ impl Checker {
         // Formula construction and expression-vector constructors quote
         // their language arguments. Names inside them are resolved later in
         // a model/data environment, not at construction time.
-        if matches!(lookup_name.as_str(), "~" | "expression" | "vars") {
+        if crate::semantic_lists::is_quoting_form(&lookup_name) {
             return RType::unknown();
         }
 

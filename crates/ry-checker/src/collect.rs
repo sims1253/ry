@@ -54,7 +54,7 @@ impl Checker {
                                     .map(|(generic, class)| (generic.to_string(), class))
                             })
                             .filter(|(generic, _)| {
-                                matches!(generic.as_str(), "Ops" | "Math" | "Summary" | "matrixOps")
+                                crate::semantic_lists::is_group_generic(generic)
                                     || params.first().is_some_and(|p| {
                                         p.name == "x"
                                             || (is_operator_generic(generic.as_str())
@@ -483,11 +483,9 @@ impl Checker {
     }
 }
 
-/// Whether `parameter` is captured without evaluation by this function.
-///
-/// `match.call()`, `sys.call()`, and `sys.function()` capture the complete
-/// call, so they make every formal quoting. `missing(p)` is deliberately not
-/// included: it tests a promise without changing how an argument is evaluated.
+/// Whether `expression` is a call to an S7 object constructor
+/// (`S7::new_class()` and friends), whose result is a callable S7 class
+/// or generic object rather than a plain value.
 fn is_callable_object_constructor(expression: &Expr) -> bool {
     let Expr::Call { func, .. } = expression else {
         return false;
@@ -495,10 +493,7 @@ fn is_callable_object_constructor(expression: &Expr) -> bool {
     matches!(
         func.as_ref(),
         Expr::Ident { name, .. }
-            if matches!(
-                name.as_str(),
-                "S7::new_class" | "S7::new_generic" | "S7::new_S3_class"
-            )
+            if crate::semantic_lists::S7_OBJECT_CONSTRUCTORS.contains(&name.as_str())
     )
 }
 

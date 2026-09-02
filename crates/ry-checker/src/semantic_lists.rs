@@ -9,8 +9,9 @@
 //! Three check kinds are permitted:
 //!
 //! - [`CheckKind::TypeshedAgreement`] — every item must exist in the embedded
-//!   typeshed (base, rlang, …). Adding an item to the list without a matching
-//!   typeshed stub fails the test.
+//!   typeshed (base, rlang, …): a function stub, an ambient function, or an
+//!   S3-generic global. Adding an item to the list without a matching
+//!   typeshed entry fails the test.
 //! - [`CheckKind::SiblingEquality`] — the list must equal another
 //!   representation of the same data within the codebase.
 //! - [`CheckKind::ROracle`] — the list must match R's own behaviour, verified
@@ -98,6 +99,68 @@ pub const METADATA_ARGS: &[&str] = &[
     "fix.empty.names",
 ];
 
+/// Functions whose ordinary calls dispatch through the S3 `Math` group
+/// generic, so `abs(x)` can hit a `Math.foo` method (the `Ops` group is
+/// operator syntax, handled in `infer/binop.rs`).
+///
+/// Checked by typeshed agreement: every member exists in the embedded base
+/// typeshed -- most in the `functions` map, with `acosh`, `asinh`, and
+/// `atanh` declared as ambient functions. The set is the subset of R's
+/// `Math` group that ry models; R additionally routes `signif`, the
+/// `cum*` family, and the `*pi`/`digamma`/`trigamma` members through the
+/// group, which ry does not model.
+pub const S3_MATH_GENERICS: &[&str] = &[
+    "abs", "acos", "acosh", "asin", "asinh", "atan", "atanh", "ceiling", "cos", "cosh", "exp",
+    "expm1", "floor", "gamma", "lgamma", "log", "log10", "log1p", "log2", "round", "sign", "sin",
+    "sinh", "sqrt", "tan", "tanh", "trunc",
+];
+
+/// Functions whose ordinary calls dispatch through the S3 `Summary` group
+/// generic, so `sum(x)` can hit a `Summary.foo` method. This is exactly
+/// R's `Summary` group.
+///
+/// Checked by typeshed agreement: every member exists in the embedded base
+/// typeshed's `functions` map.
+pub const S3_SUMMARY_GENERICS: &[&str] = &["all", "any", "max", "min", "prod", "range", "sum"];
+
+/// The four S3 group-generic group names, i.e. the method-name prefixes
+/// (`Ops.foo`, `Math.foo`, ...) whose definitions register as group
+/// methods rather than needing the first-parameter heuristic.
+///
+/// Checked by typeshed agreement: every name is declared in the embedded
+/// base typeshed's `globals.s3_generics`.
+pub const GROUP_GENERICS: &[&str] = &["Ops", "Math", "Summary", "matrixOps"];
+
+/// Whether `name` is one of the S3 group-generic group names.
+pub(crate) fn is_group_generic(name: &str) -> bool {
+    GROUP_GENERICS.contains(&name)
+}
+
+/// S7 constructor entry points: calls whose result is a callable S7
+/// class, generic, or S3-interop class object, so the bound variable is
+/// callable even though it is not a function literal.
+///
+/// Checked by R oracle: all three are exported by the S7 package (the
+/// check skips when S7 is not installed).
+pub const S7_OBJECT_CONSTRUCTORS: &[&str] =
+    &["S7::new_class", "S7::new_generic", "S7::new_S3_class"];
+
+/// Call constructors that quote their language arguments: a formula, an
+/// expression vector, or a tidyselect column specification. Names inside
+/// them resolve later in a model/data environment, not at construction
+/// time.
+///
+/// Checked by R oracle: each member accepts a bare, undefined symbol
+/// without evaluating it (`~` and `expression` in vanilla R; `vars` via
+/// ggplot2, skipped when ggplot2 is not installed).
+pub const QUOTING_FORMS: &[&str] = &["~", "expression", "vars"];
+
+/// Whether `name` constructs a quoted language object (formula,
+/// expression vector, or tidyselect column specification).
+pub(crate) fn is_quoting_form(name: &str) -> bool {
+    QUOTING_FORMS.contains(&name)
+}
+
 /// Bindings injected for Shiny application server fragments.
 ///
 /// Checked by R oracle: these are the conventional parameters of a Shiny
@@ -142,6 +205,36 @@ pub fn registry() -> Vec<SemanticList> {
             items: BUILTIN_ENVIRONMENT_BINDINGS,
             check: CheckKind::ROracle,
             claim: "Shiny server function parameters",
+        },
+        SemanticList {
+            name: "S3_MATH_GENERICS",
+            items: S3_MATH_GENERICS,
+            check: CheckKind::TypeshedAgreement,
+            claim: "functions whose calls dispatch through the S3 Math group generic",
+        },
+        SemanticList {
+            name: "S3_SUMMARY_GENERICS",
+            items: S3_SUMMARY_GENERICS,
+            check: CheckKind::TypeshedAgreement,
+            claim: "functions whose calls dispatch through the S3 Summary group generic",
+        },
+        SemanticList {
+            name: "GROUP_GENERICS",
+            items: GROUP_GENERICS,
+            check: CheckKind::TypeshedAgreement,
+            claim: "S3 group-generic group names declared by the base stub globals",
+        },
+        SemanticList {
+            name: "S7_OBJECT_CONSTRUCTORS",
+            items: S7_OBJECT_CONSTRUCTORS,
+            check: CheckKind::ROracle,
+            claim: "S7 package constructors returning callable class or generic objects",
+        },
+        SemanticList {
+            name: "QUOTING_FORMS",
+            items: QUOTING_FORMS,
+            check: CheckKind::ROracle,
+            claim: "call constructors that quote their language arguments",
         },
     ]
 }

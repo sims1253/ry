@@ -662,9 +662,8 @@ pub(crate) fn is_operator_generic(name: &str) -> bool {
 
 pub(crate) fn insert_s3_dispatch_context(method_name: &str, scope: &mut Scope, globals: &Globals) {
     let method_name = semantic_argument_name(method_name);
-    let group_method = split_s3_method_name(&method_name, globals).is_some_and(|(generic, _)| {
-        matches!(generic.as_str(), "Ops" | "Math" | "Summary" | "matrixOps")
-    });
+    let group_method = split_s3_method_name(&method_name, globals)
+        .is_some_and(|(generic, _)| crate::semantic_lists::is_group_generic(&generic));
     if group_method {
         scope.insert(".Generic", RType::scalar(Mode::Character));
         scope.insert(".Method", RType::new(Mode::Character, Length::Unknown));

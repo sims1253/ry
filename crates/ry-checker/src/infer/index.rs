@@ -675,9 +675,14 @@ pub(crate) fn insert_s3_dispatch_context(method_name: &str, scope: &mut Scope, g
 }
 
 /// Names assigned anywhere in a body, for closure-capture candidates.
-/// Skips function bodies, assignment targets, control tests (if/while
-/// conditions, for iterators), and every expression form except blocks,
-/// `if`, and assignment operators.
+/// Enters assignment values, `if`/`for`/`while` statement bodies,
+/// braced-block values, and `if`-expression branches; records the names
+/// bound by plain assignments, `for` iterators, function definitions,
+/// and expression-position `<-`/`<<-`. Skips function bodies, control
+/// tests (`if`/`while` conditions, `for` iterators), the assignment
+/// target and `<-`/`<<-` left-operand subtrees (only the bound name is
+/// recorded -- R does not evaluate them), and every expression form
+/// except blocks, `if`, and assignment operators.
 pub(crate) fn assigned_names_in_body(body: &[Stmt]) -> HashSet<String> {
     let mut names = HashSet::new();
     let _ = walk_stmts(
@@ -713,9 +718,13 @@ pub(crate) fn assigned_names_in_body(body: &[Stmt]) -> HashSet<String> {
                         names.insert(name.clone());
                     }
                 }
-                // Only blocks and `if` can carry further statements, and
-                // only assignment operators bind from expression position;
-                // calls, indexing, and literals cannot introduce names.
+                // Blocks and `if` expressions carry further statements;
+                // the control_tests=false knob already prunes their
+                // conditions. Every other expression form cannot
+                // introduce names: calls, indexing, and literals only
+                // read, and only assignment operators bind from
+                // expression position.
+                AstNode::Expr(Expr::Block { .. } | Expr::If { .. }) => {}
                 AstNode::Expr(_) => return ControlFlow::Continue(Descend::Skip),
                 AstNode::Stmt(_) => {}
             }
@@ -723,6 +732,76 @@ pub(crate) fn assigned_names_in_body(body: &[Stmt]) -> HashSet<String> {
         },
     );
     names
+}
+
+/// Pins the traversal shape of [`assigned_names_in_body`] to the
+/// hand-rolled walker it replaced: names bound inside braced-block
+/// values and `if`-expression branches are locals of the enclosing
+/// body (closure-capture and loop-carried-binding candidates), while
+/// control tests and unevaluated assignment targets stay pruned.
+#[cfg(test)]
+mod assigned_names_in_body_tests {
+    use super::*;
+    use ry_core::RParser;
+    use std::collections::HashSet;
+
+    /// The collection runs on a function body (its callers extract the
+    /// body from the literal first), so wrap the test source in one.
+    fn assigned(body_src: &str) -> HashSet<String> {
+        let src = format!("f <- function() {{\n{body_src}\n}}\n");
+        let file = RParser::new()
+            .expect("parser")
+            .parse("assigned_names_test.R", &src)
+            .expect("parse");
+        let [
+            Stmt::Assign {
+                value: Expr::Function { body, .. },
+                ..
+            },
+        ] = file.stmts.as_slice()
+        else {
+            panic!("test source must be a single `f <- function()` assignment");
+        };
+        assigned_names_in_body(body)
+    }
+
+    fn assert_exact(body_src: &str, expected: &[&str]) {
+        let found = assigned(body_src);
+        let expected: HashSet<String> = expected.iter().map(|name| name.to_string()).collect();
+        assert_eq!(found, expected, "names from body `{body_src}`");
+    }
+
+    /// A braced-block value carries statements, so `x` is assigned in
+    /// the enclosing body. A wildcard `Expr(_) => Skip` callback arm
+    /// pruned it -- the review blocker this pins.
+    #[test]
+    fn records_names_assigned_inside_braced_block_values() {
+        assert_exact("out <- { x <- 1; out }", &["out", "x"]);
+    }
+
+    /// `if` in expression position evaluates both branches in the
+    /// current environment, so bindings in either branch are locals.
+    #[test]
+    fn records_names_assigned_inside_if_expression_branches() {
+        assert_exact("res <- if (c) a else { b <- 1 }", &["res", "b"]);
+    }
+
+    /// Negative controls: the `for` iterator is a control test and the
+    /// `if`-expression condition is not walked, so assignments nested
+    /// there are not recorded even though R evaluates the test.
+    #[test]
+    fn does_not_record_control_test_assignments() {
+        assert_exact("for (i in g(a <- 1)) print(i)", &["i"]);
+        assert_exact("res <- if (mk(w <- 1)) a else b", &["res"]);
+    }
+
+    /// Names bound through `<-`/`<<-` in expression position are
+    /// recorded, but the left operand subtree is not walked (only the
+    /// bound identifier is recorded, matching R's unevaluated target).
+    #[test]
+    fn records_expression_position_assignment_names_without_walking_lhs() {
+        assert_exact("z <- (y <- f(x <- 1))", &["z", "y"]);
+    }
 }
 
 #[cfg(test)]

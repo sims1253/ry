@@ -275,7 +275,12 @@ mod tests {
 
     /// The policy knobs skip exactly their documented subtrees: the
     /// `$field` identifier, the `<-` LHS and `Stmt::Assign` target, the
-    /// function body, and the `if` condition.
+    /// function body, and the `if` condition. The combined off-policy
+    /// here is deliberately not per-knob proof: `assign_targets` and
+    /// `dollar_args` overlap on `field`, and `assign_operands` is never
+    /// exercised (no expression-position assignment). The companion
+    /// `assign_knobs_each_prune_a_subtree_only_they_reach` test isolates
+    /// those two knobs.
     #[test]
     fn policy_flags_skip_exactly_their_subtrees() {
         let src = "if (cond(x)) { d$field <- f(d$other, function(y) z) }";
@@ -308,6 +313,56 @@ mod tests {
             assert!(
                 skipped.contains(&name.to_string()),
                 "kept {name}: {skipped:?}"
+            );
+        }
+    }
+
+    /// Each assignment knob alone must prune a subtree only that knob
+    /// reaches. `assign_targets` is isolated from `dollar_args` with a
+    /// plain `[` subscript target (`arr[f(t)] <- ...`: no `$` argument
+    /// anywhere), and `assign_operands` gets an expression-position
+    /// assignment with a compound LHS (`out <- (m[j <- 1L] <- v)`),
+    /// whose inner `<-` LHS is only reachable through that knob. In
+    /// both cases the value side must stay visited.
+    #[test]
+    fn assign_knobs_each_prune_a_subtree_only_they_reach() {
+        let targets = visited(
+            "arr[f(t)] <- g(u)",
+            Walk {
+                assign_targets: false,
+                ..Walk::ALL
+            },
+        );
+        for name in ["arr", "f", "t"] {
+            assert!(
+                !targets.contains(&name.to_string()),
+                "assign_targets=false must skip the subscripted target {name}: {targets:?}"
+            );
+        }
+        for name in ["g", "u"] {
+            assert!(
+                targets.contains(&name.to_string()),
+                "the value side must stay visited: {targets:?}"
+            );
+        }
+
+        let operands = visited(
+            "out <- (m[j <- 1L] <- v)",
+            Walk {
+                assign_operands: false,
+                ..Walk::ALL
+            },
+        );
+        for name in ["m", "j"] {
+            assert!(
+                !operands.contains(&name.to_string()),
+                "assign_operands=false must skip the expression-position LHS {name}: {operands:?}"
+            );
+        }
+        for name in ["out", "v"] {
+            assert!(
+                operands.contains(&name.to_string()),
+                "the outer target and RHS must stay visited: {operands:?}"
             );
         }
     }

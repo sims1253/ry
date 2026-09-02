@@ -641,6 +641,14 @@ fn project_with(files: &[(&str, &str)]) -> Vec<(String, Vec<Diagnostic>)> {
     project.check()
 }
 
+/// Whether `path` (an absolute path key from `Project::check`) ends
+/// with the relative fixture path `rel` (written with `/` separators).
+/// `Path::ends_with` compares components, so this matches regardless
+/// of the platform's path separator.
+fn path_matches(path: &str, rel: &str) -> bool {
+    std::path::Path::new(path).ends_with(rel.split('/').collect::<std::path::PathBuf>())
+}
+
 #[test]
 fn cross_file_top_level_variables_resolve_between_files() {
     // File A defines a top-level binding whose RHS is not a function
@@ -664,7 +672,7 @@ fn cross_file_top_level_variables_resolve_between_files() {
         let diagnostics = project_with(&[("R/a.R", definition), ("R/b.R", use_src)]);
         let reader = diagnostics
             .iter()
-            .find(|(path, _)| path.ends_with("R/b.R"))
+            .find(|(path, _)| path_matches(path, "R/b.R"))
             .map(|(_, diags)| diags)
             .unwrap_or_else(|| panic!("{label}: R/b.R diagnostics missing"));
         assert!(
@@ -717,7 +725,7 @@ fn scripts_share_top_level_known_vars() {
     ]);
     let reader = diagnostics
         .iter()
-        .find(|(path, _)| path.ends_with("inst/examples/b.R"))
+        .find(|(path, _)| path_matches(path, "inst/examples/b.R"))
         .map(|(_, diags)| diags)
         .expect("reading script diagnostics");
     assert!(
@@ -746,7 +754,7 @@ fn testthat_script_sees_package_library_functions() {
     ]);
     let test = diagnostics
         .iter()
-        .find(|(path, _)| path.ends_with("tests/testthat/test-hidden.R"))
+        .find(|(path, _)| path_matches(path, "tests/testthat/test-hidden.R"))
         .map(|(_, diags)| diags)
         .expect("testthat script diagnostics");
     assert!(

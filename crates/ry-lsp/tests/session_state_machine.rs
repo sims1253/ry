@@ -42,7 +42,7 @@
 use proptest::collection;
 use proptest::prelude::*;
 use proptest::test_runner::{Config, RngAlgorithm, TestCaseError, TestRng, TestRunner};
-use ry_testkit::{FixtureProject, LspSession, file_uri};
+use ry_testkit::{FixtureProject, LspSession};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -51,8 +51,8 @@ use std::time::Duration;
 mod harness;
 
 use harness::{
-    ClientSession, SourceVariant, apply_incremental_edit, first_line_utf16_len, join_session,
-    normalize_diagnostics, sorted_diagnostics, spawn_session, sync_barrier,
+    ClientSession, SourceVariant, apply_incremental_edit, file_uri, first_line_utf16_len,
+    join_session, normalize_diagnostics, sorted_diagnostics, spawn_session, sync_barrier,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -412,7 +412,7 @@ fn file_path(fixture: &FixtureProject, slot: u8) -> PathBuf {
 }
 
 fn file_uri_str(fixture: &FixtureProject, slot: u8) -> String {
-    file_uri(&file_path(fixture, slot)).unwrap()
+    file_uri(&file_path(fixture, slot))
 }
 
 /// Write the current model's `ry.toml` to disk.
@@ -623,7 +623,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                     .write_file(FILES[*file as usize], source.text())
                     .unwrap();
                 model.disk_files.insert(*file, source.text().to_string());
-                let ry_toml_uri = file_uri(&fixture.path("ry.toml")).unwrap();
+                let ry_toml_uri = file_uri(&fixture.path("ry.toml"));
                 live.notify(
                     "workspace/didChangeWatchedFiles",
                     json!({"changes": [{"uri": ry_toml_uri, "type": 2}]}),
@@ -655,7 +655,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                 let path = file_path(&fixture, *file);
                 let _ = std::fs::remove_file(&path);
                 model.disk_files.remove(file);
-                let ry_toml_uri = file_uri(&fixture.path("ry.toml")).unwrap();
+                let ry_toml_uri = file_uri(&fixture.path("ry.toml"));
                 live.notify(
                     "workspace/didChangeWatchedFiles",
                     json!({"changes": [{"uri": ry_toml_uri, "type": 2}]}),
@@ -682,7 +682,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                 std::fs::rename(&from_path, &to_path).unwrap();
                 model.disk_files.remove(from);
                 model.disk_files.insert(*to, content);
-                let ry_toml_uri = file_uri(&fixture.path("ry.toml")).unwrap();
+                let ry_toml_uri = file_uri(&fixture.path("ry.toml"));
                 live.notify(
                     "workspace/didChangeWatchedFiles",
                     json!({"changes": [{"uri": ry_toml_uri, "type": 2}]}),
@@ -697,7 +697,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                     Vec::new()
                 };
                 write_config(&fixture, &model);
-                let ry_toml_uri = file_uri(&fixture.path("ry.toml")).unwrap();
+                let ry_toml_uri = file_uri(&fixture.path("ry.toml"));
                 live.notify(
                     "workspace/didChangeWatchedFiles",
                     json!({"changes": [{"uri": ry_toml_uri, "type": 2}]}),
@@ -708,7 +708,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
             Operation::EditBaseline { suppress } => {
                 model.baseline_suppress = *suppress;
                 write_baseline(&fixture, &model);
-                let baseline_uri = file_uri(&fixture.path("baseline.json")).unwrap();
+                let baseline_uri = file_uri(&fixture.path("baseline.json"));
                 live.notify(
                     "workspace/didChangeWatchedFiles",
                     json!({"changes": [{"uri": baseline_uri, "type": 2}]}),
@@ -722,7 +722,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                 fixture
                     .write_file(format!("{SECOND}/NAMESPACE"), content)
                     .unwrap();
-                let ns_uri = file_uri(&fixture.path(format!("{SECOND}/NAMESPACE"))).unwrap();
+                let ns_uri = file_uri(&fixture.path(format!("{SECOND}/NAMESPACE")));
                 live.notify(
                     "workspace/didChangeWatchedFiles",
                     json!({"changes": [{"uri": ns_uri, "type": 2}]}),
@@ -735,7 +735,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                 fixture
                     .write_file(format!("{SECOND}/DESCRIPTION"), content)
                     .unwrap();
-                let desc_uri = file_uri(&fixture.path(format!("{SECOND}/DESCRIPTION"))).unwrap();
+                let desc_uri = file_uri(&fixture.path(format!("{SECOND}/DESCRIPTION")));
                 live.notify(
                     "workspace/didChangeWatchedFiles",
                     json!({"changes": [{"uri": desc_uri, "type": 2}]}),
@@ -759,8 +759,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                 fixture
                     .write_file(format!("{SECOND}/typesheds/localdep.json"), &stub)
                     .unwrap();
-                let ts_uri =
-                    file_uri(&fixture.path(format!("{SECOND}/typesheds/localdep.json"))).unwrap();
+                let ts_uri = file_uri(&fixture.path(format!("{SECOND}/typesheds/localdep.json")));
                 live.notify(
                     "workspace/didChangeWatchedFiles",
                     json!({"changes": [{"uri": ts_uri, "type": 2}]}),
@@ -771,7 +770,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
             Operation::EditDiscoveryCaps { max_files } => {
                 model.max_files = *max_files as u64;
                 write_config(&fixture, &model);
-                let ry_toml_uri = file_uri(&fixture.path("ry.toml")).unwrap();
+                let ry_toml_uri = file_uri(&fixture.path("ry.toml"));
                 live.notify(
                     "workspace/didChangeWatchedFiles",
                     json!({"changes": [{"uri": ry_toml_uri, "type": 2}]}),
@@ -802,7 +801,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                 if model.second_folder {
                     continue;
                 }
-                let second_uri = file_uri(&fixture.path(SECOND)).unwrap();
+                let second_uri = file_uri(&fixture.path(SECOND));
                 live.notify(
                     "workspace/didChangeWorkspaceFolders",
                     json!({
@@ -820,7 +819,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                 if !model.second_folder {
                     continue;
                 }
-                let second_uri = file_uri(&fixture.path(SECOND)).unwrap();
+                let second_uri = file_uri(&fixture.path(SECOND));
                 live.notify(
                     "workspace/didChangeWorkspaceFolders",
                     json!({
@@ -1431,9 +1430,9 @@ async fn utf16_transcript() {
     fixture.write_file("main.R", SOURCE).unwrap();
     fixture.write_file("other.R", OTHER_SOURCE).unwrap();
     fixture.write_file("disk.R", DISK_SOURCE).unwrap();
-    let main_uri = file_uri(&fixture.path("main.R")).unwrap();
-    let other_uri = file_uri(&fixture.path("other.R")).unwrap();
-    let disk_uri = file_uri(&fixture.path("disk.R")).unwrap();
+    let main_uri = file_uri(&fixture.path("main.R"));
+    let other_uri = file_uri(&fixture.path("other.R"));
+    let disk_uri = file_uri(&fixture.path("disk.R"));
     let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
     let (client_reader, client_writer) = tokio::io::split(client_stream);
     let (server_reader, server_writer) = tokio::io::split(server_stream);
@@ -1598,7 +1597,7 @@ fn close_reopen_publishes_diagnostics_again() {
 async fn close_reopen_republishes() {
     let fixture = FixtureProject::empty().unwrap();
     fixture.write_file("a.R", INITIAL_DISK).unwrap();
-    let uri = file_uri(&fixture.path("a.R")).unwrap();
+    let uri = file_uri(&fixture.path("a.R"));
     let (mut session, server) = spawn_session(&[fixture.root()]).await;
 
     // Barrier + mark before the open, the same pattern

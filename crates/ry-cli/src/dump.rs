@@ -670,7 +670,7 @@ pub(crate) fn run_dump_types(
             .or_else(|| project_root.clone())
             .or_else(|| config_root.clone())
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-        let package_scope = ry_workspace::resolve_workspace_context(
+        let mut package_scope = ry_workspace::resolve_workspace_context(
             &resolution_root,
             &cfg,
             ry_workspace::ResolutionEnvironment {
@@ -689,7 +689,10 @@ pub(crate) fn run_dump_types(
                 )
             })
             .collect();
-        let (workspace, degraded_scopes) = pipeline::workspace_context(package_scope);
+        // Split the resolved workspace into checker input (with an empty
+        // `degraded_scopes`) and the notes this command reports itself.
+        let degraded_scopes = std::mem::take(&mut package_scope.degraded_scopes);
+        let workspace = package_scope;
         let check_input = check::CheckInput {
             files: analysis_files,
             user_stubs: std::sync::Arc::clone(&user_stubs),

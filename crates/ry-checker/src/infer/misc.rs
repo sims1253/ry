@@ -781,7 +781,7 @@ pub(crate) fn collect_forwarded_calls_in_expr(
     match expr {
         Expr::Call { func, args, .. } => {
             if let Expr::Ident { name, .. } = func.as_ref() {
-                let callee = name.rsplit_once("::").map(|(_, name)| name).unwrap_or(name);
+                let callee = crate::semantic_lists::bare_name(name);
                 calls.push(ForwardedCall {
                     caller: caller.to_string(),
                     callee: callee.to_string(),
@@ -1090,10 +1090,6 @@ fn first_executed_identifier_in_stmt(
     }
 }
 
-fn is_defusing_call(name: &str) -> bool {
-    DEFUSING_CALLS.contains(&crate::semantic_lists::bare_name(name))
-}
-
 fn first_executed_identifier(
     expr: &Expr,
     wanted: &str,
@@ -1106,7 +1102,7 @@ fn first_executed_identifier(
             if callee.is_some_and(|name| {
                 let qualified_defuser = name.rsplit_once("::").is_some_and(|(package, _)| {
                     matches!(package.trim_end_matches(':'), "base" | "rlang")
-                        && is_defusing_call(name)
+                        && DEFUSING_CALLS.contains(&crate::semantic_lists::bare_name(name))
                 });
                 name == "missing" || qualified_defuser || trusted_defusers.contains(name)
             }) {
@@ -1831,6 +1827,7 @@ pub(crate) fn build_named_schema(arg_types: &[RType], args: &[Arg]) -> Option<Co
 /// list indexing semantics.
 pub(crate) fn build_data_frame_schema(arg_types: &[RType], args: &[Arg]) -> Option<ColumnSchema> {
     let mut schema = build_named_schema(arg_types, args)?;
+    debug_assert_eq!(schema.columns.len(), args.len());
     for ((name, _), arg) in schema.columns.iter_mut().zip(args) {
         if arg.name.is_none() {
             let Expr::Ident { name: symbol, .. } = &arg.value else {
@@ -1884,7 +1881,7 @@ pub(crate) fn json_rtype_to_rtype(jt: &JsonRType) -> RType {
     let cols: Vec<(String, RType)> = jt
         .columns
         .iter()
-        .map(|(name, child)| (name.clone(), json_rtype_to_rtype_shallow(child)))
+        .map(|(name, child)| (name.clone(), json_rtype_scalar(child)))
         .collect();
     let schema = Arc::new(ColumnSchema {
         columns: cols,
@@ -1894,22 +1891,21 @@ pub(crate) fn json_rtype_to_rtype(jt: &JsonRType) -> RType {
     base.with_columns(schema)
 }
 
-/// Single-level variant of `json_rtype_to_rtype` for column entries
-/// inside a dataset schema. Identical to the parent function except it
-/// ignores any `columns` field on the child (data-frame columns are
-/// plain atomic vectors in the typeshed; nested data frames are out of
-/// scope for v1).
-pub(crate) fn json_rtype_to_rtype_shallow(jt: &JsonRType) -> RType {
-    json_rtype_scalar(jt)
-}
-
-fn json_rtype_scalar(jt: &JsonRType) -> RType {
-    let length = match JsonLength::parse(&jt.length) {
+/// Map a parsed `JsonLength` to the checker's `Length`. Literal lengths
+/// map exactly; every arg-derived spec (`arg0`, `longest_arg`, ...) and a
+/// missing spec map to `Length::Unknown`, so callers that resolve those
+/// specs contextually must do so before falling back to this.
+pub(crate) fn json_length_to_length(spec: Option<JsonLength>) -> Length {
+    match spec {
         Some(JsonLength::Known(0)) => Length::Zero,
         Some(JsonLength::Known(1)) => Length::One,
         Some(JsonLength::Known(value)) => Length::Known(value),
         _ => Length::Unknown,
-    };
+    }
+}
+
+pub(crate) fn json_rtype_scalar(jt: &JsonRType) -> RType {
+    let length = json_length_to_length(JsonLength::parse(&jt.length));
     if matches!(JsonMode::parse(&jt.mode), Some(JsonMode::Union)) {
         let members: Vec<RType> = jt
             .members

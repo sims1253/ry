@@ -41,15 +41,11 @@ impl Checker {
                         "RY070",
                         format!("cannot call a value of mode `{}`", mode),
                     );
-                    for a in args {
-                        self.infer(&a.value, scope);
-                    }
+                    self.infer_args_for_diagnostics(args, scope);
                     return RType::unknown();
                 }
                 self.infer(func, scope);
-                for a in args {
-                    self.infer(&a.value, scope);
-                }
+                self.infer_args_for_diagnostics(args, scope);
                 return RType::unknown();
             }
         };
@@ -61,19 +57,9 @@ impl Checker {
         if name.contains("::")
             && let Some(value_type) = self.resolve_typeshed_value(&name)
         {
-            self.emit(
-                Severity::Error,
-                span,
-                "RY070",
-                format!(
-                    "`{}` is `{}`, not a function; cannot call it",
-                    name, value_type.mode
-                ),
-            );
-            for argument in args {
-                self.infer(&argument.value, scope);
-            }
-            return RType::unknown();
+            let result = self.emit_not_callable(&name, value_type.mode, span);
+            self.infer_args_for_diagnostics(args, scope);
+            return result;
         }
 
         // For namespace-qualified calls (`pkg::fn(args)`), strip the
@@ -388,17 +374,13 @@ impl Checker {
 
         if semantic_name == "load" {
             scope.mark_search_path_unknown();
-            for argument in args {
-                let _ = self.infer(&argument.value, scope);
-            }
+            self.infer_args_for_diagnostics(args, scope);
             if let Some(bindings) = self.load_bindings.get(&span.start).cloned() {
                 for binding in bindings {
                     if binding == ry_core::SERIALIZED_BINDINGS_UNENUMERABLE {
-                        // Oversized workspaces now fall back to a file-stem
-                        // binding at scope-construction time (see
-                        // `serialized_inventory`), so this marker no longer
-                        // reaches `load_bindings`. Kept defensively: an
-                        // unenumerable workspace may introduce any binding.
+                        // An unenumerable workspace may introduce any
+                        // binding, so open the search path instead of
+                        // enumerating names.
                         scope.mark_search_path_unknown();
                     } else {
                         scope.insert(binding, RType::unknown());
@@ -483,9 +465,7 @@ impl Checker {
         // to the base case.)
         if semantic_name == "factor" {
             // Infer args so unbound-variable diagnostics still fire.
-            for a in args {
-                let _ = self.infer(&a.value, scope);
-            }
+            self.infer_args_for_diagnostics(args, scope);
             return RType::new(Mode::Integer, Length::Unknown)
                 .with_class(ClassVector::single("factor"));
         }
@@ -869,13 +849,7 @@ impl Checker {
                         // "could not find function". Args have already been
                         // inferred above, so we just emit and return opaque
                         // (re-inferring would double-emit arg diagnostics).
-                        self.emit(
-                            Severity::Error,
-                            span,
-                            "RY070",
-                            format!("`{}` is `{}`, not a function; cannot call it", name, t.mode),
-                        );
-                        return RType::unknown();
+                        return self.emit_not_callable(&name, t.mode, span);
                     }
                     // A function exists elsewhere; fall through to resolve it
                     // (the local non-function binding is ignored at the call
@@ -891,16 +865,7 @@ impl Checker {
         if scope.get(&lookup_name).is_none()
             && let Some(value_type) = self.resolve_typeshed_value(&name)
         {
-            self.emit(
-                Severity::Error,
-                span,
-                "RY070",
-                format!(
-                    "`{}` is `{}`, not a function; cannot call it",
-                    name, value_type.mode
-                ),
-            );
-            return RType::unknown();
+            return self.emit_not_callable(&name, value_type.mode, span);
         }
 
         // Built-in: `c(...)` concatenates and produces the common mode.
@@ -1053,6 +1018,28 @@ impl Checker {
 
         // Unknown function: opaque.
         RType::unknown()
+    }
+
+    /// Emit RY070 for a call to a name whose type is known to be a
+    /// non-function value, and return the opaque result every such site
+    /// yields.
+    fn emit_not_callable(&mut self, name: &str, mode: Mode, span: Span) -> RType {
+        self.emit(
+            Severity::Error,
+            span,
+            "RY070",
+            format!("`{}` is `{}`, not a function; cannot call it", name, mode),
+        );
+        RType::unknown()
+    }
+
+    /// Infer every argument of a call for diagnostics only, discarding the
+    /// types. The shared tail of the call paths that reject a call shape
+    /// before argument types are needed.
+    pub(crate) fn infer_args_for_diagnostics(&mut self, args: &[Arg], scope: &mut Scope) {
+        for argument in args {
+            let _ = self.infer(&argument.value, scope);
+        }
     }
 
     pub(crate) fn try_s4_dispatch(&self, generic: &str, arg_types: &[RType]) -> Option<RType> {
@@ -1213,15 +1200,14 @@ impl Checker {
             }
         }
 
-        let mut returns = members.iter().map(|member| {
+        let returns = members.iter().map(|member| {
             member
                 .fn_sig
                 .as_ref()
                 .map(|signature| (*signature.return_type).clone())
                 .unwrap_or_else(RType::unknown)
         });
-        let first = returns.next().unwrap_or_else(RType::unknown);
-        Some(returns.fold(first, RType::join))
+        Some(join_all(returns))
     }
 
     /// The names declared in the `public` / `private` / `active` lists of an

@@ -203,14 +203,3 @@ where
     }
     groups
 }
-
-/// Split a resolved workspace into checker input and degraded-scope
-/// notes. The checker copy starts with `degraded_scopes` empty; both
-/// commands report the notes themselves (`check` in the summary line,
-/// `dump-types` on stderr) instead of feeding them to the checker.
-pub(crate) fn workspace_context(
-    mut scope: ry_workspace::WorkspaceContext,
-) -> (ry_workspace::WorkspaceContext, Vec<(PathBuf, &'static str)>) {
-    let degraded_scopes = std::mem::take(&mut scope.degraded_scopes);
-    (scope, degraded_scopes)
-}

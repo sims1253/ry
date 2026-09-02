@@ -217,6 +217,18 @@ pub enum BinOpKind {
     PipeAssign,
 }
 
+impl BinOpKind {
+    /// Whether `self` is one of R's seven arithmetic operators (the Arith
+    /// members without the group dispatch machinery): `+ - * / ^ %% %/%`.
+    /// Comparison, logic, and sequence operators are excluded.
+    pub fn is_arithmetic(self) -> bool {
+        matches!(
+            self,
+            Self::Add | Self::Sub | Self::Mul | Self::Div | Self::Pow | Self::Mod | Self::IDiv
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOpKind {
     Neg,

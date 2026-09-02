@@ -1,6 +1,9 @@
 use super::*;
 use crate::infer::*;
 
+/// `HigherOrderSpec` argument indices name formal slots, never raw call
+/// positions. One ordinary R argument match drives callback, source,
+/// length, and template lookup throughout the higher-order path.
 fn higher_order_argument_match(params: &[ParamSpec], args: &[Arg]) -> ArgumentMatch {
     let names = params
         .iter()
@@ -32,15 +35,8 @@ fn argument_bound_to_formal<'a>(
     matched_argument_index(argument_match, formal_index).and_then(|index| args.get(index))
 }
 
-/// `HigherOrderSpec` argument indices name formal slots, never raw call
-/// positions. Build one ordinary R argument match and use it for callback,
-/// source, length, and template lookup throughout the higher-order path.
-struct HigherOrderCall<'a> {
-    args: &'a [Arg],
-    arg_types: &'a [RType],
-    argument_match: &'a ArgumentMatch,
-}
-
+/// With a `...` formal, every unmatched actual is part of dots (see
+/// `higher_order_argument_match` for the shared match).
 fn arguments_bound_to_dots<'a>(
     arg_types: &'a [RType],
     argument_match: &'a ArgumentMatch,
@@ -73,12 +69,7 @@ impl Checker {
         let signature = self.resolve_typeshed_sig(name)?;
         let spec = signature.higher_order.as_ref()?;
         let argument_match = higher_order_argument_match(&signature.params, args);
-        let call = HigherOrderCall {
-            args,
-            arg_types,
-            argument_match: &argument_match,
-        };
-        Some(self.infer_ho_result(name, spec, &call, scope, span))
+        Some(self.infer_ho_result(name, spec, args, arg_types, &argument_match, scope, span))
     }
 
     /// Per-builtin result-type computation. Used by both pass 2 (pure,
@@ -86,17 +77,17 @@ impl Checker {
     /// the pass-3 entry point: it calls `self.infer` on data
     /// arguments (which may emit RY010 etc.) before computing the
     /// element type.
+    #[allow(clippy::too_many_arguments)]
     fn infer_ho_result(
         &mut self,
         name: &str,
         spec: &HigherOrderSpec,
-        call: &HigherOrderCall<'_>,
+        args: &[Arg],
+        arg_types: &[RType],
+        argument_match: &ArgumentMatch,
         scope: &Scope,
         span: Span,
     ) -> RType {
-        let args = call.args;
-        let arg_types = call.arg_types;
-        let argument_match = call.argument_match;
         let callback_types = self.higher_order_callback_types(spec, arg_types, argument_match);
         let callback = argument_bound_to_formal(args, argument_match, spec.callback_position)
             .map(|argument| &argument.value);
@@ -139,7 +130,7 @@ impl Checker {
                     && let Some(return_type) = &callback_return
                     && !modes_compatible(&return_type.mode, &mode)
                 {
-                    let bare_name = name.rsplit_once("::").map(|(_, bare)| bare).unwrap_or(name);
+                    let bare_name = crate::semantic_lists::bare_name(name);
                     self.emit(
                         Severity::Warning,
                         span,
@@ -405,11 +396,8 @@ impl Checker {
                 // Strip any `pkg::` namespace prefix so a qualified
                 // callback name (`base::sqrt` passed to `sapply`)
                 // resolves against the same entries as the bare name.
-                // `rsplit_once("::")` handles both `::` and `:::`.
-                let lookup_name = name
-                    .rsplit_once("::")
-                    .map(|(_, n)| n)
-                    .unwrap_or(name.as_str());
+                // `bare_name` handles both `::` and `:::`.
+                let lookup_name = crate::semantic_lists::bare_name(name);
                 // Bound closure value in scope?
                 if let Some(t) = scope.get(lookup_name) {
                     if matches!(t.mode, Mode::Function) {
@@ -423,15 +411,14 @@ impl Checker {
                         && !members.is_empty()
                         && members.iter().all(|member| member.mode == Mode::Function)
                     {
-                        let mut returns = members.iter().map(|member| {
+                        let returns = members.iter().map(|member| {
                             member
                                 .fn_sig
                                 .as_ref()
                                 .map(|signature| (*signature.return_type).clone())
                                 .unwrap_or_else(RType::unknown)
                         });
-                        let first = returns.next().unwrap_or_else(RType::unknown);
-                        return Some(returns.fold(first, RType::join));
+                        return Some(join_all(returns));
                     }
                 }
                 // User-defined function in the FnTable?

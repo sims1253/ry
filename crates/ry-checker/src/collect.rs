@@ -1,5 +1,6 @@
 use super::*;
 use crate::infer::*;
+use crate::semantic_lists::bare_name;
 
 impl Checker {
     pub(crate) fn collect_fns(&mut self, stmts: &[Stmt]) {
@@ -161,7 +162,7 @@ impl Checker {
         match e {
             Expr::Call { func, args, .. } => {
                 if let Expr::Ident { name, .. } = func.as_ref() {
-                    let bare = name.rsplit_once("::").map(|(_, n)| n).unwrap_or(name);
+                    let bare = bare_name(name);
                     Arc::make_mut(&mut self.fn_table)
                         .call_sites
                         .entry(bare.to_string())
@@ -590,7 +591,7 @@ fn captures_all_arguments(expression: &Expr) -> bool {
     matches!(
         expression,
         Expr::Call { func, .. }
-            if matches!(bare_call_name(func), Some("match.call" | "sys.call"))
+            if matches!(ident_name(func).map(bare_name), Some("match.call" | "sys.call"))
     )
 }
 
@@ -601,7 +602,7 @@ fn quotes_parameter(expression: &Expr, parameter: &str) -> bool {
     let Expr::Call { func, args, .. } = expression else {
         return false;
     };
-    (matches!(bare_call_name(func), Some("substitute"))
+    (matches!(ident_name(func).map(bare_name), Some("substitute"))
         && args
             .first()
             .is_some_and(|argument| is_parameter(&argument.value, parameter)))
@@ -609,7 +610,7 @@ fn quotes_parameter(expression: &Expr, parameter: &str) -> bool {
             && args
                 .first()
                 .is_some_and(|argument| is_parameter(&argument.value, parameter)))
-        || (matches!(bare_call_name(func), Some("bquote"))
+        || (matches!(ident_name(func).map(bare_name), Some("bquote"))
             && args
                 .iter()
                 .any(|argument| bquote_references_parameter(&argument.value, parameter)))
@@ -746,15 +747,11 @@ fn unquotes_parameter(expression: &Expr, parameter: &str) -> bool {
     matches!(
         expression,
         Expr::Call { func, args, .. }
-            if matches!(bare_call_name(func), Some("."))
+            if matches!(ident_name(func).map(bare_name), Some("."))
                 && args
                     .iter()
                     .any(|argument| is_parameter(&argument.value, parameter))
     )
-}
-
-fn bare_call_name(expression: &Expr) -> Option<&str> {
-    ident_name(expression).map(|name| name.rsplit_once("::").map(|(_, bare)| bare).unwrap_or(name))
 }
 
 fn is_parameter(expression: &Expr, parameter: &str) -> bool {
@@ -846,10 +843,13 @@ fn collect_parameter_uses_in_expr(expression: &Expr, parameter: &str, uses: &mut
             }
         }
         Expr::Call { func, args, .. } => {
-            let probes_promise = matches!(bare_call_name(func), Some("missing"));
+            let probes_promise = matches!(ident_name(func).map(bare_name), Some("missing"));
             let defuses_direct_argument = is_single_promise_capture(func)
                 || is_dots_promise_capture(func)
-                || matches!(bare_call_name(func), Some("match.call" | "substitute"));
+                || matches!(
+                    ident_name(func).map(bare_name),
+                    Some("match.call" | "substitute")
+                );
             collect_parameter_uses_in_expr(func, parameter, uses);
             for argument in args {
                 if matches!(&argument.value, Expr::Ident { name, .. } if name == parameter) {
@@ -960,7 +960,7 @@ fn first_parameter_use_in_expr(expression: &Expr, parameter: &str) -> Option<Fir
             let defuses_direct_argument = is_single_promise_capture(func)
                 || is_dots_promise_capture(func)
                 || matches!(
-                    bare_call_name(func),
+                    ident_name(func).map(bare_name),
                     Some("substitute" | "match.call" | "bquote")
                 );
             if defuses_direct_argument

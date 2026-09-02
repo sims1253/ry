@@ -91,7 +91,7 @@ fn string_literals(expr: &Expr) -> Vec<String> {
             let Some(name) = ident_name(func) else {
                 return Vec::new();
             };
-            let bare = name.rsplit_once("::").map(|(_, n)| n).unwrap_or(name);
+            let bare = crate::semantic_lists::bare_name(name);
             if bare != "c" {
                 return Vec::new();
             }
@@ -224,20 +224,10 @@ fn split_s3_operator_method_name(name: &str) -> Option<(&'static str, String)> {
     })
 }
 
-struct EnvironmentProfile {
-    bindings: &'static [&'static str],
-    path_trigger: fn(&str) -> bool,
-}
-
-// One built-in profile: Shiny application fragments. User-defined profiles
-// (named, path-glob-triggered) come from `ry.toml` `[[environments]]` and are
-// threaded through the CLI config instead.
-const BUILTIN_ENVIRONMENTS: &[EnvironmentProfile] = &[EnvironmentProfile {
-    bindings: crate::semantic_lists::BUILTIN_ENVIRONMENT_BINDINGS,
-    path_trigger: is_shiny_app_fragment_path,
-}];
-
 /// Whether a file is plausibly sourced into a Shiny application server.
+/// This is ry's one built-in ambient-environment extension; user-defined
+/// profiles (named, path-glob-triggered) come from `ry.toml`
+/// `[[environments]]` and are threaded through the CLI config instead.
 fn is_shiny_app_fragment_path(path: &str) -> bool {
     use std::path::Path;
 
@@ -329,11 +319,20 @@ impl Scope {
 
     pub(crate) fn insert_parameter_default(&mut self, name: impl Into<String>, t: RType) {
         let name = name.into();
-        self.function_aliases.remove(&name);
+        // Unlike a plain rebinding, a defaulted parameter shadows its
+        // captured-scope namesake without disturbing the lexical-function
+        // and list-origin markers (`insert` would clear both).
+        let was_lexical_function = self.lexical_functions.contains(&name);
+        let was_list_origin = self.list_origin_bindings.contains(&name);
+        self.insert(name.clone(), t);
+        if was_lexical_function {
+            self.lexical_functions.insert(name.clone());
+        }
+        if was_list_origin {
+            self.list_origin_bindings.insert(name.clone());
+        }
         self.parameter_bindings.insert(name.clone());
-        self.default_parameter_bindings.insert(name.clone());
-        self.narrowed_bindings.remove(&name);
-        self.bindings.insert(name, t);
+        self.default_parameter_bindings.insert(name);
     }
 
     pub(crate) fn mark_list_origin(&mut self, name: impl Into<String>) {
@@ -435,7 +434,7 @@ pub(crate) struct UserFn {
     pub(crate) return_slot: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct UserParam {
     pub(crate) name: String,
     pub(crate) type_: RType,
@@ -452,32 +451,13 @@ pub(crate) struct UserParam {
 /// function's inferred return type is unchanged.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CallerVisibleSignature {
-    parameters: Vec<CallerVisibleParameter>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct CallerVisibleParameter {
-    name: String,
-    type_: RType,
-    required: bool,
-    defused: bool,
-    quoting: bool,
+    parameters: Vec<UserParam>,
 }
 
 impl UserFn {
     pub(crate) fn caller_visible_signature(&self) -> CallerVisibleSignature {
         CallerVisibleSignature {
-            parameters: self
-                .params
-                .iter()
-                .map(|parameter| CallerVisibleParameter {
-                    name: parameter.name.clone(),
-                    type_: parameter.type_.clone(),
-                    required: parameter.required,
-                    defused: parameter.defused,
-                    quoting: parameter.quoting,
-                })
-                .collect(),
+            parameters: self.params.clone(),
         }
     }
 
@@ -496,10 +476,7 @@ impl UserFn {
             return false;
         }
         for (current, previous) in self.params.iter_mut().zip(&signature.parameters) {
-            current.type_ = previous.type_.clone();
-            current.required = previous.required;
-            current.defused = previous.defused;
-            current.quoting = previous.quoting;
+            *current = previous.clone();
         }
         true
     }
@@ -743,15 +720,43 @@ impl Checker {
     }
 
     pub fn check(&mut self, file: &SourceFile) -> &[Diagnostic] {
+        // Passes 1-2 (collect + fixpoint) reset every derived table first,
+        // so a second `check` on the same instance starts fresh rather
+        // than accumulating the previous run's functions, known-vars, and
+        // diagnostics.
+        self.run_passes(file);
+
+        // Pass 3: final walk, emitting all diagnostics. Function calls
+        // now resolve against the refined FnTable.
+        self.emit_diagnostics(file);
+        &self.diagnostics
+    }
+
+    // Check a file and return both diagnostics and the final top-level
+    // scope. Used by the LSP server's scope cache: the scope maps variable
+    // names to their inferred types, feeding inlay hint lookups.
+    pub fn check_with_scope(&mut self, file: &SourceFile) -> (Vec<Diagnostic>, Scope) {
+        self.run_passes(file);
+        // Emit parse errors after the collection/refinement passes (both
+        // run with emission suppressed), so RY000s lead the diagnostic
+        // vector rather than being wiped or buried by it.
+        self.emit_parse_errors(file);
+        let mut scope = self.top_level_scope();
+        for s in &file.stmts {
+            self.check_stmt(s, &mut scope);
+        }
+        (std::mem::take(&mut self.diagnostics), scope)
+    }
+
+    /// The shared prologue of [`check`](Self::check) and
+    /// [`check_with_scope`](Self::check_with_scope): set the source seams,
+    /// clear the previous run's diagnostics and derived tables, run pass 1
+    /// (collection) and pass 2 (the return-type fixpoint), and refresh
+    /// `known_vars` from the refined table. Emits nothing: collection is
+    /// silent by design and the fixpoint forces discarding mode.
+    fn run_passes(&mut self, file: &SourceFile) {
         self.path = file.path.clone();
         self.source.clone_from(&file.source);
-
-        // Clear diagnostics FIRST so a second `check` on the same
-        // instance starts fresh rather than accumulating the previous
-        // run's diagnostics. Also reset the function table and return
-        // slots: `collect_fns` appends to the table, so without a reset
-        // a reused Checker leaks functions and known-vars from the
-        // previous file into the current check.
         self.diagnostics.clear();
         self.fn_table = Arc::new(FnTable::default());
         self.return_slots = Arc::new(ReturnSlots::default());
@@ -765,36 +770,6 @@ impl Checker {
         // until the table stabilizes or we hit MAX_FIXPOINT_DEPTH.
         self.run_fixpoint();
         self.known_vars = Arc::new(self.fn_table.known_vars.clone());
-
-        // Pass 3: final walk, emitting all diagnostics. Function calls
-        // now resolve against the refined FnTable.
-        self.emit_diagnostics(file);
-        &self.diagnostics
-    }
-
-    // Check a file and return both diagnostics and the final top-level
-    // scope. Used by the LSP server's scope cache: the scope maps variable
-    // names to their inferred types, feeding inlay hint lookups.
-    pub fn check_with_scope(&mut self, file: &SourceFile) -> (Vec<Diagnostic>, Scope) {
-        self.path = file.path.clone();
-        self.source.clone_from(&file.source);
-        // Clear diagnostics FIRST so we start fresh (the caller may call
-        // this multiple times on the same checker instance), THEN emit
-        // parse errors. The previous order emitted RY000s and then wiped
-        // them with `clear()`, so this API path never surfaced syntax
-        // errors.
-        self.diagnostics.clear();
-        self.fn_table = Arc::new(FnTable::default());
-        self.return_slots = Arc::new(ReturnSlots::default());
-        self.emit_parse_errors(file);
-        self.collect_fns(&file.stmts);
-        self.run_fixpoint();
-        self.known_vars = Arc::new(self.fn_table.known_vars.clone());
-        let mut scope = self.top_level_scope();
-        for s in &file.stmts {
-            self.check_stmt(s, &mut scope);
-        }
-        (std::mem::take(&mut self.diagnostics), scope)
     }
 
     // Construct a checker that uses pre-populated function tables.
@@ -1314,11 +1289,8 @@ impl Checker {
         {
             scope.mark_search_path_unknown();
         }
-        for profile in BUILTIN_ENVIRONMENTS {
-            if !(profile.path_trigger)(&self.path) {
-                continue;
-            }
-            for name in profile.bindings {
+        if is_shiny_app_fragment_path(&self.path) {
+            for name in crate::semantic_lists::BUILTIN_ENVIRONMENT_BINDINGS {
                 scope.insert(*name, RType::unknown());
             }
         }

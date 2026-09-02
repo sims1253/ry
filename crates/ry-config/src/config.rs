@@ -45,26 +45,14 @@ const DEFAULT_INDEX_MAX_DEPTH: u64 = 64;
 #[serde(default, deny_unknown_fields)]
 pub struct IndexConfig {
     /// Maximum number of R source files discovered per root. Default: 20,000.
-    #[serde(alias = "max-files", default = "default_index_max_files")]
+    #[serde(alias = "max-files")]
     pub max_files: u64,
     /// Maximum size in bytes of a single R file to include. Default: 2 MiB.
-    #[serde(alias = "max-file-bytes", default = "default_index_max_file_bytes")]
+    #[serde(alias = "max-file-bytes")]
     pub max_file_bytes: u64,
     /// Maximum directory depth to descend from each root. Default: 64.
-    #[serde(alias = "max-depth", default = "default_index_max_depth")]
+    #[serde(alias = "max-depth")]
     pub max_depth: u64,
-}
-
-fn default_index_max_files() -> u64 {
-    DEFAULT_INDEX_MAX_FILES
-}
-
-fn default_index_max_file_bytes() -> u64 {
-    DEFAULT_INDEX_MAX_FILE_BYTES
-}
-
-fn default_index_max_depth() -> u64 {
-    DEFAULT_INDEX_MAX_DEPTH
 }
 
 impl Default for IndexConfig {

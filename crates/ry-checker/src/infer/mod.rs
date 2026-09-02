@@ -10,6 +10,17 @@ pub(crate) mod misc;
 pub(crate) mod pipe;
 pub(crate) mod recall;
 
+/// Join an entire collection of types into one: the lattice join of every
+/// element, with `unknown` for an empty collection (no branch contributes
+/// a type). The fold seeds from the first element because `RType::join`
+/// is absorbing for opaque: seeding with `unknown()` would collapse every
+/// collection. Shared by the return-collection sites that used to
+/// hand-roll `iter.next().unwrap_or(...) + fold`.
+pub(crate) fn join_all(mut types: impl Iterator<Item = RType>) -> RType {
+    let first = types.next().unwrap_or(RType::unknown());
+    types.fold(first, RType::join)
+}
+
 /// The diagnostic family appropriate for a known condition type. Opaque
 /// conditions deliberately remain silent: the runtime value may be logical.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -84,7 +95,7 @@ fn expression_has_list_origin(expression: &Expr, scope: &Scope) -> bool {
     match expression {
         Expr::Call { func, .. } => ident_name(func).is_some_and(|name| {
             matches!(
-                name.rsplit_once("::").map(|(_, bare)| bare).unwrap_or(name),
+                crate::semantic_lists::bare_name(name),
                 "list" | "lapply" | "Map"
             )
         }),
@@ -103,10 +114,7 @@ fn vector_intent_parameters(params: &[Param], body: &[Stmt]) -> HashSet<String> 
         match expr {
             Expr::Call { func, args, .. } => {
                 if ident_name(func).is_some_and(|name| {
-                    matches!(
-                        name.rsplit_once("::").map(|(_, bare)| bare).unwrap_or(name),
-                        "paste" | "paste0"
-                    )
+                    matches!(crate::semantic_lists::bare_name(name), "paste" | "paste0")
                 }) && args
                     .iter()
                     .any(|argument| matches!(argument.name.as_deref(), Some("collapse")))
@@ -198,18 +206,9 @@ fn vector_intent_parameters(params: &[Param], body: &[Stmt]) -> HashSet<String> 
 
 fn discarded_value_expression(expression: &Expr) -> bool {
     match expression {
-        Expr::BinOp { op, .. } => matches!(
-            op,
-            BinOpKind::Add
-                | BinOpKind::Sub
-                | BinOpKind::Mul
-                | BinOpKind::Div
-                | BinOpKind::Pow
-                | BinOpKind::Mod
-                | BinOpKind::IDiv
-        ),
+        Expr::BinOp { op, .. } => op.is_arithmetic(),
         Expr::Call { func, .. } => ident_name(func).is_some_and(|name| {
-            let bare = name.rsplit_once("::").map(|(_, bare)| bare).unwrap_or(name);
+            let bare = crate::semantic_lists::bare_name(name);
             matches!(bare, "paste" | "paste0" | "sprintf")
                 || bare.starts_with("read_")
                 || bare.starts_with("read.")
@@ -360,9 +359,7 @@ impl Checker {
                 );
                 let narrowing = self.extract_type_narrowing(cond, scope);
                 let has_else = else_.is_some();
-                let (then_scope, else_scope, narrowed) = apply_narrowing(scope, &narrowing);
-                let mut then_scope = then_scope;
-                let mut else_scope = else_scope;
+                let (mut then_scope, mut else_scope, narrowed) = apply_narrowing(scope, &narrowing);
                 for s in then {
                     self.walk_stmt(s, &mut then_scope, returns.as_deref_mut());
                 }
@@ -558,11 +555,8 @@ impl Checker {
         let has_ry100 = self.diagnostics[diagnostic_start..]
             .iter()
             .any(|diagnostic| diagnostic.code == "RY100");
-        if matches!(
-            condition_diagnostic(&ct),
-            Some(ConditionDiagnostic::Invalid)
-        ) && !has_ry100
-        {
+        let condition = condition_diagnostic(&ct);
+        if matches!(condition, Some(ConditionDiagnostic::Invalid)) && !has_ry100 {
             self.emit(
                 Severity::Error,
                 span_of(cond),
@@ -573,10 +567,8 @@ impl Checker {
                     ct
                 ),
             );
-        } else if matches!(
-            condition_diagnostic(&ct),
-            Some(ConditionDiagnostic::Numeric)
-        ) && !has_ry100
+        } else if matches!(condition, Some(ConditionDiagnostic::Numeric))
+            && !has_ry100
             && !is_numeric_truthiness_idiom(cond, scope)
         {
             self.emit(
@@ -644,15 +636,12 @@ impl Checker {
     /// Bind names assigned by a loop body before walking it. A binding may
     /// have been established by a previous iteration, even when its first
     /// assignment is textually later than its use in the body.
-    fn insert_loop_carried_bindings(&self, body: &[Stmt], scope: &mut Scope) -> HashSet<String> {
-        let mut prebound = HashSet::new();
+    fn insert_loop_carried_bindings(&self, body: &[Stmt], scope: &mut Scope) {
         for name in assigned_names_in_body(body) {
             if scope.get(&name).is_none() {
-                scope.insert(name.clone(), RType::unknown());
-                prebound.insert(name);
+                scope.insert(name, RType::unknown());
             }
         }
-        prebound
     }
 
     /// Merge bindings introduced inside the two `if` branches back into the
@@ -821,11 +810,7 @@ impl Checker {
                 let Some(name) = ident_name(func) else {
                     return false;
                 };
-                if name == "UseMethod"
-                    || name
-                        .rsplit_once("::")
-                        .is_some_and(|(_, bare)| bare == "UseMethod")
-                {
+                if name == "UseMethod" || crate::semantic_lists::bare_name(name) == "UseMethod" {
                     return true;
                 }
                 if self
@@ -978,9 +963,7 @@ impl Checker {
         if returns.is_empty() {
             return None;
         }
-        let mut iter = returns.into_iter();
-        let first = iter.next().unwrap_or(RType::unknown());
-        let joined = iter.fold(first, |acc, t| acc.join(t));
+        let joined = join_all(returns.into_iter());
         // If we couldn't infer anything useful (joined is UNKNOWN),
         // there's no point attaching an empty signature.
         if matches!(joined.mode, Mode::Opaque) {
@@ -1654,10 +1637,10 @@ impl Checker {
                     if let (Some(a), Some(b)) = (extract_literal_int(lhs), extract_literal_int(rhs))
                     {
                         let len = (b - a).unsigned_abs() as usize;
+                        // `saturating_add` keeps `len` a positive usize, so
+                        // the result length is always at least 1.
                         let len = len.saturating_add(1);
-                        if len > 0 {
-                            return RType::new(Mode::Integer, Length::Known(len));
-                        }
+                        return RType::new(Mode::Integer, Length::Known(len));
                     }
                 }
                 if matches!(op, BinOpKind::AndAnd | BinOpKind::OrOr) {

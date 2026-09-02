@@ -236,7 +236,13 @@ fn no_unregistered_hardcoded_lists() {
 
     // Lists that are intentionally not semantic and do not belong in the
     // registry.
-    let known_non_semantic: &[&str] = &[];
+    //
+    // * `BASE_DATABASE_PACKAGES`: which R packages share ry's embedded
+    //   base stub database is a checker-internal storage mapping, not an
+    //   R semantic fact; the constant exists so the two qualified-lookup
+    //   paths (`resolve_typeshed_sig` and `resolve_typeshed_value`) name
+    //   the same standard packages.
+    let known_non_semantic: &[&str] = &["BASE_DATABASE_PACKAGES"];
 
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut found_lists = Vec::new();

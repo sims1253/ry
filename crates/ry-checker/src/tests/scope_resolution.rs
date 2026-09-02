@@ -1147,3 +1147,49 @@ fn attach_opens_search_path_via_unknown_bindings_scope_effect() {
         "attach() opens the search path: {diags:?}"
     );
 }
+
+#[test]
+fn parameter_default_preserves_lexical_and_list_origin_markers() {
+    // Pre-deduplication, `insert_parameter_default` removed only the
+    // function-alias and narrowed markers; `lexical_functions` and
+    // `list_origin_bindings` were left untouched. Delegating to
+    // `Scope::insert` must not silently drop those two: a defaulted
+    // parameter shadowing a captured-scope name keeps its markers
+    // through `build_function_signature`'s walk, which clones the
+    // captured scope and layers parameter defaults on top.
+    let mut scope = Scope::default();
+    scope.insert("d", RType::new(Mode::List, Length::One));
+    scope.insert_narrowed("d", RType::unknown());
+    // Layer every marker the name can carry in a captured scope.
+    scope.set_function_alias("d", "stats::median".to_string());
+    scope.mark_lexical_function("d");
+    scope.mark_list_origin("d");
+
+    scope.insert_parameter_default("d", RType::new(Mode::Integer, Length::One));
+
+    assert_eq!(
+        scope.get("d"),
+        Some(&RType::new(Mode::Integer, Length::One)),
+        "default value must be installed"
+    );
+    assert!(
+        scope.is_lexical_function("d"),
+        "lexical-function marker must survive a defaulted parameter"
+    );
+    assert!(
+        scope.has_list_origin("d"),
+        "list-origin marker must survive a defaulted parameter"
+    );
+    assert!(
+        scope.function_alias("d").is_none(),
+        "function alias must be cleared"
+    );
+    assert!(
+        !scope.narrowed_bindings.contains("d"),
+        "narrowed marker must be cleared"
+    );
+    assert!(
+        scope.is_parameter("d") && scope.is_default_parameter("d"),
+        "parameter and default-parameter markers must be set"
+    );
+}

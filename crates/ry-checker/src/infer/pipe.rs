@@ -317,9 +317,7 @@ impl Checker {
         if alt_types.is_empty() {
             return RType::unknown();
         }
-        let mut iter = alt_types.into_iter();
-        let first = iter.next().unwrap_or(RType::unknown());
-        iter.fold(first, |acc, t| acc.join(t))
+        join_all(alt_types.into_iter())
     }
 
     /// Infer the result type of `tryCatch(expr, ...)`. The first
@@ -362,8 +360,6 @@ impl Checker {
         if types.is_empty() {
             return RType::unknown();
         }
-        let mut iter = types.into_iter();
-        let first = iter.next().unwrap_or(RType::unknown());
-        iter.fold(first, |acc, t| acc.join(t))
+        join_all(types.into_iter())
     }
 }

@@ -1,6 +1,18 @@
 use super::*;
 use crate::infer::json_rtype_to_rtype;
 
+/// R's standard packages, which share ry's embedded base stub database:
+/// a qualified lookup in any of them resolves against `typeshed` itself.
+const BASE_DATABASE_PACKAGES: &[&str] = &[
+    "base",
+    "stats",
+    "utils",
+    "graphics",
+    "grDevices",
+    "methods",
+    "datasets",
+];
+
 impl Checker {
     /// Resolve only signatures that declare checker schema semantics. Unlike
     /// ordinary call resolution, a same-named base function without an effect
@@ -113,10 +125,8 @@ impl Checker {
     pub(crate) fn resolve_typeshed_value(&self, name: &str) -> Option<RType> {
         if let Some((pkg_raw, value)) = name.rsplit_once("::") {
             let package = pkg_raw.trim_end_matches(':');
-            if matches!(
-                package,
-                "base" | "stats" | "utils" | "graphics" | "grDevices" | "methods" | "datasets"
-            ) && let Some(value_type) = self.typeshed.datasets.get(value)
+            if BASE_DATABASE_PACKAGES.contains(&package)
+                && let Some(value_type) = self.typeshed.datasets.get(value)
             {
                 return Some(json_rtype_to_rtype(value_type));
             }
@@ -167,10 +177,8 @@ impl Checker {
             // R's standard packages share our embedded base database. This
             // is an explicit package-to-database mapping, not a fallback to
             // a similarly named export from another package.
-            if matches!(
-                pkg,
-                "base" | "stats" | "utils" | "graphics" | "grDevices" | "methods" | "datasets"
-            ) && let Some(sig) = self.typeshed.functions.get(fun)
+            if BASE_DATABASE_PACKAGES.contains(&pkg)
+                && let Some(sig) = self.typeshed.functions.get(fun)
             {
                 return Some(sig.clone());
             }
@@ -308,27 +316,7 @@ impl Checker {
     /// order minus the search-path guard, because a loaded package rarely
     /// redefines `list` or `length`.
     pub(crate) fn resolves_to_base_lenient(&self, name: &str, scope: &Scope) -> bool {
-        if name.rsplit_once("::").is_some() {
-            return crate::semantic_lists::is_base_qualified(name);
-        }
-        if scope.is_lexical_function(name) {
-            return false;
-        }
-        if let Some(ty) = scope.get(name) {
-            if matches!(ty.mode, ry_core::types::Mode::Function) || scope.is_parameter(name) {
-                return false;
-            }
-        }
-        if self.fn_table.fns.contains_key(name) {
-            return false;
-        }
-        if let Some(pkg) = self.imported_from.get(name) {
-            return pkg == "base";
-        }
-        if self.external_bindings.contains(name) {
-            return false;
-        }
-        true
+        self.resolves_to_base_impl(name, scope, false)
     }
 
     /// Whether the callee `name` resolves to `base::bare_name` at this call
@@ -350,6 +338,14 @@ impl Checker {
     ///    → cannot prove base resolution.
     /// 9. Otherwise the bare name falls through to base.
     pub(crate) fn resolves_to_base(&self, name: &str, scope: &Scope) -> bool {
+        self.resolves_to_base_impl(name, scope, true)
+    }
+
+    /// Shared body of the two base-resolution predicates. `guard_search_path`
+    /// toggles step 8 of the documented lookup order: the strict variant
+    /// refuses to conclude base resolution while any package may be
+    /// attached, the lenient one allows it.
+    fn resolves_to_base_impl(&self, name: &str, scope: &Scope, guard_search_path: bool) -> bool {
         // (a) Explicit base:: qualification.
         if name.rsplit_once("::").is_some() {
             return crate::semantic_lists::is_base_qualified(name);
@@ -385,7 +381,7 @@ impl Checker {
         }
 
         // (e) search_path_unknown or bare-loaded packages may shadow.
-        if scope.search_path_unknown || !self.bare_loaded.is_empty() {
+        if guard_search_path && (scope.search_path_unknown || !self.bare_loaded.is_empty()) {
             return false;
         }
 

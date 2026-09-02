@@ -349,7 +349,7 @@ impl Checker {
                 return None;
             };
             let name = ident_name(func)?;
-            let bare = name.rsplit_once("::").map(|(_, bare)| bare).unwrap_or(name);
+            let bare = crate::semantic_lists::bare_name(name);
             if !names.contains(&bare) {
                 return None;
             }
@@ -418,19 +418,7 @@ fn data_frame_binop_result(op: BinOpKind, lhs: &RType, rhs: &RType) -> Option<RT
         op,
         BinOpKind::And | BinOpKind::AndAnd | BinOpKind::Or | BinOpKind::OrOr
     );
-    if !(is_compare
-        || is_logic
-        || matches!(
-            op,
-            BinOpKind::Add
-                | BinOpKind::Sub
-                | BinOpKind::Mul
-                | BinOpKind::Div
-                | BinOpKind::Pow
-                | BinOpKind::Mod
-                | BinOpKind::IDiv
-        ))
-    {
+    if !(is_compare || is_logic || op.is_arithmetic()) {
         return None;
     }
     let (frame, other) = if lhs.class.contains("data.frame") {

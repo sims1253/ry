@@ -116,7 +116,6 @@ pub fn resolve_workspace_context<'a>(
     let mut namespace_cache: HashMap<PathBuf, NamespaceMetadata> = HashMap::new();
     let mut export_cache: HashMap<String, HashSet<String>> = HashMap::new();
     let mut dataset_cache: HashMap<PathBuf, DataInventory> = HashMap::new();
-    let mut serialized_cache: HashMap<PathBuf, SerializedInventory> = HashMap::new();
     let mut source_binding_cache: HashMap<PathBuf, SourceBindings> = HashMap::new();
     let mut attached = HashSet::new();
     let mut bare_attached = HashMap::new();
@@ -215,10 +214,7 @@ pub fn resolve_workspace_context<'a>(
                 }
             }
             let sysdata = root.join("R/sysdata.rda");
-            let sysdata_inventory = serialized_cache
-                .entry(sysdata.clone())
-                .or_insert_with(|| serialized_inventory(&sysdata, max_serialized_bytes))
-                .clone();
+            let sysdata_inventory = serialized_inventory(&sysdata, max_serialized_bytes);
             file_bindings.extend(sysdata_inventory.bindings.iter().cloned());
             if sysdata_inventory.degraded {
                 degraded.insert((sysdata, "oversized R/sysdata.rda"));
@@ -229,7 +225,6 @@ pub fn resolve_workspace_context<'a>(
                 &project_attached,
                 user_stubs,
                 max_serialized_bytes,
-                &mut serialized_cache,
             );
             for path in &loaded.degraded {
                 degraded.insert((path.clone(), "oversized load() target"));
@@ -880,7 +875,6 @@ fn loaded_serialized_bindings(
     attached_packages: &HashSet<String>,
     user_stubs: &std::collections::BTreeMap<String, ry_typeshed::Typeshed>,
     max_serialized_bytes: u64,
-    cache: &mut HashMap<PathBuf, SerializedInventory>,
 ) -> LoadedInventory {
     fn resolve_path(
         expr: &Expr,
@@ -955,10 +949,7 @@ fn loaded_serialized_bindings(
                 user_stubs,
             )
         }) {
-            let inventory = cache
-                .entry(path.clone())
-                .or_insert_with(|| serialized_inventory(&path, max_serialized_bytes))
-                .clone();
+            let inventory = serialized_inventory(&path, max_serialized_bytes);
             if inventory.degraded {
                 out.degraded.push(path);
             }

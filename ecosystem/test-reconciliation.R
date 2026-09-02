@@ -77,10 +77,9 @@ cat("Test 7: unowned finding appears in audit-transcript mode -> exit 0\n")
 stopifnot(run_reconcile(make_corpus(list(tp, fp), "audit-transcript"), list(pkg = list(tp, fp, extra))) == 0L)
 cat("  PASS\n")
 
-# simultaneous TP disappearance and FP appearance (the exact
-# silent-degradation scenario the gate exists to catch). A true_positive disappears
-# from reports AND a false_positive appears that is not in the ledger, both
-# in the same reconciliation run. The gate must catch both in one pass.
+# The exact silent-degradation scenario the gate exists to catch: a
+# true_positive drops from the reports while a false_positive not in the
+# ledger appears, in the same run. The gate must catch both in one pass.
 cat("Test 8: TP disappears AND unowned FP appears simultaneously (hermetic) -> exit 1\n")
 stopifnot(run_reconcile(make_corpus(list(tp, fp)), list(pkg = list(fp, extra))) == 1L)
 cat("  PASS\n")

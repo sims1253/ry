@@ -583,17 +583,18 @@ pub fn load_base() -> Result<Typeshed, TypeshedError> {
 /// sorted" style warning; every other consumer reads the `BTreeMap`,
 /// which is inherently sorted (#172).
 ///
-/// It is load-bearing, not dead: r-typeshed's generator does not
-/// guarantee sorted keys, and the current vendored snapshot carries
-/// unsorted `functions` maps (base.json `load` > `lm`, rlang.json
-/// `:=` > `!!`, shiny.json `testServer` > `reactive`). The warning
-/// surfaces that during `ry typeshed validate` (run by
-/// `scripts/sync_typeshed.sh` and by r-typeshed's CI, non-gating) and
-/// is exercised by ry-cli's `warns_without_failing_on_unsorted_function_keys`
-/// e2e test. Deleting it requires r-typeshed to emit
-/// sorted keys first; a sortedness check without this visitor needs
-/// either a second JSON library pass or serde_json's `preserve_order`
-/// feature, which would change map ordering workspace-wide.
+/// It is load-bearing, not dead: the current vendored stubs contain
+/// adjacent inversions (base.json `load` > `lm`, rlang.json `:=` > `!!`,
+/// shiny.json `testServer` > `reactive`), so the warning fires on the
+/// vendor tree as it stands. `validate_stub_file` consumes this order
+/// for that warning, `scripts/sync_typeshed.sh` runs
+/// `ry typeshed validate` over the tree it syncs, and ry-cli's
+/// `warns_without_failing_on_unsorted_function_keys` e2e test pins
+/// warning plus successful exit. Delete this machinery once the
+/// complete upstream production pipeline emits sorted maps; a
+/// sortedness check without this visitor needs either a second JSON
+/// library pass or serde_json's `preserve_order` feature, which would
+/// change map ordering workspace-wide.
 struct RawFunctions(Vec<(String, FunctionSig)>);
 
 impl<'de> Deserialize<'de> for RawFunctions {

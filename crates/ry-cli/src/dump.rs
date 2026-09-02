@@ -475,7 +475,7 @@ pub(crate) fn run_dump_types(
     // missing config is fine, malformed config aborts. The config's
     // directory is kept as `config_root` — it anchors the `exclude`
     // patterns below and is the resolution-root fallback for non-package
-    // files, exactly as in `run_check`. The anchor differs from
+    // files, exactly as in `check::run_check`. The anchor differs from
     // `ry check` on purpose: dump-types requires files, and discovery
     // starts at the first input itself, not at its parent.
     let search_start = files.first().cloned().unwrap_or_else(|| PathBuf::from("."));
@@ -517,7 +517,8 @@ pub(crate) fn run_dump_types(
     // its own library namespace. Non-package scripts share one group
     // rooted at --project-root, else the config root (the directory
     // owning the discovered ry.toml), else the working directory —
-    // `run_check_once`'s fallback chain with --project-root overriding.
+    // `check::run_check_once`'s fallback chain with --project-root
+    // overriding.
     let groups = pipeline::resolve_groups(
         &parsed,
         &cfg,

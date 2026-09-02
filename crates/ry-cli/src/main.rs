@@ -6,9 +6,7 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{
-    Args, CommandFactory, FromArgMatches, Parser as ClapParser, Subcommand, ValueEnum,
-};
+use clap::{Args, CommandFactory, FromArgMatches, Parser as ClapParser, Subcommand, ValueEnum};
 use miette::{IntoDiagnostic, Result};
 
 use ry_config as config;

@@ -8,8 +8,8 @@
 //! function definitions; subsequent passes refine each function's inferred
 //! return type until stable (or the depth cap is hit).
 
-// Not vestigial: 21 collapsible-if sites remain in infer/,
-// higher_order.rs, and collect.rs (outside the file scope of the
+// Not vestigial: collapsible-if sites remain in infer/, higher_order.rs,
+// and collect.rs (outside the file scope of the
 // cleanup/checker-core-markers branch). The resolve.rs and project.rs
 // sites were collapsed under #185; lift this allow together with those.
 #![allow(clippy::collapsible_if)]
@@ -369,12 +369,7 @@ impl Scope {
     /// subset in `keep` that the name already carried. This is the one
     /// save/restore point for marker state; the `insert_*` variants below
     /// declare their keep-list instead of hand-restoring marker sets.
-    pub(crate) fn insert_preserving(
-        &mut self,
-        name: impl Into<String>,
-        t: RType,
-        keep: &[Marker],
-    ) {
+    pub(crate) fn insert_preserving(&mut self, name: impl Into<String>, t: RType, keep: &[Marker]) {
         let name = name.into();
         let keep: Vec<Marker> = keep
             .iter()
@@ -936,15 +931,18 @@ impl Checker {
 
     /// Packages attached anywhere in `stmts` by `library(pkg)` /
     /// `require(pkg)`, collected on the shared walker (pure syntax, no
-    /// inference). Mirrors the recording `infer_call` performs for the
-    /// same calls during a real check: the callee must be the bare name
-    /// `library`/`require` (a string call head is R-legal and treated
-    /// the same), and the package is the first argument's identifier —
-    /// unless `character.only = TRUE` restricts it to a string literal.
-    /// Unlike the inference walk this replaces, it also sees calls the
-    /// walker proves unreachable (after a `stop()`), which is the safe
-    /// direction for a project-wide attachment union.
-    fn harvest_attached_packages(&mut self, stmts: &[Stmt]) -> HashSet<String> {
+    /// inference). Argument handling matches `infer_call`'s recording
+    /// rule: the callee must be the bare name `library`/`require` (a
+    /// string call head is R-legal and treated the same), and the
+    /// package is the first argument's identifier — unless
+    /// `character.only = TRUE` restricts it to a string literal.
+    /// Unlike the inference walk it replaced, this scan is not a
+    /// superset: direct calls after code the walker proves unreachable
+    /// (after a `stop()`) are now included — the safe direction for a
+    /// project-wide attachment union — while the rare alias
+    /// indirection `lib <- library; lib(dplyr)`, which inference
+    /// recorded via `function_alias` resolution, is not.
+    fn harvest_attached_packages(&self, stmts: &[Stmt]) -> HashSet<String> {
         use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
         use std::ops::ControlFlow;
 
@@ -960,9 +958,7 @@ impl Checker {
                         }
                         _ => false,
                     };
-                    if bare_callee
-                        && let Some(package) = attached_package_name(args)
-                    {
+                    if bare_callee && let Some(package) = attached_package_name(args) {
                         attached.insert(package);
                     }
                 }

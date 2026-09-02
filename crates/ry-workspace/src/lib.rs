@@ -1287,11 +1287,14 @@ fn is_r_source_name(name: &str) -> bool {
 /// documented contract (the "special files" vignette): test files start
 /// with `test-` or `test_`, helper files with `helper`, and setup and
 /// teardown files with `setup` and `teardown`. A name that merely
-/// contains the prefix — `testing.R`, `testthat.R` — is data consumed
-/// by tests, not code the runner executes. (testthat's implementation
-/// regex `^test.*\.[rR]$` is broader than its documentation; ry follows
-/// the documented contract, which classifies strictly fewer files as
-/// executed code.)
+/// contains the prefix — `testing.R`, `testthat.R` — classifies as data
+/// consumed by tests. (testthat's implementation regex `^test.*\.[rR]$`
+/// is broader than its documentation and would execute such a lookalike;
+/// ry follows the documented contract, which classifies strictly fewer
+/// files as executed code — the tradeoff is that a prefix lookalike real
+/// testthat still runs is skipped here unless `check_test_fixtures` is
+/// enabled, because fixture classification excludes a file from the
+/// default check.)
 fn is_testthat_code_name(name: &str) -> bool {
     let stem = std::path::Path::new(name)
         .file_stem()
@@ -1656,7 +1659,13 @@ mod shared_tests {
     /// positive) and friends never classify as executed code.
     #[test]
     fn testthat_code_names_reject_prefix_lookalikes() {
-        for name in ["testing.R", "testthat.R", "test.R", "data.R", "snapshot.txt"] {
+        for name in [
+            "testing.R",
+            "testthat.R",
+            "test.R",
+            "data.R",
+            "snapshot.txt",
+        ] {
             assert!(
                 !is_testthat_code_name(name),
                 "{name} must not classify as runner code"

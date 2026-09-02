@@ -67,6 +67,32 @@ fn schema_verb_ladder_gates_on_the_project_union_and_tidyverse_expansion() {
 }
 
 #[test]
+fn schema_gate_covers_both_tidyverse_limbs_and_rejects_unrelated() {
+    // The test above pins only the dplyr limb of the tidyverse expansion.
+    // Table over the tidyr limb plus the all-negative control: a project
+    // union with neither dplyr, tidyr, nor tidyverse resolves no schema
+    // verb. `pivot_longer` and `arrange` exist in no base or rlang stub,
+    // so a `None` means the gate closed, not masking by another rung.
+    let cases: &[(&[&str], &str, bool)] = &[
+        (&["tidyverse"], "pivot_longer", true),
+        (&["tidyr"], "pivot_longer", true),
+        (&["rlang"], "pivot_longer", false),
+        (&["rlang"], "arrange", false),
+    ];
+    for (loaded, verb, resolves) in cases {
+        let mut checker = Checker::new("test.R");
+        checker.set_shared_loaded(Arc::new(HashSet::from_iter(
+            loaded.iter().map(|name| name.to_string()),
+        )));
+        assert_eq!(
+            checker.resolve_schema_sig(verb).is_some(),
+            *resolves,
+            "loaded={loaded:?}, verb={verb}"
+        );
+    }
+}
+
+#[test]
 fn package_loading_calls_have_distinct_return_types() {
     let (diags, scope) = check_with_scope(
         "attached <- library(stats)\navailable <- require(stats)\nnamespaced <- requireNamespace(\"stats\")\n",

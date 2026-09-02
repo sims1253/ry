@@ -42,13 +42,15 @@ impl Checker {
     /// form of the "walk candidate packages, keep the ones actually
     /// attached" rung that every ladder below used to hand-roll.
     pub(crate) fn candidate_packages(&self, gate: AttachedGate) -> impl Iterator<Item = &str> + '_ {
-        self.available_package_names().filter(move |package| match gate {
-            AttachedGate::Bare => self.bare_loaded.contains(*package),
-            AttachedGate::SchemaNse => {
-                self.loaded.contains(*package)
-                    || (self.loaded.contains("tidyverse") && matches!(*package, "dplyr" | "tidyr"))
-            }
-        })
+        self.available_package_names()
+            .filter(move |package| match gate {
+                AttachedGate::Bare => self.bare_loaded.contains(*package),
+                AttachedGate::SchemaNse => {
+                    self.loaded.contains(*package)
+                        || (self.loaded.contains("tidyverse")
+                            && matches!(*package, "dplyr" | "tidyr"))
+                }
+            })
     }
 
     /// Resolve only signatures that declare checker schema semantics. Unlike
@@ -168,11 +170,12 @@ impl Checker {
         if let Some(value_type) = self.typeshed.datasets.get(name) {
             return Some(json_rtype_to_rtype(value_type));
         }
-        self.candidate_packages(AttachedGate::Bare).find_map(|package| {
-            self.package_typeshed(package)
-                .and_then(|typeshed| typeshed.datasets.get(name))
-                .map(json_rtype_to_rtype)
-        })
+        self.candidate_packages(AttachedGate::Bare)
+            .find_map(|package| {
+                self.package_typeshed(package)
+                    .and_then(|typeshed| typeshed.datasets.get(name))
+                    .map(json_rtype_to_rtype)
+            })
     }
 
     /// Resolve a function signature by name, consulting (in order):
@@ -302,10 +305,10 @@ impl Checker {
             return true;
         }
         // Loaded packages (fixed priority order; see resolve_typeshed_sig).
-        if self
-            .candidate_packages(AttachedGate::Bare)
-            .any(|pkg| self.package_typeshed(pkg).is_some_and(|t| t.functions.contains_key(name)))
-        {
+        if self.candidate_packages(AttachedGate::Bare).any(|pkg| {
+            self.package_typeshed(pkg)
+                .is_some_and(|t| t.functions.contains_key(name))
+        }) {
             return true;
         }
         self.fn_table.fns.contains_key(name) || self.fn_table.callable_vars.contains(name)

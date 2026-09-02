@@ -13,14 +13,14 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use clap::parser::ValueSource;
 use clap::ArgMatches;
+use clap::parser::ValueSource;
 use miette::Result;
 
 use ry_config as config;
 
-use crate::pipeline;
 use crate::CheckArgs;
+use crate::pipeline;
 
 /// Input for a unified diagnostics check.
 pub struct CheckInput {
@@ -556,9 +556,7 @@ pub(crate) fn load_user_stubs(
 
 /// Deterministic diagnostic order (confidence, path, position, code,
 /// severity, message), then drop exact duplicates.
-pub(crate) fn sort_and_deduplicate_diagnostics(
-    diagnostics: &mut Vec<ry_checker::Diagnostic>,
-) {
+pub(crate) fn sort_and_deduplicate_diagnostics(diagnostics: &mut Vec<ry_checker::Diagnostic>) {
     diagnostics.sort_by(|a, b| {
         b.confidence.cmp(&a.confidence).then(
             a.path

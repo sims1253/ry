@@ -1,9 +1,9 @@
-//! Shared session harness for the LSP property tests.
+//! Shared session harness for the LSP tests.
 //!
 //! One copy of the client-session type, the source variants the
-//! properties edit between, and the spawn/quiesce plumbing, used by both
-//! `session.rs` (transcript + convergence property) and
-//! `session_state_machine.rs` (extended operation alphabet).
+//! properties edit between, and the spawn/quiesce plumbing, used by
+//! `session_state_machine.rs` (the extended-alphabet convergence
+//! property plus the deterministic transcript tests).
 
 // Each test binary uses a different subset of this module.
 #![allow(dead_code)]

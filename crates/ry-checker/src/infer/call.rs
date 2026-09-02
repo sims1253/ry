@@ -94,18 +94,18 @@ impl Checker {
 
         // `switch(EXPR, ...)`: the join of all alternatives.
         if semantic_name == "switch" {
-            return self.infer_switch_call(args, scope, span);
+            return self.infer_switch_call(args, scope);
         }
 
         // `tryCatch(expr, ..., handler = fun)`: the join of the main
         // expression and all handler return types.
         if semantic_name == "tryCatch" {
-            return self.infer_trycatch_call(args, scope, span);
+            return self.infer_trycatch_call(args, scope);
         }
 
         // The class-constructor stage: `structure`, `factor`, S4 `new`.
         if let Some(t) =
-            self.infer_class_constructor_call(&semantic_name, &lookup_name, args, scope, span)
+            self.infer_class_constructor_call(&semantic_name, &lookup_name, args, scope)
         {
             return t;
         }
@@ -170,9 +170,7 @@ impl Checker {
 
         // The atomic-constructor stage: `c`, `list`, `data.frame`, `t`,
         // `as.data.frame`.
-        if let Some(t) =
-            self.infer_atomic_constructor_call(&lookup_name, args, &call.arg_types, span)
-        {
+        if let Some(t) = self.infer_atomic_constructor_call(&lookup_name, args, &call.arg_types) {
             return t;
         }
 
@@ -249,7 +247,7 @@ impl Checker {
         // Must run after the FnTable stage above so a user-defined
         // `rep`/`seq` still wins, and before the typeshed stage below so
         // the literal-pinned length beats the conservative stub.
-        if let Some(t) = self.infer_literal_length_call(&lookup_name, args, &call.arg_types, span) {
+        if let Some(t) = self.infer_literal_length_call(&lookup_name, args, &call.arg_types) {
             return t;
         }
 
@@ -257,7 +255,7 @@ impl Checker {
         // against `load_package(pkg)`; an unqualified call falls back
         // from base to loaded packages (reverse load order).
         if let Some(sig) = call.resolved_sig {
-            return self.apply_sig(&lookup_name, &sig, &call.arg_types, args, span);
+            return self.apply_sig(&sig, &call.arg_types, args);
         }
 
         // Unknown function: opaque.
@@ -384,7 +382,7 @@ impl Checker {
             return None;
         }
         let params: Vec<&str> = signature.param_names().collect();
-        let matches = match_arguments(&params, args);
+        let matches = match_params(&signature.params, args);
         // R6 has two evaluation models for method bodies. Under the default
         // (`portable = TRUE`) a method is enclosed by a separate environment
         // in which members are reachable only through `self$` / `private$`,
@@ -402,7 +400,7 @@ impl Checker {
         for (index, argument) in args.iter().enumerate() {
             let parameter = matches.param_for_arg[index].and_then(|index| params.get(index));
             let quoted_expression = matches!(
-                eval_mode_for_arg(&signature, &params, &matches, index),
+                eval_mode_for_arg(&signature, &matches, index),
                 Some(EvalMode::QuotedExpression)
             );
             let specs: Vec<_> = signature
@@ -460,7 +458,7 @@ impl Checker {
             );
         }
         self.check_typeshed_call_arguments(lookup_name, &signature, args, &arg_types, span);
-        Some(self.apply_sig(lookup_name, &signature, &arg_types, args, span))
+        Some(self.apply_sig(&signature, &arg_types, args))
     }
 
     /// `assign("name", ..., envir = asNamespace("pkg"))`: the binding
@@ -787,7 +785,7 @@ impl Checker {
         // the same convention, but they are ordinary redefinable R
         // functions, so they only get this treatment in a package that
         // declares `useDynLib(..., .registration = TRUE)`.
-        if is_ffi_primitive(semantic_name)
+        if ry_core::FFI_PRIMITIVES.contains(&semantic_name)
             || (is_registered_ffi_wrapper(semantic_name) && self.native_registration)
         {
             for (i, a) in args.iter().enumerate() {
@@ -895,34 +893,28 @@ impl Checker {
         });
         // One match for the resolved signature; the loop below used to redo it
         // for every argument.
-        let declared_binding = resolved_sig.as_ref().map(|signature| {
-            let names: Vec<&str> = signature.param_names().collect();
-            let bindings = match_arguments(&names, args);
-            (signature, names, bindings)
-        });
+        let declared_binding = resolved_sig
+            .as_ref()
+            .map(|signature| (signature, match_params(&signature.params, args)));
         let mut arg_types: Vec<RType> = Vec::with_capacity(args.len());
         for (index, a) in args.iter().enumerate() {
-            let declared_mode =
-                declared_binding
-                    .as_ref()
-                    .and_then(|(signature, names, bindings)| {
-                        eval_mode_for_arg(signature, names, bindings, index)
-                    });
+            let declared_mode = declared_binding
+                .as_ref()
+                .and_then(|(signature, bindings)| eval_mode_for_arg(signature, bindings, index));
             let user_dispatch = inherited_s3_metadata
                 || user_function.is_some()
                 || arg_types
                     .first()
                     .is_some_and(|first| self.resolves_user_s3_dispatch(lookup_name, first));
-            let is_defused = user_argument_matches
+            // The user formal this actual bound to (directly or through
+            // `...`), looked up once for both the defusing and quoting
+            // flags below.
+            let user_param = user_argument_matches
                 .as_ref()
                 .and_then(|matches| matches.param_for_arg[index].or(matches.dots))
-                .and_then(|parameter| user_function.as_ref()?.params.get(parameter))
-                .is_some_and(|parameter| parameter.defused);
-            let is_quoting = user_argument_matches
-                .as_ref()
-                .and_then(|matches| matches.param_for_arg[index].or(matches.dots))
-                .and_then(|parameter| user_function.as_ref()?.params.get(parameter))
-                .is_some_and(|parameter| parameter.quoting);
+                .and_then(|parameter| user_function.as_ref()?.params.get(parameter));
+            let is_defused = user_param.is_some_and(|parameter| parameter.defused);
+            let is_quoting = user_param.is_some_and(|parameter| parameter.quoting);
             if is_quoting {
                 // User functions that capture an argument with substitute(),
                 // bquote(), or match.call()-style reflection receive the
@@ -1119,10 +1111,7 @@ impl Checker {
         // once, and only for signatures that actually declare an assertion.
         let assertion_binding = assertion_signature
             .filter(|signature| signature.assertion.is_some())
-            .map(|signature| {
-                let names: Vec<&str> = signature.param_names().collect();
-                (signature, match_arguments(&names, args))
-            });
+            .map(|signature| (signature, match_params(&signature.params, args)));
         if (name.contains("::") || !locally_shadows_stub || resolution.user_function.is_some())
             && let Some((signature, bindings)) = assertion_binding
             && let Some(assertion) = signature.assertion.as_ref()

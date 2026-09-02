@@ -1,17 +1,6 @@
 use super::*;
 use crate::infer::*;
 
-/// `HigherOrderSpec` argument indices name formal slots, never raw call
-/// positions. One ordinary R argument match drives callback, source,
-/// length, and template lookup throughout the higher-order path.
-fn higher_order_argument_match(params: &[ParamSpec], args: &[Arg]) -> ArgumentMatch {
-    let names = params
-        .iter()
-        .map(|parameter| parameter.name.as_str())
-        .collect::<Vec<_>>();
-    match_arguments(&names, args)
-}
-
 fn matched_argument_index(argument_match: &ArgumentMatch, formal_index: usize) -> Option<usize> {
     argument_match
         .param_for_arg
@@ -35,8 +24,9 @@ fn argument_bound_to_formal<'a>(
     matched_argument_index(argument_match, formal_index).and_then(|index| args.get(index))
 }
 
-/// With a `...` formal, every unmatched actual is part of dots (see
-/// `higher_order_argument_match` for the shared match).
+/// With a `...` formal, every unmatched actual is part of dots (one
+/// ordinary R argument match drives callback, source, length, and
+/// template lookup throughout the higher-order path).
 fn arguments_bound_to_dots<'a>(
     arg_types: &'a [RType],
     argument_match: &'a ArgumentMatch,
@@ -68,7 +58,7 @@ impl Checker {
     ) -> Option<RType> {
         let signature = self.resolve_typeshed_sig(name)?;
         let spec = signature.higher_order.as_ref()?;
-        let argument_match = higher_order_argument_match(&signature.params, args);
+        let argument_match = match_params(&signature.params, args);
         Some(self.infer_ho_result(name, spec, args, arg_types, &argument_match, scope, span))
     }
 
@@ -431,13 +421,7 @@ impl Checker {
                 }
                 // Typeshed function?
                 if let Some(sig) = self.resolve_typeshed_sig(name) {
-                    return Some(self.apply_sig(
-                        lookup_name,
-                        &sig,
-                        call_arg_types,
-                        &[],
-                        Span::default(),
-                    ));
+                    return Some(self.apply_sig(&sig, call_arg_types, &[]));
                 }
                 None
             }
@@ -482,9 +466,7 @@ impl Checker {
         if returns.is_empty() {
             return None;
         }
-        let mut iter = returns.into_iter();
-        let first = iter.next().unwrap_or(RType::unknown());
-        let joined = iter.fold(first, |acc, t| acc.join(t));
+        let joined = join_all(returns.into_iter());
         if matches!(joined.mode, Mode::Opaque) {
             return None;
         }
@@ -522,7 +504,7 @@ impl Checker {
         if matches!(spec.result.kind, HigherOrderResultKind::CallbackIdentity) {
             return;
         }
-        let argument_match = higher_order_argument_match(&signature.params, args);
+        let argument_match = match_params(&signature.params, args);
         let elem_types = self.higher_order_callback_types(spec, arg_types, &argument_match);
         let cb = match argument_bound_to_formal(args, &argument_match, spec.callback_position) {
             Some(argument) => &argument.value,
@@ -597,7 +579,7 @@ impl Checker {
                     });
                 }
                 if let Some(sig) = self.typeshed.s3_methods.get(&key).cloned() {
-                    return Some(self.apply_sig(candidate, &sig, arg_types, &[], span));
+                    return Some(self.apply_sig(&sig, arg_types, &[]));
                 }
                 let sig = self.available_package_names().find_map(|pkg| {
                     self.package_typeshed(pkg)
@@ -605,7 +587,7 @@ impl Checker {
                         .cloned()
                 });
                 if let Some(sig) = sig {
-                    return Some(self.apply_sig(candidate, &sig, arg_types, &[], span));
+                    return Some(self.apply_sig(&sig, arg_types, &[]));
                 }
             }
         }

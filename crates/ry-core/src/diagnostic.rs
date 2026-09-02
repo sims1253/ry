@@ -72,4 +72,6 @@ pub const SERIALIZED_BINDINGS_UNENUMERABLE: &str = "\0serialized:unenumerable";
 
 /// R foreign-function-interface primitives.
 /// Their first argument is a native routine entry-point symbol, not a variable.
+/// `.Internal` is deliberately absent: its first argument is a call
+/// expression, not a bare entry-point symbol.
 pub const FFI_PRIMITIVES: &[&str] = &[".Call", ".C", ".Fortran", ".External", ".External2"];

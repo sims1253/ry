@@ -10,7 +10,8 @@ use crate::diagnostics::{
 };
 use crate::hints::collect_inlay_hints;
 use crate::settings::{FolderSettings, ServerSettings};
-use crate::util::position_to_byte_offset_pos;
+use crate::util::position_to_byte_offset;
+
 use ry_checker::Project;
 use ry_core::{RParser, SourceFile};
 use std::collections::HashMap;
@@ -455,19 +456,6 @@ impl State {
             _ => true,
         }
     }
-
-    /// Return the cached effective baseline for a document path (pure
-    /// cache read — no disk access). Editor setting took precedence over
-    /// `ry.toml`, resolved relative to the owning folder root at load time.
-    pub(super) fn effective_baseline_for_path(
-        &self,
-        doc_path: &str,
-    ) -> Option<ry_config::Baseline> {
-        if let Some(ctx) = self.folder_context_for_path(doc_path) {
-            return ctx.baseline.clone();
-        }
-        self.root_baseline.clone()
-    }
 }
 
 #[tower_lsp::async_trait]
@@ -838,7 +826,10 @@ impl LanguageServer for Backend {
             let old_contexts_for_task = old_contexts.clone();
             // spawn_blocking keeps every disk read off the async runtime.
             let new_contexts = match tokio::task::spawn_blocking(move || {
-                rebuild_folder_contexts(&old_contexts_for_task)
+                old_contexts_for_task
+                    .iter()
+                    .map(rebuild_folder_context)
+                    .collect::<Vec<_>>()
             })
             .await
             {
@@ -1092,30 +1083,26 @@ impl Backend {
     /// path is not an open document or parsing fails.
     async fn parsed_file(&self, path: &str) -> Option<(Arc<SourceFile>, String)> {
         loop {
-            // Fast path: version-matched cache hit.
-            {
+            // One guard reads the parse cache, the document text/version,
+            // and the old tree as one snapshot; only the parse itself
+            // (the non-`Send` `RParser`) happens outside the lock. The
+            // old tree is only cloned on the miss path — a cache hit must
+            // not pay for a tree copy it never hands to the parser.
+            let (text, version, old_tree) = {
                 let state = self.state.lock().await;
-                if let Some(file) = state.cached_parse(path) {
-                    let text = state.docs.get(path).cloned()?;
-                    return Some((file, text));
+                if let (Some(text), Some(version)) =
+                    (state.docs.get(path), state.versions.get(path))
+                {
+                    // Fast path: version-matched cache hit.
+                    if let Some(file) = state.cached_parse(path) {
+                        return Some((file, text.clone()));
+                    }
+                    (text.clone(), *version, state.tree_for(path))
+                } else {
+                    return None;
                 }
-            }
-            let (text, version) = {
-                let state = self.state.lock().await;
-                (
-                    state.docs.get(path).cloned(),
-                    state.versions.get(path).copied(),
-                )
-            };
-            let (text, version) = match (text, version) {
-                (Some(t), Some(v)) => (t, v),
-                _ => return None,
             };
             // Incremental reparse when a version-matched old tree exists.
-            let old_tree = {
-                let state = self.state.lock().await;
-                state.tree_for(path)
-            };
             // Test-only scheduling barrier: when armed, the parse pauses
             // here — after reading text/version/tree, before parsing — so a
             // test can force the interleaving:
@@ -1247,14 +1234,14 @@ impl Backend {
     /// open document. Publishing all files is required because an edit to a
     /// function definition can change diagnostics in its cross-file callers.
     async fn publish_diagnostics(&self, uri: Url, generation: u64) {
-        // Snapshot the open docs under the lock, then drop it before
-        // checking so a slow check doesn't block other LSP requests
-        // (e.g. didOpen of a second file). Only eligible documents'
-        // versions are snapshotted.
-        let (path, doc_versions) = {
+        let path = uri_to_path(&uri);
+        // Snapshot the open docs and the requested file's eligibility under
+        // the lock, then drop it before checking so a slow check doesn't
+        // block other LSP requests (e.g. didOpen of a second file). Only
+        // eligible documents' versions are snapshotted.
+        let (doc_versions, requested_is_eligible) = {
             let state = self.state.lock().await;
             (
-                uri_to_path(&uri),
                 state
                     .docs
                     .keys()
@@ -1267,11 +1254,8 @@ impl Backend {
                             .map(|version| (p.clone(), version))
                     })
                     .collect::<Vec<_>>(),
+                state.eligibility_for_path(&path),
             )
-        };
-        let requested_is_eligible = {
-            let state = self.state.lock().await;
-            state.eligibility_for_path(&path)
         };
         if !requested_is_eligible {
             self.client
@@ -1303,43 +1287,63 @@ impl Backend {
         project_files.extend(disk_entries);
 
         // Check each folder partition independently through its own
-        // ProjectCache, stubs, and workspace context.
-        let (folder_contexts, root_project, user_stubs) = {
+        // ProjectCache, stubs, and workspace context. The root-level
+        // filter, confidence, exclude, baseline, and root state rides
+        // along for the files no folder owns.
+        let (
+            folder_contexts,
+            root_project,
+            user_stubs,
+            root_filter,
+            root_min_confidence,
+            root_excludes,
+            root_baseline,
+            root,
+        ) = {
             let state = self.state.lock().await;
             (
                 state.folder_contexts.clone(),
                 Arc::clone(&state.project),
                 Arc::clone(&state.user_stubs),
+                state.root_filter.clone(),
+                state.root_min_confidence,
+                state.root_excludes.clone(),
+                state.root_baseline.clone(),
+                state.root.clone(),
             )
         };
 
-        // Partition project_files by folder root (longest-prefix ownership).
-        // Files not owned by any folder go to the root project.
-        use std::collections::BTreeMap;
-        let mut per_folder: BTreeMap<String, FolderPartition> = BTreeMap::new();
+        // Partition project_files by folder root: each file goes to the
+        // first folder context whose root contains it (the same ownership
+        // rule as `folder_context_for_path`); files no folder owns go to
+        // the root project. The contexts are already clones, so every
+        // partition carries its owning context instead of a map key
+        // nobody reads.
+        let mut partitions: Vec<FolderPartition> = Vec::new();
+        let mut root_files: Vec<(String, i32, Arc<SourceFile>)> = Vec::new();
         for (fp, ver, file) in project_files {
             if let Some(ctx) = folder_contexts
                 .iter()
                 .find(|c| std::path::Path::new(&fp).starts_with(&c.root))
             {
-                let key = ctx.root.to_string_lossy().to_string();
-                per_folder
-                    .entry(key)
-                    .or_insert_with(|| (Some(ctx.clone()), Vec::new()))
-                    .1
-                    .push((fp, ver, file));
+                let partition = partitions
+                    .iter_mut()
+                    .find(|(owned, _)| owned.as_ref().is_some_and(|c| c.root == ctx.root));
+                match partition {
+                    Some((_, files)) => files.push((fp, ver, file)),
+                    None => partitions.push((Some(ctx.clone()), vec![(fp, ver, file)])),
+                }
             } else {
-                per_folder
-                    .entry("__root__".to_string())
-                    .or_insert_with(|| (None, Vec::new()))
-                    .1
-                    .push((fp, ver, file));
+                root_files.push((fp, ver, file));
             }
         }
+        if !root_files.is_empty() {
+            partitions.push((None, root_files));
+        }
 
-        let mut all_results: Vec<ProjectCheckResult> = Vec::new();
-        for (_key, (ctx_opt, files)) in per_folder {
-            let (stubs, workspace_context, project_handle) = match ctx_opt {
+        let mut all_results: Vec<(Option<FolderAnalysisContext>, ProjectCheckResult)> = Vec::new();
+        for (ctx, files) in partitions {
+            let (stubs, workspace_context, project_handle) = match &ctx {
                 Some(ctx) => (
                     Arc::clone(&ctx.stubs),
                     ctx.workspace_context.clone(),
@@ -1349,7 +1353,7 @@ impl Backend {
             };
             let mut project = project_handle.lock().await;
             let result = project.check_with_workspace(files, stubs, workspace_context.as_ref());
-            all_results.push(result);
+            all_results.push((ctx, result));
         }
 
         // An edit that arrived while parsing/checking invalidates this whole
@@ -1362,34 +1366,32 @@ impl Backend {
         }
 
         // Publish per-file diagnostics through the folder's
-        // filter/confidence/exclude/baseline state.
-        for result in all_results {
+        // filter/confidence/exclude/baseline state. The partition carried
+        // the owning context through the check, so publication uses the
+        // same snapshot the check ran under; files no folder owns use the
+        // snapshotted root-level values.
+        for (ctx, result) in all_results {
             let ProjectCheckResult {
                 diagnostics: per_file,
                 files: checked_files,
             } = result;
+            let (filter, min_confidence, excludes, baseline, folder_root) = match ctx.as_ref() {
+                Some(ctx) => (
+                    ctx.filter.clone(),
+                    ctx.min_confidence,
+                    ctx.excludes.clone(),
+                    ctx.baseline.clone(),
+                    Some(ctx.root.clone()),
+                ),
+                None => (
+                    root_filter.clone(),
+                    root_min_confidence,
+                    root_excludes.clone(),
+                    root_baseline.clone(),
+                    root.clone(),
+                ),
+            };
             for (diagnostic_path, mut diagnostics) in per_file {
-                let (filter, min_confidence, excludes, baseline, folder_root) = {
-                    let state = self.state.lock().await;
-                    let ctx = state.folder_context_for_path(&diagnostic_path);
-                    let (filter, min_confidence, excludes) = match ctx {
-                        Some(c) => (c.filter.clone(), c.min_confidence, c.excludes.clone()),
-                        None => {
-                            // Files outside every folder root use the
-                            // precomputed root-level values.
-                            (
-                                state.root_filter.clone(),
-                                state.root_min_confidence,
-                                state.root_excludes.clone(),
-                            )
-                        }
-                    };
-                    let baseline = state.effective_baseline_for_path(&diagnostic_path);
-                    let folder_root = ctx
-                        .map(|c| Some(c.root.clone()))
-                        .unwrap_or_else(|| state.root.clone());
-                    (filter, min_confidence, excludes, baseline, folder_root)
-                };
                 ry_checker::apply_filter_to_diagnostics(&mut diagnostics, &filter);
 
                 if let Some(min) = min_confidence {
@@ -1863,14 +1865,6 @@ fn rebuild_folder_context(old: &FolderAnalysisContext) -> FolderAnalysisContext 
     }
 }
 
-/// Rebuild every folder's analysis context from disk, returning a
-/// replacement `Vec` in the same order as `old`. Used by the
-/// watched-files handler to rebuild outside the write lock and then swap
-/// atomically; each folder is rebuilt independently.
-fn rebuild_folder_contexts(old: &[FolderAnalysisContext]) -> Vec<FolderAnalysisContext> {
-    old.iter().map(rebuild_folder_context).collect()
-}
-
 /// Convert a document's path string (the key used in `State::docs`)
 /// back into an LSP `Url`. Filesystem paths round-trip via
 /// `Url::from_file_path`; non-file URIs (e.g. `untitled:`) fall back to
@@ -1893,8 +1887,8 @@ pub(crate) fn uri_to_path(uri: &Url) -> String {
 /// Convert an LSP range (0-based line/character, UTF-16 code units) in
 /// `old_text` to a byte-offset span for splicing.
 fn range_byte_span(old_text: &str, range: Range) -> Option<(usize, usize)> {
-    let start_byte = position_to_byte_offset_pos(old_text, range.start)?;
-    let end_byte = position_to_byte_offset_pos(old_text, range.end)?;
+    let start_byte = position_to_byte_offset(old_text, range.start.line, range.start.character)?;
+    let end_byte = position_to_byte_offset(old_text, range.end.line, range.end.character)?;
     (start_byte <= end_byte).then_some((start_byte, end_byte))
 }
 

@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use ry_config as config;
 
@@ -24,7 +25,7 @@ pub(crate) fn discover_config(
             tracing::debug!(config = %path.display(), "loaded ry.toml");
             Ok((path.parent().map(PathBuf::from), cfg))
         }
-        Ok(None) => Ok((None, config::Config::defaults())),
+        Ok(None) => Ok((None, config::Config::default())),
         Err(e) => {
             eprintln!("ry: {}", e);
             Err(ExitCode::FAILURE)
@@ -202,4 +203,75 @@ where
             .push(index);
     }
     groups
+}
+
+/// One per-package group, ready for the checker: the group's files and
+/// workspace context wrapped as a `CheckInput`, plus the degraded-scope
+/// notes the command reports in its own voice.
+pub(crate) struct ResolvedGroup {
+    pub check_input: crate::check::CheckInput,
+    pub degraded_scopes: Vec<(PathBuf, &'static str)>,
+}
+
+/// Resolve parsed files into per-package checker inputs, shared by
+/// `ry check` and `ry dump-types` so the two commands can never disagree
+/// about library scoping or resolution roots.
+///
+/// Each DESCRIPTION root becomes its own group (see
+/// [`group_by_package_root`]). A group without a package root resolves
+/// against the first entry of `fallback_roots` that is set — `ry check`
+/// passes the config root, `dump-types` passes `--project-root` and then
+/// the config root — and finally against the working directory. The
+/// workspace context's `degraded_scopes` are split out of the
+/// `CheckInput` because each command reports the precision loss
+/// differently: check summarizes them in its summary line, dump-types
+/// prints one note per scope on stderr to keep stdout's JSON clean.
+pub(crate) fn resolve_groups(
+    parsed: &[ParsedFile],
+    cfg: &config::Config,
+    user_stubs: &Arc<BTreeMap<String, ry_typeshed::Typeshed>>,
+    fallback_roots: &[Option<&Path>],
+) -> miette::Result<Vec<ResolvedGroup>> {
+    let groups = group_by_package_root(parsed.iter().map(|file| file.path.as_str()));
+    let mut resolved = Vec::with_capacity(groups.len());
+    for (group_root, indices) in &groups {
+        let resolution_root = group_root
+            .clone()
+            .or_else(|| {
+                fallback_roots
+                    .iter()
+                    .flatten()
+                    .copied()
+                    .next()
+                    .map(PathBuf::from)
+            })
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        let mut package_scope = ry_workspace::resolve_workspace_context(
+            &resolution_root,
+            cfg,
+            ry_workspace::ResolutionEnvironment {
+                files: indices.iter().map(|index| &parsed[*index].file).collect(),
+                user_stubs,
+            },
+        )
+        .map_err(|error| miette::miette!(error))?;
+        let analysis_files = indices
+            .iter()
+            .map(|index| {
+                let parsed_file = &parsed[*index];
+                (parsed_file.path.clone(), Arc::new(parsed_file.file.clone()))
+            })
+            .collect();
+        let degraded_scopes = std::mem::take(&mut package_scope.degraded_scopes);
+        let workspace = package_scope;
+        resolved.push(ResolvedGroup {
+            check_input: crate::check::CheckInput {
+                files: analysis_files,
+                user_stubs: Arc::clone(user_stubs),
+                workspace: Some(workspace),
+            },
+            degraded_scopes,
+        });
+    }
+    Ok(resolved)
 }

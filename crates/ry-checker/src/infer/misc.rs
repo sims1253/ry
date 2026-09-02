@@ -56,16 +56,69 @@ pub(crate) fn modes_compatible(mode: &Mode, target: &Mode) -> bool {
         return true;
     }
     match target {
-        Mode::Double | Mode::Integer | Mode::Logical => is_numeric_mode(*mode),
+        Mode::Double | Mode::Integer | Mode::Logical => numeric_family(*mode),
         Mode::Character => matches!(mode, Mode::Character),
         _ => true,
     }
 }
 
-/// R's coercion family: logical, integer, and double values interchange
-/// without a lossy or surprising conversion in the contexts that ask.
-fn is_numeric_mode(mode: Mode) -> bool {
+/// R's silent-coercion numeric family (issue #169): logical, integer,
+/// and double values interchange without a lossy or surprising
+/// conversion in every context modeled here (arithmetic operands, `if`
+/// conditions, purrr typed-map callbacks, stub-argument checking).
+///
+/// Membership decisions, unified across all callers instead of
+/// preserving per-callsite drift:
+/// * Logical IS a member: R coerces `if (1L)` and `1L + 1L` silently.
+/// * Complex is NOT a member: R coerces complex into the double family
+///   only by discarding imaginary parts with a warning, and base R's
+///   `is.numeric()` excludes complex. A complex value meeting a numeric
+///   expectation is therefore a genuine mismatch for compatibility
+///   questions.
+///
+/// One documented, genuine exception: `expected_type_label`'s
+/// "numeric" shorthand covers the wider logical..complex arithmetic
+/// ladder, because it is message wording for unions that R's own
+/// documentation calls numeric (`mean` accepts complex with no warning
+/// at all) — not a coercion promise.
+fn numeric_family(mode: Mode) -> bool {
     matches!(mode, Mode::Double | Mode::Integer | Mode::Logical)
+}
+
+/// Every storage mode a type may hold, with unions flattened
+/// recursively (issue #169). This is the *permissive* view: opaque
+/// contributes `Mode::Opaque` like any other member, so pairwise mode
+/// comparison (`types_intersect`) treats opacity as a mode that only
+/// matches itself. A union that carries no member list (a state
+/// `RType::union`'s contract forbids) yields nothing, overlapping with
+/// no mode. The strict view over the same walk is `mode_set`.
+fn modes_of(ty: &RType) -> Vec<Mode> {
+    match ty.mode {
+        Mode::Union => ty
+            .members
+            .as_ref()
+            .map(|members| members.iter().flat_map(modes_of).collect())
+            .unwrap_or_default(),
+        mode => vec![mode],
+    }
+}
+
+/// The set of storage modes a type may hold when that set is fully
+/// knowable (the *strict* view over `modes_of`): `None` when the type
+/// is opaque, any union member at any depth is opaque, or a union
+/// carries no member list.
+///
+/// `None` is a *proof barrier*, not a mode and not emptiness: callers
+/// that must prove something (incompatibility, a label) treat it as
+/// "cannot decide", never as evidence of a mismatch. These two views
+/// replace the per-helper drift the former union-flattening sites
+/// encoded (`known_modes`, the `modes` closure in `types_intersect`,
+/// and the member walk in `standalone_check_provably_rejects`, which
+/// keeps full `RType`s for per-member length/class checks and so
+/// mirrors `modes_of` rather than calling it).
+fn mode_set(ty: &RType) -> Option<Vec<Mode>> {
+    let modes = modes_of(ty);
+    (!modes.is_empty() && !modes.contains(&Mode::Opaque)).then_some(modes)
 }
 
 /// Return the R source symbol for a binary operator, for use in
@@ -642,19 +695,15 @@ fn install_positive_narrowing(
 /// This deliberately ignores length and class metadata: a guard such as
 /// `is.list(x)` is about storage mode, and a default value's length/class
 /// says nothing about values supplied by callers.
+///
+/// Uses `modes_of` (the permissive view): opaque matches only itself,
+/// so an opaque-bearing default against a concrete predicate target is
+/// "disjoint", which is exactly what lets the narrowing call sites
+/// replace such a default with the predicate's type in the guarded
+/// branch.
 fn types_intersect(left: &RType, right: &RType) -> bool {
-    fn modes(ty: &RType) -> Vec<Mode> {
-        if ty.mode == Mode::Union {
-            ty.members
-                .as_ref()
-                .map(|members| members.iter().flat_map(modes).collect())
-                .unwrap_or_default()
-        } else {
-            vec![ty.mode]
-        }
-    }
-    let left = modes(left);
-    let right = modes(right);
+    let left = modes_of(left);
+    let right = modes_of(right);
     left.iter().any(|mode| right.contains(mode))
 }
 
@@ -1464,10 +1513,10 @@ fn edit_distance(left: &str, right: &str) -> usize {
 }
 
 pub(crate) fn types_provably_incompatible(actual: &RType, expected: &RType) -> bool {
-    let Some(actual_modes) = known_modes(actual) else {
+    let Some(actual_modes) = mode_set(actual) else {
         return false;
     };
-    let Some(expected_modes) = known_modes(expected) else {
+    let Some(expected_modes) = mode_set(expected) else {
         return false;
     };
     !actual_modes.iter().any(|actual_mode| {
@@ -1482,13 +1531,20 @@ pub(crate) fn types_provably_incompatible(actual: &RType, expected: &RType) -> b
 /// standalone checks are exact assertions: their length and class constraints
 /// are runtime preconditions, and numeric modes are not interchangeable.
 pub(crate) fn standalone_check_provably_rejects(actual: &RType, expected: &RType) -> bool {
+    /// The per-member view of a type for standalone checks: unions
+    /// flattened recursively, mirroring `mode_set`'s walk, with a bare
+    /// type as itself. Unlike `mode_set` these keep the full `RType` --
+    /// standalone assertions are exact, so each member's length and
+    /// class are runtime preconditions too. A union that carries no
+    /// member list (a state `RType::union`'s contract forbids) degrades
+    /// to the union itself: one unknowable member, like `mode_set`'s
+    /// `None`.
     fn members(rtype: &RType) -> Vec<&RType> {
         if rtype.mode == Mode::Union {
-            rtype
-                .members
-                .as_deref()
-                .map(|members| members.iter().collect())
-                .unwrap_or_else(|| vec![rtype])
+            match rtype.members.as_deref() {
+                Some(union_members) => union_members.iter().flat_map(|m| members(m)).collect(),
+                None => vec![rtype],
+            }
         } else {
             vec![rtype]
         }
@@ -1555,36 +1611,24 @@ fn generic_argument_may_dispatch(
     generic && (actual.class.has_known_class() || actual.mode == Mode::Null)
 }
 
-fn known_modes(rtype: &RType) -> Option<Vec<Mode>> {
-    match rtype.mode {
-        Mode::Opaque => None,
-        Mode::Union => {
-            let members = rtype.members.as_ref()?;
-            if members.iter().any(|member| member.mode == Mode::Opaque) {
-                None
-            } else {
-                Some(members.iter().map(|member| member.mode).collect())
-            }
-        }
-        mode => Some(vec![mode]),
-    }
-}
-
 fn compatible_mode_pair(actual: Mode, expected: Mode) -> bool {
-    actual == expected || (is_numeric_mode(actual) && is_numeric_mode(expected))
+    actual == expected || (numeric_family(actual) && numeric_family(expected))
 }
 
 pub(crate) fn expected_type_label(expected: &RType) -> String {
-    let Some(modes) = known_modes(expected) else {
+    let Some(modes) = mode_set(expected) else {
         return "unknown".to_string();
     };
+    // The "numeric" shorthand deliberately covers the wider arithmetic
+    // ladder than `numeric_family` (complex included): this is message
+    // wording for unions R's own documentation calls numeric (`mean`
+    // accepts complex with no warning), not a coercion promise, so the
+    // difference from the compatibility family is genuine and kept on
+    // purpose (see `numeric_family`).
     if modes.len() >= 3
-        && modes.iter().all(|mode| {
-            matches!(
-                mode,
-                Mode::Logical | Mode::Integer | Mode::Double | Mode::Complex
-            )
-        })
+        && modes
+            .iter()
+            .all(|mode| numeric_family(*mode) || matches!(mode, Mode::Complex))
     {
         return "numeric".to_string();
     }
@@ -1990,5 +2034,224 @@ mod argument_matching_tests {
             Some("length")
         );
         assert_eq!(closest_parameter("unrelated", &["length", "x"]), None);
+    }
+}
+
+/// Pins for the mode/union-set helpers unified in issue #169:
+/// `modes_compatible`, `types_intersect`,
+/// `types_provably_incompatible`/`expected_type_label`, and
+/// `standalone_check_provably_rejects`. Each block records the behavior
+/// its call sites rely on, so the `mode_set`/`numeric_family`
+/// unification can only change a pin through an explicitly documented
+/// decision (commented at the assert that moved).
+#[cfg(test)]
+mod mode_union_set_pins {
+    use super::*;
+
+    fn union(members: Vec<RType>) -> RType {
+        RType::union(Arc::from(members))
+    }
+
+    // ---- modes_compatible (RY080 purrr typed-map coercion) ----
+    #[test]
+    fn modes_compatible_pins_the_coercion_view() {
+        // No evidence: opaque/union/null callback returns stay compatible.
+        assert!(modes_compatible(&Mode::Opaque, &Mode::Double));
+        assert!(modes_compatible(&Mode::Union, &Mode::Double));
+        assert!(modes_compatible(&Mode::Null, &Mode::Double));
+        // The silent-coercion family interchanges freely.
+        assert!(modes_compatible(&Mode::Logical, &Mode::Double));
+        assert!(modes_compatible(&Mode::Integer, &Mode::Logical));
+        assert!(modes_compatible(&Mode::Double, &Mode::Integer));
+        // The footguns RY080 exists for.
+        assert!(!modes_compatible(&Mode::Character, &Mode::Double));
+        assert!(!modes_compatible(&Mode::Double, &Mode::Character));
+        // Complex into a numeric target discards imaginary parts with a
+        // warning, so it is not silently compatible.
+        assert!(!modes_compatible(&Mode::Complex, &Mode::Double));
+        // Unmodeled targets stay permissive.
+        assert!(modes_compatible(&Mode::Double, &Mode::Complex));
+        assert!(modes_compatible(&Mode::Character, &Mode::List));
+    }
+
+    // ---- types_intersect (parameter-default narrowing compatibility) ----
+    #[test]
+    fn types_intersect_pins_narrowing_mode_overlap() {
+        let double = RType::scalar(Mode::Double);
+        let character = RType::scalar(Mode::Character);
+        let numeric_union = union(vec![RType::scalar(Mode::Integer), double.clone()]);
+        assert!(types_intersect(&double, &double));
+        assert!(!types_intersect(&character, &double));
+        assert!(types_intersect(&numeric_union, &double));
+        assert!(types_intersect(&double, &numeric_union));
+        assert!(!types_intersect(&numeric_union, &character));
+    }
+
+    #[test]
+    fn types_intersect_treats_opaque_as_a_mode_matching_only_itself() {
+        let double = RType::scalar(Mode::Double);
+        let character = RType::scalar(Mode::Character);
+        let opaque_member_union = union(vec![character.clone(), RType::unknown()]);
+        // The permissive view (`modes_of`): opaque participates as an
+        // ordinary mode. Opaque-vs-double is therefore disjoint, which
+        // is what lets a guarded default parameter be replaced by the
+        // predicate's type (see `types_intersect`). An opaque-bearing
+        // union still intersects through its knowable members.
+        assert!(!types_intersect(&RType::unknown(), &double));
+        assert!(!types_intersect(&double, &RType::unknown()));
+        assert!(types_intersect(&RType::unknown(), &RType::unknown()));
+        assert!(!types_intersect(&opaque_member_union, &double));
+        assert!(types_intersect(&opaque_member_union, &character));
+    }
+
+    // ---- types_provably_incompatible / expected_type_label (RY092) ----
+    #[test]
+    fn types_provably_incompatible_pins_argument_checking() {
+        let double = RType::scalar(Mode::Double);
+        let character = RType::scalar(Mode::Character);
+        assert!(types_provably_incompatible(&character, &double));
+        assert!(!types_provably_incompatible(
+            &RType::scalar(Mode::Integer),
+            &double
+        ));
+        assert!(!types_provably_incompatible(
+            &double,
+            &RType::scalar(Mode::Logical)
+        ));
+        // Complex is outside the silent-coercion family (see
+        // `numeric_family`), so complex-vs-double is provably
+        // incompatible.
+        assert!(types_provably_incompatible(
+            &RType::scalar(Mode::Complex),
+            &double
+        ));
+        // Opaque anywhere means "cannot decide", never incompatible.
+        assert!(!types_provably_incompatible(&RType::unknown(), &double));
+        assert!(!types_provably_incompatible(&double, &RType::unknown()));
+        let opaque_member = union(vec![double.clone(), RType::unknown()]);
+        assert!(!types_provably_incompatible(&opaque_member, &character));
+        // A union with any compatible member passes.
+        let mixed = union(vec![character.clone(), double.clone()]);
+        assert!(!types_provably_incompatible(&mixed, &double));
+        assert!(types_provably_incompatible(
+            &RType::scalar(Mode::List),
+            &double
+        ));
+    }
+
+    #[test]
+    fn expected_type_label_pins_message_text() {
+        assert_eq!(expected_type_label(&RType::scalar(Mode::Double)), "double");
+        assert_eq!(expected_type_label(&RType::unknown()), "unknown");
+        let numeric = union(vec![
+            RType::scalar(Mode::Logical),
+            RType::scalar(Mode::Integer),
+            RType::scalar(Mode::Double),
+        ]);
+        assert_eq!(expected_type_label(&numeric), "numeric");
+        // Documented genuine difference from `numeric_family`: the
+        // "numeric" shorthand covers the wider logical..complex
+        // arithmetic ladder, because it is message wording for unions
+        // R's own documentation calls numeric (`mean` accepts complex
+        // with no warning), not a coercion promise.
+        let with_complex = union(vec![
+            RType::scalar(Mode::Integer),
+            RType::scalar(Mode::Double),
+            RType::scalar(Mode::Complex),
+        ]);
+        assert_eq!(expected_type_label(&with_complex), "numeric");
+    }
+
+    // ---- standalone_check_provably_rejects (exact assertions) ----
+    #[test]
+    fn standalone_check_pins_exact_assertions() {
+        let double = RType::scalar(Mode::Double);
+        let character = RType::scalar(Mode::Character);
+        let double2 = RType::new(Mode::Double, Length::Known(2));
+        assert!(standalone_check_provably_rejects(&character, &double));
+        assert!(!standalone_check_provably_rejects(&double, &double));
+        // Standalone checks are exact assertions: numeric modes are not
+        // interchangeable here, unlike ordinary argument compatibility.
+        assert!(standalone_check_provably_rejects(
+            &RType::scalar(Mode::Integer),
+            &double
+        ));
+        // Length is a runtime precondition, and opaque never rejects.
+        assert!(standalone_check_provably_rejects(&double, &double2));
+        assert!(!standalone_check_provably_rejects(
+            &double,
+            &RType::new(Mode::Double, Length::Unknown)
+        ));
+        assert!(!standalone_check_provably_rejects(
+            &RType::unknown(),
+            &double
+        ));
+        // A union expectation with any overlapping member passes.
+        let nullable_character = union(vec![
+            RType::new(Mode::Null, Length::Zero),
+            character.clone(),
+        ]);
+        assert!(!standalone_check_provably_rejects(
+            &character,
+            &nullable_character
+        ));
+        assert!(standalone_check_provably_rejects(
+            &double,
+            &nullable_character
+        ));
+    }
+
+    // ---- apply_narrowing call sites (types_intersect consumers) ----
+    //
+    // These pin installed-narrowing outcomes rather than the
+    // compatibility flag itself, proving the `mode_set` unification
+    // (opaque sides are "unprovable", not "disjoint") cannot change
+    // what a guard installs.
+    #[test]
+    fn opaque_bearing_default_parameters_still_narrow() {
+        let target = RType::scalar(Mode::Double);
+        for existing in [
+            RType::unknown(),
+            union(vec![RType::scalar(Mode::Character), RType::unknown()]),
+        ] {
+            let mut base = Scope::default();
+            base.insert_parameter_default("x", existing);
+            let (then_scope, ..) = apply_narrowing(
+                &base,
+                &Narrowing::Positive {
+                    var: "x".to_string(),
+                    target: target.clone(),
+                },
+            );
+            assert_eq!(
+                then_scope.get("x").map(|t| t.mode),
+                Some(Mode::Double),
+                "an is.double guard must install over an opaque-bearing default"
+            );
+        }
+    }
+
+    #[test]
+    fn knowable_unions_narrow_to_the_confirmed_member() {
+        let mut base = Scope::default();
+        base.insert(
+            "x",
+            union(vec![
+                RType::scalar(Mode::Integer),
+                RType::scalar(Mode::Double),
+            ]),
+        );
+        let (then_scope, ..) = apply_narrowing(
+            &base,
+            &Narrowing::Positive {
+                var: "x".to_string(),
+                target: RType::scalar(Mode::Double),
+            },
+        );
+        assert_eq!(
+            then_scope.get("x").map(|t| t.mode),
+            Some(Mode::Double),
+            "a predicate confirming one union member narrows to it"
+        );
     }
 }

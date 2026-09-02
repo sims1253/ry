@@ -737,17 +737,13 @@ pub(crate) fn assigned_names_in_body(body: &[Stmt]) -> HashSet<String> {
 #[cfg(test)]
 mod assigned_names_in_body_tests {
     use super::*;
-    use ry_core::RParser;
     use std::collections::HashSet;
 
     /// The collection runs on a function body (its callers extract the
     /// body from the literal first), so wrap the test source in one.
     fn assigned(body_src: &str) -> HashSet<String> {
         let src = format!("f <- function() {{\n{body_src}\n}}\n");
-        let file = RParser::new()
-            .expect("parser")
-            .parse("assigned_names_test.R", &src)
-            .expect("parse");
+        let file = crate::tests::parse_snippet("assigned_names_test.R", &src);
         let [
             Stmt::Assign {
                 value: Expr::Function { body, .. },

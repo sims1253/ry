@@ -12,11 +12,19 @@ mod type_inference;
 
 // Shared fixtures used across topic modules.
 
-fn check(src: &str) -> Vec<Diagnostic> {
+/// Parse one checker-test snippet under `path`: the single
+/// `RParser::new()` + parse entry point shared by the topic modules in
+/// this directory and the inline `#[cfg(test)]` units in `collect.rs`,
+/// `infer::binop`, and `infer::index`, so parser setup cannot drift
+/// between them.
+pub(super) fn parse_snippet(path: &str, src: &str) -> SourceFile {
     let mut p = RParser::new().unwrap();
-    let f = p.parse("test.R", src).unwrap();
+    p.parse(path, src).unwrap()
+}
+
+fn check(src: &str) -> Vec<Diagnostic> {
     let mut c = Checker::new("test.R");
-    c.check(&f);
+    c.check(&parse_snippet("test.R", src));
     c.take_diagnostics()
 }
 
@@ -24,11 +32,9 @@ fn check(src: &str) -> Vec<Diagnostic> {
 /// that configure external bindings, loaded packages, imported-from
 /// metadata, or user stubs.
 fn check_with(src: &str, setup: impl FnOnce(&mut Checker)) -> Vec<Diagnostic> {
-    let mut p = RParser::new().unwrap();
-    let f = p.parse("test.R", src).unwrap();
     let mut c = Checker::new("test.R");
     setup(&mut c);
-    c.check(&f);
+    c.check(&parse_snippet("test.R", src));
     c.take_diagnostics()
 }
 
@@ -38,15 +44,12 @@ fn check_with(src: &str, setup: impl FnOnce(&mut Checker)) -> Vec<Diagnostic> {
 /// `Checker::check_with_scope`, so the tests exercise the real pass
 /// structure and cannot diverge from it.
 fn check_with_scope(src: &str) -> (Vec<Diagnostic>, Scope) {
-    let mut p = RParser::new().unwrap();
-    let f = p.parse("test.R", src).unwrap();
     let mut c = Checker::new("test.R");
-    c.check_with_scope(&f)
+    c.check_with_scope(&parse_snippet("test.R", src))
 }
 
 /// Parse helper for tests that check a `SourceFile` under a custom path
 /// (project mode, non-`test.R` names). Also used by `project::tests`.
 pub(super) fn parse_file(path: &str, src: &str) -> SourceFile {
-    let mut p = RParser::new().unwrap();
-    p.parse(path, src).unwrap()
+    parse_snippet(path, src)
 }

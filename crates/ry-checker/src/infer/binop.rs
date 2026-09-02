@@ -538,17 +538,13 @@ fn collect_condition_assignment_names(expr: &Expr, names: &mut HashSet<String>) 
 #[cfg(test)]
 mod collect_condition_assignment_names_tests {
     use super::*;
-    use ry_core::RParser;
     use std::collections::HashSet;
 
     /// Collects the names bound in the RHS operand of a `flag && ...`
     /// expression -- the position `merge_condition_assignments` scans.
     fn collected(operand_src: &str) -> HashSet<String> {
         let src = format!("flag && {operand_src}\n");
-        let file = RParser::new()
-            .expect("parser")
-            .parse("cond_assign_test.R", &src)
-            .expect("parse");
+        let file = crate::tests::parse_snippet("cond_assign_test.R", &src);
         let [Stmt::Expr(Expr::BinOp { rhs, .. })] = file.stmts.as_slice() else {
             panic!("test source must be a single `flag && ...` expression");
         };

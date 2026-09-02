@@ -410,6 +410,40 @@ fn code_action_ignore_line_detects_noqa_after_string_hash() {
 }
 
 #[test]
+fn code_action_ignore_line_not_blocked_by_ignore_file_marker() {
+    // `# ry: ignore-file` is a FILE-level directive: the checker's
+    // suppression parser does not line-suppress through it, so the line
+    // quick-fix must still be offered. (The hand-rolled marker check
+    // this replaces treated it as a line suppression and blocked the
+    // action.)
+    let text = "x <- 1L + \"s\"  # ry: ignore-file\n";
+    let diag = lsp_diag(0, 0, 1, "RY040");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(make_ignore_action(&uri, &diag, text).is_some());
+}
+
+#[test]
+fn code_action_ignore_line_not_blocked_by_prose_mention() {
+    // A directive that does not START the comment body is prose, not a
+    // suppression — the checker's parser ignores it, so the quick-fix
+    // availability must too.
+    let text = "x <- 1L + \"s\"  # see docs for ry: ignore\n";
+    let diag = lsp_diag(0, 0, 1, "RY040");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(make_ignore_action(&uri, &diag, text).is_some());
+}
+
+#[test]
+fn code_action_ignore_line_marker_is_case_insensitive() {
+    // The checker's parser matches `ry:` / `noqa` markers
+    // case-insensitively; the quick-fix availability follows it.
+    let text = "x <- 1L + \"s\"  # RY: IGNORE[RY040]\n";
+    let diag = lsp_diag(0, 0, 1, "RY040");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(make_ignore_action(&uri, &diag, text).is_none());
+}
+
+#[test]
 fn code_action_ignore_line_handles_missing_code() {
     // A diagnostic without a code (defensive) must still produce an
     // action, with the comment omitting the `[CODE]` suffix.

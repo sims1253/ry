@@ -261,8 +261,11 @@ fn s7_object_constructors_match_r_oracle() {
         let Some(bare) = constructor.strip_prefix("S7::") else {
             panic!("S7_OBJECT_CONSTRUCTORS member {constructor:?} is not S7-qualified");
         };
+        // The production matcher keys on `S7::<name>` call syntax, which
+        // only resolves through the export list, so check the exports
+        // rather than mere namespace membership.
         let check = r_eval(&format!(
-            "cat(exists(\"{bare}\", where = asNamespace(\"S7\"), inherits = FALSE), \"\\n\")"
+            "cat(\"{bare}\" %in% getNamespaceExports(\"S7\"), \"\\n\")"
         ));
         assert!(
             check.trim().starts_with("TRUE"),

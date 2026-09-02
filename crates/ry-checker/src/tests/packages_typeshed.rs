@@ -1,5 +1,71 @@
 use super::*;
 
+// The two attachment gates of the typeshed-resolution ladders
+// (`AttachedGate` in resolve.rs, issue #166). rlang supplies a predicate
+// signature (`is_null`) and a typed dataset (`na_chr`); dplyr supplies a
+// schema-effect verb (`arrange`). Pinning both directions keeps the
+// `loaded` (project-wide union) vs `bare_loaded` (file-local search
+// path) distinction from silently collapsing into one lookup.
+
+#[test]
+fn bare_name_ladders_gate_on_the_file_local_search_path() {
+    // rlang attached project-wide only: every bare-name ladder must
+    // stay blind to it because `bare_loaded` is empty.
+    let mut checker = Checker::new("test.R");
+    checker.set_shared_loaded(Arc::new(HashSet::from(["rlang".to_string()])));
+    assert!(
+        checker.resolve_typeshed_sig("is_null").is_none(),
+        "signatures resolve through bare_loaded, not the project union"
+    );
+    assert!(
+        checker.resolve_typeshed_value("na_chr").is_none(),
+        "values resolve through bare_loaded, not the project union"
+    );
+    assert!(
+        checker.resolve_predicate_sig("is_null").is_none(),
+        "predicates resolve through bare_loaded, not the project union"
+    );
+    assert!(
+        !checker.has_function_anywhere("is_null"),
+        "function existence resolves through bare_loaded, not the project union"
+    );
+
+    // The same attachment visible on this file's bare search path makes
+    // all four ladders resolve.
+    let mut checker = Checker::new("test.R");
+    checker.set_bare_loaded(HashSet::from(["rlang".to_string()]));
+    assert!(checker.resolve_typeshed_sig("is_null").is_some());
+    assert!(checker.resolve_typeshed_value("na_chr").is_some());
+    assert!(checker.resolve_predicate_sig("is_null").is_some());
+    assert!(checker.has_function_anywhere("is_null"));
+}
+
+#[test]
+fn schema_verb_ladder_gates_on_the_project_union_and_tidyverse_expansion() {
+    // dplyr attached project-wide only (bare search path empty): the
+    // schema ladder sees it, ordinary signature resolution does not.
+    let mut checker = Checker::new("test.R");
+    checker.set_shared_loaded(Arc::new(HashSet::from(["dplyr".to_string()])));
+    assert!(
+        checker.resolve_schema_sig("arrange").is_some(),
+        "schema-effect verbs gate on the project-wide loaded union"
+    );
+    assert!(
+        checker.resolve_typeshed_sig("arrange").is_none(),
+        "ordinary signatures still gate on bare_loaded"
+    );
+
+    // `library(tidyverse)` expands to dplyr/tidyr for schema purposes
+    // only (tidyverse itself ships no stubs).
+    let mut checker = Checker::new("test.R");
+    checker.set_shared_loaded(Arc::new(HashSet::from(["tidyverse".to_string()])));
+    assert!(
+        checker.resolve_schema_sig("arrange").is_some(),
+        "the tidyverse expansion must reach dplyr's declarative verbs"
+    );
+    assert!(checker.resolve_typeshed_sig("arrange").is_none());
+}
+
 #[test]
 fn package_loading_calls_have_distinct_return_types() {
     let (diags, scope) = check_with_scope(

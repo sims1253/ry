@@ -16,13 +16,50 @@ const BASE_DATABASE_PACKAGES: &[&str] = &[
     "datasets",
 ];
 
+/// Which attachment set gates the attached-package rung of a
+/// typeshed-resolution ladder. The checker keeps two sets with different
+/// granularity (`Checker::loaded` is a project-wide union used for dplyr
+/// NSE gating; `Checker::bare_loaded` is this file's R search path), so
+/// every ladder must declare its gate explicitly rather than silently
+/// sharing one lookup (issue #166).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AttachedGate {
+    /// `bare_loaded`: this file's own search path. The gate for ordinary
+    /// bare-name resolution -- signatures, values, predicates, and
+    /// `has_function_anywhere`.
+    Bare,
+    /// `loaded` (the project-wide union) plus the tidyverse expansion:
+    /// `library(tidyverse)` makes dplyr and tidyr's declarative verbs
+    /// resolvable everywhere, exactly like the dplyr NSE gating they
+    /// share inference with.
+    SchemaNse,
+}
+
 impl Checker {
+    /// The attached packages a resolution ladder may consult, in the
+    /// deterministic priority order of [`Self::available_package_names`],
+    /// filtered by `gate`'s attachment rule. This is the one shared
+    /// form of the "walk candidate packages, keep the ones actually
+    /// attached" rung that every ladder below used to hand-roll.
+    pub(crate) fn candidate_packages(&self, gate: AttachedGate) -> impl Iterator<Item = &str> + '_ {
+        self.available_package_names().filter(move |package| {
+            let attached = match gate {
+                AttachedGate::Bare => self.bare_loaded.contains(*package),
+                AttachedGate::SchemaNse => {
+                    self.loaded.contains(*package)
+                        || (self.loaded.contains("tidyverse")
+                            && matches!(*package, "dplyr" | "tidyr"))
+                }
+            };
+            attached
+        })
+    }
+
     /// Resolve only signatures that declare checker schema semantics. Unlike
     /// ordinary call resolution, a same-named base function without an effect
     /// does not mask an attached package's declarative verb.
     pub(crate) fn resolve_schema_sig(&self, name: &str) -> Option<FunctionSig> {
-        if let Some((pkg_raw, fun)) = name.rsplit_once("::") {
-            let pkg = pkg_raw.trim_end_matches(':');
+        if let Some((pkg, fun)) = split_qualified(name) {
             if let Some(signature) = self
                 .package_typeshed(pkg)
                 .and_then(|typeshed| typeshed.functions.get(fun))
@@ -54,21 +91,13 @@ impl Checker {
         {
             return Some(sig.clone());
         }
-        for package in self.available_package_names() {
-            let attached = self.loaded.contains(package)
-                || (self.loaded.contains("tidyverse") && matches!(package, "dplyr" | "tidyr"));
-            if !attached {
-                continue;
-            }
-            if let Some(sig) = self
-                .package_typeshed(package)
-                .and_then(|typeshed| typeshed.functions.get(name))
-                .filter(|sig| has_schema_semantics(sig))
-            {
-                return Some(sig.clone());
-            }
-        }
-        None
+        self.candidate_packages(AttachedGate::SchemaNse)
+            .find_map(|package| {
+                self.package_typeshed(package)
+                    .and_then(|typeshed| typeshed.functions.get(name))
+                    .filter(|sig| has_schema_semantics(sig))
+                    .cloned()
+            })
     }
 
     /// Resolve a predicate declaration with exact callee provenance. Bare
@@ -102,10 +131,7 @@ impl Checker {
         {
             candidates.push(signature);
         }
-        for package in self.available_package_names() {
-            if !self.bare_loaded.contains(package) {
-                continue;
-            }
+        for package in self.candidate_packages(AttachedGate::Bare) {
             if let Some(signature) = self
                 .package_typeshed(package)
                 .and_then(|typeshed| typeshed.functions.get(name))
@@ -126,8 +152,7 @@ impl Checker {
     /// values as well as package datasets; unlike `functions`, these names are
     /// never callable.
     pub(crate) fn resolve_typeshed_value(&self, name: &str) -> Option<RType> {
-        if let Some((pkg_raw, value)) = name.rsplit_once("::") {
-            let package = pkg_raw.trim_end_matches(':');
+        if let Some((package, value)) = split_qualified(name) {
             if BASE_DATABASE_PACKAGES.contains(&package)
                 && let Some(value_type) = self.typeshed.datasets.get(value)
             {
@@ -148,16 +173,11 @@ impl Checker {
         if let Some(value_type) = self.typeshed.datasets.get(name) {
             return Some(json_rtype_to_rtype(value_type));
         }
-        for package in self.available_package_names() {
-            if self.bare_loaded.contains(package)
-                && let Some(value_type) = self
-                    .package_typeshed(package)
-                    .and_then(|typeshed| typeshed.datasets.get(name))
-            {
-                return Some(json_rtype_to_rtype(value_type));
-            }
-        }
-        None
+        self.candidate_packages(AttachedGate::Bare).find_map(|package| {
+            self.package_typeshed(package)
+                .and_then(|typeshed| typeshed.datasets.get(name))
+                .map(json_rtype_to_rtype)
+        })
     }
 
     /// Resolve a function signature by name, consulting (in order):
@@ -173,10 +193,7 @@ impl Checker {
     /// Returns the signature; `None` when no package knows the name.
     pub(crate) fn resolve_typeshed_sig(&self, name: &str) -> Option<FunctionSig> {
         // Qualified call: explicit package reference.
-        if let Some((pkg_raw, fun)) = name.rsplit_once("::") {
-            // `pkg:::fun` splits as ("pkg:", "fun"); trim the trailing
-            // colon to recover the package name.
-            let pkg = pkg_raw.trim_end_matches(':');
+        if let Some((pkg, fun)) = split_qualified(name) {
             // R's standard packages share our embedded base database. This
             // is an explicit package-to-database mapping, not a fallback to
             // a similarly named export from another package.
@@ -216,17 +233,11 @@ impl Checker {
         // disjoint across these packages, so masking rarely bites).
         // `loaded` is a HashSet (unordered) so we walk a deterministic
         // known-packages list and check membership.
-        for pkg in self.available_package_names() {
-            if !self.bare_loaded.contains(pkg) {
-                continue;
-            }
-            if let Some(t) = self.package_typeshed(pkg) {
-                if let Some(sig) = t.functions.get(name) {
-                    return Some(sig.clone());
-                }
-            }
-        }
-        None
+        self.candidate_packages(AttachedGate::Bare).find_map(|pkg| {
+            self.package_typeshed(pkg)
+                .and_then(|typeshed| typeshed.functions.get(name))
+                .cloned()
+        })
     }
 
     /// Inherit declarative NSE metadata when a source package defines an S3
@@ -271,8 +282,7 @@ impl Checker {
     // somewhere). Mirrors [`resolve_typeshed_sig`] plus the FnTable.
     pub(crate) fn has_function_anywhere(&self, name: &str) -> bool {
         // Qualified: check the named package.
-        if let Some((pkg_raw, fun)) = name.rsplit_once("::") {
-            let pkg = pkg_raw.trim_end_matches(':');
+        if let Some((pkg, fun)) = split_qualified(name) {
             if let Some(t) = self.package_typeshed(pkg) {
                 if t.functions.contains_key(fun) {
                     return true;
@@ -298,15 +308,11 @@ impl Checker {
             return true;
         }
         // Loaded packages (fixed priority order; see resolve_typeshed_sig).
-        for pkg in self.available_package_names() {
-            if !self.bare_loaded.contains(pkg) {
-                continue;
-            }
-            if let Some(t) = self.package_typeshed(pkg) {
-                if t.functions.contains_key(name) {
-                    return true;
-                }
-            }
+        if self
+            .candidate_packages(AttachedGate::Bare)
+            .any(|pkg| self.package_typeshed(pkg).is_some_and(|t| t.functions.contains_key(name)))
+        {
+            return true;
         }
         self.fn_table.fns.contains_key(name) || self.fn_table.callable_vars.contains(name)
     }
@@ -486,4 +492,12 @@ fn has_schema_semantics(signature: &FunctionSig) -> bool {
             signature.schema_effect,
             Some(SchemaEffect::Join | SchemaEffect::Pivot)
         )
+}
+
+/// Split `pkg::fun` / `pkg:::fun` into `(package, member)`. The triple-
+/// colon form splits as `("pkg:", "fun")`, so trailing colons are
+/// trimmed to recover the package name.
+fn split_qualified(name: &str) -> Option<(&str, &str)> {
+    let (pkg_raw, member) = name.rsplit_once("::")?;
+    Some((pkg_raw.trim_end_matches(':'), member))
 }

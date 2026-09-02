@@ -59,6 +59,19 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Changed
 
+- **Remaining `collect.rs` walkers on the shared walker**: the
+  parameter-use collector, the declared-globals scan, the
+  function-definition collection, and the nested-definition collection
+  now express their traversal through the shared `ry_core` walker
+  (`Walk::ALL` for the first two; a statement-level policy that skips
+  control tests for the definition walks) instead of four hand-rolled
+  Stmt/Expr recursions. The `first_parameter_use` family stays
+  hand-rolled: it answers a first-use query in evaluation order whose
+  rules select individual children (the value side of a complex
+  assignment before its target, both `if` branches past their first
+  hits, the `for` re-binding between iterator and body), not whole
+  subtrees. Every converted walker ships with a test pinning its skip
+  policy; diagnostics and inferred types are unchanged (#163).
 - **Shared test harnesses, leaner comments, `suppress.rs` renamed to
   `resolve.rs`**: the checker's inline tests gained `check_with` (parse,
   configure, check) and a shared `parse_file`, replacing copy-pasted

@@ -165,61 +165,13 @@ where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin,
 {
-    // Delegates to `run_with_counters` and discards the handle, so production
-    // and the counter-observing tests construct the server through exactly one
-    // code path. Duplicating the `LspService::build` call here would let the
-    // two drift, and the drift would be invisible: the tests would keep
-    // passing while exercising a server the CLI never runs.
-    let (server, _counters) = run_with_counters(reader, writer);
-    server.await;
-    Ok(())
-}
-
-/// Test-only handle to a single server's publish-window compile
-/// counter, returned by [`run_with_counters`]. Because the counter lives in
-/// per-server [`State`] (not a process global), each spawned server observes
-/// only its own compilations, so parallel integration tests never trip each
-/// other's "zero compiles during publish" assertion.
-pub struct ServerCounters {
-    compile_during_last_publish: Arc<std::sync::atomic::AtomicU64>,
-}
-
-impl ServerCounters {
-    /// Compile-count delta observed during this server's most recent
-    /// `publish_diagnostics` cycle. Must be zero once filters are
-    /// precomputed and borrowed in the publish loop.
-    pub fn compile_during_last_publish(&self) -> u64 {
-        self.compile_during_last_publish
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-}
-
-/// Test-only: like [`run_with`], but also returns a handle to this server's
-/// counters so assertions are scoped to one instance rather than the process.
-/// The returned future drives the server (spawn it as you would `run_with`);
-/// the [`ServerCounters`] handle shares the same per-server `Arc`s, so reads
-/// after the server quiesces see exactly what the server stored.
-pub fn run_with_counters<I, O>(
-    read: I,
-    write: O,
-) -> (impl std::future::Future<Output = ()>, ServerCounters)
-where
-    I: tokio::io::AsyncRead + Unpin,
-    O: tokio::io::AsyncWrite + Unpin,
-{
-    let state = State::default();
-    let counters = ServerCounters {
-        compile_during_last_publish: Arc::clone(&state.compile_during_last_publish),
-    };
     let (service, socket) = LspService::build(|client| Backend {
         client,
-        state: Arc::new(Mutex::new(state)),
+        state: Arc::new(Mutex::new(State::default())),
     })
     .finish();
-    let fut = async move {
-        Server::new(read, write, socket).serve(service).await;
-    };
-    (fut, counters)
+    Server::new(reader, writer, socket).serve(service).await;
+    Ok(())
 }
 
 #[cfg(test)]

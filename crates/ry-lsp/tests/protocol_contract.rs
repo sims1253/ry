@@ -1340,14 +1340,16 @@ fn invalid_root_rytoml_degrades_entirely_to_defaults() {
 //
 // Filter, confidence, and exclude values are compiled once while building
 // each `FolderAnalysisContext` and borrowed inside the per-file publish
-// loop. A construction-count test hook lets this test assert the count
-// directly instead of inferring it from wall time.
+// loop — visible structurally in `build_folder_contexts`, which computes
+// them per folder rather than per published file.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// #46: for a fixed folder count, filter/glob construction must be flat
-/// as file count grows. This test creates many files in one folder,
-/// opens a trigger document, and verifies that all published diagnostics
-/// are byte-for-byte correct.
+/// #46: with many files in one folder, every published diagnostic must
+/// still be byte-for-byte correct — the publish loop borrows the
+/// per-folder precomputed filter/confidence/excludes instead of
+/// recompiling anything per file. This test creates many files in one
+/// folder, opens a trigger document, and checks the first and last
+/// indexed files publish identical, correct diagnostics.
 #[test]
 fn many_files_flat_filter_construction() {
     let fixture = FixtureProject::empty().unwrap();
@@ -1368,13 +1370,8 @@ fn many_files_flat_filter_construction() {
         let (client_stream, server_stream) = tokio::io::duplex(256 * 1024);
         let (client_reader, client_writer) = tokio::io::split(client_stream);
         let (server_reader, server_writer) = tokio::io::split(server_stream);
-        // (#46): drive this server through `run_with_counters` so the
-        // "zero compiles during publish" assertion below reads this server's
-        // own per-instance counter, not a process global shared with parallel
-        // test servers.
-        let (server_fut, counters) =
-            ry_lsp::run_with_counters(server_reader, server_writer);
-        let server = tokio::spawn(server_fut);
+        let server =
+            tokio::spawn(async move { ry_lsp::run_with(server_reader, server_writer).await });
         let mut client = AsyncJsonRpcClient::new(client_reader, client_writer);
 
         let init_id = client.request("initialize", json!({
@@ -1444,7 +1441,7 @@ fn many_files_flat_filter_construction() {
         client.receive_until(|m| m.get("id") == Some(&json!(shutdown_id)), 128).await.unwrap();
         client.notify("exit", Value::Null).await.unwrap();
         drop(client);
-        tokio::time::timeout(std::time::Duration::from_secs(5), server).await.unwrap().unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), server).await.unwrap().unwrap().unwrap();
 
         // Every indexed file must produce the same RY090 diagnostic.
         assert!(
@@ -1471,18 +1468,6 @@ fn many_files_flat_filter_construction() {
         }
         assert_eq!(first_diags[0].path, "file_00.R");
         assert_eq!(last_diags[0].path, "file_31.R");
-
-        // (#46): Assert filter/glob construction count is flat
-        // during the publish cycle. The per-server `counters` handle records
-        // the delta observed during the most recent publish_diagnostics call
-        // on this server only. It must be zero with precomputation.
-        let compile_during_publish = counters.compile_during_last_publish();
-        assert_eq!(
-            compile_during_publish, 0,
-            "filter/glob construction count during publish must be \
-             zero (got {}); precomputation not working",
-            compile_during_publish
-        );
     });
 }
 

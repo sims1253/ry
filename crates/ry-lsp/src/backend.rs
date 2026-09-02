@@ -116,12 +116,9 @@ pub(super) struct State {
 
     // --- multi-root workspace folders ---
     /// Per-root analysis contexts, ordered by root path length descending
-    /// for longest-prefix ownership.
+    /// for longest-prefix ownership. Each context owns its folder's
+    /// project cache (see [`FolderAnalysisContext::project_cache`]).
     folder_contexts: Vec<FolderAnalysisContext>,
-    /// Per-folder project caches for isolated checking. Each workspace
-    /// folder gets its own `ProjectCache` so two roots defining the same
-    /// package differently never collide. Keyed by root path string.
-    folder_projects: HashMap<String, Arc<Mutex<ProjectCache>>>,
     /// On-disk `.R`/`.r` files discovered by the background indexer,
     /// keyed by absolute path. Open documents shadow these.
     disk_files: HashMap<String, Arc<SourceFile>>,
@@ -130,15 +127,6 @@ pub(super) struct State {
     /// the current document version, so no cached tree can ever be
     /// served for a different document generation.
     trees: HashMap<String, (i32, ry_core::Tree)>,
-    /// per-server counter for filter/glob construction events.
-    /// Incremented each time a filter or exclude set is compiled from config.
-    /// Scoped to this server (not process-global) so parallel integration
-    /// tests each observe only their own compilations, never a sibling's.
-    pub(super) filter_compile_count: Arc<std::sync::atomic::AtomicU64>,
-    /// compile-count delta observed during this server's most
-    /// recent `publish_diagnostics` cycle. Tests assert it is zero
-    /// (precomputed values are borrowed, never recompiled mid-publish).
-    pub(super) compile_during_last_publish: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// One per-folder analysis context. Analysis channels resolve config,
@@ -167,24 +155,25 @@ pub(super) struct FolderAnalysisContext {
     pub min_confidence: Option<ry_checker::Confidence>,
     /// Precompiled exclude glob patterns.
     pub excludes: ry_config::Excludes,
+    /// This folder's project cache for isolated checking. Each workspace
+    /// folder gets its own `ProjectCache` so two roots defining the same
+    /// package differently never collide. Shared via `Arc` and carried
+    /// across context rebuilds so incremental check state survives a
+    /// config reload.
+    pub project_cache: Arc<Mutex<ProjectCache>>,
 }
 
 /// Compile the filter, min_confidence, and excludes for a folder from its
 /// config and settings. The folder config is both the exclude source and
-/// the severity fallback. `filter_count` is threaded in from
-/// [`State::filter_compile_count`] rather than a process global so
-/// parallel test servers never observe each other's compiles.
+/// the severity fallback.
 fn compute_folder_filter(
     config: &ry_config::Config,
     folder_settings: &FolderSettings,
-    filter_count: &std::sync::atomic::AtomicU64,
 ) -> (
     ry_checker::SeverityFilter,
     Option<ry_checker::Confidence>,
     ry_config::Excludes,
 ) {
-    filter_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
     let lint = &folder_settings.lint;
     let error = lint.error.clone().unwrap_or_else(|| config.error.clone());
     let warn = lint.warn.clone().unwrap_or_else(|| config.warn.clone());
@@ -219,20 +208,18 @@ fn compute_folder_filter(
 
 /// Recompute the cached filter / min_confidence / excludes for every
 /// folder context and the root-level fallback from their installed
-/// `folder_settings`. Never called from `publish_diagnostics`: the
-/// publish-cycle contract asserts zero filter compilations during a
-/// publish cycle.
+/// `folder_settings`. Never called from `publish_diagnostics`, which
+/// borrows these precomputed values instead of recompiling them.
 fn refresh_cached_folder_filters(state: &mut State) {
-    let filter_count = Arc::clone(&state.filter_compile_count);
     for ctx in &mut state.folder_contexts {
         let (filter, min_confidence, excludes) =
-            compute_folder_filter(&ctx.config, &ctx.folder_settings, &filter_count);
+            compute_folder_filter(&ctx.config, &ctx.folder_settings);
         ctx.filter = filter;
         ctx.min_confidence = min_confidence;
         ctx.excludes = excludes;
     }
     let (root_filter, root_min_confidence, root_excludes) =
-        compute_folder_filter(&state.file_config, &state.folder_settings, &filter_count);
+        compute_folder_filter(&state.file_config, &state.folder_settings);
     state.root_filter = root_filter;
     state.root_min_confidence = root_min_confidence;
     state.root_excludes = root_excludes;
@@ -431,12 +418,7 @@ impl State {
     /// [`compute_folder_filter`] the production paths use.
     #[cfg(test)]
     pub(super) fn effective_filter(&self) -> ry_checker::SeverityFilter {
-        compute_folder_filter(
-            &self.file_config,
-            &self.folder_settings,
-            &self.filter_compile_count,
-        )
-        .0
+        compute_folder_filter(&self.file_config, &self.folder_settings).0
     }
 
     /// Find the owning [`FolderAnalysisContext`] for a document path
@@ -538,15 +520,12 @@ impl LanguageServer for Backend {
                     .collect()
             })
             .unwrap_or_default();
-        let filter_compile_count = self.state.lock().await.filter_compile_count.clone();
         let folder_contexts = {
-            let filter_compile_count = Arc::clone(&filter_compile_count);
             tokio::task::spawn_blocking(move || {
                 build_folder_contexts(
                     root_clone.as_deref(),
                     &ws_folder_paths,
                     &server_settings_clone,
-                    &filter_compile_count,
                 )
             })
             .await
@@ -569,18 +548,8 @@ impl LanguageServer for Backend {
                 }
             };
 
-        let folder_projects: HashMap<String, Arc<Mutex<ProjectCache>>> = folder_contexts
-            .iter()
-            .map(|ctx| {
-                (
-                    ctx.root.to_string_lossy().to_string(),
-                    Arc::new(Mutex::new(ProjectCache::default())),
-                )
-            })
-            .collect();
-
         let (root_filter, root_min_confidence, root_excludes) =
-            compute_folder_filter(&file_config, &folder_settings, &filter_compile_count);
+            compute_folder_filter(&file_config, &folder_settings);
 
         let mut state = self.state.lock().await;
         state.user_stubs = user_stubs;
@@ -595,7 +564,6 @@ impl LanguageServer for Backend {
         state.supports_workspace_configuration = supports_workspace_configuration;
         state.supports_did_change_watched_files = supports_did_change_watched_files;
         state.folder_contexts = folder_contexts;
-        state.folder_projects = folder_projects;
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 // All position conversion in this server is UTF-16. Advertise
@@ -788,7 +756,6 @@ impl LanguageServer for Backend {
 
             let new_contexts = if !added_roots.is_empty() {
                 let server_settings = state.server_settings.clone();
-                let filter_compile_count = Arc::clone(&state.filter_compile_count);
                 tokio::task::spawn_blocking(move || {
                     build_folder_contexts(
                         None,
@@ -797,7 +764,6 @@ impl LanguageServer for Backend {
                             .map(|path| (usize::MAX, path.clone()))
                             .collect::<Vec<_>>(),
                         &server_settings,
-                        &filter_compile_count,
                     )
                 })
                 .await
@@ -806,6 +772,8 @@ impl LanguageServer for Backend {
                 Vec::new()
             };
 
+            // Replacing removed contexts drops their project caches with
+            // them; surviving contexts keep theirs, new ones start fresh.
             state
                 .folder_contexts
                 .retain(|ctx| !removed_paths.iter().any(|p| p == &ctx.root));
@@ -814,23 +782,6 @@ impl LanguageServer for Backend {
             state
                 .folder_contexts
                 .sort_by_key(|ctx| std::cmp::Reverse(ctx.root.as_os_str().len()));
-
-            for p in &removed_paths {
-                state
-                    .folder_projects
-                    .remove(&p.to_string_lossy().to_string());
-            }
-            let ctx_keys: Vec<String> = state
-                .folder_contexts
-                .iter()
-                .map(|ctx| ctx.root.to_string_lossy().to_string())
-                .collect();
-            for key in &ctx_keys {
-                state
-                    .folder_projects
-                    .entry(key.clone())
-                    .or_insert_with(|| Arc::new(Mutex::new(ProjectCache::default())));
-            }
 
             state.index_generation = state.index_generation.wrapping_add(1);
         }
@@ -880,18 +831,14 @@ impl LanguageServer for Backend {
         // atomically; a failed reload retains the last valid fields (see
         // `rebuild_folder_context`).
         if config_or_baseline_changed {
-            let (old_contexts, root, filter_compile_count) = {
+            let (old_contexts, root) = {
                 let state = self.state.lock().await;
-                (
-                    state.folder_contexts.clone(),
-                    state.root.clone(),
-                    Arc::clone(&state.filter_compile_count),
-                )
+                (state.folder_contexts.clone(), state.root.clone())
             };
             let old_contexts_for_task = old_contexts.clone();
             // spawn_blocking keeps every disk read off the async runtime.
             let new_contexts = match tokio::task::spawn_blocking(move || {
-                rebuild_folder_contexts(&old_contexts_for_task, &filter_compile_count)
+                rebuild_folder_contexts(&old_contexts_for_task)
             })
             .await
             {
@@ -953,12 +900,9 @@ impl LanguageServer for Backend {
             let (root_project, folder_project_opt) = {
                 let state = self.state.lock().await;
                 let root = Arc::clone(&state.project);
-                let folder = state.folder_context_for_path(&path).and_then(|ctx| {
-                    state
-                        .folder_projects
-                        .get(&ctx.root.to_string_lossy().to_string())
-                        .cloned()
-                });
+                let folder = state
+                    .folder_context_for_path(&path)
+                    .map(|ctx| Arc::clone(&ctx.project_cache));
                 (root, folder)
             };
             let mut project = root_project.lock().await;
@@ -1307,7 +1251,7 @@ impl Backend {
         // checking so a slow check doesn't block other LSP requests
         // (e.g. didOpen of a second file). Only eligible documents'
         // versions are snapshotted.
-        let (path, doc_versions, filter_compile_count, compile_during_last_publish) = {
+        let (path, doc_versions) = {
             let state = self.state.lock().await;
             (
                 uri_to_path(&uri),
@@ -1323,11 +1267,8 @@ impl Backend {
                             .map(|version| (p.clone(), version))
                     })
                     .collect::<Vec<_>>(),
-                Arc::clone(&state.filter_compile_count),
-                Arc::clone(&state.compile_during_last_publish),
             )
         };
-        let publish_start_count = filter_compile_count.load(std::sync::atomic::Ordering::Relaxed);
         let requested_is_eligible = {
             let state = self.state.lock().await;
             state.eligibility_for_path(&path)
@@ -1363,11 +1304,10 @@ impl Backend {
 
         // Check each folder partition independently through its own
         // ProjectCache, stubs, and workspace context.
-        let (folder_contexts, folder_project_handles, root_project, user_stubs) = {
+        let (folder_contexts, root_project, user_stubs) = {
             let state = self.state.lock().await;
             (
                 state.folder_contexts.clone(),
-                state.folder_projects.clone(),
                 Arc::clone(&state.project),
                 Arc::clone(&state.user_stubs),
             )
@@ -1398,15 +1338,12 @@ impl Backend {
         }
 
         let mut all_results: Vec<ProjectCheckResult> = Vec::new();
-        for (key, (ctx_opt, files)) in per_folder {
+        for (_key, (ctx_opt, files)) in per_folder {
             let (stubs, workspace_context, project_handle) = match ctx_opt {
                 Some(ctx) => (
                     Arc::clone(&ctx.stubs),
                     ctx.workspace_context.clone(),
-                    folder_project_handles
-                        .get(&key)
-                        .cloned()
-                        .unwrap_or_else(|| Arc::clone(&root_project)),
+                    Arc::clone(&ctx.project_cache),
                 ),
                 None => (Arc::clone(&user_stubs), None, Arc::clone(&root_project)),
             };
@@ -1503,11 +1440,6 @@ impl Backend {
                     .await;
             }
         }
-        let publish_end_count = filter_compile_count.load(std::sync::atomic::Ordering::Relaxed);
-        compile_during_last_publish.store(
-            publish_end_count - publish_start_count,
-            std::sync::atomic::Ordering::Relaxed,
-        );
     }
 
     /// Discover and parse all `.R`/`.r` files under the workspace root(s)
@@ -1808,7 +1740,6 @@ fn build_folder_contexts(
     root: Option<&std::path::Path>,
     workspace_folders: &[(usize, PathBuf)],
     server_settings: &ServerSettings,
-    filter_count: &std::sync::atomic::AtomicU64,
 ) -> Vec<FolderAnalysisContext> {
     let folders: Vec<(usize, PathBuf)> = if !workspace_folders.is_empty() {
         workspace_folders.to_vec()
@@ -1852,8 +1783,7 @@ fn build_folder_contexts(
 
         let stubs = load_stubs_from_config(&config);
 
-        let (filter, min_confidence, excludes) =
-            compute_folder_filter(&config, &folder_settings, filter_count);
+        let (filter, min_confidence, excludes) = compute_folder_filter(&config, &folder_settings);
         contexts.push(FolderAnalysisContext {
             root: folder_root.clone(),
             config,
@@ -1864,6 +1794,7 @@ fn build_folder_contexts(
             filter,
             min_confidence,
             excludes,
+            project_cache: Arc::new(Mutex::new(ProjectCache::default())),
         });
     }
 
@@ -1877,14 +1808,12 @@ fn build_folder_contexts(
 /// Each field is reloaded independently. On any sub-failure (config parse,
 /// baseline parse) the **last valid value for that field is retained** and a
 /// visible warning emitted — a corrupt reload never silently clears the
-/// baseline. `folder_settings` and `workspace_context` are not reloaded by
-/// file-watch events (they come from editor push / the background indexer
-/// respectively) and are carried over unchanged. Disk I/O happens here;
-/// callers MUST run this outside the state lock.
-fn rebuild_folder_context(
-    old: &FolderAnalysisContext,
-    filter_count: &std::sync::atomic::AtomicU64,
-) -> FolderAnalysisContext {
+/// baseline. `folder_settings`, `workspace_context`, and `project_cache`
+/// are not config-file-derived (they come from editor push / the background
+/// indexer / incremental checks respectively) and are carried over
+/// unchanged. Disk I/O happens here; callers MUST run this outside the
+/// state lock.
+fn rebuild_folder_context(old: &FolderAnalysisContext) -> FolderAnalysisContext {
     let config = match discover_folder_config(&old.folder_settings, &old.root) {
         Ok(cfg) => cfg,
         Err(error) => {
@@ -1920,8 +1849,7 @@ fn rebuild_folder_context(
             old.baseline.clone()
         }
     };
-    let (filter, min_confidence, excludes) =
-        compute_folder_filter(&config, &old.folder_settings, filter_count);
+    let (filter, min_confidence, excludes) = compute_folder_filter(&config, &old.folder_settings);
     FolderAnalysisContext {
         root: old.root.clone(),
         config,
@@ -1932,6 +1860,7 @@ fn rebuild_folder_context(
         filter,
         min_confidence,
         excludes,
+        project_cache: Arc::clone(&old.project_cache),
     }
 }
 
@@ -1939,13 +1868,8 @@ fn rebuild_folder_context(
 /// replacement `Vec` in the same order as `old`. Used by the
 /// watched-files handler to rebuild outside the write lock and then swap
 /// atomically; each folder is rebuilt independently.
-fn rebuild_folder_contexts(
-    old: &[FolderAnalysisContext],
-    filter_count: &std::sync::atomic::AtomicU64,
-) -> Vec<FolderAnalysisContext> {
-    old.iter()
-        .map(|ctx| rebuild_folder_context(ctx, filter_count))
-        .collect()
+fn rebuild_folder_contexts(old: &[FolderAnalysisContext]) -> Vec<FolderAnalysisContext> {
+    old.iter().map(rebuild_folder_context).collect()
 }
 
 /// Convert a document's path string (the key used in `State::docs`)

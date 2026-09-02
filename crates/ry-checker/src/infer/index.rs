@@ -1,4 +1,6 @@
 use super::*;
+use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
+use std::ops::ControlFlow;
 
 fn atomic_mode(member: &RType) -> bool {
     matches!(
@@ -672,86 +674,134 @@ pub(crate) fn insert_s3_dispatch_context(method_name: &str, scope: &mut Scope, g
     }
 }
 
+/// Names assigned anywhere in a body, for closure-capture candidates.
+/// Enters assignment values, `if`/`for`/`while` statement bodies,
+/// braced-block values, and `if`-expression branches; records the names
+/// bound by plain assignments, `for` iterators, function definitions,
+/// and expression-position `<-`/`<<-`. Skips function bodies, control
+/// tests (`if`/`while` conditions, `for` iterators), the assignment
+/// target and `<-`/`<<-` left-operand subtrees (only the bound name is
+/// recorded -- R does not evaluate them), and every expression form
+/// except blocks, `if`, and assignment operators.
 pub(crate) fn assigned_names_in_body(body: &[Stmt]) -> HashSet<String> {
-    fn visit(statement: &Stmt, names: &mut HashSet<String>) {
-        match statement {
-            Stmt::Assign { target, value, .. } => {
-                if let Expr::Ident { name, .. } = target {
-                    names.insert(name.clone());
-                }
-                // A nested closure has its own locals; do not leak them into
-                // the enclosing closure's capture candidates.
-                if !matches!(value, Expr::Function { .. }) {
-                    visit_expr(value, names);
-                }
-            }
-            Stmt::If { then, else_, .. } => {
-                for statement in then {
-                    visit(statement, names);
-                }
-                if let Some(else_) = else_ {
-                    for statement in else_ {
-                        visit(statement, names);
+    let mut names = HashSet::new();
+    let _ = walk_stmts(
+        body,
+        Walk {
+            assign_targets: false,
+            assign_operands: false,
+            fn_bodies: false,
+            control_tests: false,
+            ..Walk::ALL
+        },
+        |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+            match node {
+                AstNode::Stmt(Stmt::Assign { target, .. }) => {
+                    if let Expr::Ident { name, .. } = target {
+                        names.insert(name.clone());
                     }
                 }
-            }
-            Stmt::For { name, body, .. } => {
-                names.insert(name.clone());
-                for statement in body {
-                    visit(statement, names);
-                }
-            }
-            Stmt::While { body, .. } => {
-                for statement in body {
-                    visit(statement, names);
-                }
-            }
-            Stmt::FunctionDef { name, .. } => {
-                if let Some(name) = name {
+                AstNode::Stmt(Stmt::For { name, .. }) => {
                     names.insert(name.clone());
                 }
-            }
-            Stmt::Expr(expr) => visit_expr(expr, names),
-            Stmt::Return { value, .. } => {
-                if let Some(value) = value {
-                    visit_expr(value, names);
+                AstNode::Stmt(Stmt::FunctionDef {
+                    name: Some(name), ..
+                }) => {
+                    names.insert(name.clone());
                 }
+                AstNode::Expr(Expr::BinOp {
+                    op: BinOpKind::Assign | BinOpKind::SuperAssign,
+                    lhs,
+                    ..
+                }) => {
+                    if let Expr::Ident { name, .. } = lhs.as_ref() {
+                        names.insert(name.clone());
+                    }
+                }
+                // Blocks and `if` expressions carry further statements;
+                // the control_tests=false knob already prunes their
+                // conditions. Every other expression form cannot
+                // introduce names: calls, indexing, and literals only
+                // read, and only assignment operators bind from
+                // expression position.
+                AstNode::Expr(Expr::Block { .. } | Expr::If { .. }) => {}
+                AstNode::Expr(_) => return ControlFlow::Continue(Descend::Skip),
+                AstNode::Stmt(_) => {}
             }
-        }
-    }
-    fn visit_expr(expr: &Expr, names: &mut HashSet<String>) {
-        match expr {
-            Expr::BinOp {
-                op: BinOpKind::Assign | BinOpKind::SuperAssign,
-                lhs,
-                rhs,
+            ControlFlow::Continue(Descend::Into)
+        },
+    );
+    names
+}
+
+/// Pins the traversal shape of [`assigned_names_in_body`] to the
+/// hand-rolled walker it replaced: names bound inside braced-block
+/// values and `if`-expression branches are locals of the enclosing
+/// body (closure-capture and loop-carried-binding candidates), while
+/// control tests and unevaluated assignment targets stay pruned.
+#[cfg(test)]
+mod assigned_names_in_body_tests {
+    use super::*;
+    use ry_core::RParser;
+    use std::collections::HashSet;
+
+    /// The collection runs on a function body (its callers extract the
+    /// body from the literal first), so wrap the test source in one.
+    fn assigned(body_src: &str) -> HashSet<String> {
+        let src = format!("f <- function() {{\n{body_src}\n}}\n");
+        let file = RParser::new()
+            .expect("parser")
+            .parse("assigned_names_test.R", &src)
+            .expect("parse");
+        let [
+            Stmt::Assign {
+                value: Expr::Function { body, .. },
                 ..
-            } => {
-                if let Expr::Ident { name, .. } = lhs.as_ref() {
-                    names.insert(name.clone());
-                }
-                visit_expr(rhs, names);
-            }
-            Expr::Block { body, .. } => {
-                for statement in body {
-                    visit(statement, names);
-                }
-            }
-            Expr::If { then, else_, .. } => {
-                visit_expr(then, names);
-                if let Some(else_) = else_ {
-                    visit_expr(else_, names);
-                }
-            }
-            _ => {}
-        }
+            },
+        ] = file.stmts.as_slice()
+        else {
+            panic!("test source must be a single `f <- function()` assignment");
+        };
+        assigned_names_in_body(body)
     }
 
-    let mut names = HashSet::new();
-    for statement in body {
-        visit(statement, &mut names);
+    fn assert_exact(body_src: &str, expected: &[&str]) {
+        let found = assigned(body_src);
+        let expected: HashSet<String> = expected.iter().map(|name| name.to_string()).collect();
+        assert_eq!(found, expected, "names from body `{body_src}`");
     }
-    names
+
+    /// A braced-block value carries statements, so `x` is assigned in
+    /// the enclosing body. A wildcard `Expr(_) => Skip` callback arm
+    /// pruned it -- the review blocker this pins.
+    #[test]
+    fn records_names_assigned_inside_braced_block_values() {
+        assert_exact("out <- { x <- 1; out }", &["out", "x"]);
+    }
+
+    /// `if` in expression position evaluates both branches in the
+    /// current environment, so bindings in either branch are locals.
+    #[test]
+    fn records_names_assigned_inside_if_expression_branches() {
+        assert_exact("res <- if (c) a else { b <- 1 }", &["res", "b"]);
+    }
+
+    /// Negative controls: the `for` iterator is a control test and the
+    /// `if`-expression condition is not walked, so assignments nested
+    /// there are not recorded even though R evaluates the test.
+    #[test]
+    fn does_not_record_control_test_assignments() {
+        assert_exact("for (i in g(a <- 1)) print(i)", &["i"]);
+        assert_exact("res <- if (mk(w <- 1)) a else b", &["res"]);
+    }
+
+    /// Names bound through `<-`/`<<-` in expression position are
+    /// recorded, but the left operand subtree is not walked (only the
+    /// bound identifier is recorded, matching R's unevaluated target).
+    #[test]
+    fn records_expression_position_assignment_names_without_walking_lhs() {
+        assert_exact("z <- (y <- f(x <- 1))", &["z", "y"]);
+    }
 }
 
 #[cfg(test)]

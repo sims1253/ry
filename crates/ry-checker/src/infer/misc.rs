@@ -1,5 +1,7 @@
 use super::*;
 use crate::semantic_lists::DEFUSING_CALLS;
+use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmts};
+use std::ops::ControlFlow;
 
 pub(crate) fn equality_list_leaf_type(value: &RType) -> Option<RType> {
     if !matches!(value.mode, Mode::List) {
@@ -732,55 +734,25 @@ pub(crate) fn parse_class_literal(e: &Expr) -> ClassLiteral {
 }
 
 /// Walk `stmts` collecting calls inside `caller`'s body that forward its
-/// `params` to nested calls.
+/// `params` to nested calls. Skips nested function bodies: a nested
+/// function has its own formals and is collected separately when it has
+/// a binding.
 pub(crate) fn collect_forwarded_calls_in_stmts(
     caller: &str,
     params: &[Param],
     stmts: &[Stmt],
     calls: &mut Vec<ForwardedCall>,
 ) {
-    for statement in stmts {
-        match statement {
-            Stmt::Assign { target, value, .. } => {
-                collect_forwarded_calls_in_expr(caller, params, target, calls);
-                collect_forwarded_calls_in_expr(caller, params, value, calls);
-            }
-            Stmt::Expr(expr) => collect_forwarded_calls_in_expr(caller, params, expr, calls),
-            Stmt::If {
-                cond, then, else_, ..
-            } => {
-                collect_forwarded_calls_in_expr(caller, params, cond, calls);
-                collect_forwarded_calls_in_stmts(caller, params, then, calls);
-                if let Some(else_) = else_ {
-                    collect_forwarded_calls_in_stmts(caller, params, else_, calls);
-                }
-            }
-            Stmt::For { iter, body, .. }
-            | Stmt::While {
-                cond: iter, body, ..
-            } => {
-                collect_forwarded_calls_in_expr(caller, params, iter, calls);
-                collect_forwarded_calls_in_stmts(caller, params, body, calls);
-            }
-            Stmt::FunctionDef { .. } => {}
-            Stmt::Return { value, .. } => {
-                if let Some(value) = value {
-                    collect_forwarded_calls_in_expr(caller, params, value, calls);
-                }
-            }
-        }
-    }
-}
-
-pub(crate) fn collect_forwarded_calls_in_expr(
-    caller: &str,
-    params: &[Param],
-    expr: &Expr,
-    calls: &mut Vec<ForwardedCall>,
-) {
-    match expr {
-        Expr::Call { func, args, .. } => {
-            if let Expr::Ident { name, .. } = func.as_ref() {
+    let _ = walk_stmts(
+        stmts,
+        Walk {
+            fn_bodies: false,
+            ..Walk::ALL
+        },
+        |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+            if let AstNode::Expr(Expr::Call { func, args, .. }) = node
+                && let Expr::Ident { name, .. } = func.as_ref()
+            {
                 let callee = crate::semantic_lists::bare_name(name);
                 calls.push(ForwardedCall {
                     caller: caller.to_string(),
@@ -799,44 +771,9 @@ pub(crate) fn collect_forwarded_calls_in_expr(
                         .collect(),
                 });
             }
-            collect_forwarded_calls_in_expr(caller, params, func, calls);
-            for argument in args {
-                collect_forwarded_calls_in_expr(caller, params, &argument.value, calls);
-            }
-        }
-        Expr::BinOp { lhs, rhs, .. } => {
-            collect_forwarded_calls_in_expr(caller, params, lhs, calls);
-            collect_forwarded_calls_in_expr(caller, params, rhs, calls);
-        }
-        Expr::UnaryOp { expr, .. } => collect_forwarded_calls_in_expr(caller, params, expr, calls),
-        Expr::Index { base, args, .. } => {
-            collect_forwarded_calls_in_expr(caller, params, base, calls);
-            for argument in args {
-                collect_forwarded_calls_in_expr(caller, params, &argument.value, calls);
-            }
-        }
-        Expr::Block { body, .. } => collect_forwarded_calls_in_stmts(caller, params, body, calls),
-        Expr::If {
-            cond, then, else_, ..
-        } => {
-            collect_forwarded_calls_in_expr(caller, params, cond, calls);
-            collect_forwarded_calls_in_expr(caller, params, then, calls);
-            if let Some(else_) = else_ {
-                collect_forwarded_calls_in_expr(caller, params, else_, calls);
-            }
-        }
-        // A nested function has its own formals; it is collected separately
-        // when it has a binding, so do not attribute its calls to this caller.
-        Expr::Function { .. }
-        | Expr::Logical(_, _)
-        | Expr::Integer(_, _)
-        | Expr::Double(_, _)
-        | Expr::String(_, _)
-        | Expr::Null(_)
-        | Expr::Na(_, _)
-        | Expr::Ident { .. }
-        | Expr::Unknown(_) => {}
-    }
+            ControlFlow::Continue(Descend::Into)
+        },
+    );
 }
 
 impl Checker {
@@ -950,6 +887,17 @@ fn build_trusted_defusers(fn_table: &FnTable) -> HashSet<String> {
     trusted
 }
 
+// The force/identifier family below (`guaranteed_force_before_replacement`,
+// `definitely_forced_identifier{,_in_stmt}`, `first_executed_identifier{,_in_stmt}`)
+// is deliberately NOT expressed through the shared walker in
+// `ry_core::walk`: its rules select individual children of a node —
+// call arguments are skipped unless the callee is a known strict
+// builtin, an `if` with a literal condition visits only the taken
+// branch, a `$` subscript's synthesized ident is skipped while the base
+// is kept — and the walk must stop at the first identifier forced in
+// evaluation order. That is an evaluation-order analysis with
+// per-child laziness rules, not a subtree-skip policy, so it keeps its
+// hand-rolled recursion.
 fn guaranteed_force_before_replacement(
     body: &[Stmt],
     wanted: &str,
@@ -1169,93 +1117,26 @@ fn first_executed_identifier(
     }
 }
 
+/// Identifiers the expression evaluates when forced. Skips assignment
+/// targets (R does not evaluate them), `$` subscript idents, and nested
+/// function bodies.
 fn collect_executed_identifiers(expr: &Expr, names: &mut HashSet<String>) {
-    match expr {
-        Expr::Ident { name, .. } => {
-            names.insert(name.clone());
-        }
-        Expr::Call { func, args, .. } => {
-            collect_executed_identifiers(func, names);
-            for argument in args {
-                collect_executed_identifiers(&argument.value, names);
+    let _ = walk_expr(
+        expr,
+        Walk {
+            assign_targets: false,
+            assign_operands: false,
+            dollar_args: false,
+            fn_bodies: false,
+            ..Walk::ALL
+        },
+        |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+            if let AstNode::Expr(Expr::Ident { name, .. }) = node {
+                names.insert(name.clone());
             }
-        }
-        Expr::BinOp { lhs, rhs, op, .. } => {
-            if !matches!(op, BinOpKind::Assign | BinOpKind::SuperAssign) {
-                collect_executed_identifiers(lhs, names);
-            }
-            collect_executed_identifiers(rhs, names);
-        }
-        Expr::UnaryOp { expr, .. } => collect_executed_identifiers(expr, names),
-        Expr::Index {
-            base, kind, args, ..
-        } => {
-            collect_executed_identifiers(base, names);
-            if !matches!(kind, IndexKind::Dollar) {
-                for argument in args {
-                    collect_executed_identifiers(&argument.value, names);
-                }
-            }
-        }
-        Expr::Block { body, .. } => {
-            for statement in body {
-                collect_identifiers_in_stmt(statement, names);
-            }
-        }
-        Expr::If {
-            cond, then, else_, ..
-        } => {
-            collect_executed_identifiers(cond, names);
-            collect_executed_identifiers(then, names);
-            if let Some(else_) = else_ {
-                collect_executed_identifiers(else_, names);
-            }
-        }
-        Expr::Function { .. }
-        | Expr::Logical(_, _)
-        | Expr::Integer(_, _)
-        | Expr::Double(_, _)
-        | Expr::String(_, _)
-        | Expr::Null(_)
-        | Expr::Na(_, _)
-        | Expr::Unknown(_) => {}
-    }
-}
-
-fn collect_identifiers_in_stmt(statement: &Stmt, names: &mut HashSet<String>) {
-    match statement {
-        Stmt::Assign { value, .. } | Stmt::Expr(value) => {
-            collect_executed_identifiers(value, names);
-        }
-        Stmt::If {
-            cond, then, else_, ..
-        } => {
-            collect_executed_identifiers(cond, names);
-            for statement in then {
-                collect_identifiers_in_stmt(statement, names);
-            }
-            if let Some(else_) = else_ {
-                for statement in else_ {
-                    collect_identifiers_in_stmt(statement, names);
-                }
-            }
-        }
-        Stmt::For { iter, body, .. }
-        | Stmt::While {
-            cond: iter, body, ..
-        } => {
-            collect_executed_identifiers(iter, names);
-            for statement in body {
-                collect_identifiers_in_stmt(statement, names);
-            }
-        }
-        Stmt::Return { value, .. } => {
-            if let Some(value) = value {
-                collect_executed_identifiers(value, names);
-            }
-        }
-        Stmt::FunctionDef { .. } => {}
-    }
+            ControlFlow::Continue(Descend::Into)
+        },
+    );
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

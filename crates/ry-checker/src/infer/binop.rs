@@ -1,4 +1,6 @@
 use super::*;
+use ry_core::walk::{AstNode, Descend, Walk, walk_expr};
+use std::ops::ControlFlow;
 
 impl Checker {
     pub(crate) fn infer_binop(
@@ -470,61 +472,138 @@ fn merge_condition_assignments(scope: &mut Scope, evaluated: &Scope, expr: &Expr
     }
 }
 
+/// Records `expr`'s name only when it is a plain identifier binding;
+/// complex targets (`d$k <- v`, `m[i] <- v`) bind no name at the
+/// target itself.
+fn insert_bound_name(expr: &Expr, names: &mut HashSet<String>) {
+    if let Expr::Ident { name, .. } = expr {
+        names.insert(name.clone());
+    }
+}
+
+/// Records names bound by assignments nested anywhere in a condition
+/// expression: the identifier LHS of expression-position `<-`/`<<-`
+/// (descending into both operands, so a complex target like
+/// `m[i <- f()]` still records `i`), and inside `{ ... }` value blocks,
+/// plain assignments of any target shape (descending into the value)
+/// plus bare expressions. Skips assignment targets, function bodies,
+/// and the remaining statement forms (if, while, for, function
+/// definitions, return), which cannot bind a name in the current
+/// environment from inside a condition value.
 fn collect_condition_assignment_names(expr: &Expr, names: &mut HashSet<String>) {
-    match expr {
-        Expr::BinOp { op, lhs, rhs, .. } => {
-            if matches!(op, BinOpKind::Assign | BinOpKind::SuperAssign)
-                && let Expr::Ident { name, .. } = lhs.as_ref()
-            {
-                names.insert(name.clone());
-            }
-            collect_condition_assignment_names(lhs, names);
-            collect_condition_assignment_names(rhs, names);
-        }
-        Expr::Call { func, args, .. } => {
-            collect_condition_assignment_names(func, names);
-            for arg in args {
-                collect_condition_assignment_names(&arg.value, names);
-            }
-        }
-        Expr::UnaryOp { expr, .. } => collect_condition_assignment_names(expr, names),
-        Expr::Index { base, args, .. } => {
-            collect_condition_assignment_names(base, names);
-            for arg in args {
-                collect_condition_assignment_names(&arg.value, names);
-            }
-        }
-        Expr::Block { body, .. } => {
-            for stmt in body {
-                match stmt {
-                    Stmt::Assign { target, value, .. } => {
-                        if let Expr::Ident { name, .. } = target {
-                            names.insert(name.clone());
-                        }
-                        collect_condition_assignment_names(value, names);
-                    }
-                    Stmt::Expr(expr) => collect_condition_assignment_names(expr, names),
-                    _ => {}
+    let _ = walk_expr(
+        expr,
+        Walk {
+            assign_targets: false,
+            // The `<-`/`<<-` LHS is walked, not pruned: base recursed
+            // into it unconditionally.
+            assign_operands: true,
+            fn_bodies: false,
+            ..Walk::ALL
+        },
+        |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+            match node {
+                AstNode::Expr(Expr::BinOp {
+                    op: BinOpKind::Assign | BinOpKind::SuperAssign,
+                    lhs,
+                    ..
+                }) => insert_bound_name(lhs, names),
+                // Any target shape: a complex target (`d$k <- v`) binds
+                // no name at the target, but its value still can.
+                AstNode::Stmt(Stmt::Assign { target, .. }) => {
+                    insert_bound_name(target, names);
                 }
+                // Inside a `{ ... }` value, only assignments and bare
+                // expressions can bind a name in the current
+                // environment; control flow, definitions, and returns
+                // cannot.
+                AstNode::Stmt(
+                    Stmt::If { .. }
+                    | Stmt::While { .. }
+                    | Stmt::For { .. }
+                    | Stmt::FunctionDef { .. }
+                    | Stmt::Return { .. },
+                ) => return ControlFlow::Continue(Descend::Skip),
+                _ => {}
             }
-        }
-        Expr::If {
-            cond, then, else_, ..
-        } => {
-            collect_condition_assignment_names(cond, names);
-            collect_condition_assignment_names(then, names);
-            if let Some(else_) = else_ {
-                collect_condition_assignment_names(else_, names);
-            }
-        }
-        Expr::Ident { .. }
-        | Expr::Logical(_, _)
-        | Expr::Integer(_, _)
-        | Expr::Double(_, _)
-        | Expr::String(_, _)
-        | Expr::Null(_)
-        | Expr::Na(_, _)
-        | Expr::Function { .. }
-        | Expr::Unknown(_) => {}
+            ControlFlow::Continue(Descend::Into)
+        },
+    );
+}
+
+/// Pins the traversal shape of [`collect_condition_assignment_names`]
+/// to the hand-rolled recursion it replaced: short-circuit `&&`/`||`
+/// operands are walked like base did, including `{ ... }` value blocks
+/// whose statements bind in the current environment.
+#[cfg(test)]
+mod collect_condition_assignment_names_tests {
+    use super::*;
+    use ry_core::RParser;
+    use std::collections::HashSet;
+
+    /// Collects the names bound in the RHS operand of a `flag && ...`
+    /// expression -- the position `merge_condition_assignments` scans.
+    fn collected(operand_src: &str) -> HashSet<String> {
+        let src = format!("flag && {operand_src}\n");
+        let file = RParser::new()
+            .expect("parser")
+            .parse("cond_assign_test.R", &src)
+            .expect("parse");
+        let [Stmt::Expr(Expr::BinOp { rhs, .. })] = file.stmts.as_slice() else {
+            panic!("test source must be a single `flag && ...` expression");
+        };
+        let mut names = HashSet::new();
+        collect_condition_assignment_names(rhs, &mut names);
+        names
+    }
+
+    fn assert_exact(operand_src: &str, expected: &[&str]) {
+        let found = collected(operand_src);
+        let expected: HashSet<String> = expected.iter().map(|name| name.to_string()).collect();
+        assert_eq!(found, expected, "names from operand `{operand_src}`");
+    }
+
+    /// Assignments nested in an `&&`/`||` operand's value block bind in
+    /// the current environment: both the identifier target `total` and
+    /// the expression-position `delta` inside its value.
+    #[test]
+    fn records_assignments_inside_condition_value_blocks() {
+        assert_exact(
+            "({ total <- total + (delta <- f()); total })",
+            &["total", "delta"],
+        );
+    }
+
+    /// A non-identifier statement target (`d$k <- ...`) binds nothing
+    /// itself, but its value still can: `y` must be recorded. A
+    /// wildcard `Stmt(_) => Skip` callback arm pruned the whole
+    /// statement -- the review blocker this pins.
+    #[test]
+    fn records_value_assignments_behind_complex_statement_targets() {
+        assert_exact("{ d$k <- (y <- 1); TRUE }", &["y"]);
+    }
+
+    /// A bare expression statement inside a condition value block can
+    /// itself carry an expression-position assignment.
+    #[test]
+    fn records_bare_expression_assignments_inside_condition_blocks() {
+        assert_exact("{ (z <- 2); TRUE }", &["z"]);
+    }
+
+    /// The left operand of expression-position `<-`/`<<-` is walked
+    /// (base recursed into it unconditionally), so a complex target
+    /// like `m[i <- compute()]` still records `i`.
+    #[test]
+    fn walks_expression_position_assignment_lhs() {
+        assert_exact("(m[i <- compute()] <- v)", &["i"]);
+    }
+
+    /// Negative controls: calls and index arguments are walked, while
+    /// control statements inside value blocks stay pruned.
+    #[test]
+    fn prunes_control_statements_but_not_call_arguments() {
+        assert_exact("g(a <- 1)", &["a"]);
+        assert_exact("m[b <- 1]", &["b"]);
+        assert_exact("{ for (q in 1:3) { w <- 1 }; TRUE }", &[]);
     }
 }

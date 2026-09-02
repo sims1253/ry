@@ -1,6 +1,8 @@
 use super::*;
 use crate::infer::*;
 use crate::semantic_lists::bare_name;
+use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmt};
+use std::ops::ControlFlow;
 
 impl Checker {
     pub(crate) fn collect_fns(&mut self, stmts: &[Stmt]) {
@@ -517,67 +519,43 @@ fn parameter_is_quoted(body: &[Stmt], params: &[Param], parameter: &str) -> bool
                 && parameter_has_normal_use(body, parameter)))
 }
 
-/// Generic statement walker shared by the quoting-capture predicates.
-/// Tests `pred` at every call node and recurses into compound
-/// statements. Short-circuits on the first hit. `Expr::Function` bodies
-/// and `Stmt::FunctionDef` are opaque: quoting inside a nested function
+/// Generic statement walker shared by the quoting-capture predicates:
+/// the shared ry-core walker in "does any expression satisfy `pred`"
+/// mode. Tests `pred` at every expression node and short-circuits on
+/// the first hit. Function bodies are opaque (skips `Expr::Function`
+/// and `Stmt::FunctionDef` bodies): quoting inside a nested function
 /// belongs to that function's own formals.
 fn stmt_any(statement: &Stmt, pred: &impl Fn(&Expr) -> bool) -> bool {
-    match statement {
-        Stmt::Assign { target, value, .. } => expr_any(target, pred) || expr_any(value, pred),
-        Stmt::Expr(expression) => expr_any(expression, pred),
-        Stmt::If {
-            cond, then, else_, ..
-        } => {
-            expr_any(cond, pred)
-                || then.iter().any(|s| stmt_any(s, pred))
-                || else_.iter().flatten().any(|s| stmt_any(s, pred))
-        }
-        Stmt::For { iter, body, .. } => {
-            expr_any(iter, pred) || body.iter().any(|s| stmt_any(s, pred))
-        }
-        Stmt::While { cond, body, .. } => {
-            expr_any(cond, pred) || body.iter().any(|s| stmt_any(s, pred))
-        }
-        Stmt::FunctionDef { .. } => false,
-        Stmt::Return { value, .. } => value.as_ref().is_some_and(|e| expr_any(e, pred)),
-    }
+    walk_stmt(
+        statement,
+        Walk {
+            fn_bodies: false,
+            ..Walk::ALL
+        },
+        |node, _| match node {
+            AstNode::Expr(e) if pred(e) => ControlFlow::Break(()),
+            _ => ControlFlow::Continue(Descend::Into),
+        },
+    )
+    .is_break()
 }
 
-/// Expression half of `stmt_any`. Tests `pred` at call nodes; every
-/// other expression recurses into its children. The quoting-capture
-/// predicates all early-return on non-call nodes, so testing at call
-/// nodes alone is equivalent to testing at every node.
+/// Expression half of `stmt_any`. The quoting-capture predicates all
+/// early-return on non-call nodes, so testing at every node is
+/// equivalent to testing at call nodes alone.
 fn expr_any(expression: &Expr, pred: &impl Fn(&Expr) -> bool) -> bool {
-    match expression {
-        Expr::Call { func, args, .. } => {
-            pred(expression)
-                || expr_any(func, pred)
-                || args.iter().any(|argument| expr_any(&argument.value, pred))
-        }
-        Expr::BinOp { lhs, rhs, .. } => expr_any(lhs, pred) || expr_any(rhs, pred),
-        Expr::UnaryOp { expr, .. } => expr_any(expr, pred),
-        Expr::Index { base, args, .. } => {
-            expr_any(base, pred) || args.iter().any(|argument| expr_any(&argument.value, pred))
-        }
-        Expr::Block { body, .. } => body.iter().any(|s| stmt_any(s, pred)),
-        Expr::If {
-            cond, then, else_, ..
-        } => {
-            expr_any(cond, pred)
-                || expr_any(then, pred)
-                || else_.as_ref().is_some_and(|e| expr_any(e, pred))
-        }
-        Expr::Function { .. }
-        | Expr::Ident { .. }
-        | Expr::Logical(_, _)
-        | Expr::Integer(_, _)
-        | Expr::Double(_, _)
-        | Expr::String(_, _)
-        | Expr::Null(_)
-        | Expr::Na(_, _)
-        | Expr::Unknown(_) => false,
-    }
+    walk_expr(
+        expression,
+        Walk {
+            fn_bodies: false,
+            ..Walk::ALL
+        },
+        |node, _| match node {
+            AstNode::Expr(e) if pred(e) => ControlFlow::Break(()),
+            _ => ControlFlow::Continue(Descend::Into),
+        },
+    )
+    .is_break()
 }
 
 /// Leaf predicate for `stmt_any`: the call reflects its complete call

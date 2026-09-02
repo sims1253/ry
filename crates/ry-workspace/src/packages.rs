@@ -6,7 +6,9 @@
 
 use ry_core::SourceFile;
 use ry_core::ast::{Expr, Stmt};
+use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
 use std::collections::{HashMap, HashSet};
+use std::ops::ControlFlow;
 
 /// External-binding sentinel carrying a `useDynLib(..., .fixes = "prefix")`
 /// prefix. Any name starting with the prefix resolves to a native routine.
@@ -120,12 +122,20 @@ pub fn namespace_metadata(file: &SourceFile) -> NamespaceMetadata {
 /// Find packages attached by `library()` or `require()` calls.
 ///
 /// `requireNamespace()` is deliberately excluded: it makes `pkg::name`
-/// available but does not place `name` on R's search path.
+/// available but does not place `name` on R's search path. Walks every
+/// subtree including function bodies: an attachment counts wherever the
+/// call appears.
 pub fn attached_packages(file: &SourceFile) -> HashSet<String> {
     let mut packages = HashSet::new();
-    for stmt in &file.stmts {
-        visit_stmt_for_attachments(stmt, &mut packages);
-    }
+    let _ = walk_stmts(&file.stmts, Walk::ALL, |node: AstNode<'_>, _: usize| {
+        if let AstNode::Expr(Expr::Call { func, args, .. }) = node
+            && matches!(func.as_ref(), Expr::Ident { name, .. } if name == "library" || name == "require")
+            && let Some(package) = args.first().and_then(|arg| static_name(&arg.value))
+        {
+            packages.insert(package);
+        }
+        ControlFlow::<(), Descend>::Continue(Descend::Into)
+    });
     packages
 }
 
@@ -136,102 +146,49 @@ fn static_name(expr: &Expr) -> Option<String> {
     }
 }
 
-fn visit_stmt_for_attachments(stmt: &Stmt, packages: &mut HashSet<String>) {
-    match stmt {
-        Stmt::Assign { target, value, .. } => {
-            visit_expr_for_attachments(target, packages);
-            visit_expr_for_attachments(value, packages);
-        }
-        Stmt::Expr(expr) => visit_expr_for_attachments(expr, packages),
-        Stmt::If {
-            cond, then, else_, ..
-        } => {
-            visit_expr_for_attachments(cond, packages);
-            for stmt in then {
-                visit_stmt_for_attachments(stmt, packages);
-            }
-            if let Some(else_) = else_ {
-                for stmt in else_ {
-                    visit_stmt_for_attachments(stmt, packages);
-                }
-            }
-        }
-        Stmt::For { iter, body, .. }
-        | Stmt::While {
-            cond: iter, body, ..
-        } => {
-            visit_expr_for_attachments(iter, packages);
-            for stmt in body {
-                visit_stmt_for_attachments(stmt, packages);
-            }
-        }
-        Stmt::FunctionDef { body, .. } => {
-            for stmt in body {
-                visit_stmt_for_attachments(stmt, packages);
-            }
-        }
-        Stmt::Return { value, .. } => {
-            if let Some(value) = value {
-                visit_expr_for_attachments(value, packages);
-            }
-        }
-    }
-}
-
-#[allow(clippy::collapsible_if)]
-fn visit_expr_for_attachments(expr: &Expr, packages: &mut HashSet<String>) {
-    match expr {
-        Expr::Call { func, args, .. } => {
-            if matches!(func.as_ref(), Expr::Ident { name, .. } if name == "library" || name == "require")
-            {
-                if let Some(package) = args.first().and_then(|arg| static_name(&arg.value)) {
-                    packages.insert(package);
-                }
-            }
-            visit_expr_for_attachments(func, packages);
-            for arg in args {
-                visit_expr_for_attachments(&arg.value, packages);
-            }
-        }
-        Expr::BinOp { lhs, rhs, .. } => {
-            visit_expr_for_attachments(lhs, packages);
-            visit_expr_for_attachments(rhs, packages);
-        }
-        Expr::UnaryOp { expr, .. } => visit_expr_for_attachments(expr, packages),
-        Expr::Index { base, args, .. } => {
-            visit_expr_for_attachments(base, packages);
-            for arg in args {
-                visit_expr_for_attachments(&arg.value, packages);
-            }
-        }
-        Expr::Function { body, .. } | Expr::Block { body, .. } => {
-            for stmt in body {
-                visit_stmt_for_attachments(stmt, packages);
-            }
-        }
-        Expr::If {
-            cond, then, else_, ..
-        } => {
-            visit_expr_for_attachments(cond, packages);
-            visit_expr_for_attachments(then, packages);
-            if let Some(else_) = else_ {
-                visit_expr_for_attachments(else_, packages);
-            }
-        }
-        Expr::Logical(..)
-        | Expr::Integer(..)
-        | Expr::Double(..)
-        | Expr::String(..)
-        | Expr::Null(..)
-        | Expr::Na(..)
-        | Expr::Ident { .. }
-        | Expr::Unknown(..) => {}
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_exact(src: &str, expected: &[&str]) {
+        let mut parser = ry_core::RParser::new().unwrap();
+        let file = parser.parse("attach_test.R", src).unwrap();
+        let expected: HashSet<String> = expected.iter().map(|name| name.to_string()).collect();
+        assert_eq!(attached_packages(&file), expected, "attached from `{src}`");
+    }
+
+    /// An attachment counts wherever the call appears: the walker uses
+    /// `Walk::ALL`, so `library()`/`require()` calls nested inside
+    /// function bodies (an `.onLoad` hook, a helper defined for tests)
+    /// attach their package just like top-level ones.
+    #[test]
+    fn attaches_calls_at_top_level_and_inside_function_bodies() {
+        assert_exact(
+            "library(dplyr)
+run <- function() {
+  require(\"stringr\")
+  if (verbose) library(rlang)
+}
+",
+            &["dplyr", "stringr", "rlang"],
+        );
+    }
+
+    /// `requireNamespace()`/`loadNamespace()` make `pkg::name` available
+    /// without placing exports on the search path, and a package name
+    /// computed at runtime is not statically knowable. None of these
+    /// attach anything.
+    #[test]
+    fn does_not_attach_namespace_helpers_or_dynamic_arguments() {
+        assert_exact(
+            "requireNamespace(\"rlang\")
+loadNamespace(\"tibble\")
+library(get_option(\"pkg\"))
+my_library(dplyr)
+",
+            &[],
+        );
+    }
 
     #[test]
     fn import_from_preserves_binding_provenance_without_attaching_package() {

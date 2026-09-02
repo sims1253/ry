@@ -5,10 +5,13 @@
 //! emitted types are exactly what a `ry check` run infers.
 
 use std::collections::HashMap;
+use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use miette::{IntoDiagnostic, Result};
+use ry_core::ast::{BinOpKind, Expr, Stmt};
+use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
 
 use crate::check;
 use crate::pipeline;
@@ -109,230 +112,86 @@ fn line_char_col_to_offset(source: &str, row: usize, col: usize) -> Option<usize
 ///
 /// R has no separate block scoping, so assignments inside `if`/`for`/
 /// `while` bodies and braced value blocks bind in the enclosing function
-/// scope. Function-literal bodies are excluded: those are their own
-/// scopes (recorded separately), though the *name* bound to a function
-/// literal (`inner <- function(...)`) is itself a local of this scope.
-fn collect_local_bindings(stmts: &[ry_core::ast::Stmt], out: &mut HashMap<String, ry_core::Span>) {
-    for statement in stmts {
-        match statement {
-            ry_core::ast::Stmt::Assign { target, value, .. } => {
-                match target {
-                    ry_core::ast::Expr::Ident { name, span }
-                    | ry_core::ast::Expr::String(name, span) => {
-                        out.entry(name.clone()).or_insert(*span);
-                    }
-                    // Indexed targets (`d$col <- v`) mutate an existing
-                    // binding rather than creating one; the base name's
-                    // plain assignment (if any) is found elsewhere. The
-                    // target's index arguments are not walked either: the
-                    // checker does not bind assignments hidden there
-                    // (`m[i <- 1L] <- v` leaves `i` unbound), and the dump
-                    // reports exactly what a `ry check` run infers.
-                    _ => {}
-                }
-                collect_local_bindings_in_expr(value, out);
-            }
-            ry_core::ast::Stmt::Expr(e) => collect_local_bindings_in_expr(e, out),
-            ry_core::ast::Stmt::If {
-                cond, then, else_, ..
-            } => {
-                collect_local_bindings_in_expr(cond, out);
-                collect_local_bindings(then, out);
-                if let Some(else_) = else_ {
-                    collect_local_bindings(else_, out);
-                }
-            }
-            ry_core::ast::Stmt::For {
-                name,
-                name_span,
-                iter,
-                body,
-                ..
-            } => {
-                out.entry(name.clone()).or_insert(*name_span);
-                collect_local_bindings_in_expr(iter, out);
-                collect_local_bindings(body, out);
-            }
-            ry_core::ast::Stmt::While { cond, body, .. } => {
-                collect_local_bindings_in_expr(cond, out);
-                collect_local_bindings(body, out);
-            }
-            // `return(e)` still binds any assignment inside `e`; a bare
-            // function definition binds no name in this scope.
-            ry_core::ast::Stmt::Return { value, .. } => {
-                if let Some(value) = value {
-                    collect_local_bindings_in_expr(value, out);
-                }
-            }
-            ry_core::ast::Stmt::FunctionDef { .. } => {}
-        }
-    }
-}
-
-/// Statement-level assignment scan through expression positions. R nests
-/// both statements (braced blocks) and side-effecting assignments
-/// (`f(x <- 1L)`, chained `a <- b <- 1L`, `if (flag <- f())`) inside
-/// arbitrary expressions, and all of them bind in the enclosing function
-/// scope. The recursion set mirrors the checker's own expression walker
-/// (`ry_checker::infer`'s `visit_expr`); literal leaves bind nothing.
-/// Function-literal bodies are excluded: those are their own scopes
-/// (recorded separately), though the *name* bound to a function literal
+/// scope. Runs on the shared walker; skips function bodies and
+/// assignment targets (indexed targets mutate rather than bind, and the
+/// checker does not bind assignments hidden in a target's index
+/// arguments, so the dump reports exactly what a `ry check` run
+/// infers). The *name* bound to a function literal
 /// (`inner <- function(...)`) is itself a local of this scope.
-fn collect_local_bindings_in_expr(
-    expr: &ry_core::ast::Expr,
-    out: &mut HashMap<String, ry_core::Span>,
-) {
-    match expr {
-        ry_core::ast::Expr::Call { func, args, .. } => {
-            collect_local_bindings_in_expr(func, out);
-            for argument in args {
-                collect_local_bindings_in_expr(&argument.value, out);
-            }
-        }
-        // Assignment operators in expression position bind the LHS in
-        // the current scope — the checker's `Expr::BinOp` arm does the
-        // same for `<-`/`<<-` (R's `<-` returns the value invisibly) and
-        // `%<>%` (which rebinds its LHS ident).
-        ry_core::ast::Expr::BinOp {
-            op:
-                ry_core::ast::BinOpKind::Assign
-                | ry_core::ast::BinOpKind::SuperAssign
-                | ry_core::ast::BinOpKind::PipeAssign,
-            lhs,
-            rhs,
-            ..
-        } => {
-            match lhs.as_ref() {
-                ry_core::ast::Expr::Ident { name, span }
-                | ry_core::ast::Expr::String(name, span) => {
+fn collect_local_bindings(stmts: &[ry_core::ast::Stmt], out: &mut HashMap<String, ry_core::Span>) {
+    let _ = walk_stmts(
+        stmts,
+        Walk {
+            assign_targets: false,
+            fn_bodies: false,
+            ..Walk::ALL
+        },
+        |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+            match node {
+                AstNode::Stmt(Stmt::Assign {
+                    target: Expr::Ident { name, span } | Expr::String(name, span),
+                    ..
+                }) => {
                     out.entry(name.clone()).or_insert(*span);
                 }
-                // Replacement-function targets (`names(d) <- v`) and
-                // indexed targets mutate; the checker's assignment arms
-                // decide those, not this walk.
+                AstNode::Stmt(Stmt::For {
+                    name, name_span, ..
+                }) => {
+                    out.entry(name.clone()).or_insert(*name_span);
+                }
+                // Assignment operators in expression position bind the
+                // LHS in the current scope: `<-`/`<<-` (R's `<-` returns
+                // the value invisibly) and `%<>%` (which rebinds its LHS
+                // ident). The LHS subtree is still walked: a nested
+                // `a <- b <- 1L` chain binds both names.
+                AstNode::Expr(Expr::BinOp {
+                    op: BinOpKind::Assign | BinOpKind::SuperAssign | BinOpKind::PipeAssign,
+                    lhs,
+                    ..
+                }) => {
+                    if let Expr::Ident { name, span } | Expr::String(name, span) = lhs.as_ref() {
+                        out.entry(name.clone()).or_insert(*span);
+                    }
+                }
                 _ => {}
             }
-            collect_local_bindings_in_expr(lhs, out);
-            collect_local_bindings_in_expr(rhs, out);
-        }
-        ry_core::ast::Expr::BinOp { lhs, rhs, .. } => {
-            collect_local_bindings_in_expr(lhs, out);
-            collect_local_bindings_in_expr(rhs, out);
-        }
-        ry_core::ast::Expr::UnaryOp { expr, .. } => collect_local_bindings_in_expr(expr, out),
-        ry_core::ast::Expr::Index { base, args, .. } => {
-            collect_local_bindings_in_expr(base, out);
-            for argument in args {
-                collect_local_bindings_in_expr(&argument.value, out);
-            }
-        }
-        ry_core::ast::Expr::Block { body, .. } => collect_local_bindings(body, out),
-        ry_core::ast::Expr::If {
-            then, else_, cond, ..
-        } => {
-            collect_local_bindings_in_expr(cond, out);
-            collect_local_bindings_in_expr(then, out);
-            if let Some(else_) = else_ {
-                collect_local_bindings_in_expr(else_, out);
-            }
-        }
-        // Function literals are separate scopes; their bodies are indexed
-        // by index_scope_bodies instead. Literals and `Unknown` bind
-        // nothing.
-        _ => {}
-    }
+            ControlFlow::Continue(Descend::Into)
+        },
+    );
 }
 
 /// Map every function body in the file to its start byte, so each
-/// recorded scope can look up its own local bindings. Mirrors the
-/// statement recursion of `collect_local_bindings` to find nested named
-/// functions at any block depth.
+/// recorded scope can look up its own local bindings. Walks into
+/// function bodies (that is what is being indexed) but skips assignment
+/// targets; each discovered body is indexed and pruned in one step.
 fn index_scope_bodies(
     stmts: &[ry_core::ast::Stmt],
     index: &mut HashMap<usize, HashMap<String, ry_core::Span>>,
 ) {
-    for statement in stmts {
-        match statement {
-            ry_core::ast::Stmt::Assign { value, .. } => match value {
-                ry_core::ast::Expr::Function { body, span, .. } => {
+    let _ = walk_stmts(
+        stmts,
+        Walk {
+            assign_targets: false,
+            ..Walk::ALL
+        },
+        |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+            match node {
+                AstNode::Stmt(Stmt::FunctionDef { body, span, .. }) => {
                     index_function_body(*span, body, index);
+                    return ControlFlow::Continue(Descend::Skip);
                 }
-                _ => index_scope_bodies_in_expr(value, index),
-            },
-            ry_core::ast::Stmt::FunctionDef { body, span, .. } => {
-                index_function_body(*span, body, index);
-            }
-            ry_core::ast::Stmt::If {
-                cond, then, else_, ..
-            } => {
-                index_scope_bodies_in_expr(cond, index);
-                index_scope_bodies(then, index);
-                if let Some(else_) = else_ {
-                    index_scope_bodies(else_, index);
+                AstNode::Stmt(Stmt::Assign {
+                    value: Expr::Function { body, span, .. },
+                    ..
+                }) => {
+                    index_function_body(*span, body, index);
+                    return ControlFlow::Continue(Descend::Skip);
                 }
+                _ => {}
             }
-            ry_core::ast::Stmt::For { iter, body, .. } => {
-                index_scope_bodies_in_expr(iter, index);
-                index_scope_bodies(body, index);
-            }
-            ry_core::ast::Stmt::While { cond, body, .. } => {
-                index_scope_bodies_in_expr(cond, index);
-                index_scope_bodies(body, index);
-            }
-            ry_core::ast::Stmt::Expr(e) => index_scope_bodies_in_expr(e, index),
-            ry_core::ast::Stmt::Return { value, .. } => {
-                if let Some(value) = value {
-                    index_scope_bodies_in_expr(value, index);
-                }
-            }
-        }
-    }
-}
-
-/// Same expression recursion as [`collect_local_bindings_in_expr`]: named
-/// functions are reachable through any expression position (a callback's
-/// body, a call argument, an index argument), and only finding them there
-/// gives their scopes `function_locals` entries.
-fn index_scope_bodies_in_expr(
-    expr: &ry_core::ast::Expr,
-    index: &mut HashMap<usize, HashMap<String, ry_core::Span>>,
-) {
-    match expr {
-        ry_core::ast::Expr::Call { func, args, .. } => {
-            index_scope_bodies_in_expr(func, index);
-            for argument in args {
-                index_scope_bodies_in_expr(&argument.value, index);
-            }
-        }
-        ry_core::ast::Expr::BinOp { lhs, rhs, .. } => {
-            index_scope_bodies_in_expr(lhs, index);
-            index_scope_bodies_in_expr(rhs, index);
-        }
-        ry_core::ast::Expr::UnaryOp { expr, .. } => index_scope_bodies_in_expr(expr, index),
-        ry_core::ast::Expr::Index { base, args, .. } => {
-            index_scope_bodies_in_expr(base, index);
-            for argument in args {
-                index_scope_bodies_in_expr(&argument.value, index);
-            }
-        }
-        ry_core::ast::Expr::Block { body, .. } => index_scope_bodies(body, index),
-        ry_core::ast::Expr::If {
-            then, else_, cond, ..
-        } => {
-            index_scope_bodies_in_expr(cond, index);
-            index_scope_bodies_in_expr(then, index);
-            if let Some(else_) = else_ {
-                index_scope_bodies_in_expr(else_, index);
-            }
-        }
-        // An anonymous function literal gets no `ScopeRecord` of its own
-        // (the checker infers it in discarding mode), but named functions
-        // defined inside it complete and are recorded — walk the body so
-        // those nested definitions are indexed. The literal itself needs
-        // no `function_locals` entry: no record will ever look it up.
-        ry_core::ast::Expr::Function { body, .. } => index_scope_bodies(body, index),
-        _ => {}
-    }
+            ControlFlow::Continue(Descend::Into)
+        },
+    );
 }
 
 fn index_function_body(

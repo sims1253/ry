@@ -2,6 +2,8 @@ use super::*;
 pub(crate) use index::*;
 pub(crate) use misc::*;
 pub(crate) use pipe::PipeForm;
+use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
+use std::ops::ControlFlow;
 pub(crate) mod binop;
 pub(crate) mod call;
 pub(crate) mod construct;
@@ -110,97 +112,43 @@ fn expression_has_list_origin(expression: &Expr, scope: &Scope) -> bool {
 }
 
 fn vector_intent_parameters(params: &[Param], body: &[Stmt]) -> HashSet<String> {
-    fn visit_expr(expr: &Expr, formals: &HashSet<&str>, intent: &mut HashSet<String>) {
-        match expr {
-            Expr::Call { func, args, .. } => {
-                if ident_name(func).is_some_and(|name| {
-                    matches!(crate::semantic_lists::bare_name(name), "paste" | "paste0")
-                }) && args
-                    .iter()
-                    .any(|argument| matches!(argument.name.as_deref(), Some("collapse")))
-                {
-                    for argument in args {
-                        if argument.name.as_deref() != Some("collapse")
-                            && let Expr::Ident { name, .. } = &argument.value
-                            && formals.contains(name.as_str())
-                        {
-                            intent.insert(name.clone());
-                        }
-                    }
-                }
-                visit_expr(func, formals, intent);
-                for argument in args {
-                    visit_expr(&argument.value, formals, intent);
-                }
-            }
-            Expr::BinOp { lhs, rhs, .. } => {
-                visit_expr(lhs, formals, intent);
-                visit_expr(rhs, formals, intent);
-            }
-            Expr::UnaryOp { expr, .. } => visit_expr(expr, formals, intent),
-            Expr::Index { base, args, .. } => {
-                visit_expr(base, formals, intent);
-                for argument in args {
-                    visit_expr(&argument.value, formals, intent);
-                }
-            }
-            Expr::Block { body, .. } | Expr::Function { body, .. } => {
-                visit_stmts(body, formals, intent)
-            }
-            Expr::If {
-                cond, then, else_, ..
-            } => {
-                visit_expr(cond, formals, intent);
-                visit_expr(then, formals, intent);
-                if let Some(else_) = else_ {
-                    visit_expr(else_, formals, intent);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn visit_stmts(stmts: &[Stmt], formals: &HashSet<&str>, intent: &mut HashSet<String>) {
-        for statement in stmts {
-            match statement {
-                Stmt::Assign { target, value, .. } => {
-                    visit_expr(target, formals, intent);
-                    visit_expr(value, formals, intent);
-                }
-                Stmt::Expr(expr) => visit_expr(expr, formals, intent),
-                Stmt::If {
-                    cond, then, else_, ..
-                } => {
-                    visit_expr(cond, formals, intent);
-                    visit_stmts(then, formals, intent);
-                    if let Some(else_) = else_ {
-                        visit_stmts(else_, formals, intent);
-                    }
-                }
-                Stmt::For { iter, body, .. } => {
-                    visit_expr(iter, formals, intent);
-                    visit_stmts(body, formals, intent);
-                }
-                Stmt::While { cond, body, .. } => {
-                    visit_expr(cond, formals, intent);
-                    visit_stmts(body, formals, intent);
-                }
-                Stmt::Return { value, .. } => {
-                    if let Some(value) = value {
-                        visit_expr(value, formals, intent);
-                    }
-                }
-                Stmt::FunctionDef { .. } => {}
-            }
-        }
-    }
-
     let formals: HashSet<&str> = params
         .iter()
         .map(|parameter| parameter.name.as_str())
         .collect();
     let mut intent = HashSet::new();
-    visit_stmts(body, &formals, &mut intent);
+    // Skips nested `function(...)` statements (their formals are their
+    // own) but walks function-literal bodies, where paste calls still
+    // evaluate the enclosing formals.
+    let _ = walk_stmts(
+        body,
+        Walk::ALL,
+        |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+            if let AstNode::Expr(Expr::Call { func, args, .. }) = node
+                && ident_name(func).is_some_and(|name| {
+                    matches!(crate::semantic_lists::bare_name(name), "paste" | "paste0")
+                })
+                && args
+                    .iter()
+                    .any(|argument| matches!(argument.name.as_deref(), Some("collapse")))
+            {
+                for argument in args {
+                    if argument.name.as_deref() != Some("collapse")
+                        && let Expr::Ident { name, .. } = &argument.value
+                        && formals.contains(name.as_str())
+                    {
+                        intent.insert(name.clone());
+                    }
+                }
+            }
+            match node {
+                // A nested `function(...)` statement's formals are its own;
+                // calls inside it do not evaluate this function's formals.
+                AstNode::Stmt(Stmt::FunctionDef { .. }) => ControlFlow::Continue(Descend::Skip),
+                _ => ControlFlow::Continue(Descend::Into),
+            }
+        },
+    );
     intent
 }
 

@@ -4,7 +4,7 @@ use ry_checker::Scope;
 use ry_core::{Expr, SourceFile, Stmt};
 use tower_lsp::lsp_types::{InlayHint, InlayHintKind, InlayHintLabel};
 
-use crate::util::byte_offset_to_position;
+use crate::positions::byte_offset_to_position;
 
 /// Collect `InlayHint`s for every assignment whose target is a bare
 /// identifier with a known (non-opaque) inferred type. The hint is

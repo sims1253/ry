@@ -4,7 +4,7 @@ use crate::diagnostics::{
     make_ignore_file_action,
 };
 use crate::hints::collect_inlay_hints;
-use crate::util::*;
+use crate::positions::*;
 use ry_checker::{Diagnostic, Severity};
 use ry_core::{RParser, SourceFile, Span};
 use tower_lsp::lsp_types::Diagnostic as LspDiagnostic;
@@ -520,6 +520,58 @@ fn utf16_position_counts_astral_as_two_units() {
     // pair) is rejected rather than snapped onto a wrong byte offset;
     // didChange incremental edits route through this conversion.
     assert_eq!(position_to_byte_offset(text, 0, 2), None);
+}
+
+#[test]
+fn utf16_columns_skip_crlf_carriage_return() {
+    // The `\r` of a CRLF terminator is not a column character: the
+    // position at the `\n` (or at end-of-line) is the column before
+    // the `\r`, and line 1 starts at column 0.
+    let text = "ab\r\ncd";
+    // Byte offsets: a=0 b=1 \r=2 \n=3 c=4 d=5.
+    assert_eq!(byte_offset_to_position(text, 2), Position::new(0, 2));
+    assert_eq!(byte_offset_to_position(text, 3), Position::new(0, 2));
+    assert_eq!(byte_offset_to_position(text, 4), Position::new(1, 0));
+    // Inverse: (0, 2) resolves to the `\r` byte, (1, 0) to `c`.
+    assert_eq!(position_to_byte_offset(text, 0, 2), Some(2));
+    assert_eq!(position_to_byte_offset(text, 1, 0), Some(4));
+}
+
+#[test]
+fn byte_offset_to_point_counts_byte_columns() {
+    // tree-sitter Point columns are BYTES from the line start, unlike
+    // LSP's UTF-16 unit — a 2-byte precomposed é advances the column
+    // by 2, and a CRLF `\r` is an ordinary column byte.
+    let text = "caf\u{e9}\r\nx";
+    // Byte offsets: c=0 a=1 f=2 \u{e9}=3,4 \r=5 \n=6 x=7.
+    let after_e_acute = byte_offset_to_point(text, 5);
+    assert_eq!(after_e_acute.row, 0);
+    assert_eq!(after_e_acute.column, 5);
+    let on_lf = byte_offset_to_point(text, 6);
+    assert_eq!(on_lf.row, 0);
+    assert_eq!(on_lf.column, 6);
+    let x = byte_offset_to_point(text, 7);
+    assert_eq!(x.row, 1);
+    assert_eq!(x.column, 0);
+    // Offsets past the end clamp to the text end.
+    let clamped = byte_offset_to_point(text, 999);
+    assert_eq!(clamped.row, 1);
+    assert_eq!(clamped.column, 1);
+}
+
+#[test]
+fn line_start_returns_byte_offset_of_line() {
+    // `\u{e9}` (precomposed é) is 2 bytes, so the byte layout is
+    // a=0 b=1 \n=2 c=3 d=4 \u{e9}=5,6 f=7 \n=8 g=9 h=10. Line starts:
+    // line 0 at 0, line 1 after the first \n at 3, line 2 after the
+    // second \n at 9.
+    let text = "ab\ncd\u{e9}f\ngh";
+    assert_eq!(line_start(text, 0), 0);
+    assert_eq!(line_start(text, 1), 3);
+    assert_eq!(line_start(text, 2), 9);
+    // A line index past the end clamps to the end of the text.
+    assert_eq!(line_start(text, 7), text.len());
+    assert_eq!(line_start("", 0), 0);
 }
 
 #[test]

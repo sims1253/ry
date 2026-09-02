@@ -9,8 +9,8 @@ use crate::diagnostics::{
     diagnostic_to_lsp, diagnostic_to_lsp_with_source, make_ignore_action, make_ignore_file_action,
 };
 use crate::hints::collect_inlay_hints;
+use crate::positions::{byte_offset_to_point, position_to_byte_offset};
 use crate::settings::{FolderSettings, ServerSettings};
-use crate::util::position_to_byte_offset;
 
 use ry_checker::Project;
 use ry_core::{RParser, SourceFile};
@@ -1933,23 +1933,6 @@ fn build_input_edit_from_span(
         old_end_position,
         new_end_position,
     }
-}
-
-/// Convert a byte offset to a tree-sitter Point (row, byte column).
-fn byte_offset_to_point(text: &str, byte_offset: usize) -> ry_core::Point {
-    let offset = byte_offset.min(text.len());
-    let mut row = 0usize;
-    let mut last_line_start = 0usize;
-
-    for (i, ch) in text[..offset].char_indices() {
-        if ch == '\n' {
-            row += 1;
-            last_line_start = i + 1;
-        }
-    }
-
-    let column = offset - last_line_start;
-    ry_core::Point { row, column }
 }
 
 /// Compute the new end Point after inserting `new_text` at `start_byte`.

@@ -22,7 +22,7 @@
 //! logic lives in [`backend`] (`Backend`, `State`, the
 //! `LanguageServer` impl, and the parse/scope/debounce caches); the
 //! per-feature helpers live in their own modules (`hints`,
-//! `diagnostics`, `util`).
+//! `diagnostics`, `positions`).
 //!
 //! CRITICAL INVARIANT: the LSP protocol uses stdout for JSON-RPC framing.
 //! Any tracing or log output that lands on stdout will corrupt the stream
@@ -137,8 +137,8 @@ mod backend;
 mod diagnostics;
 mod hints;
 mod index;
+mod positions;
 mod settings;
-mod util;
 
 use backend::{Backend, State};
 // Re-export the baseline disk-read counter so integration

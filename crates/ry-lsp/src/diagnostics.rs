@@ -15,7 +15,7 @@ use tower_lsp::lsp_types::{
     Position, Range, TextEdit, Url, WorkspaceEdit,
 };
 
-use crate::util::byte_offset_to_position;
+use crate::positions::{byte_offset_to_position, line_start};
 
 /// Convert a `ry_checker::Diagnostic` to an LSP `Diagnostic` using the
 /// span's pre-resolved `line` / `col` and a single-character range. Used
@@ -134,8 +134,8 @@ pub(super) fn make_ignore_action(
     // UTF-16 code-unit column, so convert the byte offset of the line's
     // end to a proper column (a non-ASCII line would otherwise produce
     // an out-of-range character).
-    let line_start = line_start_byte_offset(text, line);
-    let end = byte_offset_to_position(text, line_start + line_text.len());
+    let line_start_byte = line_start(text, line);
+    let end = byte_offset_to_position(text, line_start_byte + line_text.len());
 
     let mut changes = HashMap::new();
     changes.insert(
@@ -199,16 +199,4 @@ pub(super) fn make_ignore_file_action(uri: &Url, text: &str) -> Option<CodeActio
         }),
         ..Default::default()
     })
-}
-
-/// Byte offset of the first character of the given 0-indexed line.
-fn line_start_byte_offset(text: &str, line: usize) -> usize {
-    let mut offset = 0usize;
-    for (i, piece) in text.split_inclusive('\n').enumerate() {
-        if i == line {
-            break;
-        }
-        offset += piece.len();
-    }
-    offset
 }

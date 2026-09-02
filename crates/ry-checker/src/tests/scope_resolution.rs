@@ -201,23 +201,18 @@ fn shiny_stub_marks_reactive_code_arguments_as_quoted() {
 
 #[test]
 fn import_from_applies_metadata_only_to_the_imported_binding() {
-    let mut parser = RParser::new().unwrap();
-    let file = parser
-        .parse(
-            "test.R",
-            "df <- data.frame(x = 1L)\nselect(df, x)\nmutate(df, created = missing_name)\n",
-        )
-        .unwrap();
-    let mut checker = Checker::new("test.R");
-    checker.set_external_bindings(HashSet::from(["select".to_string()]));
-    checker.set_imported_from(HashMap::from([("select".to_string(), "dplyr".to_string())]));
-    checker.check(&file);
-
-    assert!(checker.diagnostics.iter().any(|diagnostic| {
+    let diagnostics = check_with(
+        "df <- data.frame(x = 1L)\nselect(df, x)\nmutate(df, created = missing_name)\n",
+        |c| {
+            c.set_external_bindings(HashSet::from(["select".to_string()]));
+            c.set_imported_from(HashMap::from([("select".to_string(), "dplyr".to_string())]));
+        },
+    );
+    assert!(diagnostics.iter().any(|diagnostic| {
         diagnostic.code == "RY010" && diagnostic.message.contains("missing_name")
     }));
     assert!(
-        checker.diagnostics.iter().all(|diagnostic| {
+        diagnostics.iter().all(|diagnostic| {
             diagnostic.code != "RY010" || !diagnostic.message.contains("`x`")
         })
     );
@@ -225,13 +220,10 @@ fn import_from_applies_metadata_only_to_the_imported_binding() {
 
 #[test]
 fn typed_package_constants_are_values_not_functions() {
-    let mut parser = RParser::new().unwrap();
-    let file = parser
-        .parse(
-            "test.R",
-            "value <- na_chr\nbad <- na_chr()\nqualified_bad <- rlang::na_chr()\n",
-        )
-        .unwrap();
+    let file = parse_file(
+        "test.R",
+        "value <- na_chr\nbad <- na_chr()\nqualified_bad <- rlang::na_chr()\n",
+    );
     let mut checker = Checker::new("test.R");
     checker.set_loaded(HashSet::from(["rlang".to_string()]));
     let (diagnostics, scope) = checker.check_with_scope(&file);
@@ -264,8 +256,7 @@ fn local_callable_shadows_typed_package_constant() {
 
 #[test]
 fn import_from_preserves_typed_package_constant() {
-    let mut parser = RParser::new().unwrap();
-    let file = parser.parse("test.R", "value <- na_int\n").unwrap();
+    let file = parse_file("test.R", "value <- na_int\n");
     let mut checker = Checker::new("test.R");
     checker.set_external_bindings(HashSet::from(["na_int".to_string()]));
     checker.set_imported_from(HashMap::from([("na_int".to_string(), "rlang".to_string())]));
@@ -293,13 +284,10 @@ fn unknown_user_infix_quotes_both_operands_and_returns_unknown() {
 
 #[test]
 fn zeallot_destructuring_binds_nested_pattern_symbols() {
-    let mut parser = RParser::new().unwrap();
-    let file = parser
-        .parse(
-            "test.R",
-            "c(first, c(second, third)) %<-% make_value()\nout <- first + second + third\n",
-        )
-        .unwrap();
+    let file = parse_file(
+        "test.R",
+        "c(first, c(second, third)) %<-% make_value()\nout <- first + second + third\n",
+    );
     let mut checker = Checker::new("test.R");
     checker.set_loaded(HashSet::from(["zeallot".to_string()]));
     let (diagnostics, scope) = checker.check_with_scope(&file);
@@ -319,10 +307,7 @@ fn zeallot_destructuring_binds_nested_pattern_symbols() {
 
 #[test]
 fn future_import_enables_mirrored_destructuring() {
-    let mut parser = RParser::new().unwrap();
-    let file = parser
-        .parse("test.R", "make_value() %->% c(left, right)\nleft + right\n")
-        .unwrap();
+    let file = parse_file("test.R", "make_value() %->% c(left, right)\nleft + right\n");
     let mut checker = Checker::new("test.R");
     checker.set_imported_from(HashMap::from([("%->%".to_string(), "future".to_string())]));
     let (diagnostics, scope) = checker.check_with_scope(&file);
@@ -1012,14 +997,11 @@ fn external_unenumerable_marker_suppresses_ry010_for_its_file() {
     // Suggests). It must suppress RY010 for THAT file only — never
     // project-wide. The over-cap fix removed the package-global sysdata route;
     // this is the remaining legitimate, file-local open search path.
-    let mut p = RParser::new().unwrap();
-    let f = p.parse("test.R", "x <- genuinely_unbound_name\n").unwrap();
-    let mut c = Checker::new("test.R");
-    c.set_external_bindings(HashSet::from([
-        ry_core::SERIALIZED_BINDINGS_UNENUMERABLE.to_string()
-    ]));
-    c.check(&f);
-    let diags = c.take_diagnostics();
+    let diags = check_with("x <- genuinely_unbound_name\n", |c| {
+        c.set_external_bindings(HashSet::from([
+            ry_core::SERIALIZED_BINDINGS_UNENUMERABLE.to_string()
+        ]));
+    });
     assert!(
         diags.iter().all(|d| d.code != "RY010"),
         "the unenumerable marker should suppress RY010 for its file: {diags:?}"

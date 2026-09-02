@@ -94,9 +94,7 @@ pub(super) struct State {
     /// from `file_config` and the root `folder_settings`.
     ///
     /// A document outside every folder root must be filtered by root-level
-    /// config: `folder_contexts` is sorted by root-path length descending,
-    /// so `.first()` is the most specific *unrelated* root, whose severity
-    /// filter and excludes could drop the diagnostics entirely.
+    /// config.
     root_filter: ry_checker::SeverityFilter,
     root_min_confidence: Option<ry_checker::Confidence>,
     root_excludes: ry_config::Excludes,
@@ -690,8 +688,6 @@ impl LanguageServer for Backend {
 
         self.spawn_background_index().await;
 
-        // Republish diagnostics for every open document so the new
-        // settings take effect immediately.
         self.republish_all_open_documents().await;
     }
 
@@ -868,8 +864,6 @@ impl LanguageServer for Backend {
 
         self.spawn_background_index().await;
 
-        // Republish diagnostics for every open document so the new
-        // config/baseline takes effect immediately.
         self.republish_all_open_documents().await;
     }
 

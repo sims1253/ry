@@ -502,9 +502,8 @@ pub(crate) fn run_dump_types(
     }
     sort_and_deduplicate_paths(&mut all_paths);
 
-    // Parallel parsing through the same thread-local parser pool as
-    // `ry check` (tree-sitter parsers are not Send); see
-    // `pipeline::parse_files`. Input order is preserved.
+    // Parsing goes through the same path as `ry check`; see
+    // `pipeline::parse_files`.
     let parsed = match pipeline::parse_files(&all_paths, dump_parse_failure) {
         Ok(parsed) => parsed,
         Err(failure) => {

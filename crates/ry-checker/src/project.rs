@@ -803,12 +803,7 @@ impl Project {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ry_core::RParser;
-
-    fn parse(path: &str, src: &str) -> SourceFile {
-        let mut p = RParser::new().unwrap();
-        p.parse(path, src).unwrap()
-    }
+    use crate::tests::parse_file;
 
     #[test]
     fn empty_project_has_no_diagnostics() {
@@ -822,7 +817,7 @@ mod tests {
         // Sanity: a single-file Project should behave like a single-file
         // Checker (no surprises from the extra plumbing).
         let src = "f <- function() { \"hello\" }\ny <- f() + 1L\n";
-        let file = parse("a.R", src);
+        let file = parse_file("a.R", src);
 
         let mut project = Project::new();
         project.add_file("a.R".to_string(), file);
@@ -840,7 +835,7 @@ mod tests {
         let mut project = Project::new();
         project.add_file(
             "inst/shiny/src/server/fragment.R".to_string(),
-            parse(
+            parse_file(
                 "inst/shiny/src/server/fragment.R",
                 "output$value <- input$value\nsession$sendCustomMessage('x', list())\n",
             ),
@@ -863,11 +858,11 @@ mod tests {
         let mut project = Project::new();
         project.add_file(
             "function.R".to_string(),
-            parse("function.R", "list.map <- function(.data, expr) expr\n"),
+            parse_file("function.R", "list.map <- function(.data, expr) expr\n"),
         );
         project.add_file(
             "call.R".to_string(),
-            parse("call.R", "r <- list.map(some_list(), . + score)\n"),
+            parse_file("call.R", "r <- list.map(some_list(), . + score)\n"),
         );
         project.set_loaded(std::collections::HashSet::from(["rlist".to_string()]));
         let diagnostics: Vec<_> = project
@@ -895,7 +890,7 @@ mod tests {
         // call site a defaulted formal stays opaque by design.
         let src = "base <- 2L\nouter <- function(x = 1L, y) {\n  local <- x + base\n  inner <- function(z) z + base\n  inner(y)\n}\nouter()\n";
         let mut project = Project::new();
-        project.add_file("a.R".to_string(), parse("a.R", src));
+        project.add_file("a.R".to_string(), parse_file("a.R", src));
         project.enable_scope_capture();
         project.check();
         let records = project.take_scope_records();
@@ -936,7 +931,7 @@ mod tests {
         assert!(outer.scope.get("local").is_some());
         // No capture without opting in.
         let mut plain = Project::new();
-        plain.add_file("a.R".to_string(), parse("a.R", src));
+        plain.add_file("a.R".to_string(), parse_file("a.R", src));
         plain.check();
         assert!(plain.take_scope_records().is_empty());
     }

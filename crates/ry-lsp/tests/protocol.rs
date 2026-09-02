@@ -1,42 +1,10 @@
-use ry_testkit::{
-    AsyncJsonRpcClient, CliProcess, FixtureProject, JsonRpcProcess, ObservedPosition,
-    PositionEncoding, normalize_path, normalize_position,
-};
+use ry_testkit::{AsyncJsonRpcClient, CliProcess, FixtureProject, JsonRpcProcess};
 use serde_json::{Value, json};
-use std::path::{Path, PathBuf};
 use std::process::Command;
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct Published {
-    path: String,
-    code: String,
-    severity: String,
-    message: String,
-    line: u32,
-    byte_column: u32,
-}
+mod common;
 
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap()
-}
-
-fn ry_binary() -> PathBuf {
-    static BINARY: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-    BINARY
-        .get_or_init(|| {
-            let status = Command::new(env!("CARGO"))
-                .current_dir(workspace_root())
-                .args(["build", "--quiet", "-p", "ry-cli"])
-                .status()
-                .expect("build the production ry binary for the protocol gate");
-            assert!(status.success());
-            workspace_root().join("target/debug/ry")
-        })
-        .clone()
-}
+use common::{Published, file_uri, published_from_cli_value, published_from_lsp, ry_binary};
 
 fn cli_diagnostics(fixture: &FixtureProject, extra: &[&str]) -> Vec<Published> {
     let output = CliProcess::new(ry_binary())
@@ -56,33 +24,10 @@ fn cli_diagnostics(fixture: &FixtureProject, extra: &[&str]) -> Vec<Published> {
     let values: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
     let mut diagnostics: Vec<_> = values
         .into_iter()
-        .map(|value| {
-            let path = value["path"].as_str().unwrap();
-            let relative = normalize_path(Path::new(path), fixture.root());
-            let relative = relative.strip_prefix("./").unwrap_or(&relative).to_string();
-            let source = std::fs::read_to_string(fixture.path(&relative)).unwrap();
-            let scalar = ObservedPosition {
-                line: value["line"].as_u64().unwrap() as u32 - 1,
-                character: value["column"].as_u64().unwrap() as u32 - 1,
-                encoding: PositionEncoding::UnicodeScalar,
-            };
-            let position = normalize_position(&source, &scalar).unwrap();
-            Published {
-                path: relative,
-                code: value["code"].as_str().unwrap().to_string(),
-                severity: value["severity"].as_str().unwrap().to_string(),
-                message: value["message"].as_str().unwrap().to_string(),
-                line: position.line,
-                byte_column: position.character,
-            }
-        })
+        .map(|value| published_from_cli_value(&value, fixture.root()))
         .collect();
     diagnostics.sort();
     diagnostics
-}
-
-fn file_uri(path: &Path) -> String {
-    format!("file://{}", path.display())
 }
 
 async fn run_with_diagnostics(
@@ -140,7 +85,7 @@ async fn run_with_diagnostics(
         )
         .await
         .unwrap();
-    let mut diagnostics = published_from_lsp(&publish, &path, fixture.root());
+    let diagnostics = published_from_lsp(&publish, &path, fixture.root());
 
     let shutdown_id = client.request("shutdown", Value::Null).await.unwrap();
     client
@@ -154,47 +99,7 @@ async fn run_with_diagnostics(
         .unwrap()
         .unwrap()
         .unwrap();
-    diagnostics.sort();
     diagnostics
-}
-
-fn published_from_lsp(message: &Value, path: &Path, root: &Path) -> Vec<Published> {
-    let relative = normalize_path(path, root);
-    let source = std::fs::read_to_string(path).unwrap();
-    message
-        .pointer("/params/diagnostics")
-        .unwrap()
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|value| {
-            let start = &value["range"]["start"];
-            let position = normalize_position(
-                &source,
-                &ObservedPosition {
-                    line: start["line"].as_u64().unwrap() as u32,
-                    character: start["character"].as_u64().unwrap() as u32,
-                    encoding: PositionEncoding::Utf16,
-                },
-            )
-            .unwrap();
-            Published {
-                path: relative.clone(),
-                code: value["code"].as_str().unwrap().to_string(),
-                severity: match value["severity"].as_u64() {
-                    Some(1) => "error",
-                    Some(2) => "warning",
-                    Some(3) => "info",
-                    Some(4) => "hint",
-                    _ => "unknown",
-                }
-                .to_string(),
-                message: value["message"].as_str().unwrap().to_string(),
-                line: position.line,
-                byte_column: position.character,
-            }
-        })
-        .collect()
 }
 
 fn settings(fixture: &FixtureProject, relative: &str) -> Value {

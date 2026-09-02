@@ -8,59 +8,24 @@
 //!
 //! Shared infrastructure reuses `ry-testkit` (`FixtureProject`,
 //! `LspSession`, `AsyncJsonRpcClient`) and the `ry_lsp::run_with` in-memory
-//! server seam. The CLI comparison helpers mirror `tests/protocol.rs` so the
-//! contract is "LSP published diagnostics equal `ry check` run independently
-//! in the same root."
+//! server seam, plus the `Published` comparison helpers shared with
+//! `tests/protocol.rs` in `tests/common`, so the contract is "LSP published
+//! diagnostics equal `ry check` run independently in the same root."
 //!
 //! No test below adds package-import or filtering differences to `normalise()`.
 
-use ry_testkit::{
-    AsyncJsonRpcClient, FixtureProject, ObservedPosition, PositionEncoding, normalize_path,
-    normalize_position,
-};
+use ry_testkit::{AsyncJsonRpcClient, FixtureProject, normalize_path};
 use serde_json::{Value, json};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
+
+mod common;
+
+use common::{Published, file_uri, published_from_cli_value, published_from_lsp, ry_binary};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Shared helpers (adapted from tests/protocol.rs for multi-root support)
 // ──────────────────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct Published {
-    path: String,
-    code: String,
-    severity: String,
-    message: String,
-    line: u32,
-    byte_column: u32,
-}
-
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap()
-}
-
-fn ry_binary() -> PathBuf {
-    static BINARY: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-    BINARY
-        .get_or_init(|| {
-            let status = Command::new(env!("CARGO"))
-                .current_dir(workspace_root())
-                .args(["build", "--quiet", "-p", "ry-cli"])
-                .status()
-                .expect("build the production ry binary for the protocol gate");
-            assert!(status.success());
-            workspace_root().join("target/debug/ry")
-        })
-        .clone()
-}
-
-fn file_uri(path: &Path) -> String {
-    format!("file://{}", path.display())
-}
 
 /// Run `ry check` in `dir` (as the working directory) and return normalized
 /// diagnostics. Each root is checked independently so multi-root parity is
@@ -89,69 +54,6 @@ fn cli_diagnostics_in_dir(dir: &Path, extra: &[&str]) -> Vec<Published> {
         .collect();
     diagnostics.sort();
     diagnostics
-}
-
-fn published_from_cli_value(value: &Value, root: &Path) -> Published {
-    let path = value["path"].as_str().unwrap();
-    let relative = normalize_path(Path::new(path), root);
-    let relative = relative.strip_prefix("./").unwrap_or(&relative).to_string();
-    let source = std::fs::read_to_string(root.join(&relative)).unwrap_or_default();
-    let scalar = ObservedPosition {
-        line: value["line"].as_u64().unwrap() as u32 - 1,
-        character: value["column"].as_u64().unwrap() as u32 - 1,
-        encoding: PositionEncoding::UnicodeScalar,
-    };
-    let position = normalize_position(&source, &scalar).unwrap();
-    Published {
-        path: relative,
-        code: value["code"].as_str().unwrap().to_string(),
-        severity: value["severity"].as_str().unwrap().to_string(),
-        message: value["message"].as_str().unwrap().to_string(),
-        line: position.line,
-        byte_column: position.character,
-    }
-}
-
-/// Normalize an LSP `publishDiagnostics` message into `Published` entries.
-fn published_from_lsp(message: &Value, path: &Path, root: &Path) -> Vec<Published> {
-    let relative = normalize_path(path, root);
-    let source = std::fs::read_to_string(path).unwrap_or_default();
-    let mut diags: Vec<_> = message
-        .pointer("/params/diagnostics")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
-        .iter()
-        .map(|value| {
-            let start = &value["range"]["start"];
-            let position = normalize_position(
-                &source,
-                &ObservedPosition {
-                    line: start["line"].as_u64().unwrap_or(0) as u32,
-                    character: start["character"].as_u64().unwrap_or(0) as u32,
-                    encoding: PositionEncoding::Utf16,
-                },
-            )
-            .expect("diagnostic start position must normalize");
-            Published {
-                path: relative.clone(),
-                code: value["code"].as_str().unwrap_or("").to_string(),
-                severity: match value["severity"].as_u64() {
-                    Some(1) => "error",
-                    Some(2) => "warning",
-                    Some(3) => "info",
-                    Some(4) => "hint",
-                    _ => "unknown",
-                }
-                .to_string(),
-                message: value["message"].as_str().unwrap_or("").to_string(),
-                line: position.line,
-                byte_column: position.character,
-            }
-        })
-        .collect();
-    diags.sort();
-    diags
 }
 
 // ──────────────────────────────────────────────────────────────────────────

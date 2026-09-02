@@ -287,9 +287,8 @@ fn main() -> Result<ExitCode> {
         None => Cmd::Check(CheckArgs::default()),
     };
 
-    // Subcommand matches are nested under the subcommand's name. We
-    // only need them for `check` (to detect explicit CLI overrides of
-    // scalar fields that the config file can also set).
+    // Kept only for `check`: detecting explicit CLI overrides of scalar
+    // fields the config file can also set.
     let check_matches = matches.subcommand_matches("check");
 
     match cmd {
@@ -560,7 +559,6 @@ fn run_check(
         return Ok(ExitCode::FAILURE);
     }
 
-    // Watch mode: poll for changes and re-check.
     eprintln!(
         "ry: watching {} file(s) for changes (Ctrl+C to stop)...",
         all_paths.len()

@@ -59,6 +59,17 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Changed
 
+- **Shared test harnesses, leaner comments, `suppress.rs` renamed to
+  `resolve.rs`**: the checker's inline tests gained `check_with` (parse,
+  configure, check) and a shared `parse_file`, replacing copy-pasted
+  parser/checker scaffolding; the language server's session and protocol
+  tests each extract one copy of their spawn/normalize helpers
+  (`tests/harness/`, `tests/common/`); near-duplicate literal-pair tests
+  are table-driven. Narrating comments that restated the next line were
+  removed. Contributor-facing rename: `crates/ry-checker/src/suppress.rs`
+  is now `crates/ry-checker/src/resolve.rs` (same code; it holds the
+  typeshed/package signature and value resolution plus the checker's
+  emit helpers). No behavior change.
 - **One shared front half for `ry check` and `ry dump-types`**: both
   commands resolve their per-package groups, workspace contexts, and
   checker inputs through one pipeline helper, so their file sets,

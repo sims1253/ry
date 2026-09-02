@@ -23,13 +23,19 @@ type Session = LspSession<
     tokio::io::WriteHalf<tokio::io::DuplexStream>,
 >;
 
-/// Spawn an LSP server and return a connected session: initialize, then
-/// hand the session to the test. No settle wait for the background
-/// indexer: it never publishes diagnostics itself (its caller
+/// Spawn an LSP server and return a connected session, initialized with
+/// `capabilities` and, unless it is `Null`, `initialization_options`.
+/// Tests using the pull path answer the server's `workspace/configuration`
+/// request themselves right after this returns. No settle wait for the
+/// background indexer: it never publishes diagnostics itself (its caller
 /// republishes, and no document is open here), and open documents shadow
 /// disk files, so each test's `published_diagnostics_after` await (which
 /// has its own timeout) is the only synchronization needed.
-async fn spawn_session(root: &Path) -> (Session, tokio::task::JoinHandle<()>) {
+async fn spawn_session(
+    root: &Path,
+    capabilities: Value,
+    initialization_options: Value,
+) -> (Session, tokio::task::JoinHandle<()>) {
     let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
     let (client_reader, client_writer) = tokio::io::split(client_stream);
     let (server_reader, server_writer) = tokio::io::split(server_stream);
@@ -37,7 +43,18 @@ async fn spawn_session(root: &Path) -> (Session, tokio::task::JoinHandle<()>) {
         let _ = ry_lsp::run_with(server_reader, server_writer).await;
     });
     let mut session = LspSession::new(client_reader, client_writer);
-    session.initialize(root).await.unwrap();
+    let root_uri = file_uri(root).unwrap();
+    let mut params = json!({
+        "processId": null,
+        "rootUri": root_uri,
+        "capabilities": capabilities,
+        "workspaceFolders": [{"uri": root_uri, "name": "fixture"}]
+    });
+    if initialization_options != Value::Null {
+        params["initializationOptions"] = initialization_options;
+    }
+    session.request("initialize", params).await.unwrap();
+    session.notify("initialized", json!({})).await.unwrap();
     (session, server)
 }
 
@@ -76,7 +93,7 @@ fn did_change_configuration_refreshes_cached_filters() {
             .write_file("R/diag.R", "z <- length(xx = 1L)\n")
             .unwrap();
 
-        let (mut session, _server) = spawn_session(fixture.root()).await;
+        let (mut session, _server) = spawn_session(fixture.root(), json!({}), Value::Null).await;
 
         let diag_uri = file_uri(&fixture.path("R/diag.R")).unwrap();
 
@@ -129,31 +146,6 @@ fn did_change_configuration_refreshes_cached_filters() {
 // context and refresh its cached values.
 // ════════════════════════════════════════════════════════════════════════════
 
-/// Spawn a session whose client advertises `workspace.configuration = true`
-/// (the pull path). The server sends a `workspace/configuration` request
-/// during `initialized`; the harness answers it with default (empty)
-/// settings so the server unblocks and the background indexer runs.
-async fn spawn_pull_session(root: &Path) -> (Session, tokio::task::JoinHandle<()>) {
-    let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
-    let (client_reader, client_writer) = tokio::io::split(client_stream);
-    let (server_reader, server_writer) = tokio::io::split(server_stream);
-    let server = tokio::spawn(async move {
-        let _ = ry_lsp::run_with(server_reader, server_writer).await;
-    });
-    let mut session = LspSession::new(client_reader, client_writer);
-    session
-        .initialize_with_capabilities(root, json!({ "workspace": { "configuration": true } }))
-        .await
-        .unwrap();
-    // Answer the initial `workspace/configuration` pull during `initialized`
-    // with default settings (one per folder root, then a root-scoped item).
-    session
-        .respond_to_request("workspace/configuration", json!([{}, {}]))
-        .await
-        .unwrap();
-    (session, server)
-}
-
 #[test]
 fn did_change_configuration_pull_applies_per_folder_settings() {
     run(async {
@@ -163,7 +155,19 @@ fn did_change_configuration_pull_applies_per_folder_settings() {
             .write_file("R/diag.R", "z <- length(xx = 1L)\n")
             .unwrap();
 
-        let (mut session, _server) = spawn_pull_session(fixture.root()).await;
+        let (mut session, _server) = spawn_session(
+            fixture.root(),
+            json!({ "workspace": { "configuration": true } }),
+            Value::Null,
+        )
+        .await;
+        // Answer the initial `workspace/configuration` pull during
+        // `initialized` with default settings (one per folder root, then a
+        // root-scoped item).
+        session
+            .respond_to_request("workspace/configuration", json!([{}, {}]))
+            .await
+            .unwrap();
 
         let diag_uri = file_uri(&fixture.path("R/diag.R")).unwrap();
 
@@ -238,7 +242,15 @@ fn enable_false_skips_diagnostics_for_the_folder() {
             .write_file("R/diag.R", "z <- length(xx = 1L)\n")
             .unwrap();
 
-        let (mut session, server) = spawn_disabled_session(fixture.root()).await;
+        let (mut session, server) = spawn_session(
+            fixture.root(),
+            json!({}),
+            json!({
+                "settings": [{"enable": false}],
+                "globalSettings": {}
+            }),
+        )
+        .await;
 
         let diag_uri = file_uri(&fixture.path("R/diag.R")).unwrap();
         let mark = session.publication_mark();
@@ -265,36 +277,6 @@ fn enable_false_skips_diagnostics_for_the_folder() {
     })
 }
 
-/// Spawn a session with `enable: false` for the fixture root.
-async fn spawn_disabled_session(root: &Path) -> (Session, tokio::task::JoinHandle<()>) {
-    let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
-    let (client_reader, client_writer) = tokio::io::split(client_stream);
-    let (server_reader, server_writer) = tokio::io::split(server_stream);
-    let server = tokio::spawn(async move {
-        let _ = ry_lsp::run_with(server_reader, server_writer).await;
-    });
-    let mut session = LspSession::new(client_reader, client_writer);
-    let root_uri = file_uri(root).unwrap();
-    session
-        .request(
-            "initialize",
-            json!({
-                "processId": null,
-                "rootUri": root_uri,
-                "capabilities": {},
-                "initializationOptions": {
-                    "settings": [{"enable": false}],
-                    "globalSettings": {}
-                },
-                "workspaceFolders": [{"uri": root_uri, "name": "fixture"}]
-            }),
-        )
-        .await
-        .unwrap();
-    session.notify("initialized", json!({})).await.unwrap();
-    (session, server)
-}
-
 #[test]
 fn enable_false_skips_inlay_hints_for_the_folder() {
     run(async {
@@ -303,7 +285,15 @@ fn enable_false_skips_inlay_hints_for_the_folder() {
         // (pinned by `inlay_hint_does_not_cross_workspace_roots`).
         fixture.write_file("R/hint.R", "x <- 1L\n").unwrap();
 
-        let (mut session, server) = spawn_disabled_session(fixture.root()).await;
+        let (mut session, server) = spawn_session(
+            fixture.root(),
+            json!({}),
+            json!({
+                "settings": [{"enable": false}],
+                "globalSettings": {}
+            }),
+        )
+        .await;
 
         let hint_uri = file_uri(&fixture.path("R/hint.R")).unwrap();
         session.open(&hint_uri, 1, "x <- 1L\n").await.unwrap();

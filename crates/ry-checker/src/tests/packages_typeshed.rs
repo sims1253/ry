@@ -22,13 +22,10 @@ fn package_loading_calls_have_distinct_return_types() {
 
 #[test]
 fn user_function_argument_rules_wait_for_callable_provenance() {
-    let mut parser = RParser::new().unwrap();
-    let file = parser
-        .parse(
-            "project.R",
-            "f <- function(required) required\nf()\nc <- function(x) x\nc(unrelated = 1L)\n",
-        )
-        .unwrap();
+    let file = parse_file(
+        "project.R",
+        "f <- function(required) required\nf()\nc <- function(x) x\nc(unrelated = 1L)\n",
+    );
     let mut project = Project::new();
     project.add_file("project.R".to_string(), file);
     let diags: Vec<_> = project

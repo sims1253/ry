@@ -17,13 +17,10 @@ mod higher_order;
 mod infer;
 mod nse;
 pub mod project;
+mod resolve;
 pub mod rules;
 pub mod semantic_lists;
-mod suppress;
 
-// Re-export `Project` at the crate root so callers (the CLI, integration
-// tests) can write `ry_checker::Project` rather than
-// `ry_checker::project::Project`. Mirrors the ergonomics of `Checker`.
 pub use project::Project;
 // Re-export the diagnostic data types and suppression helpers at the
 // crate root for back-compat (callers and tests reference
@@ -34,9 +31,8 @@ pub use diagnostics::{
     parse_suppressions_from_comments,
 };
 
-// These builders construct a `SeverityFilter`, a checker type, from a
-// config's rule lists. They live here because ry-checker depends on
-// ry-config; the reverse direction would be a cycle.
+// These builders live here, not in ry-config, because ry-checker depends
+// on ry-config and the reverse direction would be a cycle.
 
 /// Build a [`SeverityFilter`] from the `error`, `warn`, and `ignore`
 /// rule lists in a config.

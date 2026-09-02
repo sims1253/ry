@@ -1,6 +1,8 @@
 use ry_testkit::{FixtureProject, LspSession, file_uri};
 use serde_json::{Value, json};
 
+mod harness;
+
 const SOURCE: &str = concat!(
     "ascii <- 1L\r\n",
     "frame <- data.frame(column = 1L)\r\n",
@@ -455,30 +457,11 @@ use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
-use std::time::Duration;
 
-type ClientSession = LspSession<
-    tokio::io::ReadHalf<tokio::io::DuplexStream>,
-    tokio::io::WriteHalf<tokio::io::DuplexStream>,
->;
-
-/// Three workspace files exercised by the model.
-const W10_FILES: &[&str] = &["a.R", "b.R", "c.R"];
-
-/// Initial on-disk content for every workspace file.
-const W10_DISK: &str = "x <- 1L\ny <- 2L\n";
-
-/// Source variants with varying Unicode prefixes so incremental-edit ranges
-/// exercise BMP, combining-mark, and astral-plane UTF-16 positions.  Each
-/// diagnostic variant emits RY090 (partial argument name) and RY091 so the
-/// oracle comparison is meaningful.
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum SourceVariant {
-    Clean,
-    AsciiDiagnostic,
-    BmpDiagnostic,
-    AstralDiagnostic,
-}
+use harness::{
+    ClientSession, SourceVariant, apply_incremental_edit, first_line_utf16_len, join_session,
+    normalize_diagnostics, spawn_session, sync_barrier,
+};
 
 impl SourceVariant {
     /// Every variant, ordered for `from_choice`'s residue pick.
@@ -489,27 +472,18 @@ impl SourceVariant {
         Self::AstralDiagnostic,
     ];
 
-    fn text(self) -> &'static str {
-        match self {
-            Self::Clean => "x <- 1L\ny <- 2L\n",
-            Self::AsciiDiagnostic => "z <- length(xx = 1L)\ny <- 2L\n",
-            Self::BmpDiagnostic => "café <- length(xx = 1L)\ny <- 2L\n",
-            Self::AstralDiagnostic => "😀 <- length(xx = 1L)\ny <- 2L\n",
-        }
-    }
-
-    /// The content of the first line without the trailing newline.  Used as
-    /// the replacement text for an incremental range edit targeting line 0.
-    fn first_line(self) -> &'static str {
-        self.text().lines().next().unwrap()
-    }
-
     /// Resolve a raw source byte to a variant.  Deterministic so shrinking
     /// the byte shrinks the resolved operation.
     fn from_choice(source: u8) -> Self {
         Self::ALL[source as usize % Self::ALL.len()]
     }
 }
+
+/// Three workspace files exercised by the model.
+const W10_FILES: &[&str] = &["a.R", "b.R", "c.R"];
+
+/// Initial on-disk content for every workspace file.
+const W10_DISK: &str = "x <- 1L\ny <- 2L\n";
 
 /// The gated operation alphabet.  Versioned operations carry the
 /// exact `textDocument/version` they send, and `Restart` carries the
@@ -761,60 +735,6 @@ impl SessionModel {
     }
 }
 
-/// Compute the UTF-16 code-unit length of the first line of `text`.  This is
-/// the LSP character column at the end of line 0.
-fn first_line_utf16_len(text: &str) -> u32 {
-    let end = text.find('\n').unwrap_or(text.len());
-    text[..end].encode_utf16().count() as u32
-}
-
-/// Splice the first-line replacement, matching the server's incremental
-/// range-to-byte conversion: replace everything from (0, 0) to
-/// (0, first_line_utf16_len) with the new first line, keeping the rest.
-fn apply_incremental_edit(old: &str, source: SourceVariant) -> String {
-    let first_line_end_byte = old.find('\n').unwrap_or(old.len());
-    let mut result = String::with_capacity(old.len() + source.first_line().len());
-    result.push_str(source.first_line());
-    result.push_str(&old[first_line_end_byte..]);
-    result
-}
-
-/// Extract and sort the diagnostics array from a publishDiagnostics
-/// notification so comparison is order-independent.
-fn normalize_diagnostics(publish: &Value) -> Vec<Value> {
-    let mut diags = publish
-        .pointer("/params/diagnostics")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    diags.sort_by(|a, b| {
-        serde_json::to_string(a)
-            .unwrap_or_default()
-            .cmp(&serde_json::to_string(b).unwrap_or_default())
-    });
-    diags
-}
-
-/// Spawn a fresh server on a duplex pair and initialize the client session.
-async fn spawn_session(root: &Path) -> (ClientSession, tokio::task::JoinHandle<()>) {
-    let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
-    let (client_reader, client_writer) = tokio::io::split(client_stream);
-    let (server_reader, server_writer) = tokio::io::split(server_stream);
-    let server = tokio::spawn(async move {
-        let _ = ry_lsp::run_with(server_reader, server_writer).await;
-    });
-    let mut session = LspSession::new(client_reader, client_writer);
-    session.initialize(root).await.unwrap();
-    (session, server)
-}
-
-/// Shut down a session and bounded-join its server.
-async fn join_session(mut session: ClientSession, server: tokio::task::JoinHandle<()>) {
-    let _ = session.shutdown().await;
-    drop(session);
-    let _ = tokio::time::timeout(Duration::from_secs(3), server).await;
-}
-
 /// Start a fresh server on the same fixture root, open the supplied
 /// documents, and return the diagnostics published for `target_file`.  This
 /// is the oracle: the live session must converge to this result.
@@ -824,7 +744,7 @@ async fn fresh_server_diagnostics(
     uris: &[String],
     target_file: u8,
 ) -> Value {
-    let (mut session, server) = spawn_session(root).await;
+    let (mut session, server) = spawn_session(&[root]).await;
     // Sync barrier to drain stale publications from the initialize cycle.
     let _ = session
         .request(
@@ -846,21 +766,6 @@ async fn fresh_server_diagnostics(
         .unwrap();
     join_session(session, server).await;
     publish
-}
-
-/// Synchronization barrier: a request/response round-trip that drains
-/// leftover publications so the next `publication_mark` captures only
-/// future arrivals. See the module docs and `LspSession::publication_mark`.
-async fn sync_barrier(live: &mut ClientSession, uri: &str) {
-    let _ = live
-        .request(
-            "textDocument/inlayHint",
-            json!({
-                "textDocument": {"uri": uri},
-                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}}
-            }),
-        )
-        .await;
 }
 
 /// Sync, set a fresh mark, quiesce on the debounced diagnostic publication
@@ -1006,7 +911,7 @@ async fn w10_convergence_property(operations: Vec<Operation>) -> Result<(), Test
         .map(|name| file_uri(&fixture.path(name)).unwrap())
         .collect();
 
-    let (mut live, mut live_server) = spawn_session(fixture.root()).await;
+    let (mut live, mut live_server) = spawn_session(&[fixture.root()]).await;
     let mut model = SessionModel::default();
 
     // Every operation was resolved against an identical model at generation
@@ -1145,7 +1050,7 @@ async fn w10_convergence_property(operations: Vec<Operation>) -> Result<(), Test
 
             Operation::Restart { reopens } => {
                 join_session(live, live_server).await;
-                let (new_live, new_server) = spawn_session(fixture.root()).await;
+                let (new_live, new_server) = spawn_session(&[fixture.root()]).await;
                 live = new_live;
                 live_server = new_server;
 
@@ -1195,7 +1100,7 @@ async fn close_reopen_republishes() {
     let fixture = FixtureProject::empty().unwrap();
     fixture.write_file("a.R", W10_DISK).unwrap();
     let uri = file_uri(&fixture.path("a.R")).unwrap();
-    let (mut session, server) = spawn_session(fixture.root()).await;
+    let (mut session, server) = spawn_session(&[fixture.root()]).await;
 
     // Barrier + mark before the open, the same pattern
     // `fresh_server_diagnostics` uses to drain the initialize cycle's

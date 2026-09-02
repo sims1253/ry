@@ -3,8 +3,8 @@
 //! These tests invoke the `ry` binary against temporary project trees
 //! to exercise the full pipeline: discovery, parsing, merging with CLI
 //! flags, and applying the merged settings to diagnostics. They
-//! complement the unit tests in `src/config.rs`, which cover the
-//! individual pieces in isolation.
+//! complement the unit tests in `ry-config`'s `src/config.rs`, which
+//! cover the individual pieces in isolation.
 
 use std::fs;
 use std::process::Command;

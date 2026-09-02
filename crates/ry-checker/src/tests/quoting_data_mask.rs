@@ -641,10 +641,7 @@ fn unknown_dot_helper_quotes_its_operands_but_known_dot_evaluates_them() {
 
 #[test]
 fn runtime_stub_defines_package_function_for_checker() {
-    let mut parser = RParser::new().unwrap();
-    let file = parser
-        .parse("runtime.R", "library(foo)\nx <- bar() + 1L\n")
-        .unwrap();
+    let file = parse_file("runtime.R", "library(foo)\nx <- bar() + 1L\n");
 
     let mut without = Checker::new("runtime.R");
     let (without_diags, without_scope) = without.check_with_scope(&file);
@@ -699,7 +696,7 @@ fn runtime_stub_defines_package_function_for_checker() {
     );
     assert_eq!(with_scope.get("x").map(|ty| &ty.mode), Some(&Mode::Integer));
 
-    let base_file = parser.parse("base.R", "x <- custom_base() + 1L\n").unwrap();
+    let base_file = parse_file("base.R", "x <- custom_base() + 1L\n");
     let mut base_checker = Checker::new("base.R");
     base_checker.set_user_stubs(stubs);
     let (base_diags, base_scope) = base_checker.check_with_scope(&base_file);
@@ -712,13 +709,10 @@ fn runtime_stub_defines_package_function_for_checker() {
 
 #[test]
 fn runtime_stub_schema_effect_extends_data_mask_semantics() {
-    let mut parser = RParser::new().unwrap();
-    let file = parser
-        .parse(
-            "runtime_nse.R",
-            "library(fakepkg)\ndf <- data.frame(x = 1L)\nout <- enrich(df, y = x + 1L)\nz <- out$y + 1L\n",
-        )
-        .unwrap();
+    let file = parse_file(
+        "runtime_nse.R",
+        "library(fakepkg)\ndf <- data.frame(x = 1L)\nout <- enrich(df, y = x + 1L)\nz <- out$y + 1L\n",
+    );
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("fakepkg.json"),
@@ -750,15 +744,8 @@ fn runtime_stub_schema_effect_extends_data_mask_semantics() {
 
 #[test]
 fn qualified_base_schema_effect_is_applied() {
-    let mut parser = RParser::new().unwrap();
-    let file = parser
-        .parse(
-            "qualified_base.R",
-            "df <- data.frame(x = 1L)\ny <- base::with(df, x + 1L)\nz <- y + 1L\n",
-        )
-        .unwrap();
-    let mut checker = Checker::new("qualified_base.R");
-    let (diagnostics, scope) = checker.check_with_scope(&file);
+    let (diagnostics, scope) =
+        check_with_scope("df <- data.frame(x = 1L)\ny <- base::with(df, x + 1L)\nz <- y + 1L\n");
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
     assert_eq!(scope.get("z").map(|ty| &ty.mode), Some(&Mode::Integer));
 }
@@ -937,22 +924,16 @@ fn join_normal_arguments_use_the_ordinary_scope() {
 
 #[test]
 fn typeshed_parameter_modes_drive_data_mask_evaluation() {
-    let mut parser = RParser::new().unwrap();
-    let file = parser
-        .parse(
-            "test.R",
-            "x <- as_draws_df(source)\ny <- mutate_variables(x, tau2 = tau^2)\n",
-        )
-        .unwrap();
-    let mut checker = Checker::new("test.R");
-    checker.set_loaded(HashSet::from(["posterior".to_string()]));
-    checker.check(&file);
+    let diagnostics = check_with(
+        "x <- as_draws_df(source)\ny <- mutate_variables(x, tau2 = tau^2)\n",
+        |c| c.set_loaded(HashSet::from(["posterior".to_string()])),
+    );
     assert!(
-        checker.diagnostics.iter().all(|diagnostic| {
+        diagnostics.iter().all(|diagnostic| {
             diagnostic.code != "RY010" || !diagnostic.message.contains("tau")
         }),
         "data-mask metadata should make tau an opaque masked binding: {:?}",
-        checker.diagnostics
+        diagnostics
     );
 }
 
@@ -1060,8 +1041,7 @@ fn lexical_types_are_opaque_under_unknown_data_masks_only() {
 #[test]
 fn exclusively_defused_dots_are_opaque_at_call_sites() {
     let source = "f <- function(...) enquos(...)\ny <- \"a\"\nf(not_a_binding == 1, y / 1L)\n";
-    let mut parser = RParser::new().unwrap();
-    let file = parser.parse("test.R", source).unwrap();
+    let file = parse_file("test.R", source);
     let mut checker = Checker::new("test.R");
     checker.collect_fns(&file.stmts);
     assert!(checker.fn_table.fns["f"].params[0].defused);
@@ -1091,8 +1071,7 @@ fn defuser_cache_reflects_propagated_quoting() {
                     inner\n\
                   }\n\
                   wrapper()\n";
-    let mut parser = RParser::new().unwrap();
-    let file = parser.parse("test.R", source).unwrap();
+    let file = parse_file("test.R", source);
     let mut checker = Checker::new("test.R");
     checker.collect_fns(&file.stmts);
     checker.run_fixpoint();
@@ -1133,8 +1112,7 @@ fn normally_used_dots_remain_eager_at_call_sites() {
 #[test]
 fn embraced_parameters_are_defused_at_call_sites() {
     let source = "library(dplyr)\nwrapper <- function(df, var) select(df, {{ var }})\nwrapper(data.frame(a = 1L), a)\n";
-    let mut parser = RParser::new().unwrap();
-    let file = parser.parse("test.R", source).unwrap();
+    let file = parse_file("test.R", source);
     let mut checker = Checker::new("test.R");
     checker.collect_fns(&file.stmts);
     assert!(checker.fn_table.fns["wrapper"].params[1].defused);

@@ -249,19 +249,15 @@ fn inherits_narrows_positive_and_negated_else_branches() {
 
 #[test]
 fn dynlib_prefix_resolves_only_with_nonempty_remainder() {
-    let mut parser = RParser::new().unwrap();
-    let file = parser.parse("test.R", "value <- pkg_call\n").unwrap();
-    let mut checker = Checker::new("test.R");
-    checker.set_external_bindings(HashSet::from(["\0useDynLib:pkg_".to_string()]));
-    checker.check(&file);
-    assert!(checker.take_diagnostics().is_empty());
+    let diags = check_with("value <- pkg_call\n", |c| {
+        c.set_external_bindings(HashSet::from(["\0useDynLib:pkg_".to_string()]));
+    });
+    assert!(diags.is_empty());
 
-    let mut parser = RParser::new().unwrap();
-    let file = parser.parse("test.R", "value <- pkg_\n").unwrap();
-    let mut checker = Checker::new("test.R");
-    checker.set_external_bindings(HashSet::from(["\0useDynLib:pkg_".to_string()]));
-    checker.check(&file);
-    assert!(checker.take_diagnostics().iter().any(|d| d.code == "RY010"));
+    let diags = check_with("value <- pkg_\n", |c| {
+        c.set_external_bindings(HashSet::from(["\0useDynLib:pkg_".to_string()]));
+    });
+    assert!(diags.iter().any(|d| d.code == "RY010"));
 }
 
 /// `call_with_cleanup(native_symbol, ...)` is the cleancall
@@ -273,15 +269,12 @@ fn dynlib_prefix_resolves_only_with_nonempty_remainder() {
 fn call_with_cleanup_symbol_needs_declared_registration() {
     let src = "f <- function(x) call_with_cleanup(map_impl, environment(), x)\n";
 
-    let mut parser = RParser::new().unwrap();
-    let file = parser.parse("test.R", src).unwrap();
-    let mut checker = Checker::new("test.R");
-    checker.set_external_bindings(HashSet::from([
-        ry_workspace::packages::NATIVE_REGISTRATION_SENTINEL.to_string(),
-        "call_with_cleanup".to_string(),
-    ]));
-    checker.check(&file);
-    let diags = checker.take_diagnostics();
+    let diags = check_with(src, |c| {
+        c.set_external_bindings(HashSet::from([
+            ry_workspace::packages::NATIVE_REGISTRATION_SENTINEL.to_string(),
+            "call_with_cleanup".to_string(),
+        ]));
+    });
     assert!(
         !diags.iter().any(|d| d.message.contains("map_impl")),
         "registered native symbol must not be reported unbound: {diags:?}"
@@ -289,14 +282,11 @@ fn call_with_cleanup_symbol_needs_declared_registration() {
 
     // Negative control: the same call in a package that never declared
     // `.registration = TRUE` keeps reporting the unbound symbol.
-    let mut parser = RParser::new().unwrap();
-    let file = parser.parse("test.R", src).unwrap();
-    let mut checker = Checker::new("test.R");
-    checker.set_external_bindings(HashSet::from(["call_with_cleanup".to_string()]));
-    checker.check(&file);
+    let diags = check_with(src, |c| {
+        c.set_external_bindings(HashSet::from(["call_with_cleanup".to_string()]));
+    });
     assert!(
-        checker
-            .take_diagnostics()
+        diags
             .iter()
             .any(|d| d.code == "RY010" && d.message.contains("map_impl")),
         "without .registration the symbol is an ordinary unbound read"
@@ -307,22 +297,17 @@ fn call_with_cleanup_symbol_needs_declared_registration() {
 /// arguments of the same call are still ordinary reads.
 #[test]
 fn call_with_cleanup_still_checks_non_symbol_arguments() {
-    let mut parser = RParser::new().unwrap();
-    let file = parser
-        .parse(
-            "test.R",
-            "f <- function() call_with_cleanup(map_impl, undefined_thing_xyz)\n",
-        )
-        .unwrap();
-    let mut checker = Checker::new("test.R");
-    checker.set_external_bindings(HashSet::from([
-        ry_workspace::packages::NATIVE_REGISTRATION_SENTINEL.to_string(),
-        "call_with_cleanup".to_string(),
-    ]));
-    checker.check(&file);
+    let diags = check_with(
+        "f <- function() call_with_cleanup(map_impl, undefined_thing_xyz)\n",
+        |c| {
+            c.set_external_bindings(HashSet::from([
+                ry_workspace::packages::NATIVE_REGISTRATION_SENTINEL.to_string(),
+                "call_with_cleanup".to_string(),
+            ]));
+        },
+    );
     assert!(
-        checker
-            .take_diagnostics()
+        diags
             .iter()
             .any(|d| d.code == "RY010" && d.message.contains("undefined_thing_xyz")),
         "only the first argument is a native symbol"

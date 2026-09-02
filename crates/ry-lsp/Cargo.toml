@@ -19,6 +19,15 @@ tracing = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+[features]
+# Test-only instrumentation: the parse/didChange scheduling barrier and
+# the baseline disk-read counter. Enabled for this crate's own
+# integration tests via the self dev-dependency below; nothing in the
+# production dependency graph (ry-cli's `ry server`) enables it, so the
+# instrumentation never compiles into shipped binaries.
+test-util = []
+
 [dev-dependencies]
+ry-lsp = { path = ".", features = ["test-util"] }
 ry-testkit = { path = "../ry-testkit" }
 proptest = { workspace = true }

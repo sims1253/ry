@@ -35,11 +35,16 @@
 /// only; cache policy (version-stamped tree rejection) is production
 /// code in `backend::parsed_file` and `State::store_tree`/`State::tree_for`.
 ///
+/// Compiled only under the `test-util` feature (enabled for this
+/// crate's own integration tests via the self dev-dependency), so it is
+/// absent from the production `ry server` binary (#170).
+///
 /// The barrier is **thread-local**: each test creates a single-threaded
 /// (`new_current_thread`) tokio runtime, so the server and its spawned
 /// tasks share the barrier with the test, while other tests running in
 /// parallel on different threads are completely isolated. No test sleeps;
 /// the barrier uses `tokio::sync::Notify` for deterministic rendezvous.
+#[cfg(feature = "test-util")]
 pub mod test_seam {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -138,7 +143,8 @@ mod util;
 use backend::{Backend, State};
 // Re-export the baseline disk-read counter so integration
 // tests can assert that the publish/inlay-hint hot path performs
-// no baseline file I/O.
+// no baseline file I/O. Test-util builds only (#170).
+#[cfg(feature = "test-util")]
 pub use backend::baseline_disk_reads;
 use std::sync::Arc;
 use tokio::sync::Mutex;

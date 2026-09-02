@@ -1168,6 +1168,174 @@ fn publish_path_performs_no_baseline_disk_io() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Invalid root ry.toml degrades entirely to defaults
+//
+// Pinned semantics: a root `ry.toml` that parses as TOML but fails
+// `Config::validate` (here `[index] max-files = 0`, which validate
+// rejects with "index.max-files") degrades the root config channel to
+// `Config::default()` plus EMPTY user stubs — one warn, never a fatal
+// error, and never a half-applied config. The diet dropped a lenient
+// stubs-only parser that re-parsed the broken file and kept applying its
+// `typeshed` entries; this test locks the full-defaults behavior in.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// An invalid root `ry.toml` degrades ENTIRELY to defaults: initialize
+/// still succeeds, diagnostics still publish, and nothing from the broken
+/// file applies — not its `ignore`/`error` severity entries (default
+/// filter and default severity hold) and not its `typeshed` stubs (empty
+/// user-stub set). The probe document lives OUTSIDE every workspace
+/// folder, so its check flows through the root-level
+/// `load_root_config_and_stubs` channel (`state.user_stubs` and the root
+/// filter) — the exact path whose Err branch degrades to defaults.
+///
+/// A control session against an identical-but-valid root config proves
+/// the RY001 probe is live: with the stubs applied, `my_func()` returns
+/// character and `if (my_func())` fires RY001. Without that contrast, the
+/// RY001-absence assertion below could pass vacuously.
+#[test]
+fn invalid_root_rytoml_degrades_entirely_to_defaults() {
+    let fixture = FixtureProject::empty().unwrap();
+    // Top-level keys precede `[index]` so the file deserializes fully as
+    // a `Config` and is rejected by `validate()` ("index.max-files"), not
+    // by the TOML or schema parse. `ignore`/`error`/`typeshed` are
+    // half-apply probes: none of them may take effect.
+    fixture
+        .write_file(
+            "broken/ry.toml",
+            "ignore = [\"RY002\"]\nerror = [\"RY002\"]\ntypeshed = [\"stubs\"]\n\n[index]\nmax-files = 0\n",
+        )
+        .unwrap();
+    // Control root: identical stubs, no validation error.
+    fixture
+        .write_file("valid/ry.toml", "typeshed = [\"stubs\"]\n")
+        .unwrap();
+    let stub = serde_json::to_string(&json!({
+        "schema_version": "1",
+        "package": "localdep",
+        "version": "test",
+        "functions": {
+            "my_func": {
+                "params": [],
+                "return": {"mode": "character", "length": "1"}
+            }
+        }
+    }))
+    .unwrap();
+    fixture
+        .write_file("broken/stubs/localdep.json", &stub)
+        .unwrap();
+    fixture
+        .write_file("valid/stubs/localdep.json", &stub)
+        .unwrap();
+
+    // Probe document. Line 1 pins the default filter and severity (the
+    // broken config would both ignore and error RY002). Lines 2-3 pin the
+    // stub channel: applied stubs give `my_func` a character return type,
+    // firing RY001 on line 3.
+    let probe = "if (c(TRUE, FALSE)) print(1)\nlibrary(localdep)\nif (my_func()) print(1)\n";
+    fixture.write_file("outside/main.R", probe).unwrap();
+
+    let broken_root = fixture.path("broken");
+    let valid_root = fixture.path("valid");
+    let doc_uri = file_uri(&fixture.path("outside/main.R"));
+
+    // Start a session on `root`, open the workspace-unowned probe
+    // document, and return the published (code, severity) pairs.
+    // Initialize must succeed and return capabilities even when the root
+    // `ry.toml` is invalid — degradation must not fail the session.
+    async fn open_unowned_and_collect(root: &Path, uri: &str, text: &str) -> Vec<(String, u64)> {
+        use ry_testkit::LspSession;
+
+        let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
+        let (client_reader, client_writer) = tokio::io::split(client_stream);
+        let (server_reader, server_writer) = tokio::io::split(server_stream);
+        let server =
+            tokio::spawn(async move { ry_lsp::run_with(server_reader, server_writer).await });
+        let mut live = LspSession::new(client_reader, client_writer);
+        let init = live
+            .initialize(root)
+            .await
+            .expect("initialize must succeed despite an invalid root ry.toml");
+        assert!(
+            init.get("capabilities").is_some(),
+            "initialize must return capabilities despite an invalid root ry.toml"
+        );
+
+        let mark = live.publication_mark();
+        live.open(uri, 1, text).await.unwrap();
+        let publish = live.published_diagnostics_after(uri, mark).await.unwrap();
+        let pairs = publish["params"]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| {
+                (
+                    d["code"].as_str().unwrap_or("").to_string(),
+                    d["severity"].as_u64().unwrap_or(0),
+                )
+            })
+            .collect();
+
+        let _ = live.shutdown().await;
+        drop(live);
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(3), server).await;
+        pairs
+    }
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        // Control: a valid root config applies the stubs, so `my_func()`
+        // resolves to a character return and RY001 fires. This proves the
+        // probe distinguishes stubs-applied from stubs-absent.
+        let valid_pairs = open_unowned_and_collect(&valid_root, &doc_uri, probe).await;
+        assert!(
+            valid_pairs.iter().any(|(code, _)| code == "RY001"),
+            "control: valid root config must apply the stubs and fire RY001; got {valid_pairs:?}"
+        );
+        assert!(
+            valid_pairs.iter().any(|(code, _)| code == "RY002"),
+            "control: RY002 must fire under the valid root config; got {valid_pairs:?}"
+        );
+
+        // Invalid root config: full-defaults degradation.
+        let broken_pairs = open_unowned_and_collect(&broken_root, &doc_uri, probe).await;
+        // Diagnostics still publish for the unowned document.
+        assert!(
+            !broken_pairs.is_empty(),
+            "diagnostics must still publish under the invalid root config"
+        );
+        // Default filter holds: the broken config's `ignore = ["RY002"]`
+        // did not half-apply, so RY002 still fires.
+        assert!(
+            broken_pairs.iter().any(|(code, _)| code == "RY002"),
+            "default filter must hold: RY002 must survive the broken config's ignore entry; got {broken_pairs:?}"
+        );
+        // Default severity holds: the broken config's `error = ["RY002"]`
+        // did not half-apply, so RY002 stays at its default Warning (2),
+        // not Error (1).
+        let ry002_severities: Vec<u64> = broken_pairs
+            .iter()
+            .filter(|(code, _)| code == "RY002")
+            .map(|(_, severity)| *severity)
+            .collect();
+        assert!(
+            !ry002_severities.is_empty() && ry002_severities.iter().all(|s| *s == 2),
+            "default severity must hold: RY002 must publish as Warning(2), not Error(1); got {broken_pairs:?}"
+        );
+        // Empty stubs hold: the broken config's `typeshed = ["stubs"]`
+        // did not half-apply, so `my_func` has no stub return type and
+        // RY001 must be absent (the control shows it fires when applied).
+        assert!(
+            !broken_pairs.iter().any(|(code, _)| code == "RY001"),
+            "no typeshed stubs from the broken config: RY001 must be absent; got {broken_pairs:?}"
+        );
+    });
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Precompute filters once per folder (#46)
 //
 // Filter, confidence, and exclude values are compiled once while building

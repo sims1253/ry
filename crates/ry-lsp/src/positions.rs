@@ -14,10 +14,8 @@
 //!   ([`byte_offset_to_point`]) and the line-start byte offsets
 //!   ([`line_start`]) used to bound whole-line text edits.
 //!
-//! The helpers are behavior-identical to the walks they replaced
-//! (formerly `util.rs`, `backend.rs::byte_offset_to_point`, and
-//! `diagnostics.rs::line_start_byte_offset`); only the line-walking
-//! core is shared.
+//! Every helper advances the same [`Scan`] core and differs only in
+//! the column unit it reports.
 
 use ry_core::Point;
 use tower_lsp::lsp_types::Position;
@@ -151,4 +149,47 @@ pub(crate) fn line_start(text: &str, line: usize) -> usize {
         }
     }
     text.len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lone_cr_is_an_ordinary_utf16_column() {
+        // A CR that is not part of a CRLF pair neither starts a new line
+        // nor vanishes from the column count: it is one column wide.
+        let text = "ab\rcd";
+        assert_eq!(
+            byte_offset_to_position(text, 3),
+            Position {
+                line: 0,
+                character: 3
+            }
+        );
+        assert_eq!(position_to_byte_offset(text, 0, 3), Some(3));
+
+        // Contrast: the `\r` of a CRLF terminator is not a column
+        // character — the byte after the pair is column 0 of line 1.
+        let crlf = "a\r\nb";
+        assert_eq!(
+            byte_offset_to_position(crlf, 3),
+            Position {
+                line: 1,
+                character: 0
+            }
+        );
+    }
+
+    #[test]
+    fn position_to_byte_offset_rejects_mid_surrogate_position() {
+        // 'a' is column 0, '😀' occupies columns 1-2, 'b' is column 3.
+        // Column 2 falls between the surrogate pair: no byte boundary
+        // exists there, so the inverse mapping rejects it instead of
+        // snapping forward to 'b'.
+        let text = "a😀b";
+        assert_eq!(position_to_byte_offset(text, 0, 1), Some(1));
+        assert_eq!(position_to_byte_offset(text, 0, 2), None);
+        assert_eq!(position_to_byte_offset(text, 0, 3), Some(5));
+    }
 }

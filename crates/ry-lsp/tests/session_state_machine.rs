@@ -1143,7 +1143,7 @@ fn metadata_edits_converge() {
         Operation::EditTypeshed,
         Operation::IncrementalEdit {
             file: 0,
-            source: SourceVariant::AstralDiagnostic,
+            source: SourceVariant::AsciiDiagnostic,
         },
     ]);
 }

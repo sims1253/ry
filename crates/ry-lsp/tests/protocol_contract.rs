@@ -9,7 +9,7 @@
 //! Shared infrastructure reuses `ry-testkit` (`FixtureProject`,
 //! `LspSession`, `AsyncJsonRpcClient`) and the `ry_lsp::run_with` in-memory
 //! server seam, plus the `Published` comparison helpers shared with
-//! `tests/protocol.rs` in `tests/common`, so the contract is "LSP published
+//! `tests/protocol.rs` in `tests/harness`, so the contract is "LSP published
 //! diagnostics equal `ry check` run independently in the same root."
 //!
 //! No test below adds package-import or filtering differences to `normalise()`.

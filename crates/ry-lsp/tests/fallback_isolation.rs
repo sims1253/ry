@@ -17,7 +17,7 @@ use ry_testkit::{AsyncJsonRpcClient, FixtureProject, file_uri};
 use serde_json::{Value, json};
 
 /// Run a future on a current-thread tokio runtime (same pattern as
-/// session.rs / configuration_refresh.rs).
+/// session_state_machine.rs / configuration_refresh.rs).
 fn run<F, T>(future: F) -> T
 where
     F: std::future::Future<Output = T>,

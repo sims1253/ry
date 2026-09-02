@@ -409,13 +409,11 @@ fn package_import_from_value_position_is_clean_in_both_modes() {
 /// cross-mode subprocess framing is correct over a multi-message
 /// exchange with the real `ry server` process.
 ///
-/// The existing `actual_ry_server_stdio_is_clean_json_rpc` test proves the
-/// initialize response is framed. This test extends that to a full
-/// request/notification/response/exit cycle and verifies every message
-/// survives Content-Length framing without truncation, merging, or
-/// leftover stdout noise. A regression that interleaves a log line or
-/// uses a wrong Content-Length would fail here, not only in an editor
-/// integration.
+/// The full request/notification/response/exit cycle — initialize
+/// included — must survive Content-Length framing without truncation,
+/// merging, or leftover stdout noise. A regression that interleaves a
+/// log line or uses a wrong Content-Length would fail here, not only in
+/// an editor integration.
 #[test]
 fn cross_mode_subprocess_framing_survives_multi_round_exchange() {
     let fixture = FixtureProject::from_fixture("shared").unwrap();

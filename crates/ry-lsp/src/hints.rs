@@ -14,9 +14,9 @@ use crate::util::byte_offset_to_position;
 /// (e.g. `: integer<len=1>`).
 ///
 /// The walk recurses into `Stmt::FunctionDef` bodies so that local
-/// bindings inside named functions are annotated too (the top-level
-/// scope may or may not track them; if it doesn't, the lookup yields
-/// `None` and no hint is emitted).
+/// bindings inside statement-position function literals are annotated
+/// too (the top-level scope may or may not track them; if it doesn't,
+/// the lookup yields `None` and no hint is emitted).
 ///
 /// Opaque (`Mode::Opaque`) types are deliberately skipped: they
 /// represent "we don't know" and would only clutter the editor with
@@ -74,11 +74,10 @@ fn collect_inlay_hints_from_stmt(
         // `df$col <- value`) don't introduce a new name in the
         // scope, so they contribute no hints.
         Stmt::Assign { .. } => {}
-        // Recurse into named function bodies so nested bindings are
-        // annotated too. `Stmt::FunctionDef` with `name: Some(..)` is
-        // not currently emitted by the parser (named functions come
-        // through as `Assign` + `Expr::Function`), but we handle it
-        // for completeness / future grammar changes.
+        // Recurse into anonymous statement-position function literals
+        // (a bare `function(...) ...` line) so bindings inside them are
+        // annotated too; named functions lower to `Assign` +
+        // `Expr::Function` and only their assignment target is hinted.
         Stmt::FunctionDef { body, .. } => {
             for s in body {
                 collect_inlay_hints_from_stmt(s, scope, text, hints);

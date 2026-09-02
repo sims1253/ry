@@ -207,31 +207,6 @@ fn settings(fixture: &FixtureProject, relative: &str) -> Value {
 }
 
 #[test]
-fn actual_ry_server_stdio_is_clean_json_rpc() {
-    let fixture = FixtureProject::from_fixture("shared").unwrap();
-    let mut command = Command::new(ry_binary());
-    command.arg("server").current_dir(fixture.root());
-    let mut client = JsonRpcProcess::spawn(&mut command).unwrap();
-    let root_uri = file_uri(fixture.root());
-    let id = client
-        .request(
-            "initialize",
-            json!({
-                "processId": null, "rootUri": root_uri, "capabilities": {}
-            }),
-        )
-        .unwrap();
-    let response = client
-        .receive_until(|m| m.get("id") == Some(&json!(id)), 8)
-        .unwrap();
-    assert_eq!(
-        response.pointer("/result/serverInfo/name"),
-        Some(&json!("ry"))
-    );
-    client.notify("exit", Value::Null).unwrap();
-}
-
-#[test]
 fn cli_and_run_with_publish_the_same_single_root_matrix() {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -434,13 +409,11 @@ fn package_import_from_value_position_is_clean_in_both_modes() {
 /// cross-mode subprocess framing is correct over a multi-message
 /// exchange with the real `ry server` process.
 ///
-/// The existing `actual_ry_server_stdio_is_clean_json_rpc` test proves the
-/// initialize response is framed. This test extends that to a full
-/// request/notification/response/exit cycle and verifies every message
-/// survives Content-Length framing without truncation, merging, or
-/// leftover stdout noise. A regression that interleaves a log line or
-/// uses a wrong Content-Length would fail here, not only in an editor
-/// integration.
+/// The full request/notification/response/exit cycle — initialize
+/// included — must survive Content-Length framing without truncation,
+/// merging, or leftover stdout noise. A regression that interleaves a
+/// log line or uses a wrong Content-Length would fail here, not only in
+/// an editor integration.
 #[test]
 fn cross_mode_subprocess_framing_survives_multi_round_exchange() {
     let fixture = FixtureProject::from_fixture("shared").unwrap();

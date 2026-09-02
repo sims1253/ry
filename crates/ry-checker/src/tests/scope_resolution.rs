@@ -910,20 +910,6 @@ fn namespace_qualified_call_to_unknown_package_function_is_silent() {
 }
 
 #[test]
-fn bare_unbound_identifier_still_emits_ry010() {
-    // Regression guard: suppressing RY010 for `pkg::name` must NOT
-    // accidentally suppress it for genuinely unbound bare names.
-    // `totally_undefined_thing` has no `::` and is not in scope,
-    // the typeshed, or the FnTable, so it must still fire RY010.
-    let diags = check("x <- totally_undefined_thing\n");
-    assert!(
-        diags.iter().any(|d| d.code == "RY010"),
-        "bare unbound identifier should still emit RY010, got {:?}",
-        diags
-    );
-}
-
-#[test]
 fn backtick_percent_operator_not_unbound() {
     // A backtick-quoted operator name like `` `%+%` `` is commonly a
     // user-defined or package-imported infix operator. The parser

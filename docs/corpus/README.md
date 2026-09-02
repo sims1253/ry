@@ -46,7 +46,7 @@ digest or an ignored `.full.txt` report.
 `ecosystem/run.sh` regenerates this companion from the production
 `ry check --output-format json` results. Posit `--check` runs compare the
 processed tier against the committed entries and print a unified diff for any
-message or replacement drift. A full non-check run updates all entries.
+message or severity drift. A full non-check run updates all entries.
 
 ## Reconciliation modes
 

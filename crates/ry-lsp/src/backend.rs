@@ -1516,7 +1516,6 @@ impl Backend {
                         tracing::warn!(
                             root = %root.display(),
                             cap = "index.max-files",
-                            omitted = report.omitted_count(),
                             "discovery file-count cap reached; additional R files were not indexed"
                         );
                     }

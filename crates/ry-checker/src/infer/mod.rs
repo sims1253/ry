@@ -2,8 +2,6 @@ use super::*;
 pub(crate) use index::*;
 pub(crate) use misc::*;
 pub(crate) use pipe::PipeForm;
-use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
-use std::ops::ControlFlow;
 pub(crate) mod binop;
 pub(crate) mod call;
 pub(crate) mod construct;
@@ -109,47 +107,6 @@ fn expression_has_list_origin(expression: &Expr, scope: &Scope) -> bool {
         Expr::Ident { name, .. } => scope.has_list_origin(name),
         _ => false,
     }
-}
-
-fn vector_intent_parameters(params: &[Param], body: &[Stmt]) -> HashSet<String> {
-    let formals: HashSet<&str> = params
-        .iter()
-        .map(|parameter| parameter.name.as_str())
-        .collect();
-    let mut intent = HashSet::new();
-    // Skips nested `function(...)` statements (their formals are their
-    // own) but walks function-literal bodies, where paste calls still
-    // evaluate the enclosing formals.
-    let _ = walk_stmts(
-        body,
-        Walk::ALL,
-        |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
-            if let AstNode::Expr(Expr::Call { func, args, .. }) = node
-                && ident_name(func).is_some_and(|name| {
-                    matches!(crate::semantic_lists::bare_name(name), "paste" | "paste0")
-                })
-                && args
-                    .iter()
-                    .any(|argument| matches!(argument.name.as_deref(), Some("collapse")))
-            {
-                for argument in args {
-                    if argument.name.as_deref() != Some("collapse")
-                        && let Expr::Ident { name, .. } = &argument.value
-                        && formals.contains(name.as_str())
-                    {
-                        intent.insert(name.clone());
-                    }
-                }
-            }
-            match node {
-                // A nested `function(...)` statement's formals are its own;
-                // calls inside it do not evaluate this function's formals.
-                AstNode::Stmt(Stmt::FunctionDef { .. }) => ControlFlow::Continue(Descend::Skip),
-                _ => ControlFlow::Continue(Descend::Into),
-            }
-        },
-    );
-    intent
 }
 
 fn discarded_value_expression(expression: &Expr) -> bool {
@@ -392,17 +349,8 @@ impl Checker {
                     scope.unreachable = true;
                 }
             }
-            Stmt::FunctionDef {
-                name,
-                params,
-                body,
-                span,
-            } => {
-                let vt = self.function_value_from_literal(params, body, scope, 0);
-                if let Some(n) = name {
-                    scope.insert(n.clone(), vt);
-                }
-                self.enter_function_body(name.as_deref(), false, params, body, *span, scope);
+            Stmt::FunctionDef { params, body, span } => {
+                self.enter_function_body(None, false, params, body, *span, scope);
             }
             Stmt::Return { value, .. } => {
                 if let Some(v) = value {
@@ -423,8 +371,8 @@ impl Checker {
     /// Both statement forms reach this: `f <- function(...) ...` and a bare
     /// `function(...) ...` statement. `named_binding` marks the first form,
     /// which is the only one that installs an S3 dispatch context. A
-    /// statement-position literal is anonymous (`name` is always `None`
-    /// today, but the parser's name is honored if it ever supplies one).
+    /// statement-position literal is anonymous, so its walk passes no
+    /// function name.
     fn enter_function_body(
         &mut self,
         function_name: Option<&str>,
@@ -472,14 +420,11 @@ impl Checker {
         }
         self.deferred_captures.push(assigned);
         self.push_enclosing_formals(params);
-        self.vector_intent_parameters
-            .push(vector_intent_parameters(params, body));
         self.check_discarded_branch_results(body);
         for s in body {
             self.walk_stmt(s, &mut fn_scope, None);
         }
         self.record_scope(function_name, span, params, &fn_scope);
-        self.vector_intent_parameters.pop();
         self.enclosing_formals.pop();
         self.deferred_captures.pop();
     }

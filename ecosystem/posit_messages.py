@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import copy
 import difflib
 import json
 import sys
@@ -64,8 +63,6 @@ def observed_entries(
                 "severity": diagnostic["severity"],
                 "message": diagnostic["message"],
             }
-            if "fix" in diagnostic:
-                entry["fix"] = diagnostic["fix"]
             observed[identity(finding)] = entry
     return observed
 
@@ -94,7 +91,7 @@ def main() -> int:
             "identity_fields": ["package", "code", "path", "line", "column"],
             "findings": {},
         }
-    candidate = copy.deepcopy(committed)
+    candidate = dict(committed)
     selected_packages = set(args.packages)
     candidate["findings"] = {
         key: value

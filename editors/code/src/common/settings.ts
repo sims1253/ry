@@ -9,8 +9,6 @@
 import * as vscode from "vscode";
 import { getConfiguration, getWorkspaceFolders } from "./vscodeapi";
 
-export const RY_SETTINGS_NAMESPACE = "ry";
-
 export interface ISettings {
   enable?: boolean;
   path?: string[];

@@ -51,16 +51,6 @@ struct JsonDiagnostic<'a> {
     confidence: &'a str,
 }
 
-/// Render the diagnostics to a string. `srcs` maps `path` -> source text
-/// so we can compute line numbers and source snippets.
-pub fn render(
-    diags: &[Diagnostic],
-    format: OutputFormat,
-    srcs: &std::collections::HashMap<String, String>,
-) -> String {
-    render_with_color(diags, format, srcs, false)
-}
-
 /// Render diagnostics with optional ANSI styling for human-readable formats.
 /// Machine-readable formats ignore `color` so their schemas remain stable.
 pub fn render_with_color(
@@ -350,6 +340,14 @@ fn line_containing(src: &str, pos: usize) -> Option<&str> {
 mod tests {
     use super::*;
     use ry_core::Span;
+
+    fn render(
+        diags: &[Diagnostic],
+        format: OutputFormat,
+        srcs: &std::collections::HashMap<String, String>,
+    ) -> String {
+        render_with_color(diags, format, srcs, false)
+    }
 
     fn diag(code: &'static str, sev: Severity) -> Diagnostic {
         Diagnostic::new(sev, Span::new(0, 1, 0, 0), "x.R", code, "msg")

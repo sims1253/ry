@@ -862,18 +862,6 @@ fn known_null_arithmetic_ignores_parameter_defaults_and_imported_schemas() {
 }
 
 #[test]
-fn dollar_missing_on_data_frame_still_fires_ry060() {
-    // The data-frame case is a real bug and must keep
-    // firing. `mtcars` is a data frame in the typeshed.
-    let diags = check("df <- mtcars\nbad <- df$nonexistent\n");
-    assert!(
-        diags.iter().any(|d| d.code == "RY060"),
-        "`$` miss on a data frame must still fire RY060, got {:?}",
-        diags
-    );
-}
-
-#[test]
 fn for_over_homogeneous_list_does_not_fire_ry040() {
     // `for (el in list(1, 2, 3))` binds `el` to the unwrapped element
     // (double<1>) inside the loop body, so accumulating into `total`

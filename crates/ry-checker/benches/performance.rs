@@ -271,7 +271,7 @@ fn lsp_edit_sim(c: &mut Criterion) {
     let mut edit = 0usize;
     let mut project = Project::new();
     for (path, file) in &parsed {
-        project.add_file(path.clone(), file.as_ref().clone());
+        project.add_file_arc(path.clone(), Arc::clone(file));
     }
     black_box(project.check_incremental());
 

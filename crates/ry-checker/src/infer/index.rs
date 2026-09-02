@@ -7,6 +7,21 @@ fn atomic_mode(member: &RType) -> bool {
     ) && member.columns.is_none()
 }
 
+/// The conservative `$`/`[[` fallback when no schema resolves the access:
+/// for list-like bases return opaque since the element type is unknowable;
+/// for other types return a length-1 value of the base mode. A union base
+/// would build a malformed union, so it degrades to opaque.
+fn conservative_element_type(bt: &RType) -> RType {
+    if matches!(
+        bt.mode,
+        Mode::List | Mode::Opaque | Mode::Function | Mode::Union
+    ) {
+        RType::unknown()
+    } else {
+        RType::new(bt.mode, Length::One)
+    }
+}
+
 fn dollar_receiver_is_definitely_atomic(receiver: &RType) -> bool {
     match receiver.mode {
         Mode::Union => receiver
@@ -124,19 +139,9 @@ impl Checker {
                         }
                     }
                 }
-                // No schema (or column not found after RY060): for
-                // list-like types, return opaque since we don't know
-                // the element type. For other types, return a length-1
-                // value of the base mode. A union base would build a
-                // malformed union here, so degrade to opaque.
-                if matches!(
-                    bt.mode,
-                    Mode::List | Mode::Opaque | Mode::Function | Mode::Union
-                ) {
-                    RType::unknown()
-                } else {
-                    RType::new(bt.mode, Length::One)
-                }
+                // No schema (or column not found after RY060): the
+                // conservative default.
+                conservative_element_type(&bt)
             }
             IndexKind::Double => {
                 // `df[["col"]]` or `x[[i]]`: the index can be a string
@@ -157,13 +162,7 @@ impl Checker {
                             self.emit_undefined_column(name, schema, span);
                         }
                     }
-                    if matches!(
-                        bt.mode,
-                        Mode::List | Mode::Opaque | Mode::Function | Mode::Union
-                    ) {
-                        return RType::unknown();
-                    }
-                    return RType::new(bt.mode, Length::One);
+                    return conservative_element_type(&bt);
                 }
                 // Integer or double literal index: look up `[[N]]` in
                 // the schema. In R, `1` is a double, `1L` is an integer;
@@ -203,14 +202,7 @@ impl Checker {
                         }
                     }
                 }
-                if matches!(
-                    bt.mode,
-                    Mode::List | Mode::Opaque | Mode::Function | Mode::Union
-                ) {
-                    RType::unknown()
-                } else {
-                    RType::new(bt.mode, Length::One)
-                }
+                conservative_element_type(&bt)
             }
             IndexKind::Single => {
                 // `df[i, j]` selects a column when `j` is scalar and the
@@ -242,9 +234,7 @@ impl Checker {
                             .map(|(_, ty)| ty.clone()),
                         _ => None,
                     };
-                    for argument in args {
-                        self.infer(&argument.value, scope);
-                    }
+                    self.infer_args_for_diagnostics(args, scope);
                     if let Some(column) = column {
                         if !drop_false {
                             return column;
@@ -263,7 +253,7 @@ impl Checker {
                     }
                     // A scalar but dynamic column index still drops to a
                     // vector. Its mode and row count are not knowable.
-                    if !drop_false && is_non_negative_scalar_index(&column_arg.value, scope) {
+                    if !drop_false && is_non_negative_scalar_index(&column_arg.value) {
                         return RType::unknown();
                     }
                     return bt;
@@ -273,9 +263,7 @@ impl Checker {
                         Expr::String(column, _) => Some(column),
                         _ => None,
                     }) {
-                        for argument in args {
-                            self.infer(&argument.value, scope);
-                        }
+                        self.infer_args_for_diagnostics(args, scope);
                         if let Some(schema) = &bt.columns {
                             if let Some(column_type) = schema.get(column) {
                                 return column_type;
@@ -361,7 +349,7 @@ impl Checker {
 /// negative exclusion selector. Zero selects no elements under `[`, so only a
 /// syntactically positive numeric literal proves scalar result length. A
 /// scalar identifier has unknown sign and is therefore not sufficient.
-pub(crate) fn is_non_negative_scalar_index(expr: &Expr, _scope: &Scope) -> bool {
+pub(crate) fn is_non_negative_scalar_index(expr: &Expr) -> bool {
     match expr {
         Expr::Integer(index, _) => *index > 0,
         Expr::Double(index, _) => *index > 0.0,
@@ -647,7 +635,7 @@ pub(crate) const NSE_SYMBOL_FNS: &[&str] = &[
 ];
 
 pub(crate) fn is_nse_symbol_fn(name: &str) -> bool {
-    let name = name.rsplit_once("::").map(|(_, n)| n).unwrap_or(name);
+    let name = crate::semantic_lists::bare_name(name);
     NSE_SYMBOL_FNS.contains(&name)
 }
 

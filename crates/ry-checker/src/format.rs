@@ -32,6 +32,12 @@ impl OutputFormat {
             _ => None,
         }
     }
+
+    /// Whether this format is read by humans (and may carry color), as
+    /// opposed to the machine-readable schemas that must stay stable.
+    pub fn is_human(self) -> bool {
+        matches!(self, Self::Full | Self::Concise)
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -67,18 +73,7 @@ pub fn render_with_color(
         OutputFormat::Concise => {
             let mut out = String::new();
             for d in diags {
-                let (line, col) = line_col(d, srcs);
-                use std::fmt::Write as _;
-                let _ = writeln!(
-                    out,
-                    "{}:{}:{}: {}: {} {}",
-                    d.path,
-                    line,
-                    col,
-                    styled_severity(d.severity, color),
-                    styled_code(d.code, color),
-                    d.message
-                );
+                write_concise_header(&mut out, d, srcs, color);
             }
             out
         }
@@ -86,20 +81,10 @@ pub fn render_with_color(
             // Like `concise` but adds the source line and a caret under
             // the span. Falls back to the concise form
             // when the source text isn't available.
+            use std::fmt::Write as _;
             let mut out = String::new();
             for d in diags {
-                let (line, col) = line_col(d, srcs);
-                use std::fmt::Write as _;
-                let _ = writeln!(
-                    out,
-                    "{}:{}:{}: {}: {} {}",
-                    d.path,
-                    line,
-                    col,
-                    styled_severity(d.severity, color),
-                    styled_code(d.code, color),
-                    d.message
-                );
+                let col = write_concise_header(&mut out, d, srcs, color);
                 if let Some(src_line) = srcs
                     .get(&d.path)
                     .and_then(|src| line_containing(src, d.span.start))
@@ -250,6 +235,30 @@ fn styled_severity(severity: Severity, color: bool) -> String {
     }
     let ansi = severity_ansi(severity);
     format!("\x1b[{ansi}m{label}\x1b[0m")
+}
+
+/// Write the `path:line:col: severity: [CODE] message` header shared by
+/// the concise and full formats, returning the 1-based char column (which
+/// the full format reuses to indent its caret line).
+fn write_concise_header(
+    out: &mut String,
+    d: &Diagnostic,
+    srcs: &std::collections::HashMap<String, String>,
+    color: bool,
+) -> usize {
+    use std::fmt::Write as _;
+    let (line, col) = line_col(d, srcs);
+    let _ = writeln!(
+        out,
+        "{}:{}:{}: {}: {} {}",
+        d.path,
+        line,
+        col,
+        styled_severity(d.severity, color),
+        styled_code(d.code, color),
+        d.message
+    );
+    col
 }
 
 fn styled_code(code: &str, color: bool) -> String {

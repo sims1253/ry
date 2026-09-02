@@ -118,11 +118,7 @@ impl Checker {
 
         // Reuse the named-schema builder, then patch the coerced types
         // in (the builder uses the original arg_types verbatim).
-        let mut schema = build_data_frame_schema(&coerced_types, &filtered_args);
-        if let Some(s) = schema.as_mut() {
-            // Sanity: lengths should already match coerced_types.
-            debug_assert_eq!(s.columns.len(), coerced_types.len());
-        }
+        let schema = build_data_frame_schema(&coerced_types, &filtered_args);
 
         let class = ClassVector::single("data.frame");
         let base = RType::new(Mode::List, Length::Known(filtered_types.len())).with_class(class);
@@ -190,42 +186,25 @@ impl Checker {
         // a supplied non-literal means `Length::Unknown`; an unsupplied
         // one defaults to 1.
         //
-        // `find_idx`'s `pos` counts only unnamed args, so
+        // `find_arg`'s `pos` counts only unnamed args, so
         // `rep(each = 2, c(1,2,3), 1)` matches `x` at 0 and `times`
         // at 1 (mirrors `infer_seq`).
-        let find_idx = |name: &str, pos: usize| -> Option<usize> {
-            for (i, a) in args.iter().enumerate() {
-                if a.name.as_deref() == Some(name) {
-                    return Some(i);
-                }
-            }
-            let mut idx = 0usize;
-            for (i, a) in args.iter().enumerate() {
-                if a.name.is_some() {
-                    continue;
-                }
-                if idx == pos {
-                    return Some(i);
-                }
-                idx += 1;
-            }
-            None
-        };
+        //
         // `x` is the first positional arg (pos 0) or a named `x = ...`.
         // We must look it up by index rather than `arg_types.first()`
         // because named `times`/`each` args can precede `x` in the
         // call (e.g. `rep(each = 2, c(1,2,3), 1)`).
-        let x_type = find_idx("x", 0)
+        let x_type = find_arg(args, "x", 0)
             .and_then(|i| arg_types.get(i).cloned())
             .unwrap_or(RType::unknown());
         // Track `times` / `each` as `Option<Option<i64>>`:
         //   * outer None      -> not supplied (use default 1)
         //   * outer Some(None) -> supplied but non-literal (Unknown)
         //   * outer Some(Some(n)) -> supplied literal value n
-        let times = find_idx("times", 1)
+        let times = find_arg(args, "times", 1)
             .and_then(|i| args.get(i))
             .map(|a| extract_literal_int(&a.value));
-        let each = find_idx("each", 2)
+        let each = find_arg(args, "each", 2)
             .and_then(|i| args.get(i))
             .map(|a| extract_literal_int(&a.value));
         // Resolve `times` and `each` through the shared count resolver.
@@ -289,22 +268,10 @@ impl Checker {
         // `pos` index counts only unnamed args, so `seq(from=1, 10)`
         // still matches `to` at positional index 0.
         let find = |name: &str, pos: usize| -> (bool, Option<i64>) {
-            for a in args.iter() {
-                if a.name.as_deref() == Some(name) {
-                    return (true, extract_literal_int(&a.value));
-                }
+            match find_arg(args, name, pos) {
+                Some(i) => (true, extract_literal_int(&args[i].value)),
+                None => (false, None),
             }
-            let mut idx = 0;
-            for a in args.iter() {
-                if a.name.is_some() {
-                    continue;
-                }
-                if idx == pos {
-                    return (true, extract_literal_int(&a.value));
-                }
-                idx += 1;
-            }
-            (false, None)
         };
 
         let (_, from_val) = find("from", 0);
@@ -458,10 +425,6 @@ impl Checker {
                     mode
                 };
                 let length = match JsonLength::parse(&c.length) {
-                    Some(JsonLength::Known(0)) => Length::Zero,
-                    Some(JsonLength::Known(1)) => Length::One,
-                    Some(JsonLength::Known(value)) => Length::Known(value),
-                    Some(JsonLength::Unknown) => Length::Unknown,
                     Some(JsonLength::Arg0) => first.length,
                     Some(JsonLength::Arg1) => {
                         matched.get(1).map(|t| t.length).unwrap_or(Length::Unknown)
@@ -474,7 +437,8 @@ impl Checker {
                     // Number of arguments (for list()).
                     Some(JsonLength::NArgs) => Length::Known(args.len()),
                     Some(JsonLength::Test) => first.length,
-                    None => Length::Unknown,
+                    // Literal lengths and a missing spec alike.
+                    literal => json_length_to_length(literal),
                 };
                 let length = semantic_return_length(
                     sig.return_length.as_ref(),
@@ -492,7 +456,7 @@ impl Checker {
                     let cols: Vec<(String, RType)> = c
                         .columns
                         .iter()
-                        .map(|(name, child)| (name.clone(), json_rtype_to_rtype_shallow(child)))
+                        .map(|(name, child)| (name.clone(), json_rtype_scalar(child)))
                         .collect();
                     result = result.with_columns(Arc::new(ColumnSchema {
                         columns: cols,
@@ -517,6 +481,28 @@ fn rep_count(value: Option<Option<i64>>) -> Option<usize> {
         Some(Some(n)) if n >= 0 => Some(n as usize),
         Some(_) => None,
     }
+}
+
+/// Find the argument for a named parameter: an exact-name argument wins, else
+/// the `pos`-th unnamed (positional) argument. `pos` counts only unnamed
+/// args, so `rep(each = 2, c(1,2,3), 1)` matches `x` at 0 and `times` at 1.
+fn find_arg(args: &[Arg], name: &str, pos: usize) -> Option<usize> {
+    for (i, a) in args.iter().enumerate() {
+        if a.name.as_deref() == Some(name) {
+            return Some(i);
+        }
+    }
+    let mut idx = 0usize;
+    for (i, a) in args.iter().enumerate() {
+        if a.name.is_some() {
+            continue;
+        }
+        if idx == pos {
+            return Some(i);
+        }
+        idx += 1;
+    }
+    None
 }
 
 fn semantic_return_length(

@@ -59,10 +59,7 @@ impl ColorChoice {
         stdout_is_terminal: bool,
         no_color: bool,
     ) -> bool {
-        if !matches!(
-            format,
-            ry_checker::format::OutputFormat::Full | ry_checker::format::OutputFormat::Concise
-        ) {
+        if !format.is_human() {
             return false;
         }
         match self {
@@ -91,16 +88,11 @@ struct Cli {
     quiet: u8,
 }
 
-/// Default `--output-format` of `ry check`. One source for the clap
-/// default and for [`CheckArgs::default`], which backs the no-subcommand
-/// `ry` invocation.
-const DEFAULT_CHECK_OUTPUT_FORMAT: &str = "full";
-
 /// Arguments of `ry check` — and of a bare `ry`, which runs `ry check`.
 ///
 /// Flag defaults live in one place. Empty vecs, unset flags, and absent
 /// options default through their types. The three scalar defaults come
-/// from [`DEFAULT_CHECK_OUTPUT_FORMAT`] and the enums' `Default` impls,
+/// from [`config::DEFAULT_OUTPUT_FORMAT`] and the enums' `Default` impls,
 /// which the clap attributes read from too, so the derive and
 /// [`CheckArgs::default`] cannot drift apart.
 #[derive(Debug, Args)]
@@ -131,7 +123,7 @@ struct CheckArgs {
     /// Output format. One of: full, concise, json, github, gitlab, junit.
     /// `full` is the default (matches ty); `concise` is available for a
     /// one-line-per-diagnostic view.
-    #[arg(long, value_name = "FORMAT", default_value_t = DEFAULT_CHECK_OUTPUT_FORMAT.to_string())]
+    #[arg(long, value_name = "FORMAT", default_value_t = config::DEFAULT_OUTPUT_FORMAT.to_string())]
     output_format: String,
     /// Control ANSI color in human-readable output.
     #[arg(long, value_enum, default_value_t = ColorChoice::default())]
@@ -165,7 +157,7 @@ impl Default for CheckArgs {
             typeshed: Vec::new(),
             error_on_warning: false,
             exit_zero: false,
-            output_format: DEFAULT_CHECK_OUTPUT_FORMAT.to_string(),
+            output_format: config::DEFAULT_OUTPUT_FORMAT.to_string(),
             color: ColorChoice::default(),
             watch: false,
             statistics: false,
@@ -425,10 +417,7 @@ fn render_diagnostics(
     srcs: &HashMap<String, String>,
     color: bool,
 ) -> String {
-    if matches!(
-        format,
-        ry_checker::format::OutputFormat::Full | ry_checker::format::OutputFormat::Concise
-    ) {
+    if format.is_human() {
         let mut tagged = diagnostics.to_vec();
         for diagnostic in &mut tagged {
             if diagnostic.confidence != ry_checker::Confidence::Medium {
@@ -546,23 +535,12 @@ fn run_check(
     // Collect the initial file set via the shared bounded discovery
     // module (issue #48). CLI and LSP use the same eligibility,
     // extension, hidden-directory, symlink, exclude, and test-fixture rules.
-    let mut all_paths = Vec::new();
     let search_roots: Vec<PathBuf> = if paths.is_empty() {
         vec![PathBuf::from(".")]
     } else {
         paths
     };
-    for root in &search_roots {
-        let result = ry_workspace::discover_r_files(
-            root,
-            config_root.as_deref(),
-            &cfg,
-            cfg.check_test_fixtures,
-        );
-        all_paths.extend(result.files);
-        report_truncation(&result.truncated, root);
-    }
-    sort_and_deduplicate_paths(&mut all_paths);
+    let mut all_paths = rescan(&search_roots, config_root.as_deref(), &cfg, true);
 
     if all_paths.is_empty() {
         let roots = search_roots
@@ -596,10 +574,7 @@ fn run_check(
     if !watch {
         return Ok(result.exit_code(&cfg));
     }
-    if !matches!(
-        format,
-        ry_checker::format::OutputFormat::Full | ry_checker::format::OutputFormat::Concise
-    ) {
+    if !format.is_human() {
         eprintln!("ry: --watch requires the full or concise output format");
         return Ok(ExitCode::FAILURE);
     }
@@ -610,30 +585,16 @@ fn run_check(
         all_paths.len()
     );
     let mut stamps: HashMap<PathBuf, std::time::SystemTime> = HashMap::new();
-    for p in &all_paths {
-        if let Ok(meta) = std::fs::metadata(p) {
-            if let Ok(mtime) = meta.modified() {
-                stamps.insert(p.clone(), mtime);
-            }
-        }
-    }
+    sync_stamps(&all_paths, &mut stamps);
 
     let poll_interval = std::time::Duration::from_millis(500);
     loop {
         std::thread::sleep(poll_interval);
 
         // Re-scan for new/deleted files via shared bounded discovery.
-        let mut current_paths = Vec::new();
-        for root in &search_roots {
-            let result = ry_workspace::discover_r_files(
-                root,
-                config_root.as_deref(),
-                &cfg,
-                cfg.check_test_fixtures,
-            );
-            current_paths.extend(result.files);
-        }
-        sort_and_deduplicate_paths(&mut current_paths);
+        // Truncation was already reported on the initial scan, so the
+        // poll keeps stderr quiet.
+        let current_paths = rescan(&search_roots, config_root.as_deref(), &cfg, false);
 
         // Check for any file modification or file set change.
         let mut changed = current_paths != all_paths;
@@ -655,13 +616,7 @@ fn run_check(
         if changed {
             all_paths = current_paths;
             // Re-sync stamps for any new files.
-            for p in &all_paths {
-                if let Ok(meta) = std::fs::metadata(p) {
-                    if let Ok(mtime) = meta.modified() {
-                        stamps.insert(p.clone(), mtime);
-                    }
-                }
-            }
+            sync_stamps(&all_paths, &mut stamps);
             // Clear screen for a clean view of the new diagnostics.
             // Using ANSI escape sequences rather than `clear` command
             // for portability (no external process spawn).
@@ -706,11 +661,7 @@ impl CheckResult {
         // Suppress the human summary line for machine-readable formats
         // so it can't corrupt JSON/Github/Gitlab/Junit output (it goes
         // to stderr, but consumers that merge stderr would see it).
-        let is_human = matches!(
-            format,
-            ry_checker::format::OutputFormat::Full | ry_checker::format::OutputFormat::Concise
-        );
-        if !is_human && !statistics {
+        if !format.is_human() && !statistics {
             return;
         }
         // --statistics: per-rule counts (ruff's --statistics). Printed
@@ -739,6 +690,17 @@ impl CheckResult {
             self.print_degraded();
             return;
         }
+        let (errors, warnings) = self.counts();
+        eprintln!(
+            "ry: checked {} file(s), {} error(s), {} warning(s)",
+            self.file_count, errors, warnings
+        );
+        self.print_degraded();
+    }
+
+    /// Error and warning counts, shared by the summary line and the exit
+    /// code so the two can never disagree.
+    fn counts(&self) -> (usize, usize) {
         let errors = self
             .diagnostics
             .iter()
@@ -749,11 +711,7 @@ impl CheckResult {
             .iter()
             .filter(|d| d.severity == ry_checker::Severity::Warning)
             .count();
-        eprintln!(
-            "ry: checked {} file(s), {} error(s), {} warning(s)",
-            self.file_count, errors, warnings
-        );
-        self.print_degraded();
+        (errors, warnings)
     }
 
     /// Surface scopes whose RY010 (unbound-variable) precision dropped
@@ -776,16 +734,7 @@ impl CheckResult {
     }
 
     fn exit_code(&self, cfg: &config::Config) -> ExitCode {
-        let errors = self
-            .diagnostics
-            .iter()
-            .filter(|d| d.severity == ry_checker::Severity::Error)
-            .count();
-        let warnings = self
-            .diagnostics
-            .iter()
-            .filter(|d| d.severity == ry_checker::Severity::Warning)
-            .count();
+        let (errors, warnings) = self.counts();
         let failed = errors > 0 || self.parse_errors > 0 || (cfg.error_on_warning && warnings > 0);
         if cfg.exit_zero || !failed {
             ExitCode::SUCCESS
@@ -876,7 +825,7 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
             .clone()
             .or_else(|| ctx.repo_root.map(PathBuf::from))
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-        let package_scope = ry_workspace::resolve_workspace_context(
+        let mut package_scope = ry_workspace::resolve_workspace_context(
             &resolution_root,
             ctx.resolution_config,
             ry_workspace::ResolutionEnvironment {
@@ -894,7 +843,10 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
             ));
             comments.insert(parsed_file.path.clone(), parsed_file.file.comments.clone());
         }
-        let (workspace, degraded_scopes) = pipeline::workspace_context(package_scope);
+        // Split the resolved workspace into checker input (with an empty
+        // `degraded_scopes`) and the notes this command reports itself.
+        let degraded_scopes = std::mem::take(&mut package_scope.degraded_scopes);
+        let workspace = package_scope;
         let check_input = check::CheckInput {
             files: analysis_files,
             user_stubs: Arc::clone(&ctx.user_stubs),
@@ -1182,6 +1134,40 @@ fn report_truncation(report: &ry_workspace::TruncationReport, root: &std::path::
 fn sort_and_deduplicate_paths(paths: &mut Vec<PathBuf>) {
     paths.sort();
     paths.dedup();
+}
+
+/// Discover the R files under `search_roots` via the shared bounded
+/// discovery module and return them sorted and deduplicated. `report`
+/// surfaces discovery-cap warnings (the initial scan does; quiet watch
+/// polls repeat the same roots and stay silent).
+fn rescan(
+    search_roots: &[PathBuf],
+    config_root: Option<&std::path::Path>,
+    cfg: &config::Config,
+    report: bool,
+) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for root in search_roots {
+        let result =
+            ry_workspace::discover_r_files(root, config_root, cfg, cfg.check_test_fixtures);
+        paths.extend(result.files);
+        if report {
+            report_truncation(&result.truncated, root);
+        }
+    }
+    sort_and_deduplicate_paths(&mut paths);
+    paths
+}
+
+/// Record the current mtime of every path into `stamps`.
+fn sync_stamps(paths: &[PathBuf], stamps: &mut HashMap<PathBuf, std::time::SystemTime>) {
+    for p in paths {
+        if let Ok(meta) = std::fs::metadata(p) {
+            if let Ok(mtime) = meta.modified() {
+                stamps.insert(p.clone(), mtime);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -686,23 +686,16 @@ fn parse_typeshed(json: &str, path: &Path) -> Result<Typeshed, TypeshedError> {
 pub fn load_base_cached() -> Result<&'static Typeshed, TypeshedError> {
     static CACHE: std::sync::OnceLock<Typeshed> = std::sync::OnceLock::new();
     // `get_or_try_init` is still unstable, so initialize eagerly via
-    // `get_or_init`. The embedded JSON always parses; a failure here is
-    // a build-time data bug, not a runtime condition, so panicking
-    // during first access is acceptable.
+    // `set`. The embedded JSON always parses; a failure here is a
+    // build-time data bug, not a runtime condition, so panicking during
+    // first access is acceptable.
     if let Some(cached) = CACHE.get() {
         return Ok(cached);
     }
-    let typeshed = load_base()?;
-    // Another thread may have raced us; `set` returns the winner's value.
-    let cached = match CACHE.set(typeshed) {
-        Ok(()) => CACHE.get().expect("cache just set"),
-        Err(loser) => {
-            // We lost the race; the winner's value is already in the cache.
-            let _ = loser;
-            CACHE.get().expect("cache set by racing thread")
-        }
-    };
-    Ok(cached)
+    // A racing thread's identical parse is simply dropped; whichever
+    // thread wins the `set`, the cache holds a value afterwards.
+    let _ = CACHE.set(load_base()?);
+    Ok(CACHE.get().expect("cache set by this or a racing thread"))
 }
 
 /// Load a non-base package's typeshed. Returns `None` for an unknown

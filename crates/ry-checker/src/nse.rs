@@ -190,9 +190,8 @@ impl Checker {
                 RType::unknown()
             }
             Expr::Call { func, args, .. }
-                if ident_name(func).is_some_and(|name| {
-                    name.rsplit_once("::").map(|(_, n)| n).unwrap_or(name) == "c"
-                }) =>
+                if ident_name(func)
+                    .is_some_and(|name| crate::semantic_lists::bare_name(name) == "c") =>
             {
                 for a in args {
                     let _ = self.infer_tidyselect_expr(&a.value, scope);
@@ -271,9 +270,8 @@ fn collect_tidy_selection(
             ..
         } => collect_tidy_selection(expr, true, includes, excludes),
         Expr::Call { func, args, .. }
-            if ident_name(func).is_some_and(|name| {
-                name.rsplit_once("::").map(|(_, bare)| bare).unwrap_or(name) == "c"
-            }) =>
+            if ident_name(func)
+                .is_some_and(|name| crate::semantic_lists::bare_name(name) == "c") =>
         {
             args.iter()
                 .all(|arg| collect_tidy_selection(&arg.value, excluded, includes, excludes))

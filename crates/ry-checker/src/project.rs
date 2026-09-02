@@ -137,6 +137,18 @@ impl Default for Project {
     }
 }
 
+/// Replace `current` with `new` when they differ, returning whether the
+/// replacement happened. The equality-aware setters below use this to
+/// skip the all-dirty invalidation an unchanged value would cause.
+fn set_if_changed<T: PartialEq>(current: &mut T, new: T) -> bool {
+    if *current == new {
+        false
+    } else {
+        *current = new;
+        true
+    }
+}
+
 impl Project {
     /// Construct an empty project with no files and empty tables.
     pub fn new() -> Self {
@@ -244,11 +256,9 @@ impl Project {
     }
 
     pub fn set_bare_loaded(&mut self, loaded: HashMap<String, HashSet<String>>) {
-        if self.bare_loaded == loaded {
-            return;
+        if set_if_changed(&mut self.bare_loaded, loaded) {
+            self.mark_all_dirty();
         }
-        self.bare_loaded = loaded;
-        self.mark_all_dirty();
     }
 
     /// Mark every file dirty so the next incremental check re-emits all.
@@ -292,38 +302,30 @@ impl Project {
     /// `NAMESPACE`'s `importFrom()` directives. Per-file scoping prevents an
     /// import in one checked package from leaking into an unrelated package.
     pub fn set_external_bindings(&mut self, bindings: HashMap<String, HashSet<String>>) {
-        if self.external_bindings == bindings {
-            return;
+        if set_if_changed(&mut self.external_bindings, bindings) {
+            self.mark_all_dirty();
         }
-        self.external_bindings = bindings;
-        self.mark_all_dirty();
     }
 
     pub fn set_imported_from(&mut self, imports: HashMap<String, HashMap<String, String>>) {
-        if self.imported_from == imports {
-            return;
+        if set_if_changed(&mut self.imported_from, imports) {
+            self.mark_all_dirty();
         }
-        self.imported_from = imports;
-        self.mark_all_dirty();
     }
 
     pub fn set_external_s3_methods(&mut self, methods: HashMap<String, HashSet<(String, String)>>) {
-        if self.external_s3_methods == methods {
-            return;
+        if set_if_changed(&mut self.external_s3_methods, methods) {
+            self.mark_all_dirty();
         }
-        self.external_s3_methods = methods;
-        self.mark_all_dirty();
     }
 
     pub fn set_load_bindings(
         &mut self,
         bindings: HashMap<String, HashMap<usize, HashSet<String>>>,
     ) {
-        if self.load_bindings == bindings {
-            return;
+        if set_if_changed(&mut self.load_bindings, bindings) {
+            self.mark_all_dirty();
         }
-        self.load_bindings = bindings;
-        self.mark_all_dirty();
     }
 
     /// Run the three-pass check across all added files. Returns a map

@@ -13,9 +13,8 @@ use miette::{IntoDiagnostic, Result};
 use ry_core::ast::{BinOpKind, Expr, Stmt};
 use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
 
-use crate::check;
+use crate::check::{self, load_user_stubs, report_truncation, sort_and_deduplicate_paths};
 use crate::pipeline;
-use crate::{load_user_stubs, report_truncation, sort_and_deduplicate_paths};
 
 #[derive(serde::Serialize)]
 struct TypesDump {

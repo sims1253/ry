@@ -99,18 +99,25 @@ pub(super) fn make_ignore_action(
 ) -> Option<CodeAction> {
     let line = diag.range.start.line as usize;
     let line_text = text.lines().nth(line)?;
+    let code = diag_code_from_lsp(diag);
 
     // Avoid a redundant action when the line already carries a
-    // suppression directive the CHECKER would honor. The check reuses
-    // ry-checker's suppression parser (the same one publish_diagnostics
-    // filters through) so the quick-fix's notion of "already ignored"
-    // cannot drift from what is actually suppressed: the directive must
-    // START the comment body (after `#` and whitespace), not merely
-    // appear as a substring (so prose like "# See docs for ry: ignore"
-    // does not block the action), and `# ry: ignore-file` — a file-level,
-    // not line-level, directive — does not block it either. `line_text`
-    // is the diagnostic's single line, so the parser resolves a
-    // suppression onto exactly this line (index 0) only for a trailing
+    // suppression directive the CHECKER would honor for THIS
+    // diagnostic. The check reuses ry-checker's suppression parser
+    // (the same one publish_diagnostics filters through) so the
+    // quick-fix's notion of "already ignored" cannot drift from what
+    // is actually suppressed: the directive must START the comment
+    // body (after `#` and whitespace), not merely appear as a
+    // substring (so prose like "# See docs for ry: ignore" does not
+    // block the action), and `# ry: ignore-file` — a file-level,
+    // not line-level, directive — does not block it either. A rule
+    // list must also cover the diagnostic: `# ry: ignore[RY010]`
+    // suppresses only RY010, so the quick-fix stays available for
+    // other codes (appending a second directive is a meaningful
+    // edit, not a no-op), while a bare `# ry: ignore` — an empty
+    // rule list, "all rules" — blocks any code. `line_text` is the
+    // diagnostic's single line, so the parser resolves a suppression
+    // onto exactly this line (index 0) only for a trailing
     // directive; a standalone `# ry: ignore` defers to the NEXT code
     // line and therefore does not suppress this one.
     let already_ignored = RParser::new()
@@ -119,14 +126,17 @@ pub(super) fn make_ignore_action(
         .map(|file| {
             ry_checker::parse_suppressions_from_comments(&file.comments, line_text)
                 .iter()
-                .any(|suppression| suppression.line == 0)
+                .any(|suppression| {
+                    suppression.line == 0
+                        && (suppression.rules.is_empty()
+                            || suppression.rules.iter().any(|rule| rule == &code))
+                })
         })
         .unwrap_or(false);
     if already_ignored {
         return None;
     }
 
-    let code = diag_code_from_lsp(diag);
     let new_line = if code.is_empty() {
         format!("{}  # ry: ignore", line_text)
     } else {

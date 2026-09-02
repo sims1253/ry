@@ -394,6 +394,64 @@ fn code_action_ignore_line_skips_already_suppressed() {
 }
 
 #[test]
+fn code_action_ignore_line_rule_list_must_cover_diagnostic_code() {
+    // A trailing `# ry: ignore[RY010]` suppresses only RY010. For a
+    // diagnostic with a DIFFERENT code the checker would still publish
+    // it, so the quick-fix must stay available — appending a second
+    // directive for the new code is a meaningful edit, not a no-op.
+    let text = "x <- 1L + \"s\"  # ry: ignore[RY010]\n";
+    let diag = lsp_diag(0, 0, 1, "RY040");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(
+        make_ignore_action(&uri, &diag, text).is_some(),
+        "a directive for another rule must not withhold the action"
+    );
+}
+
+#[test]
+fn code_action_ignore_line_rule_list_withholds_matching_code() {
+    // The same `[RY010]` directive DOES withhold the action for the
+    // rule it names: the checker would suppress that diagnostic
+    // already, so offering the quick-fix would be redundant.
+    let text = "x <- 1L + \"s\"  # ry: ignore[RY010]\n";
+    let diag = lsp_diag(0, 0, 1, "RY010");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(
+        make_ignore_action(&uri, &diag, text).is_none(),
+        "a directive naming this rule must withhold the action"
+    );
+}
+
+#[test]
+fn code_action_ignore_line_bare_directive_withholds_any_code() {
+    // A bare `# ry: ignore` carries an empty rule list, which the
+    // checker reads as "suppress all rules" — so it withholds the
+    // action regardless of the diagnostic's code.
+    let text = "x <- 1L + \"s\"  # ry: ignore\n";
+    let diag = lsp_diag(0, 0, 1, "RY040");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(
+        make_ignore_action(&uri, &diag, text).is_none(),
+        "a bare directive suppresses every rule"
+    );
+}
+
+#[test]
+fn code_action_ignore_line_standalone_directive_defers_to_next_line() {
+    // A standalone `# ry: ignore` (comment alone on the diagnostic's
+    // line) defers to the NEXT code line; within the single line the
+    // quick-fix inspects there is no next line, so the directive
+    // suppresses nothing here and the action stays available.
+    let text = "# ry: ignore\n";
+    let diag = lsp_diag(0, 0, 1, "RY040");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(
+        make_ignore_action(&uri, &diag, text).is_some(),
+        "a standalone directive must not suppress its own line"
+    );
+}
+
+#[test]
 fn code_action_ignore_line_ignores_hash_inside_string() {
     let text = "x <- \"# not a comment\"\n";
     let diag = lsp_diag(0, 0, 1, "RY040");

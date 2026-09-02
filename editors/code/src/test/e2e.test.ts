@@ -40,34 +40,4 @@ describe("E2E: ry extension", () => {
     // activate and produce at least this diagnostic.
     expect(codes).to.include(expectedCode);
   });
-
-  // The server launches from the single pre-resolved binary path; the
-  // unit tests in binary.test.ts verify trust-honoring resolution.
-  it("Server starts from the resolved binary path", async function () {
-    this.timeout(30000);
-
-    const fixturePath = path.join(
-      __dirname,
-      "..",
-      "..",
-      "testFixture",
-      "bad.R",
-    );
-    const uri = vscode.Uri.file(fixturePath);
-    const doc = await vscode.workspace.openTextDocument(uri);
-    await vscode.window.showTextDocument(doc);
-
-    const deadline = Date.now() + 15000;
-    let serverStarted = false;
-    while (Date.now() < deadline) {
-      const diags = vscode.languages.getDiagnostics(uri);
-      if (diags.length > 0) {
-        serverStarted = true;
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    }
-    // Server started means startServer received a valid binaryPath.
-    expect(serverStarted).to.equal(true);
-  });
 });

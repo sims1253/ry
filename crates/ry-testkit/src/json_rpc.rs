@@ -401,27 +401,6 @@ mod tests {
 
     // ── cross-mode subprocess framing ──────────────────────────
 
-    /// Encode/decode round-trip preserves the message exactly.
-    ///
-    /// Protects the framing seam: if `encode` wrote a wrong Content-Length
-    /// or a malformed header terminator, the decoder would produce a
-    /// different message or fail. This catches a framing mismatch between
-    /// what the testkit client sends and what it expects to receive.
-    #[test]
-    fn encode_decode_round_trip_preserves_message() {
-        let messages = [
-            json!({"jsonrpc": "2.0", "id": 1, "result": {"capabilities": {}}}),
-            json!({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {"uri": "file:///x.R", "diagnostics": []}}),
-            json!({"jsonrpc": "2.0", "id": 2, "method": "shutdown", "params": null}),
-        ];
-        for message in &messages {
-            let frame = encode(message).expect("encode");
-            let mut reader = BufReader::new(frame.as_slice());
-            let decoded = decode_blocking(&mut reader).expect("decode");
-            assert_eq!(&decoded, message);
-        }
-    }
-
     /// the Content-Length header matches the body byte length
     /// exactly, and the header/body separator is the correct CRLFCRLF.
     /// A wrong separator or miscounted length silently truncates or

@@ -1,5 +1,4 @@
 use super::*;
-use ry_core::RParser;
 
 #[test]
 fn closure_factory_infers_inner_return() {
@@ -7,12 +6,15 @@ fn closure_factory_infers_inner_return() {
     // function whose `fn_sig.return_type` is itself a function with
     // `fn_sig.return_type` = integer<1>. So `c <- make_counter()`
     // binds `c` to a function-typed value with an inferred signature,
-    // and `c()` resolves to integer<1>. We verify by using the
-    // result arithmetically: integer + character must fire RY040
-    // (proving the type was inferred, not opaque).
-    let (_, scope) = check_with_scope(
+    // and `c()` resolves to integer<1>. We verify the signature
+    // through the scope and prove the type was inferred (not opaque)
+    // by using the result arithmetically: integer + character must
+    // fire RY040.
+    let (diags, scope) = check_with_scope(
         "make_counter <- function() { function() { 1L } }\n\
-             c <- make_counter()\n",
+             c <- make_counter()\n\
+             v <- c()\n\
+             bad <- v + \"x\"\n",
     );
     let c = scope.get("c").expect("c should be bound");
     assert_eq!(
@@ -28,14 +30,6 @@ fn closure_factory_infers_inner_return() {
         "c() must resolve to integer, got {:?}",
         sig.return_type
     );
-    // Behavioral check: using the result arithmetically with a
-    // character operand must fire RY040.
-    let diags = check(
-        "make_counter <- function() { function() { 1L } }\n\
-             c <- make_counter()\n\
-             v <- c()\n\
-             bad <- v + \"x\"\n",
-    );
     assert!(
         diags.iter().any(|d| d.code == "RY040"),
         "expected RY040 from integer closure result + character, got {:?}",
@@ -49,12 +43,15 @@ fn closure_capture_resolves_outer_binding() {
     // `x`. The inner function's body `x + y` (both double via
     // defaults) produces double<1>; the outer function's `fn_sig`
     // carries that as the return type. `add5(3)` therefore resolves
-    // to double<1>.
-    let (_, scope) = check_with_scope(
+    // to double<1>, proven both through the scope and by the RY040
+    // on `v + "x"`.
+    let (diags, scope) = check_with_scope(
         "make_adder <- function(x = 0) {\n\
              \x20 function(y = 0) { x + y }\n\
              }\n\
-             add5 <- make_adder(5)\n",
+             add5 <- make_adder(5)\n\
+             v <- add5(3)\n\
+             bad <- v + \"x\"\n",
     );
     let add5 = scope.get("add5").expect("add5 should be bound");
     assert_eq!(add5.mode, Mode::Function);
@@ -67,15 +64,6 @@ fn closure_capture_resolves_outer_binding() {
         Mode::Double,
         "add5(3) must resolve to double, got {:?}",
         sig.return_type
-    );
-    // Behavioral check: RY040 on v + "x".
-    let diags = check(
-        "make_adder <- function(x = 0) {\n\
-             \x20 function(y = 0) { x + y }\n\
-             }\n\
-             add5 <- make_adder(5)\n\
-             v <- add5(3)\n\
-             bad <- v + \"x\"\n",
     );
     assert!(
         diags.iter().any(|d| d.code == "RY040"),
@@ -91,13 +79,16 @@ fn nested_function_definition_visible_in_outer_body() {
     // assignment so the trailing `g` picks up `g`'s inferred
     // `fn_sig`. The outer function's return type is therefore a
     // function value with an inferred signature, and `h()`
-    // resolves to integer<1>.
-    let (_, scope) = check_with_scope(
+    // resolves to integer<1>, proven through the scope and by the
+    // RY040 on `v + "x"`.
+    let (diags, scope) = check_with_scope(
         "f <- function() {\n\
              \x20 g <- function() { 1L }\n\
              \x20 g\n\
              }\n\
-             h <- f()\n",
+             h <- f()\n\
+             v <- h()\n\
+             bad <- v + \"x\"\n",
     );
     let h = scope.get("h").expect("h should be bound");
     assert_eq!(h.mode, Mode::Function);
@@ -107,15 +98,6 @@ fn nested_function_definition_visible_in_outer_body() {
         Mode::Integer,
         "h() must resolve to integer, got {:?}",
         sig.return_type
-    );
-    let diags = check(
-        "f <- function() {\n\
-             \x20 g <- function() { 1L }\n\
-             \x20 g\n\
-             }\n\
-             h <- f()\n\
-             v <- h()\n\
-             bad <- v + \"x\"\n",
     );
     assert!(
         diags.iter().any(|d| d.code == "RY040"),
@@ -147,21 +129,24 @@ fn closure_depth_cap_falls_back_to_opaque() {
 #[test]
 fn lapply_anon_callback_infers_integer() {
     // `lapply(1:3, function(i) i * 2L)` returns a list whose
-    // elements are integer (the callback's return type). We verify
-    // by accessing an element and using it arithmetically: integer
-    // + character must fire RY040, proving the element type was
-    // inferred rather than opaque.
-    let diags = check(
+    // elements carry the callback's integer return type. We assert
+    // the inferred list type through the test scope and prove the
+    // element type is real: `result[[1]]` resolves through the
+    // schema to integer, so mixing it with a character fires RY040.
+    let (diags, scope) = check_with_scope(
         "result <- lapply(1:3, function(i) i * 2L)\n\
              bad <- result[[1]] + \"x\"\n",
     );
-    // `result[[1]]` goes through IndexKind::Double on a list with
-    // a schema, so it resolves to the element type (integer).
-    // However if the index access falls back to opaque, no RY040
-    // fires. We assert no false positives at minimum.
     assert!(
         diags.iter().all(|d| d.code != "RY010"),
         "no RY010 expected in lapply callback body, got {:?}",
+        diags
+    );
+    let result = scope.get("result").expect("result should be bound");
+    assert_eq!(result.mode, Mode::List, "got {:?}", result);
+    assert!(
+        diags.iter().any(|d| d.code == "RY040"),
+        "result[[1]] must resolve to the callback's integer element type, got {:?}",
         diags
     );
 }
@@ -218,17 +203,26 @@ fn sapply_typeshed_callback_simplifies() {
 fn vapply_uses_fun_value_template() {
     // `vapply(X, FUN, FUN.VALUE)` returns FUN.VALUE's type.
     // Here FUN.VALUE = `numeric(1)` = double<1>, so the result is
-    // double. Using it with character fires RY040.
-    let diags = check(
+    // double; using it with a character fires RY040.
+    let (diags, scope) = check_with_scope(
         "v <- vapply(c(1, 2, 3), function(x) x * 2, numeric(1))\n\
              bad <- v + \"x\"\n",
     );
-    // `numeric(1)` may or may not resolve to double<1> depending
-    // on typeshed coverage; if it resolves opaque, no RY040 fires.
-    // Assert at minimum no false positives.
     assert!(
         diags.iter().all(|d| d.code != "RY010"),
         "no RY010 expected in vapply, got {:?}",
+        diags
+    );
+    let v = scope.get("v").expect("v should be bound");
+    assert_eq!(
+        v.mode,
+        Mode::Double,
+        "FUN.VALUE = numeric(1) must template the result type, got {:?}",
+        v
+    );
+    assert!(
+        diags.iter().any(|d| d.code == "RY040"),
+        "double result + character must fire RY040, got {:?}",
         diags
     );
 }

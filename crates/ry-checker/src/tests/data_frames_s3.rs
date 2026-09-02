@@ -1,5 +1,4 @@
 use super::*;
-use ry_core::RParser;
 
 #[test]
 fn dataset_resolves_mtcars() {
@@ -466,14 +465,13 @@ fn nse_subset_resolves_columns() {
     // augmented with `mtcars`'s column schema. Without the NSE
     // handler, `cyl` would be reported as unbound (RY010). With it,
     // the expression is well-typed and produces no diagnostics.
-    let diags = check("df <- mtcars\nsmall <- subset(df, cyl == 4)\n");
+    let (diags, scope) = check_with_scope("df <- mtcars\nsmall <- subset(df, cyl == 4)\n");
     assert!(
         diags.iter().all(|d| d.code != "RY010"),
         "subset NSE handler should suppress RY010 on column refs, got {:?}",
         diags
     );
     // The result type is the same data frame type as the first arg.
-    let (_, scope) = check_with_scope("df <- mtcars\nsmall <- subset(df, cyl == 4)\n");
     let small = scope.get("small").expect("small should be bound");
     assert!(
         small.class.contains("data.frame"),
@@ -492,7 +490,7 @@ fn nse_with_evaluates_expression() {
     // `with(mtcars, sum(mpg))` evaluates `sum(mpg)` against a scope
     // where `mpg` is bound to the `mtcars` column type. Without the
     // NSE handler, `mpg` would trigger RY010 inside the `sum` call.
-    let diags = check("df <- mtcars\ntotal <- with(df, sum(mpg))\n");
+    let (diags, scope) = check_with_scope("df <- mtcars\ntotal <- with(df, sum(mpg))\n");
     assert!(
         diags.iter().all(|d| d.code != "RY010"),
         "with NSE handler should suppress RY010 on column refs, got {:?}",
@@ -500,7 +498,6 @@ fn nse_with_evaluates_expression() {
     );
     // `with` returns whatever the expression evaluates to. `sum`
     // dispatches against the typeshed to a length-1 numeric.
-    let (_, scope) = check_with_scope("df <- mtcars\ntotal <- with(df, sum(mpg))\n");
     let total = scope.get("total").expect("total should be bound");
     assert!(
         matches!(total.mode, Mode::Double | Mode::Integer),
@@ -515,7 +512,7 @@ fn nse_transform_handles_new_column() {
     // `transform(mtcars, x = mpg * 2)` evaluates `mpg * 2` against
     // an augmented scope. Without the NSE handler, `mpg` would
     // trigger RY010 inside the arithmetic expression.
-    let diags = check("df <- mtcars\ndf2 <- transform(df, x = mpg * 2)\n");
+    let (diags, scope) = check_with_scope("df <- mtcars\ndf2 <- transform(df, x = mpg * 2)\n");
     assert!(
         diags.iter().all(|d| d.code != "RY010"),
         "transform NSE handler should suppress RY010 on column refs, got {:?}",
@@ -523,7 +520,6 @@ fn nse_transform_handles_new_column() {
     );
     // `transform` returns a data frame; v1 keeps the original
     // schema (does not fold in the new column type).
-    let (_, scope) = check_with_scope("df <- mtcars\ndf2 <- transform(df, x = mpg * 2)\n");
     let df2 = scope.get("df2").expect("df2 should be bound");
     assert!(
         df2.class.contains("data.frame"),
@@ -568,15 +564,14 @@ fn nse_dplyr_filter_resolves_columns() {
     // NSE handler, `mpg` would be reported as unbound (RY010). The
     // handler injects the data frame's column schema so the
     // comparison is well-typed.
-    let diags = check("library(dplyr)\ndf <- mtcars\nsmall <- filter(df, mpg > 20)\n");
+    let (diags, scope) =
+        check_with_scope("library(dplyr)\ndf <- mtcars\nsmall <- filter(df, mpg > 20)\n");
     assert!(
         diags.iter().all(|d| d.code != "RY010"),
         "dplyr filter NSE handler should suppress RY010 on column refs, got {:?}",
         diags
     );
     // `filter` preserves the data frame type.
-    let (_, scope) =
-        check_with_scope("library(dplyr)\ndf <- mtcars\nsmall <- filter(df, mpg > 20)\n");
     let small = scope.get("small").expect("small should be bound");
     assert!(
         small.class.contains("data.frame"),
@@ -594,14 +589,13 @@ fn nse_dplyr_mutate_resolves_columns() {
     // `mutate(df, kml = mpg * 0.425)` evaluates `mpg * 0.425`
     // against an augmented scope. Without the handler, `mpg` would
     // fire RY010.
-    let diags = check("library(dplyr)\ndf <- mtcars\ndf2 <- mutate(df, kml = mpg * 0.425)\n");
+    let (diags, scope) =
+        check_with_scope("library(dplyr)\ndf <- mtcars\ndf2 <- mutate(df, kml = mpg * 0.425)\n");
     assert!(
         diags.iter().all(|d| d.code != "RY010"),
         "dplyr mutate NSE handler should suppress RY010 on column refs, got {:?}",
         diags
     );
-    let (_, scope) =
-        check_with_scope("library(dplyr)\ndf <- mtcars\ndf2 <- mutate(df, kml = mpg * 0.425)\n");
     let df2 = scope.get("df2").expect("df2 should be bound");
     assert!(
         df2.class.contains("data.frame"),
@@ -616,14 +610,13 @@ fn nse_dplyr_summarise_returns_data_frame() {
     // frame. The column reference `mpg` resolves via the augmented
     // scope. The result is a fresh data frame type with the named
     // summary outputs, not the input column schema.
-    let diags = check("library(dplyr)\ndf <- mtcars\ns <- summarise(df, m = mean(mpg))\n");
+    let (diags, scope) =
+        check_with_scope("library(dplyr)\ndf <- mtcars\ns <- summarise(df, m = mean(mpg))\n");
     assert!(
         diags.iter().all(|d| d.code != "RY010"),
         "dplyr summarise NSE handler should suppress RY010 on column refs, got {:?}",
         diags
     );
-    let (_, scope) =
-        check_with_scope("library(dplyr)\ndf <- mtcars\ns <- summarise(df, m = mean(mpg))\n");
     let s = scope.get("s").expect("s should be bound");
     assert!(
         s.class.contains("data.frame"),
@@ -648,14 +641,13 @@ fn nse_dplyr_summarize_alias_matches_summarise() {
     // The American-English `summarize` is an alias for `summarise`
     // and must dispatch to the same handler. `hp` resolves against
     // the augmented scope; the result is a data frame.
-    let diags = check("library(dplyr)\ndf <- mtcars\ns <- summarize(df, m = mean(hp))\n");
+    let (diags, scope) =
+        check_with_scope("library(dplyr)\ndf <- mtcars\ns <- summarize(df, m = mean(hp))\n");
     assert!(
         diags.iter().all(|d| d.code != "RY010"),
         "dplyr summarize alias should suppress RY010 on column refs, got {:?}",
         diags
     );
-    let (_, scope) =
-        check_with_scope("library(dplyr)\ndf <- mtcars\ns <- summarize(df, m = mean(hp))\n");
     let s = scope.get("s").expect("s should be bound");
     assert!(
         s.class.contains("data.frame"),
@@ -670,11 +662,10 @@ fn nse_dplyr_pipe_chain_resolves_columns() {
     // to nested calls. Each stage's data frame is the previous
     // stage's result (mtcars for the first), so column references
     // resolve via the augmented scope and no RY010 fires.
-    let diags = check(
-        "library(magrittr)\n\
-             library(dplyr)\n\
-             result <- mtcars %>% filter(cyl == 4) %>% select(mpg, hp)\n",
-    );
+    let src = "library(magrittr)\n\
+         library(dplyr)\n\
+         result <- mtcars %>% filter(cyl == 4) %>% select(mpg, hp)\n";
+    let (diags, scope) = check_with_scope(src);
     assert!(
         diags.iter().all(|d| d.code != "RY010"),
         "piped dplyr chain should suppress RY010 on column refs, got {:?}",
@@ -683,11 +674,6 @@ fn nse_dplyr_pipe_chain_resolves_columns() {
     // The chain's final result is a data frame (select preserves
     // the type of its input, which here is `filter`'s output =
     // mtcars' type).
-    let (_, scope) = check_with_scope(
-        "library(magrittr)\n\
-             library(dplyr)\n\
-             result <- mtcars %>% filter(cyl == 4) %>% select(mpg, hp)\n",
-    );
     let result = scope.get("result").expect("result should be bound");
     assert!(
         result.class.contains("data.frame"),
@@ -781,22 +767,15 @@ fn nse_dplyr_filter_tidyverse_counts_as_dplyr() {
 fn nse_dplyr_arrange_groupby_preserve_type() {
     // `arrange` and `group_by` walk their column-reference args in
     // the augmented scope and preserve the input data frame type.
-    let diags = check(
-        "library(dplyr)\n\
-             df <- mtcars\n\
-             sorted <- arrange(df, mpg)\n\
-             grouped <- group_by(df, cyl)\n",
-    );
+    let src = "library(dplyr)\n\
+         df <- mtcars\n\
+         sorted <- arrange(df, mpg)\n\
+         grouped <- group_by(df, cyl)\n";
+    let (diags, scope) = check_with_scope(src);
     assert!(
         diags.iter().all(|d| d.code != "RY010"),
         "arrange/group_by NSE handlers should suppress RY010 on column refs, got {:?}",
         diags
-    );
-    let (_, scope) = check_with_scope(
-        "library(dplyr)\n\
-             df <- mtcars\n\
-             sorted <- arrange(df, mpg)\n\
-             grouped <- group_by(df, cyl)\n",
     );
     let sorted = scope.get("sorted").expect("sorted should be bound");
     assert!(

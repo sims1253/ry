@@ -1,28 +1,28 @@
 use super::*;
-use ry_core::RParser;
 
 #[test]
-fn type_narrowing_is_null_then_branch() {
-    // `if (!is.null(x)) { length(x) }`: the `then` branch knows
-    // `x` is non-null. Without narrowing, `x` inside the branch
-    // resolves from the enclosing scope and is well-typed either
-    // way. We test the negative: inside a `!is.null` branch, using
-    // `x` arithmetically should NOT fire RY040 when `x` was opaque
-    // (the narrowing doesn't give us a mode, just removes null).
-    let diags = check(
-        "x <- NULL\n\
-             if (!is.null(x)) {\n\
-             \x20 y <- x + 1\n\
-             }\n",
-    );
-    // `x` starts as NULL; in the `then` branch it's narrowed to
-    // opaque (non-null). `opaque + 1` should not fire RY040
-    // (opaque is permissive).
-    assert!(
-        diags.iter().all(|d| d.code != "RY040"),
-        "non-null narrowed opaque should not fire RY040, got {:?}",
-        diags
-    );
+fn type_narrowing_predicate_then_branch_stays_well_typed() {
+    // `x <- <NULL or opaque>; if (<type predicate over x>) { <use> }`:
+    // the `then` branch sees `x` narrowed. The refinement only
+    // removes NULL or installs the predicate's mode -- it never
+    // fabricates precision -- so the branch-local use stays
+    // well-typed and must not fire RY040.
+    for (binding, guard, use_expr) in [
+        ("x <- NULL\n", "!is.null(x)", "y <- x + 1\n"),
+        ("x <- some_opaque_thing\n", "is.numeric(x)", "y <- x + 1\n"),
+        (
+            "x <- some_opaque_thing\n",
+            "is.character(x)",
+            "n <- nchar(x)\n",
+        ),
+    ] {
+        let src = format!("{binding}if ({guard}) {{\n  {use_expr}}}\n");
+        let diags = check(&src);
+        assert!(
+            diags.iter().all(|d| d.code != "RY040"),
+            "`{guard}` then branch should not fire RY040, got {diags:?}"
+        );
+    }
 }
 
 #[test]
@@ -44,71 +44,82 @@ fn underscored_null_predicate_narrows_default_parameter() {
 }
 
 #[test]
-fn diverging_null_guard_makes_default_function_callable() {
-    let diagnostics = check(
-        "apply_fun <- function(x, fun = NULL) {\n\
-           if (is.null(fun)) stop(\"fun required\")\n\
-           fun(x)\n\
-         }\n\
-         apply_fun(1)\n",
-    );
-    assert!(
-        diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.code != "RY070"),
-        "the continuation of a diverging null guard must be callable: {diagnostics:?}"
-    );
-}
-
-#[test]
-fn diverging_null_guard_makes_default_value_record_like() {
-    let diagnostics = check(
-        "read_field <- function(x = NULL) {\n\
-           if (is.null(x)) stop(\"x required\")\n\
-           x$field\n\
-         }\n\
-         read_field()\n",
-    );
-    assert!(
-        diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.code != "RY061"),
-        "the continuation of a diverging null guard must exclude NULL: {diagnostics:?}"
-    );
-}
-
-#[test]
-fn diverging_negated_predicate_guard_narrows_continuation() {
-    let diagnostics = check(
-        "compare_text <- function(x = NULL) {\n\
-           if (!is.character(x)) stop(\"x must be character\")\n\
-           x == \"1\"\n\
-         }\n\
-         compare_text()\n",
-    );
-    assert!(
-        diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.code != "RY033"),
-        "the false path of !is.character must be character: {diagnostics:?}"
-    );
-}
-
-#[test]
-fn return_guard_narrows_continuation() {
-    let diagnostics = check(
-        "read_field <- function(x = NULL) {\n\
-           if (is.null(x)) return(NULL)\n\
-           x$field\n\
-         }\n\
-         read_field()\n",
-    );
-    assert!(
-        diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.code != "RY061"),
-        "returning null guard must narrow its continuation: {diagnostics:?}"
-    );
+fn diverging_guards_narrow_the_guarded_continuation() {
+    // A guard whose true branch provably diverges -- stop(), a final
+    // return(), or a block ending in stop() -- leaves only the false
+    // path for the continuation, where the guarded parameter's NULL
+    // default has been narrowed away. The continuation use must
+    // therefore not fire the diagnostic the unnarrowed default would.
+    let guarded = |params: &str, guard: &str, diverge: &str, tail: &str, call: &str| {
+        format!("f <- function({params}) {{\n  if ({guard}) {diverge}\n  {tail}\n}}\n{call}\n")
+    };
+    for (label, src, suppressed) in [
+        (
+            "a stop guard makes a default function callable",
+            guarded(
+                "x, fun = NULL",
+                "is.null(fun)",
+                "stop(\"fun required\")",
+                "fun(x)",
+                "f(1)",
+            ),
+            "RY070",
+        ),
+        (
+            "a stop guard keeps a default value record-like",
+            guarded("x = NULL", "is.null(x)", "stop(\"x required\")", "x$field", "f()"),
+            "RY061",
+        ),
+        (
+            "a negated predicate stop guard narrows the mode",
+            guarded(
+                "x = NULL",
+                "!is.character(x)",
+                "stop(\"x must be character\")",
+                "x == \"1\"",
+                "f()",
+            ),
+            "RY033",
+        ),
+        (
+            "a return guard narrows like a stop guard",
+            guarded("x = NULL", "is.null(x)", "return(NULL)", "x$field", "f()"),
+            "RY061",
+        ),
+        (
+            "a guard block ending in stop diverges",
+            guarded(
+                "x = NULL",
+                "is.null(x)",
+                "{ log(\"x required\"); stop(\"x required\") }",
+                "x$field",
+                "f()",
+            ),
+            "RY061",
+        ),
+        (
+            "a compound null guard narrows its continuation",
+            guarded(
+                "x = NULL",
+                "is.null(x) || is.na(x)",
+                "stop(\"x required\")",
+                "x$field",
+                "f()",
+            ),
+            "RY061",
+        ),
+        (
+            "a guard inside a function defined in a loop narrows independently",
+            "for (i in 1:2) {\n  read_field <- function(x = NULL) {\n    if (is.null(x)) stop(\"x required\")\n    x$field\n  }\n}\n".to_string(),
+            "RY061",
+        ),
+    ] {
+        let diagnostics = check(&src);
+        assert!(
+            diagnostics.iter().all(|d| d.code != suppressed),
+            "{label}: {diagnostics:?}"
+        );
+    }
 }
 
 #[test]
@@ -143,41 +154,6 @@ fn project_function_named_abort_does_not_diverge() {
             .iter()
             .any(|diagnostic| diagnostic.code == "RY070"),
         "a project abort() must not be treated as a terminator: {diagnostics:?}"
-    );
-}
-
-#[test]
-fn final_statement_in_guard_block_can_diverge() {
-    let diagnostics = check(
-        "read_field <- function(x = NULL) {\n\
-           if (is.null(x)) { log(\"x required\"); stop(\"x required\") }\n\
-           x$field\n\
-         }\n\
-         read_field()\n",
-    );
-    assert!(
-        diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.code != "RY061"),
-        "a guard block ending in stop must narrow its continuation: {diagnostics:?}"
-    );
-}
-
-#[test]
-fn divergence_narrowing_works_in_nested_function_inside_loop() {
-    let diagnostics = check(
-        "for (i in 1:2) {\n\
-           read_field <- function(x = NULL) {\n\
-             if (is.null(x)) stop(\"x required\")\n\
-             x$field\n\
-           }\n\
-         }\n",
-    );
-    assert!(
-        diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.code != "RY061"),
-        "nested function guard should narrow independently: {diagnostics:?}"
     );
 }
 
@@ -254,23 +230,6 @@ fn null_return_guard_alone_does_not_prove_non_empty() {
 }
 
 #[test]
-fn compound_null_guard_narrows_its_continuation() {
-    let diagnostics = check(
-        "read_field <- function(x = NULL) {\n\
-           if (is.null(x) || is.na(x)) stop(\"x required\")\n\
-           x$field\n\
-         }\n\
-         read_field()\n",
-    );
-    assert!(
-        diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.code != "RY061"),
-        "the false path of a compound null guard must exclude NULL: {diagnostics:?}"
-    );
-}
-
-#[test]
 fn missing_guard_is_ignored_for_type_narrowing() {
     let diagnostics = check(
         "apply_fun <- function(x, fun = NULL) {\n\
@@ -336,24 +295,6 @@ fn diverging_else_branch_promotes_then_refinement() {
             .iter()
             .all(|diagnostic| diagnostic.code != "RY070"),
         "a diverging else branch must promote then-branch refinements: {diagnostics:?}"
-    );
-}
-
-#[test]
-fn type_narrowing_is_numeric_then_branch() {
-    // `if (is.numeric(x)) { x + 1 }`: the `then` branch narrows
-    // `x` to numeric (double). If `x` was opaque, it's now double
-    // inside the branch. Using `x + 1` should be well-typed.
-    let diags = check(
-        "x <- some_opaque_thing\n\
-             if (is.numeric(x)) {\n\
-             \x20 y <- x + 1\n\
-             }\n",
-    );
-    assert!(
-        diags.iter().all(|d| d.code != "RY040"),
-        "numeric-narrowed opaque should not fire RY040 in then branch, got {:?}",
-        diags
     );
 }
 
@@ -471,23 +412,6 @@ fn type_narrowing_does_not_leak() {
     assert!(
         diags.iter().all(|d| d.code != "RY040"),
         "narrowing leaked into enclosing scope, got {:?}",
-        diags
-    );
-}
-
-#[test]
-fn type_narrowing_is_character_then_branch() {
-    // `if (is.character(x)) { nchar(x) }`: the `then` branch
-    // narrows `x` to character. `nchar` on character is fine.
-    let diags = check(
-        "x <- some_opaque_thing\n\
-             if (is.character(x)) {\n\
-             \x20 n <- nchar(x)\n\
-             }\n",
-    );
-    assert!(
-        diags.iter().all(|d| d.code != "RY040"),
-        "character-narrowed opaque should not fire RY040 in then branch, got {:?}",
         diags
     );
 }

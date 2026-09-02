@@ -1,5 +1,4 @@
 use super::*;
-use ry_core::RParser;
 
 #[test]
 fn attach_makes_later_search_path_bindings_uncertain() {
@@ -626,31 +625,61 @@ fn s4_generics_and_methods_resolve_cross_file() {
     );
 }
 
-#[test]
-fn cross_file_literal_variable_resolves() {
-    // File A defines a top-level constant `my_const <- 42`; file B
-    // references it. Without `known_vars`, B would emit RY010 on
-    // `my_const`. With `known_vars`, the reference resolves to
-    // opaque and no diagnostic fires.
+/// Build a tempdir package project (DESCRIPTION at the root, files
+/// relative to it), check it, and return the per-file diagnostics.
+/// Mirrors how the project-mode fixtures lay out a real package.
+fn project_with(files: &[(&str, &str)]) -> Vec<(String, Vec<Diagnostic>)> {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir(dir.path().join("R")).unwrap();
     std::fs::write(dir.path().join("DESCRIPTION"), "Package: fixture\n").unwrap();
-    let a = dir.path().join("R/a.R").to_string_lossy().to_string();
-    let b = dir.path().join("R/b.R").to_string_lossy().to_string();
     let mut project = Project::new();
-    project.add_file(a.clone(), parse_file(&a, "my_const <- 42\n"));
-    project.add_file(b.clone(), parse_file(&b, "x <- my_const\n"));
-    let diags = project.check();
-    let b_diags: Vec<_> = diags
-        .into_iter()
-        .filter(|(p, _)| p == &b)
-        .flat_map(|(_, d)| d)
-        .collect();
-    assert!(
-        b_diags.iter().all(|d| d.code != "RY010"),
-        "cross-file literal variable should not trigger RY010, got {:?}",
-        b_diags
-    );
+    for (path, src) in files {
+        let full = dir.path().join(path);
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+        let full = full.to_string_lossy().to_string();
+        project.add_file(full.clone(), parse_file(&full, src));
+    }
+    project.check()
+}
+
+/// Whether `path` (an absolute path key from `Project::check`) ends
+/// with the relative fixture path `rel` (written with `/` separators).
+/// `Path::ends_with` compares components, so this matches regardless
+/// of the platform's path separator.
+fn path_matches(path: &str, rel: &str) -> bool {
+    std::path::Path::new(path).ends_with(rel.split('/').collect::<std::path::PathBuf>())
+}
+
+#[test]
+fn cross_file_top_level_variables_resolve_between_files() {
+    // File A defines a top-level binding whose RHS is not a function
+    // literal (a constant, an opaque ggproto() call result, a list
+    // constructor), so it is not in `fns`; file B references it.
+    // Without `known_vars`, B would emit RY010 on the name. With it,
+    // the reference resolves and the reading file stays clean.
+    for (label, definition, use_src) in [
+        ("literal constant", "my_const <- 42\n", "x <- my_const\n"),
+        (
+            "opaque call result",
+            "GeomRect <- ggproto(\"GeomRect\", Geom, draw = function() NULL)\n",
+            "x <- GeomRect\n",
+        ),
+        (
+            "list constructor",
+            "config <- list(timeout = 30, retries = 3)\n",
+            "t <- config$timeout\n",
+        ),
+    ] {
+        let diagnostics = project_with(&[("R/a.R", definition), ("R/b.R", use_src)]);
+        let reader = diagnostics
+            .iter()
+            .find(|(path, _)| path_matches(path, "R/b.R"))
+            .map(|(_, diags)| diags)
+            .unwrap_or_else(|| panic!("{label}: R/b.R diagnostics missing"));
+        assert!(
+            reader.iter().all(|d| d.code != "RY010"),
+            "cross-file {label} should resolve without RY010, got {reader:?}"
+        );
+    }
 }
 
 #[test]
@@ -687,98 +716,21 @@ fn open_search_path_does_not_leak_between_project_files() {
 }
 
 #[test]
-fn cross_file_opaque_call_variable_resolves() {
-    // File A defines `GeomRect <- ggproto("GeomRect", Geom, ...)`.
-    // The RHS is a CALL (not a function literal), so it would not
-    // be in `fns`; previously any reference from file B would fire
-    // RY010. With `known_vars`, `GeomRect` resolves to opaque.
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir(dir.path().join("R")).unwrap();
-    std::fs::write(dir.path().join("DESCRIPTION"), "Package: fixture\n").unwrap();
-    let geom = dir.path().join("R/geom.R").to_string_lossy().to_string();
-    let user = dir.path().join("R/user.R").to_string_lossy().to_string();
-    let mut project = Project::new();
-    project.add_file(
-        geom.clone(),
-        parse_file(
-            &geom,
-            "GeomRect <- ggproto(\"GeomRect\", Geom, draw = function() NULL)\n",
-        ),
-    );
-    project.add_file(user.clone(), parse_file(&user, "x <- GeomRect\n"));
-    let diags = project.check();
-    let user_diags: Vec<_> = diags
-        .into_iter()
-        .filter(|(p, _)| p == &user)
-        .flat_map(|(_, d)| d)
-        .collect();
-    assert!(
-        user_diags.iter().all(|d| d.code != "RY010"),
-        "cross-file ggproto-defined variable should not trigger RY010, got {:?}",
-        user_diags
-    );
-}
-
-#[test]
-fn cross_file_list_constructor_variable_resolves() {
-    // File A defines `config <- list(timeout = 30, retries = 3)`:
-    // a list constructor, not a function. File B references it.
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir(dir.path().join("R")).unwrap();
-    std::fs::write(dir.path().join("DESCRIPTION"), "Package: fixture\n").unwrap();
-    let config = dir.path().join("R/config.R").to_string_lossy().to_string();
-    let main = dir.path().join("R/main.R").to_string_lossy().to_string();
-    let mut project = Project::new();
-    project.add_file(
-        config.clone(),
-        parse_file(&config, "config <- list(timeout = 30, retries = 3)\n"),
-    );
-    project.add_file(main.clone(), parse_file(&main, "t <- config$timeout\n"));
-    let diags = project.check();
-    let main_diags: Vec<_> = diags
-        .into_iter()
-        .filter(|(p, _)| p == &main)
-        .flat_map(|(_, d)| d)
-        .collect();
-    assert!(
-        main_diags.iter().all(|d| d.code != "RY010"),
-        "cross-file list-constructor variable should not trigger RY010, got {:?}",
-        main_diags
-    );
-}
-
-#[test]
 fn scripts_share_top_level_known_vars() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(dir.path().join("inst/examples")).unwrap();
-    std::fs::write(dir.path().join("DESCRIPTION"), "Package: fixture\n").unwrap();
-    let defining = dir
-        .path()
-        .join("inst/examples/a.R")
-        .to_string_lossy()
-        .to_string();
-    let reading = dir
-        .path()
-        .join("inst/examples/b.R")
-        .to_string_lossy()
-        .to_string();
-    let mut project = Project::new();
-    project.add_file(
-        defining.clone(),
-        parse_file(&defining, "h <- list(pre = 1L)\n"),
-    );
-    project.add_file(reading.clone(), parse_file(&reading, "x <- h[[\"pre\"]]\n"));
-    let diagnostics: Vec<_> = project
-        .check()
-        .into_iter()
-        .find(|(path, _)| path == &reading)
-        .unwrap()
-        .1;
+    // Scripts under inst/ (outside the package's R/ code) still
+    // share top-level bindings with the rest of the project.
+    let diagnostics = project_with(&[
+        ("inst/examples/a.R", "h <- list(pre = 1L)\n"),
+        ("inst/examples/b.R", "x <- h[[\"pre\"]]\n"),
+    ]);
+    let reader = diagnostics
+        .iter()
+        .find(|(path, _)| path_matches(path, "inst/examples/b.R"))
+        .map(|(_, diags)| diags)
+        .expect("reading script diagnostics");
     assert!(
-        diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.code != "RY010"),
-        "sourced scripts must share top-level bindings: {diagnostics:?}"
+        reader.iter().all(|d| d.code != "RY010"),
+        "sourced scripts must share top-level bindings: {reader:?}"
     );
 }
 
@@ -794,33 +746,20 @@ fn function_self_read_before_assignment_reports_ry010() {
 
 #[test]
 fn testthat_script_sees_package_library_functions() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(dir.path().join("R")).unwrap();
-    std::fs::create_dir_all(dir.path().join("tests/testthat")).unwrap();
-    std::fs::write(dir.path().join("DESCRIPTION"), "Package: fixture\n").unwrap();
-    let library = dir.path().join("R/hidden.R").to_string_lossy().to_string();
-    let test = dir
-        .path()
-        .join("tests/testthat/test-hidden.R")
-        .to_string_lossy()
-        .to_string();
-    let mut project = Project::new();
-    project.add_file(
-        library.clone(),
-        parse_file(&library, "hidden <- function() 1L\n"),
-    );
-    project.add_file(test.clone(), parse_file(&test, "x <- hidden()\n"));
-    let diagnostics = project
-        .check()
-        .into_iter()
-        .find(|(path, _)| path == &test)
-        .unwrap()
-        .1;
+    // tests/testthat code retains access to the package's R/
+    // library functions even though it lives outside R/.
+    let diagnostics = project_with(&[
+        ("R/hidden.R", "hidden <- function() 1L\n"),
+        ("tests/testthat/test-hidden.R", "x <- hidden()\n"),
+    ]);
+    let test = diagnostics
+        .iter()
+        .find(|(path, _)| path_matches(path, "tests/testthat/test-hidden.R"))
+        .map(|(_, diags)| diags)
+        .expect("testthat script diagnostics");
     assert!(
-        diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.code != "RY010"),
-        "testthat code must retain access to package functions: {diagnostics:?}"
+        test.iter().all(|d| d.code != "RY010"),
+        "testthat code must retain access to package functions: {test:?}"
     );
 }
 
@@ -830,21 +769,11 @@ fn genuinely_undefined_variable_still_triggers_ry010() {
     // (and is not a typeshed function or dataset) must still emit
     // RY010. `known_vars` only suppresses diagnostics for names we
     // have actually seen assigned.
-    let mut project = Project::new();
-    project.add_file(
-        "a.R".to_string(),
-        parse_file("a.R", "x <- totally_undefined_thing\n"),
-    );
-    let diags = project.check();
-    let a_diags: Vec<_> = diags
-        .into_iter()
-        .filter(|(p, _)| p == "a.R")
-        .flat_map(|(_, d)| d)
-        .collect();
+    let diagnostics = project_with(&[("a.R", "x <- totally_undefined_thing\n")]);
+    let all: Vec<_> = diagnostics.into_iter().flat_map(|(_, d)| d).collect();
     assert!(
-        a_diags.iter().any(|d| d.code == "RY010"),
-        "genuinely undefined variable should still trigger RY010, got {:?}",
-        a_diags
+        all.iter().any(|d| d.code == "RY010"),
+        "genuinely undefined variable should still trigger RY010, got {all:?}"
     );
 }
 

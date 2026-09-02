@@ -520,53 +520,25 @@ pub(crate) fn run_dump_types(
     // rooted at --project-root, else the config root (the directory
     // owning the discovered ry.toml), else the working directory —
     // `run_check_once`'s fallback chain with --project-root overriding.
-    let groups = pipeline::group_by_package_root(parsed.iter().map(|file| file.path.as_str()));
+    let groups = pipeline::resolve_groups(
+        &parsed,
+        &cfg,
+        &user_stubs,
+        &[project_root.as_deref(), config_root.as_deref()],
+    )?;
 
     let mut records_by_path: HashMap<String, Vec<ry_checker::ScopeRecord>> = HashMap::new();
-    for (group_root, indices) in &groups {
-        let resolution_root = group_root
-            .clone()
-            .or_else(|| project_root.clone())
-            .or_else(|| config_root.clone())
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-        let mut package_scope = ry_workspace::resolve_workspace_context(
-            &resolution_root,
-            &cfg,
-            ry_workspace::ResolutionEnvironment {
-                files: indices.iter().map(|index| &parsed[*index].file).collect(),
-                user_stubs: &user_stubs,
-            },
-        )
-        .map_err(|error| miette::miette!(error))?;
-        let analysis_files: Vec<_> = indices
-            .iter()
-            .map(|index| {
-                let parsed_file = &parsed[*index];
-                (
-                    parsed_file.path.clone(),
-                    std::sync::Arc::new(parsed_file.file.clone()),
-                )
-            })
-            .collect();
-        // Split the resolved workspace into checker input (with an empty
-        // `degraded_scopes`) and the notes this command reports itself.
-        let degraded_scopes = std::mem::take(&mut package_scope.degraded_scopes);
-        let workspace = package_scope;
-        let check_input = check::CheckInput {
-            files: analysis_files,
-            user_stubs: std::sync::Arc::clone(&user_stubs),
-            workspace: Some(workspace),
-        };
+    for group in groups {
         // `ry check` prints one summary line per degraded scope; keep the
         // note on stderr here too so a dump over the same project reports
         // the same precision loss without polluting the JSON on stdout.
-        for (path, reason) in &degraded_scopes {
+        for (path, reason) in &group.degraded_scopes {
             eprintln!(
                 "ry: {}: degraded scope ({reason}); serialized data file(s) over the byte cap fell back to file stems",
                 path.display()
             );
         }
-        for (path, records) in check::check_project_with_scope_capture(check_input) {
+        for (path, records) in check::check_project_with_scope_capture(group.check_input) {
             records_by_path.insert(path, records);
         }
     }

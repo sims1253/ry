@@ -737,11 +737,7 @@ impl Checker {
         // Emit parse errors after the collection/refinement passes (both
         // run with emission suppressed), so RY000s lead the diagnostic
         // vector rather than being wiped or buried by it.
-        self.emit_parse_errors(file);
-        let mut scope = self.top_level_scope();
-        for s in &file.stmts {
-            self.check_stmt(s, &mut scope);
-        }
+        let scope = self.emit_diagnostics(file);
         (std::mem::take(&mut self.diagnostics), scope)
     }
 
@@ -1213,8 +1209,9 @@ impl Checker {
 
     // Pass 3: emit diagnostics for this file using the refined tables.
     // Diagnostics are appended to `self.diagnostics`; clear that vec
-    // first if you want only this file's diagnostics.
-    pub(crate) fn emit_diagnostics(&mut self, file: &SourceFile) {
+    // first if you want only this file's diagnostics. Returns the final
+    // top-level scope (also what `check_with_scope` hands to the LSP).
+    pub(crate) fn emit_diagnostics(&mut self, file: &SourceFile) -> Scope {
         self.path = file.path.clone();
         self.source.clone_from(&file.source);
         self.emit_parse_errors(file);
@@ -1230,10 +1227,11 @@ impl Checker {
                 name: None,
                 span: whole_file_span(&self.source),
                 params: Vec::new(),
-                scope,
+                scope: scope.clone(),
             };
             self.scope_records.push(record);
         }
+        scope
     }
 
     /// Opt this checker into snapshotting every completed lexical scope

@@ -10,7 +10,6 @@ impl Checker {
         lookup_name: &str,
         args: &[Arg],
         scope: &mut Scope,
-        span: Span,
     ) -> Option<RType> {
         // `structure(x, class = "...")` is R's class constructor. We
         // model only the common literal forms:
@@ -19,7 +18,7 @@ impl Checker {
         // Non-literal or unparseable forms fall through to opaque
         // inference with `ClassVector::unknown()` so RY050 stays quiet.
         if semantic_name == "structure" {
-            return Some(self.infer_structure_call(args, scope, span));
+            return Some(self.infer_structure_call(args, scope));
         }
         // `factor(x)` returns an integer vector with class "factor".
         // (And often also "ordered" if `ordered = TRUE`, but we keep v1
@@ -61,12 +60,7 @@ impl Checker {
     /// `[("a", integer<1>)]` and whose class is `["foo"]`. This lets
     /// `$a` resolve correctly on user-defined classes built on top of
     /// a list-shaped payload.
-    pub(crate) fn infer_structure_call(
-        &mut self,
-        args: &[Arg],
-        scope: &mut Scope,
-        _span: Span,
-    ) -> RType {
+    pub(crate) fn infer_structure_call(&mut self, args: &[Arg], scope: &mut Scope) -> RType {
         // The base value is the first positional argument (or the
         // `x = ...` named argument). The first such positional-or-`x`
         // arg wins; later ones are inferred for diagnostics only.
@@ -111,11 +105,10 @@ impl Checker {
         lookup_name: &str,
         args: &[Arg],
         arg_types: &[RType],
-        span: Span,
     ) -> Option<RType> {
         // Built-in: `c(...)` concatenates and produces the common mode.
         if lookup_name == "c" {
-            let result = self.infer_c(args, arg_types, span);
+            let result = self.infer_c(args, arg_types);
             if let Some(schema) = build_named_schema(arg_types, args)
                 .filter(|_| args.iter().any(|argument| argument.name.is_some()))
             {
@@ -124,7 +117,7 @@ impl Checker {
             return Some(result);
         }
         if lookup_name == "list" {
-            return Some(self.infer_list(arg_types, args, span));
+            return Some(self.infer_list(arg_types, args));
         }
         // `data.frame(...)`: a record constructor. Same column-schema
         // logic as `list(...)`, but the result is classed
@@ -142,7 +135,7 @@ impl Checker {
                         .with_columns(schema),
                 );
             }
-            return Some(self.infer_data_frame(arg_types, args, span));
+            return Some(self.infer_data_frame(arg_types, args));
         }
 
         if lookup_name == "t" {
@@ -172,21 +165,20 @@ impl Checker {
         lookup_name: &str,
         args: &[Arg],
         arg_types: &[RType],
-        span: Span,
     ) -> Option<RType> {
         if lookup_name == "vector" {
             return Some(self.infer_vector(args));
         }
         if lookup_name == "rep" {
-            return Some(self.infer_rep(args, arg_types, span));
+            return Some(self.infer_rep(args, arg_types));
         }
         if lookup_name == "seq" || lookup_name == "seq.int" {
-            return Some(self.infer_seq(args, arg_types, span));
+            return Some(self.infer_seq(args, arg_types));
         }
         None
     }
 
-    pub(crate) fn infer_c(&mut self, args: &[Arg], arg_types: &[RType], _span: Span) -> RType {
+    pub(crate) fn infer_c(&mut self, args: &[Arg], arg_types: &[RType]) -> RType {
         if arg_types.is_empty() {
             return RType::new(Mode::Null, Length::Zero);
         }
@@ -207,7 +199,10 @@ impl Checker {
                 Length::One => 1,
                 Length::Known(n) => n,
                 Length::Unknown => {
-                    return RType::new(collapse_c_mode(mode, saw_union), Length::Unknown);
+                    return RType::new(
+                        if saw_union { Mode::Opaque } else { mode },
+                        Length::Unknown,
+                    );
                 }
             });
         }
@@ -216,7 +211,7 @@ impl Checker {
         } else {
             Length::Known(total_len)
         };
-        RType::new(collapse_c_mode(mode, saw_union), length)
+        RType::new(if saw_union { Mode::Opaque } else { mode }, length)
     }
 
     // Infer the type of `list(...)`. The result is always a list whose
@@ -228,7 +223,7 @@ impl Checker {
     // mirrors R's `list(a = 1, "x")` which produces names `c("a", "2")`.
     // The schema is what powers `df$col` / `df[["col"]]` resolution
     // downstream.
-    pub(crate) fn infer_list(&mut self, arg_types: &[RType], args: &[Arg], _span: Span) -> RType {
+    pub(crate) fn infer_list(&mut self, arg_types: &[RType], args: &[Arg]) -> RType {
         let length = Length::Known(arg_types.len());
         let base = RType::new(Mode::List, length);
         let mut schema = build_named_schema(arg_types, args).unwrap_or(ColumnSchema {
@@ -260,12 +255,7 @@ impl Checker {
     // * Special arguments like `row.names = ...`, `check.names = ...`
     //   are NOT columns and are dropped from the schema. We recognize
     //   the common ones by name.
-    pub(crate) fn infer_data_frame(
-        &mut self,
-        arg_types: &[RType],
-        args: &[Arg],
-        _span: Span,
-    ) -> RType {
+    pub(crate) fn infer_data_frame(&mut self, arg_types: &[RType], args: &[Arg]) -> RType {
         // Filter out non-column named arguments first. Positional args
         // are kept (they become columns); known metadata args are dropped
         // so they don't pollute the schema.
@@ -359,7 +349,7 @@ impl Checker {
         RType::new(mode, length)
     }
 
-    pub(crate) fn infer_rep(&self, args: &[Arg], arg_types: &[RType], _span: Span) -> RType {
+    pub(crate) fn infer_rep(&self, args: &[Arg], arg_types: &[RType]) -> RType {
         // Infer `rep(x, times, each)`: length = `length(x) * times * each`
         // with `times`/`each` defaulting to 1, and the result keeping
         // `x`'s mode, class, and schema (so `rep(factor(...), 3)` stays
@@ -447,7 +437,7 @@ impl Checker {
     // taking precedence over `by`). When we can't pin the length, we
     // still report the right mode (integer when the first arg is an
     // integer literal, else double) with `Length::Unknown`.
-    pub(crate) fn infer_seq(&self, args: &[Arg], arg_types: &[RType], _span: Span) -> RType {
+    pub(crate) fn infer_seq(&self, args: &[Arg], arg_types: &[RType]) -> RType {
         // Helper: find (was_supplied, literal_value) for a named or
         // positional argument. Named args win over positional. The
         // `pos` index counts only unnamed args, so `seq(from=1, 10)`
@@ -522,11 +512,9 @@ impl Checker {
 
     pub(crate) fn apply_sig(
         &mut self,
-        _name: &str,
         sig: &FunctionSig,
         arg_types: &[RType],
         args: &[Arg],
-        span: Span,
     ) -> RType {
         // Match named arguments to parameters so that `arg0` refers to
         // the first *parameter* (by name), not the first positional arg.
@@ -550,7 +538,7 @@ impl Checker {
             ReturnSpec::Slot(slot) => {
                 let mut result = match slot {
                     ReturnSlot::Arg0 => first,
-                    ReturnSlot::ConcatOfArgs => self.infer_c(args, arg_types, span),
+                    ReturnSlot::ConcatOfArgs => self.infer_c(args, arg_types),
                 };
                 if let Some(length) =
                     semantic_return_length(sig.return_length.as_ref(), &sig.params, args, arg_types)
@@ -703,13 +691,7 @@ fn semantic_return_length(
     if args.is_empty() && !arg_types.is_empty() {
         return None;
     }
-    let bindings = match_arguments(
-        &signature_params
-            .iter()
-            .map(|param| param.name.as_str())
-            .collect::<Vec<_>>(),
-        args,
-    );
+    let bindings = match_params(signature_params, args);
     let bound_args = |param: &str| {
         signature_params
             .iter()

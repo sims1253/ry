@@ -79,8 +79,10 @@ fn mistyped_element_name(target: &Expr) -> Option<&str> {
     }
 }
 
-/// Strip any leading unary `!` operators, returning the operand under them.
-fn strip_negation(expr: &Expr) -> &Expr {
+/// Strip any leading unary `!` operators, returning the operand under
+/// them. Also used by the tidyeval `!!`/`!!!` handling in `infer`, which
+/// tree-sitter parses as nested unary `!`.
+pub(crate) fn strip_negation(expr: &Expr) -> &Expr {
     let mut inner = expr;
     while let Expr::UnaryOp {
         op: UnaryOpKind::Not,

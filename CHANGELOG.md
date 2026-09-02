@@ -59,6 +59,22 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Changed
 
+- **One shared front half for `ry check` and `ry dump-types`**: both
+  commands resolve their per-package groups, workspace contexts, and
+  checker inputs through one pipeline helper, so their file sets,
+  resolution roots, and degraded-scope notes cannot drift apart.
+  Diagnostics and dump output are unchanged.
+- **Consolidated duplicated helpers across the crates**: `ry rule` and
+  `ry explain rule` share one argument struct; `ry.toml` merging takes a
+  single `CliOverrides` value instead of ten positional flags; the
+  checker's argument matching, condition inference, and plain-assignment
+  binding each have one implementation; the language server partitions
+  open documents per folder once, carries the owning folder through
+  publication, and reads the parse cache under a single lock; workspace
+  resolution caches DESCRIPTION reads per package root. Tests for
+  workspace discovery, `.Rbuildignore` translation, and baselines moved
+  into the crates whose code they exercise. Behavior, diagnostics, and
+  inferred types are unchanged.
 - **`enable` is honored per folder**: a workspace folder whose settings
   set `enable: false` is skipped: the language server publishes no
   diagnostics and returns no inlay hints for it. The setting was

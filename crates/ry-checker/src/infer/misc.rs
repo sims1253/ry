@@ -34,28 +34,6 @@ pub(crate) fn equality_list_leaf_type(value: &RType) -> Option<RType> {
     }
 }
 
-pub(crate) fn is_ffi_primitive(name: &str) -> bool {
-    ry_core::FFI_PRIMITIVES.contains(&name)
-}
-
-#[cfg(test)]
-mod ffi_primitives_tests {
-    use super::*;
-
-    /// .Internal must NOT be in FFI_PRIMITIVES: its first argument is a
-    /// call expression, not a bare entry-point symbol. (Every listed
-    /// primitive is trivially "recognized" -- `is_ffi_primitive` is a
-    /// containment check against that very list -- so only non-members
-    /// pin the convention.)
-    #[test]
-    fn internal_is_not_an_ffi_primitive() {
-        assert!(
-            !is_ffi_primitive(".Internal"),
-            ".Internal takes a call, not a symbol; it must not be in FFI_PRIMITIVES"
-        );
-    }
-}
-
 /// Wrappers that forward their first argument to an FFI primitive, so it is
 /// a native routine symbol under the same convention. Unlike the primitives
 /// these are ordinary R functions a user could redefine, so callers gate
@@ -77,14 +55,17 @@ pub(crate) fn modes_compatible(mode: &Mode, target: &Mode) -> bool {
     if matches!(mode, Mode::Opaque | Mode::Union | Mode::Null) {
         return true;
     }
-    fn is_numeric(m: &Mode) -> bool {
-        matches!(m, Mode::Double | Mode::Integer | Mode::Logical)
-    }
     match target {
-        Mode::Double | Mode::Integer | Mode::Logical => is_numeric(mode),
+        Mode::Double | Mode::Integer | Mode::Logical => is_numeric_mode(*mode),
         Mode::Character => matches!(mode, Mode::Character),
         _ => true,
     }
+}
+
+/// R's coercion family: logical, integer, and double values interchange
+/// without a lossy or surprising conversion in the contexts that ask.
+fn is_numeric_mode(mode: Mode) -> bool {
+    matches!(mode, Mode::Double | Mode::Integer | Mode::Logical)
 }
 
 /// Return the R source symbol for a binary operator, for use in
@@ -245,7 +226,7 @@ pub(crate) fn extract_builtin_type_narrowing(cond: &Expr) -> Narrowing {
             lhs,
             rhs,
             ..
-        } if is_zero_literal(rhs) => {
+        } if is_literal_eq(rhs, 0.0) => {
             if let Some(var) = length_guard_var(lhs) {
                 Narrowing::NonNullElse { var }
             } else {
@@ -326,9 +307,9 @@ fn scalar_false_path_fact(expr: &Expr) -> Option<(String, Option<RType>)> {
         else {
             return None;
         };
-        if is_one_literal(rhs) {
+        if is_literal_eq(rhs, 1.0) {
             length_guard_var(lhs)
-        } else if is_one_literal(lhs) {
+        } else if is_literal_eq(lhs, 1.0) {
             length_guard_var(rhs)
         } else {
             None
@@ -371,12 +352,14 @@ fn length_guard_var(expr: &Expr) -> Option<String> {
     first_arg_ident(args)
 }
 
-fn is_zero_literal(expr: &Expr) -> bool {
-    matches!(expr, Expr::Integer(0, _)) || matches!(expr, Expr::Double(value, _) if *value == 0.0)
-}
-
-fn is_one_literal(expr: &Expr) -> bool {
-    matches!(expr, Expr::Integer(1, _)) || matches!(expr, Expr::Double(value, _) if *value == 1.0)
+/// Whether `expr` is the whole-number literal `value` (`0`, `1`, `1.0`),
+/// for the length-guard shapes `length(x) == 0` / `length(x) != 1`.
+fn is_literal_eq(expr: &Expr, value: f64) -> bool {
+    match expr {
+        Expr::Integer(n, _) => *n as f64 == value,
+        Expr::Double(n, _) => *n == value,
+        _ => false,
+    }
 }
 
 /// Return the variable inspected by a simple predicate. `is.na` is included
@@ -1208,6 +1191,41 @@ pub(crate) fn match_arguments(param_names: &[&str], args: &[Arg]) -> ArgumentMat
     result
 }
 
+/// The formal-parameter view RY090/RY091 reporting needs, shared by
+/// typeshed `ParamSpec`s and collected `UserParam`s so one code path
+/// serves stub and user calls.
+trait CallFormal {
+    fn name(&self) -> &str;
+    fn required(&self) -> bool;
+}
+
+impl CallFormal for ParamSpec {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn required(&self) -> bool {
+        self.required
+    }
+}
+
+impl CallFormal for UserParam {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn required(&self) -> bool {
+        self.required
+    }
+}
+
+/// `match_arguments` over a signature's formal specs: collect the formal
+/// names once and run R's three-pass matching. Callers that need the
+/// names themselves (message text, eval-mode lookup) keep their own
+/// `param_names()` vector.
+pub(crate) fn match_params(params: &[ParamSpec], args: &[Arg]) -> ArgumentMatch {
+    let names: Vec<&str> = params.iter().map(|param| param.name.as_str()).collect();
+    match_arguments(&names, args)
+}
+
 /// Return the actual argument bound to a formal under ordinary R matching.
 /// Semantic metadata must use this rather than raw call positions.
 pub(crate) fn bound_argument_index(
@@ -1215,8 +1233,7 @@ pub(crate) fn bound_argument_index(
     args: &[Arg],
     formal: &str,
 ) -> Option<usize> {
-    let names: Vec<_> = params.iter().map(|param| param.name.as_str()).collect();
-    bound_argument_index_matched(params, &match_arguments(&names, args), formal)
+    bound_argument_index_matched(params, &match_params(params, args), formal)
 }
 
 /// `bound_argument_index` over a match already computed for this call.
@@ -1237,8 +1254,7 @@ pub(crate) fn match_args_to_params(
     args: &[Arg],
     arg_types: &[RType],
 ) -> Vec<RType> {
-    let names: Vec<&str> = sig_params.iter().map(|param| param.name.as_str()).collect();
-    let bindings = match_arguments(&names, args);
+    let bindings = match_params(sig_params, args);
     let mut matched = vec![RType::unknown(); sig_params.len()];
     for (argument_index, parameter_index) in bindings.param_for_arg.iter().enumerate() {
         if let Some(parameter_index) = parameter_index
@@ -1267,9 +1283,7 @@ impl Checker {
         arg_types: &[RType],
         call_span: Span,
     ) {
-        let names: Vec<&str> = signature.param_names().collect();
-        let bindings = match_arguments(&names, args);
-
+        let bindings = match_params(&signature.params, args);
         // `...` accepts every otherwise-unmatched actual argument. Without
         // it, report only named arguments; excess positionals are outside
         // this rule's deliberately narrow scope.
@@ -1277,19 +1291,14 @@ impl Checker {
             .params
             .iter()
             .any(|param| param.required || param.default.is_some() || param.type_.is_some());
-        self.emit_unknown_arguments(
+        self.check_call_arity(
             function_name,
-            &names,
+            &signature.params,
             args,
             &bindings,
             supports_unknown_argument_check,
+            call_span,
         );
-        let required: Vec<bool> = signature
-            .params
-            .iter()
-            .map(|param| param.required)
-            .collect();
-        self.emit_missing_required(function_name, &names, &required, &bindings, call_span);
 
         for (argument_index, parameter_index) in bindings.param_for_arg.iter().enumerate() {
             let Some(parameter_index) = parameter_index else {
@@ -1335,13 +1344,33 @@ impl Checker {
             .map(|parameter| parameter.name.as_str())
             .collect();
         let bindings = match_arguments(&names, args);
-        self.emit_unknown_arguments(function_name, &names, args, &bindings, true);
-        let required: Vec<bool> = function
-            .params
-            .iter()
-            .map(|parameter| parameter.required)
-            .collect();
-        self.emit_missing_required(function_name, &names, &required, &bindings, call_span);
+        self.check_call_arity(
+            function_name,
+            &function.params,
+            args,
+            &bindings,
+            true,
+            call_span,
+        );
+    }
+
+    /// Shared arity reporting over one argument match: RY090 for named
+    /// actuals no formal matched, RY091 for required formals no actual
+    /// bound. The typeshed and user-function checks differ only in their
+    /// formals source and unknown-argument gating.
+    fn check_call_arity<P: CallFormal>(
+        &mut self,
+        function_name: &str,
+        params: &[P],
+        args: &[Arg],
+        bindings: &ArgumentMatch,
+        report_unknown: bool,
+        call_span: Span,
+    ) {
+        let names: Vec<&str> = params.iter().map(|param| param.name()).collect();
+        let required: Vec<bool> = params.iter().map(|param| param.required()).collect();
+        self.emit_unknown_arguments(function_name, &names, args, bindings, report_unknown);
+        self.emit_missing_required(function_name, &names, &required, bindings, call_span);
     }
 
     fn emit_unknown_arguments(
@@ -1542,10 +1571,7 @@ fn known_modes(rtype: &RType) -> Option<Vec<Mode>> {
 }
 
 fn compatible_mode_pair(actual: Mode, expected: Mode) -> bool {
-    fn numeric(mode: Mode) -> bool {
-        matches!(mode, Mode::Logical | Mode::Integer | Mode::Double)
-    }
-    actual == expected || (numeric(actual) && numeric(expected))
+    actual == expected || (is_numeric_mode(actual) && is_numeric_mode(expected))
 }
 
 pub(crate) fn expected_type_label(expected: &RType) -> String {
@@ -1571,17 +1597,18 @@ pub(crate) fn expected_type_label(expected: &RType) -> String {
 
 /// Eval mode declared for the argument at `index`.
 ///
-/// `names` and `bindings` come from one `match_arguments` call shared by the
-/// whole call site, so a loop over arguments does not re-match per argument.
+/// `bindings` comes from one `match_params` call shared by the whole call
+/// site, so a loop over arguments does not re-match per argument.
 pub(crate) fn eval_mode_for_arg(
     sig: &FunctionSig,
-    names: &[&str],
     bindings: &ArgumentMatch,
     index: usize,
 ) -> Option<EvalMode> {
-    bindings.param_for_arg.get(index)?;
-    let parameter = bindings.param_for_arg[index]
-        .and_then(|parameter_index| names.get(parameter_index).copied())
+    let parameter = bindings
+        .param_for_arg
+        .get(index)?
+        .and_then(|parameter_index| sig.params.get(parameter_index))
+        .map(|param| param.name.as_str())
         .unwrap_or("...");
     sig.eval
         .get(parameter)
@@ -1594,8 +1621,7 @@ pub(crate) fn argument_eval_mode(
     args: &[Arg],
     index: usize,
 ) -> Option<EvalMode> {
-    let names: Vec<&str> = sig.param_names().collect();
-    eval_mode_for_arg(sig, &names, &match_arguments(&names, args), index)
+    eval_mode_for_arg(sig, &match_params(&sig.params, args), index)
 }
 
 /// Locate the supplied argument named by a signature's data-mask source.
@@ -1603,36 +1629,20 @@ pub(crate) fn argument_eval_mode(
 /// after mask-evaluated arguments, so callers must not assume argument zero.
 pub(crate) fn data_mask_source_arg(sig: &FunctionSig, args: &[Arg]) -> Option<usize> {
     let source = sig.data_mask_source.as_deref()?;
-    let names: Vec<&str> = sig.param_names().collect();
-    let source_parameter = names.iter().position(|name| *name == source)?;
-    let bindings = match_arguments(&names, args);
+    let bindings = match_params(&sig.params, args);
+    let source_parameter = sig.params.iter().position(|param| param.name == source)?;
     bindings
         .param_for_arg
         .iter()
         .position(|parameter| *parameter == Some(source_parameter))
 }
 
-/// Resolve the resulting mode for `c(...)`. If any argument was a union,
-/// the coerce-rank ladder doesn't apply soundly, so degrade to opaque
-/// rather than emitting a malformed union.
-pub(crate) fn collapse_c_mode(mode: Mode, saw_union: bool) -> Mode {
-    if saw_union { Mode::Opaque } else { mode }
-}
-
 /// If `e` is a literal expression (`42`, `"x"`, `TRUE`, `NULL`, `NA`),
 /// return the mode that calling it would error with.
 /// Non-literal callees return `None` so the caller stays silent.
 pub(crate) fn literal_callee_mode(e: &Expr) -> Option<Mode> {
-    match e {
-        Expr::Logical(_, _) => Some(Mode::Logical),
-        Expr::Integer(_, _) => Some(Mode::Integer),
-        Expr::Double(_, _) => Some(Mode::Double),
-        Expr::String(_, _) => Some(Mode::Character),
-        Expr::Null(_) => Some(Mode::Null),
-        // `NA` carries its own mode (NA, NA_real_, NA_integer_, ...).
-        Expr::Na(t, _) => Some(t.mode),
-        _ => None,
-    }
+    let t = infer_literal_default(e);
+    (!matches!(t.mode, Mode::Opaque)).then_some(t.mode)
 }
 
 /// Compute the longest known length among a slice of argument types.

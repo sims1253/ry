@@ -1,6 +1,6 @@
 use ry_testkit::{
     Driver, DriverError, FixtureProject, JsonRpcProcess, ObservedDiagnostic, ObservedPosition,
-    ObservedRange, PositionEncoding, normalize_path,
+    ObservedRange, PositionEncoding, file_uri, normalize_path,
 };
 use serde_json::{Value, json};
 use std::path::Path;
@@ -16,7 +16,7 @@ impl Driver for LspSubprocessDriver {
         let mut command = Command::new(env!("CARGO_BIN_EXE_ry"));
         command.arg("server").current_dir(fixture.root());
         let mut client = JsonRpcProcess::spawn(&mut command)?;
-        let root_uri = file_uri(fixture.root());
+        let root_uri = file_uri(fixture.root())?;
         let initialize_id = client.request(
             "initialize",
             json!({
@@ -33,7 +33,7 @@ impl Driver for LspSubprocessDriver {
         client.notify("initialized", json!({}))?;
 
         let path = fixture.path("R/diagnostic.R");
-        let uri = file_uri(&path);
+        let uri = file_uri(&path)?;
         let text = std::fs::read_to_string(&path)?;
         client.notify(
             "textDocument/didOpen",
@@ -119,10 +119,6 @@ fn lsp_position(value: &Value) -> Result<ObservedPosition, DriverError> {
             .ok_or("position has no character")? as u32,
         encoding: PositionEncoding::Utf16,
     })
-}
-
-fn file_uri(path: &Path) -> String {
-    format!("file://{}", path.display())
 }
 
 #[test]

@@ -5,9 +5,9 @@ use ry_testkit::{
 use serde_json::{Value, json};
 use std::path::Path;
 
-mod common;
+mod harness;
 
-use common::file_uri;
+use harness::file_uri;
 
 struct RunWithDriver;
 

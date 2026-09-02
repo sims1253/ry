@@ -19,9 +19,9 @@ use serde_json::{Value, json};
 use std::path::Path;
 use std::process::Command;
 
-mod common;
+mod harness;
 
-use common::{Published, file_uri, published_from_cli_value, published_from_lsp, ry_binary};
+use harness::{Published, file_uri, published_from_cli_value, published_from_lsp, ry_binary};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Shared helpers (adapted from tests/protocol.rs for multi-root support)

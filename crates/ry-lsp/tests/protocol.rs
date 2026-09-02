@@ -2,9 +2,9 @@ use ry_testkit::{AsyncJsonRpcClient, CliProcess, FixtureProject, JsonRpcProcess}
 use serde_json::{Value, json};
 use std::process::Command;
 
-mod common;
+mod harness;
 
-use common::{Published, file_uri, published_from_cli_value, published_from_lsp, ry_binary};
+use harness::{Published, file_uri, published_from_cli_value, published_from_lsp, ry_binary};
 
 fn cli_diagnostics(fixture: &FixtureProject, extra: &[&str]) -> Vec<Published> {
     let output = CliProcess::new(ry_binary())

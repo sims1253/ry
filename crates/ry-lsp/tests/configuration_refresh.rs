@@ -14,51 +14,15 @@
 //! `enable_false_skips_inlay_hints_for_the_folder` verifies the on-demand
 //! half: `textDocument/inlayHint` returns null there instead of hints.
 
-use ry_testkit::{FixtureProject, LspSession, file_uri};
+use ry_testkit::{FixtureProject, file_uri};
 use serde_json::{Value, json};
-use std::path::Path;
 
-type Session = LspSession<
-    tokio::io::ReadHalf<tokio::io::DuplexStream>,
-    tokio::io::WriteHalf<tokio::io::DuplexStream>,
->;
+mod harness;
 
-/// Spawn an LSP server and return a connected session, initialized with
-/// `capabilities` and, unless it is `Null`, `initialization_options`.
-/// Tests using the pull path answer the server's `workspace/configuration`
-/// request themselves right after this returns. No settle wait for the
-/// background indexer: it never publishes diagnostics itself (its caller
-/// republishes, and no document is open here), and open documents shadow
-/// disk files, so each test's `published_diagnostics_after` await (which
-/// has its own timeout) is the only synchronization needed.
-async fn spawn_session(
-    root: &Path,
-    capabilities: Value,
-    initialization_options: Value,
-) -> (Session, tokio::task::JoinHandle<()>) {
-    let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
-    let (client_reader, client_writer) = tokio::io::split(client_stream);
-    let (server_reader, server_writer) = tokio::io::split(server_stream);
-    let server = tokio::spawn(async move {
-        let _ = ry_lsp::run_with(server_reader, server_writer).await;
-    });
-    let mut session = LspSession::new(client_reader, client_writer);
-    let root_uri = file_uri(root).unwrap();
-    let mut params = json!({
-        "processId": null,
-        "rootUri": root_uri,
-        "capabilities": capabilities,
-        "workspaceFolders": [{"uri": root_uri, "name": "fixture"}]
-    });
-    if initialization_options != Value::Null {
-        params["initializationOptions"] = initialization_options;
-    }
-    session.request("initialize", params).await.unwrap();
-    session.notify("initialized", json!({})).await.unwrap();
-    (session, server)
-}
+use harness::spawn_session_with_options;
 
-/// Run a future on a current-thread tokio runtime (same pattern as session.rs).
+/// Run a future on a current-thread tokio runtime (same pattern as the
+/// session tests).
 fn run<F, T>(future: F) -> T
 where
     F: std::future::Future<Output = T>,
@@ -93,7 +57,8 @@ fn did_change_configuration_refreshes_cached_filters() {
             .write_file("R/diag.R", "z <- length(xx = 1L)\n")
             .unwrap();
 
-        let (mut session, _server) = spawn_session(fixture.root(), json!({}), Value::Null).await;
+        let (mut session, _server) =
+            spawn_session_with_options(fixture.root(), json!({}), Value::Null).await;
 
         let diag_uri = file_uri(&fixture.path("R/diag.R")).unwrap();
 
@@ -155,7 +120,7 @@ fn did_change_configuration_pull_applies_per_folder_settings() {
             .write_file("R/diag.R", "z <- length(xx = 1L)\n")
             .unwrap();
 
-        let (mut session, _server) = spawn_session(
+        let (mut session, _server) = spawn_session_with_options(
             fixture.root(),
             json!({ "workspace": { "configuration": true } }),
             Value::Null,
@@ -242,7 +207,7 @@ fn enable_false_skips_diagnostics_for_the_folder() {
             .write_file("R/diag.R", "z <- length(xx = 1L)\n")
             .unwrap();
 
-        let (mut session, server) = spawn_session(
+        let (mut session, server) = spawn_session_with_options(
             fixture.root(),
             json!({}),
             json!({
@@ -285,7 +250,7 @@ fn enable_false_skips_inlay_hints_for_the_folder() {
         // (pinned by `inlay_hint_does_not_cross_workspace_roots`).
         fixture.write_file("R/hint.R", "x <- 1L\n").unwrap();
 
-        let (mut session, server) = spawn_session(
+        let (mut session, server) = spawn_session_with_options(
             fixture.root(),
             json!({}),
             json!({

@@ -1428,6 +1428,143 @@ fn is_excluded_package_directory(package_root: &Path, path: &Path) -> bool {
         || matches!(components.as_slice(), ["tests", "testthat", "_snaps"])
 }
 
+/// Pins the recording conditions of [`collect_dynamic_bindings_stmts`].
+/// The environment argument's *presence* is what records, never its
+/// value: any `envir`/`env`/`assign.env` expression, or an unnamed
+/// positional argument in the environment slot (third for
+/// `assign`/`makeActiveBinding`, fourth for `delayedAssign`), makes the
+/// target explicit. Bare `assign` records only via the `fn_depth == 0`
+/// arm; bare `makeActiveBinding`/`delayedAssign` never do.
+#[cfg(test)]
+mod dynamic_binding_tests {
+    use super::*;
+
+    fn collect_from(src: &str) -> SourceBindings {
+        let mut parser = ry_core::RParser::new().unwrap();
+        let file = parser.parse("dynamic_binding_test.R", src).unwrap();
+        let mut found = SourceBindings::default();
+        collect_dynamic_bindings_stmts(&file.stmts, &mut found);
+        found
+    }
+
+    fn assert_exact(src: &str, expected: &[&str]) {
+        let found = collect_from(src).bindings;
+        let expected: HashSet<String> = expected.iter().map(|name| name.to_string()).collect();
+        assert_eq!(found, expected, "bindings from `{src}`");
+    }
+
+    /// A bare two-argument `assign("x", v)` targets the package namespace
+    /// only at the file top level (`fn_depth == 0`; braced blocks do not
+    /// count). Inside a function body the same call binds in that call's
+    /// execution environment and records nothing.
+    #[test]
+    fn bare_assign_records_only_at_top_level() {
+        assert_exact("assign(\"top\", value)", &["top"]);
+        assert_exact("{ assign(\"in_block\", value) }", &["in_block"]);
+        assert_exact(
+            "on_load <- function() assign(\"nested\", value)
+assign(\"top\", value)",
+            &["top"],
+        );
+    }
+
+    /// Only `assign` has the top-level bare arm: bare
+    /// `makeActiveBinding`/`delayedAssign` record nothing even at the
+    /// file top level.
+    #[test]
+    fn bare_make_active_binding_and_delayed_assign_never_record() {
+        assert_exact(
+            "makeActiveBinding(\"active\", getter)
+delayedAssign(\"later\", value)",
+            &[],
+        );
+    }
+
+    /// A named `envir`/`env`/`assign.env` argument records at any depth,
+    /// whatever the environment expression is -- `asNamespace(...)`,
+    /// `globalenv()`, or a namespace variable threaded through an
+    /// `.onLoad` helper.
+    #[test]
+    fn named_environment_argument_records_inside_function_bodies() {
+        assert_exact(
+            "on_load <- function(libname, pkgname) {
+  assign(\"ns_var\", 1, envir = asNamespace(\"pkg\"))
+  assign(\"global_var\", 1, envir = globalenv())
+  assign(\"env_alias\", 1, env = ns)
+  makeActiveBinding(\"active\", getter, assign.env = ns)
+}
+",
+            &["ns_var", "global_var", "env_alias", "active"],
+        );
+    }
+
+    /// The environment passed positionally -- third argument of
+    /// `assign`/`makeActiveBinding`, fourth of `delayedAssign` -- also
+    /// records inside function bodies, matching `.onLoad` helpers that
+    /// thread the namespace through positionally.
+    #[test]
+    fn positional_environment_argument_records_inside_function_bodies() {
+        assert_exact(
+            "on_load <- function(libname, pkgname) {
+  assign(\"positional\", 1, ns)
+  makeActiveBinding(\"lazy_active\", getter, ns)
+  delayedAssign(\"lazy_later\", value, NULL, ns)
+}
+",
+            &["positional", "lazy_active", "lazy_later"],
+        );
+    }
+
+    /// A named third argument that is not an environment alias
+    /// (`inherits = TRUE`) leaves the call bare for depth purposes:
+    /// ignored inside a function body, recorded at the file top level by
+    /// the `assign`-only arm.
+    #[test]
+    fn named_non_environment_argument_stays_depth_gated() {
+        assert_exact("f <- function() assign(\"flag\", 1, inherits = TRUE)", &[]);
+        assert_exact("assign(\"flag\", 1, inherits = TRUE)", &["flag"]);
+    }
+
+    /// Only a literal string target is statically knowable. An
+    /// identifier target computes the binding name at runtime and
+    /// records nothing -- even at the top level with an explicit
+    /// environment, so an unknown dynamic name cannot mask an unresolved
+    /// variable.
+    #[test]
+    fn non_literal_target_names_record_nothing() {
+        assert_exact("assign(name_var, value)", &[]);
+        assert_exact("assign(name_var, value, envir = ns)", &[]);
+        assert_exact("f <- function() assign(name_var, value, envir = ns)", &[]);
+    }
+
+    /// `.Call(ffi_enquo, ...)` proves `ffi_enquo` names a native routine
+    /// rather than a variable (rlang later passes the same symbol as an
+    /// ordinary value). Every FFI primitive records its first argument
+    /// when it is an unnamed symbol; a string entry point or a named
+    /// first argument is not a symbol witness.
+    #[test]
+    fn ffi_primitives_record_unnamed_symbol_first_arguments() {
+        assert_eq!(
+            collect_from(".Call(ffi_enquo, quote(arg))").native_symbols,
+            HashSet::from(["ffi_enquo".to_string()])
+        );
+        assert_eq!(
+            collect_from(".External2(entry, x)").native_symbols,
+            HashSet::from(["entry".to_string()])
+        );
+        assert!(
+            collect_from(".Call(\"as_string\", x)")
+                .native_symbols
+                .is_empty()
+        );
+        assert!(
+            collect_from(".Call(name = ffi_enquo, x)")
+                .native_symbols
+                .is_empty()
+        );
+    }
+}
+
 #[cfg(test)]
 mod shared_tests {
     use super::*;

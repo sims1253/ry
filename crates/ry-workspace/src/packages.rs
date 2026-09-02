@@ -150,6 +150,46 @@ fn static_name(expr: &Expr) -> Option<String> {
 mod tests {
     use super::*;
 
+    fn assert_exact(src: &str, expected: &[&str]) {
+        let mut parser = ry_core::RParser::new().unwrap();
+        let file = parser.parse("attach_test.R", src).unwrap();
+        let expected: HashSet<String> = expected.iter().map(|name| name.to_string()).collect();
+        assert_eq!(attached_packages(&file), expected, "attached from `{src}`");
+    }
+
+    /// An attachment counts wherever the call appears: the walker uses
+    /// `Walk::ALL`, so `library()`/`require()` calls nested inside
+    /// function bodies (an `.onLoad` hook, a helper defined for tests)
+    /// attach their package just like top-level ones.
+    #[test]
+    fn attaches_calls_at_top_level_and_inside_function_bodies() {
+        assert_exact(
+            "library(dplyr)
+run <- function() {
+  require(\"stringr\")
+  if (verbose) library(rlang)
+}
+",
+            &["dplyr", "stringr", "rlang"],
+        );
+    }
+
+    /// `requireNamespace()`/`loadNamespace()` make `pkg::name` available
+    /// without placing exports on the search path, and a package name
+    /// computed at runtime is not statically knowable. None of these
+    /// attach anything.
+    #[test]
+    fn does_not_attach_namespace_helpers_or_dynamic_arguments() {
+        assert_exact(
+            "requireNamespace(\"rlang\")
+loadNamespace(\"tibble\")
+library(get_option(\"pkg\"))
+my_library(dplyr)
+",
+            &[],
+        );
+    }
+
     #[test]
     fn import_from_preserves_binding_provenance_without_attaching_package() {
         let mut parser = ry_core::RParser::new().unwrap();

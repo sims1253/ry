@@ -14,8 +14,9 @@
 //!   ([`byte_offset_to_point`]) and the line-start byte offsets
 //!   ([`line_start`]) used to bound whole-line text edits.
 //!
-//! Every helper advances the same [`Scan`] core and differs only in
-//! the column unit it reports.
+//! The position conversions share the [`Scan`] core and differ only
+//! in the column unit they report; [`line_start`] skips the scan,
+//! sharing only the newline-only line rule.
 
 use ry_core::Point;
 use tower_lsp::lsp_types::Position;

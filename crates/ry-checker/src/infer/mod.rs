@@ -175,22 +175,18 @@ impl Checker {
                 let value_has_list_origin = expression_has_list_origin(value, scope);
                 let vt = self.infer(value, scope);
                 let function_alias = self.function_alias_target(value, scope);
-                if !self.assign_class_attribute(target, value, scope)
-                    && !self.assign_replacement_target(target, scope)
+                if self.try_assign_value(target, value, vt, scope)
+                    && let Some(name) = binding_name(target)
                 {
-                    self.assign_target(target, vt, scope);
-                    if let Some(name) = binding_name(target) {
-                        if value_has_list_origin {
-                            scope.mark_list_origin(name.to_string());
-                        }
-                        if matches!(value, Expr::Function { .. })
-                            && !self.enclosing_formals.is_empty()
-                        {
-                            scope.mark_lexical_function(name.to_string());
-                        }
-                        if let Some(alias) = function_alias {
-                            scope.set_function_alias(name.to_string(), alias);
-                        }
+                    if value_has_list_origin {
+                        scope.mark_list_origin(name.to_string());
+                    }
+                    if matches!(value, Expr::Function { .. }) && !self.enclosing_formals.is_empty()
+                    {
+                        scope.mark_lexical_function(name.to_string());
+                    }
+                    if let Some(alias) = function_alias {
+                        scope.set_function_alias(name.to_string(), alias);
                     }
                 }
                 // Named function bodies (`f <- function(...) body`) must
@@ -252,16 +248,7 @@ impl Checker {
                 cond, then, else_, ..
             } => {
                 // RY103: an `if` condition is a length-1 logical context.
-                self.check_class_equality_operand(cond, scope);
-                let diagnostic_start = self.diagnostics.len();
-                let ct = self.infer(cond, scope);
-                self.emit_condition_diagnostics(
-                    cond,
-                    ct,
-                    scope,
-                    diagnostic_start,
-                    ConditionContext::If,
-                );
+                self.infer_condition(cond, scope, ConditionContext::If);
                 let narrowing = self.extract_type_narrowing(cond, scope);
                 let has_else = else_.is_some();
                 let (mut then_scope, mut else_scope, narrowed) = apply_narrowing(scope, &narrowing);
@@ -322,16 +309,7 @@ impl Checker {
             }
             Stmt::While { cond, body, .. } => {
                 // RY103: a loop condition is a length-1 logical context.
-                self.check_class_equality_operand(cond, scope);
-                let diagnostic_start = self.diagnostics.len();
-                let ct = self.infer(cond, scope);
-                self.emit_condition_diagnostics(
-                    cond,
-                    ct,
-                    scope,
-                    diagnostic_start,
-                    ConditionContext::Loop,
-                );
+                self.infer_condition(cond, scope, ConditionContext::Loop);
                 let mut inner = scope.clone();
                 self.insert_loop_carried_bindings(body, &mut inner);
                 for s in body {
@@ -427,6 +405,21 @@ impl Checker {
         self.record_scope(function_name, span, params, &fn_scope);
         self.enclosing_formals.pop();
         self.deferred_captures.pop();
+    }
+
+    /// Infer a condition in place and emit its condition-diagnostic
+    /// family, in the one order that keeps the rules honest: the RY103
+    /// class-equality operand check runs first, then the condition's own
+    /// inference, and `diagnostic_start` bounds exactly the diagnostics
+    /// that inference produced — which is what lets an RY100 reported
+    /// inside the condition suppress the RY001/RY003/RY002 family. All
+    /// three condition contexts (`if` statements, loop conditions, `if`
+    /// expressions) route through here so they cannot drift apart.
+    fn infer_condition(&mut self, cond: &Expr, scope: &mut Scope, ctx: ConditionContext) {
+        self.check_class_equality_operand(cond, scope);
+        let diagnostic_start = self.diagnostics.len();
+        let ct = self.infer(cond, scope);
+        self.emit_condition_diagnostics(cond, ct, scope, diagnostic_start, ctx);
     }
 
     /// Emit RY001/RY003/RY002 for a condition already inferred as `ct`.
@@ -1011,6 +1004,29 @@ impl Checker {
         })
     }
 
+    /// Run the plain-assignment path: bind `target` (whose value was
+    /// already inferred as `vt`) unless the statement is one of the two
+    /// special assignment forms the checker models separately — a
+    /// class-attribute write (`class(x) <- ...`) or a
+    /// replacement-function mutation (`names(x) <- ...`). Returns
+    /// whether the plain binding ran; the statement walker layers its
+    /// list-origin and function-alias provenance marks on that outcome.
+    fn try_assign_value(
+        &mut self,
+        target: &Expr,
+        value: &Expr,
+        vt: RType,
+        scope: &mut Scope,
+    ) -> bool {
+        if self.assign_class_attribute(target, value, scope)
+            || self.assign_replacement_target(target, scope)
+        {
+            return false;
+        }
+        self.assign_target(target, vt, scope);
+        true
+    }
+
     pub(crate) fn assign_target(&mut self, target: &Expr, vt: RType, scope: &mut Scope) {
         match target {
             Expr::Ident { name, .. } | Expr::String(name, _) => {
@@ -1295,11 +1311,7 @@ impl Checker {
         match stmt {
             Stmt::Assign { target, value, .. } => {
                 let vt = self.infer(value, scope);
-                if !self.assign_class_attribute(target, value, scope)
-                    && !self.assign_replacement_target(target, scope)
-                {
-                    self.assign_target(target, vt.clone(), scope);
-                }
+                self.try_assign_value(target, value, vt.clone(), scope);
                 vt
             }
             Stmt::Expr(e) => self.infer(e, scope),
@@ -1323,7 +1335,7 @@ impl Checker {
                         span: *span,
                     })
                 });
-                self.infer_if_expr(cond, &then_expr, &else_expr, *span, scope)
+                self.infer_if_expr(cond, &then_expr, &else_expr, scope)
             }
             Stmt::For { .. } | Stmt::While { .. } | Stmt::FunctionDef { .. } => {
                 self.walk_stmt(stmt, scope, None);
@@ -1511,11 +1523,7 @@ impl Checker {
                 // value (invisibly).
                 if matches!(*op, BinOpKind::Assign | BinOpKind::SuperAssign) {
                     let rt = self.infer(rhs, scope);
-                    if !self.assign_class_attribute(lhs, rhs, scope)
-                        && !self.assign_replacement_target(lhs, scope)
-                    {
-                        self.assign_target(lhs, rt.clone(), scope);
-                    }
+                    self.try_assign_value(lhs, rhs, rt.clone(), scope);
                     return rt;
                 }
                 // `:` sequence operator: when both operands are
@@ -1569,26 +1577,19 @@ impl Checker {
                 // strip ALL nested `!` operators and only infer the
                 // innermost operand, so RY021 doesn't fire on the
                 // intermediate `!` applied to a list/function.
-                if matches!(op, UnaryOpKind::Not) {
-                    if let Expr::UnaryOp {
-                        op: UnaryOpKind::Not,
-                        ..
-                    } = expr.as_ref()
-                    {
-                        // Strip all consecutive `!` operators to find
-                        // the innermost real expression.
-                        let mut innermost = expr.as_ref();
-                        while let Expr::UnaryOp {
+                if matches!(op, UnaryOpKind::Not)
+                    && matches!(
+                        expr.as_ref(),
+                        Expr::UnaryOp {
                             op: UnaryOpKind::Not,
-                            expr: next,
                             ..
-                        } = innermost
-                        {
-                            innermost = next.as_ref();
                         }
-                        let _ = self.infer(innermost, scope);
-                        return RType::unknown();
-                    }
+                    )
+                {
+                    // Strip all consecutive `!` operators to find
+                    // the innermost real expression.
+                    let _ = self.infer(recall::strip_negation(expr), scope);
+                    return RType::unknown();
                 }
                 let t = self.infer(expr, scope);
                 // Base R's `Math.data.frame`/`Ops.data.frame` apply unary
@@ -1713,11 +1714,8 @@ impl Checker {
                 }
             }
             Expr::If {
-                cond,
-                then,
-                else_,
-                span,
-            } => self.infer_if_expr(cond, then, else_, *span, scope),
+                cond, then, else_, ..
+            } => self.infer_if_expr(cond, then, else_, scope),
             Expr::Unknown(_) => RType::unknown(),
         }
     }

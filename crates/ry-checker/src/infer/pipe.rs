@@ -259,15 +259,11 @@ impl Checker {
         cond: &Expr,
         then: &Expr,
         else_: &Option<Box<Expr>>,
-        _span: Span,
         scope: &mut Scope,
     ) -> RType {
         // RY103: an `if` used in expression position still requires a
         // length-1 logical condition.
-        self.check_class_equality_operand(cond, scope);
-        let diagnostic_start = self.diagnostics.len();
-        let ct = self.infer(cond, scope);
-        self.emit_condition_diagnostics(cond, ct, scope, diagnostic_start, ConditionContext::If);
+        self.infer_condition(cond, scope, ConditionContext::If);
         // Flow-sensitive type narrowing for the expression form too.
         //
         // Limitation: the branch scopes here are clones, and
@@ -299,12 +295,7 @@ impl Checker {
     /// The result type is the join of all alternative types (since we
     /// can't know which branch will execute at runtime). Each
     /// alternative is also walked for diagnostics.
-    pub(crate) fn infer_switch_call(
-        &mut self,
-        args: &[Arg],
-        scope: &mut Scope,
-        _span: Span,
-    ) -> RType {
+    pub(crate) fn infer_switch_call(&mut self, args: &[Arg], scope: &mut Scope) -> RType {
         // The first argument is the selector; infer it for diagnostics.
         if let Some(first) = args.first() {
             let _ = self.infer(&first.value, scope);
@@ -331,12 +322,7 @@ impl Checker {
     /// `callback_return_type` with the condition object as the
     /// callback's argument (opaque, since we don't model the
     /// condition object).
-    pub(crate) fn infer_trycatch_call(
-        &mut self,
-        args: &[Arg],
-        scope: &mut Scope,
-        _span: Span,
-    ) -> RType {
+    pub(crate) fn infer_trycatch_call(&mut self, args: &[Arg], scope: &mut Scope) -> RType {
         let mut types: Vec<RType> = Vec::new();
         for (i, a) in args.iter().enumerate() {
             if i == 0 {

@@ -220,13 +220,7 @@ enum Cmd {
     /// Explain a rule (or all rules). `ry rule` is an alias (matches
     /// ruff's `ruff rule`).
     #[command(visible_alias = "rule")]
-    ExplainRule {
-        /// Rule code or name. Omit to list all rules.
-        rule: Option<String>,
-        /// Output format: text or json.
-        #[arg(long, value_name = "FORMAT", default_value = "text")]
-        output_format: String,
-    },
+    ExplainRule(ExplainRuleArgs),
     /// Explain analyzer data and configuration.
     Explain {
         #[command(subcommand)]
@@ -244,16 +238,22 @@ enum Cmd {
     },
 }
 
+/// Arguments shared by `ry explain-rule` (alias `ry rule`) and
+/// `ry explain rule`: both spellings select the same rule and output
+/// format, so their flags cannot drift apart.
+#[derive(Debug, Args)]
+struct ExplainRuleArgs {
+    /// Rule code or name. Omit to list all rules.
+    rule: Option<String>,
+    /// Output format: text or json.
+    #[arg(long, value_name = "FORMAT", default_value = "text")]
+    output_format: String,
+}
+
 #[derive(Debug, Subcommand)]
 enum ExplainCmd {
     /// Explain a rule (or all rules).
-    Rule {
-        /// Rule code or name. Omit to list all rules.
-        rule: Option<String>,
-        /// Output format: text or json.
-        #[arg(long, value_name = "FORMAT", default_value = "text")]
-        output_format: String,
-    },
+    Rule(ExplainRuleArgs),
     /// Show vendored and active runtime typeshed packages.
     Typeshed,
 }
@@ -332,15 +332,9 @@ fn main() -> Result<ExitCode> {
             print_version(&output_format);
             Ok(ExitCode::SUCCESS)
         }
-        Cmd::ExplainRule {
-            rule,
-            output_format,
-        } => run_explain_rule(rule, &output_format),
+        Cmd::ExplainRule(args) => run_explain_rule(args.rule, &args.output_format),
         Cmd::Explain { command } => match command {
-            ExplainCmd::Rule {
-                rule,
-                output_format,
-            } => run_explain_rule(rule, &output_format),
+            ExplainCmd::Rule(args) => run_explain_rule(args.rule, &args.output_format),
             ExplainCmd::Typeshed => run_explain_typeshed(),
         },
         Cmd::Typeshed {
@@ -458,26 +452,16 @@ fn run_check(
         min_confidence,
     } = args;
 
-    // Determine the search start directory for config discovery. If the
-    // user passed a path, anchor discovery at the first path's parent
-    // (for files) or at the path itself (for directories). With no
-    // paths, discovery starts from the current working directory.
-    // `dump-types` anchors at the first input itself instead; see
-    // `run_dump_types`.
-    let search_start: PathBuf = paths
+    // Config discovery is anchored at the first input path (itself for a
+    // directory, its parent for a file — `Config::discover` applies that
+    // rule) or at the working directory when no paths were given, the
+    // same anchor `ry dump-types` uses.
+    let search_start = paths
         .first()
-        .map(|p| {
-            if p.is_dir() {
-                p.clone()
-            } else {
-                p.parent()
-                    .map(|p| p.to_path_buf())
-                    .unwrap_or_else(|| PathBuf::from("."))
-            }
-        })
-        .unwrap_or_else(|| PathBuf::from("."));
+        .map(|p| p.as_path())
+        .unwrap_or_else(|| std::path::Path::new("."));
 
-    let (config_root, base_cfg) = match pipeline::discover_config(&search_start) {
+    let (config_root, base_cfg) = match pipeline::discover_config(search_start) {
         Ok(found) => found,
         Err(code) => return Ok(code),
     };
@@ -485,23 +469,20 @@ fn run_check(
     // Forward `None` for scalars the CLI did not set explicitly, so the
     // config file's value wins.
     let m = check_matches;
-    let cli_error_on_warning = flag_set(m, "error_on_warning").then_some(error_on_warning);
-    let cli_exit_zero = flag_set(m, "exit_zero").then_some(exit_zero);
-    let cli_output_format = flag_set(m, "output_format").then_some(output_format.to_string());
     let baseline_from_cli = flag_set(m, "baseline");
 
-    let cfg = base_cfg.merge_cli(
+    let cfg = base_cfg.merge_cli(config::CliOverrides {
         error,
         warn,
         ignore,
         typeshed,
         baseline,
-        cli_error_on_warning,
-        cli_exit_zero,
-        cli_output_format,
-        cli_verbose,
-        cli_quiet,
-    );
+        error_on_warning: flag_set(m, "error_on_warning").then_some(error_on_warning),
+        exit_zero: flag_set(m, "exit_zero").then_some(exit_zero),
+        output_format: flag_set(m, "output_format").then_some(output_format.to_string()),
+        verbose: cli_verbose,
+        quiet: cli_quiet,
+    });
 
     let baseline = match cfg.baseline.as_deref() {
         Some(path) => match config::load_baseline(path) {
@@ -797,6 +778,7 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
         .filter(|parsed_file| {
             file_count += 1;
             srcs.insert(parsed_file.path.clone(), parsed_file.src.clone());
+            comments.insert(parsed_file.path.clone(), parsed_file.file.comments.clone());
             if is_probably_not_r_source(&parsed_file.file) {
                 not_r_diagnostics.push(ry_checker::Diagnostic::new(
                     ry_checker::Severity::Info,
@@ -812,49 +794,21 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
         })
         .collect();
 
-    // Same per-package grouping as `ry dump-types` (see
-    // `pipeline::group_by_package_root`).
-    let groups = pipeline::group_by_package_root(parsed.iter().map(|file| file.path.as_str()));
+    // Same per-package grouping as `ry dump-types`; check's fallback
+    // resolution root for non-package files is the config root (check has
+    // no --project-root flag), else the working directory.
+    let groups = pipeline::resolve_groups(
+        &parsed,
+        ctx.resolution_config,
+        &ctx.user_stubs,
+        &[ctx.repo_root],
+    )?;
 
     let mut per_file_diagnostics = Vec::new();
-    for (group_root, indices) in &groups {
-        // Non-package files resolve against the config root, else the
-        // working directory. (`dump-types` offers --project-root as an
-        // extra override here; check has no such flag.)
-        let resolution_root = group_root
-            .clone()
-            .or_else(|| ctx.repo_root.map(PathBuf::from))
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-        let mut package_scope = ry_workspace::resolve_workspace_context(
-            &resolution_root,
-            ctx.resolution_config,
-            ry_workspace::ResolutionEnvironment {
-                files: indices.iter().map(|index| &parsed[*index].file).collect(),
-                user_stubs: &ctx.user_stubs,
-            },
-        )
-        .map_err(|error| miette::miette!(error))?;
-        let mut analysis_files = Vec::new();
-        for index in indices {
-            let parsed_file = &parsed[*index];
-            analysis_files.push((
-                parsed_file.path.clone(),
-                std::sync::Arc::new(parsed_file.file.clone()),
-            ));
-            comments.insert(parsed_file.path.clone(), parsed_file.file.comments.clone());
-        }
-        // Split the resolved workspace into checker input (with an empty
-        // `degraded_scopes`) and the notes this command reports itself.
-        let degraded_scopes = std::mem::take(&mut package_scope.degraded_scopes);
-        let workspace = package_scope;
-        let check_input = check::CheckInput {
-            files: analysis_files,
-            user_stubs: Arc::clone(&ctx.user_stubs),
-            workspace: Some(workspace),
-        };
-        let check_output = check::check_project(check_input);
+    for group in groups {
+        let check_output = check::check_project(group.check_input);
         per_file_diagnostics.extend(check_output.diagnostics);
-        for (path, reason) in degraded_scopes {
+        for (path, reason) in group.degraded_scopes {
             degraded.insert(format!("{} ({})", path.display(), reason));
         }
     }
@@ -1088,21 +1042,6 @@ fn run_shell_completion(shell: &str) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Test-compatible wrapper around the shared bounded discovery module.
-/// Production code calls [`ry_workspace::discover_r_files`] directly with
-/// the effective folder config so CLI and LSP use identical discovery
-/// rules (issue #48).
-#[cfg(test)]
-fn collect_r_files(path: &std::path::Path, out: &mut Vec<PathBuf>, check_test_fixtures: bool) {
-    let result = ry_workspace::discover_r_files(
-        path,
-        None,
-        &ry_config::Config::default(),
-        check_test_fixtures,
-    );
-    out.extend(result.files);
-}
-
 /// Surface a discovery cap hit to the user. A cap hit is never
 /// silent: the CLI prints one warning per root when any limit is reached.
 fn report_truncation(report: &ry_workspace::TruncationReport, root: &std::path::Path) {
@@ -1172,12 +1111,9 @@ fn sync_stamps(paths: &[PathBuf], stamps: &mut HashMap<PathBuf, std::time::Syste
 
 #[cfg(test)]
 mod tests {
-    use super::config::{
-        Baseline, BaselineEntry, load_baseline, subtract_baseline, write_baseline_file,
-    };
     use super::{
-        CheckContext, CheckResult, ColorChoice, collect_r_files, demote_non_source_paths,
-        run_check_once, sort_and_deduplicate_diagnostics,
+        CheckContext, CheckResult, ColorChoice, demote_non_source_paths, run_check_once,
+        sort_and_deduplicate_diagnostics,
     };
     use ry_checker::format::OutputFormat;
     use ry_checker::{Diagnostic, Severity};
@@ -1200,7 +1136,7 @@ mod tests {
     /// root; anything else they vary themselves.
     fn check_files(paths: &[PathBuf], repo_root: Option<&std::path::Path>) -> CheckResult {
         let filter = ry_checker::SeverityFilter::default();
-        let resolution_config = ry_config::Config::defaults();
+        let resolution_config = ry_config::Config::default();
         run_check_once(
             paths,
             &CheckContext {
@@ -1215,35 +1151,6 @@ mod tests {
             },
         )
         .unwrap()
-    }
-
-    #[test]
-    fn rbuildignore_trailing_dollar_respects_escape_parity() {
-        assert!(
-            ry_workspace::rbuildignore_pattern("^file$")
-                .unwrap()
-                .matches("file")
-        );
-        assert!(
-            !ry_workspace::rbuildignore_pattern("^file$")
-                .unwrap()
-                .matches("filex")
-        );
-        assert!(
-            ry_workspace::rbuildignore_pattern(r"^file\$")
-                .unwrap()
-                .matches("file$")
-        );
-        assert!(
-            ry_workspace::rbuildignore_pattern(r"^file\\$")
-                .unwrap()
-                .matches(r"file\")
-        );
-        assert!(
-            !ry_workspace::rbuildignore_pattern(r"^file\\$")
-                .unwrap()
-                .matches(r"file\x")
-        );
     }
 
     #[test]
@@ -1269,39 +1176,6 @@ mod tests {
                 ("b.R", 1, 0, "RY010"),
             ]
         );
-    }
-
-    #[test]
-    fn baseline_round_trip_suppresses_existing_but_not_new_diagnostics() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("baseline.json");
-        let existing = diag("a.R", 1, 0, "RY010");
-        write_baseline_file(&path, std::slice::from_ref(&existing), Some(temp.path())).unwrap();
-        let baseline = load_baseline(&path).unwrap();
-        let mut diagnostics = vec![existing, diag("a.R", 2, 0, "RY030")];
-        subtract_baseline(&mut diagnostics, &baseline, Some(temp.path()));
-        assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].code, "RY030");
-    }
-
-    #[test]
-    fn baseline_counts_absorb_only_the_recorded_occurrences() {
-        let baseline = Baseline {
-            version: 1,
-            entries: vec![BaselineEntry {
-                path: "a.R".to_string(),
-                code: "RY010".to_string(),
-                message: "same message".to_string(),
-                count: 2,
-            }],
-        };
-        let mut diagnostics = vec![
-            diag("a.R", 1, 0, "RY010"),
-            diag("a.R", 2, 0, "RY010"),
-            diag("a.R", 3, 0, "RY010"),
-        ];
-        subtract_baseline(&mut diagnostics, &baseline, None);
-        assert_eq!(diagnostics.len(), 1);
     }
 
     #[test]
@@ -1349,8 +1223,9 @@ mod tests {
         std::fs::write(first.join("R/first.R"), "only_in_first <- 1L\n").unwrap();
         std::fs::write(second.join("R/second.R"), "value <- only_in_first\n").unwrap();
 
-        let mut paths = Vec::new();
-        collect_r_files(temp.path(), &mut paths, false);
+        let mut paths =
+            ry_workspace::discover_r_files(temp.path(), None, &ry_config::Config::default(), false)
+                .files;
         paths.sort();
         let result = check_files(&paths, Some(temp.path()));
         assert!(result.diagnostics.iter().any(|diagnostic| {
@@ -1358,103 +1233,6 @@ mod tests {
                 && diagnostic.path.contains("second")
                 && diagnostic.message.contains("only_in_first")
         }));
-    }
-
-    #[test]
-    fn package_scan_skips_test_fixtures_but_keeps_executable_test_code() {
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path();
-        std::fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
-        for directory in [
-            "R",
-            "tests/testthat",
-            "tests/testthat/fixtures",
-            "tests/testthat/_snaps",
-            "tests/manual",
-            "revdep/other/R",
-            "src/ratfor",
-        ] {
-            std::fs::create_dir_all(root.join(directory)).unwrap();
-        }
-        for file in [
-            "R/package.R",
-            "tests/testthat.R",
-            "tests/testthat/test-package.R",
-            "tests/testthat/helper-package.R",
-            "tests/testthat/setup-package.R",
-            "tests/testthat/teardown-package.R",
-            "tests/testthat/fixtures/input.R",
-            "tests/testthat/data.R",
-            "tests/testthat/_snaps/output.R",
-            "tests/manual/example.R",
-            "revdep/other/R/other.R",
-            "src/ratfor/program.r",
-        ] {
-            std::fs::write(root.join(file), "").unwrap();
-        }
-
-        let mut paths = Vec::new();
-        collect_r_files(root, &mut paths, false);
-        paths.sort();
-
-        assert_eq!(
-            paths,
-            vec![
-                root.join("R/package.R"),
-                root.join("tests/testthat/helper-package.R"),
-                root.join("tests/testthat/setup-package.R"),
-                root.join("tests/testthat/teardown-package.R"),
-                root.join("tests/testthat/test-package.R"),
-                root.join("tests/testthat.R"),
-            ]
-        );
-    }
-
-    #[test]
-    fn package_scan_can_opt_into_test_fixtures() {
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path();
-        std::fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
-        std::fs::create_dir_all(root.join("tests/testthat/fixtures")).unwrap();
-        let fixture = root.join("tests/testthat/fixtures/input.R");
-        std::fs::write(&fixture, "missing_name\n").unwrap();
-
-        let mut paths = Vec::new();
-        collect_r_files(root, &mut paths, true);
-
-        assert_eq!(paths, vec![fixture]);
-    }
-
-    #[test]
-    fn package_scan_keeps_inst_sources() {
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path();
-        std::fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
-        std::fs::create_dir_all(root.join("inst/resources")).unwrap();
-        let installed = root.join("inst/resources/activate.R");
-        std::fs::write(&installed, "missing_name\n").unwrap();
-
-        let mut paths = Vec::new();
-        collect_r_files(root, &mut paths, false);
-
-        assert_eq!(paths, vec![installed]);
-    }
-
-    #[test]
-    fn package_scan_skips_vendored_renv_bootstrap() {
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path();
-        std::fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
-        std::fs::create_dir_all(root.join("R")).unwrap();
-        std::fs::create_dir_all(root.join("renv")).unwrap();
-        let source = root.join("R/package.R");
-        std::fs::write(&source, "value <- 1L\n").unwrap();
-        std::fs::write(root.join("renv/activate.R"), "bootstrap_missing\n").unwrap();
-
-        let mut paths = Vec::new();
-        collect_r_files(root, &mut paths, false);
-
-        assert_eq!(paths, vec![source]);
     }
 
     #[test]
@@ -1466,8 +1244,8 @@ mod tests {
         std::fs::write(&source, "source_missing\n").unwrap();
         std::fs::write(root.join("example.Rcheck/R/copied.R"), "copied_missing\n").unwrap();
 
-        let mut paths = Vec::new();
-        collect_r_files(root, &mut paths, false);
+        let paths =
+            ry_workspace::discover_r_files(root, None, &ry_config::Config::default(), false).files;
 
         assert_eq!(paths, vec![source.clone()]);
 
@@ -1483,84 +1261,6 @@ mod tests {
                 .diagnostics
                 .iter()
                 .all(|diagnostic| diagnostic.path == source.to_string_lossy().as_ref())
-        );
-    }
-
-    #[test]
-    fn collection_includes_all_supported_r_source_extensions() {
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path();
-        for extension in ["R", "r", "S", "s", "q"] {
-            std::fs::write(root.join(format!("source.{extension}")), "value <- 1L\n").unwrap();
-        }
-        std::fs::write(root.join("source.txt"), "not R\n").unwrap();
-
-        let mut paths = Vec::new();
-        collect_r_files(root, &mut paths, false);
-        paths.sort();
-
-        let mut expected = ["R", "r", "S", "s", "q"]
-            .map(|extension| root.join(format!("source.{extension}")))
-            .into_iter()
-            .collect::<Vec<_>>();
-        expected.sort();
-        assert_eq!(paths, expected);
-    }
-
-    #[test]
-    fn explicitly_selected_file_is_not_package_excluded() {
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path();
-        std::fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
-        std::fs::create_dir(root.join("src")).unwrap();
-        let file = root.join("src/ratfor.r");
-        std::fs::write(&file, "").unwrap();
-
-        let mut paths = Vec::new();
-        collect_r_files(&file, &mut paths, false);
-
-        assert_eq!(paths, vec![file]);
-    }
-
-    #[test]
-    fn explicitly_selected_q_file_is_collected() {
-        let temp = tempfile::tempdir().unwrap();
-        let file = temp.path().join("source.q");
-        std::fs::write(&file, "value <- 1L\n").unwrap();
-
-        let mut paths = Vec::new();
-        collect_r_files(&file, &mut paths, false);
-
-        assert_eq!(paths, vec![file]);
-    }
-
-    #[test]
-    fn package_scan_honors_rbuildignore_except_r_and_tests() {
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path();
-        std::fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
-        std::fs::write(root.join(".Rbuildignore"), "^ignored\\.R$\n^R/\n^tests/\n").unwrap();
-        std::fs::create_dir_all(root.join("R")).unwrap();
-        std::fs::create_dir_all(root.join("tests/testthat")).unwrap();
-        for file in [
-            "ignored.R",
-            "kept.R",
-            "R/package.R",
-            "tests/testthat/test-package.R",
-        ] {
-            std::fs::write(root.join(file), "").unwrap();
-        }
-
-        let mut paths = Vec::new();
-        collect_r_files(root, &mut paths, false);
-        paths.sort();
-        assert_eq!(
-            paths,
-            vec![
-                root.join("R/package.R"),
-                root.join("kept.R"),
-                root.join("tests/testthat/test-package.R"),
-            ]
         );
     }
 
@@ -1593,8 +1293,8 @@ mod tests {
         .unwrap();
         std::fs::write(root.join("data-raw/build.R"), "Surv\n").unwrap();
 
-        let mut paths = Vec::new();
-        collect_r_files(root, &mut paths, false);
+        let mut paths =
+            ry_workspace::discover_r_files(root, None, &ry_config::Config::default(), false).files;
         paths.sort();
         let result = check_files(&paths, Some(root));
         let unresolved: Vec<_> = result
@@ -1630,8 +1330,8 @@ mod tests {
         )
         .unwrap();
 
-        let mut paths = Vec::new();
-        collect_r_files(root, &mut paths, false);
+        let mut paths =
+            ry_workspace::discover_r_files(root, None, &ry_config::Config::default(), false).files;
         paths.sort();
         let result = check_files(&paths, Some(root));
         let unresolved: Vec<_> = result

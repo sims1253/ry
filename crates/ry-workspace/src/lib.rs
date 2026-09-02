@@ -117,6 +117,9 @@ pub fn resolve_workspace_context<'a>(
     let mut export_cache: HashMap<String, HashSet<String>> = HashMap::new();
     let mut dataset_cache: HashMap<PathBuf, DataInventory> = HashMap::new();
     let mut source_binding_cache: HashMap<PathBuf, SourceBindings> = HashMap::new();
+    // A package root is visited once per file in it, so cache the
+    // DESCRIPTION read like the sibling namespace/dataset caches.
+    let mut description_cache: HashMap<PathBuf, DescriptionPackages> = HashMap::new();
     let mut attached = HashSet::new();
     let mut bare_attached = HashMap::new();
     let mut bindings = HashMap::new();
@@ -201,7 +204,13 @@ pub fn resolve_workspace_context<'a>(
                 // Packages that rely on DESCRIPTION Depends may omit a
                 // NAMESPACE (Quarto/Shiny projects commonly do). Depends are
                 // attached before package code runs, unlike Imports.
-                file_attached.extend(read_description_packages(&root).depends);
+                file_attached.extend(
+                    description_cache
+                        .entry(root.clone())
+                        .or_insert_with(|| read_description_packages(&root))
+                        .depends
+                        .clone(),
+                );
             }
             if source_package_lazy_data(&root) {
                 let datasets = dataset_cache
@@ -237,7 +246,10 @@ pub fn resolve_workspace_context<'a>(
                 // DESCRIPTION Suggests as their working set. Imports remain
                 // excluded: they only provide bare names through explicit
                 // NAMESPACE directives.
-                let dependencies = read_description_packages(&root);
+                let dependencies = description_cache
+                    .entry(root.clone())
+                    .or_insert_with(|| read_description_packages(&root))
+                    .clone();
                 let test_dependencies = dependencies
                     .depends
                     .into_iter()
@@ -442,7 +454,7 @@ fn collect_dynamic_bindings_stmts(stmts: &[Stmt], found: &mut SourceBindings) {
     });
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct DescriptionPackages {
     depends: HashSet<String>,
     suggests: HashSet<String>,
@@ -1809,6 +1821,185 @@ mod shared_tests {
             result.files.len(),
             5,
             "R, r, S, s, q discovered; .txt excluded"
+        );
+    }
+
+    #[test]
+    fn collection_includes_all_supported_r_source_extensions() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        for extension in ["R", "r", "S", "s", "q"] {
+            std::fs::write(root.join(format!("source.{extension}")), "value <- 1L\n").unwrap();
+        }
+        std::fs::write(root.join("source.txt"), "not R\n").unwrap();
+
+        let mut paths = discover_r_files(root, None, &ry_config::Config::default(), false).files;
+        paths.sort();
+
+        let mut expected = ["R", "r", "S", "s", "q"]
+            .map(|extension| root.join(format!("source.{extension}")))
+            .into_iter()
+            .collect::<Vec<_>>();
+        expected.sort();
+        assert_eq!(paths, expected);
+    }
+
+    #[test]
+    fn package_scan_skips_test_fixtures_but_keeps_executable_test_code() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
+        for directory in [
+            "R",
+            "tests/testthat",
+            "tests/testthat/fixtures",
+            "tests/testthat/_snaps",
+            "tests/manual",
+            "revdep/other/R",
+            "src/ratfor",
+        ] {
+            std::fs::create_dir_all(root.join(directory)).unwrap();
+        }
+        for file in [
+            "R/package.R",
+            "tests/testthat.R",
+            "tests/testthat/test-package.R",
+            "tests/testthat/helper-package.R",
+            "tests/testthat/setup-package.R",
+            "tests/testthat/teardown-package.R",
+            "tests/testthat/fixtures/input.R",
+            "tests/testthat/data.R",
+            "tests/testthat/_snaps/output.R",
+            "tests/manual/example.R",
+            "revdep/other/R/other.R",
+            "src/ratfor/program.r",
+        ] {
+            std::fs::write(root.join(file), "").unwrap();
+        }
+
+        let paths = discover_r_files(root, None, &ry_config::Config::default(), false).files;
+
+        assert_eq!(
+            paths,
+            vec![
+                root.join("R/package.R"),
+                root.join("tests/testthat/helper-package.R"),
+                root.join("tests/testthat/setup-package.R"),
+                root.join("tests/testthat/teardown-package.R"),
+                root.join("tests/testthat/test-package.R"),
+                root.join("tests/testthat.R"),
+            ]
+        );
+    }
+
+    #[test]
+    fn package_scan_can_opt_into_test_fixtures() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
+        std::fs::create_dir_all(root.join("tests/testthat/fixtures")).unwrap();
+        let fixture = root.join("tests/testthat/fixtures/input.R");
+        std::fs::write(&fixture, "missing_name\n").unwrap();
+
+        let paths = discover_r_files(root, None, &ry_config::Config::default(), true).files;
+
+        assert_eq!(paths, vec![fixture]);
+    }
+
+    #[test]
+    fn package_scan_keeps_inst_sources() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
+        std::fs::create_dir_all(root.join("inst/resources")).unwrap();
+        let installed = root.join("inst/resources/activate.R");
+        std::fs::write(&installed, "missing_name\n").unwrap();
+
+        let paths = discover_r_files(root, None, &ry_config::Config::default(), false).files;
+
+        assert_eq!(paths, vec![installed]);
+    }
+
+    #[test]
+    fn package_scan_skips_vendored_renv_bootstrap() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
+        std::fs::create_dir_all(root.join("R")).unwrap();
+        std::fs::create_dir_all(root.join("renv")).unwrap();
+        let source = root.join("R/package.R");
+        std::fs::write(&source, "value <- 1L\n").unwrap();
+        std::fs::write(root.join("renv/activate.R"), "bootstrap_missing\n").unwrap();
+
+        let paths = discover_r_files(root, None, &ry_config::Config::default(), false).files;
+
+        assert_eq!(paths, vec![source]);
+    }
+
+    #[test]
+    fn explicitly_selected_file_is_not_package_excluded() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
+        std::fs::create_dir(root.join("src")).unwrap();
+        let file = root.join("src/ratfor.r");
+        std::fs::write(&file, "").unwrap();
+
+        let paths = discover_r_files(&file, None, &ry_config::Config::default(), false).files;
+
+        assert_eq!(paths, vec![file]);
+    }
+
+    #[test]
+    fn explicitly_selected_q_file_is_collected() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("source.q");
+        std::fs::write(&file, "value <- 1L\n").unwrap();
+
+        let paths = discover_r_files(&file, None, &ry_config::Config::default(), false).files;
+
+        assert_eq!(paths, vec![file]);
+    }
+
+    #[test]
+    fn package_scan_honors_rbuildignore_except_r_and_tests() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
+        std::fs::write(root.join(".Rbuildignore"), "^ignored\\.R$\n^R/\n^tests/\n").unwrap();
+        std::fs::create_dir_all(root.join("R")).unwrap();
+        std::fs::create_dir_all(root.join("tests/testthat")).unwrap();
+        for file in [
+            "ignored.R",
+            "kept.R",
+            "R/package.R",
+            "tests/testthat/test-package.R",
+        ] {
+            std::fs::write(root.join(file), "").unwrap();
+        }
+
+        let mut paths = discover_r_files(root, None, &ry_config::Config::default(), false).files;
+        paths.sort();
+        assert_eq!(
+            paths,
+            vec![
+                root.join("R/package.R"),
+                root.join("kept.R"),
+                root.join("tests/testthat/test-package.R"),
+            ]
+        );
+    }
+
+    #[test]
+    fn rbuildignore_trailing_dollar_respects_escape_parity() {
+        assert!(rbuildignore_pattern("^file$").unwrap().matches("file"));
+        assert!(!rbuildignore_pattern("^file$").unwrap().matches("filex"));
+        assert!(rbuildignore_pattern(r"^file\$").unwrap().matches("file$"));
+        assert!(rbuildignore_pattern(r"^file\\$").unwrap().matches(r"file\"));
+        assert!(
+            !rbuildignore_pattern(r"^file\\$")
+                .unwrap()
+                .matches(r"file\x")
         );
     }
 }

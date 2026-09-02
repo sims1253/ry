@@ -46,7 +46,7 @@ pub(crate) fn byte_offset_to_position(text: &str, byte_offset: usize) -> Positio
 /// Number of UTF-16 code units a Unicode scalar value encodes to: 1 for
 /// the Basic Multilingual Plane, 2 for astral-plane characters (which
 /// become a surrogate pair).
-pub(crate) fn utf16_len(ch: char) -> usize {
+fn utf16_len(ch: char) -> usize {
     if (ch as u32) >= 0x10000 { 2 } else { 1 }
 }
 
@@ -84,13 +84,4 @@ pub(crate) fn position_to_byte_offset(text: &str, line: u32, utf16_col: u32) -> 
     } else {
         None
     }
-}
-
-/// Map an LSP `Position` to a byte offset. Wrapper over the line/col
-/// variant for callers that hold a `Position`. Returns `None` when the
-/// position does not fall inside the text (line past the end of the
-/// file, or a column past the end of its line), so callers can report
-/// "no result" instead of silently resolving against the last byte.
-pub(crate) fn position_to_byte_offset_pos(text: &str, position: Position) -> Option<usize> {
-    position_to_byte_offset(text, position.line, position.character)
 }

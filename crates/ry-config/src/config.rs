@@ -143,24 +143,8 @@ pub struct Config {
 }
 
 impl Default for Config {
-    /// Same as [`Config::defaults`].
-    fn default() -> Self {
-        Self::defaults()
-    }
-}
-
-/// serde default for `Config::output_format`. Kept as a free function
-/// because `#[serde(default = "...")]` requires a path, not a closure.
-/// Without this, the struct-level `#[serde(default)]` would fill a
-/// missing `output-format` with the `String` default (empty string)
-/// rather than `"full"`.
-fn default_output_format() -> String {
-    DEFAULT_OUTPUT_FORMAT.to_string()
-}
-
-impl Config {
     /// Built-in defaults, as if no config file were present.
-    pub fn defaults() -> Self {
+    fn default() -> Self {
         Self {
             error_on_warning: false,
             exit_zero: false,
@@ -183,7 +167,18 @@ impl Config {
             index: IndexConfig::default(),
         }
     }
+}
 
+/// serde default for `Config::output_format`. Kept as a free function
+/// because `#[serde(default = "...")]` requires a path, not a closure.
+/// Without this, the struct-level `#[serde(default)]` would fill a
+/// missing `output-format` with the `String` default (empty string)
+/// rather than `"full"`.
+fn default_output_format() -> String {
+    DEFAULT_OUTPUT_FORMAT.to_string()
+}
+
+impl Config {
     /// Try to load a `ry.toml` from the given directory.
     ///
     /// Returns `Ok(Some(config))` if the file exists and parses
@@ -287,7 +282,39 @@ impl Config {
             }
         }
     }
+}
 
+/// CLI flag values that override (or extend) a loaded `ry.toml`.
+///
+/// Every field is empty/unset by default, which means "the CLI did not
+/// touch this; keep the config value". The list fields append to the
+/// config's lists; the scalar fields install only when `Some`; the
+/// verbosity counts add on top of the config's.
+#[derive(Debug, Default)]
+pub struct CliOverrides {
+    /// Rules to treat as errors (`--error`).
+    pub error: Vec<String>,
+    /// Rules to treat as warnings (`--warn`).
+    pub warn: Vec<String>,
+    /// Rules to disable (`--ignore`).
+    pub ignore: Vec<String>,
+    /// Extra typeshed directories (`--typeshed`).
+    pub typeshed: Vec<PathBuf>,
+    /// Baseline file (`--baseline`); wins over a config `baseline`.
+    pub baseline: Option<PathBuf>,
+    /// `--error-on-warning`, when the flag was passed explicitly.
+    pub error_on_warning: Option<bool>,
+    /// `--exit-zero`, when the flag was passed explicitly.
+    pub exit_zero: Option<bool>,
+    /// `--output-format`, when the flag was passed explicitly.
+    pub output_format: Option<String>,
+    /// `-v` count; added to the config's `verbose`.
+    pub verbose: u8,
+    /// `-q` count; added to the config's `quiet`.
+    pub quiet: u8,
+}
+
+impl Config {
     /// Merge CLI overrides into this config, returning a new `Config`.
     ///
     /// List fields (`error`, `warn`, `ignore`) have the CLI values
@@ -299,35 +326,22 @@ impl Config {
     /// `verbose` and `quiet` are additive: the CLI count is added on
     /// top of the config count, so `verbose = 1` in `ry.toml` plus a
     /// single `-v` flag yields a final count of 2.
-    #[allow(clippy::too_many_arguments)]
-    pub fn merge_cli(
-        self,
-        cli_errors: Vec<String>,
-        cli_warns: Vec<String>,
-        cli_ignores: Vec<String>,
-        cli_typeshed: Vec<PathBuf>,
-        cli_baseline: Option<PathBuf>,
-        cli_error_on_warning: Option<bool>,
-        cli_exit_zero: Option<bool>,
-        cli_output_format: Option<String>,
-        cli_verbose: u8,
-        cli_quiet: u8,
-    ) -> Self {
+    pub fn merge_cli(self, cli: CliOverrides) -> Self {
         let mut errors = self.error;
-        errors.extend(cli_errors);
+        errors.extend(cli.error);
         let mut warns = self.warn;
-        warns.extend(cli_warns);
+        warns.extend(cli.warn);
         let mut ignores = self.ignore;
-        ignores.extend(cli_ignores);
+        ignores.extend(cli.ignore);
         let mut typeshed = self.typeshed;
-        typeshed.extend(cli_typeshed);
+        typeshed.extend(cli.typeshed);
 
-        let output_format = cli_output_format.unwrap_or(self.output_format);
-        let baseline = cli_baseline.or(self.baseline);
+        let output_format = cli.output_format.unwrap_or(self.output_format);
+        let baseline = cli.baseline.or(self.baseline);
 
         Self {
-            error_on_warning: cli_error_on_warning.unwrap_or(self.error_on_warning),
-            exit_zero: cli_exit_zero.unwrap_or(self.exit_zero),
+            error_on_warning: cli.error_on_warning.unwrap_or(self.error_on_warning),
+            exit_zero: cli.exit_zero.unwrap_or(self.exit_zero),
             error: errors,
             warn: warns,
             ignore: ignores,
@@ -338,8 +352,8 @@ impl Config {
             output_format,
             // Saturating add so a config value of 255 plus a CLI flag
             // stays within u8 rather than panicking on overflow.
-            verbose: self.verbose.saturating_add(cli_verbose),
-            quiet: self.quiet.saturating_add(cli_quiet),
+            verbose: self.verbose.saturating_add(cli.verbose),
+            quiet: self.quiet.saturating_add(cli.quiet),
             // Config-only (no CLI flag): passes through unchanged.
             packages: self.packages,
             globals: self.globals,
@@ -430,7 +444,7 @@ mod tests {
 
     #[test]
     fn defaults_match_expectations() {
-        let d = Config::defaults();
+        let d = Config::default();
         assert!(!d.error_on_warning);
         assert!(!d.exit_zero);
         assert!(d.error.is_empty());
@@ -539,20 +553,13 @@ paths = ["inst/shiny/**"]
         let cfg = Config {
             typeshed: vec![PathBuf::from("config-stubs")],
             baseline: Some(PathBuf::from("config-baseline.json")),
-            ..Config::defaults()
+            ..Config::default()
         };
-        let merged = cfg.merge_cli(
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            vec![PathBuf::from("cli-stubs")],
-            Some(PathBuf::from("cli-baseline.json")),
-            None,
-            None,
-            None,
-            0,
-            0,
-        );
+        let merged = cfg.merge_cli(CliOverrides {
+            typeshed: vec![PathBuf::from("cli-stubs")],
+            baseline: Some(PathBuf::from("cli-baseline.json")),
+            ..CliOverrides::default()
+        });
         // Typeshed appends config and CLI entries.
         assert_eq!(
             merged.typeshed,
@@ -568,20 +575,13 @@ paths = ["inst/shiny/**"]
             error: vec!["RY001".to_string()],
             warn: vec!["RY002".to_string()],
             ignore: vec!["RY010".to_string()],
-            ..Config::defaults()
+            ..Config::default()
         };
-        let merged = cfg.merge_cli(
-            vec!["RY040".to_string()],
-            vec![],
-            vec!["RY050".to_string()],
-            Vec::new(),
-            None,
-            None,
-            None,
-            None,
-            0,
-            0,
-        );
+        let merged = cfg.merge_cli(CliOverrides {
+            error: vec!["RY040".to_string()],
+            ignore: vec!["RY050".to_string()],
+            ..CliOverrides::default()
+        });
         assert_eq!(merged.error, vec!["RY001", "RY040"]);
         assert_eq!(merged.warn, vec!["RY002"]);
         assert_eq!(merged.ignore, vec!["RY010", "RY050"]);
@@ -593,20 +593,14 @@ paths = ["inst/shiny/**"]
             error_on_warning: false,
             exit_zero: false,
             output_format: "concise".to_string(),
-            ..Config::defaults()
+            ..Config::default()
         };
-        let merged = cfg.merge_cli(
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            None,
-            Some(true),
-            Some(true),
-            Some("json".to_string()),
-            0,
-            0,
-        );
+        let merged = cfg.merge_cli(CliOverrides {
+            error_on_warning: Some(true),
+            exit_zero: Some(true),
+            output_format: Some("json".to_string()),
+            ..CliOverrides::default()
+        });
         assert!(merged.error_on_warning);
         assert!(merged.exit_zero);
         assert_eq!(merged.output_format, "json");
@@ -622,20 +616,9 @@ paths = ["inst/shiny/**"]
             output_format: "json".to_string(),
             verbose: 2,
             quiet: 1,
-            ..Config::defaults()
+            ..Config::default()
         };
-        let merged = cfg.merge_cli(
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            None,
-            None,
-            None,
-            None,
-            0,
-            0,
-        );
+        let merged = cfg.merge_cli(CliOverrides::default());
         assert!(merged.error_on_warning);
         assert!(merged.exit_zero);
         assert_eq!(merged.output_format, "json");
@@ -648,20 +631,13 @@ paths = ["inst/shiny/**"]
         let cfg = Config {
             verbose: 1,
             quiet: 1,
-            ..Config::defaults()
+            ..Config::default()
         };
-        let merged = cfg.merge_cli(
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            None,
-            None,
-            None,
-            None,
-            2,
-            3,
-        );
+        let merged = cfg.merge_cli(CliOverrides {
+            verbose: 2,
+            quiet: 3,
+            ..CliOverrides::default()
+        });
         assert_eq!(merged.verbose, 3);
         assert_eq!(merged.quiet, 4);
     }
@@ -670,20 +646,12 @@ paths = ["inst/shiny/**"]
     fn merge_cli_verbose_saturates() {
         let cfg = Config {
             verbose: 250,
-            ..Config::defaults()
+            ..Config::default()
         };
-        let merged = cfg.merge_cli(
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            None,
-            None,
-            None,
-            None,
-            10,
-            0,
-        );
+        let merged = cfg.merge_cli(CliOverrides {
+            verbose: 10,
+            ..CliOverrides::default()
+        });
         assert_eq!(merged.verbose, 255);
     }
 
@@ -797,7 +765,7 @@ paths = ["inst/shiny/**"]
                 "tests/fixtures/**".to_string(),
                 "**/_snapshots/**".to_string(),
             ],
-            ..Config::defaults()
+            ..Config::default()
         };
         let ex = Excludes::from_config(&cfg);
         assert!(!ex.is_empty());
@@ -814,7 +782,7 @@ paths = ["inst/shiny/**"]
         // required form. This test records that constraint.
         let ex = Excludes::from_config(&Config {
             exclude: vec!["tests/fixtures".to_string()],
-            ..Config::defaults()
+            ..Config::default()
         });
         assert!(ex.matches("tests/fixtures"));
         assert!(!ex.matches("tests/fixtures/a.R"));
@@ -826,7 +794,7 @@ paths = ["inst/shiny/**"]
         // rather than panic. The matcher ends up with zero patterns.
         let ex = Excludes::from_config(&Config {
             exclude: vec!["[unclosed".to_string()],
-            ..Config::defaults()
+            ..Config::default()
         });
         assert!(ex.is_empty());
         assert!(!ex.matches("anything"));

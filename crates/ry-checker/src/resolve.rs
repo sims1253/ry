@@ -42,16 +42,12 @@ impl Checker {
     /// form of the "walk candidate packages, keep the ones actually
     /// attached" rung that every ladder below used to hand-roll.
     pub(crate) fn candidate_packages(&self, gate: AttachedGate) -> impl Iterator<Item = &str> + '_ {
-        self.available_package_names().filter(move |package| {
-            let attached = match gate {
-                AttachedGate::Bare => self.bare_loaded.contains(*package),
-                AttachedGate::SchemaNse => {
-                    self.loaded.contains(*package)
-                        || (self.loaded.contains("tidyverse")
-                            && matches!(*package, "dplyr" | "tidyr"))
-                }
-            };
-            attached
+        self.available_package_names().filter(move |package| match gate {
+            AttachedGate::Bare => self.bare_loaded.contains(*package),
+            AttachedGate::SchemaNse => {
+                self.loaded.contains(*package)
+                    || (self.loaded.contains("tidyverse") && matches!(*package, "dplyr" | "tidyr"))
+            }
         })
     }
 

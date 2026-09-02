@@ -245,6 +245,31 @@ fn is_shiny_app_fragment_path(path: &str) -> bool {
     })
 }
 
+/// One provenance marker a [`Scope`] binding can carry. Each name has its
+/// own marker membership (a name is or is not `Parameter`, independently of
+/// every other name); a plain rebinding through [`Scope::insert`] clears
+/// all of them, while the `insert_*` variants keep a documented subset via
+/// [`Scope::insert_preserving`] (issue #167).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum Marker {
+    /// The current binding was installed by flow narrowing rather than an
+    /// R assignment, so branch merging can tell a temporary refinement
+    /// from a rebinding.
+    Narrowed,
+    /// The binding still refers directly to a function parameter.
+    Parameter,
+    /// The binding's type came from a function parameter default. A
+    /// default is one call shape, not a complete declaration of the
+    /// parameter's runtime type.
+    DefaultParameter,
+    /// The binding derives from a list-valued expression even when later
+    /// subset inference loses the concrete mode.
+    ListOrigin,
+    /// The binding is a function literal defined in a nested lexical
+    /// environment, not through the project-wide function table.
+    LexicalFunction,
+}
+
 /// A single scope's binding table.
 #[derive(Debug, Clone, Default)]
 pub struct Scope {
@@ -282,6 +307,29 @@ impl Scope {
         self.bindings.get(name)
     }
 
+    /// Whether `name` currently carries `marker`.
+    pub(crate) fn has_marker(&self, name: &str, marker: Marker) -> bool {
+        match marker {
+            Marker::Narrowed => self.narrowed_bindings.contains(name),
+            Marker::Parameter => self.parameter_bindings.contains(name),
+            Marker::DefaultParameter => self.default_parameter_bindings.contains(name),
+            Marker::ListOrigin => self.list_origin_bindings.contains(name),
+            Marker::LexicalFunction => self.lexical_functions.contains(name),
+        }
+    }
+
+    /// Add `marker` to `name`'s marker set.
+    pub(crate) fn set_marker(&mut self, name: impl Into<String>, marker: Marker) {
+        let name = name.into();
+        match marker {
+            Marker::Narrowed => self.narrowed_bindings.insert(name),
+            Marker::Parameter => self.parameter_bindings.insert(name),
+            Marker::DefaultParameter => self.default_parameter_bindings.insert(name),
+            Marker::ListOrigin => self.list_origin_bindings.insert(name),
+            Marker::LexicalFunction => self.lexical_functions.insert(name),
+        };
+    }
+
     pub fn insert(&mut self, name: impl Into<String>, t: RType) {
         let name = name.into();
         self.function_aliases.remove(&name);
@@ -293,42 +341,50 @@ impl Scope {
         self.bindings.insert(name, t);
     }
 
-    pub(crate) fn insert_narrowed(&mut self, name: impl Into<String>, t: RType) {
+    /// Rebind `name` to `t`, clearing every provenance marker except the
+    /// subset in `keep` that the name already carried. This is the one
+    /// save/restore point for marker state; the `insert_*` variants below
+    /// declare their keep-list instead of hand-restoring marker sets.
+    pub(crate) fn insert_preserving(
+        &mut self,
+        name: impl Into<String>,
+        t: RType,
+        keep: &[Marker],
+    ) {
         let name = name.into();
-        let was_parameter = self.parameter_bindings.contains(&name);
-        let was_default_parameter = self.default_parameter_bindings.contains(&name);
+        let keep: Vec<Marker> = keep
+            .iter()
+            .copied()
+            .filter(|marker| self.has_marker(&name, *marker))
+            .collect();
         self.insert(name.clone(), t);
-        if was_parameter {
-            self.parameter_bindings.insert(name.clone());
+        for marker in keep {
+            self.set_marker(name.clone(), marker);
         }
-        if was_default_parameter {
-            self.default_parameter_bindings.insert(name.clone());
-        }
-        self.narrowed_bindings.insert(name);
+    }
+
+    pub(crate) fn insert_narrowed(&mut self, name: impl Into<String>, t: RType) {
+        // Narrowing refines the value without rebinding the name, so the
+        // parameter markers survive.
+        let name = name.into();
+        self.insert_preserving(&name, t, &[Marker::Parameter, Marker::DefaultParameter]);
+        self.set_marker(name, Marker::Narrowed);
     }
 
     pub(crate) fn insert_parameter(&mut self, name: impl Into<String>, t: RType) {
         let name = name.into();
-        self.insert(name.clone(), t);
-        self.parameter_bindings.insert(name);
+        self.insert_preserving(&name, t, &[]);
+        self.set_marker(name, Marker::Parameter);
     }
 
     pub(crate) fn insert_parameter_default(&mut self, name: impl Into<String>, t: RType) {
-        let name = name.into();
         // Unlike a plain rebinding, a defaulted parameter shadows its
         // captured-scope namesake without disturbing the lexical-function
         // and list-origin markers (`insert` would clear both).
-        let was_lexical_function = self.lexical_functions.contains(&name);
-        let was_list_origin = self.list_origin_bindings.contains(&name);
-        self.insert(name.clone(), t);
-        if was_lexical_function {
-            self.lexical_functions.insert(name.clone());
-        }
-        if was_list_origin {
-            self.list_origin_bindings.insert(name.clone());
-        }
-        self.parameter_bindings.insert(name.clone());
-        self.default_parameter_bindings.insert(name);
+        let name = name.into();
+        self.insert_preserving(&name, t, &[Marker::LexicalFunction, Marker::ListOrigin]);
+        self.set_marker(name.clone(), Marker::Parameter);
+        self.set_marker(name, Marker::DefaultParameter);
     }
 
     pub(crate) fn mark_list_origin(&mut self, name: impl Into<String>) {

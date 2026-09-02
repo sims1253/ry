@@ -1,7 +1,7 @@
 use super::*;
 use crate::infer::*;
 use crate::semantic_lists::bare_name;
-use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmt};
+use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmt, walk_stmts};
 use std::ops::ControlFlow;
 
 impl Checker {
@@ -10,138 +10,112 @@ impl Checker {
         // derived from; the quoting propagators and signature seeding clear it
         // after collection. Starting a collection round drops it.
         self.trusted_defusers = None;
-        for s in stmts {
-            self.collect_fns_stmt(s);
+        // Statement-level walk on the shared core: a binding statement can
+        // appear at the top level, in `if` branches, and in `for`/`while`
+        // bodies, so those are the only statements whose children this
+        // traversal enters — never the tests (`control_tests` off), never
+        // assignment values or expression interiors (a literal without a
+        // binding name has nothing to record; literals inside a bound body
+        // go through `collect_nested_fns_in_body`). The declared-globals
+        // scan below still covers tests and expression interiors because
+        // it walks each reached statement's whole subtree.
+        let _ = walk_stmts(
+            stmts,
+            Walk {
+                control_tests: false,
+                ..Walk::ALL
+            },
+            |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+                let AstNode::Stmt(statement) = node else {
+                    // Expression interiors are not definition sites.
+                    return ControlFlow::Continue(Descend::Skip);
+                };
+                self.collect_declared_globals_stmt(statement);
+                if let Stmt::Assign { target, value, .. } = statement {
+                    self.collect_fns_assign(target, value);
+                }
+                ControlFlow::Continue(match statement {
+                    Stmt::If { .. } | Stmt::For { .. } | Stmt::While { .. } => Descend::Into,
+                    _ => Descend::Skip,
+                })
+            },
+        );
+    }
+
+    // Records one identifier-bound assignment from the collection
+    // traversal: the bound name in `known_vars` (and `callable_vars` for
+    // constructor calls), and, when the value is a function literal, the
+    // function itself.
+    fn collect_fns_assign(&mut self, target: &Expr, value: &Expr) {
+        // Record every identifier-bound top-level assignment in
+        // `known_vars`. This is independent of whether the RHS
+        // is a function literal: regular variable assignments
+        // (`my_const <- 42`, `GeomRect <- ggproto(...)`) need
+        // to be resolvable from other files (and from later in
+        // this same file) without triggering RY010.
+        if let Some(name) = binding_name(target) {
+            let table = Arc::make_mut(&mut self.fn_table);
+            table.known_vars.insert(name.to_string());
+            if is_callable_object_constructor(value) {
+                table.callable_vars.insert(name.to_string());
+            } else {
+                table.callable_vars.remove(name);
+            }
+        }
+        if let (Some(name), Expr::Function { params, body, .. }) = (binding_name(target), value) {
+            // An S3 method named like `print.foo` is recorded both
+            // as a regular function (so the name resolves to its
+            // return type if called directly) and as an S3 method
+            // (so dispatch from `print(x)` on a classed value
+            // finds it). We record the body once and share the
+            // return slot between both entries.
+            //
+            // Group generics are unambiguous and may dispatch through
+            // `...` alone (notably `Summary.foo <- function(...)`).
+            // Other dotted names retain the first-parameter heuristic
+            // so ordinary helpers are not misregistered as methods.
+            let semantic_name = semantic_argument_name(name);
+            let looks_like_s3 = split_s3_method_name(&semantic_name, &self.typeshed.globals)
+                .or_else(|| {
+                    split_s3_operator_method_name(&semantic_name)
+                        .map(|(generic, class)| (generic.to_string(), class))
+                })
+                .filter(|(generic, _)| {
+                    crate::semantic_lists::is_group_generic(generic)
+                        || params.first().is_some_and(|p| {
+                            p.name == "x"
+                                || (is_operator_generic(generic.as_str())
+                                    && matches!(p.name.as_str(), "e1" | "e2"))
+                        })
+                });
+            if let Some((generic, class)) = looks_like_s3 {
+                let slot = self.record_fn(name.to_string(), params, body.clone());
+                Arc::make_mut(&mut self.fn_table)
+                    .s3_methods
+                    .insert((generic.to_string(), class), slot);
+            } else {
+                let _ = self.record_fn(name.to_string(), params, body.clone());
+            }
+            self.collect_forwarded_calls(name, params, body);
+            self.collect_nested_fns_in_body(name, body);
         }
     }
 
-    fn collect_fns_stmt(&mut self, s: &Stmt) {
-        self.collect_declared_globals_stmt(s);
-        match s {
-            Stmt::Assign { target, value, .. } => {
-                // Record every identifier-bound top-level assignment in
-                // `known_vars`. This is independent of whether the RHS
-                // is a function literal: regular variable assignments
-                // (`my_const <- 42`, `GeomRect <- ggproto(...)`) need
-                // to be resolvable from other files (and from later in
-                // this same file) without triggering RY010.
-                if let Some(name) = binding_name(target) {
-                    let table = Arc::make_mut(&mut self.fn_table);
-                    table.known_vars.insert(name.to_string());
-                    if is_callable_object_constructor(value) {
-                        table.callable_vars.insert(name.to_string());
-                    } else {
-                        table.callable_vars.remove(name);
-                    }
-                }
-                if let (Some(name), Expr::Function { params, body, .. }) =
-                    (binding_name(target), value)
-                {
-                    // An S3 method named like `print.foo` is recorded both
-                    // as a regular function (so the name resolves to its
-                    // return type if called directly) and as an S3 method
-                    // (so dispatch from `print(x)` on a classed value
-                    // finds it). We record the body once and share the
-                    // return slot between both entries.
-                    //
-                    // Group generics are unambiguous and may dispatch through
-                    // `...` alone (notably `Summary.foo <- function(...)`).
-                    // Other dotted names retain the first-parameter heuristic
-                    // so ordinary helpers are not misregistered as methods.
-                    let semantic_name = semantic_argument_name(name);
-                    let looks_like_s3 =
-                        split_s3_method_name(&semantic_name, &self.typeshed.globals)
-                            .or_else(|| {
-                                split_s3_operator_method_name(&semantic_name)
-                                    .map(|(generic, class)| (generic.to_string(), class))
-                            })
-                            .filter(|(generic, _)| {
-                                crate::semantic_lists::is_group_generic(generic)
-                                    || params.first().is_some_and(|p| {
-                                        p.name == "x"
-                                            || (is_operator_generic(generic.as_str())
-                                                && matches!(p.name.as_str(), "e1" | "e2"))
-                                    })
-                            });
-                    if let Some((generic, class)) = looks_like_s3 {
-                        let slot = self.record_fn(name.to_string(), params, body.clone());
-                        Arc::make_mut(&mut self.fn_table)
-                            .s3_methods
-                            .insert((generic.to_string(), class), slot);
-                    } else {
-                        let _ = self.record_fn(name.to_string(), params, body.clone());
-                    }
-                    self.collect_forwarded_calls(name, params, body);
-                    self.collect_nested_fns_in_body(name, body);
-                }
-            }
-            Stmt::If { then, else_, .. } => {
-                for s in then {
-                    self.collect_fns_stmt(s);
-                }
-                if let Some(e) = else_ {
-                    for s in e {
-                        self.collect_fns_stmt(s);
-                    }
-                }
-            }
-            Stmt::For { body, .. } | Stmt::While { body, .. } => {
-                // Loop bodies may contain function definitions (rare but
-                // possible); recurse so we don't miss them.
-                for s in body {
-                    self.collect_fns_stmt(s);
-                }
-            }
-            _ => {}
-        }
-    }
-
+    // Full-subtree scan, run once per statement the collection traversal
+    // reaches, for table entries that live outside lexical scope:
+    // syntactic call sites, `globalVariables()` declarations,
+    // namespace-targeted `assign()`, and S4 registration calls. R
+    // evaluates every position this walk enters — control tests, `$`
+    // subscript arguments, nested function bodies — so the policy is
+    // `Walk::ALL` with no skip rules at all.
     fn collect_declared_globals_stmt(&mut self, s: &Stmt) {
-        match s {
-            Stmt::Assign { target, value, .. } => {
-                self.collect_declared_globals_expr(target);
-                self.collect_declared_globals_expr(value);
-            }
-            Stmt::Expr(e) => self.collect_declared_globals_expr(e),
-            Stmt::If {
-                cond, then, else_, ..
-            } => {
-                self.collect_declared_globals_expr(cond);
-                for s in then {
-                    self.collect_declared_globals_stmt(s);
-                }
-                if let Some(else_) = else_ {
-                    for s in else_ {
-                        self.collect_declared_globals_stmt(s);
-                    }
-                }
-            }
-            Stmt::For { iter, body, .. }
-            | Stmt::While {
-                cond: iter, body, ..
-            } => {
-                self.collect_declared_globals_expr(iter);
-                for s in body {
-                    self.collect_declared_globals_stmt(s);
-                }
-            }
-            Stmt::FunctionDef { body, .. } => {
-                for s in body {
-                    self.collect_declared_globals_stmt(s);
-                }
-            }
-            Stmt::Return { value, .. } => {
-                if let Some(value) = value {
-                    self.collect_declared_globals_expr(value);
-                }
-            }
-        }
-    }
-
-    fn collect_declared_globals_expr(&mut self, e: &Expr) {
-        match e {
-            Expr::Call { func, args, .. } => {
-                if let Expr::Ident { name, .. } = func.as_ref() {
+        let _ = walk_stmt(
+            s,
+            Walk::ALL,
+            |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+                if let AstNode::Expr(Expr::Call { func, args, .. }) = node
+                    && let Expr::Ident { name, .. } = func.as_ref()
+                {
                     let bare = bare_name(name);
                     Arc::make_mut(&mut self.fn_table)
                         .call_sites
@@ -175,50 +149,9 @@ impl Checker {
                     }
                     self.collect_s4_call(bare, args);
                 }
-                self.collect_declared_globals_expr(func);
-                for arg in args {
-                    self.collect_declared_globals_expr(&arg.value);
-                }
-            }
-            Expr::BinOp { lhs, rhs, .. } => {
-                self.collect_declared_globals_expr(lhs);
-                self.collect_declared_globals_expr(rhs);
-            }
-            Expr::UnaryOp { expr, .. } => self.collect_declared_globals_expr(expr),
-            Expr::Index { base, args, .. } => {
-                self.collect_declared_globals_expr(base);
-                for arg in args {
-                    self.collect_declared_globals_expr(&arg.value);
-                }
-            }
-            Expr::Function { body, .. } => {
-                for s in body {
-                    self.collect_declared_globals_stmt(s);
-                }
-            }
-            Expr::Block { body, .. } => {
-                for s in body {
-                    self.collect_declared_globals_stmt(s);
-                }
-            }
-            Expr::If {
-                cond, then, else_, ..
-            } => {
-                self.collect_declared_globals_expr(cond);
-                self.collect_declared_globals_expr(then);
-                if let Some(else_) = else_ {
-                    self.collect_declared_globals_expr(else_);
-                }
-            }
-            Expr::Logical(_, _)
-            | Expr::Integer(_, _)
-            | Expr::Double(_, _)
-            | Expr::String(_, _)
-            | Expr::Null(_)
-            | Expr::Na(_, _)
-            | Expr::Ident { .. }
-            | Expr::Unknown(_) => {}
-        }
+                ControlFlow::Continue(Descend::Into)
+            },
+        );
     }
 
     fn collect_s4_call(&mut self, name: &str, args: &[Arg]) {
@@ -296,27 +229,31 @@ impl Checker {
     // Recursion is bounded by the AST's literal nesting (small in
     // practice). The inference depth is separately bounded by
     // `MAX_CLOSURE_DEPTH` in `build_function_signature`.
+    //
+    // Like `collect_fns`, this is a statement-level walk on the shared
+    // core: nested definitions are recorded wherever a binding statement
+    // can appear — `if` branches and `for`/`while` bodies — never in
+    // control tests or expression interiors.
     fn collect_nested_fns_in_body(&mut self, outer: &str, body: &[Stmt]) {
-        for s in body {
-            self.collect_nested_fns_stmt(outer, s);
-        }
-    }
-
-    // Per-statement helper for `collect_nested_fns_in_body`. Records
-    // any `inner <- function(...) ...` under `<outer>$<inner>` and
-    // recurses into compound statements so we catch nested defs
-    // inside `if` / `for` / `while` blocks too.
-    fn collect_nested_fns_stmt(&mut self, outer: &str, s: &Stmt) {
-        match s {
-            Stmt::Assign { target, value, .. } => {
-                if let (
-                    Expr::Ident { name: inner, .. },
-                    Expr::Function {
-                        params,
-                        body: inner_body,
-                        ..
-                    },
-                ) = (target, value)
+        let _ = walk_stmts(
+            body,
+            Walk {
+                control_tests: false,
+                ..Walk::ALL
+            },
+            |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+                let AstNode::Stmt(statement) = node else {
+                    return ControlFlow::Continue(Descend::Skip);
+                };
+                if let Stmt::Assign { target, value, .. } = statement
+                    && let (
+                        Expr::Ident { name: inner, .. },
+                        Expr::Function {
+                            params,
+                            body: inner_body,
+                            ..
+                        },
+                    ) = (target, value)
                 {
                     let mangled = format!("{}${}", outer, inner);
                     let next_outer = mangled.clone();
@@ -325,24 +262,12 @@ impl Checker {
                     // are also collected.
                     self.collect_nested_fns_in_body(&next_outer, inner_body);
                 }
-            }
-            Stmt::If { then, else_, .. } => {
-                for s in then {
-                    self.collect_nested_fns_stmt(outer, s);
-                }
-                if let Some(e) = else_ {
-                    for s in e {
-                        self.collect_nested_fns_stmt(outer, s);
-                    }
-                }
-            }
-            Stmt::For { body, .. } | Stmt::While { body, .. } => {
-                for s in body {
-                    self.collect_nested_fns_stmt(outer, s);
-                }
-            }
-            _ => {}
-        }
+                ControlFlow::Continue(match statement {
+                    Stmt::If { .. } | Stmt::For { .. } | Stmt::While { .. } => Descend::Into,
+                    _ => Descend::Skip,
+                })
+            },
+        );
     }
 
     // Record a user-defined function. Returns the index of the
@@ -706,7 +631,7 @@ fn is_parameter(expression: &Expr, parameter: &str) -> bool {
     matches!(expression, Expr::Ident { name, .. } if name == parameter)
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FirstParameterUse {
     Defused,
     Normal,
@@ -725,138 +650,105 @@ fn parameter_is_defused(body: &[Stmt], parameter: &str) -> bool {
         == Some(FirstParameterUse::Defused)
 }
 
-#[derive(Default)]
+#[derive(Default, Debug, PartialEq, Eq)]
 struct ParameterUses {
     defused: bool,
     normal: bool,
 }
 
+/// Collect whether `parameter` is used defused or normally across one
+/// statement subtree, on the shared walker (`Walk::ALL`): every position
+/// is visited, including nested function bodies that do not shadow the
+/// parameter. Three rules depend on the ENCLOSING construct, so they are
+/// decided when the walker hands over the parent and the classified leaf
+/// visits that follow are suppressed:
+///
+/// - a simple `p <- value` binding: R never evaluates the left-hand side
+///   of a plain binding, so re-binding the parameter is not a use (a
+///   complex target such as `arr[p] <- v` does evaluate its substructure
+///   and stays visited);
+/// - a defusing call's direct symbol argument (`substitute(p)`,
+///   promise-capture helpers, `match.call`) records a defused use;
+/// - `missing(p)` inspects whether a promise was supplied without
+///   forcing it, so it records neither kind.
 fn collect_parameter_uses_in_stmt(statement: &Stmt, parameter: &str, uses: &mut ParameterUses) {
-    match statement {
-        Stmt::Assign { target, value, .. } => {
-            collect_parameter_uses_in_expr(value, parameter, uses);
-            if !matches!(target, Expr::Ident { .. }) {
-                collect_parameter_uses_in_expr(target, parameter, uses);
-            }
-        }
-        Stmt::Expr(expression) => collect_parameter_uses_in_expr(expression, parameter, uses),
-        Stmt::If {
-            cond, then, else_, ..
-        } => {
-            collect_parameter_uses_in_expr(cond, parameter, uses);
-            for statement in then {
-                collect_parameter_uses_in_stmt(statement, parameter, uses);
-            }
-            for statement in else_.iter().flatten() {
-                collect_parameter_uses_in_stmt(statement, parameter, uses);
-            }
-        }
-        Stmt::For {
-            name, iter, body, ..
-        } => {
-            collect_parameter_uses_in_expr(iter, parameter, uses);
-            if name == parameter {
-                uses.normal = true;
-            }
-            for statement in body {
-                collect_parameter_uses_in_stmt(statement, parameter, uses);
-            }
-        }
-        Stmt::While { cond, body, .. } => {
-            collect_parameter_uses_in_expr(cond, parameter, uses);
-            for statement in body {
-                collect_parameter_uses_in_stmt(statement, parameter, uses);
-            }
-        }
-        Stmt::FunctionDef { params, body, .. } => {
-            if !params.iter().any(|formal| formal.name == parameter) {
-                for statement in body {
-                    collect_parameter_uses_in_stmt(statement, parameter, uses);
+    // Leaf identifier nodes their enclosing construct already classified.
+    // Each AST node is visited at most once per walk and the entries are
+    // node identities, so an entry can never suppress a different node.
+    // Raw pointers dodge the higher-ranked lifetime of the callback's
+    // `AstNode<'_>`; they are only compared, never dereferenced.
+    let mut classified: Vec<*const Expr> = Vec::new();
+    let _ = walk_stmt(
+        statement,
+        Walk::ALL,
+        |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+            match node {
+                AstNode::Stmt(Stmt::Assign { target, .. }) => {
+                    if matches!(target, Expr::Ident { name, .. } if name == parameter) {
+                        classified.push(target);
+                    }
                 }
-            }
-        }
-        Stmt::Return { value, .. } => {
-            if let Some(expression) = value {
-                collect_parameter_uses_in_expr(expression, parameter, uses);
-            }
-        }
-    }
-}
-
-fn collect_parameter_uses_in_expr(expression: &Expr, parameter: &str, uses: &mut ParameterUses) {
-    match expression {
-        Expr::Ident { name, .. } => {
-            if name == parameter {
-                uses.normal = true;
-            }
-        }
-        Expr::Call { func, args, .. } => {
-            let probes_promise = matches!(ident_name(func).map(bare_name), Some("missing"));
-            let defuses_direct_argument = is_single_promise_capture(func)
-                || is_dots_promise_capture(func)
-                || matches!(
-                    ident_name(func).map(bare_name),
-                    Some("match.call" | "substitute")
-                );
-            collect_parameter_uses_in_expr(func, parameter, uses);
-            for argument in args {
-                if matches!(&argument.value, Expr::Ident { name, .. } if name == parameter) {
-                    if defuses_direct_argument {
-                        uses.defused = true;
-                    } else if !probes_promise {
-                        // `missing(p)` inspects whether a promise was
-                        // supplied without forcing it. It should therefore
-                        // neither cancel a later NSE capture nor itself make
-                        // the parameter quoted.
+                AstNode::Stmt(Stmt::For { name, .. }) => {
+                    // The loop variable re-binds the name on every
+                    // iteration; that re-binding counts as an ordinary
+                    // use so downstream analysis stays conservative.
+                    if name == parameter {
                         uses.normal = true;
                     }
-                } else {
-                    collect_parameter_uses_in_expr(&argument.value, parameter, uses);
                 }
-            }
-        }
-        Expr::BinOp { lhs, rhs, .. } => {
-            collect_parameter_uses_in_expr(lhs, parameter, uses);
-            collect_parameter_uses_in_expr(rhs, parameter, uses);
-        }
-        Expr::UnaryOp { expr, .. } => collect_parameter_uses_in_expr(expr, parameter, uses),
-        Expr::Index { base, args, .. } => {
-            collect_parameter_uses_in_expr(base, parameter, uses);
-            for argument in args {
-                collect_parameter_uses_in_expr(&argument.value, parameter, uses);
-            }
-        }
-        Expr::Function { params, body, .. } => {
-            if !params.iter().any(|formal| formal.name == parameter) {
-                for statement in body {
-                    collect_parameter_uses_in_stmt(statement, parameter, uses);
+                // A closure has its own formals: a same-named formal
+                // shadows the parameter, and uses inside its body belong
+                // to the inner scope.
+                AstNode::Stmt(Stmt::FunctionDef { params, .. })
+                | AstNode::Expr(Expr::Function { params, .. }) => {
+                    if params.iter().any(|formal| formal.name == parameter) {
+                        return ControlFlow::Continue(Descend::Skip);
+                    }
                 }
+                AstNode::Expr(Expr::Call { func, args, .. }) => {
+                    let bare = ident_name(func).map(bare_name);
+                    let probes_promise = matches!(bare, Some("missing"));
+                    let defuses_direct_argument = is_single_promise_capture(func)
+                        || is_dots_promise_capture(func)
+                        || matches!(bare, Some("match.call" | "substitute"));
+                    if probes_promise || defuses_direct_argument {
+                        for argument in args {
+                            if matches!(&argument.value, Expr::Ident { name, .. } if name == parameter)
+                            {
+                                if defuses_direct_argument {
+                                    uses.defused = true;
+                                }
+                                classified.push(&argument.value);
+                            }
+                        }
+                    }
+                }
+                AstNode::Expr(ident @ Expr::Ident { name, .. })
+                    if name == parameter
+                        && !classified.iter().any(|seen| std::ptr::eq(*seen, ident)) =>
+                {
+                    uses.normal = true;
+                }
+                _ => {}
             }
-        }
-        Expr::Block { body, .. } => {
-            for statement in body {
-                collect_parameter_uses_in_stmt(statement, parameter, uses);
-            }
-        }
-        Expr::If {
-            cond, then, else_, ..
-        } => {
-            collect_parameter_uses_in_expr(cond, parameter, uses);
-            collect_parameter_uses_in_expr(then, parameter, uses);
-            if let Some(expression) = else_ {
-                collect_parameter_uses_in_expr(expression, parameter, uses);
-            }
-        }
-        Expr::Logical(_, _)
-        | Expr::Integer(_, _)
-        | Expr::Double(_, _)
-        | Expr::String(_, _)
-        | Expr::Null(_)
-        | Expr::Na(_, _)
-        | Expr::Unknown(_) => {}
-    }
+            ControlFlow::Continue(Descend::Into)
+        },
+    );
 }
 
+// The `first_parameter_use` family below is deliberately NOT expressed
+// through the shared walker in `ry_core::walk`: it is a first-use query
+// in evaluation order whose rules select individual children of a node
+// rather than whole subtrees. `Stmt::Assign` answers from the value side
+// before the target substructure because R evaluates the right-hand side
+// of a complex assignment first (R-lang, "Complex assignments"), while
+// the walker descends target-first; `if` arms are combined by
+// `conservative_branch_use`, which must walk BOTH branches past their
+// first hits (a Normal use in either branch dominates a Defused use in
+// the other), while the walker's `Break` halts the entire walk at the
+// first payload; and a `for` loop's variable re-binding is checked
+// strictly between the iterator walk and the body walk, where the walker
+// provides no hook. Same judgment as the force family in `infer/misc.rs`.
 fn first_parameter_use_in_stmt(statement: &Stmt, parameter: &str) -> Option<FirstParameterUse> {
     match statement {
         Stmt::Assign { target, value, .. } => first_parameter_use_in_expr(value, parameter)
@@ -1124,5 +1016,316 @@ fn expression_must_force(expression: &Expr, name: &str) -> bool {
         | Expr::Null(_)
         | Expr::Na(_, _)
         | Expr::Unknown(_) => false,
+    }
+}
+
+/// Pins the traversal policies of the collection walkers at the
+/// behavior level: which subtrees each analysis enters, and which leaf
+/// positions their enclosing construct classifies. The
+/// `first_parameter_use` family stays hand-rolled; its pins document the
+/// evaluation-order and branch semantics that keep it off the shared
+/// walker.
+#[cfg(test)]
+mod collect_walker_tests {
+    use super::*;
+    use ry_core::RParser;
+
+    fn parse_stmts(src: &str) -> Vec<Stmt> {
+        let mut parser = RParser::new().unwrap();
+        parser.parse("collect_walker_test.R", src).unwrap().stmts
+    }
+
+    fn parameter_uses(src: &str, parameter: &str) -> ParameterUses {
+        let mut uses = ParameterUses::default();
+        for statement in &parse_stmts(src) {
+            collect_parameter_uses_in_stmt(statement, parameter, &mut uses);
+        }
+        uses
+    }
+
+    fn first_use(src: &str, parameter: &str) -> Option<FirstParameterUse> {
+        parse_stmts(src)
+            .iter()
+            .find_map(|statement| first_parameter_use_in_stmt(statement, parameter))
+    }
+
+    fn collect(src: &str) -> Checker {
+        let mut parser = RParser::new().unwrap();
+        let file = parser.parse("collect_walker_test.R", src).unwrap();
+        let mut checker = Checker::new("collect_walker_test.R");
+        checker.collect_file_fns(&file);
+        checker
+    }
+
+    /// A closure has its own formals: a same-named formal shadows the
+    /// parameter, so uses in that body belong to the inner scope and
+    /// count for neither flag. A nested function that does NOT re-declare
+    /// the name still reads the enclosing formal.
+    #[test]
+    fn parameter_uses_skip_shadowing_closures_only() {
+        assert_eq!(
+            parameter_uses("function(p) p", "p"),
+            ParameterUses {
+                defused: false,
+                normal: false
+            }
+        );
+        assert_eq!(
+            parameter_uses("function(q) p", "p"),
+            ParameterUses {
+                defused: false,
+                normal: true
+            }
+        );
+        assert_eq!(
+            parameter_uses("function(q) { function(p) p; 0 }", "p"),
+            ParameterUses {
+                defused: false,
+                normal: false
+            }
+        );
+        assert_eq!(
+            parameter_uses("function(q) { function(r) p; 0 }", "p"),
+            ParameterUses {
+                defused: false,
+                normal: true
+            }
+        );
+    }
+
+    /// R never evaluates the left-hand side of a plain `name <- value`
+    /// binding, so re-binding the parameter is not a use. A complex
+    /// target's substructure IS evaluated (`arr[p] <- v` computes `arr`
+    /// and `p`), so the subscript counts.
+    #[test]
+    fn parameter_uses_rebinding_is_not_a_use_complex_targets_are() {
+        assert_eq!(
+            parameter_uses("p <- 1", "p"),
+            ParameterUses {
+                defused: false,
+                normal: false
+            }
+        );
+        assert_eq!(
+            parameter_uses("arr[p] <- 1", "p"),
+            ParameterUses {
+                defused: false,
+                normal: true
+            }
+        );
+    }
+
+    /// A `for` loop that re-binds the parameter name counts as an
+    /// ordinary use, and so does reading it in the iterator; both keep
+    /// the parameter out of defused-only treatment.
+    #[test]
+    fn parameter_uses_for_loop_binding_and_iterator_are_normal() {
+        assert_eq!(
+            parameter_uses("for (p in xs) 0", "p"),
+            ParameterUses {
+                defused: false,
+                normal: true
+            }
+        );
+        assert_eq!(
+            parameter_uses("for (i in p) 0", "p"),
+            ParameterUses {
+                defused: false,
+                normal: true
+            }
+        );
+    }
+
+    /// Direct symbol arguments are classified by their call: a defusing
+    /// call records a defused use (and not a normal one), `missing(p)`
+    /// records neither because it only inspects whether a promise was
+    /// supplied, an ordinary call records a normal use, and a non-symbol
+    /// argument (`substitute(p + 1)`) is walked normally.
+    #[test]
+    fn parameter_uses_defusing_and_missing_classify_direct_arguments() {
+        assert_eq!(
+            parameter_uses("substitute(p)", "p"),
+            ParameterUses {
+                defused: true,
+                normal: false
+            }
+        );
+        assert_eq!(
+            parameter_uses("missing(p)", "p"),
+            ParameterUses {
+                defused: false,
+                normal: false
+            }
+        );
+        assert_eq!(
+            parameter_uses("print(p)", "p"),
+            ParameterUses {
+                defused: false,
+                normal: true
+            }
+        );
+        assert_eq!(
+            parameter_uses("substitute(p + 1)", "p"),
+            ParameterUses {
+                defused: false,
+                normal: true
+            }
+        );
+    }
+
+    /// `$` field subscripts and control-flow tests stay in the walk: the
+    /// field is a synthesized identifier node in the visited tree, and
+    /// an `if`/`while` condition reads the promise like any other
+    /// expression position.
+    #[test]
+    fn parameter_uses_walk_dollar_fields_and_control_tests() {
+        assert!(parameter_uses("x$p", "p").normal);
+        assert!(parameter_uses("if (p) 1", "p").normal);
+        assert!(parameter_uses("while (p) 1", "p").normal);
+    }
+
+    /// R evaluates the right-hand side before the target substructure of
+    /// a complex assignment (R-lang, "Complex assignments"), so
+    /// `arr[p] <- substitute(p)` reports the value side's Defused even
+    /// though the target appears first in the source. A walker that
+    /// descends target-first would answer Normal here.
+    #[test]
+    fn first_use_prefers_the_value_side_of_complex_assignments() {
+        assert_eq!(
+            first_use("arr[p] <- substitute(p)", "p"),
+            Some(FirstParameterUse::Defused)
+        );
+    }
+
+    /// `conservative_branch_use` walks both branches past their first
+    /// hits: a Normal use in either branch dominates a Defused use in
+    /// the other, because the analysis cannot know which branch runs. An
+    /// early-exit walker would stop at the then-branch's Defused.
+    #[test]
+    fn first_use_normal_dominates_across_branches() {
+        assert_eq!(
+            first_use("if (c) substitute(p) else print(p)", "p"),
+            Some(FirstParameterUse::Normal)
+        );
+        assert_eq!(
+            first_use("if (c) substitute(p) else bquote(p)", "p"),
+            Some(FirstParameterUse::Defused)
+        );
+        // A missing else branch contributes nothing, so a Defused
+        // then-branch stands.
+        assert_eq!(
+            first_use("if (c) substitute(p)", "p"),
+            Some(FirstParameterUse::Defused)
+        );
+    }
+
+    /// A `for` loop's variable re-binding is checked strictly between
+    /// the iterator walk and the body walk: the iterator's use wins over
+    /// the re-binding, and the re-binding (a Normal use) wins over a
+    /// defusing use inside the body.
+    #[test]
+    fn first_use_orders_iterator_rebinding_body() {
+        assert_eq!(
+            first_use("for (i in p) substitute(p)", "p"),
+            Some(FirstParameterUse::Normal)
+        );
+        assert_eq!(
+            first_use("for (p in i) substitute(p)", "p"),
+            Some(FirstParameterUse::Normal)
+        );
+    }
+
+    /// A bare `{{ p }}` embrace (rlang-style pronoun forwarding, as in
+    /// `mean({{ var }})`) is the first use and is defused.
+    /// Function-definition statements never contribute a use at all,
+    /// shadowing or not — unlike the `collect_parameter_uses` policy,
+    /// which enters a non-shadowing body.
+    #[test]
+    fn first_use_embraced_symbol_is_defused_function_defs_never_count() {
+        assert_eq!(
+            first_use("mean({ { p } })", "p"),
+            Some(FirstParameterUse::Defused)
+        );
+        assert_eq!(first_use("function(q) p", "p"), None);
+    }
+
+    /// The declared-globals scan covers every position R evaluates:
+    /// `if` conditions, `for` iterators, and nested function bodies all
+    /// contribute call sites, so the per-file call-site index sees calls
+    /// that the statement-level definition traversal skips.
+    #[test]
+    fn declared_globals_records_calls_in_tests_and_fn_bodies() {
+        let checker = collect("if (cond_fn()) branch_fn()");
+        assert!(checker.fn_table.call_sites.contains_key("cond_fn"));
+        assert!(checker.fn_table.call_sites.contains_key("branch_fn"));
+        let checker = collect("for (i in iter_fn()) body_fn()");
+        assert!(checker.fn_table.call_sites.contains_key("iter_fn"));
+        assert!(checker.fn_table.call_sites.contains_key("body_fn"));
+        let checker = collect("h <- function() inner_fn()");
+        assert!(checker.fn_table.call_sites.contains_key("inner_fn"));
+    }
+
+    /// `globalVariables(...)` strings and namespace-targeted
+    /// `assign(..., envir = asNamespace(...))` declare known variables;
+    /// an `assign` into any other environment does not.
+    #[test]
+    fn declared_globals_declare_only_namespace_targets() {
+        let checker = collect("globalVariables(c(\"gv_one\", \"gv_two\"))");
+        assert!(checker.fn_table.known_vars.contains("gv_one"));
+        assert!(checker.fn_table.known_vars.contains("gv_two"));
+        let checker = collect("assign(\"ns_var\", 1, envir = asNamespace(\"pkg\"))");
+        assert!(checker.fn_table.known_vars.contains("ns_var"));
+        let checker = collect("assign(\"global_var\", 1, envir = globalenv())");
+        assert!(!checker.fn_table.known_vars.contains("global_var"));
+    }
+
+    /// Function definitions are collected wherever a binding statement
+    /// can appear — `if` branches (taken or not, and `else` branches)
+    /// and `for`/`while` bodies — while a definition in expression
+    /// position has no binding statement and records nothing: neither a
+    /// bare definition statement nor a function literal passed as an
+    /// argument.
+    #[test]
+    fn fn_definitions_collected_from_branch_and_loop_bodies() {
+        let checker = collect("if (c) { taken <- function() 1 } else { skipped <- function() 2 }");
+        assert!(checker.fn_table.fns.contains_key("taken"));
+        assert!(checker.fn_table.fns.contains_key("skipped"));
+        let checker = collect("for (i in xs) { loop_fn <- function() 1 }");
+        assert!(checker.fn_table.fns.contains_key("loop_fn"));
+        let checker = collect("while (c) { while_fn <- function() 1 }");
+        assert!(checker.fn_table.fns.contains_key("while_fn"));
+        let checker = collect("function() 1");
+        assert!(checker.fn_table.fns.is_empty());
+        let checker = collect("out <- lapply(xs, function() 1)");
+        assert!(!checker.fn_table.fns.contains_key("out"));
+        // The callback skips Expr nodes, so a block-valued condition's
+        // statements are never visited and contribute no definitions.
+        // (`control_tests: false` only spares the walker those visits;
+        // the callback's skip is the load-bearing rule, and this pin
+        // fails if it is relaxed.)
+        let checker = collect("if ({ fn_in_cond <- function() 1 }) 1");
+        assert!(!checker.fn_table.fns.contains_key("fn_in_cond"));
+    }
+
+    /// Nested definitions record under the mangled `<outer>$<inner>`
+    /// name at every nesting level, including inside `if` within a
+    /// function body; a literal in expression position (an `lapply`
+    /// argument) has no binding and records no mangled entry.
+    #[test]
+    fn nested_definitions_are_mangled_per_level() {
+        let checker = collect(
+            "outer <- function() {
+  inner <- function() { deepest <- function() 1; 2 }
+  3
+}",
+        );
+        assert!(checker.fn_table.fns.contains_key("outer"));
+        assert!(checker.fn_table.fns.contains_key("outer$inner"));
+        assert!(checker.fn_table.fns.contains_key("outer$inner$deepest"));
+        let checker = collect("f <- function() { if (c) { branched <- function() 1 } }");
+        assert!(checker.fn_table.fns.contains_key("f$branched"));
+        let checker = collect("f <- function() lapply(xs, function(q) q)");
+        assert_eq!(checker.fn_table.fns.len(), 1);
+        assert!(checker.fn_table.fns.contains_key("f"));
     }
 }

@@ -1246,130 +1246,107 @@ fn invalid_root_rytoml_degrades_entirely_to_defaults() {
 // them per folder rather than per published file.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// #46: with many files in one folder, every published diagnostic must
-/// still be byte-for-byte correct — the publish loop borrows the
-/// per-folder precomputed filter/confidence/excludes instead of
-/// recompiling anything per file. This test creates many files in one
-/// folder, opens a trigger document, and checks the first and last
-/// indexed files publish identical, correct diagnostics.
+/// #46: the publish loop borrows the folder's precomputed
+/// filter/confidence/excludes once and applies them per file — so
+/// several files with DIFFERENT diagnostics in one folder must each
+/// publish exactly what `ry check` reports for that file. Identical
+/// files (the old shape of this test) could only assert determinism:
+/// a cross-contaminated or misattributed result would still "pass".
+/// Differing rule codes, lines, and counts make any per-file mix-up
+/// observable.
 #[test]
-fn many_files_flat_filter_construction() {
+fn per_file_publication_matches_cli_across_differing_files() {
     let fixture = FixtureProject::empty().unwrap();
-    // Create 32 files, each with a diagnostic (RY090).
-    for i in 0..32u8 {
-        fixture
-            .write_file(format!("file_{i:02}.R"), "length(xx = 1L)\n")
-            .unwrap();
+    // Four files whose diagnostic sets differ in rule, line, and count.
+    let files: &[(&str, &str)] = &[
+        // RY090 (partial argument name) at line 0.
+        ("a.R", "z <- length(xx = 1L)\n"),
+        // RY002 (length-2 if condition) at line 0.
+        ("b.R", "if (c(TRUE, FALSE)) print(1)\n"),
+        // Both triggers, at lines 1 and 2.
+        (
+            "c.R",
+            "w <- 1L\nif (c(TRUE, FALSE)) print(1)\nz <- length(xx = 1L)\n",
+        ),
+        // Clean: publishes an empty set.
+        ("d.R", "ok <- 1L\n"),
+    ];
+    for (name, text) in files {
+        fixture.write_file(*name, *text).unwrap();
     }
-    fixture.write_file("trigger.R", "ok <- 1L\n").unwrap();
+
+    // CLI reference: `ry check` over the same folder.
+    let cli = cli_diagnostics_in_dir(fixture.root(), &[]);
+    // Non-vacuity: the diagnostic-bearing files must produce pairwise
+    // different (code, line) sets, or the test degenerates back into a
+    // determinism check.
+    let code_lines = |path: &str| -> std::collections::BTreeSet<String> {
+        cli.iter()
+            .filter(|d| d.path == path)
+            .map(|d| format!("{}@{}", d.code, d.line))
+            .collect()
+    };
+    let (a, b, c) = (code_lines("a.R"), code_lines("b.R"), code_lines("c.R"));
+    assert!(
+        !a.is_empty() && !b.is_empty() && !c.is_empty(),
+        "fixture must produce diagnostics; CLI said: {cli:?}"
+    );
+    assert!(
+        a != b && a != c && b != c,
+        "files must produce differing diagnostics; got {a:?}, {b:?}, {c:?}"
+    );
 
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
     runtime.block_on(async {
-        let root_uri = file_uri(fixture.root());
-        let (client_stream, server_stream) = tokio::io::duplex(256 * 1024);
+        use ry_testkit::LspSession;
+
+        let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
         let (client_reader, client_writer) = tokio::io::split(client_stream);
         let (server_reader, server_writer) = tokio::io::split(server_stream);
         let server =
             tokio::spawn(async move { ry_lsp::run_with(server_reader, server_writer).await });
-        let mut client = AsyncJsonRpcClient::new(client_reader, client_writer);
+        let mut client = LspSession::new(client_reader, client_writer);
+        client.initialize(fixture.root()).await.unwrap();
 
-        let init_id = client.request("initialize", json!({
-            "processId": null,
-            "rootUri": root_uri,
-            "capabilities": {},
-            "workspaceFolders": [{"uri": root_uri, "name": "fixture"}]
-        })).await.unwrap();
-        client.receive_until(|m| m.get("id") == Some(&json!(init_id)), 16).await.unwrap();
-        client.notify("initialized", json!({})).await.unwrap();
+        // Open the clean file: its debounced publish rides along with the
+        // background index's first publication of every indexed file.
+        let clean_uri = file_uri(&fixture.path("d.R"));
+        let mark = client.publication_mark();
+        client.open(&clean_uri, 1, "ok <- 1L\n").await.unwrap();
 
-        // Open the trigger file to start the background index.
-        let trigger_uri = file_uri(&fixture.path("trigger.R"));
-        let trigger_text = std::fs::read_to_string(fixture.path("trigger.R")).unwrap();
-        client.notify("textDocument/didOpen", json!({
-            "textDocument": {"uri": trigger_uri, "languageId": "r", "version": 1, "text": trigger_text}
-        })).await.unwrap();
-
-        // Collect diagnostics for the first and last indexed files from
-        // the background index's publications. The background index +
-        // debounced publish will send diagnostics for trigger.R and all
-        // indexed files; we keep receiving until both sentinel files have
-        // published.
-        let first_uri = file_uri(&fixture.path("file_00.R"));
-        let last_uri = file_uri(&fixture.path("file_31.R"));
-        let mut first_diags: Vec<Published> = Vec::new();
-        let mut last_diags: Vec<Published> = Vec::new();
-
-        // Drain until diagnostics for both sentinel files have been
-        // published, bounded by a total deadline. Quiescence (one silent
-        // 500 ms window) cannot decide completion here: on a loaded
-        // machine the background index of 32 files plus the publish
-        // debounce can pause longer than a single window before the first
-        // indexed-file publication, which used to end collection with both
-        // sentinel vectors still empty and fail the assertions below with
-        // no production defect (#90).
-        let drain_deadline =
-            tokio::time::Instant::now() + std::time::Duration::from_secs(30);
-        while (first_diags.is_empty() || last_diags.is_empty())
-            && tokio::time::Instant::now() < drain_deadline
-        {
-            match tokio::time::timeout_at(drain_deadline, client.receive()).await {
-                Ok(Ok(message)) => {
-                    if message.get("method") == Some(&json!("textDocument/publishDiagnostics")) {
-                        if message.pointer("/params/uri") == Some(&json!(first_uri)) {
-                            first_diags = published_from_lsp(
-                                &message,
-                                &fixture.path("file_00.R"),
-                                fixture.root(),
-                            );
-                        }
-                        if message.pointer("/params/uri") == Some(&json!(last_uri)) {
-                            last_diags = published_from_lsp(
-                                &message,
-                                &fixture.path("file_31.R"),
-                                fixture.root(),
-                            );
-                        }
-                    }
-                }
-                Ok(Err(e)) => panic!("transport error during drain: {e}"),
-                Err(_) => break, // total deadline exhausted before both files published
-            }
+        // Wait for each file's publication individually — bounded by the
+        // per-receive deadline, so collection cannot end early on a drain
+        // window the way a 32-file index could (#90).
+        let mut lsp: Vec<Published> = Vec::new();
+        for (name, _) in files {
+            let uri = file_uri(&fixture.path(name));
+            let publish = client
+                .published_diagnostics_after(&uri, mark)
+                .await
+                .unwrap();
+            lsp.extend(published_from_lsp(
+                &publish,
+                &fixture.path(name),
+                fixture.root(),
+            ));
         }
+        lsp.sort();
 
-        let shutdown_id = client.request("shutdown", Value::Null).await.unwrap();
-        client.receive_until(|m| m.get("id") == Some(&json!(shutdown_id)), 128).await.unwrap();
-        client.notify("exit", Value::Null).await.unwrap();
+        client.shutdown().await.unwrap();
         drop(client);
-        tokio::time::timeout(std::time::Duration::from_secs(5), server).await.unwrap().unwrap().unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(3), server)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
 
-        // Every indexed file must produce the same RY090 diagnostic.
-        assert!(
-            !first_diags.is_empty() && first_diags.iter().any(|d| d.code == "RY090"),
-            "file_00 must produce RY090; got {:?}",
-            first_diags
-        );
-        assert!(
-            !last_diags.is_empty() && last_diags.iter().any(|d| d.code == "RY090"),
-            "file_31 must produce RY090; got {:?}",
-            last_diags
-        );
         assert_eq!(
-            first_diags.len(),
-            last_diags.len(),
-            "all files must produce the same number of diagnostics"
+            lsp, cli,
+            "every file's publication must equal the CLI's result for that file"
         );
-        for (a, b) in first_diags.iter().zip(last_diags.iter()) {
-            assert_eq!(a.code, b.code, "codes must match");
-            assert_eq!(a.severity, b.severity, "severities must match");
-            assert_eq!(a.message, b.message, "messages must match");
-            assert_eq!(a.line, b.line, "lines must match");
-            assert_eq!(a.byte_column, b.byte_column, "columns must match");
-        }
-        assert_eq!(first_diags[0].path, "file_00.R");
-        assert_eq!(last_diags[0].path, "file_31.R");
     });
 }
 

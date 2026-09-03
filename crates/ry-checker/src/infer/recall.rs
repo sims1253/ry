@@ -406,8 +406,7 @@ mod scalar_reduction_tests {
     #[test]
     fn known_scalar_reductions_fire_ry105() {
         fn fires(src: &str, code: &str) -> bool {
-            let mut parser = ry_core::RParser::new().expect("parser init");
-            let file = parser.parse("t.R", src).expect("parse");
+            let file = crate::tests::parse_snippet("t.R", src);
             let mut checker = crate::Checker::new("t.R");
             checker.check(&file);
             checker.take_diagnostics().iter().any(|d| d.code == code)

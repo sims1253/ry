@@ -1028,11 +1028,9 @@ fn expression_must_force(expression: &Expr, name: &str) -> bool {
 #[cfg(test)]
 mod collect_walker_tests {
     use super::*;
-    use ry_core::RParser;
 
     fn parse_stmts(src: &str) -> Vec<Stmt> {
-        let mut parser = RParser::new().unwrap();
-        parser.parse("collect_walker_test.R", src).unwrap().stmts
+        crate::tests::parse_snippet("collect_walker_test.R", src).stmts
     }
 
     fn parameter_uses(src: &str, parameter: &str) -> ParameterUses {
@@ -1050,8 +1048,7 @@ mod collect_walker_tests {
     }
 
     fn collect(src: &str) -> Checker {
-        let mut parser = RParser::new().unwrap();
-        let file = parser.parse("collect_walker_test.R", src).unwrap();
+        let file = crate::tests::parse_snippet("collect_walker_test.R", src);
         let mut checker = Checker::new("collect_walker_test.R");
         checker.collect_file_fns(&file);
         checker

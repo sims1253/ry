@@ -774,81 +774,71 @@ impl Checker {
         captured_scope: &Scope,
         depth: usize,
     ) -> Option<Arc<FunctionSignature>> {
-        if body.is_empty() {
-            return None;
-        }
-        // Signature building is a PURE return-type computation: it must
-        // never emit diagnostics (the diagnostic walk of a function body
-        // happens via check_stmt's function-body arm in pass 3). Force
-        // discarding mode for this walk regardless of the caller's mode.
-        let prev_discarding = self.discarding;
-        self.discarding = true;
-        let result = self.build_function_signature_inner(params, body, captured_scope, depth);
-        self.discarding = prev_discarding;
-        result
+        // Each param's type comes from its default literal (`x = 1L` ->
+        // integer) or is unknown; a defaulted param keeps its
+        // default-marker binding so narrowing treats it as
+        // caller-replaceable.
+        let mut param_types: Vec<RType> = Vec::with_capacity(params.len());
+        let return_type = self.walk_literal_returns(body, captured_scope, depth, |scope| {
+            for p in params {
+                let t = match &p.default {
+                    Some(e) => infer_literal_default(e),
+                    None => RType::unknown(),
+                };
+                if p.default.is_some() {
+                    scope.insert_parameter_default(p.name.clone(), t.clone());
+                } else {
+                    scope.insert(p.name.clone(), t.clone());
+                }
+                param_types.push(t);
+            }
+        })?;
+        Some(Arc::new(FunctionSignature {
+            params: param_types,
+            return_type: Box::new(return_type),
+        }))
     }
 
-    pub(crate) fn build_function_signature_inner(
+    /// The closure-return walk shared by signature building
+    /// ([`build_function_signature`]) and higher-order callback
+    /// inference ([`Checker::callback_literal_return`]): clone the
+    /// captured scope, let `bind_params` layer the literal's parameters
+    /// on top, then collect each explicit `return(...)`/`invisible(...)`
+    /// type plus the trailing statement's implicit value and join them.
+    /// Returns `None` when nothing contributes a type or the join
+    /// collapses to opaque. PURE computation: forces discarding mode so
+    /// it never emits diagnostics (those come from the pass-3 walks).
+    pub(crate) fn walk_literal_returns(
         &mut self,
-        params: &[Param],
         body: &[Stmt],
         captured_scope: &Scope,
         depth: usize,
-    ) -> Option<Arc<FunctionSignature>> {
-        // Layer the inner function's params on top of the captured
-        // scope. We start from a clone of the captured scope so the
-        // body can reference enclosing bindings (`make_adder`'s `x`).
+        bind_params: impl FnOnce(&mut Scope),
+    ) -> Option<RType> {
+        let prev_discarding = self.discarding;
+        self.discarding = true;
         let mut scope = captured_scope.clone();
-        let mut param_types: Vec<RType> = Vec::with_capacity(params.len());
-        for p in params {
-            let t = match &p.default {
-                Some(e) => infer_literal_default(e),
-                None => RType::unknown(),
-            };
-            if p.default.is_some() {
-                scope.insert_parameter_default(p.name.clone(), t.clone());
-            } else {
-                scope.insert(p.name.clone(), t.clone());
-            }
-            param_types.push(t);
-        }
-        // Walk the body in source order, simulating each statement's
-        // effect on the scope so later statements (notably the trailing
-        // return expression) can reference bindings established earlier
-        // in the body. This is what lets us resolve the named-return
-        // closure pattern:
-        //     f <- function() { g <- function() { 1L }; g }
-        // Here the trailing `g` must see the `g <- function() { 1L }`
-        // binding to pick up its inferred `fn_sig`.
-        //
-        // We collect explicit `return(...)` types as we go; the trailing
-        // statement's value is added separately below. Branches in `if`
+        bind_params(&mut scope);
+        // Simulate each statement's scope effect in source order so the
+        // trailing return can reference bindings established earlier in
+        // the body (the named-return closure pattern). `if` branches
         // are walked without splitting the scope (v1 approximation).
         let mut returns: Vec<RType> = Vec::new();
-        // Walk the body via the unified walker (discarding mode, return
-        // collection enabled).
         for s in body {
             self.walk_stmt(s, &mut scope, Some(&mut returns));
         }
-        // Trailing expression of a braced body is the implicit return.
-        // A trailing `Stmt::FunctionDef` (a bare function literal in
-        // statement position) is also the implicit return value - this
-        // is the closure-factory pattern: `function() { function() { 1L } }`
-        // has a `Stmt::FunctionDef` as its body's last statement.
+        // The trailing expression -- or a bare trailing function
+        // literal, the closure-factory pattern -- is the implicit
+        // return.
         if let Some(t) = self.trailing_return_type(body, &mut scope, depth + 1) {
             returns.push(t);
         }
+        self.discarding = prev_discarding;
         if returns.is_empty() {
             return None;
         }
         let joined = join_all(returns.into_iter());
-        if matches!(joined.mode, Mode::Opaque) {
-            return None;
-        }
-        Some(Arc::new(FunctionSignature {
-            params: param_types,
-            return_type: Box::new(joined),
-        }))
+        (!matches!(joined.mode, Mode::Opaque)).then_some(joined)
     }
 
     /// Extract the implicit return type of a function body's trailing
@@ -859,7 +849,7 @@ impl Checker {
     ///
     /// Returns `None` when the body is empty, the last statement is not
     /// an expression-like form, or the trailing expression is a
-    /// `return(...)` call (which `collect_returns_stmt_at_depth`
+    /// `return(...)` call (which [`Checker::walk_literal_returns`]
     /// already counted).
     pub(crate) fn trailing_return_type(
         &mut self,

@@ -1,19 +1,14 @@
 use super::*;
 use crate::infer::*;
 
-fn matched_argument_index(argument_match: &ArgumentMatch, formal_index: usize) -> Option<usize> {
-    argument_match
-        .param_for_arg
-        .iter()
-        .position(|matched| *matched == Some(formal_index))
-}
-
 fn matched_argument_type<'a>(
     arg_types: &'a [RType],
     argument_match: &ArgumentMatch,
     formal_index: usize,
 ) -> Option<&'a RType> {
-    matched_argument_index(argument_match, formal_index).and_then(|index| arg_types.get(index))
+    argument_match
+        .arg_for_param(formal_index)
+        .and_then(|index| arg_types.get(index))
 }
 
 fn argument_bound_to_formal<'a>(
@@ -21,7 +16,9 @@ fn argument_bound_to_formal<'a>(
     argument_match: &ArgumentMatch,
     formal_index: usize,
 ) -> Option<&'a Arg> {
-    matched_argument_index(argument_match, formal_index).and_then(|index| args.get(index))
+    argument_match
+        .arg_for_param(formal_index)
+        .and_then(|index| args.get(index))
 }
 
 /// With a `...` formal, every unmatched actual is part of dots (one
@@ -35,9 +32,8 @@ fn arguments_bound_to_dots<'a>(
         .iter()
         .enumerate()
         .filter_map(|(index, argument_type)| {
-            // With a `...` formal, every unmatched actual is part of dots.
-            // Preserve actual call order because Map/mapply pass that order
-            // on to the callback.
+            // Preserve actual call order because Map/mapply pass that
+            // order on to the callback.
             (argument_match.dots.is_some()
                 && argument_match
                     .param_for_arg
@@ -430,10 +426,10 @@ impl Checker {
     }
 
     /// Walk an anonymous function literal's body to infer its return
-    /// type, given the argument types the caller will pass. Similar to
-    /// `build_function_signature` but takes explicit argument
-    /// types rather than inferring from defaults. Used by
-    /// `callback_return_type` for the inline-literal case.
+    /// type, given the argument types the caller will pass: the shared
+    /// [`Checker::walk_literal_returns`] walk with params bound from
+    /// the call-site argument types instead of declared defaults.
+    /// Used by `callback_return_type` for the inline-literal case.
     pub(crate) fn callback_literal_return(
         &mut self,
         params: &[Param],
@@ -442,35 +438,15 @@ impl Checker {
         captured_scope: &Scope,
         depth: usize,
     ) -> Option<RType> {
-        if body.is_empty() || depth >= MAX_CLOSURE_DEPTH {
+        if depth >= MAX_CLOSURE_DEPTH {
             return None;
         }
-        // Pure return-type computation: force discarding so this does not
-        // double-emit diagnostics (the callback body's diagnostics come
-        // from walk_callback_for_diagnostics in pass 3).
-        let prev_discarding = self.discarding;
-        self.discarding = true;
-        let mut scope = captured_scope.clone();
-        for (i, p) in params.iter().enumerate() {
-            let t = call_arg_types.get(i).cloned().unwrap_or(RType::unknown());
-            scope.insert(p.name.clone(), t);
-        }
-        let mut returns: Vec<RType> = Vec::new();
-        for s in body {
-            self.walk_stmt(s, &mut scope, Some(&mut returns));
-        }
-        if let Some(t) = self.trailing_return_type(body, &mut scope, depth + 1) {
-            returns.push(t);
-        }
-        self.discarding = prev_discarding;
-        if returns.is_empty() {
-            return None;
-        }
-        let joined = join_all(returns.into_iter());
-        if matches!(joined.mode, Mode::Opaque) {
-            return None;
-        }
-        Some(joined)
+        self.walk_literal_returns(body, captured_scope, depth, |scope| {
+            for (i, p) in params.iter().enumerate() {
+                let t = call_arg_types.get(i).cloned().unwrap_or(RType::unknown());
+                scope.insert(p.name.clone(), t);
+            }
+        })
     }
 
     /// Walk the callback body of a higher-order function call for

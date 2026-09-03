@@ -1101,14 +1101,6 @@ impl Checker {
         let assertion_binding = assertion_signature
             .filter(|signature| signature.assertion.is_some())
             .map(|signature| (signature, match_params(&signature.params, args)));
-        // Name -> formal -> actual, against the prebuilt match.
-        let bound_actual = |signature: &FunctionSig, bindings: &ArgumentMatch, name: &str| {
-            signature
-                .params
-                .iter()
-                .position(|param| param.name == name)
-                .and_then(|formal_index| bindings.arg_for_param(formal_index))
-        };
         if (name.contains("::") || !locally_shadows_stub || resolution.user_function.is_some())
             && let Some((signature, bindings)) = assertion_binding
             && let Some(assertion) = signature.assertion.as_ref()
@@ -1126,7 +1118,7 @@ impl Checker {
                     })
             })
             && let Some(subject_index) =
-                bound_actual(signature, &bindings, &assertion.subject_param)
+                bound_argument_index_matched(&signature.params, &bindings, &assertion.subject_param)
             && let Some(Expr::Ident { name: var, .. }) =
                 args.get(subject_index).map(|arg| &arg.value)
         {
@@ -1143,7 +1135,7 @@ impl Checker {
                 ),
             ] {
                 if let (Some(param), Some(weakening)) = (param, null_target)
-                    && bound_actual(signature, &bindings, param)
+                    && bound_argument_index_matched(&signature.params, &bindings, param)
                         .is_some_and(|index| !matches!(args[index].value, Expr::Logical(false, _)))
                 {
                     target = target.join(weakening);

@@ -16,9 +16,8 @@ fn allows_int_plus_double() {
     assert!(diags.is_empty(), "got {:?}", diags);
 }
 
-// Table-driven form of the RY001/RY002/RY003 condition-diagnostic
-// family (the #155 conversion's shape): each row pins which family
-// code one condition source fires, that its sibling codes stay
+// Table-driven RY001/RY002/RY003 condition family: each row pins which
+// family code one condition source fires, that its sibling codes stay
 // silent, and that RY003 keeps its info-level severity. Absorbs the
 // former single-case `detects_if_on_character` and
 // `detects_long_condition_warning` tests.
@@ -55,29 +54,21 @@ fn condition_rules_fire_their_family_code() {
             "{note}: expected {expected}, got {diags:?}"
         );
         for silent in ["RY001", "RY002", "RY003"] {
-            if silent == expected {
-                continue;
-            }
             assert!(
-                diags.iter().all(|d| d.code != silent),
+                silent == expected || diags.iter().all(|d| d.code != silent),
                 "{note}: {silent} must stay silent, got {diags:?}"
             );
         }
-        if expected == "RY003" {
-            assert!(
-                diags
+        assert!(
+            expected != "RY003"
+                || diags
                     .iter()
                     .any(|d| d.code == "RY003" && d.severity == Severity::Info),
-                "{note}: RY003 is an info-level nudge, got {diags:?}"
-            );
-        }
+            "{note}: RY003 is an info-level nudge, got {diags:?}"
+        );
     }
 }
 
-// Not folded into a table: this is the only RY010-presence case in
-// type_inference.rs (the file's RY010 tables all assert absence), and
-// the rule's table-driven homes live in test modules outside this
-// cleanup's file ownership, so the single-case form stays.
 #[test]
 fn detects_unbound_var() {
     let diags = check("y <- undefined_thing\n");

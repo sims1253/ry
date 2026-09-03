@@ -426,12 +426,10 @@ impl Checker {
     }
 
     /// Walk an anonymous function literal's body to infer its return
-    /// type, given the argument types the caller will pass. The shared
-    /// walk is [`Checker::walk_literal_returns`]; this layers the
-    /// callback's params, bound to the call-site argument types, on the
-    /// captured scope (whereas `build_function_signature` binds them
-    /// from declared defaults). Used by `callback_return_type` for the
-    /// inline-literal case.
+    /// type, given the argument types the caller will pass: the shared
+    /// [`Checker::walk_literal_returns`] walk with params bound from
+    /// the call-site argument types instead of declared defaults.
+    /// Used by `callback_return_type` for the inline-literal case.
     pub(crate) fn callback_literal_return(
         &mut self,
         params: &[Param],
@@ -440,7 +438,7 @@ impl Checker {
         captured_scope: &Scope,
         depth: usize,
     ) -> Option<RType> {
-        if body.is_empty() || depth >= MAX_CLOSURE_DEPTH {
+        if depth >= MAX_CLOSURE_DEPTH {
             return None;
         }
         self.walk_literal_returns(body, captured_scope, depth, |scope| {

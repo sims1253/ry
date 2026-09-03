@@ -874,7 +874,7 @@ impl Checker {
     ///
     /// Returns `None` when the body is empty, the last statement is not
     /// an expression-like form, or the trailing expression is a
-    /// `return(...)` call (which `collect_returns_stmt_at_depth`
+    /// `return(...)` call (which [`Checker::walk_literal_returns`]
     /// already counted).
     pub(crate) fn trailing_return_type(
         &mut self,

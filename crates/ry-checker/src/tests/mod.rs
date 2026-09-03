@@ -15,8 +15,8 @@ mod type_inference;
 /// Parse one checker-test snippet under `path`: the single
 /// `RParser::new()` + parse entry point shared by the topic modules in
 /// this directory and the inline `#[cfg(test)]` units in `collect.rs`,
-/// `infer::binop`, and `infer::index`, so parser setup cannot drift
-/// between them.
+/// `infer::binop`, `infer::index`, and `infer::recall`, so parser setup
+/// cannot drift between them.
 pub(super) fn parse_snippet(path: &str, src: &str) -> SourceFile {
     let mut p = RParser::new().unwrap();
     p.parse(path, src).unwrap()

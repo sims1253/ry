@@ -110,12 +110,10 @@ fn modes_of(ty: &RType) -> Vec<Mode> {
 ///
 /// `None` is a *proof barrier*, not a mode and not emptiness: callers
 /// that must prove something (incompatibility, a label) treat it as
-/// "cannot decide", never as evidence of a mismatch. These two views
-/// replace the per-helper drift the former union-flattening sites
-/// encoded (`known_modes`, the `modes` closure in `types_intersect`,
-/// and the member walk in `standalone_check_provably_rejects`, which
-/// keeps full `RType`s for per-member length/class checks and so
-/// mirrors `modes_of` rather than calling it).
+/// "cannot decide", never as evidence of a mismatch. A site that needs
+/// the full `RType` of each union member for per-member length/class
+/// checks walks the members itself (`standalone_check_provably_rejects`)
+/// and so mirrors `modes_of` rather than calling this.
 fn mode_set(ty: &RType) -> Option<Vec<Mode>> {
     let modes = modes_of(ty);
     (!modes.is_empty() && !modes.contains(&Mode::Opaque)).then_some(modes)
@@ -1170,9 +1168,11 @@ pub(crate) struct ArgumentMatch {
 impl ArgumentMatch {
     /// The actual argument bound to formal parameter `formal_index`
     /// under ordinary R matching, if any: the reverse of
-    /// `param_for_arg` (each formal binds at most one actual).
-    /// Semantic metadata must go through this rather than raw call
-    /// positions.
+    /// `param_for_arg`. For valid R each formal binds at most one
+    /// actual; a call that repeats a name (`f(x = 1, x = 2)`) is a
+    /// runtime error in R and is not rejected here, and this lookup
+    /// picks the first such actual. Semantic metadata must go through
+    /// this rather than raw call positions.
     pub(crate) fn arg_for_param(&self, formal_index: usize) -> Option<usize> {
         self.param_for_arg
             .iter()

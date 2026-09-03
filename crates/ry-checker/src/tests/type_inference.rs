@@ -65,7 +65,9 @@ fn condition_rules_fire_their_family_code() {
         }
         if expected == "RY003" {
             assert!(
-                diags.iter().any(|d| d.code == "RY003" && d.severity == Severity::Info),
+                diags
+                    .iter()
+                    .any(|d| d.code == "RY003" && d.severity == Severity::Info),
                 "{note}: RY003 is an info-level nudge, got {diags:?}"
             );
         }

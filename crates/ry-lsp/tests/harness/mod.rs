@@ -220,21 +220,58 @@ pub fn workspace_root() -> PathBuf {
         .unwrap()
 }
 
-/// Build the production `ry` binary once per test process and return its
-/// debug path.
+/// Build the production `ry` binary once per test process and return the
+/// path Cargo reports for it.
+///
+/// The path comes from Cargo's JSON artifact messages rather than a
+/// hardcoded `target/debug/ry`, so it stays correct when artifacts land
+/// elsewhere: a custom `CARGO_TARGET_DIR` (relative or absolute), a
+/// `[build] target-dir` in a Cargo config, or a platform executable
+/// suffix (`ry.exe` on Windows).
 pub fn ry_binary() -> PathBuf {
     static BINARY: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     BINARY
         .get_or_init(|| {
-            let status = Command::new(env!("CARGO"))
+            let output = Command::new(env!("CARGO"))
                 .current_dir(workspace_root())
-                .args(["build", "--quiet", "-p", "ry-cli"])
-                .status()
+                .args(["build", "--quiet", "-p", "ry-cli", "--message-format=json"])
+                .output()
                 .expect("build the production ry binary for the protocol gate");
-            assert!(status.success());
-            workspace_root().join("target/debug/ry")
+            assert!(
+                output.status.success(),
+                "building the production ry binary failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            ry_executable_from_cargo_json(&output.stdout)
+                .expect("cargo must report the ry binary artifact")
         })
         .clone()
+}
+
+/// Extract the `ry` executable's path from `cargo build
+/// --message-format=json` stdout: one JSON object per line, the wanted
+/// one being the `compiler-artifact` message whose target is the `ry`
+/// bin (dependency artifacts report a null `executable` and are
+/// skipped). A relative report is anchored at the workspace root — the
+/// directory the build ran in — because a relative path would otherwise
+/// be resolved against the test process's working directory.
+pub fn ry_executable_from_cargo_json(stdout: &[u8]) -> Option<PathBuf> {
+    let stdout = std::str::from_utf8(stdout).ok()?;
+    let artifact = stdout
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|msg| {
+            msg["reason"] == "compiler-artifact"
+                && msg["target"]["name"] == "ry"
+                && msg["target"]["kind"][0] == "bin"
+                && msg["executable"].is_string()
+        })?;
+    let path = PathBuf::from(artifact["executable"].as_str()?);
+    Some(if path.is_absolute() {
+        path
+    } else {
+        workspace_root().join(path)
+    })
 }
 
 /// Percent-encoded `file://` URI for `path` (the testkit encoder, which

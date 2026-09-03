@@ -1276,19 +1276,30 @@ fn is_test_fixture(path: &Path) -> bool {
     }
 }
 
+/// Whether `name` uses the conventional `.R`/`.r` spelling. testthat and
+/// `R CMD check` execute only `.R`/`.r` under `tests/`, so the historical
+/// S-dialect spellings (`.S`/`.s`/`.q`) stay discoverable as R source
+/// outside `tests/` but classify as fixtures inside it.
 fn is_r_source_name(name: &str) -> bool {
     std::path::Path::new(name)
         .extension()
         .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| matches!(extension, "R" | "r" | "S" | "s" | "q"))
+        .is_some_and(|extension| matches!(extension, "R" | "r"))
 }
 
+/// Whether a `tests/testthat/` file name is runner code under testthat's
+/// documented contract: `test-`/`test_` test files plus `helper`, `setup`,
+/// and `teardown` prefixes. A name merely starting with the letters
+/// "test" (`testing.R`, `testthat.R`) is data. testthat's implementation
+/// regex `^test.*\.[rR]$` is broader than its docs and would execute a
+/// lookalike; ry follows the documented contract, so a lookalike is
+/// skipped unless `check_test_fixtures` is enabled.
 fn is_testthat_code_name(name: &str) -> bool {
     let stem = std::path::Path::new(name)
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or(name);
-    ["test", "helper", "setup", "teardown"]
+    ["test-", "test_", "helper", "setup", "teardown"]
         .iter()
         .any(|prefix| stem.starts_with(prefix))
 }
@@ -1617,6 +1628,62 @@ delayedAssign(\"later\", value)",
 mod shared_tests {
     use super::*;
 
+    /// Runner-code names under testthat's documented contract: both
+    /// test-file spellings plus the helper/setup/teardown prefixes. A
+    /// name merely starting with the letters "test" does not qualify.
+    #[test]
+    fn testthat_code_names_follow_the_documented_prefixes() {
+        for name in [
+            "test-that.R",
+            "test_placeholder.r",
+            "helper-values.R",
+            "helper.R",
+            "setup.R",
+            "setup-db.R",
+            "teardown.R",
+            "teardown-cache.r",
+        ] {
+            assert!(is_testthat_code_name(name), "{name}");
+        }
+        for name in [
+            "testing.R",
+            "testthat.R",
+            "test.R",
+            "data.R",
+            "snapshot.txt",
+        ] {
+            assert!(!is_testthat_code_name(name), "{name}");
+        }
+    }
+
+    /// Runner classification accepts only the conventional `.R`/`.r`
+    /// spellings, so historical S-dialect extensions never classify as
+    /// runner code — including directly under `tests/`, where nothing
+    /// executes them (fixtures are skipped unless
+    /// `check_test_fixtures` is enabled).
+    #[test]
+    fn runner_classification_requires_r_extension() {
+        for name in ["test-x.R", "helper.r", "setup.R"] {
+            assert!(is_r_source_name(name), "{name}");
+        }
+        for name in ["test-x.S", "test-x.s", "test-x.q", "test-x.txt"] {
+            assert!(!is_r_source_name(name), "{name}");
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
+        for (relative, fixture) in [
+            ("tests/testthat.R", false),
+            ("tests/foo.R", false),
+            ("tests/foo.r", false),
+            ("tests/foo.S", true),
+            ("tests/foo.s", true),
+            ("tests/foo.q", true),
+        ] {
+            assert_eq!(is_test_fixture(&root.join(relative)), fixture, "{relative}");
+        }
+    }
+
     #[test]
     fn eligibility_is_rooted_and_separator_independent() {
         let dir = tempfile::tempdir().unwrap();
@@ -1844,6 +1911,12 @@ mod shared_tests {
             "tests/testthat/teardown-package.R",
             "tests/testthat/fixtures/input.R",
             "tests/testthat/data.R",
+            // Fixtures under the documented contract: a "test" prefix
+            // lookalike, a runner spelling in a historical extension,
+            // and a historical extension directly under tests/.
+            "tests/testthat/testing.R",
+            "tests/testthat/test-legacy.S",
+            "tests/legacy.S",
             "tests/testthat/_snaps/output.R",
             "tests/manual/example.R",
             "revdep/other/R/other.R",

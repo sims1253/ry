@@ -686,30 +686,19 @@ impl Checker {
         // the package name into `self.loaded` so the dplyr NSE gating can
         // treat dplyr/tidyverse as in scope after either call.
         if semantic_name == "library" || semantic_name == "require" {
-            if let Some(first) = args.first() {
-                let character_only = args.iter().any(|argument| {
-                    argument.name.as_deref() == Some("character.only")
-                        && matches!(argument.value, Expr::Logical(true, _))
-                });
-                let package = match &first.value {
-                    Expr::Ident { name, .. } if !character_only => Some(name),
-                    Expr::String(name, _) => Some(name),
-                    _ => None,
-                };
-                if let Some(pkg) = package {
-                    Arc::make_mut(&mut self.loaded).insert(pkg.clone());
-                    Arc::make_mut(&mut self.bare_loaded).insert(pkg.clone());
-                    // An attached package without a stub can contribute any
-                    // export or lazy-loaded dataset to the search path.
-                    if !self.package_is_known(pkg) {
-                        scope.mark_search_path_unknown();
-                    }
-                } else if character_only {
-                    // `library(pkg, character.only = TRUE)` evaluates its
-                    // argument. Without a literal package name we cannot
-                    // know which bindings were attached.
+            if let Some(pkg) = crate::attached_package_name(args) {
+                Arc::make_mut(&mut self.loaded).insert(pkg.to_string());
+                Arc::make_mut(&mut self.bare_loaded).insert(pkg.to_string());
+                // An attached package without a stub can contribute any
+                // export or lazy-loaded dataset to the search path.
+                if !self.package_is_known(pkg) {
                     scope.mark_search_path_unknown();
                 }
+            } else if crate::character_only(args) {
+                // `library(pkg, character.only = TRUE)` evaluates its
+                // argument. Without a literal package name we cannot
+                // know which bindings were attached.
+                scope.mark_search_path_unknown();
             }
             return Some(if semantic_name == "require" {
                 RType::new(Mode::Logical, Length::One)

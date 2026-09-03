@@ -337,37 +337,28 @@ impl Project {
     /// For incremental updates, use [`update_file`](Self::update_file)
     /// followed by [`check_incremental`](Self::check_incremental).
     pub fn check(&mut self) -> Vec<(String, Vec<Diagnostic>)> {
-        // Pre-scan: collect packages attached via `library`/`require`
-        // from every file and union them with the
+        // Pass 1: one collection walk per file. Each file's functions
+        // AND its `library`/`require` attachments are harvested in the
+        // same pass (issue #178); the attachments are unioned with the
         // project-declared `loaded` set (from `ry.toml`'s `packages`
         // key). The union is seeded into every pass-3 emitter so a
         // `library(dplyr)` in any file makes dplyr NSE verbs resolve
         // everywhere (matching R's source()-based cross-file semantics).
-        // A throwaway Checker in discarding mode drives the walk; no
-        // diagnostics are emitted.
         let mut union_loaded = self.declared_loaded.clone();
-        let mut loaded_scanner = Checker::new("__project_loaded__");
-        loaded_scanner.set_user_stubs(Arc::clone(&self.user_stubs));
-        for (_path, file) in &self.files {
-            union_loaded.extend(loaded_scanner.collect_file_loaded(file));
-        }
-        self.loaded = union_loaded.clone();
-
-        // Pass 1: collect each file separately before merging. Their binding
-        // sets are pooled for diagnostic emission, matching source()-based
-        // project semantics (including testthat helpers and examples).
         let mut fn_table = FnTable::default();
         let mut return_slots = ReturnSlots::default();
         self.file_known_vars.clear();
         for (path, file) in &self.files {
             let mut collector = Checker::new(path);
             collector.set_user_stubs(Arc::clone(&self.user_stubs));
-            collector.collect_file_fns(file);
+            let loaded = collector.collect_file_fns(file);
             let (collected, slots) = collector.into_tables();
             self.file_known_vars
                 .insert(path.clone(), collected.known_vars.clone());
+            union_loaded.extend(loaded);
             fn_table.append_collected(&collected, &mut return_slots, &slots);
         }
+        self.loaded = union_loaded.clone();
         fn_table.known_vars = self.pooled_known_vars();
         self.fn_table = fn_table;
         self.return_slots = return_slots;
@@ -392,13 +383,11 @@ impl Project {
             if self.collected_files.contains_key(path) {
                 continue;
             }
-            let mut loaded_scanner = Checker::new(path);
-            loaded_scanner.set_user_stubs(Arc::clone(&self.user_stubs));
-            let loaded = loaded_scanner.collect_file_loaded(file);
-
+            // Same combined collection walk as the cold `check`: the
+            // file's functions and attachments in one pass (#178).
             let mut collector = Checker::new(path);
             collector.set_user_stubs(Arc::clone(&self.user_stubs));
-            collector.collect_file_fns(file);
+            let loaded = collector.collect_file_fns(file);
             let (fn_table, return_slots) = collector.into_tables();
             self.file_known_vars
                 .insert(path.clone(), fn_table.known_vars.clone());
@@ -636,13 +625,12 @@ impl Project {
                     continue;
                 }
                 // Does this file call any function whose return type changed?
-                if let Some(called) = self.file_called_fns.get(path) {
-                    if called
+                if let Some(called) = self.file_called_fns.get(path)
+                    && called
                         .iter()
                         .any(|name| changed_fns.contains(name.as_str()))
-                    {
-                        dirty.insert(path.as_str());
-                    }
+                {
+                    dirty.insert(path.as_str());
                 }
                 // Conservatively: if any S3/S4 method slot changed, emit
                 // this file. S3 dispatch is dynamic; we cannot cheaply

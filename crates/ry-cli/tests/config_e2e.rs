@@ -343,7 +343,7 @@ fn ry_toml_output_format_json() {
 
     let output = ry_check(tmp.path());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // JSON output lands on stdout (per main.rs's routing) and must
+    // JSON output lands on stdout (per check.rs's routing) and must
     // parse as a JSON array containing the RY040 diagnostic.
     assert!(
         stdout.trim_start().starts_with('['),

@@ -223,6 +223,47 @@ fn opaque_group_stubs_keep_the_base_operator_diagnostics() {
 }
 
 #[test]
+fn factor_arithmetic_does_not_warn_about_recycling() {
+    // `Ops.factor` preempts the primitive for *all* arithmetic: real R
+    // warns "'+' not meaningful for factors" and returns
+    // `rep.int(NA, max(length(e1), length(e2)))` without ever recycling,
+    // so no factor path may claim "R will recycle with a warning"
+    // (verified against R 4.6: neither `f + list(1, 2)` nor `f + 1:2`
+    // emits the `longer object length ...` warning). The list line is
+    // the review corner where the lattice cannot combine the operands
+    // at all; the `1:2` line is where it can, so gating on `arith`
+    // succeeding alone would not suffice. RY042 stays on both, and the
+    // ordinary non-factor recycling case keeps its warning.
+    let (diags, _) = check_with_scope(
+        "f <- structure(1:3, class = \"factor\")\n\
+         l <- list(1, 2)\n\
+         a <- f + l\n\
+         b <- f + 1:2\n\
+         plain <- c(1, 2, 3) + c(10, 20)\n",
+    );
+    let ry042_lines = diags
+        .iter()
+        .filter(|d| d.code == "RY042")
+        .map(|d| d.span.line)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ry042_lines,
+        vec![2, 3],
+        "factor arithmetic keeps RY042 for both the list and numeric counterpart: {diags:?}"
+    );
+    let ry041_lines = diags
+        .iter()
+        .filter(|d| d.code == "RY041")
+        .map(|d| d.span.line)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ry041_lines,
+        vec![4],
+        "only the non-factor line may warn about recycling: {diags:?}"
+    );
+}
+
+#[test]
 fn operator_dispatch_tries_rhs_and_class_vector_order() {
     // R tries the LHS operand's classes, then the RHS's, and within one
     // operand the class vector in order: `1 + y` dispatches on `y`, and

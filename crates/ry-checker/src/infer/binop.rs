@@ -167,19 +167,24 @@ impl Checker {
         };
         if lt.class.contains("factor") || rt.class.contains("factor") {
             // Base R's `Ops.factor` warns "'+' not meaningful for factors"
-            // for *any* arithmetic involving a factor and returns `NA`, no
-            // matter what the other operand is (`factor + 1` and
-            // `factor + list` behave alike). Report RY042 before the
-            // lattice rules: the dispatched method preempts the
-            // primitive's own mode-mismatch error, so a list counterpart
-            // must stay a warning, not become RY040.
+            // for *any* arithmetic involving a factor and returns
+            // `rep.int(NA, max(length(e1), length(e2)))`, no matter what
+            // the other operand is (`factor + 1` and `factor + list`
+            // behave alike). Report RY042 before the lattice rules: the
+            // dispatched method preempts the primitive's own mode-mismatch
+            // error, so a list counterpart must stay a warning, not become
+            // RY040. That dispatch equally preempts the primitive's
+            // recycling: the method never warns about uneven operand
+            // lengths (verified against R 4.6), so no factor path may
+            // emit RY041's "R will recycle with a warning" claim -- not
+            // even where the storage modes would arith-combine (`factor +
+            // 1:2` warns only about meaninglessness in real R).
             self.emit(
                 Severity::Warning,
                 span,
                 "RY042",
                 "arithmetic on a factor produces `NA`; operate on its levels or convert it explicitly",
             );
-            emit_recycle_warning(self);
             return lt.arith(rt).unwrap_or_else(RType::unknown);
         }
         if let Some(t) = lt.arith(rt) {

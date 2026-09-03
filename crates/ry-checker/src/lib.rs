@@ -9,9 +9,8 @@
 //! return type until stable (or the depth cap is hit).
 
 // Not vestigial: collapsible-if sites remain in infer/, higher_order.rs,
-// and collect.rs (outside the file scope of the
-// cleanup/checker-core-markers branch). The resolve.rs and project.rs
-// sites were collapsed under #185; lift this allow together with those.
+// and collect.rs. The resolve.rs and project.rs sites were collapsed
+// under #185; lift this allow together with those.
 #![allow(clippy::collapsible_if)]
 
 mod collect;

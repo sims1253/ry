@@ -1276,6 +1276,12 @@ fn is_test_fixture(path: &Path) -> bool {
     }
 }
 
+/// Whether `name` uses the conventional `.R`/`.r` source spelling.
+/// Runner-code classification uses this predicate, so the historical
+/// S-dialect spellings (`.S`/`.s`/`.q`) stay discoverable as R source
+/// outside `tests/` but classify as fixtures inside it: testthat and
+/// `R CMD check` execute only `.R`/`.r` under `tests/`, so a
+/// `tests/foo.S` is data, not runner code.
 fn is_r_source_name(name: &str) -> bool {
     std::path::Path::new(name)
         .extension()
@@ -1689,6 +1695,25 @@ mod shared_tests {
         }
     }
 
+    /// Two-segment `tests/<file>` paths classify as executed code only
+    /// in the conventional `.R`/`.r` spellings. A historical S-dialect
+    /// file like `tests/foo.S` is a fixture — neither `R CMD check` nor
+    /// testthat executes anything but `.R`/`.r` directly under `tests/`
+    /// — so it is skipped unless `check_test_fixtures` is enabled. Pins
+    /// the conscious flip the #174 extension narrowing causes here.
+    #[test]
+    fn tests_root_legacy_extension_classifies_as_fixture() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
+        assert!(!is_test_fixture(&root.join("tests/testthat.R")));
+        assert!(!is_test_fixture(&root.join("tests/foo.R")));
+        assert!(!is_test_fixture(&root.join("tests/foo.r")));
+        assert!(is_test_fixture(&root.join("tests/foo.S")));
+        assert!(is_test_fixture(&root.join("tests/foo.s")));
+        assert!(is_test_fixture(&root.join("tests/foo.q")));
+    }
+
     #[test]
     fn eligibility_is_rooted_and_separator_independent() {
         let dir = tempfile::tempdir().unwrap();
@@ -1921,6 +1946,10 @@ mod shared_tests {
             // spelling in a historical extension. Both are fixtures.
             "tests/testthat/testing.R",
             "tests/testthat/test-legacy.S",
+            // A historical extension directly under tests/: discoverable
+            // as R source, but nothing executes it there, so it is a
+            // skipped-by-default fixture.
+            "tests/legacy.S",
             "tests/testthat/_snaps/output.R",
             "tests/manual/example.R",
             "revdep/other/R/other.R",

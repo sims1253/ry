@@ -16,41 +16,31 @@ const BASE_DATABASE_PACKAGES: &[&str] = &[
     "datasets",
 ];
 
-/// Which attachment set gates the attached-package rung of a
-/// typeshed-resolution ladder. The checker keeps two sets with different
-/// granularity (`Checker::loaded` is a project-wide union used for dplyr
-/// NSE gating; `Checker::bare_loaded` is this file's R search path), so
-/// every ladder must declare its gate explicitly rather than silently
-/// sharing one lookup (issue #166).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AttachedGate {
-    /// `bare_loaded`: this file's own search path. The gate for ordinary
-    /// bare-name resolution -- signatures, values, predicates, and
-    /// `has_function_anywhere`.
-    Bare,
-    /// `loaded` (the project-wide union) plus the tidyverse expansion:
-    /// `library(tidyverse)` makes dplyr and tidyr's declarative verbs
-    /// resolvable everywhere, exactly like the dplyr NSE gating they
-    /// share inference with.
-    SchemaNse,
-}
-
 impl Checker {
     /// The attached packages a resolution ladder may consult, in the
-    /// deterministic priority order of [`Self::available_package_names`],
-    /// filtered by `gate`'s attachment rule. This is the one shared
-    /// form of the "walk candidate packages, keep the ones actually
-    /// attached" rung that every ladder below used to hand-roll.
-    pub(crate) fn candidate_packages(&self, gate: AttachedGate) -> impl Iterator<Item = &str> + '_ {
+    /// deterministic priority order of [`Self::available_package_names`]:
+    /// the one shared form of the "walk candidate packages, keep the ones
+    /// actually attached" rung that every ladder below uses. The checker
+    /// keeps two attachment sets with different granularity, so each
+    /// ladder picks its gate explicitly (issue #166).
+    ///
+    /// `bare_loaded` — this file's own search path — gates ordinary
+    /// bare-name resolution: signatures, values, predicates, and
+    /// `has_function_anywhere`.
+    pub(crate) fn bare_attached_packages(&self) -> impl Iterator<Item = &str> + '_ {
         self.available_package_names()
-            .filter(move |package| match gate {
-                AttachedGate::Bare => self.bare_loaded.contains(*package),
-                AttachedGate::SchemaNse => {
-                    self.loaded.contains(*package)
-                        || (self.loaded.contains("tidyverse")
-                            && matches!(*package, "dplyr" | "tidyr"))
-                }
-            })
+            .filter(move |package| self.bare_loaded.contains(*package))
+    }
+
+    /// The other gate: `loaded` (the project-wide union) plus the
+    /// tidyverse expansion — `library(tidyverse)` makes dplyr and tidyr's
+    /// declarative verbs resolvable everywhere, exactly like the dplyr
+    /// NSE gating they share inference with.
+    pub(crate) fn schema_attached_packages(&self) -> impl Iterator<Item = &str> + '_ {
+        self.available_package_names().filter(move |package| {
+            self.loaded.contains(*package)
+                || (self.loaded.contains("tidyverse") && matches!(*package, "dplyr" | "tidyr"))
+        })
     }
 
     /// Resolve only signatures that declare checker schema semantics. Unlike
@@ -88,13 +78,12 @@ impl Checker {
         {
             return Some(sig.clone());
         }
-        self.candidate_packages(AttachedGate::SchemaNse)
-            .find_map(|package| {
-                self.package_typeshed(package)
-                    .and_then(|typeshed| typeshed.functions.get(name))
-                    .filter(|sig| has_schema_semantics(sig))
-                    .cloned()
-            })
+        self.schema_attached_packages().find_map(|package| {
+            self.package_typeshed(package)
+                .and_then(|typeshed| typeshed.functions.get(name))
+                .filter(|sig| has_schema_semantics(sig))
+                .cloned()
+        })
     }
 
     /// Resolve a predicate declaration with exact callee provenance. Bare
@@ -128,7 +117,7 @@ impl Checker {
         {
             candidates.push(signature);
         }
-        for package in self.candidate_packages(AttachedGate::Bare) {
+        for package in self.bare_attached_packages() {
             if let Some(signature) = self
                 .package_typeshed(package)
                 .and_then(|typeshed| typeshed.functions.get(name))
@@ -170,12 +159,11 @@ impl Checker {
         if let Some(value_type) = self.typeshed.datasets.get(name) {
             return Some(json_rtype_to_rtype(value_type));
         }
-        self.candidate_packages(AttachedGate::Bare)
-            .find_map(|package| {
-                self.package_typeshed(package)
-                    .and_then(|typeshed| typeshed.datasets.get(name))
-                    .map(json_rtype_to_rtype)
-            })
+        self.bare_attached_packages().find_map(|package| {
+            self.package_typeshed(package)
+                .and_then(|typeshed| typeshed.datasets.get(name))
+                .map(json_rtype_to_rtype)
+        })
     }
 
     /// Resolve a function signature by name, consulting (in order):
@@ -231,7 +219,7 @@ impl Checker {
         // disjoint across these packages, so masking rarely bites).
         // `loaded` is a HashSet (unordered) so we walk a deterministic
         // known-packages list and check membership.
-        self.candidate_packages(AttachedGate::Bare).find_map(|pkg| {
+        self.bare_attached_packages().find_map(|pkg| {
             self.package_typeshed(pkg)
                 .and_then(|typeshed| typeshed.functions.get(name))
                 .cloned()
@@ -305,7 +293,7 @@ impl Checker {
             return true;
         }
         // Loaded packages (fixed priority order; see resolve_typeshed_sig).
-        if self.candidate_packages(AttachedGate::Bare).any(|pkg| {
+        if self.bare_attached_packages().any(|pkg| {
             self.package_typeshed(pkg)
                 .is_some_and(|t| t.functions.contains_key(name))
         }) {

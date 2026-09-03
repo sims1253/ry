@@ -8,9 +8,8 @@
 //! function definitions; subsequent passes refine each function's inferred
 //! return type until stable (or the depth cap is hit).
 
-// Not vestigial: collapsible-if sites remain in infer/, higher_order.rs,
-// and collect.rs. The resolve.rs and project.rs sites were collapsed
-// under #185; lift this allow together with those.
+// Not vestigial: collapsible-if sites remain in infer/,
+// higher_order.rs, and collect.rs.
 #![allow(clippy::collapsible_if)]
 
 mod collect;
@@ -120,22 +119,22 @@ fn is_na_literal(expr: &Expr) -> bool {
     matches!(expr, Expr::Na(_, _))
 }
 
-/// The package a `library()` / `require()` call attaches, given its
-/// argument list. Mirrors `infer_call`'s recording rule: the first
-/// argument names the package as a bare symbol — unless
-/// `character.only = TRUE` restricts it to a string literal. `None`
-/// when no literal package name is available (a computed argument
-/// attaches an unknown set of bindings; the inference walk marks the
-/// search path unknown in that case, which pass 1 does not model).
-fn attached_package_name(args: &[Arg]) -> Option<String> {
-    let first = args.first()?;
-    let character_only = args.iter().any(|argument| {
+/// Whether `library()` / `require()` was passed `character.only = TRUE`.
+fn character_only(args: &[Arg]) -> bool {
+    args.iter().any(|argument| {
         argument.name.as_deref() == Some("character.only")
             && matches!(argument.value, Expr::Logical(true, _))
-    });
-    match &first.value {
-        Expr::Ident { name, .. } if !character_only => Some(name.clone()),
-        Expr::String(name, _) => Some(name.clone()),
+    })
+}
+
+/// The package a `library()` / `require()` call attaches, given its
+/// argument list: the first argument names the package as a bare symbol
+/// — unless `character.only = TRUE` restricts it to a string literal.
+/// `None` when no literal name is available.
+fn attached_package_name(args: &[Arg]) -> Option<&str> {
+    match &args.first()?.value {
+        Expr::Ident { name, .. } if !character_only(args) => Some(name),
+        Expr::String(name, _) => Some(name),
         _ => None,
     }
 }
@@ -268,31 +267,6 @@ fn is_shiny_app_fragment_path(path: &str) -> bool {
     })
 }
 
-/// One provenance marker a [`Scope`] binding can carry. Each name has its
-/// own marker membership (a name is or is not `Parameter`, independently of
-/// every other name); a plain rebinding through [`Scope::insert`] clears
-/// all of them, while the `insert_*` variants keep a documented subset via
-/// [`Scope::insert_preserving`] (issue #167).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum Marker {
-    /// The current binding was installed by flow narrowing rather than an
-    /// R assignment, so branch merging can tell a temporary refinement
-    /// from a rebinding.
-    Narrowed,
-    /// The binding still refers directly to a function parameter.
-    Parameter,
-    /// The binding's type came from a function parameter default. A
-    /// default is one call shape, not a complete declaration of the
-    /// parameter's runtime type.
-    DefaultParameter,
-    /// The binding derives from a list-valued expression even when later
-    /// subset inference loses the concrete mode.
-    ListOrigin,
-    /// The binding is a function literal defined in a nested lexical
-    /// environment, not through the project-wide function table.
-    LexicalFunction,
-}
-
 /// A single scope's binding table.
 #[derive(Debug, Clone, Default)]
 pub struct Scope {
@@ -330,29 +304,6 @@ impl Scope {
         self.bindings.get(name)
     }
 
-    /// Whether `name` currently carries `marker`.
-    pub(crate) fn has_marker(&self, name: &str, marker: Marker) -> bool {
-        match marker {
-            Marker::Narrowed => self.narrowed_bindings.contains(name),
-            Marker::Parameter => self.parameter_bindings.contains(name),
-            Marker::DefaultParameter => self.default_parameter_bindings.contains(name),
-            Marker::ListOrigin => self.list_origin_bindings.contains(name),
-            Marker::LexicalFunction => self.lexical_functions.contains(name),
-        }
-    }
-
-    /// Add `marker` to `name`'s marker set.
-    pub(crate) fn set_marker(&mut self, name: impl Into<String>, marker: Marker) {
-        let name = name.into();
-        match marker {
-            Marker::Narrowed => self.narrowed_bindings.insert(name),
-            Marker::Parameter => self.parameter_bindings.insert(name),
-            Marker::DefaultParameter => self.default_parameter_bindings.insert(name),
-            Marker::ListOrigin => self.list_origin_bindings.insert(name),
-            Marker::LexicalFunction => self.lexical_functions.insert(name),
-        };
-    }
-
     pub fn insert(&mut self, name: impl Into<String>, t: RType) {
         let name = name.into();
         self.function_aliases.remove(&name);
@@ -364,35 +315,26 @@ impl Scope {
         self.bindings.insert(name, t);
     }
 
-    /// Rebind `name` to `t`, clearing every provenance marker except the
-    /// subset in `keep` that the name already carried. This is the one
-    /// save/restore point for marker state; the `insert_*` variants below
-    /// declare their keep-list instead of hand-restoring marker sets.
-    pub(crate) fn insert_preserving(&mut self, name: impl Into<String>, t: RType, keep: &[Marker]) {
-        let name = name.into();
-        let keep: Vec<Marker> = keep
-            .iter()
-            .copied()
-            .filter(|marker| self.has_marker(&name, *marker))
-            .collect();
-        self.insert(name.clone(), t);
-        for marker in keep {
-            self.set_marker(name.clone(), marker);
-        }
-    }
-
     pub(crate) fn insert_narrowed(&mut self, name: impl Into<String>, t: RType) {
         // Narrowing refines the value without rebinding the name, so the
-        // parameter markers survive.
+        // parameter markers survive `insert`'s clearing.
         let name = name.into();
-        self.insert_preserving(&name, t, &[Marker::Parameter, Marker::DefaultParameter]);
-        self.set_marker(name, Marker::Narrowed);
+        let was_parameter = self.parameter_bindings.contains(&name);
+        let was_default_parameter = self.default_parameter_bindings.contains(&name);
+        self.insert(name.clone(), t);
+        if was_parameter {
+            self.parameter_bindings.insert(name.clone());
+        }
+        if was_default_parameter {
+            self.default_parameter_bindings.insert(name.clone());
+        }
+        self.narrowed_bindings.insert(name);
     }
 
     pub(crate) fn insert_parameter(&mut self, name: impl Into<String>, t: RType) {
         let name = name.into();
-        self.insert_preserving(&name, t, &[]);
-        self.set_marker(name, Marker::Parameter);
+        self.insert(name.clone(), t);
+        self.parameter_bindings.insert(name);
     }
 
     pub(crate) fn insert_parameter_default(&mut self, name: impl Into<String>, t: RType) {
@@ -400,9 +342,17 @@ impl Scope {
         // captured-scope namesake without disturbing the lexical-function
         // and list-origin markers (`insert` would clear both).
         let name = name.into();
-        self.insert_preserving(&name, t, &[Marker::LexicalFunction, Marker::ListOrigin]);
-        self.set_marker(name.clone(), Marker::Parameter);
-        self.set_marker(name, Marker::DefaultParameter);
+        let was_lexical_function = self.lexical_functions.contains(&name);
+        let was_list_origin = self.list_origin_bindings.contains(&name);
+        self.insert(name.clone(), t);
+        if was_lexical_function {
+            self.lexical_functions.insert(name.clone());
+        }
+        if was_list_origin {
+            self.list_origin_bindings.insert(name.clone());
+        }
+        self.parameter_bindings.insert(name.clone());
+        self.default_parameter_bindings.insert(name);
     }
 
     pub(crate) fn mark_list_origin(&mut self, name: impl Into<String>) {
@@ -914,14 +864,12 @@ impl Checker {
         self.validate_user_call_arguments = false;
     }
 
-    // Pass 1: collect function definitions from this file into the
-    // shared `FnTable` and, in the same pass, harvest the packages it
-    // attaches via `library()`/`require()`. Does NOT emit diagnostics.
-    // Returns the attached-package set so `Project::check` can union it
-    // across files (a `library(dplyr)` in any file makes dplyr NSE
-    // verbs work in every file, matching the intended cross-file
-    // union). One collection pass per file instead of the previous
-    // discarding inference walk plus a fn-collection walk (issue #178).
+    // Pass 1: collect this file's function definitions into the shared
+    // `FnTable` and harvest its `library()`/`require()` attachments in
+    // the same walk — one collection pass instead of a fn-collection
+    // walk plus a discarding inference walk (issue #178). Does NOT emit
+    // diagnostics; returns the attachments for `Project::check` to
+    // union across files.
     pub(crate) fn collect_file_fns(&mut self, file: &SourceFile) -> HashSet<String> {
         self.path = file.path.clone();
         self.collect_fns(&file.stmts);
@@ -930,17 +878,12 @@ impl Checker {
 
     /// Packages attached anywhere in `stmts` by `library(pkg)` /
     /// `require(pkg)`, collected on the shared walker (pure syntax, no
-    /// inference). Argument handling matches `infer_call`'s recording
-    /// rule: the callee must be the bare name `library`/`require` (a
-    /// string call head is R-legal and treated the same), and the
-    /// package is the first argument's identifier — unless
-    /// `character.only = TRUE` restricts it to a string literal.
-    /// Unlike the inference walk it replaced, this scan is not a
-    /// superset: direct calls after code the walker proves unreachable
-    /// (after a `stop()`) are now included — the safe direction for a
-    /// project-wide attachment union — while the rare alias
-    /// indirection `lib <- library; lib(dplyr)`, which inference
-    /// recorded via `function_alias` resolution, is not.
+    /// inference; the callee must be the bare name — a string call head
+    /// is R-legal and treated the same). Not a superset of the inference
+    /// walk it replaced: direct calls after code the walker proves
+    /// unreachable (past a `stop()`) are now included — the safe
+    /// direction for a project-wide union — while the rare alias
+    /// indirection `lib <- library; lib(dplyr)` is not.
     fn harvest_attached_packages(&self, stmts: &[Stmt]) -> HashSet<String> {
         use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
         use std::ops::ControlFlow;
@@ -950,16 +893,11 @@ impl Checker {
             stmts,
             Walk::ALL,
             |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
-                if let AstNode::Expr(Expr::Call { func, args, .. }) = node {
-                    let bare_callee = match func.as_ref() {
-                        Expr::Ident { name, .. } | Expr::String(name, _) => {
-                            name == "library" || name == "require"
-                        }
-                        _ => false,
-                    };
-                    if bare_callee && let Some(package) = attached_package_name(args) {
-                        attached.insert(package);
-                    }
+                if let AstNode::Expr(Expr::Call { func, args, .. }) = node
+                    && matches!(binding_name(func), Some("library" | "require"))
+                    && let Some(package) = attached_package_name(args)
+                {
+                    attached.insert(package.to_string());
                 }
                 ControlFlow::Continue(Descend::Into)
             },

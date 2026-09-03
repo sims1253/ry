@@ -1276,12 +1276,10 @@ fn is_test_fixture(path: &Path) -> bool {
     }
 }
 
-/// Whether `name` uses the conventional `.R`/`.r` source spelling.
-/// Runner-code classification uses this predicate, so the historical
+/// Whether `name` uses the conventional `.R`/`.r` spelling. testthat and
+/// `R CMD check` execute only `.R`/`.r` under `tests/`, so the historical
 /// S-dialect spellings (`.S`/`.s`/`.q`) stay discoverable as R source
-/// outside `tests/` but classify as fixtures inside it: testthat and
-/// `R CMD check` execute only `.R`/`.r` under `tests/`, so a
-/// `tests/foo.S` is data, not runner code.
+/// outside `tests/` but classify as fixtures inside it.
 fn is_r_source_name(name: &str) -> bool {
     std::path::Path::new(name)
         .extension()
@@ -1290,27 +1288,20 @@ fn is_r_source_name(name: &str) -> bool {
 }
 
 /// Whether a `tests/testthat/` file name is runner code under testthat's
-/// documented contract (the "special files" vignette): test files start
-/// with `test-` or `test_`, helper files with `helper`, and setup and
-/// teardown files with `setup` and `teardown`. A name that merely
-/// contains the prefix — `testing.R`, `testthat.R` — classifies as data
-/// consumed by tests. (testthat's implementation regex `^test.*\.[rR]$`
-/// is broader than its documentation and would execute such a lookalike;
-/// ry follows the documented contract, which classifies strictly fewer
-/// files as executed code — the tradeoff is that a prefix lookalike real
-/// testthat still runs is skipped here unless `check_test_fixtures` is
-/// enabled, because fixture classification excludes a file from the
-/// default check.)
+/// documented contract: `test-`/`test_` test files plus `helper`, `setup`,
+/// and `teardown` prefixes. A name merely starting with the letters
+/// "test" (`testing.R`, `testthat.R`) is data. testthat's implementation
+/// regex `^test.*\.[rR]$` is broader than its docs and would execute a
+/// lookalike; ry follows the documented contract, so a lookalike is
+/// skipped unless `check_test_fixtures` is enabled.
 fn is_testthat_code_name(name: &str) -> bool {
     let stem = std::path::Path::new(name)
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or(name);
-    stem.starts_with("test-")
-        || stem.starts_with("test_")
-        || ["helper", "setup", "teardown"]
-            .iter()
-            .any(|prefix| stem.starts_with(prefix))
+    ["test-", "test_", "helper", "setup", "teardown"]
+        .iter()
+        .any(|prefix| stem.starts_with(prefix))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1638,10 +1629,10 @@ mod shared_tests {
     use super::*;
 
     /// Runner-code names under testthat's documented contract: both
-    /// test-file spellings (`test-`, `test_`) and the helper, setup,
-    /// and teardown prefixes, in both extension cases.
+    /// test-file spellings plus the helper/setup/teardown prefixes. A
+    /// name merely starting with the letters "test" does not qualify.
     #[test]
-    fn testthat_code_names_match_the_documented_prefixes() {
+    fn testthat_code_names_follow_the_documented_prefixes() {
         for name in [
             "test-that.R",
             "test_placeholder.r",
@@ -1652,19 +1643,8 @@ mod shared_tests {
             "teardown.R",
             "teardown-cache.r",
         ] {
-            assert!(
-                is_testthat_code_name(name),
-                "{name} should classify as runner code"
-            );
+            assert!(is_testthat_code_name(name), "{name}");
         }
-    }
-
-    /// Names that merely begin with the letters "test" are fixtures:
-    /// the documented contract requires the `test-`/`test_` separator,
-    /// so `testing.R` (the old over-broad rule's canonical false
-    /// positive) and friends never classify as executed code.
-    #[test]
-    fn testthat_code_names_reject_prefix_lookalikes() {
         for name in [
             "testing.R",
             "testthat.R",
@@ -1672,46 +1652,36 @@ mod shared_tests {
             "data.R",
             "snapshot.txt",
         ] {
-            assert!(
-                !is_testthat_code_name(name),
-                "{name} must not classify as runner code"
-            );
+            assert!(!is_testthat_code_name(name), "{name}");
         }
     }
 
     /// Runner classification accepts only the conventional `.R`/`.r`
-    /// spellings; the historical S-dialect extensions remain
-    /// discoverable as R source but never classify as testthat code.
+    /// spellings, so historical S-dialect extensions never classify as
+    /// runner code — including directly under `tests/`, where nothing
+    /// executes them (fixtures are skipped unless
+    /// `check_test_fixtures` is enabled).
     #[test]
     fn runner_classification_requires_r_extension() {
         for name in ["test-x.R", "helper.r", "setup.R"] {
-            assert!(is_r_source_name(name), "{name} is an R source name");
+            assert!(is_r_source_name(name), "{name}");
         }
         for name in ["test-x.S", "test-x.s", "test-x.q", "test-x.txt"] {
-            assert!(
-                !is_r_source_name(name),
-                "{name} must not classify as runner R source"
-            );
+            assert!(!is_r_source_name(name), "{name}");
         }
-    }
-
-    /// Two-segment `tests/<file>` paths classify as executed code only
-    /// in the conventional `.R`/`.r` spellings. A historical S-dialect
-    /// file like `tests/foo.S` is a fixture — neither `R CMD check` nor
-    /// testthat executes anything but `.R`/`.r` directly under `tests/`
-    /// — so it is skipped unless `check_test_fixtures` is enabled. Pins
-    /// the conscious flip the #174 extension narrowing causes here.
-    #[test]
-    fn tests_root_legacy_extension_classifies_as_fixture() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
         std::fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
-        assert!(!is_test_fixture(&root.join("tests/testthat.R")));
-        assert!(!is_test_fixture(&root.join("tests/foo.R")));
-        assert!(!is_test_fixture(&root.join("tests/foo.r")));
-        assert!(is_test_fixture(&root.join("tests/foo.S")));
-        assert!(is_test_fixture(&root.join("tests/foo.s")));
-        assert!(is_test_fixture(&root.join("tests/foo.q")));
+        for (relative, fixture) in [
+            ("tests/testthat.R", false),
+            ("tests/foo.R", false),
+            ("tests/foo.r", false),
+            ("tests/foo.S", true),
+            ("tests/foo.s", true),
+            ("tests/foo.q", true),
+        ] {
+            assert_eq!(is_test_fixture(&root.join(relative)), fixture, "{relative}");
+        }
     }
 
     #[test]
@@ -1941,14 +1911,11 @@ mod shared_tests {
             "tests/testthat/teardown-package.R",
             "tests/testthat/fixtures/input.R",
             "tests/testthat/data.R",
-            // Prefix lookalikes the documented contract rejects: a file
-            // merely starting with the letters "test", and a runner
-            // spelling in a historical extension. Both are fixtures.
+            // Fixtures under the documented contract: a "test" prefix
+            // lookalike, a runner spelling in a historical extension,
+            // and a historical extension directly under tests/.
             "tests/testthat/testing.R",
             "tests/testthat/test-legacy.S",
-            // A historical extension directly under tests/: discoverable
-            // as R source, but nothing executes it there, so it is a
-            // skipped-by-default fixture.
             "tests/legacy.S",
             "tests/testthat/_snaps/output.R",
             "tests/manual/example.R",

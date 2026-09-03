@@ -60,23 +60,18 @@ suppression actions — and fixes a parser panic plus several editor issues.
 ### Changed
 
 - **One pass-1 walk per file, syntax-only attachment harvest**: the
-  checker's collection pass now harvests the packages a file attaches
-  via `library()`/`require()` in the same walk that collects its
-  function definitions, replacing a second full discarding inference
-  walk over every file (#178). The harvest is purely syntactic, with
-  one tradeoff: the rare alias indirection `lib <- library; lib(dplyr)`
-  no longer extends the project-wide attachment union (a direct
-  `library(dplyr)` in any file still does), while attachments after
-  code the walker proves unreachable (past a `stop()`) now count.
-  Diagnostics and inferred types are otherwise unchanged.
-- **Checker and CLI internals consolidated**: the five
-  typeshed-resolution ladders share one attached-package lookup (#166),
-  scope-marker preservation is centralized behind
-  `Scope::insert_preserving` (#167), and `ry check`'s orchestration
-  moved out of the CLI entrypoint into `check.rs` (#182); the last
-  owned `collapsible_if` debt was lifted and the remaining scoped
-  allowance documented (#185). Diagnostics, inferred types, and CLI
-  behavior are unchanged.
+  collection pass now harvests each file's `library()`/`require()`
+  attachments in the same walk that collects its function definitions,
+  replacing a second full discarding inference walk per file (#178).
+  The syntactic harvest drops the rare alias indirection `lib <-
+  library; lib(dplyr)` but counts attachments after code the walker
+  proves unreachable (past a `stop()`); diagnostics and inferred types
+  are otherwise unchanged.
+- **Checker and CLI internals consolidated**: the typeshed-resolution
+  ladders share one attached-package lookup per attachment gate (#166),
+  and `ry check`'s orchestration moved out of the CLI entrypoint into
+  `check.rs` (#182); the last owned `collapsible_if` debt was lifted
+  (#185). Diagnostics, inferred types, and CLI behavior are unchanged.
 - **Remaining `collect.rs` walkers on the shared walker**: the
   parameter-use collector, the declared-globals scan, the
   function-definition collection, and the nested-definition collection
@@ -202,16 +197,13 @@ suppression actions — and fixes a parser panic plus several editor issues.
 ### Fixed
 
 - **testthat runner classification follows the documented contract**:
-  a file under `tests/` now classifies as code the runner executes only
-  under testthat's special-files rules: `.R`/`.r` files directly under
-  `tests/` (what `R CMD check` sources, including `tests/testthat.R`)
-  and, under `tests/testthat/`, `test-`/`test_` test files plus
-  `helper`/`setup`/`teardown` files. Prefix lookalikes such as
-  `testing.R` or `testthat.R` are fixtures, and so are legacy
-  S-dialect spellings (`.S`/`.s`/`.q`) anywhere under `tests/`,
-  including directly at `tests/` root — nothing executes them there.
-  Files classified as fixtures are skipped unless
-  `check_test_fixtures` is enabled (#174).
+  under `tests/`, only `.R`/`.r` files directly at the root (what
+  `R CMD check` sources, including `tests/testthat.R`) and, under
+  `tests/testthat/`, `test-`/`test_` test files plus
+  `helper`/`setup`/`teardown` files classify as executed code. Prefix
+  lookalikes such as `testing.R` and legacy S-dialect spellings
+  (`.S`/`.s`/`.q`) anywhere under `tests/` are fixtures — skipped
+  unless `check_test_fixtures` is enabled (#174).
 - **`bquote` quotes unquotes inside braced bodies**: a `.(x)` in
   `bquote({ 1 == .(x) })` was not recognized as quoting, so the
   argument passed at the call site was treated as eagerly evaluated and

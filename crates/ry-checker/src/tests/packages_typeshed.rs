@@ -1,37 +1,26 @@
 use super::*;
 
 // The two attachment gates of the typeshed-resolution ladders
-// (`AttachedGate` in resolve.rs, issue #166). rlang supplies a predicate
-// signature (`is_null`) and a typed dataset (`na_chr`); dplyr supplies a
-// schema-effect verb (`arrange`). Pinning both directions keeps the
-// `loaded` (project-wide union) vs `bare_loaded` (file-local search
-// path) distinction from silently collapsing into one lookup.
+// (resolve.rs, issue #166). rlang supplies a predicate signature
+// (`is_null`) and a typed dataset (`na_chr`); dplyr a schema-effect
+// verb (`arrange`). Pinning both directions keeps `loaded` (the
+// project-wide union) and `bare_loaded` (this file's search path)
+// from silently collapsing into one lookup.
 
 #[test]
 fn bare_name_ladders_gate_on_the_file_local_search_path() {
-    // rlang attached project-wide only: every bare-name ladder must
-    // stay blind to it because `bare_loaded` is empty.
+    // rlang attached project-wide only (`bare_loaded` empty): every
+    // bare-name ladder — signatures, values, predicates, function
+    // existence — must stay blind to it.
     let mut checker = Checker::new("test.R");
     checker.set_shared_loaded(Arc::new(HashSet::from(["rlang".to_string()])));
-    assert!(
-        checker.resolve_typeshed_sig("is_null").is_none(),
-        "signatures resolve through bare_loaded, not the project union"
-    );
-    assert!(
-        checker.resolve_typeshed_value("na_chr").is_none(),
-        "values resolve through bare_loaded, not the project union"
-    );
-    assert!(
-        checker.resolve_predicate_sig("is_null").is_none(),
-        "predicates resolve through bare_loaded, not the project union"
-    );
-    assert!(
-        !checker.has_function_anywhere("is_null"),
-        "function existence resolves through bare_loaded, not the project union"
-    );
+    assert!(checker.resolve_typeshed_sig("is_null").is_none());
+    assert!(checker.resolve_typeshed_value("na_chr").is_none());
+    assert!(checker.resolve_predicate_sig("is_null").is_none());
+    assert!(!checker.has_function_anywhere("is_null"));
 
-    // The same attachment visible on this file's bare search path makes
-    // all four ladders resolve.
+    // The same attachment on this file's bare search path makes all
+    // four ladders resolve.
     let mut checker = Checker::new("test.R");
     checker.set_bare_loaded(HashSet::from(["rlang".to_string()]));
     assert!(checker.resolve_typeshed_sig("is_null").is_some());
@@ -42,38 +31,14 @@ fn bare_name_ladders_gate_on_the_file_local_search_path() {
 
 #[test]
 fn schema_verb_ladder_gates_on_the_project_union_and_tidyverse_expansion() {
-    // dplyr attached project-wide only (bare search path empty): the
-    // schema ladder sees it, ordinary signature resolution does not.
-    let mut checker = Checker::new("test.R");
-    checker.set_shared_loaded(Arc::new(HashSet::from(["dplyr".to_string()])));
-    assert!(
-        checker.resolve_schema_sig("arrange").is_some(),
-        "schema-effect verbs gate on the project-wide loaded union"
-    );
-    assert!(
-        checker.resolve_typeshed_sig("arrange").is_none(),
-        "ordinary signatures still gate on bare_loaded"
-    );
-
-    // `library(tidyverse)` expands to dplyr/tidyr for schema purposes
-    // only (tidyverse itself ships no stubs).
-    let mut checker = Checker::new("test.R");
-    checker.set_shared_loaded(Arc::new(HashSet::from(["tidyverse".to_string()])));
-    assert!(
-        checker.resolve_schema_sig("arrange").is_some(),
-        "the tidyverse expansion must reach dplyr's declarative verbs"
-    );
-    assert!(checker.resolve_typeshed_sig("arrange").is_none());
-}
-
-#[test]
-fn schema_gate_covers_both_tidyverse_limbs_and_rejects_unrelated() {
-    // The test above pins only the dplyr limb of the tidyverse expansion.
-    // Table over the tidyr limb plus the all-negative control: a project
-    // union with neither dplyr, tidyr, nor tidyverse resolves no schema
-    // verb. `pivot_longer` and `arrange` exist in no base or rlang stub,
-    // so a `None` means the gate closed, not masking by another rung.
+    // Schema-effect verbs gate on the project-wide `loaded` union plus
+    // the tidyverse expansion (tidyverse itself ships no stubs), while
+    // ordinary signature resolution stays gated on `bare_loaded`.
+    // `arrange`/`pivot_longer` exist in no base or rlang stub, so a
+    // `None` means the gate closed, not masking by another rung.
     let cases: &[(&[&str], &str, bool)] = &[
+        (&["dplyr"], "arrange", true),
+        (&["tidyverse"], "arrange", true),
         (&["tidyverse"], "pivot_longer", true),
         (&["tidyr"], "pivot_longer", true),
         (&["rlang"], "pivot_longer", false),
@@ -90,6 +55,19 @@ fn schema_gate_covers_both_tidyverse_limbs_and_rejects_unrelated() {
             "loaded={loaded:?}, verb={verb}"
         );
     }
+
+    // dplyr attached project-wide only (bare search path empty):
+    // ordinary signature resolution must stay blind to it.
+    let mut checker = Checker::new("test.R");
+    checker.set_shared_loaded(Arc::new(HashSet::from(["dplyr".to_string()])));
+    assert!(checker.resolve_schema_sig("arrange").is_some());
+    assert!(checker.resolve_typeshed_sig("arrange").is_none());
+
+    // The tidyverse expansion must not leak into the ordinary ladder
+    // either (tidyverse itself ships no stubs).
+    let mut checker = Checker::new("test.R");
+    checker.set_shared_loaded(Arc::new(HashSet::from(["tidyverse".to_string()])));
+    assert!(checker.resolve_typeshed_sig("arrange").is_none());
 }
 
 #[test]

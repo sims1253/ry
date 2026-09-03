@@ -102,9 +102,21 @@ pub fn normalize_diagnostics(publish: &Value) -> Vec<Value> {
     )
 }
 
-/// Spawn a fresh server on a duplex pair and initialize the client session
-/// with the given workspace folders (first folder is the root URI).
-pub async fn spawn_session(roots: &[&Path]) -> (ClientSession, tokio::task::JoinHandle<()>) {
+/// Spawn a fresh server on a duplex pair and initialize the client
+/// session with the given workspace folders (the first is the root
+/// URI), client `capabilities`, and — when `initialization_options` is
+/// `Some` — initialization options. Tests using the pull path answer
+/// the server's `workspace/configuration` request themselves right
+/// after this returns. No settle wait for the background indexer: it
+/// never publishes diagnostics itself (its caller republishes, and no
+/// document is open here), and open documents shadow disk files, so
+/// each test's `published_diagnostics_after` await (which has its own
+/// timeout) is the only synchronization needed.
+pub async fn spawn_session(
+    roots: &[&Path],
+    capabilities: Value,
+    initialization_options: Option<Value>,
+) -> (ClientSession, tokio::task::JoinHandle<()>) {
     let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
     let (client_reader, client_writer) = tokio::io::split(client_stream);
     let (server_reader, server_writer) = tokio::io::split(server_stream);
@@ -118,55 +130,18 @@ pub async fn spawn_session(roots: &[&Path]) -> (ClientSession, tokio::task::Join
         .map(|r| {
             json!({
                 "uri": ry_testkit::file_uri(r).unwrap(),
-                "name": r.file_name().unwrap().to_string_lossy()
+                "name": r.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "fixture".to_string())
             })
         })
         .collect();
-    session
-        .request(
-            "initialize",
-            json!({
-                "processId": null,
-                "rootUri": root_uri,
-                "capabilities": {},
-                "workspaceFolders": ws_folders
-            }),
-        )
-        .await
-        .unwrap();
-    session.notify("initialized", json!({})).await.unwrap();
-    (session, server)
-}
-
-/// Spawn an LSP server over a single root with custom client
-/// `capabilities` and, unless it is `Value::Null`, `initialization_options`.
-/// Tests using the pull path answer the server's `workspace/configuration`
-/// request themselves right after this returns. No settle wait for the
-/// background indexer: it never publishes diagnostics itself (its caller
-/// republishes, and no document is open here), and open documents shadow
-/// disk files, so each test's `published_diagnostics_after` await (which
-/// has its own timeout) is the only synchronization needed.
-pub async fn spawn_session_with_options(
-    root: &Path,
-    capabilities: Value,
-    initialization_options: Value,
-) -> (ClientSession, tokio::task::JoinHandle<()>) {
-    let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
-    let (client_reader, client_writer) = tokio::io::split(client_stream);
-    let (server_reader, server_writer) = tokio::io::split(server_stream);
-    let server = tokio::spawn(async move {
-        let _ = ry_lsp::run_with(server_reader, server_writer).await;
-    });
-    let mut session = LspSession::new(client_reader, client_writer);
-    let root_uri = ry_testkit::file_uri(root).unwrap();
     let mut params = json!({
         "processId": null,
         "rootUri": root_uri,
         "capabilities": capabilities,
-        "workspaceFolders": [{"uri": root_uri, "name": "fixture"}]
+        "workspaceFolders": ws_folders
     });
-    if initialization_options != Value::Null {
-        params["initializationOptions"] = initialization_options;
+    if let Some(options) = initialization_options {
+        params["initializationOptions"] = options;
     }
     session.request("initialize", params).await.unwrap();
     session.notify("initialized", json!({})).await.unwrap();

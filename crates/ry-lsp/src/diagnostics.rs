@@ -105,35 +105,27 @@ pub(super) fn make_ignore_action(
     let code = diag_code_from_lsp(diag);
 
     // Avoid a redundant action when the source already carries a
-    // suppression directive the CHECKER would honor for THIS
-    // diagnostic. The check reuses ry-checker's suppression parser
-    // (the same one publish_diagnostics filters through) so the
-    // quick-fix's notion of "already ignored" cannot drift from what
-    // is actually suppressed: the directive must START the comment
-    // body (after `#` and whitespace), not merely appear as a
-    // substring (so prose like "# See docs for ry: ignore" does not
-    // block the action), and `# ry: ignore-file` — a file-level,
-    // not line-level, directive — does not block it either. A rule
-    // list must also cover the diagnostic: `# ry: ignore[RY010]`
-    // suppresses only RY010, so the quick-fix stays available for
-    // other codes (appending a second directive is a meaningful
-    // edit, not a no-op), while a bare `# ry: ignore` — an empty
-    // rule list, "all rules" — blocks any code.
+    // directive the CHECKER would honor for THIS diagnostic, decided
+    // with ry-checker's own suppression parser (the same one
+    // publish_diagnostics filters through) so the quick-fix's notion
+    // of "already ignored" cannot drift from what is suppressed: a
+    // directive must START the comment body (prose mentions like
+    // "# See docs for ry: ignore" do not count), `# ry: ignore-file`
+    // is file-level and never blocks a line fix, and a rule list must
+    // name this code — `# ry: ignore[RY010]` suppresses only RY010,
+    // so the quick-fix stays available for other codes, while a bare
+    // directive's empty rule list means "all rules".
     //
-    // The parser is fed a bounded window, not the diagnostic's single
-    // line: the checker assigns a STANDALONE directive to the next
-    // non-comment, non-blank line, so a directive on the comment-only
-    // lines above the diagnostic already suppresses it. Only the
-    // contiguous run of blank / comment-only lines ending just above
-    // the diagnostic's line (plus the line itself) can matter — any
-    // directive higher up is absorbed by the code line that ends that
-    // run, exactly as the checker's own line-based resolution skips
-    // blanks and comments downward. `suppression.line == target`
-    // keeps the match on the diagnostic's line: a trailing directive
-    // resolves to the line it sits on, a standalone one to the
-    // window's last line, and a standalone directive that IS the
-    // diagnostic's whole line finds no next line and suppresses
-    // nothing.
+    // The parser sees a bounded window, not just the diagnostic's
+    // line: the checker resolves a STANDALONE directive to the next
+    // non-comment, non-blank line, so one on the contiguous blank /
+    // comment-only run above the diagnostic already suppresses it,
+    // while one higher up is absorbed by the code line that ends the
+    // run. `suppression.line == target` keeps the match on the
+    // diagnostic's line: a trailing directive resolves to the line it
+    // sits on, a standalone one to the window's last line, and a
+    // standalone directive that IS the diagnostic's whole line finds
+    // no next line and suppresses nothing.
     let window_start = suppression_window_start(&lines, line);
     let window = lines[window_start..=line].join("\n");
     let target = line - window_start;
@@ -202,10 +194,7 @@ pub(super) fn make_ignore_action(
 /// `line`: the top of the contiguous run of blank / comment-only lines
 /// ending just above it, or `line` itself when the line above carries
 /// code. Line classification mirrors the checker's `next_code_line`
-/// (blank, or first non-whitespace character is `#`) so a standalone
-/// directive anywhere in the run resolves onto `line` under the same
-/// rules the checker applies to the full document, while a directive
-/// above the run is absorbed by the code line that ends it.
+/// (blank, or first non-whitespace character is `#`).
 fn suppression_window_start(lines: &[&str], line: usize) -> usize {
     let mut start = line;
     while start > 0 {

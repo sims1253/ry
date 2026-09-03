@@ -681,6 +681,7 @@ fn utf16_position_counts_astral_as_two_units() {
     assert_eq!(byte_offset_to_position(text, 5).character, 3);
     // 'a'=1 unit, '😀'=2 units -> 'b' is at UTF-16 col 3.
     assert_eq!(position_to_byte_offset(text, 0, 3), Some(5));
+    assert_eq!(position_to_byte_offset(text, 0, 1), Some(1));
     // A column inside the astral char (the second unit of its surrogate
     // pair) is rejected rather than snapped onto a wrong byte offset;
     // didChange incremental edits route through this conversion.
@@ -700,6 +701,11 @@ fn utf16_columns_skip_crlf_carriage_return() {
     // Inverse: (0, 2) resolves to the `\r` byte, (1, 0) to `c`.
     assert_eq!(position_to_byte_offset(text, 0, 2), Some(2));
     assert_eq!(position_to_byte_offset(text, 1, 0), Some(4));
+    // Contrast: a LONE `\r` (no `\n` after it) neither starts a new line
+    // nor vanishes from the column count — it is one column wide.
+    let lone = "ab\rcd";
+    assert_eq!(byte_offset_to_position(lone, 3), Position::new(0, 3));
+    assert_eq!(position_to_byte_offset(lone, 0, 3), Some(3));
 }
 
 #[test]
@@ -718,6 +724,9 @@ fn byte_offset_to_point_counts_byte_columns() {
     let x = byte_offset_to_point(text, 7);
     assert_eq!(x.row, 1);
     assert_eq!(x.column, 0);
+    let crlf = byte_offset_to_point("a\r\nb", 3);
+    assert_eq!((crlf.row, crlf.column), (1, 0));
+    assert_eq!(byte_offset_to_point("aé", 2), byte_offset_to_point("aé", 1));
     // Offsets past the end clamp to the text end.
     let clamped = byte_offset_to_point(text, 999);
     assert_eq!(clamped.row, 1);

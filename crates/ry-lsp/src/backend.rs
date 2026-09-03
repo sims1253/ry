@@ -1923,7 +1923,7 @@ fn build_input_edit_from_span(
 
     let start_position = byte_offset_to_point(old_text, start_byte);
     let old_end_position = byte_offset_to_point(old_text, old_end_byte);
-    let new_end_position = byte_offset_to_point_relative(start_byte, start_position, new_text);
+    let new_end_position = byte_offset_to_point_relative(start_position, new_text);
 
     ry_core::InputEdit {
         start_byte,
@@ -1935,12 +1935,9 @@ fn build_input_edit_from_span(
     }
 }
 
-/// Compute the new end Point after inserting `new_text` at `start_byte`.
-fn byte_offset_to_point_relative(
-    _start_byte: usize,
-    start_position: ry_core::Point,
-    new_text: &str,
-) -> ry_core::Point {
+/// Compute the new end Point after inserting `new_text` at the position
+/// where `start_position` sits.
+fn byte_offset_to_point_relative(start_position: ry_core::Point, new_text: &str) -> ry_core::Point {
     let newlines = new_text.matches('\n').count();
     if newlines == 0 {
         ry_core::Point {

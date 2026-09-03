@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 
 mod harness;
 
-use harness::spawn_session_with_options;
+use harness::spawn_session;
 
 /// Run a future on a current-thread tokio runtime (same pattern as the
 /// session tests).
@@ -57,8 +57,7 @@ fn did_change_configuration_refreshes_cached_filters() {
             .write_file("R/diag.R", "z <- length(xx = 1L)\n")
             .unwrap();
 
-        let (mut session, _server) =
-            spawn_session_with_options(fixture.root(), json!({}), Value::Null).await;
+        let (mut session, _server) = spawn_session(&[fixture.root()], json!({}), None).await;
 
         let diag_uri = file_uri(&fixture.path("R/diag.R")).unwrap();
 
@@ -120,10 +119,10 @@ fn did_change_configuration_pull_applies_per_folder_settings() {
             .write_file("R/diag.R", "z <- length(xx = 1L)\n")
             .unwrap();
 
-        let (mut session, _server) = spawn_session_with_options(
-            fixture.root(),
+        let (mut session, _server) = spawn_session(
+            &[fixture.root()],
             json!({ "workspace": { "configuration": true } }),
-            Value::Null,
+            None,
         )
         .await;
         // Answer the initial `workspace/configuration` pull during
@@ -207,13 +206,13 @@ fn enable_false_skips_diagnostics_for_the_folder() {
             .write_file("R/diag.R", "z <- length(xx = 1L)\n")
             .unwrap();
 
-        let (mut session, server) = spawn_session_with_options(
-            fixture.root(),
+        let (mut session, server) = spawn_session(
+            &[fixture.root()],
             json!({}),
-            json!({
+            Some(json!({
                 "settings": [{"enable": false}],
                 "globalSettings": {}
-            }),
+            })),
         )
         .await;
 
@@ -250,13 +249,13 @@ fn enable_false_skips_inlay_hints_for_the_folder() {
         // (pinned by `inlay_hint_does_not_cross_workspace_roots`).
         fixture.write_file("R/hint.R", "x <- 1L\n").unwrap();
 
-        let (mut session, server) = spawn_session_with_options(
-            fixture.root(),
+        let (mut session, server) = spawn_session(
+            &[fixture.root()],
             json!({}),
-            json!({
+            Some(json!({
                 "settings": [{"enable": false}],
                 "globalSettings": {}
-            }),
+            })),
         )
         .await;
 

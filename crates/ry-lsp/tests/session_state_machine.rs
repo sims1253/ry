@@ -468,7 +468,7 @@ async fn fresh_server_snapshot(
         roots.push(fixture.path(SECOND));
     }
     let root_refs: Vec<&Path> = roots.iter().map(|p| p.as_path()).collect();
-    let (mut session, server) = spawn_session(&root_refs).await;
+    let (mut session, server) = spawn_session(&root_refs, json!({}), None).await;
 
     // Sync barrier: drain the initialize/index cycle.
     let target_uri = file_uri_str(fixture, target_slot);
@@ -507,7 +507,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
     write_baseline(&fixture, &SessionModel::default());
 
     let roots: Vec<&Path> = vec![fixture.root()];
-    let (mut live, mut live_server) = spawn_session(&roots).await;
+    let (mut live, mut live_server) = spawn_session(&roots, json!({}), None).await;
     let mut model = SessionModel::default();
 
     for (step, operation) in operations.into_iter().enumerate() {
@@ -603,7 +603,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                     roots.push(fixture.path(SECOND));
                 }
                 let root_refs: Vec<&Path> = roots.iter().map(|p| p.as_path()).collect();
-                let (new_live, new_server) = spawn_session(&root_refs).await;
+                let (new_live, new_server) = spawn_session(&root_refs, json!({}), None).await;
                 live = new_live;
                 live_server = new_server;
                 for (&file, text) in &model.open_docs {
@@ -1345,13 +1345,13 @@ fn anchor(name: &str) -> Anchor {
     *ANCHORS.iter().find(|anchor| anchor.name == name).unwrap()
 }
 
-fn position(name: &str) -> Value {
-    let anchor = anchor(name);
-    json!({"line": anchor.line, "character": anchor.character})
-}
-
 fn assert_position(actual: &Value, name: &str) {
-    assert_eq!(actual, &position(name), "wrong LSP position for {name}");
+    let anchor = anchor(name);
+    assert_eq!(
+        actual,
+        &json!({"line": anchor.line, "character": anchor.character}),
+        "wrong LSP position for {name}"
+    );
 }
 
 /// Request inlay hints for a single line of `uri`. The transcript test
@@ -1599,7 +1599,7 @@ async fn close_reopen_republishes() {
     let fixture = FixtureProject::empty().unwrap();
     fixture.write_file("a.R", INITIAL_DISK).unwrap();
     let uri = file_uri(&fixture.path("a.R"));
-    let (mut session, server) = spawn_session(&[fixture.root()]).await;
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
 
     // Barrier + mark before the open, the same pattern
     // `fresh_server_snapshot` uses to drain the initialize cycle's

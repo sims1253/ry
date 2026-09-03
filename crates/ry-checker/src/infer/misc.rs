@@ -2012,7 +2012,7 @@ mod argument_matching_tests {
 mod mode_union_set_pins {
     use super::*;
 
-    /// Test-only union of mode-only scalars (length One, no class); must not be used where length/class matter (standalone/narrowing cases keep bespoke constructions).
+    /// Test-only union of mode-only scalars (length One, no class); must not be used where length/class matter (the standalone pins keep bespoke constructions).
     fn union(modes: &[Mode]) -> RType {
         RType::union(Arc::from_iter(
             modes.iter().map(|mode| RType::scalar(*mode)),

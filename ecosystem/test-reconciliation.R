@@ -16,8 +16,8 @@ tmp <- tempfile()
 dir.create(tmp)
 on.exit(unlink(tmp, recursive = TRUE), add = TRUE)
 
-write_report <- function(package, entries) {
-  path <- file.path(tmp, paste0(package, ".root.txt"))
+write_report <- function(package, entries, report_prefix = "") {
+  path <- file.path(tmp, paste0(report_prefix, package, ".root.txt"))
   lines <- if (length(entries)) {
     vapply(entries, function(e) {
       sprintf("%s:%s:%s %s", e$path, e$line, e$column, e$code)
@@ -35,13 +35,13 @@ make_corpus <- function(findings, reconciliation = NULL) {
   )
 }
 
-run_reconcile <- function(corpus, report_entries) {
+run_reconcile <- function(corpus, report_entries, report_prefix = "") {
   corpus_path <- file.path(tmp, "corpus.json")
   writeLines(toJSON(corpus, auto_unbox = TRUE), corpus_path)
   for (pkg in names(report_entries)) {
-    write_report(pkg, report_entries[[pkg]])
+    write_report(pkg, report_entries[[pkg]], report_prefix)
   }
-  reconcile(corpus_path, tmp, "pkg")
+  reconcile(corpus_path, tmp, report_prefix, "pkg")
 }
 
 tp <- list(package = "pkg", code = "RY010", path = "R/a.R", line = 1, column = 1, label = "true_positive", audit_group = "group-a")
@@ -76,10 +76,9 @@ cat("Test 7: unowned finding appears in audit-transcript mode -> exit 0\n")
 stopifnot(run_reconcile(make_corpus(list(tp, fp), "audit-transcript"), list(pkg = list(tp, fp, extra))) == 0L)
 cat("  PASS\n")
 
-# simultaneous TP disappearance and FP appearance (the exact
-# silent-degradation scenario the gate exists to catch). A true_positive disappears
-# from reports AND a false_positive appears that is not in the ledger, both
-# in the same reconciliation run. The gate must catch both in one pass.
+# The exact silent-degradation scenario the gate exists to catch: a
+# true_positive drops from the reports while a false_positive not in the
+# ledger appears, in the same run. The gate must catch both in one pass.
 cat("Test 8: TP disappears AND unowned FP appears simultaneously (hermetic) -> exit 1\n")
 stopifnot(run_reconcile(make_corpus(list(tp, fp)), list(pkg = list(fp, extra))) == 1L)
 cat("  PASS\n")
@@ -87,5 +86,23 @@ cat("  PASS\n")
 cat("Test 9: TP disappears AND unowned FP appears simultaneously (audit-transcript) -> exit 1\n")
 stopifnot(run_reconcile(make_corpus(list(tp, fp), "audit-transcript"), list(pkg = list(fp, extra))) == 1L)
 cat("  PASS\n")
+
+# The Posit lane reconciles manifest-scoped reports: the shared reconcile()
+# must read `posit.pkg.root.txt`, not `pkg.root.txt`, or every ledger
+# identity looks missing (#164).
+prefix_cases <- list(
+  list(description = "reconciles cleanly", entries = list(tp, fp), expected = 0L),
+  list(description = "still gates a disappeared true_positive", entries = list(fp), expected = 1L),
+  list(description = "still gates an unowned finding", entries = list(tp, fp, extra), expected = 1L)
+)
+for (i in seq_along(prefix_cases)) {
+  case <- prefix_cases[[i]]
+  cat(sprintf("Test %d: manifest-scoped report prefix %s -> exit %d\n", 9 + i, case$description, case$expected))
+  actual <- run_reconcile(make_corpus(list(tp, fp)), list(pkg = case$entries), "posit.")
+  if (actual != case$expected) {
+    stop(sprintf("Test %d (%s): expected exit %d, got %d", 9 + i, case$description, case$expected, actual))
+  }
+  cat("  PASS\n")
+}
 
 cat("\nAll reconciliation tests passed.\n")

@@ -102,7 +102,7 @@ jobs:
           --ledger docs/corpus/posit-0.9.0.json
           --tier ${{ github.event_name == 'pull_request' && 'fast' || 'full' }}
       - name: Readable Posit message drift integration test
-        run: python3 ecosystem/test_posit_messages.py
+        run: python3 ecosystem/test-posit-messages.py
       - name: Posit ledger drift detection integration test
         run: ecosystem/test-posit-drift-detection.sh
       - name: Posit label falsification integration test

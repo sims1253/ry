@@ -394,98 +394,23 @@ fi
 # makes missing and unowned identities fail; `audit-transcript` exists only for
 # historical installed-library ledgers whose environment cannot be reproduced.
 # In both modes findings labelled `true_positive` are checked explicitly so a
-# real bug disappearing is always surfaced.
+# real bug disappearing is always surfaced. The gating logic lives in
+# ecosystem/reconcile.R — the single copy, unit-tested by
+# test-reconciliation.R — sourced here with the manifest's report prefix (#164).
 if ! $local_only; then
   [[ -f "$audit_corpus" ]] || {
     echo "ecosystem: audit corpus not found: $audit_corpus" >&2
     exit 1
   }
-  Rscript - "$audit_corpus" "$generated_dir" "$report_prefix" "${root_packages[@]}" <<'RS'
+  Rscript - "$audit_corpus" "$generated_dir" "$report_prefix" "$ecosystem_dir/reconcile.R" "${root_packages[@]}" <<'RS'
 args <- commandArgs(trailingOnly = TRUE)
 corpus_path <- args[[1]]
 reports_dir <- args[[2]]
 report_prefix <- args[[3]]
-processed <- args[-c(1, 2, 3)]
-corpus <- jsonlite::fromJSON(corpus_path, simplifyDataFrame = TRUE)
-audited <- intersect(processed, corpus$packages$name)
-
-identity <- function(package, code, path, line, column) {
-  sprintf("%s\t%s\t%s\t%s\t%s", package, code, sub("^\\./", "", path), line, column)
-}
-expected_rows <- corpus$findings[corpus$findings$package %in% audited, , drop = FALSE]
-expected <- identity(
-  expected_rows$package,
-  expected_rows$code,
-  expected_rows$path,
-  expected_rows$line,
-  expected_rows$column
-)
-
-actual <- character(0)
-for (package in audited) {
-  report <- file.path(reports_dir, paste0(report_prefix, package, ".root.txt"))
-  lines <- readLines(report, encoding = "UTF-8", warn = FALSE)
-  lines <- lines[nzchar(lines)]
-  for (entry in lines) {
-    fields <- regmatches(entry, regexec("^(.*):([0-9]+):([0-9]+) (RY[0-9]+)$", entry))[[1]]
-    if (length(fields) != 5L) stop("malformed ecosystem report entry: ", entry)
-    actual <- c(actual, identity(package, fields[[5]], fields[[2]], fields[[3]], fields[[4]]))
-  }
-}
-
-multiset_delta <- function(left, right) {
-  left_counts <- table(left)
-  right_counts <- table(right)
-  keys <- union(names(left_counts), names(right_counts))
-  left_values <- left_counts[keys]
-  right_values <- right_counts[keys]
-  left_values[is.na(left_values)] <- 0L
-  right_values[is.na(right_values)] <- 0L
-  rep(keys, pmax(as.integer(left_values - right_values), 0L))
-}
-missing <- multiset_delta(expected, actual)
-unowned <- multiset_delta(actual, expected)
-required_rows <- expected_rows[
-  which(expected_rows$label == "true_positive"),
-  ,
-  drop = FALSE
-]
-required <- identity(
-  required_rows$package,
-  required_rows$code,
-  required_rows$path,
-  required_rows$line,
-  required_rows$column
-)
-missing_required <- multiset_delta(required, actual)
-
-if (length(missing_required)) {
-  writeLines(c("ecosystem: required reviewed findings disappeared:", paste0("  - ", missing_required)), stderr())
-}
-other_missing <- multiset_delta(missing, missing_required)
-if (length(other_missing)) {
-  writeLines(c("ecosystem: reviewed audit findings disappeared:", paste0("  - ", other_missing)), stderr())
-}
-if (length(unowned)) {
-  writeLines(c("ecosystem: unowned hermetic findings appeared:", paste0("  - ", unowned)), stderr())
-}
-if (length(missing) || length(unowned)) {
-  if (length(missing_required)) {
-    writeLines("ecosystem: a reviewed true_positive finding disappeared; this gates the build in every mode.", stderr())
-    quit(status = 1L)
-  }
-  reconciliation_mode <- if (!is.null(corpus$reconciliation)) corpus$reconciliation[[1L]] else "hermetic"
-  if (reconciliation_mode == "audit-transcript") {
-    writeLines(c(
-      sprintf("ecosystem: %s is an audit transcript of an installed-library run;", corpus_path),
-      "ecosystem: the hermetic-vs-audit delta above is reported for visibility and does not gate this build.",
-      sprintf("ecosystem: to update the ledger, re-audit the %s corpus and regenerate it from the audit results (see docs/corpus/README.md).", corpus$corpus[[1L]])
-    ), stderr())
-  } else {
-    writeLines(sprintf("ecosystem: update %s with the reviewed findings delta", corpus_path), stderr())
-    quit(status = 1L)
-  }
-}
+source(args[[4]])
+processed <- args[-c(1, 2, 3, 4)]
+status <- reconcile(corpus_path, reports_dir, report_prefix, processed)
+if (status != 0L) quit(status = status)
 RS
 fi
 

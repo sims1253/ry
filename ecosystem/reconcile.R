@@ -20,10 +20,14 @@ multiset_delta <- function(left, right) {
 }
 
 #' Read actual diagnostic identities from a .root.txt report.
-read_actual_identities <- function(reports_dir, audited) {
+#'
+#' @param reports_dir Directory containing the .root.txt report files.
+#' @param report_prefix Manifest namespace prefixed to each report file name ("" for the default manifest).
+#' @param audited Character vector of package names to read.
+read_actual_identities <- function(reports_dir, report_prefix = "", audited) {
   actual <- character(0)
   for (package in audited) {
-    report <- file.path(reports_dir, paste0(package, ".root.txt"))
+    report <- file.path(reports_dir, paste0(report_prefix, package, ".root.txt"))
     lines <- readLines(report, encoding = "UTF-8", warn = FALSE)
     lines <- lines[nzchar(lines)]
     for (entry in lines) {
@@ -39,9 +43,10 @@ read_actual_identities <- function(reports_dir, audited) {
 #'
 #' @param corpus_path Path to the corpus JSON.
 #' @param reports_dir Directory containing the .root.txt report files.
+#' @param report_prefix Manifest namespace prefixed to each report file name ("" for the default manifest).
 #' @param processed Character vector of package names that were processed.
 #' @return Integer exit status: 0 = pass, 1 = fail.
-reconcile <- function(corpus_path, reports_dir, processed) {
+reconcile <- function(corpus_path, reports_dir, report_prefix = "", processed) {
   corpus <- jsonlite::fromJSON(corpus_path, simplifyDataFrame = TRUE)
   audited <- intersect(processed, corpus$packages$name)
 
@@ -53,7 +58,7 @@ reconcile <- function(corpus_path, reports_dir, processed) {
     expected_rows$line,
     expected_rows$column
   )
-  actual <- read_actual_identities(reports_dir, audited)
+  actual <- read_actual_identities(reports_dir, report_prefix, audited)
 
   missing <- multiset_delta(expected, actual)
   unowned <- multiset_delta(actual, expected)

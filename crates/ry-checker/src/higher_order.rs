@@ -504,12 +504,9 @@ impl Checker {
     /// Try S3 dispatch for a known generic. Returns `Some(rt)` if a
     /// method was found or a diagnostic was emitted (the caller should
     /// use the returned type directly). Returns `None` only when the
-    /// caller should fall through to other resolution paths.
-    ///
-    /// The method-source ladder ([`Checker::s3_lookup_method`]) is
-    /// shared with operator dispatch (`infer/binop.rs`); the miss tail
-    /// is not -- see [`Checker::s3_dispatch_miss`] for why operators
-    /// deliberately never reach it.
+    /// caller should fall through to other resolution paths. The
+    /// method-source ladder is shared with operator dispatch
+    /// (`infer/binop.rs`); the miss tail is not.
     ///
     /// Design note: we deliberately return `Option<RType>` rather than
     /// `RType` because the caller (`infer_call`) may still want to
@@ -551,15 +548,14 @@ impl Checker {
                 }
             }
         }
-        let classes = class_vector_names(&cv).join(", ");
-        self.s3_dispatch_miss(generic, &generics, &classes, span)
+        self.s3_dispatch_miss(generic, &generics, &cv, span)
     }
 
-    /// The method-source ladder for one `(generic, class)` rung:
+    /// One `(generic, class)` rung of the method-source ladder:
     /// external registrations, the project fn table, the base typeshed,
-    /// then package typesheds. `try_s3_dispatch` and the operator
-    /// dispatch in `infer/binop.rs` share this lookup so the two paths
-    /// cannot disagree about which methods exist.
+    /// then package typesheds. Shared with the operator dispatch in
+    /// `infer/binop.rs` so the two paths cannot disagree about which
+    /// methods exist.
     pub(crate) fn s3_lookup_method(&self, generic: &str, class: &str) -> Option<S3MethodSource> {
         let key = (generic.to_string(), class.to_string());
         if self.external_s3_methods.contains(&key) {
@@ -580,11 +576,9 @@ impl Checker {
             .map(|sig| S3MethodSource::Stub(Box::new(sig)))
     }
 
-    /// A project method's return: a specific generic (`abs.foo` called
-    /// as `abs`) has an inferable return, while a group method
-    /// (`Math.foo` reached from any member generic) only promises that
-    /// the operation is supported, not its result shape. Shared by
-    /// call and operator dispatch.
+    /// A project method's return: a specific method (`abs.foo` called
+    /// as `abs`) has an inferable return; a group method (`Math.foo`)
+    /// only promises that the operation is supported, not its shape.
     pub(crate) fn s3_specific_or_group_return(&self, specific: bool, slot: usize) -> RType {
         if specific {
             self.return_slots.get(slot)
@@ -593,29 +587,19 @@ impl Checker {
         }
     }
 
-    /// The call path's post-walk miss tail; operators deliberately
-    /// never reach it. A `<generic>.default` method is a real S3
-    /// dispatch target, not merely evidence that `generic` uses S3:
-    /// when it exists in any method source, a miss for a class-specific
-    /// method falls through to it and must remain silent. Without a
-    /// default, we report only for a generic that has at least one
-    /// project-defined S3 method. This is the conservative
-    /// cross-package gate: an un-stubbed dependency may own a foreign
-    /// class, while a local method proves that this project owns the
-    /// generic's dispatch surface. `classes` names the value(s) the
-    /// generic was applied to, for the RY050 message.
-    ///
-    /// Operator dispatch skips this tail because a primitive operator
-    /// has a fallback of its own: real R silently computes `bar + 1`
-    /// with the primitive when no `+.bar`/`Ops.bar` method exists, so a
-    /// miss there is neither an error nor opaque -- the caller's
-    /// storage-mode rules model the primitive fallback (issue #165's
-    /// RY050 criterion was corrected against this).
+    /// The call path's post-walk miss tail; operators never reach it,
+    /// because a primitive operator is its own fallback in R (issue
+    /// #165): a miss there is silent and modeled by the caller's
+    /// storage-mode rules. Here, a `<generic>.default` method is a real
+    /// dispatch target, so a miss with one stays silent. Otherwise we
+    /// report RY050 only for generics with a project-defined method:
+    /// an un-stubbed dependency may own a foreign class, while a local
+    /// method proves this project owns the dispatch surface.
     fn s3_dispatch_miss(
         &mut self,
         generic: &str,
         generics: &[&str],
-        classes: &str,
+        cv: &ClassVector,
         span: Span,
     ) -> Option<RType> {
         let has_default = generics.iter().any(|candidate| {
@@ -641,6 +625,14 @@ impl Checker {
         // The generic has no dispatch target for this class. Emit RY050
         // and return opaque so callers don't trip further diagnostics on
         // the result.
+        let classes = cv
+            .names
+            .iter()
+            .take(cv.len as usize)
+            .flatten()
+            .map(|class| class.as_ref())
+            .collect::<Vec<_>>()
+            .join(", ");
         self.emit(
             Severity::Warning,
             span,
@@ -654,31 +646,18 @@ impl Checker {
     }
 }
 
-/// One method-source hit in the S3 dispatch ladder shared by call
-/// dispatch ([`Checker::try_s3_dispatch`]) and operator dispatch
-/// (`infer/binop.rs`).
+/// One method-source hit in the S3 dispatch ladder shared by call and
+/// operator dispatch.
 pub(crate) enum S3MethodSource {
-    /// A method registered through package metadata: it exists, but its
-    /// body is not analyzable, so dispatch can only conclude opaque.
+    /// Registered through package metadata: not analyzable, so dispatch
+    /// can only conclude opaque.
     Registered,
     /// A project-defined method (`generic.class <- function(...)`) and
     /// its refined return slot.
     Project(usize),
     /// A stub signature from the base typeshed or a package typeshed.
-    /// Boxed: a `FunctionSig` is large, and the ladder consults several
-    /// sources per rung that usually miss.
+    /// Boxed: `FunctionSig` is large, and the ladder usually misses.
     Stub(Box<FunctionSig>),
-}
-
-/// The class names of a class vector in dispatch order, for the call
-/// path's RY050 message.
-fn class_vector_names(cv: &ClassVector) -> Vec<&str> {
-    cv.names
-        .iter()
-        .take(cv.len as usize)
-        .flatten()
-        .map(|class| class.as_ref())
-        .collect()
 }
 
 /// S3 group generics used by ordinary function calls. Operator expressions

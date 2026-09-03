@@ -39,16 +39,12 @@ impl Checker {
         if let Some(result) = data_frame_binop_result(op, &lt, &rt) {
             return result;
         }
-        // Primitive operators dispatch through an operator-specific method
-        // (`+.foo`) and then the `Ops.foo` group generic before applying the
-        // storage-mode rules below. Unlike an ordinary generic, a dispatch
-        // miss is silent: the primitive itself is the fallback (issue #165's
-        // original RY050 criterion was corrected against real R, where
-        // defining `+.foo` or `Ops.foo` does not make `bar + 1` warn -- the
-        // primitive computes it). The storage-mode rules below are that
-        // fallback. A dynamically classed value is likewise not proof that
-        // the primitive is invalid: its runtime class may provide a method
-        // from another package.
+        // Primitive operators dispatch through `+.foo` then the `Ops.foo`
+        // group generic before the storage-mode rules below; a miss is
+        // silent, as in R -- the primitive itself is the fallback (issue
+        // #165). A dynamically classed value is likewise not proof that
+        // the primitive is invalid: its runtime class may provide a
+        // method from another package.
         if let Some(dispatched) = self.try_s3_binop_dispatch(op, &lt, &rt) {
             return dispatched;
         }
@@ -152,33 +148,12 @@ impl Checker {
             );
             return RType::unknown();
         }
-        let recycles = non_divisible_recycling(lt.length, rt.length);
-        let emit_recycle_warning = |this: &mut Self| {
-            if let Some((lhs_len, rhs_len)) = recycles {
-                this.emit(
-                    Severity::Warning,
-                    span,
-                    "RY041",
-                    format!(
-                        "vector lengths {lhs_len} and {rhs_len} do not divide evenly; R will recycle with a warning"
-                    ),
-                );
-            }
-        };
         if lt.class.contains("factor") || rt.class.contains("factor") {
-            // Base R's `Ops.factor` warns "'+' not meaningful for factors"
-            // for *any* arithmetic involving a factor and returns
-            // `rep.int(NA, max(length(e1), length(e2)))`, no matter what
-            // the other operand is (`factor + 1` and `factor + list`
-            // behave alike). Report RY042 before the lattice rules: the
-            // dispatched method preempts the primitive's own mode-mismatch
-            // error, so a list counterpart must stay a warning, not become
-            // RY040. That dispatch equally preempts the primitive's
-            // recycling: the method never warns about uneven operand
-            // lengths (verified against R 4.6), so no factor path may
-            // emit RY041's "R will recycle with a warning" claim -- not
-            // even where the storage modes would arith-combine (`factor +
-            // 1:2` warns only about meaninglessness in real R).
+            // Base `Ops.factor` preempts the primitive for *any* factor
+            // arithmetic and returns `NA` without ever recycling
+            // (verified against R 4.6, even where the modes would
+            // arith-combine): RY042 only -- never RY041, and a list
+            // counterpart stays a warning instead of RY040.
             self.emit(
                 Severity::Warning,
                 span,
@@ -187,8 +162,18 @@ impl Checker {
             );
             return lt.arith(rt).unwrap_or_else(RType::unknown);
         }
+        let recycles = non_divisible_recycling(lt.length, rt.length);
         if let Some(t) = lt.arith(rt) {
-            emit_recycle_warning(self);
+            if let Some((lhs_len, rhs_len)) = recycles {
+                self.emit(
+                    Severity::Warning,
+                    span,
+                    "RY041",
+                    format!(
+                        "vector lengths {lhs_len} and {rhs_len} do not divide evenly; R will recycle with a warning"
+                    ),
+                );
+            }
             return t;
         }
         self.emit(
@@ -203,17 +188,12 @@ impl Checker {
         RType::unknown()
     }
 
-    /// Resolve operator S3 dispatch for one operand through the shared
-    /// method-source ladder (`s3_lookup_method`): the operator's own
-    /// method (`+.foo`), then the `Ops` group generic, across project
-    /// methods, stub signatures, and external registrations. An unknown
-    /// class on a concrete mode means any class vector may apply, so
-    /// the result is unknowable. `operands` is the full operator
-    /// argument list (both sides of a binary op): a stub signature is
-    /// applied to it. `None` is a dispatch miss, which for operators is
-    /// silent: unlike an ordinary generic, the primitive itself is R's
-    /// fallback, so the caller falls through to the storage-mode rules
-    /// below instead of reporting a missing method.
+    /// Resolve operator S3 dispatch for one operand: the operator's own
+    /// method (`+.foo`), then `Ops.foo`, through the shared
+    /// `s3_lookup_method` ladder. An unknown class on a concrete mode
+    /// means any class vector may apply, so the result is unknowable.
+    /// `operands` is the full operator argument list, which a stub
+    /// signature is applied to.
     fn s3_dispatch_on_operand(
         &mut self,
         symbol: &str,
@@ -237,29 +217,24 @@ impl Checker {
                 match self.s3_lookup_method(generic, class) {
                     Some(S3MethodSource::Registered) => return Some(RType::unknown()),
                     Some(S3MethodSource::Project(slot)) => {
-                        // A specific operator method has an inferable
-                        // return; a group method only promises that this
-                        // operator is supported, not its result shape.
                         return Some(self.s3_specific_or_group_return(generic == symbol, slot));
                     }
                     Some(S3MethodSource::Stub(sig)) => {
-                        // A specific stub, or a group stub declaring a
-                        // usable shape, is this operator's method.
                         let arg_types = operands
                             .iter()
                             .map(|operand| (**operand).clone())
                             .collect::<Vec<_>>();
                         let result = self.apply_sig(&sig, &arg_types, &[]);
+                        // A specific stub, or a group stub declaring a
+                        // usable shape, is this operator's method.
                         if generic == symbol || !matches!(result.mode, Mode::Opaque) {
                             return Some(result);
                         }
                         // An opaque group stub (every embedded `Ops.*`
                         // entry) offers no shape: fall through like a
                         // miss, so the storage-mode rules keep modeling
-                        // these base classes (`Ops.factor`'s
-                        // not-meaningful warning, `Ops.Date` arithmetic)
-                        // and keep their diagnostics instead of
-                        // collapsing to opaque.
+                        // these base classes with their own diagnostics
+                        // (`Ops.factor`'s warning, `Ops.Date` arithmetic).
                     }
                     None => {}
                 }
@@ -274,10 +249,9 @@ impl Checker {
         lhs: &RType,
         rhs: &RType,
     ) -> Option<RType> {
-        // `:`, the pipes, and `%in%` are not S3 generics. `&&`/`||` never
-        // dispatch either: in R they are strictly logical short-circuit
-        // primitives -- an `Ops.foo` method cannot intercept them -- so
-        // their length/type diagnostics below always fire.
+        // `:`, the pipes, and `%in%` are not S3 generics, and `&&`/`||`
+        // are strictly logical short-circuit primitives that no `Ops`
+        // method can intercept, so their diagnostics always fire.
         if matches!(
             op,
             BinOpKind::In

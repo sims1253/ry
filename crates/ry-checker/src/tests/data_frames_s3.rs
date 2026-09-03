@@ -40,29 +40,15 @@ fn s3_dispatch_known_method() {
 
 #[test]
 fn registered_unexported_s3_method_in_stub_satisfies_dispatch() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(
-        dir.path().join("base.json"),
-        r#"{
-            "schema_version": "1",
-            "package": "base",
-            "version": "test",
-            "functions": {},
-            "s3_methods": [
-                {"generic": "print", "class": "default", "params": ["x", "..."], "return": {"mode": "opaque", "length": "unknown"}}
-            ]
-        }"#,
-    )
-    .unwrap();
-    let stubs = Arc::new(ry_typeshed::load_stub_dir(dir.path()).unwrap());
-    let diagnostics = check_with(
+    let (diagnostics, _) = check_with_stubs(
         "x <- structure(list(), class = \"unexported\")\nprint(x)\n",
-        |c| c.set_user_stubs(stubs),
+        &[(
+            "base.json",
+            r#"{"version":"t","functions":{},"s3_methods":[{"generic":"print","class":"default","params":["x","..."],"return":{"mode":"opaque","length":"unknown"}}]}"#,
+        )],
     );
     assert!(
-        diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.code != "RY050"),
+        diagnostics.iter().all(|d| d.code != "RY050"),
         "a registered default method must satisfy S3 dispatch: {diagnostics:?}"
     );
 }

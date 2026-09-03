@@ -504,16 +504,9 @@ impl Checker {
     /// Try S3 dispatch for a known generic. Returns `Some(rt)` if a
     /// method was found or a diagnostic was emitted (the caller should
     /// use the returned type directly). Returns `None` only when the
-    /// caller should fall through to other resolution paths.
-    ///
-    /// RY050 emission policy: a `<generic>.default` method is a real S3
-    /// dispatch target, not merely evidence that `generic` uses S3. When
-    /// it exists in any method source, a miss for a class-specific method
-    /// falls through to it and must remain silent. Without a default, we
-    /// report only for a generic that has at least one project-defined S3
-    /// method. This is the conservative cross-package gate: an un-stubbed
-    /// dependency may own a foreign class, while a local method proves that
-    /// this project owns the generic's dispatch surface.
+    /// caller should fall through to other resolution paths. The
+    /// method-source ladder is shared with operator dispatch
+    /// (`infer/binop.rs`); the miss tail is not.
     ///
     /// Design note: we deliberately return `Option<RType>` rather than
     /// `RType` because the caller (`infer_call`) may still want to
@@ -543,34 +536,72 @@ impl Checker {
                 continue;
             }
             for candidate in &generics {
-                let key = ((*candidate).to_string(), class.to_string());
-                if self.external_s3_methods.contains(&key) {
-                    return Some(RType::unknown());
-                }
-                if let Some(slot) = self.fn_table.s3_methods.get(&key).cloned() {
-                    return Some(if *candidate == generic {
-                        self.return_slots.get(slot)
-                    } else {
-                        RType::unknown()
-                    });
-                }
-                if let Some(sig) = self.typeshed.s3_methods.get(&key).cloned() {
-                    return Some(self.apply_sig(&sig, arg_types, &[]));
-                }
-                let sig = self.available_package_names().find_map(|pkg| {
-                    self.package_typeshed(pkg)
-                        .and_then(|t| t.s3_methods.get(&key))
-                        .cloned()
-                });
-                if let Some(sig) = sig {
-                    return Some(self.apply_sig(&sig, arg_types, &[]));
+                match self.s3_lookup_method(candidate, class) {
+                    Some(S3MethodSource::Registered) => return Some(RType::unknown()),
+                    Some(S3MethodSource::Project(slot)) => {
+                        return Some(self.s3_specific_or_group_return(*candidate == generic, slot));
+                    }
+                    Some(S3MethodSource::Stub(sig)) => {
+                        return Some(self.apply_sig(&sig, arg_types, &[]));
+                    }
+                    None => {}
                 }
             }
         }
-        // A default method is the final S3 dispatch fallback. Consult
-        // every source used for specific methods above (plus external
-        // registrations), and do not report a missing class method when
-        // dispatch can reach one.
+        self.s3_dispatch_miss(generic, &generics, &cv, span)
+    }
+
+    /// One `(generic, class)` rung of the method-source ladder:
+    /// external registrations, the project fn table, the base typeshed,
+    /// then package typesheds. Shared with the operator dispatch in
+    /// `infer/binop.rs` so the two paths cannot disagree about which
+    /// methods exist.
+    pub(crate) fn s3_lookup_method(&self, generic: &str, class: &str) -> Option<S3MethodSource> {
+        let key = (generic.to_string(), class.to_string());
+        if self.external_s3_methods.contains(&key) {
+            return Some(S3MethodSource::Registered);
+        }
+        if let Some(slot) = self.fn_table.s3_methods.get(&key) {
+            return Some(S3MethodSource::Project(*slot));
+        }
+        if let Some(sig) = self.typeshed.s3_methods.get(&key) {
+            return Some(S3MethodSource::Stub(Box::new(sig.clone())));
+        }
+        self.available_package_names()
+            .find_map(|pkg| {
+                self.package_typeshed(pkg)
+                    .and_then(|typeshed| typeshed.s3_methods.get(&key))
+                    .cloned()
+            })
+            .map(|sig| S3MethodSource::Stub(Box::new(sig)))
+    }
+
+    /// A project method's return: a specific method (`abs.foo` called
+    /// as `abs`) has an inferable return; a group method (`Math.foo`)
+    /// only promises that the operation is supported, not its shape.
+    pub(crate) fn s3_specific_or_group_return(&self, specific: bool, slot: usize) -> RType {
+        if specific {
+            self.return_slots.get(slot)
+        } else {
+            RType::unknown()
+        }
+    }
+
+    /// The call path's post-walk miss tail; operators never reach it,
+    /// because a primitive operator is its own fallback in R (issue
+    /// #165): a miss there is silent and modeled by the caller's
+    /// storage-mode rules. Here, a `<generic>.default` method is a real
+    /// dispatch target, so a miss with one stays silent. Otherwise we
+    /// report RY050 only for generics with a project-defined method:
+    /// an un-stubbed dependency may own a foreign class, while a local
+    /// method proves this project owns the dispatch surface.
+    fn s3_dispatch_miss(
+        &mut self,
+        generic: &str,
+        generics: &[&str],
+        cv: &ClassVector,
+        span: Span,
+    ) -> Option<RType> {
         let has_default = generics.iter().any(|candidate| {
             let default_key = ((*candidate).to_string(), "default".to_string());
             self.fn_table.s3_methods.contains_key(&default_key)
@@ -584,10 +615,6 @@ impl Checker {
         if has_default {
             return Some(RType::unknown());
         }
-
-        // Without a default, use the project-owned-method fallback gate.
-        // External/typeshed methods alone cannot prove that this project owns
-        // the class, so suppress RY050 for potentially un-stubbed packages.
         let has_known_s3_method =
             self.fn_table.s3_methods.keys().any(|(known_generic, _)| {
                 generics.iter().any(|candidate| known_generic == candidate)
@@ -598,18 +625,39 @@ impl Checker {
         // The generic has no dispatch target for this class. Emit RY050
         // and return opaque so callers don't trip further diagnostics on
         // the result.
+        let classes = cv
+            .names
+            .iter()
+            .take(cv.len as usize)
+            .flatten()
+            .map(|class| class.as_ref())
+            .collect::<Vec<_>>()
+            .join(", ");
         self.emit(
             Severity::Warning,
             span,
             "RY050",
             format!(
                 "S3 generic `{}` called on value with classes [{}] but no matching method is defined",
-                generic,
-                cv.names.iter().take(cv.len as usize).flatten().map(|class| class.as_ref()).collect::<Vec<_>>().join(", "),
+                generic, classes,
             ),
         );
         Some(RType::unknown())
     }
+}
+
+/// One method-source hit in the S3 dispatch ladder shared by call and
+/// operator dispatch.
+pub(crate) enum S3MethodSource {
+    /// Registered through package metadata: not analyzable, so dispatch
+    /// can only conclude opaque.
+    Registered,
+    /// A project-defined method (`generic.class <- function(...)`) and
+    /// its refined return slot.
+    Project(usize),
+    /// A stub signature from the base typeshed or a package typeshed.
+    /// Boxed: `FunctionSig` is large, and the ladder usually misses.
+    Stub(Box<FunctionSig>),
 }
 
 /// S3 group generics used by ordinary function calls. Operator expressions

@@ -683,6 +683,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_s3_dispatch.R
 - diagnostics: []
+  fixture: ok_s3_operator_absence_arithmetic.R
+- diagnostics: []
   fixture: ok_s4_terra_named_vector.R
 - diagnostics: []
   fixture: ok_s7_class_callable.R

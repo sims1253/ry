@@ -5,6 +5,7 @@ mod data_frames_s3;
 mod diagnostics;
 mod functions_classes;
 mod narrowing;
+mod operator_s3_dispatch;
 mod packages_typeshed;
 mod quoting_data_mask;
 mod scope_resolution;
@@ -43,6 +44,20 @@ fn check_with(src: &str, setup: impl FnOnce(&mut Checker)) -> Vec<Diagnostic> {
 /// structure and cannot diverge from it.
 fn check_with_scope(src: &str) -> (Vec<Diagnostic>, Scope) {
     let mut c = Checker::new("test.R");
+    c.check_with_scope(&parse_snippet("test.R", src))
+}
+
+/// `check_with_scope` plus stub typeshed files (file name, raw JSON)
+/// written into one temp directory. A file's stem is its package key:
+/// `base.json` replaces the embedded base typeshed, any other name
+/// becomes a package typeshed.
+fn check_with_stubs(src: &str, stub_files: &[(&str, &str)]) -> (Vec<Diagnostic>, Scope) {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, json) in stub_files {
+        std::fs::write(dir.path().join(name), json).unwrap();
+    }
+    let mut c = Checker::new("test.R");
+    c.set_user_stubs(Arc::new(ry_typeshed::load_stub_dir(dir.path()).unwrap()));
     c.check_with_scope(&parse_snippet("test.R", src))
 }
 

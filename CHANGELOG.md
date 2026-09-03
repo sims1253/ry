@@ -206,6 +206,17 @@ suppression actions — and fixes a parser panic plus several editor issues.
   lookalikes such as `testing.R` and legacy S-dialect spellings
   (`.S`/`.s`/`.q`) anywhere under `tests/` are fixtures — skipped
   unless `check_test_fixtures` is enabled (#174).
+- **Operator S3 dispatch sees the same methods as calls** (#165):
+  `x + 1` now resolves `+.foo`/`Ops.foo` through the same source ladder
+  as `+(x, 1)` — external registrations, project functions, base and
+  package typesheds. A miss is silent, as in R (the primitive is the
+  fallback): no RY050, and `+.default` is never consulted as a
+  fallback. `&&`/`||` never dispatch through `Ops`, so their
+  RY031/RY032 diagnostics cannot be hidden. Factor arithmetic warns RY042
+  for any counterpart (`factor + list` warns instead of erroring RY040)
+  without a false RY041 recycling warning. Differing methods on both operands still
+  resolve first-applicable; R's `chooseOpsMethod` is tracked
+  separately (#193).
 - **`bquote` quotes unquotes inside braced bodies**: a `.(x)` in
   `bquote({ 1 == .(x) })` was not recognized as quoting, so the
   argument passed at the call site was treated as eagerly evaluated and

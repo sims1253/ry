@@ -1,4 +1,5 @@
 use super::*;
+use crate::higher_order::S3MethodSource;
 use ry_core::walk::{AstNode, Descend, Walk, walk_expr};
 use std::ops::ControlFlow;
 
@@ -38,11 +39,12 @@ impl Checker {
         if let Some(result) = data_frame_binop_result(op, &lt, &rt) {
             return result;
         }
-        // Primitive operators dispatch through an operator-specific method
-        // (`+.foo`) and then the `Ops.foo` group generic before applying the
-        // storage-mode rules below. A dynamically classed value is likewise
-        // not proof that the primitive is invalid: its runtime class may
-        // provide a method from another package.
+        // Primitive operators dispatch through `+.foo` then the `Ops.foo`
+        // group generic before the storage-mode rules below; a miss is
+        // silent, as in R -- the primitive itself is the fallback (issue
+        // #165). A dynamically classed value is likewise not proof that
+        // the primitive is invalid: its runtime class may provide a
+        // method from another package.
         if let Some(dispatched) = self.try_s3_binop_dispatch(op, &lt, &rt) {
             return dispatched;
         }
@@ -146,8 +148,21 @@ impl Checker {
             );
             return RType::unknown();
         }
+        if lt.class.contains("factor") || rt.class.contains("factor") {
+            // Base `Ops.factor` preempts the primitive for *any* factor
+            // arithmetic and returns `NA` without ever recycling
+            // (verified against R 4.6, even where the modes would
+            // arith-combine): RY042 only -- never RY041, and a list
+            // counterpart stays a warning instead of RY040.
+            self.emit(
+                Severity::Warning,
+                span,
+                "RY042",
+                "arithmetic on a factor produces `NA`; operate on its levels or convert it explicitly",
+            );
+            return lt.arith(rt).unwrap_or_else(RType::unknown);
+        }
         let recycles = non_divisible_recycling(lt.length, rt.length);
-        let has_factor = lt.class.contains("factor") || rt.class.contains("factor");
         if let Some(t) = lt.arith(rt) {
             if let Some((lhs_len, rhs_len)) = recycles {
                 self.emit(
@@ -157,14 +172,6 @@ impl Checker {
                     format!(
                         "vector lengths {lhs_len} and {rhs_len} do not divide evenly; R will recycle with a warning"
                     ),
-                );
-            }
-            if has_factor {
-                self.emit(
-                    Severity::Warning,
-                    span,
-                    "RY042",
-                    "arithmetic on a factor produces `NA`; operate on its levels or convert it explicitly",
                 );
             }
             return t;
@@ -181,11 +188,18 @@ impl Checker {
         RType::unknown()
     }
 
-    /// Resolve operator S3 dispatch for one operand. An unknown class on a
-    /// concrete mode means any class vector may apply, so the result is
-    /// unknowable. Each known class is tried against the operator's own
-    /// method, then the `Ops` group generic.
-    fn s3_dispatch_on_operand(&self, symbol: &str, operand: &RType) -> Option<RType> {
+    /// Resolve operator S3 dispatch for one operand: the operator's own
+    /// method (`+.foo`), then `Ops.foo`, through the shared
+    /// `s3_lookup_method` ladder. An unknown class on a concrete mode
+    /// means any class vector may apply, so the result is unknowable.
+    /// `operands` is the full operator argument list, which a stub
+    /// signature is applied to.
+    fn s3_dispatch_on_operand(
+        &mut self,
+        symbol: &str,
+        operands: &[&RType],
+        operand: &RType,
+    ) -> Option<RType> {
         if operand.class.is_unknown() && !matches!(operand.mode, Mode::Opaque | Mode::Union) {
             return Some(RType::unknown());
         }
@@ -196,26 +210,33 @@ impl Checker {
             .take(operand.class.len as usize)
             .flatten()
         {
+            if &**class == "default" {
+                continue;
+            }
             for generic in [symbol, "Ops"] {
-                if self
-                    .external_s3_methods
-                    .contains(&(generic.to_string(), class.to_string()))
-                {
-                    return Some(RType::unknown());
-                }
-                if let Some(slot) = self
-                    .fn_table
-                    .s3_methods
-                    .get(&(generic.to_string(), class.to_string()))
-                {
-                    // A specific operator method has an inferable return;
-                    // a group method only promises that this operator is
-                    // supported, not its result shape.
-                    return Some(if generic == symbol {
-                        self.return_slots.get(*slot)
-                    } else {
-                        RType::unknown()
-                    });
+                match self.s3_lookup_method(generic, class) {
+                    Some(S3MethodSource::Registered) => return Some(RType::unknown()),
+                    Some(S3MethodSource::Project(slot)) => {
+                        return Some(self.s3_specific_or_group_return(generic == symbol, slot));
+                    }
+                    Some(S3MethodSource::Stub(sig)) => {
+                        let arg_types = operands
+                            .iter()
+                            .map(|operand| (**operand).clone())
+                            .collect::<Vec<_>>();
+                        let result = self.apply_sig(&sig, &arg_types, &[]);
+                        // A specific stub, or a group stub declaring a
+                        // usable shape, is this operator's method.
+                        if generic == symbol || !matches!(result.mode, Mode::Opaque) {
+                            return Some(result);
+                        }
+                        // An opaque group stub (every embedded `Ops.*`
+                        // entry) offers no shape: fall through like a
+                        // miss, so the storage-mode rules keep modeling
+                        // these base classes with their own diagnostics
+                        // (`Ops.factor`'s warning, `Ops.Date` arithmetic).
+                    }
+                    None => {}
                 }
             }
         }
@@ -223,32 +244,42 @@ impl Checker {
     }
 
     pub(crate) fn try_s3_binop_dispatch(
-        &self,
+        &mut self,
         op: BinOpKind,
         lhs: &RType,
         rhs: &RType,
     ) -> Option<RType> {
-        let symbol = op_symbol(op);
+        // `:`, the pipes, and `%in%` are not S3 generics, and `&&`/`||`
+        // are strictly logical short-circuit primitives that no `Ops`
+        // method can intercept, so their diagnostics always fire.
         if matches!(
             op,
-            BinOpKind::In | BinOpKind::Colon | BinOpKind::PipeForward | BinOpKind::PipeNative
+            BinOpKind::In
+                | BinOpKind::Colon
+                | BinOpKind::PipeForward
+                | BinOpKind::PipeNative
+                | BinOpKind::AndAnd
+                | BinOpKind::OrOr
         ) {
             return None;
         }
-        for operand in [lhs, rhs] {
-            if let Some(dispatched) = self.s3_dispatch_on_operand(symbol, operand) {
-                return Some(dispatched);
-            }
-        }
-        None
+        let symbol = op_symbol(op);
+        let operands = [lhs, rhs];
+        operands
+            .iter()
+            .find_map(|operand| self.s3_dispatch_on_operand(symbol, &operands, operand))
     }
 
-    pub(crate) fn try_s3_unary_dispatch(&self, op: UnaryOpKind, operand: &RType) -> Option<RType> {
+    pub(crate) fn try_s3_unary_dispatch(
+        &mut self,
+        op: UnaryOpKind,
+        operand: &RType,
+    ) -> Option<RType> {
         let symbol = match op {
             UnaryOpKind::Neg => "-",
             UnaryOpKind::Not => "!",
         };
-        self.s3_dispatch_on_operand(symbol, operand)
+        self.s3_dispatch_on_operand(symbol, &[operand], operand)
     }
 
     pub(crate) fn infer_short_circuit_binop(

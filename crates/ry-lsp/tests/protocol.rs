@@ -1,10 +1,11 @@
 use ry_testkit::{AsyncJsonRpcClient, CliProcess, FixtureProject, JsonRpcProcess};
 use serde_json::{Value, json};
+use std::path::PathBuf;
 use std::process::Command;
 
-mod common;
+mod harness;
 
-use common::{Published, file_uri, published_from_cli_value, published_from_lsp, ry_binary};
+use harness::{Published, file_uri, published_from_cli_value, published_from_lsp, ry_binary};
 
 fn cli_diagnostics(fixture: &FixtureProject, extra: &[&str]) -> Vec<Published> {
     let output = CliProcess::new(ry_binary())
@@ -387,4 +388,43 @@ fn cross_mode_subprocess_framing_survives_multi_round_exchange() {
         .unwrap();
     assert_eq!(shutdown_response["result"], Value::Null);
     client.notify("exit", Value::Null).unwrap();
+}
+
+// ---- ry_binary path resolution ----
+
+/// The Cargo-JSON path resolver must pick the `ry` bin artifact, skip
+/// null-executable dependency artifacts, and anchor a relative report
+/// at the workspace root (cargo resolves a relative `CARGO_TARGET_DIR`
+/// against the build's working directory, not the test runner's cwd).
+#[test]
+fn ry_executable_from_cargo_json_picks_the_bin_artifact() {
+    let json = concat!(
+        r#"{"reason":"compiler-artifact","target":{"kind":["lib"],"name":"ry_core"},"executable":null}"#,
+        "\n",
+        r#"{"reason":"compiler-artifact","target":{"kind":["bin"],"name":"ry"},"executable":"/abs/target/debug/ry"}"#,
+        "\n",
+        r#"{"reason":"build-finished","success":true}"#,
+        "\n",
+    );
+    assert_eq!(
+        harness::ry_executable_from_cargo_json(json.as_bytes()),
+        Some(PathBuf::from("/abs/target/debug/ry")),
+        "must report the bin artifact's executable path"
+    );
+}
+
+/// On Windows (or any setup where cargo reports a relative executable
+/// path) the result is anchored at the workspace root so the tests
+/// spawn the artifact that was built regardless of their own cwd.
+#[test]
+fn ry_executable_from_cargo_json_anchors_relative_paths() {
+    let json = concat!(
+        r#"{"reason":"compiler-artifact","target":{"kind":["bin"],"name":"ry"},"executable":"custom-target/debug/ry.exe"}"#,
+        "\n",
+    );
+    assert_eq!(
+        harness::ry_executable_from_cargo_json(json.as_bytes()),
+        Some(harness::workspace_root().join("custom-target/debug/ry.exe")),
+        "a relative report must be anchored at the workspace root"
+    );
 }

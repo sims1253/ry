@@ -15,7 +15,7 @@ use tower_lsp::lsp_types::{
     Position, Range, TextEdit, Url, WorkspaceEdit,
 };
 
-use crate::util::byte_offset_to_position;
+use crate::positions::{byte_offset_to_position, line_start};
 
 /// Convert a `ry_checker::Diagnostic` to an LSP `Diagnostic` using the
 /// span's pre-resolved `line` / `col` and a single-character range. Used
@@ -91,35 +91,61 @@ pub(super) fn diag_code_from_lsp(d: &LspDiagnostic) -> String {
 
 /// Build a `CodeAction` that appends a `# ry: ignore[CODE]` suppression
 /// comment to the end of the diagnostic's line. Returns `None` when the
-/// line already carries an ignore comment (no redundant no-op).
+/// checker would already suppress the diagnostic (no redundant no-op):
+/// either a trailing directive on its line or a standalone directive on
+/// the comment-only lines directly above it.
 pub(super) fn make_ignore_action(
     uri: &Url,
     diag: &LspDiagnostic,
     text: &str,
 ) -> Option<CodeAction> {
     let line = diag.range.start.line as usize;
-    let line_text = text.lines().nth(line)?;
+    let lines: Vec<&str> = text.lines().collect();
+    let line_text = *lines.get(line)?;
+    let code = diag_code_from_lsp(diag);
 
-    // Avoid a redundant action when the line already carries a
-    // suppression directive. Check that the marker STARTS the comment
-    // body (after `#` and whitespace), not merely appears as a substring
-    // (so prose like "# See docs for ry: ignore" does not block the action).
+    // Avoid a redundant action when the source already carries a
+    // directive the CHECKER would honor for THIS diagnostic, decided
+    // with ry-checker's own suppression parser (the same one
+    // publish_diagnostics filters through) so the quick-fix's notion
+    // of "already ignored" cannot drift from what is suppressed: a
+    // directive must START the comment body (prose mentions like
+    // "# See docs for ry: ignore" do not count), `# ry: ignore-file`
+    // is file-level and never blocks a line fix, and a rule list must
+    // name this code — `# ry: ignore[RY010]` suppresses only RY010,
+    // so the quick-fix stays available for other codes, while a bare
+    // directive's empty rule list means "all rules".
+    //
+    // The parser sees a bounded window, not just the diagnostic's
+    // line: the checker resolves a STANDALONE directive to the next
+    // non-comment, non-blank line, so one on the contiguous blank /
+    // comment-only run above the diagnostic already suppresses it,
+    // while one higher up is absorbed by the code line that ends the
+    // run. `suppression.line == target` keeps the match on the
+    // diagnostic's line: a trailing directive resolves to the line it
+    // sits on, a standalone one to the window's last line, and a
+    // standalone directive that IS the diagnostic's whole line finds
+    // no next line and suppresses nothing.
+    let window_start = suppression_window_start(&lines, line);
+    let window = lines[window_start..=line].join("\n");
+    let target = line - window_start;
     let already_ignored = RParser::new()
         .ok()
-        .and_then(|mut parser| parser.parse("<code-action>", line_text).ok())
-        .into_iter()
-        .flat_map(|file| file.comments)
-        .map(|comment| comment.body.trim_start().to_lowercase())
-        .any(|body| {
-            body.starts_with("ry: ignore")
-                || body.starts_with("ry:ignore")
-                || body.starts_with("noqa")
-        });
+        .and_then(|mut parser| parser.parse("<code-action>", &window).ok())
+        .map(|file| {
+            ry_checker::parse_suppressions_from_comments(&file.comments, &window)
+                .iter()
+                .any(|suppression| {
+                    suppression.line == target
+                        && (suppression.rules.is_empty()
+                            || suppression.rules.iter().any(|rule| rule == &code))
+                })
+        })
+        .unwrap_or(false);
     if already_ignored {
         return None;
     }
 
-    let code = diag_code_from_lsp(diag);
     let new_line = if code.is_empty() {
         format!("{}  # ry: ignore", line_text)
     } else {
@@ -134,8 +160,8 @@ pub(super) fn make_ignore_action(
     // UTF-16 code-unit column, so convert the byte offset of the line's
     // end to a proper column (a non-ASCII line would otherwise produce
     // an out-of-range character).
-    let line_start = line_start_byte_offset(text, line);
-    let end = byte_offset_to_position(text, line_start + line_text.len());
+    let line_start_byte = line_start(text, line);
+    let end = byte_offset_to_position(text, line_start_byte + line_text.len());
 
     let mut changes = HashMap::new();
     changes.insert(
@@ -162,6 +188,24 @@ pub(super) fn make_ignore_action(
         diagnostics: Some(vec![diag.clone()]),
         ..Default::default()
     })
+}
+
+/// The first line of the bounded suppression window for a diagnostic on
+/// `line`: the top of the contiguous run of blank / comment-only lines
+/// ending just above it, or `line` itself when the line above carries
+/// code. Line classification mirrors the checker's `next_code_line`
+/// (blank, or first non-whitespace character is `#`).
+fn suppression_window_start(lines: &[&str], line: usize) -> usize {
+    let mut start = line;
+    while start > 0 {
+        let trimmed = lines[start - 1].trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            start -= 1;
+        } else {
+            break;
+        }
+    }
+    start
 }
 
 /// Build a `CodeAction` that inserts `# ry: ignore-file` at the top of
@@ -199,16 +243,4 @@ pub(super) fn make_ignore_file_action(uri: &Url, text: &str) -> Option<CodeActio
         }),
         ..Default::default()
     })
-}
-
-/// Byte offset of the first character of the given 0-indexed line.
-fn line_start_byte_offset(text: &str, line: usize) -> usize {
-    let mut offset = 0usize;
-    for (i, piece) in text.split_inclusive('\n').enumerate() {
-        if i == line {
-            break;
-        }
-        offset += piece.len();
-    }
-    offset
 }

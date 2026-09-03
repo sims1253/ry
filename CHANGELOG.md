@@ -75,9 +75,11 @@ suppression actions — and fixes a parser panic plus several editor issues.
 - **Shared test harnesses, leaner comments, `suppress.rs` renamed to
   `resolve.rs`**: the checker's inline tests gained `check_with` (parse,
   configure, check) and a shared `parse_file`, replacing copy-pasted
-  parser/checker scaffolding; the language server's session and protocol
-  tests each extract one copy of their spawn/normalize helpers
-  (`tests/harness/`, `tests/common/`); near-duplicate literal-pair tests
+  parser/checker scaffolding; the language server's test binaries share
+  one harness module (`tests/harness/`) for spawning sessions (with or
+  without client capabilities and `initializationOptions`), incremental
+  edit splicing, and the `Published` normalization used to compare LSP
+  and CLI diagnostics item by item; near-duplicate literal-pair tests
   are table-driven. Narrating comments that restated the next line were
   removed. Contributor-facing rename: `crates/ry-checker/src/suppress.rs`
   is now `crates/ry-checker/src/resolve.rs` (same code; it holds the

@@ -1,22 +1,36 @@
-//! Shared session harness for the LSP property tests.
+//! Shared test harness for the LSP integration tests.
 //!
-//! One copy of the client-session type, the source variants the
-//! properties edit between, and the spawn/quiesce plumbing, used by both
-//! `session.rs` (transcript + convergence property) and
-//! `session_state_machine.rs` (extended operation alphabet).
+//! Two halves, one module:
+//!
+//! * the session plumbing — the client-session type, the source variants
+//!   the properties edit between, and the spawn/quiesce helpers — used by
+//!   `session_state_machine.rs` (the extended-alphabet convergence
+//!   property plus the deterministic transcript tests) and
+//!   `configuration_refresh.rs`;
+//! * the cross-mode protocol gates — the `Published` normalization and
+//!   the CLI/LSP comparison plumbing — used by `protocol.rs`,
+//!   `protocol_contract.rs`, and `testkit.rs`, so the contract stays
+//!   "LSP published diagnostics equal `ry check` run independently in
+//!   the same root".
 
 // Each test binary uses a different subset of this module.
 #![allow(dead_code)]
 
 use ry_testkit::LspSession;
+use ry_testkit::{ObservedPosition, PositionEncoding, normalize_path, normalize_position};
 use serde_json::{Value, json};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Duration;
 
 pub type ClientSession = LspSession<
     tokio::io::ReadHalf<tokio::io::DuplexStream>,
     tokio::io::WriteHalf<tokio::io::DuplexStream>,
 >;
+
+// ──────────────────────────────────────────────────────────────────────────
+// Session plumbing
+// ──────────────────────────────────────────────────────────────────────────
 
 /// Source variants with varying Unicode prefixes so incremental-edit ranges
 /// exercise BMP, combining-mark, and astral-plane UTF-16 positions.  Each
@@ -88,9 +102,21 @@ pub fn normalize_diagnostics(publish: &Value) -> Vec<Value> {
     )
 }
 
-/// Spawn a fresh server on a duplex pair and initialize the client session
-/// with the given workspace folders (first folder is the root URI).
-pub async fn spawn_session(roots: &[&Path]) -> (ClientSession, tokio::task::JoinHandle<()>) {
+/// Spawn a fresh server on a duplex pair and initialize the client
+/// session with the given workspace folders (the first is the root
+/// URI), client `capabilities`, and — when `initialization_options` is
+/// `Some` — initialization options. Tests using the pull path answer
+/// the server's `workspace/configuration` request themselves right
+/// after this returns. No settle wait for the background indexer: it
+/// never publishes diagnostics itself (its caller republishes, and no
+/// document is open here), and open documents shadow disk files, so
+/// each test's `published_diagnostics_after` await (which has its own
+/// timeout) is the only synchronization needed.
+pub async fn spawn_session(
+    roots: &[&Path],
+    capabilities: Value,
+    initialization_options: Option<Value>,
+) -> (ClientSession, tokio::task::JoinHandle<()>) {
     let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
     let (client_reader, client_writer) = tokio::io::split(client_stream);
     let (server_reader, server_writer) = tokio::io::split(server_stream);
@@ -104,22 +130,20 @@ pub async fn spawn_session(roots: &[&Path]) -> (ClientSession, tokio::task::Join
         .map(|r| {
             json!({
                 "uri": ry_testkit::file_uri(r).unwrap(),
-                "name": r.file_name().unwrap().to_string_lossy()
+                "name": r.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "fixture".to_string())
             })
         })
         .collect();
-    session
-        .request(
-            "initialize",
-            json!({
-                "processId": null,
-                "rootUri": root_uri,
-                "capabilities": {},
-                "workspaceFolders": ws_folders
-            }),
-        )
-        .await
-        .unwrap();
+    let mut params = json!({
+        "processId": null,
+        "rootUri": root_uri,
+        "capabilities": capabilities,
+        "workspaceFolders": ws_folders
+    });
+    if let Some(options) = initialization_options {
+        params["initializationOptions"] = options;
+    }
+    session.request("initialize", params).await.unwrap();
     session.notify("initialized", json!({})).await.unwrap();
     (session, server)
 }
@@ -144,4 +168,155 @@ pub async fn sync_barrier(session: &mut ClientSession, uri: &str) {
             }),
         )
         .await;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Cross-mode protocol gates
+// ──────────────────────────────────────────────────────────────────────────
+
+/// A diagnostic normalized to file-relative coordinates so CLI and LSP
+/// output can be compared item by item.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Published {
+    pub path: String,
+    pub code: String,
+    pub severity: String,
+    pub message: String,
+    pub line: u32,
+    pub byte_column: u32,
+}
+
+/// The workspace root (this crate's parent's parent), where `target/`
+/// and the cargo invocations live.
+pub fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap()
+}
+
+/// Build the production `ry` binary once per test process and return the
+/// path Cargo reports for it.
+///
+/// The path comes from Cargo's JSON artifact messages rather than a
+/// hardcoded `target/debug/ry`, so it stays correct when artifacts land
+/// elsewhere: a custom `CARGO_TARGET_DIR` (relative or absolute), a
+/// `[build] target-dir` in a Cargo config, or a platform executable
+/// suffix (`ry.exe` on Windows).
+pub fn ry_binary() -> PathBuf {
+    static BINARY: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    BINARY
+        .get_or_init(|| {
+            let output = Command::new(env!("CARGO"))
+                .current_dir(workspace_root())
+                .args(["build", "--quiet", "-p", "ry-cli", "--message-format=json"])
+                .output()
+                .expect("build the production ry binary for the protocol gate");
+            assert!(
+                output.status.success(),
+                "building the production ry binary failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            ry_executable_from_cargo_json(&output.stdout)
+                .expect("cargo must report the ry binary artifact")
+        })
+        .clone()
+}
+
+/// Extract the `ry` executable's path from `cargo build
+/// --message-format=json` stdout: one JSON object per line, the wanted
+/// one being the `compiler-artifact` message whose target is the `ry`
+/// bin (dependency artifacts report a null `executable` and are
+/// skipped). A relative report is anchored at the workspace root — the
+/// directory the build ran in — because a relative path would otherwise
+/// be resolved against the test process's working directory.
+pub fn ry_executable_from_cargo_json(stdout: &[u8]) -> Option<PathBuf> {
+    let stdout = std::str::from_utf8(stdout).ok()?;
+    let artifact = stdout
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|msg| {
+            msg["reason"] == "compiler-artifact"
+                && msg["target"]["name"] == "ry"
+                && msg["target"]["kind"][0] == "bin"
+                && msg["executable"].is_string()
+        })?;
+    let path = PathBuf::from(artifact["executable"].as_str()?);
+    Some(if path.is_absolute() {
+        path
+    } else {
+        workspace_root().join(path)
+    })
+}
+
+/// Percent-encoded `file://` URI for `path` (the testkit encoder, which
+/// the server itself accepts).
+pub fn file_uri(path: &Path) -> String {
+    ry_testkit::file_uri(path).unwrap()
+}
+
+/// Convert one `ry check --output-format json` entry into a `Published`
+/// with byte columns, relative to `root`.
+pub fn published_from_cli_value(value: &Value, root: &Path) -> Published {
+    let path = value["path"].as_str().unwrap();
+    let relative = normalize_path(Path::new(path), root);
+    let relative = relative.strip_prefix("./").unwrap_or(&relative).to_string();
+    let source = std::fs::read_to_string(root.join(&relative)).unwrap_or_default();
+    let scalar = ObservedPosition {
+        line: value["line"].as_u64().unwrap() as u32 - 1,
+        character: value["column"].as_u64().unwrap() as u32 - 1,
+        encoding: PositionEncoding::UnicodeScalar,
+    };
+    let position = normalize_position(&source, &scalar).unwrap();
+    Published {
+        path: relative,
+        code: value["code"].as_str().unwrap_or("").to_string(),
+        severity: value["severity"].as_str().unwrap_or("").to_string(),
+        message: value["message"].as_str().unwrap_or("").to_string(),
+        line: position.line,
+        byte_column: position.character,
+    }
+}
+
+/// Normalize an LSP `publishDiagnostics` message into sorted `Published`
+/// entries so comparison is order-independent.
+pub fn published_from_lsp(message: &Value, path: &Path, root: &Path) -> Vec<Published> {
+    let relative = normalize_path(path, root);
+    let source = std::fs::read_to_string(path).unwrap_or_default();
+    let mut diags: Vec<_> = message
+        .pointer("/params/diagnostics")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .map(|value| {
+            let start = &value["range"]["start"];
+            let position = normalize_position(
+                &source,
+                &ObservedPosition {
+                    line: start["line"].as_u64().unwrap_or(0) as u32,
+                    character: start["character"].as_u64().unwrap_or(0) as u32,
+                    encoding: PositionEncoding::Utf16,
+                },
+            )
+            .expect("diagnostic start position must normalize");
+            Published {
+                path: relative.clone(),
+                code: value["code"].as_str().unwrap_or("").to_string(),
+                severity: match value["severity"].as_u64() {
+                    Some(1) => "error",
+                    Some(2) => "warning",
+                    Some(3) => "info",
+                    Some(4) => "hint",
+                    _ => "unknown",
+                }
+                .to_string(),
+                message: value["message"].as_str().unwrap_or("").to_string(),
+                line: position.line,
+                byte_column: position.character,
+            }
+        })
+        .collect();
+    diags.sort();
+    diags
 }

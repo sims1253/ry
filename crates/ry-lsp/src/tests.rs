@@ -4,7 +4,7 @@ use crate::diagnostics::{
     make_ignore_file_action,
 };
 use crate::hints::collect_inlay_hints;
-use crate::util::*;
+use crate::positions::*;
 use ry_checker::{Diagnostic, Severity};
 use ry_core::{RParser, SourceFile, Span};
 use tower_lsp::lsp_types::Diagnostic as LspDiagnostic;
@@ -394,6 +394,137 @@ fn code_action_ignore_line_skips_already_suppressed() {
 }
 
 #[test]
+fn code_action_ignore_line_rule_list_must_cover_diagnostic_code() {
+    // A trailing `# ry: ignore[RY010]` suppresses only RY010. For a
+    // diagnostic with a DIFFERENT code the checker would still publish
+    // it, so the quick-fix must stay available — appending a second
+    // directive for the new code is a meaningful edit, not a no-op.
+    let text = "x <- 1L + \"s\"  # ry: ignore[RY010]\n";
+    let diag = lsp_diag(0, 0, 1, "RY040");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(
+        make_ignore_action(&uri, &diag, text).is_some(),
+        "a directive for another rule must not withhold the action"
+    );
+}
+
+#[test]
+fn code_action_ignore_line_rule_list_withholds_matching_code() {
+    // The same `[RY010]` directive DOES withhold the action for the
+    // rule it names: the checker would suppress that diagnostic
+    // already, so offering the quick-fix would be redundant.
+    let text = "x <- 1L + \"s\"  # ry: ignore[RY010]\n";
+    let diag = lsp_diag(0, 0, 1, "RY010");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(
+        make_ignore_action(&uri, &diag, text).is_none(),
+        "a directive naming this rule must withhold the action"
+    );
+}
+
+#[test]
+fn code_action_ignore_line_bare_directive_withholds_any_code() {
+    // A bare `# ry: ignore` carries an empty rule list, which the
+    // checker reads as "suppress all rules" — so it withholds the
+    // action regardless of the diagnostic's code.
+    let text = "x <- 1L + \"s\"  # ry: ignore\n";
+    let diag = lsp_diag(0, 0, 1, "RY040");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(
+        make_ignore_action(&uri, &diag, text).is_none(),
+        "a bare directive suppresses every rule"
+    );
+}
+
+#[test]
+fn code_action_ignore_line_standalone_directive_defers_to_next_line() {
+    // A standalone `# ry: ignore` (comment alone on the diagnostic's
+    // line) defers to the NEXT code line; within the single line the
+    // quick-fix inspects there is no next line, so the directive
+    // suppresses nothing here and the action stays available.
+    let text = "# ry: ignore\n";
+    let diag = lsp_diag(0, 0, 1, "RY040");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(
+        make_ignore_action(&uri, &diag, text).is_some(),
+        "a standalone directive must not suppress its own line"
+    );
+}
+
+#[test]
+fn code_action_ignore_line_withheld_by_preceding_standalone_directive() {
+    // A standalone directive on the comment-only line ABOVE the
+    // diagnostic is assigned to this code line by the checker (it
+    // defers to the next non-comment, non-blank line), so the
+    // diagnostic is already suppressed and the quick-fix would append
+    // a redundant second suppression.
+    let text = "# ry: ignore[RY010]\nz <- length(xx = 1L)\n";
+    let diag = lsp_diag(1, 0, 1, "RY010");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(
+        make_ignore_action(&uri, &diag, text).is_none(),
+        "a preceding standalone directive for this rule must withhold the action"
+    );
+}
+
+#[test]
+fn code_action_ignore_line_preceding_standalone_rule_list_must_cover_code() {
+    // The preceding standalone `[RY040]` directive suppresses only
+    // RY040; for a diagnostic with a different code the checker would
+    // still publish it, so the quick-fix must stay available.
+    let text = "# ry: ignore[RY040]\nz <- length(xx = 1L)\n";
+    let diag = lsp_diag(1, 0, 1, "RY010");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(
+        make_ignore_action(&uri, &diag, text).is_some(),
+        "a preceding standalone directive for another rule must not withhold the action"
+    );
+}
+
+#[test]
+fn code_action_ignore_line_withheld_by_preceding_bare_directive() {
+    // A bare preceding standalone directive carries an empty rule
+    // list ("suppress all rules"), so it withholds the action for any
+    // code, exactly like its trailing counterpart.
+    let text = "# ry: ignore\nz <- length(xx = 1L)\n";
+    let diag = lsp_diag(1, 0, 1, "RY040");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(
+        make_ignore_action(&uri, &diag, text).is_none(),
+        "a bare preceding standalone directive suppresses every rule"
+    );
+}
+
+#[test]
+fn code_action_ignore_line_preceding_directive_skips_interleaved_comments() {
+    // The checker skips blank and comment-only lines when resolving a
+    // standalone directive, so a directive separated from the code
+    // line by prose comments or blanks still reaches it.
+    let text = "# ry: ignore[RY010]\n# why this is fine\n\nz <- length(xx = 1L)\n";
+    let diag = lsp_diag(3, 0, 1, "RY010");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(
+        make_ignore_action(&uri, &diag, text).is_none(),
+        "a standalone directive above interleaved comments must still withhold the action"
+    );
+}
+
+#[test]
+fn code_action_ignore_line_preceding_directive_blocked_by_code_line() {
+    // A code line between the directive and the diagnostic's line
+    // absorbs the standalone directive (the checker resolves it to the
+    // NEXT code line), so the diagnostic below is not suppressed and
+    // the quick-fix stays available.
+    let text = "# ry: ignore[RY010]\ny <- 1L\nz <- length(xx = 1L)\n";
+    let diag = lsp_diag(2, 0, 1, "RY010");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(
+        make_ignore_action(&uri, &diag, text).is_some(),
+        "a directive absorbed by an earlier code line must not withhold the action"
+    );
+}
+
+#[test]
 fn code_action_ignore_line_ignores_hash_inside_string() {
     let text = "x <- \"# not a comment\"\n";
     let diag = lsp_diag(0, 0, 1, "RY040");
@@ -404,6 +535,40 @@ fn code_action_ignore_line_ignores_hash_inside_string() {
 #[test]
 fn code_action_ignore_line_detects_noqa_after_string_hash() {
     let text = "x <- \"# not a comment\"  # noqa\n";
+    let diag = lsp_diag(0, 0, 1, "RY040");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(make_ignore_action(&uri, &diag, text).is_none());
+}
+
+#[test]
+fn code_action_ignore_line_not_blocked_by_ignore_file_marker() {
+    // `# ry: ignore-file` is a FILE-level directive: the checker's
+    // suppression parser does not line-suppress through it, so the line
+    // quick-fix must still be offered. (The hand-rolled marker check
+    // this replaces treated it as a line suppression and blocked the
+    // action.)
+    let text = "x <- 1L + \"s\"  # ry: ignore-file\n";
+    let diag = lsp_diag(0, 0, 1, "RY040");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(make_ignore_action(&uri, &diag, text).is_some());
+}
+
+#[test]
+fn code_action_ignore_line_not_blocked_by_prose_mention() {
+    // A directive that does not START the comment body is prose, not a
+    // suppression — the checker's parser ignores it, so the quick-fix
+    // availability must too.
+    let text = "x <- 1L + \"s\"  # see docs for ry: ignore\n";
+    let diag = lsp_diag(0, 0, 1, "RY040");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(make_ignore_action(&uri, &diag, text).is_some());
+}
+
+#[test]
+fn code_action_ignore_line_marker_is_case_insensitive() {
+    // The checker's parser matches `ry:` / `noqa` markers
+    // case-insensitively; the quick-fix availability follows it.
+    let text = "x <- 1L + \"s\"  # RY: IGNORE[RY040]\n";
     let diag = lsp_diag(0, 0, 1, "RY040");
     let uri = Url::parse("file:///tmp/test.R").unwrap();
     assert!(make_ignore_action(&uri, &diag, text).is_none());
@@ -516,10 +681,71 @@ fn utf16_position_counts_astral_as_two_units() {
     assert_eq!(byte_offset_to_position(text, 5).character, 3);
     // 'a'=1 unit, '😀'=2 units -> 'b' is at UTF-16 col 3.
     assert_eq!(position_to_byte_offset(text, 0, 3), Some(5));
+    assert_eq!(position_to_byte_offset(text, 0, 1), Some(1));
     // A column inside the astral char (the second unit of its surrogate
     // pair) is rejected rather than snapped onto a wrong byte offset;
     // didChange incremental edits route through this conversion.
     assert_eq!(position_to_byte_offset(text, 0, 2), None);
+}
+
+#[test]
+fn utf16_columns_skip_crlf_carriage_return() {
+    // The `\r` of a CRLF terminator is not a column character: the
+    // position at the `\n` (or at end-of-line) is the column before
+    // the `\r`, and line 1 starts at column 0.
+    let text = "ab\r\ncd";
+    // Byte offsets: a=0 b=1 \r=2 \n=3 c=4 d=5.
+    assert_eq!(byte_offset_to_position(text, 2), Position::new(0, 2));
+    assert_eq!(byte_offset_to_position(text, 3), Position::new(0, 2));
+    assert_eq!(byte_offset_to_position(text, 4), Position::new(1, 0));
+    // Inverse: (0, 2) resolves to the `\r` byte, (1, 0) to `c`.
+    assert_eq!(position_to_byte_offset(text, 0, 2), Some(2));
+    assert_eq!(position_to_byte_offset(text, 1, 0), Some(4));
+    // Contrast: a LONE `\r` (no `\n` after it) neither starts a new line
+    // nor vanishes from the column count — it is one column wide.
+    let lone = "ab\rcd";
+    assert_eq!(byte_offset_to_position(lone, 3), Position::new(0, 3));
+    assert_eq!(position_to_byte_offset(lone, 0, 3), Some(3));
+}
+
+#[test]
+fn byte_offset_to_point_counts_byte_columns() {
+    // tree-sitter Point columns are BYTES from the line start, unlike
+    // LSP's UTF-16 unit — a 2-byte precomposed é advances the column
+    // by 2, and a CRLF `\r` is an ordinary column byte.
+    let text = "caf\u{e9}\r\nx";
+    // Byte offsets: c=0 a=1 f=2 \u{e9}=3,4 \r=5 \n=6 x=7.
+    let after_e_acute = byte_offset_to_point(text, 5);
+    assert_eq!(after_e_acute.row, 0);
+    assert_eq!(after_e_acute.column, 5);
+    let on_lf = byte_offset_to_point(text, 6);
+    assert_eq!(on_lf.row, 0);
+    assert_eq!(on_lf.column, 6);
+    let x = byte_offset_to_point(text, 7);
+    assert_eq!(x.row, 1);
+    assert_eq!(x.column, 0);
+    let crlf = byte_offset_to_point("a\r\nb", 3);
+    assert_eq!((crlf.row, crlf.column), (1, 0));
+    assert_eq!(byte_offset_to_point("aé", 2), byte_offset_to_point("aé", 1));
+    // Offsets past the end clamp to the text end.
+    let clamped = byte_offset_to_point(text, 999);
+    assert_eq!(clamped.row, 1);
+    assert_eq!(clamped.column, 1);
+}
+
+#[test]
+fn line_start_returns_byte_offset_of_line() {
+    // `\u{e9}` (precomposed é) is 2 bytes, so the byte layout is
+    // a=0 b=1 \n=2 c=3 d=4 \u{e9}=5,6 f=7 \n=8 g=9 h=10. Line starts:
+    // line 0 at 0, line 1 after the first \n at 3, line 2 after the
+    // second \n at 9.
+    let text = "ab\ncd\u{e9}f\ngh";
+    assert_eq!(line_start(text, 0), 0);
+    assert_eq!(line_start(text, 1), 3);
+    assert_eq!(line_start(text, 2), 9);
+    // A line index past the end clamps to the end of the text.
+    assert_eq!(line_start(text, 7), text.len());
+    assert_eq!(line_start("", 0), 0);
 }
 
 #[test]

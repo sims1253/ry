@@ -32,11 +32,17 @@
 //! the `textDocument/publishDiagnostics` notification — an explicit protocol
 //! signal. The drain idle-timeout detects end-of-stream; it does not wait
 //! for computation.
+//!
+//! The file also hosts the deterministic session tests that predate the
+//! property (the full-alphabet property subsumed the original
+//! open/edit/close/restart convergence property): the UTF-16 position
+//! transcript over a non-ASCII document and the #81 close/reopen
+//! republication regression.
 
 use proptest::collection;
 use proptest::prelude::*;
 use proptest::test_runner::{Config, RngAlgorithm, TestCaseError, TestRng, TestRunner};
-use ry_testkit::{FixtureProject, file_uri};
+use ry_testkit::{FixtureProject, LspSession};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -45,8 +51,8 @@ use std::time::Duration;
 mod harness;
 
 use harness::{
-    ClientSession, SourceVariant, apply_incremental_edit, first_line_utf16_len, join_session,
-    sorted_diagnostics, spawn_session, sync_barrier,
+    ClientSession, SourceVariant, apply_incremental_edit, file_uri, first_line_utf16_len,
+    join_session, normalize_diagnostics, sorted_diagnostics, spawn_session, sync_barrier,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -406,7 +412,7 @@ fn file_path(fixture: &FixtureProject, slot: u8) -> PathBuf {
 }
 
 fn file_uri_str(fixture: &FixtureProject, slot: u8) -> String {
-    file_uri(&file_path(fixture, slot)).unwrap()
+    file_uri(&file_path(fixture, slot))
 }
 
 /// Write the current model's `ry.toml` to disk.
@@ -462,7 +468,7 @@ async fn fresh_server_snapshot(
         roots.push(fixture.path(SECOND));
     }
     let root_refs: Vec<&Path> = roots.iter().map(|p| p.as_path()).collect();
-    let (mut session, server) = spawn_session(&root_refs).await;
+    let (mut session, server) = spawn_session(&root_refs, json!({}), None).await;
 
     // Sync barrier: drain the initialize/index cycle.
     let target_uri = file_uri_str(fixture, target_slot);
@@ -501,7 +507,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
     write_baseline(&fixture, &SessionModel::default());
 
     let roots: Vec<&Path> = vec![fixture.root()];
-    let (mut live, mut live_server) = spawn_session(&roots).await;
+    let (mut live, mut live_server) = spawn_session(&roots, json!({}), None).await;
     let mut model = SessionModel::default();
 
     for (step, operation) in operations.into_iter().enumerate() {
@@ -597,7 +603,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                     roots.push(fixture.path(SECOND));
                 }
                 let root_refs: Vec<&Path> = roots.iter().map(|p| p.as_path()).collect();
-                let (new_live, new_server) = spawn_session(&root_refs).await;
+                let (new_live, new_server) = spawn_session(&root_refs, json!({}), None).await;
                 live = new_live;
                 live_server = new_server;
                 for (&file, text) in &model.open_docs {
@@ -617,7 +623,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                     .write_file(FILES[*file as usize], source.text())
                     .unwrap();
                 model.disk_files.insert(*file, source.text().to_string());
-                let ry_toml_uri = file_uri(&fixture.path("ry.toml")).unwrap();
+                let ry_toml_uri = file_uri(&fixture.path("ry.toml"));
                 live.notify(
                     "workspace/didChangeWatchedFiles",
                     json!({"changes": [{"uri": ry_toml_uri, "type": 2}]}),
@@ -649,7 +655,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                 let path = file_path(&fixture, *file);
                 let _ = std::fs::remove_file(&path);
                 model.disk_files.remove(file);
-                let ry_toml_uri = file_uri(&fixture.path("ry.toml")).unwrap();
+                let ry_toml_uri = file_uri(&fixture.path("ry.toml"));
                 live.notify(
                     "workspace/didChangeWatchedFiles",
                     json!({"changes": [{"uri": ry_toml_uri, "type": 2}]}),
@@ -676,7 +682,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                 std::fs::rename(&from_path, &to_path).unwrap();
                 model.disk_files.remove(from);
                 model.disk_files.insert(*to, content);
-                let ry_toml_uri = file_uri(&fixture.path("ry.toml")).unwrap();
+                let ry_toml_uri = file_uri(&fixture.path("ry.toml"));
                 live.notify(
                     "workspace/didChangeWatchedFiles",
                     json!({"changes": [{"uri": ry_toml_uri, "type": 2}]}),
@@ -691,7 +697,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                     Vec::new()
                 };
                 write_config(&fixture, &model);
-                let ry_toml_uri = file_uri(&fixture.path("ry.toml")).unwrap();
+                let ry_toml_uri = file_uri(&fixture.path("ry.toml"));
                 live.notify(
                     "workspace/didChangeWatchedFiles",
                     json!({"changes": [{"uri": ry_toml_uri, "type": 2}]}),
@@ -702,7 +708,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
             Operation::EditBaseline { suppress } => {
                 model.baseline_suppress = *suppress;
                 write_baseline(&fixture, &model);
-                let baseline_uri = file_uri(&fixture.path("baseline.json")).unwrap();
+                let baseline_uri = file_uri(&fixture.path("baseline.json"));
                 live.notify(
                     "workspace/didChangeWatchedFiles",
                     json!({"changes": [{"uri": baseline_uri, "type": 2}]}),
@@ -716,7 +722,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                 fixture
                     .write_file(format!("{SECOND}/NAMESPACE"), content)
                     .unwrap();
-                let ns_uri = file_uri(&fixture.path(format!("{SECOND}/NAMESPACE"))).unwrap();
+                let ns_uri = file_uri(&fixture.path(format!("{SECOND}/NAMESPACE")));
                 live.notify(
                     "workspace/didChangeWatchedFiles",
                     json!({"changes": [{"uri": ns_uri, "type": 2}]}),
@@ -729,7 +735,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                 fixture
                     .write_file(format!("{SECOND}/DESCRIPTION"), content)
                     .unwrap();
-                let desc_uri = file_uri(&fixture.path(format!("{SECOND}/DESCRIPTION"))).unwrap();
+                let desc_uri = file_uri(&fixture.path(format!("{SECOND}/DESCRIPTION")));
                 live.notify(
                     "workspace/didChangeWatchedFiles",
                     json!({"changes": [{"uri": desc_uri, "type": 2}]}),
@@ -753,8 +759,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                 fixture
                     .write_file(format!("{SECOND}/typesheds/localdep.json"), &stub)
                     .unwrap();
-                let ts_uri =
-                    file_uri(&fixture.path(format!("{SECOND}/typesheds/localdep.json"))).unwrap();
+                let ts_uri = file_uri(&fixture.path(format!("{SECOND}/typesheds/localdep.json")));
                 live.notify(
                     "workspace/didChangeWatchedFiles",
                     json!({"changes": [{"uri": ts_uri, "type": 2}]}),
@@ -765,7 +770,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
             Operation::EditDiscoveryCaps { max_files } => {
                 model.max_files = *max_files as u64;
                 write_config(&fixture, &model);
-                let ry_toml_uri = file_uri(&fixture.path("ry.toml")).unwrap();
+                let ry_toml_uri = file_uri(&fixture.path("ry.toml"));
                 live.notify(
                     "workspace/didChangeWatchedFiles",
                     json!({"changes": [{"uri": ry_toml_uri, "type": 2}]}),
@@ -796,7 +801,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                 if model.second_folder {
                     continue;
                 }
-                let second_uri = file_uri(&fixture.path(SECOND)).unwrap();
+                let second_uri = file_uri(&fixture.path(SECOND));
                 live.notify(
                     "workspace/didChangeWorkspaceFolders",
                     json!({
@@ -814,7 +819,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                 if !model.second_folder {
                     continue;
                 }
-                let second_uri = file_uri(&fixture.path(SECOND)).unwrap();
+                let second_uri = file_uri(&fixture.path(SECOND));
                 live.notify(
                     "workspace/didChangeWorkspaceFolders",
                     json!({
@@ -1140,4 +1145,510 @@ fn metadata_edits_converge() {
             source: SourceVariant::AsciiDiagnostic,
         },
     ]);
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Deterministic session tests
+//
+// Targeted coverage the property only samples randomly: exact UTF-16
+// positions across a non-ASCII transcript, and the #81 close/reopen
+// republication race. These tests predate the property: the original
+// open/edit/close/restart convergence property they accompanied was
+// deleted as subsumed by `pr_session_seeds`.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// The transcript document: CRLF terminators, BMP text, a decomposed
+/// combining mark, astral-plane characters in strings and backtick
+/// identifiers, plus two diagnostic triggers.
+const SOURCE: &str = concat!(
+    "ascii <- 1L\r\n",
+    "frame <- data.frame(column = 1L)\r\n",
+    "marker <- \"é e\u{301} 😀\"; target <- 1L\r\n",
+    "marker; target\r\n",
+    "marker <- \"😀\"; length(xx = 1L)\r\n",
+    "`😀` <- 4L\r\n",
+    "`😀`\r\n",
+);
+const OTHER_SOURCE: &str = "\"😀\"; target\r\n";
+const DISK_SOURCE: &str = "marker <- \"😀\"; length(xx = 1L)\r\n";
+
+/// A hand-declared point in `SOURCE`. These values intentionally do not use
+/// ry-lsp or ry-testkit conversion helpers: byte offsets count UTF-8 bytes
+/// and character columns count UTF-16 code units.
+#[derive(Clone, Copy, Debug)]
+struct Anchor {
+    name: &'static str,
+    byte: usize,
+    line: u32,
+    scalar: u32,
+    character: u32,
+    following: &'static str,
+}
+
+// Hand-declared from the literal above.
+const ANCHORS: &[Anchor] = &[
+    Anchor {
+        name: "ascii",
+        byte: 0,
+        line: 0,
+        scalar: 0,
+        character: 0,
+        following: "ascii",
+    },
+    Anchor {
+        name: "line after CRLF",
+        byte: 13,
+        line: 1,
+        scalar: 0,
+        character: 0,
+        following: "frame",
+    },
+    Anchor {
+        name: "BMP start",
+        byte: 58,
+        line: 2,
+        scalar: 11,
+        character: 11,
+        following: "é",
+    },
+    Anchor {
+        name: "BMP end",
+        byte: 60,
+        line: 2,
+        scalar: 12,
+        character: 12,
+        following: " ",
+    },
+    Anchor {
+        name: "combining base",
+        byte: 61,
+        line: 2,
+        scalar: 13,
+        character: 13,
+        following: "e",
+    },
+    Anchor {
+        name: "combining mark",
+        byte: 62,
+        line: 2,
+        scalar: 14,
+        character: 14,
+        following: "\u{301}",
+    },
+    Anchor {
+        name: "combining end",
+        byte: 64,
+        line: 2,
+        scalar: 15,
+        character: 15,
+        following: " ",
+    },
+    Anchor {
+        name: "astral start",
+        byte: 65,
+        line: 2,
+        scalar: 16,
+        character: 16,
+        following: "😀",
+    },
+    Anchor {
+        name: "astral end",
+        byte: 69,
+        line: 2,
+        scalar: 17,
+        character: 18,
+        following: "\"",
+    },
+    Anchor {
+        name: "target declaration",
+        byte: 72,
+        line: 2,
+        scalar: 20,
+        character: 21,
+        following: "target",
+    },
+    Anchor {
+        name: "target declaration end",
+        byte: 78,
+        line: 2,
+        scalar: 26,
+        character: 27,
+        following: " ",
+    },
+    Anchor {
+        name: "target read",
+        byte: 94,
+        line: 3,
+        scalar: 8,
+        character: 8,
+        following: "target",
+    },
+    Anchor {
+        name: "target read end",
+        byte: 100,
+        line: 3,
+        scalar: 14,
+        character: 14,
+        following: "\r\n",
+    },
+    Anchor {
+        name: "diagnostic name",
+        byte: 127,
+        line: 4,
+        scalar: 22,
+        character: 23,
+        following: "xx",
+    },
+    Anchor {
+        name: "diagnostic name end",
+        byte: 129,
+        line: 4,
+        scalar: 24,
+        character: 25,
+        following: " =",
+    },
+    Anchor {
+        name: "diagnostic end",
+        byte: 134,
+        line: 4,
+        scalar: 29,
+        character: 30,
+        following: ")",
+    },
+    Anchor {
+        name: "backtick astral",
+        byte: 138,
+        line: 5,
+        scalar: 1,
+        character: 1,
+        following: "😀",
+    },
+    Anchor {
+        name: "backtick astral end",
+        byte: 142,
+        line: 5,
+        scalar: 2,
+        character: 3,
+        following: "`",
+    },
+    Anchor {
+        name: "multiline backtick read",
+        byte: 152,
+        line: 6,
+        scalar: 1,
+        character: 1,
+        following: "😀",
+    },
+];
+
+fn anchor(name: &str) -> Anchor {
+    *ANCHORS.iter().find(|anchor| anchor.name == name).unwrap()
+}
+
+fn assert_position(actual: &Value, name: &str) {
+    let anchor = anchor(name);
+    assert_eq!(
+        actual,
+        &json!({"line": anchor.line, "character": anchor.character}),
+        "wrong LSP position for {name}"
+    );
+}
+
+/// Request inlay hints for a single line of `uri`. The transcript test
+/// uses this as its state-observable probe: a response is produced from
+/// the cached parse and the checked scope, so it reflects exactly what
+/// the server currently believes the document contains.
+async fn hints_for_line(session: &mut ClientSession, uri: &str, line: u32) -> Value {
+    session
+        .request(
+            "textDocument/inlayHint",
+            json!({
+                "textDocument": {"uri": uri},
+                "range": {
+                    "start": {"line": line, "character": 0},
+                    "end": {"line": line + 1, "character": 0}
+                }
+            }),
+        )
+        .await
+        .unwrap()
+}
+
+/// Assert the server placed a type hint immediately after the binding
+/// identifier at (`line`, `character`).
+fn assert_hint_at(hints: &Value, line: u32, character: u32) {
+    assert!(
+        hints
+            .as_array()
+            .expect("inlay hints should be an array")
+            .iter()
+            .any(
+                |hint| hint["position"] == json!({"line": line, "character": character})
+                    && hint["label"]
+                        .as_str()
+                        .is_some_and(|label| label.starts_with(": "))
+            ),
+        "expected a type hint at ({line}, {character}); got: {hints}"
+    );
+}
+
+#[test]
+fn utf16_contract_holds_across_one_real_lsp_transcript() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(utf16_transcript());
+}
+
+async fn utf16_transcript() {
+    for anchor in ANCHORS {
+        assert!(
+            SOURCE.as_bytes()[anchor.byte..].starts_with(anchor.following.as_bytes()),
+            "bad independent byte offset for {}",
+            anchor.name
+        );
+        let prefix = &SOURCE[..anchor.byte];
+        let line = prefix.bytes().filter(|byte| *byte == b'\n').count() as u32;
+        let line_start = prefix.rfind('\n').map_or(0, |byte| byte + 1);
+        let line_prefix = &SOURCE[line_start..anchor.byte];
+        assert_eq!(line, anchor.line, "bad line for {}", anchor.name);
+        assert_eq!(
+            line_prefix.chars().count() as u32,
+            anchor.scalar,
+            "bad Unicode-scalar column for {}",
+            anchor.name
+        );
+        assert_eq!(
+            line_prefix.encode_utf16().count() as u32,
+            anchor.character,
+            "bad UTF-16 column for {}",
+            anchor.name
+        );
+    }
+
+    let fixture = FixtureProject::empty().unwrap();
+    fixture.write_file("main.R", SOURCE).unwrap();
+    fixture.write_file("other.R", OTHER_SOURCE).unwrap();
+    fixture.write_file("disk.R", DISK_SOURCE).unwrap();
+    let main_uri = file_uri(&fixture.path("main.R"));
+    let other_uri = file_uri(&fixture.path("other.R"));
+    let disk_uri = file_uri(&fixture.path("disk.R"));
+    let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
+    let (client_reader, client_writer) = tokio::io::split(client_stream);
+    let (server_reader, server_writer) = tokio::io::split(server_stream);
+    let server = tokio::spawn(async move { ry_lsp::run_with(server_reader, server_writer).await });
+    let mut session = LspSession::new(client_reader, client_writer);
+    let initialize = session.initialize(fixture.root()).await.unwrap();
+    assert_eq!(
+        initialize.pointer("/capabilities/positionEncoding"),
+        Some(&json!("utf-16"))
+    );
+    let open_mark = session.publication_mark();
+    session.open(&main_uri, 1, SOURCE).await.unwrap();
+    session.open(&other_uri, 1, OTHER_SOURCE).await.unwrap();
+
+    // Byte -> UTF-16: diagnostics publish the exact range after BMP,
+    // combining, astral, and CRLF prefixes.
+    let publish = session
+        .published_diagnostics_after(&main_uri, open_mark)
+        .await
+        .unwrap();
+    let diagnostic = publish["params"]["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|diagnostic| diagnostic["code"] == "RY090")
+        .expect("length's partial argument name should emit RY090");
+    assert_position(&diagnostic["range"]["start"], "diagnostic name");
+    assert_position(&diagnostic["range"]["end"], "diagnostic end");
+
+    // Unopened indexed files must retain their source text too; otherwise
+    // byte columns leak into LSP ranges.
+    let disk_publish = session
+        .published_diagnostics_after(&disk_uri, open_mark)
+        .await
+        .unwrap();
+    let disk_diagnostic = disk_publish["params"]["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|diagnostic| diagnostic["code"] == "RY090")
+        .expect("indexed file should publish RY090");
+    assert_eq!(
+        disk_diagnostic["range"],
+        json!({
+            "start": {"line": 0, "character": 23},
+            "end": {"line": 0, "character": 30}
+        })
+    );
+
+    // The state-observable probe through a kept capability: the line-0
+    // binding places a type hint right after its identifier. The
+    // change-path tests below reuse this probe to observe what the
+    // server's cached parse contains after each edit.
+    let initial_hints = hints_for_line(&mut session, &main_uri, 0).await;
+    assert_hint_at(&initial_hints, 0, 5);
+
+    // The document-change path must reject the same invalid position rather
+    // than corrupting the document by snapping into the backtick identifier.
+    let invalid_change_mark = session.publication_mark();
+    session
+        .change(
+            &main_uri,
+            2,
+            json!([{
+                "range": {
+                    "start": {"line": 6, "character": 2},
+                    "end": {"line": 6, "character": 3}
+                },
+                "text": "BROKEN"
+            }]),
+        )
+        .await
+        .unwrap();
+    session
+        .published_diagnostics_after(&main_uri, invalid_change_mark)
+        .await
+        .unwrap();
+    // The rejected edit must leave the last-good parse serving content
+    // requests unchanged.
+    let hints_after_invalid_change = hints_for_line(&mut session, &main_uri, 0).await;
+    assert_hint_at(&hints_after_invalid_change, 0, 5);
+
+    let out_of_range_change_mark = session.publication_mark();
+    session
+        .change(
+            &main_uri,
+            3,
+            json!([{
+                "range": {
+                    "start": {"line": 6, "character": 99},
+                    "end": {"line": 6, "character": 99}
+                },
+                "text": "BROKEN"
+            }]),
+        )
+        .await
+        .unwrap();
+    session
+        .published_diagnostics_after(&main_uri, out_of_range_change_mark)
+        .await
+        .unwrap();
+    let hints_after_out_of_range_change = hints_for_line(&mut session, &main_uri, 0).await;
+    assert_hint_at(&hints_after_out_of_range_change, 0, 5);
+
+    // A valid incremental edit after BMP, decomposed combining, and astral
+    // scalars must use UTF-16 columns in both endpoints.
+    let valid_change_mark = session.publication_mark();
+    session
+        .change(
+            &main_uri,
+            4,
+            json!([{
+                "range": {
+                    "start": {"line": 2, "character": 21},
+                    "end": {"line": 2, "character": 27}
+                },
+                "text": "changed"
+            }]),
+        )
+        .await
+        .unwrap();
+    let changed_publish = session
+        .published_diagnostics_after(&main_uri, valid_change_mark)
+        .await
+        .unwrap();
+    assert!(
+        changed_publish["params"]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|diagnostic| diagnostic["code"] == "RY090")
+    );
+
+    // The re-parse is visible through the kept surface: the edited
+    // line-2 binding is now `changed`, so its hint moves to the new
+    // identifier's UTF-16 end column.
+    let hints_after_valid_change = hints_for_line(&mut session, &main_uri, 2).await;
+    assert_hint_at(&hints_after_valid_change, 2, 28);
+
+    session.shutdown().await.unwrap();
+    drop(session);
+    tokio::time::timeout(std::time::Duration::from_secs(3), server)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+}
+
+/// Regression for #81: after a close/reopen the server must publish the
+/// reopened document's diagnostics, and the close's clearing `[]` must not
+/// be mistakable for that publication.  Deterministic companion to the
+/// convergence property, which samples this path randomly.
+#[test]
+fn close_reopen_publishes_diagnostics_again() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(close_reopen_republishes());
+}
+
+async fn close_reopen_republishes() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture.write_file("a.R", INITIAL_DISK).unwrap();
+    let uri = file_uri(&fixture.path("a.R"));
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+
+    // Barrier + mark before the open, the same pattern
+    // `fresh_server_snapshot` uses to drain the initialize cycle's
+    // background-index publications.
+    sync_barrier(&mut session, &uri).await;
+    let open_mark = session.publication_mark();
+    session
+        .open(&uri, 1, SourceVariant::AsciiDiagnostic.text())
+        .await
+        .unwrap();
+    let first = session
+        .published_diagnostics_after(&uri, open_mark)
+        .await
+        .unwrap();
+    assert!(
+        !normalize_diagnostics(&first).is_empty(),
+        "initial open must publish diagnostics"
+    );
+
+    let close_mark = session.publication_mark();
+    session
+        .notify(
+            "textDocument/didClose",
+            json!({"textDocument": {"uri": uri}}),
+        )
+        .await
+        .unwrap();
+    let cleared = session
+        .published_diagnostics_after(&uri, close_mark)
+        .await
+        .unwrap();
+    assert!(
+        normalize_diagnostics(&cleared).is_empty(),
+        "close must clear diagnostics"
+    );
+
+    let reopen_mark = session.publication_mark();
+    session
+        .open(&uri, 2, SourceVariant::AstralDiagnostic.text())
+        .await
+        .unwrap();
+    let republish = session
+        .published_diagnostics_after(&uri, reopen_mark)
+        .await
+        .unwrap();
+    assert!(
+        !normalize_diagnostics(&republish).is_empty(),
+        "reopen must publish diagnostics again, not the close's clearing []"
+    );
+
+    join_session(session, server).await;
 }

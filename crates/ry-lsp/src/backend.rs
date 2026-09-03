@@ -9,8 +9,8 @@ use crate::diagnostics::{
     diagnostic_to_lsp, diagnostic_to_lsp_with_source, make_ignore_action, make_ignore_file_action,
 };
 use crate::hints::collect_inlay_hints;
+use crate::positions::{byte_offset_to_point, position_to_byte_offset};
 use crate::settings::{FolderSettings, ServerSettings};
-use crate::util::position_to_byte_offset;
 
 use ry_checker::Project;
 use ry_core::{RParser, SourceFile};
@@ -26,11 +26,14 @@ use tower_lsp::{Client, LanguageServer};
 /// Counts baseline file reads performed by `load_folder_baseline`, the
 /// only baseline disk-read site in the LSP. Exposed via
 /// [`baseline_disk_reads`] so integration tests can assert hot-path I/O
-/// is absent rather than infer it from timing.
+/// is absent rather than infer it from timing. Test-util builds only
+/// (#170): the counter never compiles into the production binary.
+#[cfg(feature = "test-util")]
 static BASELINE_DISK_READS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Number of baseline file reads since process start. A publish/inlay-hint
 /// that does not change this value performs zero baseline disk I/O.
+#[cfg(feature = "test-util")]
 pub fn baseline_disk_reads() -> usize {
     BASELINE_DISK_READS.load(std::sync::atomic::Ordering::Relaxed)
 }
@@ -658,6 +661,7 @@ impl LanguageServer for Backend {
         }
         self.schedule_diagnostics(uri).await;
         // Test seam: signals didChange completion (see `test_seam`).
+        #[cfg(feature = "test-util")]
         crate::test_seam::note_did_change();
     }
 
@@ -1105,8 +1109,10 @@ impl Backend {
             //   3. parse N finishes (test releases the barrier)
             //   4. stale result is rejected by store_tree / record_parse
             //   5. the retry loop parses the current version N+1 fresh
-            // The seam controls scheduling only; when not armed this is a
-            // single relaxed atomic load.
+            // The seam controls scheduling only; compiled under the
+            // `test-util` feature, it is absent from production builds
+            // (#170) and costs nothing when not armed.
+            #[cfg(feature = "test-util")]
             crate::test_seam::maybe_pause().await;
             let mut parser = RParser::new().ok()?;
             let (parsed, new_tree) = parser
@@ -1720,6 +1726,9 @@ fn load_folder_baseline(
     } else {
         baseline_path
     };
+    // Baseline-read accounting for the `test-util` counter above; see
+    // `baseline_disk_reads` (#170).
+    #[cfg(feature = "test-util")]
     BASELINE_DISK_READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     ry_config::load_baseline(&resolved)
         .map(Some)
@@ -1914,7 +1923,7 @@ fn build_input_edit_from_span(
 
     let start_position = byte_offset_to_point(old_text, start_byte);
     let old_end_position = byte_offset_to_point(old_text, old_end_byte);
-    let new_end_position = byte_offset_to_point_relative(start_byte, start_position, new_text);
+    let new_end_position = byte_offset_to_point_relative(start_position, new_text);
 
     ry_core::InputEdit {
         start_byte,
@@ -1926,29 +1935,9 @@ fn build_input_edit_from_span(
     }
 }
 
-/// Convert a byte offset to a tree-sitter Point (row, byte column).
-fn byte_offset_to_point(text: &str, byte_offset: usize) -> ry_core::Point {
-    let offset = byte_offset.min(text.len());
-    let mut row = 0usize;
-    let mut last_line_start = 0usize;
-
-    for (i, ch) in text[..offset].char_indices() {
-        if ch == '\n' {
-            row += 1;
-            last_line_start = i + 1;
-        }
-    }
-
-    let column = offset - last_line_start;
-    ry_core::Point { row, column }
-}
-
-/// Compute the new end Point after inserting `new_text` at `start_byte`.
-fn byte_offset_to_point_relative(
-    _start_byte: usize,
-    start_position: ry_core::Point,
-    new_text: &str,
-) -> ry_core::Point {
+/// Compute the new end Point after inserting `new_text` at the position
+/// where `start_position` sits.
+fn byte_offset_to_point_relative(start_position: ry_core::Point, new_text: &str) -> ry_core::Point {
     let newlines = new_text.matches('\n').count();
     if newlines == 0 {
         ry_core::Point {

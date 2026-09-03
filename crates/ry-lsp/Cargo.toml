@@ -19,6 +19,13 @@ tracing = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+[features]
+# Test-only instrumentation (the scheduling barrier and the baseline
+# disk-read counter), enabled by the self dev-dependency below so it
+# never compiles into shipped binaries.
+test-util = []
+
 [dev-dependencies]
+ry-lsp = { path = ".", features = ["test-util"] }
 ry-testkit = { path = "../ry-testkit" }
 proptest = { workspace = true }

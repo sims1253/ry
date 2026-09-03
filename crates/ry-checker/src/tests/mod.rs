@@ -5,6 +5,7 @@ mod data_frames_s3;
 mod diagnostics;
 mod functions_classes;
 mod narrowing;
+mod operator_s3_dispatch;
 mod packages_typeshed;
 mod quoting_data_mask;
 mod scope_resolution;

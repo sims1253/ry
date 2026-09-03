@@ -91,17 +91,20 @@ pub(super) fn diag_code_from_lsp(d: &LspDiagnostic) -> String {
 
 /// Build a `CodeAction` that appends a `# ry: ignore[CODE]` suppression
 /// comment to the end of the diagnostic's line. Returns `None` when the
-/// line already carries an ignore comment (no redundant no-op).
+/// checker would already suppress the diagnostic (no redundant no-op):
+/// either a trailing directive on its line or a standalone directive on
+/// the comment-only lines directly above it.
 pub(super) fn make_ignore_action(
     uri: &Url,
     diag: &LspDiagnostic,
     text: &str,
 ) -> Option<CodeAction> {
     let line = diag.range.start.line as usize;
-    let line_text = text.lines().nth(line)?;
+    let lines: Vec<&str> = text.lines().collect();
+    let line_text = *lines.get(line)?;
     let code = diag_code_from_lsp(diag);
 
-    // Avoid a redundant action when the line already carries a
+    // Avoid a redundant action when the source already carries a
     // suppression directive the CHECKER would honor for THIS
     // diagnostic. The check reuses ry-checker's suppression parser
     // (the same one publish_diagnostics filters through) so the
@@ -115,19 +118,33 @@ pub(super) fn make_ignore_action(
     // suppresses only RY010, so the quick-fix stays available for
     // other codes (appending a second directive is a meaningful
     // edit, not a no-op), while a bare `# ry: ignore` — an empty
-    // rule list, "all rules" — blocks any code. `line_text` is the
-    // diagnostic's single line, so the parser resolves a suppression
-    // onto exactly this line (index 0) only for a trailing
-    // directive; a standalone `# ry: ignore` defers to the NEXT code
-    // line and therefore does not suppress this one.
+    // rule list, "all rules" — blocks any code.
+    //
+    // The parser is fed a bounded window, not the diagnostic's single
+    // line: the checker assigns a STANDALONE directive to the next
+    // non-comment, non-blank line, so a directive on the comment-only
+    // lines above the diagnostic already suppresses it. Only the
+    // contiguous run of blank / comment-only lines ending just above
+    // the diagnostic's line (plus the line itself) can matter — any
+    // directive higher up is absorbed by the code line that ends that
+    // run, exactly as the checker's own line-based resolution skips
+    // blanks and comments downward. `suppression.line == target`
+    // keeps the match on the diagnostic's line: a trailing directive
+    // resolves to the line it sits on, a standalone one to the
+    // window's last line, and a standalone directive that IS the
+    // diagnostic's whole line finds no next line and suppresses
+    // nothing.
+    let window_start = suppression_window_start(&lines, line);
+    let window = lines[window_start..=line].join("\n");
+    let target = line - window_start;
     let already_ignored = RParser::new()
         .ok()
-        .and_then(|mut parser| parser.parse("<code-action>", line_text).ok())
+        .and_then(|mut parser| parser.parse("<code-action>", &window).ok())
         .map(|file| {
-            ry_checker::parse_suppressions_from_comments(&file.comments, line_text)
+            ry_checker::parse_suppressions_from_comments(&file.comments, &window)
                 .iter()
                 .any(|suppression| {
-                    suppression.line == 0
+                    suppression.line == target
                         && (suppression.rules.is_empty()
                             || suppression.rules.iter().any(|rule| rule == &code))
                 })
@@ -179,6 +196,27 @@ pub(super) fn make_ignore_action(
         diagnostics: Some(vec![diag.clone()]),
         ..Default::default()
     })
+}
+
+/// The first line of the bounded suppression window for a diagnostic on
+/// `line`: the top of the contiguous run of blank / comment-only lines
+/// ending just above it, or `line` itself when the line above carries
+/// code. Line classification mirrors the checker's `next_code_line`
+/// (blank, or first non-whitespace character is `#`) so a standalone
+/// directive anywhere in the run resolves onto `line` under the same
+/// rules the checker applies to the full document, while a directive
+/// above the run is absorbed by the code line that ends it.
+fn suppression_window_start(lines: &[&str], line: usize) -> usize {
+    let mut start = line;
+    while start > 0 {
+        let trimmed = lines[start - 1].trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            start -= 1;
+        } else {
+            break;
+        }
+    }
+    start
 }
 
 /// Build a `CodeAction` that inserts `# ry: ignore-file` at the top of

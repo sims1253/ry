@@ -452,6 +452,79 @@ fn code_action_ignore_line_standalone_directive_defers_to_next_line() {
 }
 
 #[test]
+fn code_action_ignore_line_withheld_by_preceding_standalone_directive() {
+    // A standalone directive on the comment-only line ABOVE the
+    // diagnostic is assigned to this code line by the checker (it
+    // defers to the next non-comment, non-blank line), so the
+    // diagnostic is already suppressed and the quick-fix would append
+    // a redundant second suppression.
+    let text = "# ry: ignore[RY010]\nz <- length(xx = 1L)\n";
+    let diag = lsp_diag(1, 0, 1, "RY010");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(
+        make_ignore_action(&uri, &diag, text).is_none(),
+        "a preceding standalone directive for this rule must withhold the action"
+    );
+}
+
+#[test]
+fn code_action_ignore_line_preceding_standalone_rule_list_must_cover_code() {
+    // The preceding standalone `[RY040]` directive suppresses only
+    // RY040; for a diagnostic with a different code the checker would
+    // still publish it, so the quick-fix must stay available.
+    let text = "# ry: ignore[RY040]\nz <- length(xx = 1L)\n";
+    let diag = lsp_diag(1, 0, 1, "RY010");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(
+        make_ignore_action(&uri, &diag, text).is_some(),
+        "a preceding standalone directive for another rule must not withhold the action"
+    );
+}
+
+#[test]
+fn code_action_ignore_line_withheld_by_preceding_bare_directive() {
+    // A bare preceding standalone directive carries an empty rule
+    // list ("suppress all rules"), so it withholds the action for any
+    // code, exactly like its trailing counterpart.
+    let text = "# ry: ignore\nz <- length(xx = 1L)\n";
+    let diag = lsp_diag(1, 0, 1, "RY040");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(
+        make_ignore_action(&uri, &diag, text).is_none(),
+        "a bare preceding standalone directive suppresses every rule"
+    );
+}
+
+#[test]
+fn code_action_ignore_line_preceding_directive_skips_interleaved_comments() {
+    // The checker skips blank and comment-only lines when resolving a
+    // standalone directive, so a directive separated from the code
+    // line by prose comments or blanks still reaches it.
+    let text = "# ry: ignore[RY010]\n# why this is fine\n\nz <- length(xx = 1L)\n";
+    let diag = lsp_diag(3, 0, 1, "RY010");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(
+        make_ignore_action(&uri, &diag, text).is_none(),
+        "a standalone directive above interleaved comments must still withhold the action"
+    );
+}
+
+#[test]
+fn code_action_ignore_line_preceding_directive_blocked_by_code_line() {
+    // A code line between the directive and the diagnostic's line
+    // absorbs the standalone directive (the checker resolves it to the
+    // NEXT code line), so the diagnostic below is not suppressed and
+    // the quick-fix stays available.
+    let text = "# ry: ignore[RY010]\ny <- 1L\nz <- length(xx = 1L)\n";
+    let diag = lsp_diag(2, 0, 1, "RY010");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(
+        make_ignore_action(&uri, &diag, text).is_some(),
+        "a directive absorbed by an earlier code line must not withhold the action"
+    );
+}
+
+#[test]
 fn code_action_ignore_line_ignores_hash_inside_string() {
     let text = "x <- \"# not a comment\"\n";
     let diag = lsp_diag(0, 0, 1, "RY040");

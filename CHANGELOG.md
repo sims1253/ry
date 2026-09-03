@@ -212,9 +212,9 @@ suppression actions — and fixes a parser panic plus several editor issues.
   package typesheds. A miss is silent, as in R (the primitive is the
   fallback): no RY050, and `+.default` is never consulted as a
   fallback. `&&`/`||` never dispatch through `Ops`, so their
-  RY031/RY032 diagnostics cannot be hidden. Factor arithmetic warns RY042 for any counterpart
-  (`factor + list` warns instead of erroring RY040) without a false
-  RY041 recycling warning. Differing methods on both operands still
+  RY031/RY032 diagnostics cannot be hidden. Factor arithmetic warns RY042
+  for any counterpart (`factor + list` warns instead of erroring RY040)
+  without a false RY041 recycling warning. Differing methods on both operands still
   resolve first-applicable; R's `chooseOpsMethod` is tracked
   separately (#193).
 - **`bquote` quotes unquotes inside braced bodies**: a `.(x)` in

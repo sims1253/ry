@@ -578,23 +578,18 @@ pub fn load_base() -> Result<Typeshed, TypeshedError> {
 
 /// File-level insertion order of the `functions` map.
 ///
-/// This order machinery — this visitor plus the `_with_order` parse
-/// twins — exists ONLY for `validate_stub_file`'s "function keys are not
-/// sorted" style warning; every other consumer reads the `BTreeMap`,
-/// which is inherently sorted (#172).
-///
-/// It is load-bearing, not dead: the current vendored stubs contain
-/// adjacent inversions (base.json `load` > `lm`, rlang.json `:=` > `!!`,
-/// shiny.json `testServer` > `reactive`), so the warning fires on the
-/// vendor tree as it stands. `validate_stub_file` consumes this order
-/// for that warning, `scripts/sync_typeshed.sh` runs
-/// `ry typeshed validate` over the tree it syncs, and ry-cli's
-/// `warns_without_failing_on_unsorted_function_keys` e2e test pins
-/// warning plus successful exit. Delete this machinery once the
-/// complete upstream production pipeline emits sorted maps; a
-/// sortedness check without this visitor needs either a second JSON
-/// library pass or serde_json's `preserve_order` feature, which would
-/// change map ordering workspace-wide.
+/// This visitor and the `_with_order` parse twins exist only for
+/// `validate_stub_file`'s "function keys are not sorted" warning; every
+/// other consumer reads the sorted `BTreeMap` (#172). Load-bearing, not
+/// dead: the vendored stubs still contain adjacent inversions (base.json
+/// `load` > `lm`, rlang.json `:=` > `!!`, shiny.json `testServer` >
+/// `reactive`), `scripts/sync_typeshed.sh` runs `ry typeshed validate`
+/// over the tree it syncs, and ry-cli's
+/// `warns_without_failing_on_unsorted_function_keys` e2e test pins the
+/// warning plus a successful exit. Delete once the complete upstream
+/// pipeline emits sorted maps; without this visitor a sortedness check
+/// needs a second JSON pass or serde_json's `preserve_order`, which
+/// changes map ordering workspace-wide.
 struct RawFunctions(Vec<(String, FunctionSig)>);
 
 impl<'de> Deserialize<'de> for RawFunctions {

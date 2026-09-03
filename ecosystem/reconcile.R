@@ -2,10 +2,7 @@
 #
 # Compares expected diagnostic identities from a corpus ledger against actual
 # diagnostics from hermetic reports, and returns the exit status (0 = pass,
-# 1 = fail) according to the reconciliation mode and finding labels. Report
-# file names carry their manifest's namespace via `report_prefix`, so
-# manifest-scoped corpora (the Posit lane) reconcile through the same code
-# as the default manifest.
+# 1 = fail) according to the reconciliation mode and finding labels.
 
 identity_key <- function(package, code, path, line, column) {
   sprintf("%s\t%s\t%s\t%s\t%s", package, code, sub("^\\./", "", path), line, column)
@@ -25,8 +22,7 @@ multiset_delta <- function(left, right) {
 #' Read actual diagnostic identities from a .root.txt report.
 #'
 #' @param reports_dir Directory containing the .root.txt report files.
-#' @param report_prefix Manifest namespace prefixed to each report file
-#'   name ("" for the default manifest).
+#' @param report_prefix Manifest namespace prefixed to each report file name ("" for the default manifest).
 #' @param audited Character vector of package names to read.
 read_actual_identities <- function(reports_dir, report_prefix = "", audited) {
   actual <- character(0)
@@ -47,8 +43,7 @@ read_actual_identities <- function(reports_dir, report_prefix = "", audited) {
 #'
 #' @param corpus_path Path to the corpus JSON.
 #' @param reports_dir Directory containing the .root.txt report files.
-#' @param report_prefix Manifest namespace prefixed to each report file
-#'   name ("" for the default manifest).
+#' @param report_prefix Manifest namespace prefixed to each report file name ("" for the default manifest).
 #' @param processed Character vector of package names that were processed.
 #' @return Integer exit status: 0 = pass, 1 = fail.
 reconcile <- function(corpus_path, reports_dir, report_prefix = "", processed) {

@@ -394,11 +394,9 @@ fi
 # makes missing and unowned identities fail; `audit-transcript` exists only for
 # historical installed-library ledgers whose environment cannot be reproduced.
 # In both modes findings labelled `true_positive` are checked explicitly so a
-# real bug disappearing is always surfaced. The gating logic itself lives in
+# real bug disappearing is always surfaced. The gating logic lives in
 # ecosystem/reconcile.R — the single copy, unit-tested by
-# test-reconciliation.R — and is sourced here with the manifest's report
-# prefix so manifest-scoped corpora (the Posit lane) gate through the same
-# code path as the default manifest (#164).
+# test-reconciliation.R — sourced here with the manifest's report prefix (#164).
 if ! $local_only; then
   [[ -f "$audit_corpus" ]] || {
     echo "ecosystem: audit corpus not found: $audit_corpus" >&2
@@ -409,10 +407,8 @@ args <- commandArgs(trailingOnly = TRUE)
 corpus_path <- args[[1]]
 reports_dir <- args[[2]]
 report_prefix <- args[[3]]
-reconcile_script <- args[[4]]
+source(args[[4]])
 processed <- args[-c(1, 2, 3, 4)]
-
-source(reconcile_script)
 status <- reconcile(corpus_path, reports_dir, report_prefix, processed)
 if (status != 0L) quit(status = status)
 RS

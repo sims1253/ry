@@ -4,8 +4,7 @@
 # Tests the SAME reconcile() function that ecosystem/run.sh calls, sourced
 # from ecosystem/reconcile.R. Each test case builds minimal corpus + report
 # fixtures and asserts the exit status for each combination of finding status,
-# reconciliation mode, and delta direction — including manifest-scoped
-# reports (a non-empty report prefix, the Posit-lane shape).
+# reconciliation mode, and delta direction.
 
 suppressPackageStartupChars <- function(x) x
 library(jsonlite)
@@ -88,20 +87,22 @@ cat("Test 9: TP disappears AND unowned FP appears simultaneously (audit-transcri
 stopifnot(run_reconcile(make_corpus(list(tp, fp), "audit-transcript"), list(pkg = list(fp, extra))) == 1L)
 cat("  PASS\n")
 
-# The Posit lane reconciles manifest-scoped reports: every report file name
-# carries the manifest namespace prefix, so the shared reconcile() must read
-# `posit.pkg.root.txt` — not `pkg.root.txt` — or every ledger identity looks
-# missing (#164).
-cat("Test 10: manifest-scoped report prefix reconciles cleanly -> exit 0\n")
-stopifnot(run_reconcile(make_corpus(list(tp, fp)), list(pkg = list(tp, fp)), "posit.") == 0L)
-cat("  PASS\n")
-
-cat("Test 11: manifest-scoped report prefix still gates a disappeared true_positive -> exit 1\n")
-stopifnot(run_reconcile(make_corpus(list(tp, fp)), list(pkg = list(fp)), "posit.") == 1L)
-cat("  PASS\n")
-
-cat("Test 12: manifest-scoped report prefix still gates an unowned finding -> exit 1\n")
-stopifnot(run_reconcile(make_corpus(list(tp, fp)), list(pkg = list(tp, fp, extra)), "posit.") == 1L)
-cat("  PASS\n")
+# The Posit lane reconciles manifest-scoped reports: the shared reconcile()
+# must read `posit.pkg.root.txt`, not `pkg.root.txt`, or every ledger
+# identity looks missing (#164).
+prefix_cases <- list(
+  list(description = "reconciles cleanly", entries = list(tp, fp), expected = 0L),
+  list(description = "still gates a disappeared true_positive", entries = list(fp), expected = 1L),
+  list(description = "still gates an unowned finding", entries = list(tp, fp, extra), expected = 1L)
+)
+for (i in seq_along(prefix_cases)) {
+  case <- prefix_cases[[i]]
+  cat(sprintf("Test %d: manifest-scoped report prefix %s -> exit %d\n", 9 + i, case$description, case$expected))
+  actual <- run_reconcile(make_corpus(list(tp, fp)), list(pkg = case$entries), "posit.")
+  if (actual != case$expected) {
+    stop(sprintf("Test %d (%s): expected exit %d, got %d", 9 + i, case$description, case$expected, actual))
+  }
+  cat("  PASS\n")
+}
 
 cat("\nAll reconciliation tests passed.\n")

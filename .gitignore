@@ -6,8 +6,7 @@
 
 # Local tool caches
 /.claude/
-/.pytest_cache/
-/ecosystem/.pytest_cache/
+.pytest_cache/
 
 # npm lockfile: the extension is managed with bun (bun.lock is tracked)
 /editors/code/package-lock.json

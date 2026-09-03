@@ -1152,8 +1152,9 @@ fn metadata_edits_converge() {
 //
 // Targeted coverage the property only samples randomly: exact UTF-16
 // positions across a non-ASCII transcript, and the #81 close/reopen
-// republication race. Moved here from session.rs when that file's
-// convergence property was deleted as subsumed by `pr_session_seeds`.
+// republication race. These tests predate the property: the original
+// open/edit/close/restart convergence property they accompanied was
+// deleted as subsumed by `pr_session_seeds`.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// The transcript document: CRLF terminators, BMP text, a decomposed

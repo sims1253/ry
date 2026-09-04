@@ -59,6 +59,18 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Changed
 
+- **Condition and list-origin heuristics read the stubs (#49)**: the
+  RY003 numeric-truthiness idiom is now any direct call whose resolved
+  stub declares an integer length-1 return, replacing the hardcoded
+  `length`/`nrow`/`ncol`/`NROW`/`NCOL` name list — `nobs`, `Position`,
+  and any other integer-1 stub return stop firing the coercion nudge,
+  while double-returning calls (`mean`, `min`) keep it, and a local
+  binding of the same name no longer inherits the stub's idiom credit.
+  List-origin marking follows the value's inferred list mode instead
+  of the `list`/`lapply`/`Map` names, so the 93 stub functions
+  declaring `mode: list` returns (60 in base: strsplit, split,
+  read.table, ...) keep the marker through type-degrading rewrites and
+  feed RY101's list-subset check.
 - **NSE/defusing knowledge comes from the stubs (#41)**: the vendored
   r-typeshed bump at 7c2ca05 (base 0.0.5, rlang 0.1.2, vctrs 0.0.1)
   ships `eval` metadata for base `quote`/`substitute`/`bquote`/

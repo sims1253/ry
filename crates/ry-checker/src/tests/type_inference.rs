@@ -75,6 +75,24 @@ fn detects_unbound_var() {
     assert!(diags.iter().any(|d| d.code == "RY010"));
 }
 
+// The numeric-truthiness idiom credits the stub's declared integer-1
+// return; a local binding of the same name replaces the callee, so its
+// — still integer-1 — return is no longer the counted idiom and the
+// coercion nudge fires again.
+#[test]
+fn shadowed_length_keeps_the_coercion_nudge() {
+    let shadowed = check("length <- function(x) 1L\nif (length(c(1, 2))) 1\n");
+    assert!(
+        shadowed.iter().any(|d| d.code == "RY003"),
+        "a shadowed length() must not inherit the stub idiom: {shadowed:?}"
+    );
+    let unshadowed = check("if (length(c(1, 2))) 1\n");
+    assert!(
+        unshadowed.iter().all(|d| d.code != "RY003"),
+        "the stub idiom suppression must stand: {unshadowed:?}"
+    );
+}
+
 #[test]
 fn loop_carried_bindings_are_available_at_the_start_of_each_iteration() {
     for src in [

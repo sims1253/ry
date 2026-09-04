@@ -787,16 +787,27 @@ fn intentional_side_effect_and_tail_expressions_remain_silent() {
 
 #[test]
 fn single_bracket_list_compared_with_scalar_by_identical_warns() {
-    let diagnostics = check(
-        "args <- list(font = \"monospace\")\n\
-         identical(args[\"font\"], \"monospace\")\n",
-    );
-    assert!(
-        diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == "RY101"),
-        "identical(list[...], scalar) is always false: {diagnostics:?}"
-    );
+    // Table-driven over constructors whose stubs declare a `mode: list`
+    // return — the former hardcoded list/lapply/Map set plus everything
+    // the stubs record the same way (strsplit, split, ...). The
+    // `names(args) <-` replacement degrades the binding's type, so the
+    // warning rides on the list-origin marker, not the resolved mode.
+    for (note, construct) in [
+        ("list literal", "args <- list(font = \"monospace\")"),
+        ("lapply result", "args <- lapply(c(\"a\"), paste0)"),
+        ("Map result", "args <- Map(paste0, c(\"a\"))"),
+        ("strsplit result", "args <- strsplit(\"a b\", \" \")"),
+        ("split result", "args <- split(c(1), c(\"a\"))"),
+    ] {
+        let src = format!("{construct}\nnames(args) <- \"x\"\nidentical(args[1], \"s\")\n");
+        let diagnostics = check(&src);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY101"),
+            "{note}: identical(list[...], scalar) is always false: {diagnostics:?}"
+        );
+    }
 }
 
 #[test]
@@ -1077,6 +1088,7 @@ fn propagated_quoting_generic_keeps_lazy_default_silent() {
         checker.fn_table.fns["g"].params[0].quoting,
         "S3 propagation must mark the generic's formal quoting"
     );
+
     let diagnostics = check(source);
     assert!(
         diagnostics

@@ -498,40 +498,6 @@ pub(crate) fn span_of(e: &Expr) -> Span {
     }
 }
 
-/// Whether a condition expression is the idiomatic numeric-truthiness
-/// non-empty check: a direct call to `length`, `nrow`, or `ncol` via a bare
-/// identifier callee (any args). These return an integer length-1, which R
-/// silently coerces to logical in `if`/`while` -- but `if (length(x))` /
-/// `if (nrow(df))` are so idiomatic in real R code that the RY003 coercion
-/// info is pure noise there. We suppress ONLY that numeric-truthiness arm
-/// for this shape; a genuinely wrong condition (e.g. `if (1L)`) still emits
-/// the informational diagnostic.
-///
-/// Negation (`if (!length(x))`) is deliberately out of scope: it is typed
-/// through the unary `!` operator, not this call shape.
-pub(crate) fn is_numeric_truthiness_idiom(cond: &Expr, scope: &Scope) -> bool {
-    if let Expr::Call { func, args, .. } = cond {
-        if let Expr::Ident { name, .. } = func.as_ref() {
-            if matches!(name.as_str(), "length" | "nrow" | "ncol" | "NROW" | "NCOL") {
-                return true;
-            }
-            if name == "sum" {
-                return args.first().is_some_and(|argument| match &argument.value {
-                    Expr::Ident { name, .. } => scope
-                        .get(name)
-                        .is_some_and(|ty| matches!(ty.mode, Mode::Logical)),
-                    Expr::BinOp { op, .. } => is_comparison(*op) || matches!(op, BinOpKind::In),
-                    Expr::Call { func, .. } => {
-                        ident_name(func).is_some_and(|predicate| predicate.starts_with("is."))
-                    }
-                    _ => false,
-                });
-            }
-        }
-    }
-    false
-}
-
 /// RY040's missing-list-field case is intentionally limited to a complete
 /// schema built by a local `list(...)` expression.  Imported data-frame
 /// schemas and transformed/narrowed values can look equally complete, but

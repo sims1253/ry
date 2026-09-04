@@ -91,14 +91,13 @@ pub(crate) fn condition_diagnostic(t: &RType) -> Option<ConditionDiagnostic> {
     }
 }
 
+/// Whether the expression reads a binding already marked with list
+/// origin. Call values are not covered here: the caller checks the
+/// value's inferred `Mode::List` — broader than the stubs' `mode: list`
+/// declarations, since a user-defined list-returning function marks
+/// its binding too.
 fn expression_has_list_origin(expression: &Expr, scope: &Scope) -> bool {
     match expression {
-        Expr::Call { func, .. } => ident_name(func).is_some_and(|name| {
-            matches!(
-                crate::semantic_lists::bare_name(name),
-                "list" | "lapply" | "Map"
-            )
-        }),
         Expr::Index {
             base,
             kind: IndexKind::Single,
@@ -166,8 +165,12 @@ impl Checker {
         }
         match s {
             Stmt::Assign { target, value, .. } => {
-                let value_has_list_origin = expression_has_list_origin(value, scope);
+                let scope_marked_origin = expression_has_list_origin(value, scope);
                 let vt = self.infer(value, scope);
+                // A call value keeps list origin whenever the stubs
+                // declare a `mode: list` return for the resolved callee.
+                let value_has_list_origin = scope_marked_origin
+                    || matches!(value, Expr::Call { .. } if matches!(vt.mode, Mode::List));
                 let function_alias = self.function_alias_target(value, scope);
                 if self.try_assign_value(target, value, vt, scope)
                     && let Some(name) = binding_name(target)
@@ -416,6 +419,53 @@ impl Checker {
         self.emit_condition_diagnostics(cond, ct, scope, diagnostic_start, ctx);
     }
 
+    /// Whether a condition expression is the idiomatic numeric-truthiness
+    /// non-empty check: a call whose resolved stub declares a scalar
+    /// integer count return (`mode: integer, length: 1` — `length`,
+    /// `nrow`, `ncol`, `NROW`, `NCOL`, and everything else the stubs
+    /// record the same way, such as `nobs` and `Position`). R silently
+    /// coerces the nonzero count to logical, but these checks are so
+    /// idiomatic that the RY003 coercion info is pure noise there; a
+    /// genuinely wrong condition (e.g. `if (1L)`) still emits it.
+    ///
+    /// `sum` declares a `double_or_int` return, so its count idiom
+    /// (`if (sum(x > 0))`) is recognized by argument shape instead: a
+    /// logical-typed name, a comparison, or an `is.*` predicate.
+    /// Negation (`if (!length(x))`) is out of scope: it is typed through
+    /// the unary `!` operator, not this call shape.
+    fn is_numeric_truthiness_idiom(&self, cond: &Expr, scope: &Scope) -> bool {
+        let Expr::Call { func, args, .. } = cond else {
+            return false;
+        };
+        let Expr::Ident { name, .. } = func.as_ref() else {
+            return false;
+        };
+        if name == "sum" {
+            return args.first().is_some_and(|argument| match &argument.value {
+                Expr::Ident { name, .. } => scope
+                    .get(name)
+                    .is_some_and(|ty| matches!(ty.mode, Mode::Logical)),
+                Expr::BinOp { op, .. } => is_comparison(*op) || matches!(op, BinOpKind::In),
+                Expr::Call { func, .. } => {
+                    ident_name(func).is_some_and(|predicate| predicate.starts_with("is."))
+                }
+                _ => false,
+            });
+        }
+        // A local binding of the same name replaces the callee, so the
+        // stub's declared return is not evidence about this call.
+        if !name.contains("::") && scope.get(name).is_some() && scope.function_alias(name).is_none()
+        {
+            return false;
+        }
+        self.resolve_typeshed_sig(name).is_some_and(|signature| {
+            matches!(
+                &signature.return_,
+                ReturnSpec::Concrete(rt) if rt.mode == "integer" && rt.length == "1"
+            )
+        })
+    }
+
     /// Emit RY001/RY003/RY002 for a condition already inferred as `ct`.
     ///
     /// `diagnostic_start` is the `diagnostics` length captured before that
@@ -449,7 +499,7 @@ impl Checker {
             );
         } else if matches!(condition, Some(ConditionDiagnostic::Numeric))
             && !has_ry100
-            && !is_numeric_truthiness_idiom(cond, scope)
+            && !self.is_numeric_truthiness_idiom(cond, scope)
         {
             self.emit(
                 Severity::Info,

@@ -59,6 +59,23 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Changed
 
+- **NSE/defusing knowledge comes from the stubs (#41)**: the vendored
+  r-typeshed bump at 7c2ca05 (base 0.0.5, rlang 0.1.2, vctrs 0.0.1)
+  ships `eval` metadata for base `quote`/`substitute`/`bquote`/
+  `expression`/`delayedAssign` and rlang `expr`/`exprs`/`quo`, so the
+  hardcoded `DEFUSING_CALLS` list and the RY098 trusted-defuser cache
+  it fed are deleted (the walker already treats every call but the
+  qualified strict builtins as possibly deferring; the cache's only
+  decision point restated that). `NSE_SYMBOL_FNS` drops the seven
+  members the stubs now cover; what remains is exactly the set with no
+  stub coverage (ggplot2 and data.table functions, unexported rlang
+  helpers, `makeActiveBinding`, `peek_vars`), pinned by the
+  `nse_symbol_fallback_does_not_overlap_stub_eval_modes` guard test.
+  Two intended consequences: `delayedAssign` now suppresses RY010 only
+  for its `value` argument, not for all arguments, and the bare rlang
+  verbs (`expr`, `quo`, `enquo`, ...) only suppress RY010 when rlang is
+  actually attached — a bare unattached `expr(undefined)` now reports
+  the unbound name like any other unknown call.
 - **One pass-1 walk per file, syntax-only attachment harvest**: the
   collection pass now harvests each file's `library()`/`require()`
   attachments in the same walk that collects its function definitions,

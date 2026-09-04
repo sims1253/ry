@@ -53,28 +53,6 @@ pub const OPERATORS: &[&str] = &[
     "+", "-", "*", "/", "^", "%%", "%/%", "==", "!=", "<", "<=", ">", ">=",
 ];
 
-/// Functions that capture an argument as a promise without forcing it.
-///
-/// Checked by typeshed agreement: every base member (`expression`, `quote`,
-/// `substitute`, `bquote`, `alist`) exists in the embedded base typeshed;
-/// every rlang member exists in the rlang vendor stub.
-pub const DEFUSING_CALLS: &[&str] = &[
-    "expression",
-    "quote",
-    "substitute",
-    "bquote",
-    "alist",
-    "expr",
-    "exprs",
-    "quo",
-    "quos",
-    "enexpr",
-    "enquo",
-    "ensym",
-    "enquos",
-    "ensyms",
-];
-
 /// R foreign-function-interface primitives.
 ///
 /// Re-exported from ry-core. The typeshed-agreement coherence test is
@@ -175,12 +153,6 @@ pub fn registry() -> Vec<SemanticList> {
             items: OPERATORS,
             check: CheckKind::ROracle,
             claim: "R operators usable as S3 generic names (Arith + Compare groups)",
-        },
-        SemanticList {
-            name: "DEFUSING_CALLS",
-            items: DEFUSING_CALLS,
-            check: CheckKind::TypeshedAgreement,
-            claim: "base and rlang functions that capture without forcing",
         },
         SemanticList {
             name: "FFI_PRIMITIVES",

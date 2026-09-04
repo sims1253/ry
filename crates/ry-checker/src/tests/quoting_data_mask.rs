@@ -1056,11 +1056,9 @@ fn exclusively_defused_dots_are_opaque_at_call_sites() {
 }
 
 #[test]
-fn defuser_cache_reflects_propagated_quoting() {
-    // `g`'s `x` turns quoting only through S3 propagation from its method.
-    // The nested lazy-default literal builds the cached defuser set during
-    // fixpoint iteration 1, before propagation flips the flag, so the cache
-    // must be dropped when a propagation round changes the table.
+fn propagated_quoting_generic_keeps_lazy_default_silent() {
+    // `g`'s `x` turns quoting only through S3 propagation from its method,
+    // and the propagated flag must hold through the nested lazy default.
     let source = "g <- function(x) UseMethod(\"g\")\n\
                   g.foo <- function(x) enquo(x)\n\
                   wrapper <- function() {\n\
@@ -1079,13 +1077,6 @@ fn defuser_cache_reflects_propagated_quoting() {
         checker.fn_table.fns["g"].params[0].quoting,
         "S3 propagation must mark the generic's formal quoting"
     );
-    if let Some(cached) = &checker.trusted_defusers {
-        assert!(
-            cached.contains("g"),
-            "cached defuser set predates quoting propagation: {cached:?}"
-        );
-    }
-
     let diagnostics = check(source);
     assert!(
         diagnostics

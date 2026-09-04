@@ -393,7 +393,9 @@ fn nse_symbol_fallback_does_not_overlap_stub_eval_modes() {
     // list registry.
     let data_mask_exemptions: &[&str] = &[
         // Empty today. dplyr's stub declares all_vars' `expr` as
-        // data_mask, so all_vars left the fallback list.
+        // data_mask, so all_vars left the fallback list. Add a name
+        // here only with a linked issue documenting why its data-mask
+        // mode must not own the call.
     ];
     use ry_typeshed::EvalMode;
     let mut stub_eval = std::collections::HashMap::new();
@@ -427,4 +429,66 @@ fn nse_symbol_fallback_does_not_overlap_stub_eval_modes() {
         overlap.is_empty(),
         "is_nse_symbol_fn members already covered by stub eval metadata; delete them or add a documented exemption: {overlap:?}"
     );
+}
+
+#[test]
+fn delayed_assign_reads_only_its_evaluated_arguments() {
+    // The base stub declares only `value: captures_promise` for
+    // delayedAssign; the variable name and the environment arguments
+    // are ordinary evaluated arguments. The pre-stub fallback wrongly
+    // suppressed the whole call.
+    for (note, src, expected) in [
+        (
+            "captured value is silent",
+            "delayedAssign(\"x\", undefined_value)\n",
+            vec![],
+        ),
+        (
+            "name argument is read",
+            "delayedAssign(undefined_name, 1)\n",
+            vec!["undefined_name"],
+        ),
+        (
+            "arguments past the captured one are read",
+            "v <- 1\ndelayedAssign(\"x\", v, eval.env = undefined_env)\n",
+            vec!["undefined_env"],
+        ),
+    ] {
+        let diags = check(src);
+        let fired: Vec<&str> = diags
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "RY010")
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect();
+        assert_eq!(
+            fired.len(),
+            expected.len(),
+            "{note}: expected RY010 on {expected:?}, got {diags:?}"
+        );
+        for name in expected {
+            assert!(
+                fired.iter().any(|message| message.contains(name)),
+                "{note}: expected RY010 naming {name}, got {diags:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn qualified_deferring_calls_do_not_force_lazy_defaults() {
+    // RY098's walker treats every call except the explicitly qualified
+    // strict builtins as possibly deferring its arguments, so a
+    // self-referential default captured by one stays silent — including
+    // calls into packages beyond base/rlang whose stubs record the
+    // deferral (`join_by`). The strict builtins demonstrably force and
+    // keep firing.
+    for (note, body, expect_ry098) in [
+        ("dplyr join_by defers", "dplyr::join_by(x == y)", false),
+        ("base quote defers", "base::quote(x)", false),
+        ("strict builtin abort forces", "rlang::abort(x)", true),
+    ] {
+        let diags = check(&format!("f <- function(x = x) {body}\n"));
+        let fired = diags.iter().any(|diagnostic| diagnostic.code == "RY098");
+        assert_eq!(fired, expect_ry098, "{note}: {diags:?}");
+    }
 }

@@ -596,9 +596,9 @@ pub(crate) fn extract_literal_int(e: &Expr) -> Option<i64> {
 /// into silent overlap.
 ///
 /// Stub coverage is genuinely absent for every member (issue #41):
-///   * base: `quote`, `substitute`, `bquote`, and `delayedAssign` have
-///     stubs without `eval` fields; `makeActiveBinding` has no stub.
-///   * rlang: the kept names have stubs without `eval` fields.
+///   * base: `makeActiveBinding` has no stub.
+///   * rlang: the kept names have stubs without `eval` fields
+///     (`defuse` and `tidyeval_data` are unexported and ship no stub).
 ///   * ggplot2 and data.table ship no stubs.
 ///   * tidyselect's stub does not declare `peek_vars`. `all_vars` is
 ///     not here: dplyr — the package it is called through — declares
@@ -612,9 +612,6 @@ pub(crate) const NSE_SYMBOL_FNS: &[&str] = &[
     "aes_q",
     // rlang NSE
     "sym",
-    "expr",
-    "exprs",
-    "quo",
     "abort",
     "inform",
     "defuse",
@@ -624,10 +621,6 @@ pub(crate) const NSE_SYMBOL_FNS: &[&str] = &[
     // tidyselect package functions
     "peek_vars",
     // base NSE helpers
-    "quote",
-    "substitute",
-    "bquote",
-    "delayedAssign",
     "makeActiveBinding",
     // data.table NSE
     "setkey",

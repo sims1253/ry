@@ -93,6 +93,28 @@ fn shadowed_length_keeps_the_coercion_nudge() {
     );
 }
 
+// The sum arm recognizes `is.*` predicates by name; a locally defined
+// `is.*` callee is a different function, while an alias keeps pointing
+// at the base predicate.
+#[test]
+fn shadowed_is_predicate_keeps_the_coercion_nudge() {
+    let shadowed = check("is.value <- function(x) 1L\nif (sum(is.value(x))) 1\n");
+    assert!(
+        shadowed.iter().any(|d| d.code == "RY003"),
+        "a shadowed is.* predicate must not feed the sum idiom: {shadowed:?}"
+    );
+    let aliased = check("predicate <- is.na\nx <- c(1, NA)\nif (sum(predicate(x))) 1\n");
+    assert!(
+        aliased.iter().all(|d| d.code != "RY003"),
+        "an aliased base predicate keeps the sum idiom: {aliased:?}"
+    );
+    let plain = check("x <- c(1, NA)\nif (sum(is.na(x))) 1\n");
+    assert!(
+        plain.iter().all(|d| d.code != "RY003"),
+        "the base predicate idiom must stand: {plain:?}"
+    );
+}
+
 #[test]
 fn loop_carried_bindings_are_available_at_the_start_of_each_iteration() {
     for src in [

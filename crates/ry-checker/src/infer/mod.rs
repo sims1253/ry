@@ -438,9 +438,7 @@ impl Checker {
     /// declaration is not evidence about this call. A function alias is
     /// provenance (`p <- is.na` keeps the base callee), not a replacement.
     fn locally_shadows_stub(name: &str, scope: &Scope) -> bool {
-        !name.contains("::")
-            && scope.get(name).is_some()
-            && scope.function_alias(name).is_none()
+        !name.contains("::") && scope.get(name).is_some() && scope.function_alias(name).is_none()
     }
 
     /// Whether a condition expression is the idiomatic numeric-truthiness
@@ -472,13 +470,10 @@ impl Checker {
                 Expr::BinOp { op, .. } => is_comparison(*op) || matches!(op, BinOpKind::In),
                 // A locally defined `is.*` callee is a different function;
                 // an aliased one still resolves to the base predicate.
-                Expr::Call { func, .. } => {
-                    ident_name(func).is_some_and(|callee| {
-                        let resolved = scope.function_alias(callee).unwrap_or(callee);
-                        resolved.starts_with("is.")
-                            && !Self::locally_shadows_stub(resolved, scope)
-                    })
-                }
+                Expr::Call { func, .. } => ident_name(func).is_some_and(|callee| {
+                    let resolved = scope.function_alias(callee).unwrap_or(callee);
+                    resolved.starts_with("is.") && !Self::locally_shadows_stub(resolved, scope)
+                }),
                 _ => false,
             });
         }

@@ -1469,6 +1469,168 @@
       "column": 17,
       "label": "unowned",
       "audit_group": "plan-32-33"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY091",
+      "path": "tests/testthat/test-backend-.R",
+      "line": 110,
+      "column": 36,
+      "label": "true_positive",
+      "audit_group": "pr195-nse-stubs"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY091",
+      "path": "tests/testthat/test-backend-.R",
+      "line": 110,
+      "column": 36,
+      "label": "true_positive",
+      "audit_group": "pr195-nse-stubs"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY091",
+      "path": "tests/testthat/test-backend-.R",
+      "line": 111,
+      "column": 36,
+      "label": "true_positive",
+      "audit_group": "pr195-nse-stubs"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY091",
+      "path": "tests/testthat/test-translate-sql-string.R",
+      "line": 13,
+      "column": 36,
+      "label": "true_positive",
+      "audit_group": "pr195-nse-stubs"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY091",
+      "path": "tests/testthat/test-translate-sql-string.R",
+      "line": 13,
+      "column": 36,
+      "label": "true_positive",
+      "audit_group": "pr195-nse-stubs"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY091",
+      "path": "tests/testthat/test-translate-sql-string.R",
+      "line": 14,
+      "column": 36,
+      "label": "true_positive",
+      "audit_group": "pr195-nse-stubs"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-tidyeval-across.R",
+      "line": 288,
+      "column": 16,
+      "label": "false_positive",
+      "audit_group": "pr195-nse-stubs"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-tidyeval-across.R",
+      "line": 308,
+      "column": 26,
+      "label": "false_positive",
+      "audit_group": "pr195-nse-stubs"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-tidyeval-across.R",
+      "line": 312,
+      "column": 26,
+      "label": "false_positive",
+      "audit_group": "pr195-nse-stubs"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-tidyeval.R",
+      "line": 96,
+      "column": 34,
+      "label": "false_positive",
+      "audit_group": "pr195-nse-stubs"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-tidyeval.R",
+      "line": 96,
+      "column": 63,
+      "label": "false_positive",
+      "audit_group": "pr195-nse-stubs"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY040",
+      "path": "tests/testthat/test-tidyeval.R",
+      "line": 102,
+      "column": 23,
+      "label": "false_positive",
+      "audit_group": "pr195-nse-stubs"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY092",
+      "path": "tests/testthat/test-verb-summarise.R",
+      "line": 264,
+      "column": 57,
+      "label": "false_positive",
+      "audit_group": "pr195-nse-stubs"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY002",
+      "path": "tests/testthat/test-summarise.R",
+      "line": 517,
+      "column": 31,
+      "label": "false_positive",
+      "audit_group": "pr195-nse-stubs"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY002",
+      "path": "tests/testthat/test-summarise.R",
+      "line": 522,
+      "column": 31,
+      "label": "false_positive",
+      "audit_group": "pr195-nse-stubs"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY092",
+      "path": "tests/testthat/test-aes-delayed-eval.R",
+      "line": 18,
+      "column": 67,
+      "label": "false_positive",
+      "audit_group": "pr195-nse-stubs"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY092",
+      "path": "tests/testthat/test-aes-delayed-eval.R",
+      "line": 21,
+      "column": 42,
+      "label": "false_positive",
+      "audit_group": "pr195-nse-stubs"
+    },
+    {
+      "package": "purrr",
+      "code": "RY040",
+      "path": "tests/testthat/test-list-modify.R",
+      "line": 150,
+      "column": 53,
+      "label": "false_positive",
+      "audit_group": "pr195-nse-stubs"
     }
   ],
   "notes": [

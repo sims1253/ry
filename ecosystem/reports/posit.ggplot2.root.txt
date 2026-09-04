@@ -42,6 +42,8 @@ R/scale-size.R:145:16 RY010
 R/stat-contour.R:142:17 RY010
 R/utilities.R:556:53 RY010
 R/utilities.R:563:53 RY010
+tests/testthat/test-aes-delayed-eval.R:18:67 RY092
+tests/testthat/test-aes-delayed-eval.R:21:42 RY092
 tests/testthat/test-axis-secondary.R:36:23 RY100
 tests/testthat/test-axis-secondary.R:37:23 RY100
 tests/testthat/test-axis-secondary.R:56:23 RY100

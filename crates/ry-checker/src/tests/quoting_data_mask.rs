@@ -798,7 +798,10 @@ fn single_bracket_list_compared_with_scalar_by_identical_warns() {
         ("Map result", "args <- Map(paste0, c(\"a\"))"),
         ("strsplit result", "args <- strsplit(\"a b\", \" \")"),
         ("split result", "args <- split(c(1), c(\"a\"))"),
-        ("block-wrapped result", "args <- { strsplit(\"a b\", \" \") }"),
+        (
+            "block-wrapped result",
+            "args <- { strsplit(\"a b\", \" \") }",
+        ),
         (
             "if-expression result",
             "args <- if (TRUE) strsplit(\"a b\", \" \") else list()",

@@ -1,4 +1,17 @@
+tests/testthat/test-backend-.R:110:36 RY091
+tests/testthat/test-backend-.R:110:36 RY091
+tests/testthat/test-backend-.R:111:36 RY091
 tests/testthat/test-query-set-op.R:7:37 RY090
+tests/testthat/test-tidyeval-across.R:288:16 RY040
+tests/testthat/test-tidyeval-across.R:308:26 RY040
+tests/testthat/test-tidyeval-across.R:312:26 RY040
+tests/testthat/test-tidyeval.R:102:23 RY040
+tests/testthat/test-tidyeval.R:96:34 RY040
+tests/testthat/test-tidyeval.R:96:63 RY040
+tests/testthat/test-translate-sql-string.R:13:36 RY091
+tests/testthat/test-translate-sql-string.R:13:36 RY091
+tests/testthat/test-translate-sql-string.R:14:36 RY091
 tests/testthat/test-verb-set-ops.R:106:30 RY090
 tests/testthat/test-verb-set-ops.R:114:30 RY090
 tests/testthat/test-verb-summarise.R:258:30 RY092
+tests/testthat/test-verb-summarise.R:264:57 RY092

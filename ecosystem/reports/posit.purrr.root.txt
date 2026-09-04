@@ -1,3 +1,4 @@
 R/deprec-prepend.R:34:7 RY032
+tests/testthat/test-list-modify.R:150:53 RY040
 tests/testthat/test-map.R:82:20 RY080
 tests/testthat/test-parallel.R:120:20 RY080

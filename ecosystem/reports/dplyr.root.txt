@@ -28,3 +28,5 @@ tests/testthat/test-slice.R:94:15 RY040
 tests/testthat/test-slice.R:95:28 RY040
 tests/testthat/test-summarise.R:321:11 RY002
 tests/testthat/test-summarise.R:331:38 RY002
+tests/testthat/test-summarise.R:517:31 RY002
+tests/testthat/test-summarise.R:522:31 RY002

@@ -120,6 +120,24 @@ fn typeshed_required_arguments_are_still_checked() {
     );
 }
 
+// Table-driven over stub formals R treats as missing()-optional: each
+// zero-arg call runs without error in R (verified in r-typeshed's
+// audit_function_semantics.R), so the stub must not mark them required —
+// unlike Filter(), whose required f genuinely errors.
+#[test]
+fn missing_optional_stub_formals_accept_zero_arg_calls() {
+    for src in [
+        "f <- function(lazy) {\n  if (missing(lazy)) return(quo())\n  lazy\n}\n",
+        "g <- function(lazy) {\n  if (missing(lazy)) return(rlang::quo())\n  lazy\n}\n",
+    ] {
+        let diags = check(src);
+        assert!(
+            diags.iter().all(|diagnostic| diagnostic.code != "RY091"),
+            "quo() defuses a missing argument into an empty quosure: {diags:?}"
+        );
+    }
+}
+
 #[test]
 fn classed_and_null_generic_arguments_do_not_report_type_mismatches() {
     let diags =

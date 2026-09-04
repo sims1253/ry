@@ -6,8 +6,8 @@ adds the R7 literal-to-parameter lifting report, targeted mutation pilot,
 and per-rule verdicts. Every rule has an executed verdict backed by multiple
 independent kinds of evidence; no single column determines the verdict.
 
-Corpus counts come from the strict hermetic `posit-0.9.0.json` ledger (746
-findings; 43 TP / 703 FP). Probe coverage comes from
+Corpus counts come from the strict hermetic `posit-0.9.0.json` ledger (709
+findings; 43 TP / 666 FP). Probe coverage comes from
 `crates/ry-checker/tests/probes.rs`. Claim fixtures come from the
 completeness-gated `crates/ry-checker/tests/oracle.rs` registry. The R7
 literal-lift report comes from `crates/ry-checker/tests/rule_evidence.rs`.

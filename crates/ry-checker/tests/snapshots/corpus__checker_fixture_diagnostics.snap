@@ -989,6 +989,16 @@ expression: snapshots
         start: 20
   fixture: warn_numeric_min_condition.R
 - diagnostics:
+    - code: RY003
+      message: "`if` condition is `integer`; R coerces nonzero to TRUE"
+      severity: info
+      span:
+        column: 4
+        end: 524
+        line: 8
+        start: 497
+  fixture: warn_position_condition.R
+- diagnostics:
     - code: RY002
       message: "`if` condition has length 2; R requires a length-1 condition"
       severity: warning

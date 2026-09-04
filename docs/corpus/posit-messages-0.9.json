@@ -100,15 +100,6 @@
       "severity": "error",
       "message": "cannot compare `function` with `character`"
     },
-    "broom::RY030::tests/testthat/test-survival-survfit.R:18:13": {
-      "package": "broom",
-      "code": "RY030",
-      "path": "tests/testthat/test-survival-survfit.R",
-      "line": 18,
-      "column": 13,
-      "severity": "error",
-      "message": "cannot compare `function` with `double`"
-    },
     "broom::RY032::R/utilities.R:459:9": {
       "package": "broom",
       "code": "RY032",
@@ -1000,60 +991,6 @@
       "severity": "error",
       "message": "cannot apply arithmetic op to `double` and `character`"
     },
-    "dbplyr::RY040::tests/testthat/test-tidyeval-across.R:288:16": {
-      "package": "dbplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-tidyeval-across.R",
-      "line": 288,
-      "column": 16,
-      "severity": "error",
-      "message": "cannot apply arithmetic op to `character` and `character`"
-    },
-    "dbplyr::RY040::tests/testthat/test-tidyeval-across.R:308:26": {
-      "package": "dbplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-tidyeval-across.R",
-      "line": 308,
-      "column": 26,
-      "severity": "error",
-      "message": "cannot apply arithmetic op to `character` and `character`"
-    },
-    "dbplyr::RY040::tests/testthat/test-tidyeval-across.R:312:26": {
-      "package": "dbplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-tidyeval-across.R",
-      "line": 312,
-      "column": 26,
-      "severity": "error",
-      "message": "cannot apply arithmetic op to `character` and `character`"
-    },
-    "dbplyr::RY040::tests/testthat/test-tidyeval.R:102:23": {
-      "package": "dbplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-tidyeval.R",
-      "line": 102,
-      "column": 23,
-      "severity": "error",
-      "message": "cannot apply arithmetic op to `list` and `character`"
-    },
-    "dbplyr::RY040::tests/testthat/test-tidyeval.R:96:34": {
-      "package": "dbplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-tidyeval.R",
-      "line": 96,
-      "column": 34,
-      "severity": "error",
-      "message": "cannot apply arithmetic op to `list` and `double`"
-    },
-    "dbplyr::RY040::tests/testthat/test-tidyeval.R:96:63": {
-      "package": "dbplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-tidyeval.R",
-      "line": 96,
-      "column": 63,
-      "severity": "error",
-      "message": "cannot apply arithmetic op to `character` and `double`"
-    },
     "dbplyr::RY090::tests/testthat/test-query-set-op.R:7:37": {
       "package": "dbplyr",
       "code": "RY090",
@@ -1125,24 +1062,6 @@
       "severity": "warning",
       "message": "missing required argument `stop` in call to `substr`"
     },
-    "dbplyr::RY092::tests/testthat/test-verb-summarise.R:258:30": {
-      "package": "dbplyr",
-      "code": "RY092",
-      "path": "tests/testthat/test-verb-summarise.R",
-      "line": 258,
-      "column": 30,
-      "severity": "error",
-      "message": "argument `x` to `mean` is `function`, expected numeric"
-    },
-    "dbplyr::RY092::tests/testthat/test-verb-summarise.R:264:57": {
-      "package": "dbplyr",
-      "code": "RY092",
-      "path": "tests/testthat/test-verb-summarise.R",
-      "line": 264,
-      "column": 57,
-      "severity": "error",
-      "message": "argument `x` to `mean` is `function`, expected numeric"
-    },
     "dplyr::RY002::tests/testthat/test-mutate.R:793:16": {
       "package": "dplyr",
       "code": "RY002",
@@ -1167,24 +1086,6 @@
       "path": "tests/testthat/test-summarise.R",
       "line": 331,
       "column": 38,
-      "severity": "warning",
-      "message": "`if` condition has length 2; R requires a length-1 condition"
-    },
-    "dplyr::RY002::tests/testthat/test-summarise.R:517:31": {
-      "package": "dplyr",
-      "code": "RY002",
-      "path": "tests/testthat/test-summarise.R",
-      "line": 517,
-      "column": 31,
-      "severity": "warning",
-      "message": "`if` condition has length 2; R requires a length-1 condition"
-    },
-    "dplyr::RY002::tests/testthat/test-summarise.R:522:31": {
-      "package": "dplyr",
-      "code": "RY002",
-      "path": "tests/testthat/test-summarise.R",
-      "line": 522,
-      "column": 31,
       "severity": "warning",
       "message": "`if` condition has length 2; R requires a length-1 condition"
     },
@@ -2466,24 +2367,6 @@
       "severity": "error",
       "message": "$ operator is invalid for atomic vectors of mode `character`"
     },
-    "ggplot2::RY092::tests/testthat/test-aes-delayed-eval.R:18:67": {
-      "package": "ggplot2",
-      "code": "RY092",
-      "path": "tests/testthat/test-aes-delayed-eval.R",
-      "line": 18,
-      "column": 67,
-      "severity": "error",
-      "message": "argument `x` to `mean` is `function`, expected numeric"
-    },
-    "ggplot2::RY092::tests/testthat/test-aes-delayed-eval.R:21:42": {
-      "package": "ggplot2",
-      "code": "RY092",
-      "path": "tests/testthat/test-aes-delayed-eval.R",
-      "line": 21,
-      "column": 42,
-      "severity": "error",
-      "message": "argument `x` to `mean` is `function`, expected numeric"
-    },
     "ggplot2::RY100::tests/testthat/test-axis-secondary.R:36:23": {
       "package": "ggplot2",
       "code": "RY100",
@@ -3239,195 +3122,6 @@
       "column": 42,
       "severity": "warning",
       "message": "variable `currencies` is not bound in this scope"
-    },
-    "gt::RY030::tests/testthat/test-fmt.R:146:17": {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-fmt.R",
-      "line": 146,
-      "column": 17,
-      "severity": "error",
-      "message": "cannot compare `function` with `character`"
-    },
-    "gt::RY030::tests/testthat/test-fmt.R:169:17": {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-fmt.R",
-      "line": 169,
-      "column": 17,
-      "severity": "error",
-      "message": "cannot compare `function` with `character`"
-    },
-    "gt::RY030::tests/testthat/test-fmt.R:193:17": {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-fmt.R",
-      "line": 193,
-      "column": 17,
-      "severity": "error",
-      "message": "cannot compare `function` with `character`"
-    },
-    "gt::RY030::tests/testthat/test-fmt.R:218:17": {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-fmt.R",
-      "line": 218,
-      "column": 17,
-      "severity": "error",
-      "message": "cannot compare `function` with `character`"
-    },
-    "gt::RY030::tests/testthat/test-fmt_auto.R:21:19": {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-fmt_auto.R",
-      "line": 21,
-      "column": 19,
-      "severity": "error",
-      "message": "cannot compare `function` with `character`"
-    },
-    "gt::RY030::tests/testthat/test-fmt_auto.R:21:41": {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-fmt_auto.R",
-      "line": 21,
-      "column": 41,
-      "severity": "error",
-      "message": "cannot compare `function` with `character`"
-    },
-    "gt::RY030::tests/testthat/test-l_fmt.R:143:17": {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-l_fmt.R",
-      "line": 143,
-      "column": 17,
-      "severity": "error",
-      "message": "cannot compare `function` with `character`"
-    },
-    "gt::RY030::tests/testthat/test-l_fmt.R:166:17": {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-l_fmt.R",
-      "line": 166,
-      "column": 17,
-      "severity": "error",
-      "message": "cannot compare `function` with `character`"
-    },
-    "gt::RY030::tests/testthat/test-l_fmt.R:190:17": {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-l_fmt.R",
-      "line": 190,
-      "column": 17,
-      "severity": "error",
-      "message": "cannot compare `function` with `character`"
-    },
-    "gt::RY030::tests/testthat/test-l_fmt.R:219:17": {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-l_fmt.R",
-      "line": 219,
-      "column": 17,
-      "severity": "error",
-      "message": "cannot compare `function` with `character`"
-    },
-    "gt::RY030::tests/testthat/test-resolver.R:161:35": {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-resolver.R",
-      "line": 161,
-      "column": 35,
-      "severity": "error",
-      "message": "cannot compare `function` with `double`"
-    },
-    "gt::RY030::tests/testthat/test-summary_rows.R:1610:19": {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-summary_rows.R",
-      "line": 1610,
-      "column": 19,
-      "severity": "error",
-      "message": "cannot compare `function` with `character`"
-    },
-    "gt::RY030::tests/testthat/test-summary_rows.R:1610:41": {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-summary_rows.R",
-      "line": 1610,
-      "column": 41,
-      "severity": "error",
-      "message": "cannot compare `function` with `character`"
-    },
-    "gt::RY030::tests/testthat/test-summary_rows.R:6:5": {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-summary_rows.R",
-      "line": 6,
-      "column": 5,
-      "severity": "error",
-      "message": "cannot compare `function` with `character`"
-    },
-    "gt::RY030::tests/testthat/test-summary_rows.R:7:5": {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-summary_rows.R",
-      "line": 7,
-      "column": 5,
-      "severity": "error",
-      "message": "cannot compare `function` with `character`"
-    },
-    "gt::RY030::tests/testthat/test-summary_rows.R:818:19": {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-summary_rows.R",
-      "line": 818,
-      "column": 19,
-      "severity": "error",
-      "message": "cannot compare `function` with `character`"
-    },
-    "gt::RY030::tests/testthat/test-summary_rows.R:818:41": {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-summary_rows.R",
-      "line": 818,
-      "column": 41,
-      "severity": "error",
-      "message": "cannot compare `function` with `character`"
-    },
-    "gt::RY030::tests/testthat/test-tab_footnote.R:660:7": {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-tab_footnote.R",
-      "line": 660,
-      "column": 7,
-      "severity": "error",
-      "message": "cannot compare `function` with `character`"
-    },
-    "gt::RY030::tests/testthat/test-tab_footnote.R:661:7": {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-tab_footnote.R",
-      "line": 661,
-      "column": 7,
-      "severity": "error",
-      "message": "cannot compare `function` with `character`"
-    },
-    "gt::RY030::tests/testthat/test-tab_style_body.R:6:19": {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-tab_style_body.R",
-      "line": 6,
-      "column": 19,
-      "severity": "error",
-      "message": "cannot compare `function` with `character`"
-    },
-    "gt::RY030::tests/testthat/test-tab_style_body.R:6:41": {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-tab_style_body.R",
-      "line": 6,
-      "column": 41,
-      "severity": "error",
-      "message": "cannot compare `function` with `character`"
     },
     "gt::RY032::R/opts.R:117:9": {
       "package": "gt",
@@ -4185,24 +3879,6 @@
       "severity": "warning",
       "message": "`u_dl` is a length-1 double, so `length(...)` is 1 here and this zero-length guard is always TRUE"
     },
-    "parsnip::RY030::tests/testthat/test-predict_formats.R:173:58": {
-      "package": "parsnip",
-      "code": "RY030",
-      "path": "tests/testthat/test-predict_formats.R",
-      "line": 173,
-      "column": 58,
-      "severity": "error",
-      "message": "cannot compare `function` with `character`"
-    },
-    "parsnip::RY030::tests/testthat/test-predict_formats.R:181:52": {
-      "package": "parsnip",
-      "code": "RY030",
-      "path": "tests/testthat/test-predict_formats.R",
-      "line": 181,
-      "column": 52,
-      "severity": "error",
-      "message": "cannot compare `function` with `character`"
-    },
     "pkgdown::RY010::R/config.R:171:7": {
       "package": "pkgdown",
       "code": "RY010",
@@ -4310,15 +3986,6 @@
       "column": 7,
       "severity": "warning",
       "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
-    },
-    "purrr::RY040::tests/testthat/test-list-modify.R:150:53": {
-      "package": "purrr",
-      "code": "RY040",
-      "path": "tests/testthat/test-list-modify.R",
-      "line": 150,
-      "column": 53,
-      "severity": "error",
-      "message": "cannot apply arithmetic op to `list` and `double`"
     },
     "purrr::RY080::tests/testthat/test-map.R:82:20": {
       "package": "purrr",

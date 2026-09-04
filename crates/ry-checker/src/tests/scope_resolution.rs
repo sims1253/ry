@@ -1090,3 +1090,38 @@ fn parameter_default_preserves_lexical_and_list_origin_markers() {
         "parameter and default-parameter markers must be set"
     );
 }
+
+/// `insert_narrowed` refines a binding without rebinding the name, so a
+/// list-origin binding narrowed by a flow guard keeps its provenance: the
+/// narrowed branch scope's marker survives into the branch merge, and a
+/// subset of the narrowed value is still provably list-shaped for RY101.
+#[test]
+fn narrowed_binding_keeps_list_origin_marker() {
+    let mut scope = Scope::default();
+    scope.insert("parts", RType::new(Mode::List, Length::Unknown));
+    scope.mark_list_origin("parts");
+
+    scope.insert_narrowed("parts", RType::new(Mode::List, Length::One));
+
+    assert_eq!(
+        scope.get("parts"),
+        Some(&RType::new(Mode::List, Length::One)),
+        "narrowed type must be installed"
+    );
+    assert!(
+        scope.has_list_origin("parts"),
+        "list-origin marker must survive narrowing"
+    );
+    assert!(
+        scope.narrowed_bindings.contains("parts"),
+        "narrowed marker must be set"
+    );
+
+    // A genuine rebinding still clears the marker: `insert` is a real
+    // assignment, not a refinement.
+    scope.insert("parts", RType::new(Mode::Character, Length::Unknown));
+    assert!(
+        !scope.has_list_origin("parts"),
+        "a plain rebinding clears list origin"
+    );
+}

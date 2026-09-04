@@ -59,40 +59,54 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Changed
 
-- **Condition and list-origin heuristics read the stubs (#49)**: the
-  RY003 numeric-truthiness idiom is now any direct call whose resolved
-  stub declares an integer length-1 return, replacing the hardcoded
-  `length`/`nrow`/`ncol`/`NROW`/`NCOL` name list — `nobs`, `Position`,
-  and any other integer-1 stub return stop firing the coercion nudge,
-  while double-returning calls (`mean`, `min`) keep it. A local
-  binding of the same name — including a locally defined `is.*`
-  predicate feeding the `sum` idiom — no longer inherits the stub's
-  idiom credit; an aliased base predicate does. List-origin marking
-  follows the value's inferred list mode instead of the
-  `list`/`lapply`/`Map` names, so the 93 stub functions declaring
-  `mode: list` returns (60 in base: strsplit, split, read.table, ...)
-  keep the marker through type-degrading rewrites and feed RY101's
-  list-subset check — for any list-mode value, including blocks and
-  `if` expressions, not only direct calls.
-- **NSE/defusing knowledge comes from the stubs (#41)**: the vendored
-  r-typeshed bumps at 7c2ca05 and 17e71dc (base 0.0.5, rlang 0.1.2,
-  vctrs 0.0.1; 17e71dc curates rlang `quo()`'s `expr` as optional —
-  `quo()` defuses a missing argument into an empty quosure)
-  ships `eval` metadata for base `quote`/`substitute`/`bquote`/
-  `expression`/`delayedAssign` and rlang `expr`/`exprs`/`quo`, so the
-  hardcoded `DEFUSING_CALLS` list and the RY098 trusted-defuser cache
-  it fed are deleted (the walker already treats every call but the
-  qualified strict builtins as possibly deferring; the cache's only
-  decision point restated that). `NSE_SYMBOL_FNS` drops the seven
-  members the stubs now cover; what remains is exactly the set with no
-  stub coverage (ggplot2 and data.table functions, unexported rlang
-  helpers, `makeActiveBinding`, `peek_vars`), pinned by the
-  `nse_symbol_fallback_does_not_overlap_stub_eval_modes` guard test.
-  Two intended consequences: `delayedAssign` now suppresses RY010 only
-  for its `value` argument, not for all arguments, and the bare rlang
-  verbs (`expr`, `quo`, `enquo`, ...) only suppress RY010 when rlang is
-  actually attached — a bare unattached `expr(undefined)` now reports
-  the unbound name like any other unknown call.
+- **More accurate `if`-condition nudges**: the "non-empty check" idiom
+  (`if (length(x))`, `if (nrow(df))`, ...) is now recognized from the
+  function's declared return type instead of a fixed name list, so it
+  covers every function that returns a count which can never be `NA`
+  (`nobs`, `vec_size`, ...). `if (Position(...))` is deliberately NOT
+  treated as that idiom anymore: when nothing matches, `Position()`
+  returns `NA`, and R errors on the condition instead of testing
+  non-empty — you now get the coercion note there, same as for
+  `if (1L)`. A local binding that shadows the called name (including a
+  locally defined `is.*` predicate feeding `sum(...)`) no longer
+  inherits the idiom credit; an aliased base predicate does.
+- **List-valued results are tracked by inferred type**: which values
+  count as list-shaped now follows the inferred mode instead of a
+  fixed name list, so the roughly 90 functions that return a list
+  (`strsplit`, `split`, `read.table`, ...) keep that fact through
+  renames and re-assignment — in blocks and `if` expressions too, not
+  only direct calls. This feeds RY101's always-FALSE check for
+  `identical(x[1], "scalar")` on list subsets.
+- **Quoting helpers are known from their signatures**: base
+  `quote`/`substitute`/`bquote`/`expression`/`delayedAssign` and rlang
+  `expr`/`exprs`/`quo`/`enquo` now suppress unbound-variable warnings
+  only for the arguments they actually quote. Two visible
+  consequences: `delayedAssign` no longer stays silent about its other
+  arguments, and rlang's ordinary evaluating helpers (`sym()`,
+  `abort()`, `inform()`, `new_formula()`, `new_quosure()`) now report
+  undefined names passed to them — R reads those arguments, so
+  `abort(undefined_name)` was always a bug. `rlang::quo()` with no
+  argument is also understood to create an empty quosure instead of
+  reporting a missing argument.
+- **Package test files see the package's imports**: testthat runs
+  `tests/testthat/` inside a copy of the package namespace, so names
+  supplied by a wholesale `import(pkg)` directive in NAMESPACE are
+  available there. `ry check` now models this: bare `expr(...)`/
+  `quo(...)` calls in a package's testthat files no longer report
+  unbound variables when the package imports rlang, matching how the
+  same call in `R/` was already treated. Outside that context (no
+  attachment and no import), a bare unattached `expr(undefined)` still
+  reports the name like any other unknown call.
+- **Names inside quoted blocks cannot borrow unrelated function
+  types**: inside an unevaluated block (a data-mask argument, or code
+  quoted for later use), a bare name that matches nothing locally used
+  to resolve to a same-named base function — so a data-mask column
+  called `class` behaved like the `class()` function in a comparison,
+  and a logical formal like `append` inside withr-style deferred code
+  behaved like `append()`. Such names now type as unknown inside those
+  blocks, removing spurious condition and comparison warnings
+  (RY001/RY030) there, while genuine argument mistakes inside the same
+  blocks are still reported.
 - **One pass-1 walk per file, syntax-only attachment harvest**: the
   collection pass now harvests each file's `library()`/`require()`
   attachments in the same walk that collects its function definitions,

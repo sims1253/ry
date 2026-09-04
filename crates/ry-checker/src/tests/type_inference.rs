@@ -133,6 +133,38 @@ fn shadowed_sum_keeps_the_coercion_nudge() {
     );
 }
 
+// The numeric-truthiness idiom requires the stub's explicit never-NA
+// claim. `Position` also declares an integer length-1 return, but its
+// no-match value is `nomatch` (`NA_integer_`), so `if (Position(...))`
+// is TRUE-or-error in R — verified: `if (Position(is.na, c(1,2,3)))`
+// raises "argument is not interpretable as logical". Its stub omits
+// `na: false`, which is not a non-NA guarantee, so the coercion nudge
+// fires while every stub that does declare `na: false` keeps the
+// suppression.
+#[test]
+fn na_capable_integer_count_keeps_the_coercion_nudge() {
+    let position = check("x <- c(1, 2, 3)\nif (Position(is.na, x)) 1\n");
+    assert!(
+        position.iter().any(|d| d.code == "RY003"),
+        "Position's NA-capable return must not feed the non-empty idiom: {position:?}"
+    );
+    for suppressed in [
+        "x <- c(1, 2, 3)\nif (length(x)) 1\n",
+        "d <- data.frame(a = 1)\nif (nrow(d)) 1\n",
+        "d <- data.frame(a = 1)\nif (ncol(d)) 1\n",
+        "l <- list(1)\nif (NROW(l)) 1\n",
+        "l <- list(1)\nif (NCOL(l)) 1\n",
+        "fit <- NULL\nif (nobs(fit)) 1\n",
+        "library(vctrs)\nx <- c(1, 2, 3)\nif (vec_size(x)) 1\n",
+    ] {
+        let diags = check(suppressed);
+        assert!(
+            diags.iter().all(|d| d.code != "RY003"),
+            "a never-NA integer count keeps the idiom suppression: {suppressed} -> {diags:?}"
+        );
+    }
+}
+
 #[test]
 fn loop_carried_bindings_are_available_at_the_start_of_each_iteration() {
     for src in [

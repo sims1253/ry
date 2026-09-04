@@ -557,9 +557,12 @@ fn signature_captures_promises(signature: &FunctionSig, dots: bool) -> bool {
 }
 
 /// One-time global index over the embedded base and package stubs:
-/// function name -> capture flags. Built lazily on first use;
-/// `is_promise_capture` consults it for unqualified names instead of
-/// re-scanning every package's function table on every call-site check.
+/// function name -> (named-parameter capture, `...` capture), the two
+/// flags `is_promise_capture(function, dots)` selects between — whether
+/// the stub declares `captures_promise` on a named formal, on `...`, or
+/// both. Built lazily on first use; `is_promise_capture` consults it for
+/// unqualified names instead of re-scanning every package's function
+/// table on every call-site check.
 fn promise_capture_index() -> &'static std::collections::HashMap<String, (bool, bool)> {
     static INDEX: std::sync::OnceLock<std::collections::HashMap<String, (bool, bool)>> =
         std::sync::OnceLock::new();

@@ -866,6 +866,38 @@ fn branch_merged_list_origin_follows_the_merged_type() {
     }
 }
 
+/// Loop bodies execute in the enclosing environment, so an in-loop list
+/// assignment carries its list-origin marker to the code after the loop
+/// — and an in-loop atomic rebinding clears a marker established before
+/// it, mirroring the branch-merge discipline above.
+#[test]
+fn loop_merged_list_origin_follows_the_loop_body() {
+    for (note, src, expects_ry101) in [
+        (
+            "for-loop assigns a list",
+            "for (i in 1:2) args <- strsplit(\"a b\", \" \")\nnames(args) <- \"x\"\nidentical(args[1], \"s\")\n",
+            true,
+        ),
+        (
+            "while-loop assigns a list",
+            "i <- 1\nwhile (i < 3) {\nargs <- strsplit(\"a b\", \" \")\ni <- i + 1\n}\nnames(args) <- \"x\"\nidentical(args[1], \"s\")\n",
+            true,
+        ),
+        (
+            "for-loop rebinds an atomic vector over a list parent",
+            "args <- strsplit(\"a b\", \" \")\nfor (i in 1:2) args <- c(\"a\", \"b\")\nnames(args) <- \"x\"\nidentical(args[1], \"s\")\n",
+            false,
+        ),
+    ] {
+        let diagnostics = check(src);
+        assert_eq!(
+            diagnostics.iter().any(|d| d.code == "RY101"),
+            expects_ry101,
+            "{note}: {diagnostics:?}"
+        );
+    }
+}
+
 #[test]
 fn double_bracket_list_compared_with_scalar_by_identical_is_valid() {
     let diagnostics = check(
@@ -1102,6 +1134,49 @@ fn lexical_types_are_opaque_under_unknown_data_masks_only() {
     assert!(
         outside.iter().any(|diagnostic| diagnostic.code == "RY040"),
         "the same lexical type must still be checked outside a mask: {outside:?}"
+    );
+}
+
+/// withr's `wrap()` factory (R/wrap.R) quotes its `pre`/`post` blocks with
+/// `substitute()`, splices them into a generated closure via `bquote`,
+/// and injects the wrapped function's formals with
+/// `formals(fun) <- formals(f)`. A block name like `append` — a formal of
+/// the wrapped `message_sink(file = NULL, append = FALSE)` — therefore
+/// evaluates to that logical formal at runtime, never to
+/// `base::append`. Under an unknown data mask the search-path
+/// function-value rungs must yield `unknown`, so `if (append)` inside
+/// the quoted block cannot borrow base::append's function type (RY001).
+#[test]
+fn quoted_factory_block_names_do_not_borrow_base_function_types() {
+    let source = "wrap <- function(f, pre, post, envir = parent.frame()) {\n  fmls <- formals(f)\n  called_fmls <- setNames(lapply(names(fmls), as.symbol), names(fmls))\n  f_call <- as.call(c(substitute(f), called_fmls))\n  pre <- substitute(pre)\n  post <- substitute(post)\n  fun <- eval(bquote(function(args) {\n    .(pre)\n    .retval <- .(f_call)\n    .(post)\n  }, as.environment(list(f_call = f_call, pre = pre, post = post))))\n  formals(fun) <- fmls\n  environment(fun) <- envir\n  fun\n}\nmessage_sink <- function(file = NULL, append = FALSE) {\n  sink(file = file, append = append, type = \"message\", split = FALSE)\n}\nset_message_sink <- wrap(\n  message_sink,\n  {\n    con <- if (is.character(file)) {\n      file <- file(file, if (append) \"a\" else \"w\")\n    }\n  },\n  {\n    list(n = sink.number(type = \"message\"), con = con)\n  })\n";
+    let diagnostics = check(source);
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY001"),
+        "the quoted block's `append` is an injected formal, not base::append: {diagnostics:?}"
+    );
+}
+
+/// The same shadowing rule for ordinary data-mask blocks: a mask column
+/// named like a base function (`class`, as in parsnip's
+/// `mutate(class = class == "VF")`) is data at runtime, so the
+/// search-path function type must not drive a comparison diagnostic
+/// (RY030) inside the mask — while the same name outside a mask keeps
+/// its function typing and diagnostics.
+#[test]
+fn base_function_names_are_opaque_inside_unknown_data_masks() {
+    let masked =
+        check("library(dplyr)\ndf <- get(\"df\")\nout <- mutate(df, is_vf = class == \"VF\")\n");
+    assert!(
+        masked.iter().all(|diagnostic| diagnostic.code != "RY030"),
+        "a mask column shadowing base::class must not drive RY030: {masked:?}"
+    );
+
+    let outside = check("x <- class == \"VF\"\n");
+    assert!(
+        outside.iter().any(|diagnostic| diagnostic.code == "RY030"),
+        "outside a mask, base::class used as a value keeps its diagnostics: {outside:?}"
     );
 }
 

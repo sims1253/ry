@@ -317,16 +317,20 @@ impl Scope {
 
     pub(crate) fn insert_narrowed(&mut self, name: impl Into<String>, t: RType) {
         // Narrowing refines the value without rebinding the name, so the
-        // parameter markers survive `insert`'s clearing.
+        // parameter and list-origin markers survive `insert`'s clearing.
         let name = name.into();
         let was_parameter = self.parameter_bindings.contains(&name);
         let was_default_parameter = self.default_parameter_bindings.contains(&name);
+        let had_list_origin = self.list_origin_bindings.contains(&name);
         self.insert(name.clone(), t);
         if was_parameter {
             self.parameter_bindings.insert(name.clone());
         }
         if was_default_parameter {
             self.default_parameter_bindings.insert(name.clone());
+        }
+        if had_list_origin {
+            self.list_origin_bindings.insert(name.clone());
         }
         self.narrowed_bindings.insert(name);
     }
@@ -1177,6 +1181,18 @@ impl Checker {
                 // `target` was computed against whichever params list was
                 // selected above; the other source's list may be shorter, so
                 // every index below must stay bounds-checked.
+                //
+                // `CapturesPromise` deliberately does NOT propagate quoting
+                // here. Letting it through silences every call site of the
+                // `p <- substitute(p)` wrapper idiom wholesale — including
+                // genuine argument bugs inside those blocks (the six ledgered
+                // dbplyr RY091 true positives in tests/testthat/
+                // test-backend-.R and test-translate-sql-string.R, whose
+                // `expect_translation_snapshot()` helper is exactly this
+                // shape). The defused-parameter arm keeps inferring such
+                // blocks with diagnostics, while unknown data-mask scoping
+                // keeps their mask-shadowable names opaque; see the
+                // Ident ladder in `infer/mod.rs`.
                 let inherits_quoting = user_callee
                     .is_some_and(|callee| callee.params.get(target).is_some_and(|p| p.quoting))
                     || stub_callee.as_ref().is_some_and(|sig| {

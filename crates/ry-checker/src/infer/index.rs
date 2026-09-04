@@ -558,13 +558,21 @@ pub(crate) fn extract_literal_int(e: &Expr) -> Option<i64> {
 /// intercepts before signature resolution and shadows the stub. Add a
 /// name here only when no stub declares its evaluation mode. The guard
 /// test `nse_symbol_fallback_does_not_overlap_stub_eval_modes` fails
-/// when a member gains stub coverage, so the two halves cannot drift
-/// into silent overlap.
+/// both when a member gains a stub `eval` entry AND when a member ships
+/// a stub without `eval` fields — an absent `eval` block is the stub's
+/// declaration of ordinary eager evaluation, not a blank to fill from
+/// this list.
+///
+/// A member must actually be NSE. rlang's `sym`, `abort`, `inform`,
+/// `new_formula`, and `new_quosure` were removed for evaluating their
+/// arguments eagerly (verified in R: `rlang::sym(undefined_name)` errors
+/// with "object not found"), so suppressing RY010 inside them hid real
+/// undefined-name bugs.
 ///
 /// Stub coverage is genuinely absent for every member (issue #41):
 ///   * base: `makeActiveBinding` has no stub.
-///   * rlang: the kept names have stubs without `eval` fields
-///     (`defuse` and `tidyeval_data` are unexported and ship no stub).
+///   * rlang: `defuse` and `tidyeval_data` are unexported and ship no
+///     stub.
 ///   * ggplot2 and data.table ship no stubs.
 ///   * tidyselect's stub does not declare `peek_vars`. `all_vars` is
 ///     not here: dplyr — the package it is called through — declares
@@ -577,13 +585,8 @@ pub(crate) const NSE_SYMBOL_FNS: &[&str] = &[
     "aes_string",
     "aes_q",
     // rlang NSE
-    "sym",
-    "abort",
-    "inform",
     "defuse",
     "tidyeval_data",
-    "new_formula",
-    "new_quosure",
     // tidyselect package functions
     "peek_vars",
     // base NSE helpers

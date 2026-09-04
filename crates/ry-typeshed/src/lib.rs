@@ -372,8 +372,13 @@ pub enum TypeshedError {
 pub struct JsonRType {
     pub mode: String,
     pub length: String,
-    #[serde(default)]
-    pub na: bool,
+    /// Whether the value can be `NA`. `None` (field absent) means the stub
+    /// does not declare it either way — which is not a non-NA guarantee.
+    /// `Some(false)` is the explicit "never NA" claim (e.g. `length`,
+    /// `nrow`); `Some(true)` marks NA-capable values (e.g. `Position`,
+    /// whose `nomatch` default is `NA_integer_`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub na: Option<bool>,
     /// S3 class vector, e.g. `["data.frame"]` for `mtcars`. Default
     /// empty for backward compatibility with existing JSON.
     #[serde(default)]

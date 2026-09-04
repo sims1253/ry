@@ -315,8 +315,18 @@ impl Checker {
                 // occurs. Static analysis cannot prove the zero-iteration
                 // case, so opaque downstream behavior is preferable to
                 // claiming a field definitely does not exist.
+                //
+                // List-origin provenance copies the continuation's marker
+                // verbatim (same discipline as `merge_branch_bindings`): the
+                // inner scope inherited the parent's marker, an in-loop list
+                // rebinding re-marks it, and an in-loop non-list rebinding
+                // cleared it — the last write is the post-loop truth.
                 for (binding, ty) in inner.bindings {
-                    scope.insert(binding, ty);
+                    let had_list_origin = inner.list_origin_bindings.contains(&binding);
+                    scope.insert(binding.clone(), ty);
+                    if had_list_origin {
+                        scope.mark_list_origin(binding);
+                    }
                 }
             }
             Stmt::While { cond, body, .. } => {
@@ -328,10 +338,16 @@ impl Checker {
                     self.walk_stmt(s, &mut inner, returns.as_deref_mut());
                 }
                 // As with `for`, assignments made by `while` and `repeat`
-                // bodies remain visible in R's enclosing environment.
+                // bodies remain visible in R's enclosing environment; the
+                // continuation's list-origin markers carry over the same
+                // way.
                 let body_unreachable = inner.unreachable;
                 for (binding, ty) in inner.bindings {
-                    scope.insert(binding, ty);
+                    let had_list_origin = inner.list_origin_bindings.contains(&binding);
+                    scope.insert(binding.clone(), ty);
+                    if had_list_origin {
+                        scope.mark_list_origin(binding);
+                    }
                 }
                 // The parser represents `repeat` as `while (TRUE)`. If its
                 // body cannot continue, neither can the enclosing block.
@@ -443,12 +459,20 @@ impl Checker {
 
     /// Whether a condition expression is the idiomatic numeric-truthiness
     /// non-empty check: a call whose resolved stub declares a scalar
-    /// integer count return (`mode: integer, length: 1` — `length`,
-    /// `nrow`, `ncol`, `NROW`, `NCOL`, and everything else the stubs
-    /// record the same way, such as `nobs` and `Position`). R silently
-    /// coerces the nonzero count to logical, but these checks are so
-    /// idiomatic that the RY003 coercion info is pure noise there; a
-    /// genuinely wrong condition (e.g. `if (1L)`) still emits it.
+    /// integer count return that is never `NA` (`mode: integer,
+    /// length: 1, na: false` — `length`, `nrow`, `ncol`, `NROW`, `NCOL`,
+    /// and everything else the stubs record the same way, such as
+    /// `nobs`). R silently coerces the nonzero count to logical, but
+    /// these checks are so idiomatic that the RY003 coercion info is
+    /// pure noise there; a genuinely wrong condition (e.g. `if (1L)`)
+    /// still emits it.
+    ///
+    /// The explicit `na: false` matters: `Position` also returns a
+    /// scalar integer, but its no-match value is `nomatch`
+    /// (`NA_integer_`), so `if (Position(...))` is TRUE-or-error — R
+    /// raises "argument is not interpretable as logical" on the NA —
+    /// and can never be the non-empty idiom. A stub that omits `na` has
+    /// not claimed the value is NA-free, so it does not qualify either.
     ///
     /// `sum` declares a `double_or_int` return, so its count idiom
     /// (`if (sum(x > 0))`) is recognized by argument shape instead: a
@@ -486,7 +510,8 @@ impl Checker {
         self.resolve_typeshed_sig(name).is_some_and(|signature| {
             matches!(
                 &signature.return_,
-                ReturnSpec::Concrete(rt) if rt.mode == "integer" && rt.length == "1"
+                ReturnSpec::Concrete(rt)
+                    if rt.mode == "integer" && rt.length == "1" && rt.na == Some(false)
             )
         })
     }
@@ -1461,6 +1486,18 @@ impl Checker {
                     }
                 }
                 None => {
+                    // A defused/data-mask scope resolves its names against
+                    // an environment ry cannot enumerate (a data mask, or
+                    // the closure a quoting helper splices the block
+                    // into — withr's `wrap()` even re-derives its formals
+                    // via `formals(fun) <- formals(f)`). The lexical arm
+                    // above already treats that as shadowing; the same
+                    // reasoning demotes the search-path function-value
+                    // rungs below, so a bare `append` inside a defused
+                    // block types as unknown instead of borrowing
+                    // `base::append`'s function type.
+                    let under_unknown_data_mask = scope.data_mask_unknown
+                        && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some();
                     // Typed package values take precedence over existence-only
                     // import bindings so constants retain their declared type.
                     if let Some(value_type) = self.resolve_typeshed_value(name) {
@@ -1485,23 +1522,30 @@ impl Checker {
                     // rather than flagging it as unbound. The higher-
                     // order call handlers resolve the signature when
                     // the callback is invoked.
-                    if self.typeshed.functions.contains_key(name) {
+                    //
+                    // Skipped under an unknown data mask: the mask may
+                    // shadow the search path, so the name is unknown
+                    // there rather than a base function value.
+                    if !under_unknown_data_mask && self.typeshed.functions.contains_key(name) {
                         return RType::scalar(Mode::Function);
                     }
                     // A function from a loaded package (e.g. purrr's
                     // `map` used as a value) resolves to a function too.
-                    if self.bare_loaded.iter().any(|pkg| {
-                        self.package_is_known(pkg)
-                            && self
-                                .package_typeshed(pkg)
-                                .map(|t| t.functions.contains_key(name))
-                                .unwrap_or(false)
-                    }) {
+                    // Equally shadowable by an unknown mask.
+                    if !under_unknown_data_mask
+                        && self.bare_loaded.iter().any(|pkg| {
+                            self.package_is_known(pkg)
+                                && self
+                                    .package_typeshed(pkg)
+                                    .map(|t| t.functions.contains_key(name))
+                                    .unwrap_or(false)
+                        })
+                    {
                         return RType::scalar(Mode::Function);
                     }
                     // User-defined function in the FnTable used as a
                     // value? Same treatment.
-                    if self.fn_table.fns.contains_key(name) {
+                    if !under_unknown_data_mask && self.fn_table.fns.contains_key(name) {
                         return RType::scalar(Mode::Function);
                     }
                     // Cross-file variable defined in another file of
@@ -1516,12 +1560,13 @@ impl Checker {
                     if self.known_vars.contains(name) {
                         return RType::unknown();
                     }
-                    if self
-                        .typeshed
-                        .globals
-                        .ambient_functions
-                        .iter()
-                        .any(|function| function == name)
+                    if !under_unknown_data_mask
+                        && self
+                            .typeshed
+                            .globals
+                            .ambient_functions
+                            .iter()
+                            .any(|function| function == name)
                     {
                         // Value-position uses of ambient functions are
                         // overwhelmingly legitimate higher-order idioms

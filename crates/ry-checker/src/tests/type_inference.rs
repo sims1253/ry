@@ -115,6 +115,24 @@ fn shadowed_is_predicate_keeps_the_coercion_nudge() {
     );
 }
 
+// The sum arm matches argument shape rather than a stub return, so it
+// must pass the same shadow gate as the stub-backed arms: a locally
+// defined `sum` is a different function even when its argument is the
+// `is.*` count shape.
+#[test]
+fn shadowed_sum_keeps_the_coercion_nudge() {
+    let shadowed = check("sum <- function(x) 1L\nx <- c(1, NA)\nif (sum(is.na(x))) 1\n");
+    assert!(
+        shadowed.iter().any(|d| d.code == "RY003"),
+        "a shadowed sum() must not inherit the argument-shape idiom: {shadowed:?}"
+    );
+    let base = check("x <- c(1, NA)\nif (sum(is.na(x))) 1\n");
+    assert!(
+        base.iter().all(|d| d.code != "RY003"),
+        "the base sum() idiom suppression must stand: {base:?}"
+    );
+}
+
 #[test]
 fn loop_carried_bindings_are_available_at_the_start_of_each_iteration() {
     for src in [

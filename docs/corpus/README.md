@@ -9,16 +9,16 @@ removing one finding can never be silently mistaken for removing another.
 The `audit_group` field groups reviewed findings by how the audit explained
 each label. `posit-0.9.0.json` has 12 groups; most name a cause
 (`type-narrowing`, `test-fixture`), one an owner (`upstream-package`), and
-the largest, `manual-audit` (390 of 728 findings), is the manually
-classified batch. `tidyverse-0.7.1.json` has 17 groups: 16 are batch ids
-from its audit (`P2`, `P3a`, `plan-32-33`), kept verbatim because the
+the largest, `manual-audit` (390 of 746 findings), is the manually
+classified batch. `tidyverse-0.7.1.json` has 18 groups: 17 are batch ids
+(`P2`, `P3a`, `plan-32-33`, `pr195-nse-stubs`), kept verbatim because the
 planning records that defined them were local-only and no longer exist;
 the other, `upstream-ggplot2`, names the upstream package.
 
 | Ledger | `ry` | Packages | Diagnostics | TP / FP / Unc | Reconciliation |
 | :-- | :-- | :-- | ---: | :-- | :-- |
-| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.7.1 | 24 | 100 | 4 / 96 / 0 | hermetic (strict CI gate) |
-| [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 728 | 37 / 691 / 0 | hermetic (strict CI gate) |
+| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.7.1 | 24 | 170 | 10 / 104 / 0 (+56 unowned) | hermetic (strict CI gate) |
+| [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 746 | 43 / 703 / 0 | hermetic (strict CI gate) |
 
 Two historical ledgers were removed as generated artifacts: the 0.8.0
 audit transcript (1,142 identities, reconciliation `audit-transcript`) and
@@ -36,7 +36,7 @@ checker fixtures plus a deterministic sample of the vendored ecosystem sources.
 ## Readable message ledger
 
 [`posit-messages-0.9.json`](posit-messages-0.9.json) records the message and
-severity for all 728 reviewed Posit diagnostics. It previously also carried an
+severity for all 746 reviewed Posit diagnostics. It previously also carried an
 optional structured fix; the autofix machinery was removed before 0.9.0 (see
 issue #89), so those payloads are gone.
 Each entry is keyed by the same stable `(package, code, path, line, column)`

@@ -462,6 +462,12 @@ impl Checker {
         let Expr::Ident { name, .. } = func.as_ref() else {
             return false;
         };
+        // A local binding of the same name replaces the callee, so the
+        // stub's declared return is not evidence about this call — and
+        // neither is `sum`'s argument-shape idiom for a local `sum`.
+        if Self::locally_shadows_stub(name, scope) {
+            return false;
+        }
         if name == "sum" {
             return args.first().is_some_and(|argument| match &argument.value {
                 Expr::Ident { name, .. } => scope
@@ -476,11 +482,6 @@ impl Checker {
                 }),
                 _ => false,
             });
-        }
-        // A local binding of the same name replaces the callee, so the
-        // stub's declared return is not evidence about this call.
-        if Self::locally_shadows_stub(name, scope) {
-            return false;
         }
         self.resolve_typeshed_sig(name).is_some_and(|signature| {
             matches!(
@@ -612,6 +613,15 @@ impl Checker {
     /// "Newly bound" means present in the branch scope but absent from the
     /// parent (or bound to a different type): names that already existed in
     /// the parent with the same type are left untouched.
+    ///
+    /// List-origin provenance merges with the same path discipline as the
+    /// type. `insert` clears the marker, so every merged rebinding must
+    /// re-establish it explicitly: a branch that rebinds the name contributes
+    /// its own marker, a branch (or an implicit no-`else`) that leaves the
+    /// name unbound cannot supply a non-list value at any later use, and a
+    /// branch that keeps the parent binding requires the parent's marker. A
+    /// single non-list rebinding therefore clears the merged marker, exactly
+    /// as a single non-list type widens the merged type.
     pub(crate) fn merge_branch_bindings(
         &self,
         scope: &mut Scope,
@@ -632,7 +642,14 @@ impl Checker {
                     continue;
                 }
                 if scope.get(name) != Some(ty) {
+                    // The continuation is the only route forward, so its
+                    // provenance is a fact in the parent (same capture-
+                    // insert-remark shape as `assign_replacement_target`).
+                    let had_list_origin = continuation.has_list_origin(name);
                     scope.insert(name.clone(), ty.clone());
+                    if had_list_origin {
+                        scope.mark_list_origin(name.clone());
+                    }
                 }
             }
             return;
@@ -706,7 +723,21 @@ impl Checker {
                 Some(p) => p.clone().join(merged),
                 None => merged,
             };
-            scope.insert(name, merged);
+            // A branch scope that does not bind the name (an implicit
+            // no-`else`, or an arm that never assigns it) cannot supply a
+            // non-list value at any later use — reading the name on that
+            // path errors first — so absence is vacuous agreement. A branch
+            // that keeps the parent binding (inherited into the clone)
+            // demands the parent's marker instead.
+            let then_origin =
+                !then_scope.bindings.contains_key(&name) || then_scope.has_list_origin(&name);
+            let else_origin =
+                !else_scope.bindings.contains_key(&name) || else_scope.has_list_origin(&name);
+            let keeps_list_origin = then_origin && else_origin;
+            scope.insert(&name, merged);
+            if keeps_list_origin {
+                scope.mark_list_origin(&name);
+            }
         }
     }
 

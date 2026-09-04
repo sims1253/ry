@@ -41,7 +41,7 @@ Before starting any release:
    it removes only ignored files, so untracked non-ignored files survive
    and it can pass while a tracked-only build fails (#50).
 
-3. **Ledger reconciled:** `python3 ecosystem/check-ledger.py docs/corpus/posit-0.9.0.json`
+3. **Ledger reconciled:** `python3 ecosystem/check-ledger.py docs/corpus/posit-0.9.0.json docs/corpus/tidyverse-0.7.1.json`
    reports agreement.
 
 4. **CHANGELOG reviewed:** verify the Unreleased section is complete and

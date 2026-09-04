@@ -806,6 +806,10 @@ fn single_bracket_list_compared_with_scalar_by_identical_warns() {
             "if-expression result",
             "args <- if (TRUE) strsplit(\"a b\", \" \") else list()",
         ),
+        (
+            "branch-assigned result",
+            "flag <- TRUE\nif (flag) {\n  args <- strsplit(\"a b\", \" \")\n}",
+        ),
     ] {
         let src = format!("{construct}\nnames(args) <- \"x\"\nidentical(args[1], \"s\")\n");
         let diagnostics = check(&src);
@@ -814,6 +818,50 @@ fn single_bracket_list_compared_with_scalar_by_identical_warns() {
                 .iter()
                 .any(|diagnostic| diagnostic.code == "RY101"),
             "{note}: identical(list[...], scalar) is always false: {diagnostics:?}"
+        );
+    }
+}
+
+// Branch merges carry list-origin provenance with the same path
+// discipline as the merged type: a non-list sibling binding (or a
+// non-list parent kept alive by the untaken path) clears the marker, so
+// `identical()` against a scalar is not provably FALSE and RY101 stays
+// silent. A diverging sibling makes the live arm the only route to the
+// continuation, so its marker is a fact there.
+#[test]
+fn branch_merged_list_origin_follows_the_merged_type() {
+    for (note, src, expects_ry101) in [
+        (
+            "both branches bind lists",
+            "flag <- TRUE\nif (flag) args <- strsplit(\"a b\", \" \") else args <- list(\"a\")\nnames(args) <- \"x\"\nidentical(args[1], \"s\")\n",
+            true,
+        ),
+        (
+            "sibling branch binds an atomic vector",
+            "flag <- TRUE\nif (flag) args <- strsplit(\"a b\", \" \") else args <- c(\"a\", \"b\")\nnames(args) <- \"x\"\nidentical(args[1], \"s\")\n",
+            false,
+        ),
+        (
+            "list rebind of an atomic parent binding",
+            "args <- c(\"a\", \"b\")\nflag <- TRUE\nif (flag) args <- strsplit(\"a b\", \" \")\nnames(args) <- \"x\"\nidentical(args[1], \"s\")\n",
+            false,
+        ),
+        (
+            "diverging sibling keeps the live arm's marker",
+            "f <- function(flag) {\nif (flag) {\nargs <- strsplit(\"a b\", \" \")\n} else {\nreturn(NULL)\n}\nnames(args) <- \"x\"\nidentical(args[1], \"s\")\n}\nf(TRUE)\n",
+            true,
+        ),
+        (
+            "diverging sibling of an atomic arm stays unmarked",
+            "f <- function(flag) {\nif (flag) {\nreturn(NULL)\n} else {\nargs <- c(\"a\", \"b\")\n}\nnames(args) <- \"x\"\nidentical(args[1], \"s\")\n}\nf(TRUE)\n",
+            false,
+        ),
+    ] {
+        let diagnostics = check(src);
+        assert_eq!(
+            diagnostics.iter().any(|d| d.code == "RY101"),
+            expects_ry101,
+            "{note}: {diagnostics:?}"
         );
     }
 }

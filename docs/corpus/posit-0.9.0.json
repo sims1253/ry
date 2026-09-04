@@ -7159,13 +7159,13 @@
     }
   ],
   "classification": {
-    "true_positive": 37,
-    "false_positive": 691,
+    "true_positive": 43,
+    "false_positive": 703,
     "uncertain": 0
   },
   "audit_group_counts": {
     "manual-audit": 390,
-    "data-masking-nse": 16,
+    "data-masking-nse": 28,
     "delayed-assign": 15,
     "function-shadowing": 3,
     "local-closure-forward-ref": 31,
@@ -7173,7 +7173,7 @@
     "numeric-if-idiom": 3,
     "reassign-scope": 10,
     "s3-method-dispatch": 7,
-    "test-fixture": 70,
+    "test-fixture": 76,
     "type-narrowing": 106,
     "upstream-package": 31
   },

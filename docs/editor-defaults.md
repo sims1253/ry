@@ -11,7 +11,7 @@ policy decisions behind them.
 
 The 0.9 corpus baseline is measured and gated in
 [docs/corpus/0.9-release-evidence.md](corpus/0.9-release-evidence.md):
-728 findings, 37 true positives, 691 false positives, 5.08% overall
+746 findings, 43 true positives, 703 false positives, 5.76% overall
 precision. The corpus is dominated by RY010 (unbound-variable) false
 positives from imported, generated, and data bindings that exist at
 runtime.

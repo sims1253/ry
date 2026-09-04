@@ -33,7 +33,7 @@
       ],
       "return": {
         "mode": "logical",
-        "length": "arg0",
+        "length": "unknown",
         "na": true
       }
     },

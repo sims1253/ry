@@ -316,22 +316,12 @@ impl Scope {
     }
 
     pub(crate) fn insert_narrowed(&mut self, name: impl Into<String>, t: RType) {
-        // Narrowing refines the value without rebinding the name, so the
-        // parameter and list-origin markers survive `insert`'s clearing.
+        // Preserve parameter, default-parameter, and list-origin markers;
+        // clear function aliases and lexical-function markers, then mark narrowed.
         let name = name.into();
-        let was_parameter = self.parameter_bindings.contains(&name);
-        let was_default_parameter = self.default_parameter_bindings.contains(&name);
-        let had_list_origin = self.list_origin_bindings.contains(&name);
-        self.insert(name.clone(), t);
-        if was_parameter {
-            self.parameter_bindings.insert(name.clone());
-        }
-        if was_default_parameter {
-            self.default_parameter_bindings.insert(name.clone());
-        }
-        if had_list_origin {
-            self.list_origin_bindings.insert(name.clone());
-        }
+        self.function_aliases.remove(&name);
+        self.lexical_functions.remove(&name);
+        self.bindings.insert(name.clone(), t);
         self.narrowed_bindings.insert(name);
     }
 
@@ -342,19 +332,12 @@ impl Scope {
     }
 
     pub(crate) fn insert_parameter_default(&mut self, name: impl Into<String>, t: RType) {
-        // Unlike a plain rebinding, a defaulted parameter shadows its
-        // captured-scope namesake without disturbing the lexical-function
-        // and list-origin markers (`insert` would clear both).
+        // Preserve lexical-function and list-origin markers; clear function
+        // aliases and narrowing, then set both parameter markers.
         let name = name.into();
-        let was_lexical_function = self.lexical_functions.contains(&name);
-        let was_list_origin = self.list_origin_bindings.contains(&name);
-        self.insert(name.clone(), t);
-        if was_lexical_function {
-            self.lexical_functions.insert(name.clone());
-        }
-        if was_list_origin {
-            self.list_origin_bindings.insert(name.clone());
-        }
+        self.function_aliases.remove(&name);
+        self.narrowed_bindings.remove(&name);
+        self.bindings.insert(name.clone(), t);
         self.parameter_bindings.insert(name.clone());
         self.default_parameter_bindings.insert(name);
     }

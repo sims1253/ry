@@ -246,6 +246,10 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Fixed
 
+- **VS Code Explain Rule**: use the CLI's actual rule-list command and display
+  its summary without a second subprocess. Binary paths are passed literally,
+  and document-opening errors reach the command's error message.
+
 - **testthat runner classification follows the documented contract**:
   under `tests/`, only `.R`/`.r` files directly at the root (what
   `R CMD check` sources, including `tests/testthat.R`) and, under

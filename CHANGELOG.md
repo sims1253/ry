@@ -246,6 +246,9 @@ suppression actions — and fixes a parser panic plus several editor issues.
 - Typeshed validation rejects empty recycled-value parameter sets, mismatched
   callback names and positions, and unsupported conditional-scope values.
   Return-length rules also reject unknown or misplaced control fields.
+  Higher-order result indices (`length_arg`, `source_arg`,
+  `template_position`) must identify a formal parameter, so custom stubs with
+  out-of-range indices that previously loaded silently now fail validation.
   Custom stubs with missing required controls or unknown return-length fields
   now fail to load; schema 2's documented control shapes remain unchanged.
   Update purrr stubs with corrected callback positions and `walk2` callback

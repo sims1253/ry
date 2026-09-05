@@ -346,7 +346,8 @@ fn code_action_ignore_line_appends_suppression_comment() {
     let text = "x <- 1L + \"s\"\n";
     let diag = lsp_diag(0, 0, 1, "RY040");
     let uri = Url::parse("file:///tmp/test.R").unwrap();
-    let action = make_ignore_action(&uri, &diag, text).expect("should produce an action");
+    let action = make_ignore_action(&uri, &diag, &parse_src("test.R", text))
+        .expect("should produce an action");
 
     assert_eq!(action.title, "Ignore RY040 on this line");
     assert_eq!(action.kind, Some(CodeActionKind::QUICKFIX));
@@ -388,22 +389,20 @@ fn code_action_ignore_line_skips_already_suppressed() {
     let diag = lsp_diag(0, 0, 1, "RY040");
     let uri = Url::parse("file:///tmp/test.R").unwrap();
     assert!(
-        make_ignore_action(&uri, &diag, text).is_none(),
+        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none(),
         "should not offer an action for an already-suppressed line"
     );
 }
 
 #[test]
 fn code_action_ignore_line_rule_list_must_cover_diagnostic_code() {
-    // A trailing `# ry: ignore[RY010]` suppresses only RY010. For a
-    // diagnostic with a DIFFERENT code the checker would still publish
-    // it, so the quick-fix must stay available — appending a second
-    // directive for the new code is a meaningful edit, not a no-op.
+    // A different rule must not withhold the action. Whether the edit
+    // actually suppresses it is a separate known gap (#210).
     let text = "x <- 1L + \"s\"  # ry: ignore[RY010]\n";
     let diag = lsp_diag(0, 0, 1, "RY040");
     let uri = Url::parse("file:///tmp/test.R").unwrap();
     assert!(
-        make_ignore_action(&uri, &diag, text).is_some(),
+        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_some(),
         "a directive for another rule must not withhold the action"
     );
 }
@@ -417,7 +416,7 @@ fn code_action_ignore_line_rule_list_withholds_matching_code() {
     let diag = lsp_diag(0, 0, 1, "RY010");
     let uri = Url::parse("file:///tmp/test.R").unwrap();
     assert!(
-        make_ignore_action(&uri, &diag, text).is_none(),
+        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none(),
         "a directive naming this rule must withhold the action"
     );
 }
@@ -431,22 +430,19 @@ fn code_action_ignore_line_bare_directive_withholds_any_code() {
     let diag = lsp_diag(0, 0, 1, "RY040");
     let uri = Url::parse("file:///tmp/test.R").unwrap();
     assert!(
-        make_ignore_action(&uri, &diag, text).is_none(),
+        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none(),
         "a bare directive suppresses every rule"
     );
 }
 
 #[test]
 fn code_action_ignore_line_standalone_directive_defers_to_next_line() {
-    // A standalone `# ry: ignore` (comment alone on the diagnostic's
-    // line) defers to the NEXT code line; within the single line the
-    // quick-fix inspects there is no next line, so the directive
-    // suppresses nothing here and the action stays available.
+    // A standalone directive applies to the next code line, not itself.
     let text = "# ry: ignore\n";
     let diag = lsp_diag(0, 0, 1, "RY040");
     let uri = Url::parse("file:///tmp/test.R").unwrap();
     assert!(
-        make_ignore_action(&uri, &diag, text).is_some(),
+        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_some(),
         "a standalone directive must not suppress its own line"
     );
 }
@@ -462,7 +458,7 @@ fn code_action_ignore_line_withheld_by_preceding_standalone_directive() {
     let diag = lsp_diag(1, 0, 1, "RY010");
     let uri = Url::parse("file:///tmp/test.R").unwrap();
     assert!(
-        make_ignore_action(&uri, &diag, text).is_none(),
+        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none(),
         "a preceding standalone directive for this rule must withhold the action"
     );
 }
@@ -476,7 +472,7 @@ fn code_action_ignore_line_preceding_standalone_rule_list_must_cover_code() {
     let diag = lsp_diag(1, 0, 1, "RY010");
     let uri = Url::parse("file:///tmp/test.R").unwrap();
     assert!(
-        make_ignore_action(&uri, &diag, text).is_some(),
+        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_some(),
         "a preceding standalone directive for another rule must not withhold the action"
     );
 }
@@ -490,7 +486,7 @@ fn code_action_ignore_line_withheld_by_preceding_bare_directive() {
     let diag = lsp_diag(1, 0, 1, "RY040");
     let uri = Url::parse("file:///tmp/test.R").unwrap();
     assert!(
-        make_ignore_action(&uri, &diag, text).is_none(),
+        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none(),
         "a bare preceding standalone directive suppresses every rule"
     );
 }
@@ -504,7 +500,7 @@ fn code_action_ignore_line_preceding_directive_skips_interleaved_comments() {
     let diag = lsp_diag(3, 0, 1, "RY010");
     let uri = Url::parse("file:///tmp/test.R").unwrap();
     assert!(
-        make_ignore_action(&uri, &diag, text).is_none(),
+        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none(),
         "a standalone directive above interleaved comments must still withhold the action"
     );
 }
@@ -519,7 +515,7 @@ fn code_action_ignore_line_preceding_directive_blocked_by_code_line() {
     let diag = lsp_diag(2, 0, 1, "RY010");
     let uri = Url::parse("file:///tmp/test.R").unwrap();
     assert!(
-        make_ignore_action(&uri, &diag, text).is_some(),
+        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_some(),
         "a directive absorbed by an earlier code line must not withhold the action"
     );
 }
@@ -529,7 +525,7 @@ fn code_action_ignore_line_ignores_hash_inside_string() {
     let text = "x <- \"# not a comment\"\n";
     let diag = lsp_diag(0, 0, 1, "RY040");
     let uri = Url::parse("file:///tmp/test.R").unwrap();
-    assert!(make_ignore_action(&uri, &diag, text).is_some());
+    assert!(make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_some());
 }
 
 #[test]
@@ -537,7 +533,7 @@ fn code_action_ignore_line_detects_noqa_after_string_hash() {
     let text = "x <- \"# not a comment\"  # noqa\n";
     let diag = lsp_diag(0, 0, 1, "RY040");
     let uri = Url::parse("file:///tmp/test.R").unwrap();
-    assert!(make_ignore_action(&uri, &diag, text).is_none());
+    assert!(make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none());
 }
 
 #[test]
@@ -550,7 +546,7 @@ fn code_action_ignore_line_not_blocked_by_ignore_file_marker() {
     let text = "x <- 1L + \"s\"  # ry: ignore-file\n";
     let diag = lsp_diag(0, 0, 1, "RY040");
     let uri = Url::parse("file:///tmp/test.R").unwrap();
-    assert!(make_ignore_action(&uri, &diag, text).is_some());
+    assert!(make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_some());
 }
 
 #[test]
@@ -561,7 +557,7 @@ fn code_action_ignore_line_not_blocked_by_prose_mention() {
     let text = "x <- 1L + \"s\"  # see docs for ry: ignore\n";
     let diag = lsp_diag(0, 0, 1, "RY040");
     let uri = Url::parse("file:///tmp/test.R").unwrap();
-    assert!(make_ignore_action(&uri, &diag, text).is_some());
+    assert!(make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_some());
 }
 
 #[test]
@@ -571,7 +567,7 @@ fn code_action_ignore_line_marker_is_case_insensitive() {
     let text = "x <- 1L + \"s\"  # RY: IGNORE[RY040]\n";
     let diag = lsp_diag(0, 0, 1, "RY040");
     let uri = Url::parse("file:///tmp/test.R").unwrap();
-    assert!(make_ignore_action(&uri, &diag, text).is_none());
+    assert!(make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none());
 }
 
 #[test]
@@ -582,7 +578,8 @@ fn code_action_ignore_line_handles_missing_code() {
     let mut diag = lsp_diag(0, 0, 1, "RY099");
     diag.code = None;
     let uri = Url::parse("file:///tmp/test.R").unwrap();
-    let action = make_ignore_action(&uri, &diag, text).expect("should produce an action");
+    let action = make_ignore_action(&uri, &diag, &parse_src("test.R", text))
+        .expect("should produce an action");
     let edit = action.edit.expect("should have an edit");
     let changes = edit.changes.unwrap();
     let te = &changes.get(&uri).unwrap()[0];
@@ -602,7 +599,8 @@ fn code_action_ignore_file_inserts_at_line_zero() {
     // very top of the document (a zero-width insert at (0, 0)).
     let text = "x <- 1L\ny <- 2L\n";
     let uri = Url::parse("file:///tmp/test.R").unwrap();
-    let action = make_ignore_file_action(&uri, text).expect("should produce a file-level action");
+    let action = make_ignore_file_action(&uri, &parse_src("test.R", text))
+        .expect("should produce a file-level action");
 
     assert_eq!(action.title, "Ignore all diagnostics in this file");
     assert_eq!(action.kind, Some(CodeActionKind::QUICKFIX));
@@ -624,9 +622,20 @@ fn code_action_ignore_file_skips_already_suppressed() {
     let text = "# ry: ignore-file\nx <- 1L\n";
     let uri = Url::parse("file:///tmp/test.R").unwrap();
     assert!(
-        make_ignore_file_action(&uri, text).is_none(),
+        make_ignore_file_action(&uri, &parse_src("test.R", text)).is_none(),
         "should not offer a file-level action when one already exists"
     );
+}
+
+#[test]
+fn code_action_preserves_multiline_string_context() {
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    let file = parse_src(
+        "test.R",
+        "x <- \"first\n# ry: ignore[RY010]\nlast\"\ny <- missing\n",
+    );
+    let diag = lsp_diag(2, 0, 1, "RY010");
+    assert!(make_ignore_action(&uri, &diag, &file).is_some());
 }
 
 #[test]

@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 
 use ry_checker::{Diagnostic as RyDiagnostic, Severity};
-use ry_core::RParser;
+use ry_core::SourceFile;
 use tower_lsp::lsp_types::{
     CodeAction, CodeActionKind, Diagnostic as LspDiagnostic, DiagnosticSeverity, NumberOrString,
     Position, Range, TextEdit, Url, WorkspaceEdit,
@@ -97,51 +97,20 @@ pub(super) fn diag_code_from_lsp(d: &LspDiagnostic) -> String {
 pub(super) fn make_ignore_action(
     uri: &Url,
     diag: &LspDiagnostic,
-    text: &str,
+    file: &SourceFile,
 ) -> Option<CodeAction> {
+    let text = &file.source;
     let line = diag.range.start.line as usize;
-    let lines: Vec<&str> = text.lines().collect();
-    let line_text = *lines.get(line)?;
+    let line_text = text.lines().nth(line)?;
     let code = diag_code_from_lsp(diag);
 
-    // Avoid a redundant action when the source already carries a
-    // directive the CHECKER would honor for THIS diagnostic, decided
-    // with ry-checker's own suppression parser (the same one
-    // publish_diagnostics filters through) so the quick-fix's notion
-    // of "already ignored" cannot drift from what is suppressed: a
-    // directive must START the comment body (prose mentions like
-    // "# See docs for ry: ignore" do not count), `# ry: ignore-file`
-    // is file-level and never blocks a line fix, and a rule list must
-    // name this code — `# ry: ignore[RY010]` suppresses only RY010,
-    // so the quick-fix stays available for other codes, while a bare
-    // directive's empty rule list means "all rules".
-    //
-    // The parser sees a bounded window, not just the diagnostic's
-    // line: the checker resolves a STANDALONE directive to the next
-    // non-comment, non-blank line, so one on the contiguous blank /
-    // comment-only run above the diagnostic already suppresses it,
-    // while one higher up is absorbed by the code line that ends the
-    // run. `suppression.line == target` keeps the match on the
-    // diagnostic's line: a trailing directive resolves to the line it
-    // sits on, a standalone one to the window's last line, and a
-    // standalone directive that IS the diagnostic's whole line finds
-    // no next line and suppresses nothing.
-    let window_start = suppression_window_start(&lines, line);
-    let window = lines[window_start..=line].join("\n");
-    let target = line - window_start;
-    let already_ignored = RParser::new()
-        .ok()
-        .and_then(|mut parser| parser.parse("<code-action>", &window).ok())
-        .map(|file| {
-            ry_checker::parse_suppressions_from_comments(&file.comments, &window)
-                .iter()
-                .any(|suppression| {
-                    suppression.line == target
-                        && (suppression.rules.is_empty()
-                            || suppression.rules.iter().any(|rule| rule == &code))
-                })
-        })
-        .unwrap_or(false);
+    let already_ignored = ry_checker::parse_suppressions_from_comments(&file.comments, text)
+        .iter()
+        .any(|suppression| {
+            suppression.line == line
+                && (suppression.rules.is_empty()
+                    || suppression.rules.iter().any(|rule| rule == &code))
+        });
     if already_ignored {
         return None;
     }
@@ -190,29 +159,11 @@ pub(super) fn make_ignore_action(
     })
 }
 
-/// The first line of the bounded suppression window for a diagnostic on
-/// `line`: the top of the contiguous run of blank / comment-only lines
-/// ending just above it, or `line` itself when the line above carries
-/// code. Line classification mirrors the checker's `next_code_line`
-/// (blank, or first non-whitespace character is `#`).
-fn suppression_window_start(lines: &[&str], line: usize) -> usize {
-    let mut start = line;
-    while start > 0 {
-        let trimmed = lines[start - 1].trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            start -= 1;
-        } else {
-            break;
-        }
-    }
-    start
-}
-
 /// Build a `CodeAction` that inserts `# ry: ignore-file` at the top of
 /// the document, suppressing every ry diagnostic in the file. Returns
 /// `None` when the file already carries a file-level suppression.
-pub(super) fn make_ignore_file_action(uri: &Url, text: &str) -> Option<CodeAction> {
-    if text.contains("ry: ignore-file") {
+pub(super) fn make_ignore_file_action(uri: &Url, file: &SourceFile) -> Option<CodeAction> {
+    if ry_checker::has_file_suppression_from_comments(&file.comments) {
         return None;
     }
 

@@ -428,3 +428,66 @@ fn ry_executable_from_cargo_json_anchors_relative_paths() {
         "a relative report must be anchored at the workspace root"
     );
 }
+
+#[test]
+fn file_suppression_actions_follow_the_current_document_comments() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture.write_file("actions.R", "").unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let (mut session, server) =
+            harness::spawn_session(&[fixture.root()], json!({}), None).await;
+        let uri = file_uri(&fixture.path("actions.R"));
+        for (index, (text, offered)) in [
+            (
+                "x <- \"# ry: ignore-file\"\ny <- never_defined_name\n",
+                true,
+            ),
+            ("# RY:IGNORE-FILE\ny <- never_defined_name\n", false),
+            (
+                "# See ry: ignore-file in the docs\ny <- never_defined_name\n",
+                true,
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mark = session.publication_mark();
+            if index == 0 {
+                session.open(&uri, 1, text).await.unwrap();
+            } else {
+                session
+                    .change(&uri, index as i32 + 1, json!([{"text": text}]))
+                    .await
+                    .unwrap();
+            }
+            let published = session
+                .published_diagnostics_after(&uri, mark)
+                .await
+                .unwrap();
+            let diagnostics = published["params"]["diagnostics"].as_array().unwrap();
+            assert_eq!(!diagnostics.is_empty(), offered);
+            let actions = session.request("textDocument/codeAction", json!({
+                "textDocument": {"uri": uri},
+                "range": {"start": {"line": 1, "character": 0}, "end": {"line": 1, "character": 1}},
+                "context": {"diagnostics": diagnostics}
+            })).await.unwrap();
+            let file_action = actions.as_array().and_then(|actions| {
+                actions
+                    .iter()
+                    .find(|action| action["title"] == "Ignore all diagnostics in this file")
+            });
+            assert_eq!(file_action.is_some(), offered, "{text}");
+            if let Some(action) = file_action {
+                assert_eq!(
+                    action["edit"]["changes"][&uri][0]["newText"],
+                    "# ry: ignore-file\n"
+                );
+            }
+        }
+        harness::join_session(session, server).await;
+    });
+}

@@ -317,16 +317,20 @@ impl Scope {
 
     pub(crate) fn insert_narrowed(&mut self, name: impl Into<String>, t: RType) {
         // Narrowing refines the value without rebinding the name, so the
-        // parameter markers survive `insert`'s clearing.
+        // parameter and list-origin markers survive `insert`'s clearing.
         let name = name.into();
         let was_parameter = self.parameter_bindings.contains(&name);
         let was_default_parameter = self.default_parameter_bindings.contains(&name);
+        let had_list_origin = self.list_origin_bindings.contains(&name);
         self.insert(name.clone(), t);
         if was_parameter {
             self.parameter_bindings.insert(name.clone());
         }
         if was_default_parameter {
             self.default_parameter_bindings.insert(name.clone());
+        }
+        if had_list_origin {
+            self.list_origin_bindings.insert(name.clone());
         }
         self.narrowed_bindings.insert(name);
     }
@@ -666,11 +670,6 @@ pub struct Checker {
     // the refcount is >1); passes 1/2 own their tables uniquely, and pass
     // 3 only reads, so the COW clone never actually fires in practice.
     pub(crate) fn_table: Arc<FnTable>,
-    /// Defusing helpers RY098 trusts, derived from `fn_table`. Built on first
-    /// use and cleared by every writer of the flags it reads: `collect_fns`,
-    /// `propagate_s3_generic_quoting`, `propagate_forwarded_quoting`, and
-    /// `seed_caller_visible_signatures`.
-    trusted_defusers: Option<Arc<HashSet<String>>>,
     /// Top-level bindings that may suppress RY010 for the file being
     /// emitted. Project checking installs either a package R/ pool or the
     /// current script's own bindings.
@@ -828,7 +827,6 @@ impl Checker {
             discarding: false,
             validate_user_call_arguments: true,
             fn_table,
-            trusted_defusers: None,
             known_vars: Arc::new(HashSet::new()),
             return_slots,
             inferring: Vec::new(),
@@ -934,17 +932,13 @@ impl Checker {
         scope: Option<&HashSet<String>>,
     ) {
         let table = Arc::make_mut(&mut self.fn_table);
-        let mut applied = false;
         for (name, function) in &mut table.fns {
             if scope.is_some_and(|scope| scope.contains(name)) {
                 continue;
             }
             if let Some(signature) = seed.get(name) {
-                applied |= function.seed_caller_visible_signature(signature);
+                function.seed_caller_visible_signature(signature);
             }
-        }
-        if applied {
-            self.trusted_defusers = None;
         }
     }
 
@@ -1092,9 +1086,6 @@ impl Checker {
                 changed = true;
             }
         }
-        if changed {
-            self.trusted_defusers = None;
-        }
         changed
     }
 
@@ -1190,6 +1181,18 @@ impl Checker {
                 // `target` was computed against whichever params list was
                 // selected above; the other source's list may be shorter, so
                 // every index below must stay bounds-checked.
+                //
+                // `CapturesPromise` deliberately does NOT propagate quoting
+                // here. Letting it through silences every call site of the
+                // `p <- substitute(p)` wrapper idiom wholesale — including
+                // genuine argument bugs inside those blocks (the six ledgered
+                // dbplyr RY091 true positives in tests/testthat/
+                // test-backend-.R and test-translate-sql-string.R, whose
+                // `expect_translation_snapshot()` helper is exactly this
+                // shape). The defused-parameter arm keeps inferring such
+                // blocks with diagnostics, while unknown data-mask scoping
+                // keeps their mask-shadowable names opaque; see the
+                // Ident ladder in `infer/mod.rs`.
                 let inherits_quoting = user_callee
                     .is_some_and(|callee| callee.params.get(target).is_some_and(|p| p.quoting))
                     || stub_callee.as_ref().is_some_and(|sig| {
@@ -1230,9 +1233,6 @@ impl Checker {
                     changed = true;
                 }
             }
-        }
-        if changed {
-            self.trusted_defusers = None;
         }
         changed
     }

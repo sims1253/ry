@@ -787,16 +787,115 @@ fn intentional_side_effect_and_tail_expressions_remain_silent() {
 
 #[test]
 fn single_bracket_list_compared_with_scalar_by_identical_warns() {
-    let diagnostics = check(
-        "args <- list(font = \"monospace\")\n\
-         identical(args[\"font\"], \"monospace\")\n",
-    );
-    assert!(
-        diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == "RY101"),
-        "identical(list[...], scalar) is always false: {diagnostics:?}"
-    );
+    // Table-driven over constructors whose stubs declare a `mode: list`
+    // return — the former hardcoded list/lapply/Map set plus everything
+    // the stubs record the same way (strsplit, split, ...). The
+    // `names(args) <-` replacement degrades the binding's type, so the
+    // warning rides on the list-origin marker, not the resolved mode.
+    for (note, construct) in [
+        ("list literal", "args <- list(font = \"monospace\")"),
+        ("lapply result", "args <- lapply(c(\"a\"), paste0)"),
+        ("Map result", "args <- Map(paste0, c(\"a\"))"),
+        ("strsplit result", "args <- strsplit(\"a b\", \" \")"),
+        ("split result", "args <- split(c(1), c(\"a\"))"),
+        (
+            "block-wrapped result",
+            "args <- { strsplit(\"a b\", \" \") }",
+        ),
+        (
+            "if-expression result",
+            "args <- if (TRUE) strsplit(\"a b\", \" \") else list()",
+        ),
+        (
+            "branch-assigned result",
+            "flag <- TRUE\nif (flag) {\n  args <- strsplit(\"a b\", \" \")\n}",
+        ),
+    ] {
+        let src = format!("{construct}\nnames(args) <- \"x\"\nidentical(args[1], \"s\")\n");
+        let diagnostics = check(&src);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY101"),
+            "{note}: identical(list[...], scalar) is always false: {diagnostics:?}"
+        );
+    }
+}
+
+// Branch merges carry list-origin provenance with the same path
+// discipline as the merged type: a non-list sibling binding (or a
+// non-list parent kept alive by the untaken path) clears the marker, so
+// `identical()` against a scalar is not provably FALSE and RY101 stays
+// silent. A diverging sibling makes the live arm the only route to the
+// continuation, so its marker is a fact there.
+#[test]
+fn branch_merged_list_origin_follows_the_merged_type() {
+    for (note, src, expects_ry101) in [
+        (
+            "both branches bind lists",
+            "flag <- TRUE\nif (flag) args <- strsplit(\"a b\", \" \") else args <- list(\"a\")\nnames(args) <- \"x\"\nidentical(args[1], \"s\")\n",
+            true,
+        ),
+        (
+            "sibling branch binds an atomic vector",
+            "flag <- TRUE\nif (flag) args <- strsplit(\"a b\", \" \") else args <- c(\"a\", \"b\")\nnames(args) <- \"x\"\nidentical(args[1], \"s\")\n",
+            false,
+        ),
+        (
+            "list rebind of an atomic parent binding",
+            "args <- c(\"a\", \"b\")\nflag <- TRUE\nif (flag) args <- strsplit(\"a b\", \" \")\nnames(args) <- \"x\"\nidentical(args[1], \"s\")\n",
+            false,
+        ),
+        (
+            "diverging sibling keeps the live arm's marker",
+            "f <- function(flag) {\nif (flag) {\nargs <- strsplit(\"a b\", \" \")\n} else {\nreturn(NULL)\n}\nnames(args) <- \"x\"\nidentical(args[1], \"s\")\n}\nf(TRUE)\n",
+            true,
+        ),
+        (
+            "diverging sibling of an atomic arm stays unmarked",
+            "f <- function(flag) {\nif (flag) {\nreturn(NULL)\n} else {\nargs <- c(\"a\", \"b\")\n}\nnames(args) <- \"x\"\nidentical(args[1], \"s\")\n}\nf(TRUE)\n",
+            false,
+        ),
+    ] {
+        let diagnostics = check(src);
+        assert_eq!(
+            diagnostics.iter().any(|d| d.code == "RY101"),
+            expects_ry101,
+            "{note}: {diagnostics:?}"
+        );
+    }
+}
+
+/// Loop bodies execute in the enclosing environment, so an in-loop list
+/// assignment carries its list-origin marker to the code after the loop
+/// — and an in-loop atomic rebinding clears a marker established before
+/// it, mirroring the branch-merge discipline above.
+#[test]
+fn loop_merged_list_origin_follows_the_loop_body() {
+    for (note, src, expects_ry101) in [
+        (
+            "for-loop assigns a list",
+            "for (i in 1:2) args <- strsplit(\"a b\", \" \")\nnames(args) <- \"x\"\nidentical(args[1], \"s\")\n",
+            true,
+        ),
+        (
+            "while-loop assigns a list",
+            "i <- 1\nwhile (i < 3) {\nargs <- strsplit(\"a b\", \" \")\ni <- i + 1\n}\nnames(args) <- \"x\"\nidentical(args[1], \"s\")\n",
+            true,
+        ),
+        (
+            "for-loop rebinds an atomic vector over a list parent",
+            "args <- strsplit(\"a b\", \" \")\nfor (i in 1:2) args <- c(\"a\", \"b\")\nnames(args) <- \"x\"\nidentical(args[1], \"s\")\n",
+            false,
+        ),
+    ] {
+        let diagnostics = check(src);
+        assert_eq!(
+            diagnostics.iter().any(|d| d.code == "RY101"),
+            expects_ry101,
+            "{note}: {diagnostics:?}"
+        );
+    }
 }
 
 #[test]
@@ -1038,6 +1137,49 @@ fn lexical_types_are_opaque_under_unknown_data_masks_only() {
     );
 }
 
+/// withr's `wrap()` factory (R/wrap.R) quotes its `pre`/`post` blocks with
+/// `substitute()`, splices them into a generated closure via `bquote`,
+/// and injects the wrapped function's formals with
+/// `formals(fun) <- formals(f)`. A block name like `append` — a formal of
+/// the wrapped `message_sink(file = NULL, append = FALSE)` — therefore
+/// evaluates to that logical formal at runtime, never to
+/// `base::append`. Under an unknown data mask the search-path
+/// function-value rungs must yield `unknown`, so `if (append)` inside
+/// the quoted block cannot borrow base::append's function type (RY001).
+#[test]
+fn quoted_factory_block_names_do_not_borrow_base_function_types() {
+    let source = "wrap <- function(f, pre, post, envir = parent.frame()) {\n  fmls <- formals(f)\n  called_fmls <- setNames(lapply(names(fmls), as.symbol), names(fmls))\n  f_call <- as.call(c(substitute(f), called_fmls))\n  pre <- substitute(pre)\n  post <- substitute(post)\n  fun <- eval(bquote(function(args) {\n    .(pre)\n    .retval <- .(f_call)\n    .(post)\n  }, as.environment(list(f_call = f_call, pre = pre, post = post))))\n  formals(fun) <- fmls\n  environment(fun) <- envir\n  fun\n}\nmessage_sink <- function(file = NULL, append = FALSE) {\n  sink(file = file, append = append, type = \"message\", split = FALSE)\n}\nset_message_sink <- wrap(\n  message_sink,\n  {\n    con <- if (is.character(file)) {\n      file <- file(file, if (append) \"a\" else \"w\")\n    }\n  },\n  {\n    list(n = sink.number(type = \"message\"), con = con)\n  })\n";
+    let diagnostics = check(source);
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY001"),
+        "the quoted block's `append` is an injected formal, not base::append: {diagnostics:?}"
+    );
+}
+
+/// The same shadowing rule for ordinary data-mask blocks: a mask column
+/// named like a base function (`class`, as in parsnip's
+/// `mutate(class = class == "VF")`) is data at runtime, so the
+/// search-path function type must not drive a comparison diagnostic
+/// (RY030) inside the mask — while the same name outside a mask keeps
+/// its function typing and diagnostics.
+#[test]
+fn base_function_names_are_opaque_inside_unknown_data_masks() {
+    let masked =
+        check("library(dplyr)\ndf <- get(\"df\")\nout <- mutate(df, is_vf = class == \"VF\")\n");
+    assert!(
+        masked.iter().all(|diagnostic| diagnostic.code != "RY030"),
+        "a mask column shadowing base::class must not drive RY030: {masked:?}"
+    );
+
+    let outside = check("x <- class == \"VF\"\n");
+    assert!(
+        outside.iter().any(|diagnostic| diagnostic.code == "RY030"),
+        "outside a mask, base::class used as a value keeps its diagnostics: {outside:?}"
+    );
+}
+
 #[test]
 fn exclusively_defused_dots_are_opaque_at_call_sites() {
     let source = "f <- function(...) enquos(...)\ny <- \"a\"\nf(not_a_binding == 1, y / 1L)\n";
@@ -1056,11 +1198,9 @@ fn exclusively_defused_dots_are_opaque_at_call_sites() {
 }
 
 #[test]
-fn defuser_cache_reflects_propagated_quoting() {
-    // `g`'s `x` turns quoting only through S3 propagation from its method.
-    // The nested lazy-default literal builds the cached defuser set during
-    // fixpoint iteration 1, before propagation flips the flag, so the cache
-    // must be dropped when a propagation round changes the table.
+fn propagated_quoting_generic_keeps_lazy_default_silent() {
+    // `g`'s `x` turns quoting only through S3 propagation from its method,
+    // and the propagated flag must hold through the nested lazy default.
     let source = "g <- function(x) UseMethod(\"g\")\n\
                   g.foo <- function(x) enquo(x)\n\
                   wrapper <- function() {\n\
@@ -1079,12 +1219,6 @@ fn defuser_cache_reflects_propagated_quoting() {
         checker.fn_table.fns["g"].params[0].quoting,
         "S3 propagation must mark the generic's formal quoting"
     );
-    if let Some(cached) = &checker.trusted_defusers {
-        assert!(
-            cached.contains("g"),
-            "cached defuser set predates quoting propagation: {cached:?}"
-        );
-    }
 
     let diagnostics = check(source);
     assert!(

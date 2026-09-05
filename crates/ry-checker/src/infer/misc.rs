@@ -1,5 +1,4 @@
 use super::*;
-use crate::semantic_lists::DEFUSING_CALLS;
 use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmts};
 use std::ops::ControlFlow;
 
@@ -764,22 +763,6 @@ pub(crate) fn collect_forwarded_calls_in_stmts(
 }
 
 impl Checker {
-    /// Cached defusing helpers. The set is derived from `fn_table.fns`, whose
-    /// quoting and defusing facts keep moving after collection: the fixpoint
-    /// walks (which build this cache) run before each round of quoting
-    /// propagation. The cache is therefore cleared by `collect_fns` and by
-    /// every later writer of those flags (`propagate_s3_generic_quoting`,
-    /// `propagate_forwarded_quoting`, `seed_caller_visible_signatures`), so a
-    /// rebuilt set always reflects the post-propagation table.
-    fn trusted_defusers(&mut self) -> Arc<HashSet<String>> {
-        if let Some(cached) = &self.trusted_defusers {
-            return Arc::clone(cached);
-        }
-        let built = Arc::new(build_trusted_defusers(&self.fn_table));
-        self.trusted_defusers = Some(Arc::clone(&built));
-        built
-    }
-
     /// Diagnose the narrow, provable lazy-default ordering bug where a
     /// parameter is used by an earlier top-level statement than the direct
     /// body assignment needed by its default expression.
@@ -790,7 +773,6 @@ impl Checker {
         assigned: &HashSet<String>,
     ) {
         let formals: HashSet<&str> = params.iter().map(|param| param.name.as_str()).collect();
-        let trusted_defusers = self.trusted_defusers();
 
         for param in params {
             let Some(default) = &param.default else {
@@ -802,12 +784,8 @@ impl Checker {
             // forces that promise; defusing helpers such as enexpr()/enquo()
             // may deliberately capture `function(x = x)` without evaluating
             // the default.
-            let forced_in_body =
-                guaranteed_force_before_replacement(body, &param.name, &trusted_defusers);
-            if forced_in_body
-                && let Some(span) =
-                    first_executed_identifier(default, &param.name, &trusted_defusers)
-            {
+            let forced_in_body = guaranteed_force_before_replacement(body, &param.name);
+            if forced_in_body && let Some(span) = first_executed_identifier(default, &param.name) {
                 self.emit(
                     Severity::Warning,
                     span,
@@ -836,7 +814,7 @@ impl Checker {
                 };
 
                 let forced = body[..assign_index].iter().find_map(|statement| {
-                    definitely_forced_identifier_in_stmt(statement, &param.name, &trusted_defusers)
+                    definitely_forced_identifier_in_stmt(statement, &param.name)
                 });
                 if let Some(span) = forced {
                     self.emit(
@@ -855,25 +833,6 @@ impl Checker {
     }
 }
 
-/// The defusing call set RY098 trusts: the base allowlist, plus every
-/// collected function whose formals are all quoting or defused. A collected
-/// function of the same name that does not qualify drops the allowlist entry.
-fn build_trusted_defusers(fn_table: &FnTable) -> HashSet<String> {
-    let mut trusted: HashSet<String> = DEFUSING_CALLS.iter().map(|s| s.to_string()).collect();
-    for (name, function) in &fn_table.fns {
-        if function
-            .params
-            .iter()
-            .all(|param| param.quoting || param.defused)
-        {
-            trusted.insert(name.clone());
-        } else {
-            trusted.remove(name);
-        }
-    }
-    trusted
-}
-
 // The force/identifier family below (`guaranteed_force_before_replacement`,
 // `definitely_forced_identifier{,_in_stmt}`, `first_executed_identifier{,_in_stmt}`)
 // is deliberately NOT expressed through the shared walker in
@@ -885,11 +844,7 @@ fn build_trusted_defusers(fn_table: &FnTable) -> HashSet<String> {
 // evaluation order. That is an evaluation-order analysis with
 // per-child laziness rules, not a subtree-skip policy, so it keeps its
 // hand-rolled recursion.
-fn guaranteed_force_before_replacement(
-    body: &[Stmt],
-    wanted: &str,
-    trusted_defusers: &HashSet<String>,
-) -> bool {
+fn guaranteed_force_before_replacement(body: &[Stmt], wanted: &str) -> bool {
     for statement in body {
         match statement {
             Stmt::Assign {
@@ -897,11 +852,11 @@ fn guaranteed_force_before_replacement(
                 value,
                 ..
             } if name == wanted => {
-                return definitely_forced_identifier(value, wanted, trusted_defusers).is_some();
+                return definitely_forced_identifier(value, wanted).is_some();
             }
             _ => {}
         }
-        if definitely_forced_identifier_in_stmt(statement, wanted, trusted_defusers).is_some() {
+        if definitely_forced_identifier_in_stmt(statement, wanted).is_some() {
             return true;
         }
         if matches!(statement, Stmt::If { .. }) {
@@ -925,173 +880,141 @@ fn guaranteed_force_before_replacement(
 /// Find a force that is guaranteed when this statement executes. Conditional
 /// branch bodies and loop bodies are not guaranteed to run; their conditions
 /// (and a for-loop's iterator) are.
-fn definitely_forced_identifier_in_stmt(
-    statement: &Stmt,
-    wanted: &str,
-    trusted_defusers: &HashSet<String>,
-) -> Option<Span> {
+fn definitely_forced_identifier_in_stmt(statement: &Stmt, wanted: &str) -> Option<Span> {
     match statement {
         Stmt::Assign { value, .. } | Stmt::Expr(value) => {
-            definitely_forced_identifier(value, wanted, trusted_defusers)
+            definitely_forced_identifier(value, wanted)
         }
         Stmt::If {
             cond, then, else_, ..
         } => match cond {
             Expr::Logical(true, span) => {
-                guaranteed_force_before_replacement(then, wanted, trusted_defusers).then_some(*span)
+                guaranteed_force_before_replacement(then, wanted).then_some(*span)
             }
             Expr::Logical(false, span) => else_.as_ref().and_then(|statements| {
-                guaranteed_force_before_replacement(statements, wanted, trusted_defusers)
-                    .then_some(*span)
+                guaranteed_force_before_replacement(statements, wanted).then_some(*span)
             }),
-            _ => definitely_forced_identifier(cond, wanted, trusted_defusers),
+            _ => definitely_forced_identifier(cond, wanted),
         },
-        Stmt::While { cond, .. } => definitely_forced_identifier(cond, wanted, trusted_defusers),
-        Stmt::For { iter, .. } => definitely_forced_identifier(iter, wanted, trusted_defusers),
+        Stmt::While { cond, .. } => definitely_forced_identifier(cond, wanted),
+        Stmt::For { iter, .. } => definitely_forced_identifier(iter, wanted),
         Stmt::Return { value, .. } => value
             .as_ref()
-            .and_then(|value| definitely_forced_identifier(value, wanted, trusted_defusers)),
+            .and_then(|value| definitely_forced_identifier(value, wanted)),
         Stmt::FunctionDef { .. } => None,
     }
 }
 
-fn definitely_forced_identifier(
-    expr: &Expr,
-    wanted: &str,
-    trusted_defusers: &HashSet<String>,
-) -> Option<Span> {
+fn definitely_forced_identifier(expr: &Expr, wanted: &str) -> Option<Span> {
     match expr {
         Expr::If {
             cond, then, else_, ..
         } => match cond.as_ref() {
-            Expr::Logical(true, _) => definitely_forced_identifier(then, wanted, trusted_defusers),
+            Expr::Logical(true, _) => definitely_forced_identifier(then, wanted),
             Expr::Logical(false, _) => else_
                 .as_ref()
-                .and_then(|else_| definitely_forced_identifier(else_, wanted, trusted_defusers)),
-            _ => definitely_forced_identifier(cond, wanted, trusted_defusers),
+                .and_then(|else_| definitely_forced_identifier(else_, wanted)),
+            _ => definitely_forced_identifier(cond, wanted),
         },
         Expr::BinOp {
             lhs,
             op: BinOpKind::AndAnd | BinOpKind::OrOr,
             ..
-        } => definitely_forced_identifier(lhs, wanted, trusted_defusers),
+        } => definitely_forced_identifier(lhs, wanted),
         Expr::Block { body, span } => {
-            guaranteed_force_before_replacement(body, wanted, trusted_defusers).then_some(*span)
+            guaranteed_force_before_replacement(body, wanted).then_some(*span)
         }
-        _ => first_executed_identifier(expr, wanted, trusted_defusers),
+        _ => first_executed_identifier(expr, wanted),
     }
 }
 
-fn first_executed_identifier_in_stmt(
-    statement: &Stmt,
-    wanted: &str,
-    trusted_defusers: &HashSet<String>,
-) -> Option<Span> {
+fn first_executed_identifier_in_stmt(statement: &Stmt, wanted: &str) -> Option<Span> {
     match statement {
-        Stmt::Assign { value, .. } => first_executed_identifier(value, wanted, trusted_defusers),
-        Stmt::Expr(expr) => first_executed_identifier(expr, wanted, trusted_defusers),
+        Stmt::Assign { value, .. } => first_executed_identifier(value, wanted),
+        Stmt::Expr(expr) => first_executed_identifier(expr, wanted),
         Stmt::If {
             cond, then, else_, ..
-        } => first_executed_identifier(cond, wanted, trusted_defusers)
+        } => first_executed_identifier(cond, wanted)
             .or_else(|| {
-                then.iter().find_map(|statement| {
-                    first_executed_identifier_in_stmt(statement, wanted, trusted_defusers)
-                })
+                then.iter()
+                    .find_map(|statement| first_executed_identifier_in_stmt(statement, wanted))
             })
             .or_else(|| {
                 else_.as_ref().and_then(|statements| {
-                    statements.iter().find_map(|statement| {
-                        first_executed_identifier_in_stmt(statement, wanted, trusted_defusers)
-                    })
+                    statements
+                        .iter()
+                        .find_map(|statement| first_executed_identifier_in_stmt(statement, wanted))
                 })
             }),
-        Stmt::For { iter, body, .. } => first_executed_identifier(iter, wanted, trusted_defusers)
-            .or_else(|| {
-                body.iter().find_map(|statement| {
-                    first_executed_identifier_in_stmt(statement, wanted, trusted_defusers)
-                })
-            }),
-        Stmt::While { cond, body, .. } => first_executed_identifier(cond, wanted, trusted_defusers)
-            .or_else(|| {
-                body.iter().find_map(|statement| {
-                    first_executed_identifier_in_stmt(statement, wanted, trusted_defusers)
-                })
-            }),
+        Stmt::For { iter, body, .. } => first_executed_identifier(iter, wanted).or_else(|| {
+            body.iter()
+                .find_map(|statement| first_executed_identifier_in_stmt(statement, wanted))
+        }),
+        Stmt::While { cond, body, .. } => first_executed_identifier(cond, wanted).or_else(|| {
+            body.iter()
+                .find_map(|statement| first_executed_identifier_in_stmt(statement, wanted))
+        }),
         Stmt::Return { value, .. } => value
             .as_ref()
-            .and_then(|value| first_executed_identifier(value, wanted, trusted_defusers)),
+            .and_then(|value| first_executed_identifier(value, wanted)),
         // Defining a closure does not evaluate its body or force captures.
         Stmt::FunctionDef { .. } => None,
     }
 }
 
-fn first_executed_identifier(
-    expr: &Expr,
-    wanted: &str,
-    trusted_defusers: &HashSet<String>,
-) -> Option<Span> {
+fn first_executed_identifier(expr: &Expr, wanted: &str) -> Option<Span> {
     match expr {
         Expr::Ident { name, span } => (name == wanted).then_some(*span),
         Expr::Call { func, args, .. } => {
-            let callee = ident_name(func);
-            if callee.is_some_and(|name| {
-                let qualified_defuser = name.rsplit_once("::").is_some_and(|(package, _)| {
-                    matches!(package.trim_end_matches(':'), "base" | "rlang")
-                        && DEFUSING_CALLS.contains(&crate::semantic_lists::bare_name(name))
-                });
-                name == "missing" || qualified_defuser || trusted_defusers.contains(name)
-            }) {
-                first_executed_identifier(func, wanted, trusted_defusers)
-            } else if callee.is_some_and(|name| {
-                // Only explicitly qualified strict builtins establish
-                // guaranteed argument forcing. Bare names may be shadowed by
-                // lazy user functions.
+            // Only explicitly qualified strict builtins establish
+            // guaranteed argument forcing. Bare names may be shadowed by
+            // lazy user functions, and any other call may defuse
+            // (`enquo(x)`, `join_by(x == y)`), so neither walks arguments.
+            if ident_name(func).is_some_and(|name| {
                 name.rsplit_once("::").is_some_and(|(package, bare)| {
                     matches!(package.trim_end_matches(':'), "base" | "rlang")
                         && matches!(bare, "abort" | "stop" | "warning" | "message")
                 })
             }) {
-                first_executed_identifier(func, wanted, trusted_defusers).or_else(|| {
-                    args.iter().find_map(|argument| {
-                        first_executed_identifier(&argument.value, wanted, trusted_defusers)
-                    })
+                first_executed_identifier(func, wanted).or_else(|| {
+                    args.iter()
+                        .find_map(|argument| first_executed_identifier(&argument.value, wanted))
                 })
             } else {
-                first_executed_identifier(func, wanted, trusted_defusers)
+                first_executed_identifier(func, wanted)
             }
         }
         Expr::BinOp { lhs, rhs, op, .. } => {
             if matches!(op, BinOpKind::Assign | BinOpKind::SuperAssign) {
-                first_executed_identifier(rhs, wanted, trusted_defusers)
+                first_executed_identifier(rhs, wanted)
             } else {
-                first_executed_identifier(lhs, wanted, trusted_defusers)
-                    .or_else(|| first_executed_identifier(rhs, wanted, trusted_defusers))
+                first_executed_identifier(lhs, wanted)
+                    .or_else(|| first_executed_identifier(rhs, wanted))
             }
         }
-        Expr::UnaryOp { expr, .. } => first_executed_identifier(expr, wanted, trusted_defusers),
+        Expr::UnaryOp { expr, .. } => first_executed_identifier(expr, wanted),
         Expr::Index {
             base, kind, args, ..
-        } => first_executed_identifier(base, wanted, trusted_defusers).or_else(|| {
+        } => first_executed_identifier(base, wanted).or_else(|| {
             // `$field` stores `field` as a synthesized identifier in the AST,
             // but R does not evaluate it as an expression. Counting that name
             // would turn `vars = parent$vars` into a self-reference.
             (!matches!(kind, IndexKind::Dollar)).then(|| {
-                args.iter().find_map(|argument| {
-                    first_executed_identifier(&argument.value, wanted, trusted_defusers)
-                })
+                args.iter()
+                    .find_map(|argument| first_executed_identifier(&argument.value, wanted))
             })?
         }),
-        Expr::Block { body, .. } => body.iter().find_map(|statement| {
-            first_executed_identifier_in_stmt(statement, wanted, trusted_defusers)
-        }),
+        Expr::Block { body, .. } => body
+            .iter()
+            .find_map(|statement| first_executed_identifier_in_stmt(statement, wanted)),
         Expr::If {
             cond, then, else_, ..
-        } => first_executed_identifier(cond, wanted, trusted_defusers)
-            .or_else(|| first_executed_identifier(then, wanted, trusted_defusers))
+        } => first_executed_identifier(cond, wanted)
+            .or_else(|| first_executed_identifier(then, wanted))
             .or_else(|| {
                 else_
                     .as_ref()
-                    .and_then(|else_| first_executed_identifier(else_, wanted, trusted_defusers))
+                    .and_then(|else_| first_executed_identifier(else_, wanted))
             }),
         Expr::Function { .. }
         | Expr::Logical(_, _)

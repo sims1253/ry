@@ -39,7 +39,18 @@ def observed_entries(
     for package, findings in by_package.items():
         report = json_dir / f"{report_prefix}{package}.root.json"
         diagnostics = json.loads(report.read_text(encoding="utf-8"))
+        # One finding identity can carry several diagnostics at the same
+        # position (RY091 reports each missing required argument on the
+        # same span). Group the ledger rows per identity so the count is
+        # checked once and every message is recorded.
+        rows_per_identity: dict[str, int] = {}
+        representative: dict[str, dict] = {}
         for finding in findings:
+            key = identity(finding)
+            rows_per_identity[key] = rows_per_identity.get(key, 0) + 1
+            representative.setdefault(key, finding)
+        for key, row_count in rows_per_identity.items():
+            finding = representative[key]
             matches = [
                 diagnostic
                 for diagnostic in diagnostics
@@ -48,22 +59,23 @@ def observed_entries(
                 and diagnostic["column"] == finding["column"]
                 and relative_path_matches(diagnostic["path"], finding["path"])
             ]
-            if len(matches) != 1:
+            if len(matches) != row_count:
                 raise SystemExit(
-                    f"posit messages: expected one production diagnostic for "
-                    f"{identity(finding)}, found {len(matches)}"
+                    f"posit messages: expected {row_count} production "
+                    f"diagnostic(s) for {key}, found {len(matches)}"
                 )
-            diagnostic = matches[0]
             entry = {
                 "package": finding["package"],
                 "code": finding["code"],
                 "path": finding["path"],
                 "line": finding["line"],
                 "column": finding["column"],
-                "severity": diagnostic["severity"],
-                "message": diagnostic["message"],
+                "severity": matches[0]["severity"],
+                "message": matches[0]["message"],
             }
-            observed[identity(finding)] = entry
+            if row_count > 1:
+                entry["messages"] = sorted(m["message"] for m in matches)
+            observed[key] = entry
     return observed
 
 

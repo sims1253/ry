@@ -499,15 +499,6 @@
       "audit_group": "P7b"
     },
     {
-      "package": "dbplyr",
-      "code": "RY092",
-      "path": "tests/testthat/test-verb-summarise.R",
-      "line": 258,
-      "column": 30,
-      "label": "false_positive",
-      "audit_group": "P3f"
-    },
-    {
       "package": "duckplyr",
       "code": "RY033",
       "path": "R/fallback.R",
@@ -1469,8 +1460,87 @@
       "column": 17,
       "label": "unowned",
       "audit_group": "plan-32-33"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY091",
+      "path": "tests/testthat/test-backend-.R",
+      "line": 110,
+      "column": 36,
+      "label": "true_positive",
+      "audit_group": "pr195-nse-stubs"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY091",
+      "path": "tests/testthat/test-backend-.R",
+      "line": 110,
+      "column": 36,
+      "label": "true_positive",
+      "audit_group": "pr195-nse-stubs"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY091",
+      "path": "tests/testthat/test-backend-.R",
+      "line": 111,
+      "column": 36,
+      "label": "true_positive",
+      "audit_group": "pr195-nse-stubs"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY091",
+      "path": "tests/testthat/test-translate-sql-string.R",
+      "line": 13,
+      "column": 36,
+      "label": "true_positive",
+      "audit_group": "pr195-nse-stubs"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY091",
+      "path": "tests/testthat/test-translate-sql-string.R",
+      "line": 13,
+      "column": 36,
+      "label": "true_positive",
+      "audit_group": "pr195-nse-stubs"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY091",
+      "path": "tests/testthat/test-translate-sql-string.R",
+      "line": 14,
+      "column": 36,
+      "label": "true_positive",
+      "audit_group": "pr195-nse-stubs"
     }
   ],
+  "classification": {
+    "true_positive": 10,
+    "false_positive": 91,
+    "uncertain": 0,
+    "unowned": 56
+  },
+  "audit_group_counts": {
+    "plan-29": 1,
+    "P6c": 2,
+    "upstream-ggplot2": 4,
+    "P7a": 2,
+    "P4b": 1,
+    "P4a": 3,
+    "P4c": 1,
+    "P2": 36,
+    "P3e": 3,
+    "P3b": 2,
+    "P3d": 3,
+    "P8": 4,
+    "P7b": 3,
+    "P3a": 26,
+    "P3c": 4,
+    "plan-32-33": 56,
+    "pr195-nse-stubs": 6
+  },
   "notes": [
     "Ecosystem reports are generated hermetically with RY_NO_INSTALLED_LIBRARIES=1; the source audit used installed R libraries.",
     "The ecosystem audit reconciles each hermetic report against finding identities in this ledger, including diagnostics that are absent from production-only reports."

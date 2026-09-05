@@ -193,13 +193,19 @@ pub fn resolve_workspace_context<'a>(
                 file_bindings.insert(packages::NATIVE_REGISTRATION_SENTINEL.to_string());
             }
             file_s3_methods.extend(metadata.s3_methods.iter().cloned());
-            // `import(pkg)` puts pkg's exports in the package namespace,
-            // not on the search path used to run its tests and examples.
-            // Keep wholesale imports confined to package implementation
-            // files; `importFrom()` bindings above remain available wherever
-            // the package context makes them meaningful.
+            // `import(pkg)` puts pkg's exports in the package namespace, not
+            // on the search path. Two execution contexts still resolve those
+            // names: the package's own `R/` sources, and the testthat runner
+            // files testthat sources into `env_clone(asNamespace(package))` —
+            // that clone's parent chain includes the namespace's imports
+            // environment (verified in R: names reachable through
+            // `parent.env(asNamespace(pkg))` resolve from the clone).
+            // `importFrom()` bindings above remain available wherever the
+            // package context makes them meaningful.
             let relative = Path::new(&file.path).strip_prefix(&root).ok();
-            if relative.is_some_and(is_package_r_file) {
+            if relative.is_some_and(is_package_r_file)
+                || relative.is_some_and(is_testthat_runner_file)
+            {
                 file_attached.extend(metadata.imported_packages.iter().cloned());
                 // Packages that rely on DESCRIPTION Depends may omit a
                 // NAMESPACE (Quarto/Shiny projects commonly do). Depends are
@@ -319,6 +325,26 @@ fn is_package_r_file(path: &Path) -> bool {
     path.components()
         .next()
         .is_some_and(|component| component.as_os_str() == "R")
+}
+
+/// Whether a path relative to a package root is testthat runner code: the
+/// `tests/testthat/` files testthat itself sources. testthat executes them in
+/// the environment returned by its `test_env(package)`, a clone of the
+/// package namespace whose parent chain includes the namespace's imports
+/// environment — so names supplied by NAMESPACE `import(pkg)` resolve there
+/// exactly as they do in `R/` sources. The classification mirrors
+/// [`is_test_fixture`]'s documented-contract prefixes: the same file set
+/// discovery treats as executable test code rather than data. Files at the
+/// `tests/` root are excluded: `R CMD check` runs those in the global
+/// environment after `library(package)`, where wholesale imports stay
+/// namespace-internal and invisible.
+fn is_testthat_runner_file(path: &Path) -> bool {
+    let components: Vec<&str> = path
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .collect();
+    matches!(components.as_slice(), ["tests", "testthat", file]
+        if is_r_source_name(file) && is_testthat_code_name(file))
 }
 
 /// Whether a path relative to a package root has the execution context used
@@ -1682,6 +1708,109 @@ mod shared_tests {
         ] {
             assert_eq!(is_test_fixture(&root.join(relative)), fixture, "{relative}");
         }
+    }
+
+    /// testthat sources `tests/testthat/` runner files into the namespace
+    /// clone, so `import(pkg)` names resolve there; the classification must
+    /// be exactly the executable-code half of [`is_test_fixture`]'s
+    /// three-segment arm. Everything else — `tests/` root scripts (run by
+    /// `R CMD check` in the global environment after `library(package)`),
+    /// fixture names, deeper paths, historical extensions — stays out.
+    #[test]
+    fn testthat_runner_files_are_exactly_the_executable_testthat_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
+        for relative in [
+            "tests/testthat/test-package.R",
+            "tests/testthat/test_package.r",
+            "tests/testthat/helper-values.R",
+            "tests/testthat/setup-db.R",
+            "tests/testthat/teardown.R",
+        ] {
+            assert!(is_testthat_runner_file(Path::new(relative)), "{relative}");
+            assert!(!is_test_fixture(&root.join(relative)), "{relative}");
+        }
+        for relative in [
+            "R/package.R",
+            "tests/testthat.R",
+            "tests/manual.R",
+            "tests/testthat/data.R",
+            "tests/testthat/testing.R",
+            "tests/testthat/test-legacy.S",
+            "tests/testthat/fixtures/input.R",
+            "tests/testthat/_snaps/output.R",
+            "vignettes/preprint.R",
+        ] {
+            assert!(!is_testthat_runner_file(Path::new(relative)), "{relative}");
+        }
+    }
+
+    /// End-to-end pin of the `import(pkg)` extension: a wholesale import's
+    /// package lands on the search path ry models for `R/` sources and for
+    /// testthat runner files, but not for `tests/` root scripts or fixture
+    /// files — those run where the imports environment is not on the
+    /// parent chain. The runner file's own `library()` attachments still
+    /// apply on top.
+    #[test]
+    fn wholesale_imports_reach_r_sources_and_testthat_runner_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
+        std::fs::write(root.join("NAMESPACE"), "import(rlang)\nexport(run)\n").unwrap();
+        for directory in ["R", "tests", "tests/testthat"] {
+            std::fs::create_dir_all(root.join(directory)).unwrap();
+        }
+        std::fs::write(root.join("R/run.R"), "").unwrap();
+        std::fs::write(root.join("tests/testthat.R"), "").unwrap();
+        std::fs::write(root.join("tests/testthat/test-run.R"), "").unwrap();
+        std::fs::write(root.join("tests/testthat/data.R"), "").unwrap();
+
+        let mut parser = ry_core::RParser::new().unwrap();
+        let files: Vec<SourceFile> = [
+            "R/run.R",
+            "tests/testthat.R",
+            "tests/testthat/test-run.R",
+            "tests/testthat/data.R",
+        ]
+        .iter()
+        .map(|relative| {
+            let path = root.join(relative);
+            let source = std::fs::read_to_string(&path).unwrap();
+            let path = path.to_string_lossy().to_string();
+            parser.parse(&path, &source).unwrap()
+        })
+        .collect();
+        let environment = ResolutionEnvironment {
+            files: files.iter().collect(),
+            user_stubs: &std::collections::BTreeMap::new(),
+        };
+        let context =
+            resolve_workspace_context(root, &ry_config::Config::default(), environment).unwrap();
+
+        let attached_for = |relative: &str| {
+            let path = root.join(relative);
+            context
+                .bare_bindings
+                .get(&path.to_string_lossy().to_string())
+                .unwrap_or_else(|| panic!("no bindings recorded for {relative}"))
+        };
+        assert!(
+            attached_for("R/run.R").contains("rlang"),
+            "R/ sources see import(rlang) names"
+        );
+        assert!(
+            attached_for("tests/testthat/test-run.R").contains("rlang"),
+            "testthat runner files execute in the namespace clone"
+        );
+        assert!(
+            !attached_for("tests/testthat.R").contains("rlang"),
+            "tests/ root scripts run in the global environment after library()"
+        );
+        assert!(
+            !attached_for("tests/testthat/data.R").contains("rlang"),
+            "fixture files are not sourced into the namespace clone"
+        );
     }
 
     #[test]

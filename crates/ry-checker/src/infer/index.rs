@@ -498,40 +498,6 @@ pub(crate) fn span_of(e: &Expr) -> Span {
     }
 }
 
-/// Whether a condition expression is the idiomatic numeric-truthiness
-/// non-empty check: a direct call to `length`, `nrow`, or `ncol` via a bare
-/// identifier callee (any args). These return an integer length-1, which R
-/// silently coerces to logical in `if`/`while` -- but `if (length(x))` /
-/// `if (nrow(df))` are so idiomatic in real R code that the RY003 coercion
-/// info is pure noise there. We suppress ONLY that numeric-truthiness arm
-/// for this shape; a genuinely wrong condition (e.g. `if (1L)`) still emits
-/// the informational diagnostic.
-///
-/// Negation (`if (!length(x))`) is deliberately out of scope: it is typed
-/// through the unary `!` operator, not this call shape.
-pub(crate) fn is_numeric_truthiness_idiom(cond: &Expr, scope: &Scope) -> bool {
-    if let Expr::Call { func, args, .. } = cond {
-        if let Expr::Ident { name, .. } = func.as_ref() {
-            if matches!(name.as_str(), "length" | "nrow" | "ncol" | "NROW" | "NCOL") {
-                return true;
-            }
-            if name == "sum" {
-                return args.first().is_some_and(|argument| match &argument.value {
-                    Expr::Ident { name, .. } => scope
-                        .get(name)
-                        .is_some_and(|ty| matches!(ty.mode, Mode::Logical)),
-                    Expr::BinOp { op, .. } => is_comparison(*op) || matches!(op, BinOpKind::In),
-                    Expr::Call { func, .. } => {
-                        ident_name(func).is_some_and(|predicate| predicate.starts_with("is."))
-                    }
-                    _ => false,
-                });
-            }
-        }
-    }
-    false
-}
-
 /// RY040's missing-list-field case is intentionally limited to a complete
 /// schema built by a local `list(...)` expression.  Imported data-frame
 /// schemas and transformed/narrowed values can look equally complete, but
@@ -592,13 +558,21 @@ pub(crate) fn extract_literal_int(e: &Expr) -> Option<i64> {
 /// intercepts before signature resolution and shadows the stub. Add a
 /// name here only when no stub declares its evaluation mode. The guard
 /// test `nse_symbol_fallback_does_not_overlap_stub_eval_modes` fails
-/// when a member gains stub coverage, so the two halves cannot drift
-/// into silent overlap.
+/// both when a member gains a stub `eval` entry AND when a member ships
+/// a stub without `eval` fields — an absent `eval` block is the stub's
+/// declaration of ordinary eager evaluation, not a blank to fill from
+/// this list.
+///
+/// A member must actually be NSE. rlang's `sym`, `abort`, `inform`,
+/// `new_formula`, and `new_quosure` were removed for evaluating their
+/// arguments eagerly (verified in R: `rlang::sym(undefined_name)` errors
+/// with "object not found"), so suppressing RY010 inside them hid real
+/// undefined-name bugs.
 ///
 /// Stub coverage is genuinely absent for every member (issue #41):
-///   * base: `quote`, `substitute`, `bquote`, and `delayedAssign` have
-///     stubs without `eval` fields; `makeActiveBinding` has no stub.
-///   * rlang: the kept names have stubs without `eval` fields.
+///   * base: `makeActiveBinding` has no stub.
+///   * rlang: `defuse` and `tidyeval_data` are unexported and ship no
+///     stub.
 ///   * ggplot2 and data.table ship no stubs.
 ///   * tidyselect's stub does not declare `peek_vars`. `all_vars` is
 ///     not here: dplyr — the package it is called through — declares
@@ -611,23 +585,11 @@ pub(crate) const NSE_SYMBOL_FNS: &[&str] = &[
     "aes_string",
     "aes_q",
     // rlang NSE
-    "sym",
-    "expr",
-    "exprs",
-    "quo",
-    "abort",
-    "inform",
     "defuse",
     "tidyeval_data",
-    "new_formula",
-    "new_quosure",
     // tidyselect package functions
     "peek_vars",
     // base NSE helpers
-    "quote",
-    "substitute",
-    "bquote",
-    "delayedAssign",
     "makeActiveBinding",
     // data.table NSE
     "setkey",

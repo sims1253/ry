@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "rlang",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "datasets": {
     "na_chr": {
       "mode": "character",
@@ -2156,6 +2156,9 @@
           "required": true
         }
       ],
+      "eval": {
+        "expr": "quoted_expression"
+      },
       "return": {
         "mode": "opaque",
         "length": "unknown",
@@ -2253,6 +2256,9 @@
         ".ignore_empty",
         ".unquote_names"
       ],
+      "eval": {
+        "...": "captures_promise"
+      },
       "return": {
         "mode": "opaque",
         "length": "unknown",
@@ -5137,9 +5143,12 @@
       "params": [
         {
           "name": "expr",
-          "required": true
+          "required": false
         }
       ],
+      "eval": {
+        "expr": "quoted_expression"
+      },
       "return": {
         "mode": "opaque",
         "length": "unknown",

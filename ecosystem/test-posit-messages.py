@@ -103,6 +103,48 @@ class PositMessagesGateTest(unittest.TestCase):
             self.assertNotIn(obsolete_demo, updated["findings"])
             self.assertIn(unselected, updated["findings"])
 
+    def test_duplicate_identity_records_every_message(self):
+        root = Path(__file__).resolve().parents[1]
+        script = root / "ecosystem/posit_messages.py"
+        with tempfile.TemporaryDirectory() as directory:
+            temp = Path(directory)
+            ledger = temp / "ledger.json"
+            messages = temp / "messages.json"
+            report = temp / "posit.demo.root.json"
+            row = {"package": "demo", "code": "RY091", "path": "R/x.R",
+                   "line": 5, "column": 3}
+            ledger.write_text(json.dumps({"findings": [row, dict(row)]}))
+            report.write_text(json.dumps([
+                {"path": "/cache/demo/R/x.R", "code": "RY091", "line": 5,
+                 "column": 3, "severity": "warning",
+                 "message": "missing required argument `yes`"},
+                {"path": "/cache/demo/R/x.R", "code": "RY091", "line": 5,
+                 "column": 3, "severity": "warning",
+                 "message": "missing required argument `no`"},
+            ]))
+            base = [
+                str(script), "update", "--ledger", str(ledger),
+                "--messages", str(messages), "--json-dir", str(temp),
+                "--report-prefix", "posit.", "demo",
+            ]
+            subprocess.run(base, check=True, capture_output=True, text=True)
+            document = json.loads(messages.read_text())
+            entry = next(iter(document["findings"].values()))
+            self.assertEqual(
+                entry["messages"],
+                ["missing required argument `no`",
+                 "missing required argument `yes`"],
+            )
+
+            entry["messages"][0] = "missing required argument `no` (edited)"
+            messages.write_text(json.dumps(document, indent=2) + "\n")
+            result = subprocess.run(
+                [base[0], "check", *base[2:]],
+                check=False, capture_output=True, text=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("missing required argument `no` (edited)", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -91,14 +91,27 @@ pub(crate) fn condition_diagnostic(t: &RType) -> Option<ConditionDiagnostic> {
     }
 }
 
+/// Whether every possible mode of the value is a list — a plain list or a
+/// union whose members are all lists (the join of two differently-shaped
+/// list branches).
+fn every_mode_is_list(ty: &RType) -> bool {
+    match ty.mode {
+        Mode::List => true,
+        Mode::Union => ty
+            .members
+            .as_ref()
+            .is_some_and(|members| members.iter().all(every_mode_is_list)),
+        _ => false,
+    }
+}
+
+/// Whether the expression reads a binding already marked with list
+/// origin. Call values are not covered here: the caller checks the
+/// value's inferred `Mode::List` — broader than the stubs' `mode: list`
+/// declarations, since a user-defined list-returning function marks
+/// its binding too.
 fn expression_has_list_origin(expression: &Expr, scope: &Scope) -> bool {
     match expression {
-        Expr::Call { func, .. } => ident_name(func).is_some_and(|name| {
-            matches!(
-                crate::semantic_lists::bare_name(name),
-                "list" | "lapply" | "Map"
-            )
-        }),
         Expr::Index {
             base,
             kind: IndexKind::Single,
@@ -166,8 +179,13 @@ impl Checker {
         }
         match s {
             Stmt::Assign { target, value, .. } => {
-                let value_has_list_origin = expression_has_list_origin(value, scope);
+                let scope_marked_origin = expression_has_list_origin(value, scope);
                 let vt = self.infer(value, scope);
+                // The value keeps list origin whenever its inferred mode
+                // is `List` — broader than the stubs' `mode: list`
+                // declarations, since a user-defined list-returning
+                // function marks its binding too.
+                let value_has_list_origin = scope_marked_origin || every_mode_is_list(&vt);
                 let function_alias = self.function_alias_target(value, scope);
                 if self.try_assign_value(target, value, vt, scope)
                     && let Some(name) = binding_name(target)
@@ -297,8 +315,18 @@ impl Checker {
                 // occurs. Static analysis cannot prove the zero-iteration
                 // case, so opaque downstream behavior is preferable to
                 // claiming a field definitely does not exist.
+                //
+                // List-origin provenance copies the continuation's marker
+                // verbatim (same discipline as `merge_branch_bindings`): the
+                // inner scope inherited the parent's marker, an in-loop list
+                // rebinding re-marks it, and an in-loop non-list rebinding
+                // cleared it — the last write is the post-loop truth.
                 for (binding, ty) in inner.bindings {
-                    scope.insert(binding, ty);
+                    let had_list_origin = inner.list_origin_bindings.contains(&binding);
+                    scope.insert(binding.clone(), ty);
+                    if had_list_origin {
+                        scope.mark_list_origin(binding);
+                    }
                 }
             }
             Stmt::While { cond, body, .. } => {
@@ -310,10 +338,16 @@ impl Checker {
                     self.walk_stmt(s, &mut inner, returns.as_deref_mut());
                 }
                 // As with `for`, assignments made by `while` and `repeat`
-                // bodies remain visible in R's enclosing environment.
+                // bodies remain visible in R's enclosing environment; the
+                // continuation's list-origin markers carry over the same
+                // way.
                 let body_unreachable = inner.unreachable;
                 for (binding, ty) in inner.bindings {
-                    scope.insert(binding, ty);
+                    let had_list_origin = inner.list_origin_bindings.contains(&binding);
+                    scope.insert(binding.clone(), ty);
+                    if had_list_origin {
+                        scope.mark_list_origin(binding);
+                    }
                 }
                 // The parser represents `repeat` as `while (TRUE)`. If its
                 // body cannot continue, neither can the enclosing block.
@@ -416,6 +450,72 @@ impl Checker {
         self.emit_condition_diagnostics(cond, ct, scope, diagnostic_start, ctx);
     }
 
+    /// Whether a local binding replaces the named callee, so the stub's
+    /// declaration is not evidence about this call. A function alias is
+    /// provenance (`p <- is.na` keeps the base callee), not a replacement.
+    fn locally_shadows_stub(name: &str, scope: &Scope) -> bool {
+        !name.contains("::") && scope.get(name).is_some() && scope.function_alias(name).is_none()
+    }
+
+    /// Whether a condition expression is the idiomatic numeric-truthiness
+    /// non-empty check: a call whose resolved stub declares a scalar
+    /// integer count return that is never `NA` (`mode: integer,
+    /// length: 1, na: false` — `length`, `nrow`, `ncol`, `NROW`, `NCOL`,
+    /// and everything else the stubs record the same way, such as
+    /// `nobs`). R silently coerces the nonzero count to logical, but
+    /// these checks are so idiomatic that the RY003 coercion info is
+    /// pure noise there; a genuinely wrong condition (e.g. `if (1L)`)
+    /// still emits it.
+    ///
+    /// The explicit `na: false` matters: `Position` also returns a
+    /// scalar integer, but its no-match value is `nomatch`
+    /// (`NA_integer_`), so `if (Position(...))` is TRUE-or-error — R
+    /// raises "argument is not interpretable as logical" on the NA —
+    /// and can never be the non-empty idiom. A stub that omits `na` has
+    /// not claimed the value is NA-free, so it does not qualify either.
+    ///
+    /// `sum` declares a `double_or_int` return, so its count idiom
+    /// (`if (sum(x > 0))`) is recognized by argument shape instead: a
+    /// logical-typed name, a comparison, or an `is.*` predicate.
+    /// Negation (`if (!length(x))`) is out of scope: it is typed through
+    /// the unary `!` operator, not this call shape.
+    fn is_numeric_truthiness_idiom(&self, cond: &Expr, scope: &Scope) -> bool {
+        let Expr::Call { func, args, .. } = cond else {
+            return false;
+        };
+        let Expr::Ident { name, .. } = func.as_ref() else {
+            return false;
+        };
+        // A local binding of the same name replaces the callee, so the
+        // stub's declared return is not evidence about this call — and
+        // neither is `sum`'s argument-shape idiom for a local `sum`.
+        if Self::locally_shadows_stub(name, scope) {
+            return false;
+        }
+        if name == "sum" {
+            return args.first().is_some_and(|argument| match &argument.value {
+                Expr::Ident { name, .. } => scope
+                    .get(name)
+                    .is_some_and(|ty| matches!(ty.mode, Mode::Logical)),
+                Expr::BinOp { op, .. } => is_comparison(*op) || matches!(op, BinOpKind::In),
+                // A locally defined `is.*` callee is a different function;
+                // an aliased one still resolves to the base predicate.
+                Expr::Call { func, .. } => ident_name(func).is_some_and(|callee| {
+                    let resolved = scope.function_alias(callee).unwrap_or(callee);
+                    resolved.starts_with("is.") && !Self::locally_shadows_stub(resolved, scope)
+                }),
+                _ => false,
+            });
+        }
+        self.resolve_typeshed_sig(name).is_some_and(|signature| {
+            matches!(
+                &signature.return_,
+                ReturnSpec::Concrete(rt)
+                    if rt.mode == "integer" && rt.length == "1" && rt.na == Some(false)
+            )
+        })
+    }
+
     /// Emit RY001/RY003/RY002 for a condition already inferred as `ct`.
     ///
     /// `diagnostic_start` is the `diagnostics` length captured before that
@@ -449,7 +549,7 @@ impl Checker {
             );
         } else if matches!(condition, Some(ConditionDiagnostic::Numeric))
             && !has_ry100
-            && !is_numeric_truthiness_idiom(cond, scope)
+            && !self.is_numeric_truthiness_idiom(cond, scope)
         {
             self.emit(
                 Severity::Info,
@@ -538,6 +638,15 @@ impl Checker {
     /// "Newly bound" means present in the branch scope but absent from the
     /// parent (or bound to a different type): names that already existed in
     /// the parent with the same type are left untouched.
+    ///
+    /// List-origin provenance merges with the same path discipline as the
+    /// type. `insert` clears the marker, so every merged rebinding must
+    /// re-establish it explicitly: a branch that rebinds the name contributes
+    /// its own marker, a branch (or an implicit no-`else`) that leaves the
+    /// name unbound cannot supply a non-list value at any later use, and a
+    /// branch that keeps the parent binding requires the parent's marker. A
+    /// single non-list rebinding therefore clears the merged marker, exactly
+    /// as a single non-list type widens the merged type.
     pub(crate) fn merge_branch_bindings(
         &self,
         scope: &mut Scope,
@@ -558,7 +667,14 @@ impl Checker {
                     continue;
                 }
                 if scope.get(name) != Some(ty) {
+                    // The continuation is the only route forward, so its
+                    // provenance is a fact in the parent (same capture-
+                    // insert-remark shape as `assign_replacement_target`).
+                    let had_list_origin = continuation.has_list_origin(name);
                     scope.insert(name.clone(), ty.clone());
+                    if had_list_origin {
+                        scope.mark_list_origin(name.clone());
+                    }
                 }
             }
             return;
@@ -632,7 +748,21 @@ impl Checker {
                 Some(p) => p.clone().join(merged),
                 None => merged,
             };
-            scope.insert(name, merged);
+            // A branch scope that does not bind the name (an implicit
+            // no-`else`, or an arm that never assigns it) cannot supply a
+            // non-list value at any later use — reading the name on that
+            // path errors first — so absence is vacuous agreement. A branch
+            // that keeps the parent binding (inherited into the clone)
+            // demands the parent's marker instead.
+            let then_origin =
+                !then_scope.bindings.contains_key(&name) || then_scope.has_list_origin(&name);
+            let else_origin =
+                !else_scope.bindings.contains_key(&name) || else_scope.has_list_origin(&name);
+            let keeps_list_origin = then_origin && else_origin;
+            scope.insert(&name, merged);
+            if keeps_list_origin {
+                scope.mark_list_origin(&name);
+            }
         }
     }
 
@@ -1356,6 +1486,18 @@ impl Checker {
                     }
                 }
                 None => {
+                    // A defused/data-mask scope resolves its names against
+                    // an environment ry cannot enumerate (a data mask, or
+                    // the closure a quoting helper splices the block
+                    // into — withr's `wrap()` even re-derives its formals
+                    // via `formals(fun) <- formals(f)`). The lexical arm
+                    // above already treats that as shadowing; the same
+                    // reasoning demotes the search-path function-value
+                    // rungs below, so a bare `append` inside a defused
+                    // block types as unknown instead of borrowing
+                    // `base::append`'s function type.
+                    let under_unknown_data_mask = scope.data_mask_unknown
+                        && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some();
                     // Typed package values take precedence over existence-only
                     // import bindings so constants retain their declared type.
                     if let Some(value_type) = self.resolve_typeshed_value(name) {
@@ -1380,23 +1522,30 @@ impl Checker {
                     // rather than flagging it as unbound. The higher-
                     // order call handlers resolve the signature when
                     // the callback is invoked.
-                    if self.typeshed.functions.contains_key(name) {
+                    //
+                    // Skipped under an unknown data mask: the mask may
+                    // shadow the search path, so the name is unknown
+                    // there rather than a base function value.
+                    if !under_unknown_data_mask && self.typeshed.functions.contains_key(name) {
                         return RType::scalar(Mode::Function);
                     }
                     // A function from a loaded package (e.g. purrr's
                     // `map` used as a value) resolves to a function too.
-                    if self.bare_loaded.iter().any(|pkg| {
-                        self.package_is_known(pkg)
-                            && self
-                                .package_typeshed(pkg)
-                                .map(|t| t.functions.contains_key(name))
-                                .unwrap_or(false)
-                    }) {
+                    // Equally shadowable by an unknown mask.
+                    if !under_unknown_data_mask
+                        && self.bare_loaded.iter().any(|pkg| {
+                            self.package_is_known(pkg)
+                                && self
+                                    .package_typeshed(pkg)
+                                    .map(|t| t.functions.contains_key(name))
+                                    .unwrap_or(false)
+                        })
+                    {
                         return RType::scalar(Mode::Function);
                     }
                     // User-defined function in the FnTable used as a
                     // value? Same treatment.
-                    if self.fn_table.fns.contains_key(name) {
+                    if !under_unknown_data_mask && self.fn_table.fns.contains_key(name) {
                         return RType::scalar(Mode::Function);
                     }
                     // Cross-file variable defined in another file of
@@ -1411,12 +1560,13 @@ impl Checker {
                     if self.known_vars.contains(name) {
                         return RType::unknown();
                     }
-                    if self
-                        .typeshed
-                        .globals
-                        .ambient_functions
-                        .iter()
-                        .any(|function| function == name)
+                    if !under_unknown_data_mask
+                        && self
+                            .typeshed
+                            .globals
+                            .ambient_functions
+                            .iter()
+                            .any(|function| function == name)
                     {
                         // Value-position uses of ambient functions are
                         // overwhelmingly legitimate higher-order idioms

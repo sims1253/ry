@@ -75,6 +75,96 @@ fn detects_unbound_var() {
     assert!(diags.iter().any(|d| d.code == "RY010"));
 }
 
+// The numeric-truthiness idiom credits the stub's declared integer-1
+// return; a local binding of the same name replaces the callee, so its
+// — still integer-1 — return is no longer the counted idiom and the
+// coercion nudge fires again.
+#[test]
+fn shadowed_length_keeps_the_coercion_nudge() {
+    let shadowed = check("length <- function(x) 1L\nif (length(c(1, 2))) 1\n");
+    assert!(
+        shadowed.iter().any(|d| d.code == "RY003"),
+        "a shadowed length() must not inherit the stub idiom: {shadowed:?}"
+    );
+    let unshadowed = check("if (length(c(1, 2))) 1\n");
+    assert!(
+        unshadowed.iter().all(|d| d.code != "RY003"),
+        "the stub idiom suppression must stand: {unshadowed:?}"
+    );
+}
+
+// The sum arm recognizes `is.*` predicates by name; a locally defined
+// `is.*` callee is a different function, while an alias keeps pointing
+// at the base predicate.
+#[test]
+fn shadowed_is_predicate_keeps_the_coercion_nudge() {
+    let shadowed = check("is.value <- function(x) 1L\nif (sum(is.value(x))) 1\n");
+    assert!(
+        shadowed.iter().any(|d| d.code == "RY003"),
+        "a shadowed is.* predicate must not feed the sum idiom: {shadowed:?}"
+    );
+    let aliased = check("predicate <- is.na\nx <- c(1, NA)\nif (sum(predicate(x))) 1\n");
+    assert!(
+        aliased.iter().all(|d| d.code != "RY003"),
+        "an aliased base predicate keeps the sum idiom: {aliased:?}"
+    );
+    let plain = check("x <- c(1, NA)\nif (sum(is.na(x))) 1\n");
+    assert!(
+        plain.iter().all(|d| d.code != "RY003"),
+        "the base predicate idiom must stand: {plain:?}"
+    );
+}
+
+// The sum arm matches argument shape rather than a stub return, so it
+// must pass the same shadow gate as the stub-backed arms: a locally
+// defined `sum` is a different function even when its argument is the
+// `is.*` count shape.
+#[test]
+fn shadowed_sum_keeps_the_coercion_nudge() {
+    let shadowed = check("sum <- function(x) 1L\nx <- c(1, NA)\nif (sum(is.na(x))) 1\n");
+    assert!(
+        shadowed.iter().any(|d| d.code == "RY003"),
+        "a shadowed sum() must not inherit the argument-shape idiom: {shadowed:?}"
+    );
+    let base = check("x <- c(1, NA)\nif (sum(is.na(x))) 1\n");
+    assert!(
+        base.iter().all(|d| d.code != "RY003"),
+        "the base sum() idiom suppression must stand: {base:?}"
+    );
+}
+
+// The numeric-truthiness idiom requires the stub's explicit never-NA
+// claim. `Position` also declares an integer length-1 return, but its
+// no-match value is `nomatch` (`NA_integer_`), so `if (Position(...))`
+// is TRUE-or-error in R — verified: `if (Position(is.na, c(1,2,3)))`
+// raises "argument is not interpretable as logical". Its stub omits
+// `na: false`, which is not a non-NA guarantee, so the coercion nudge
+// fires while every stub that does declare `na: false` keeps the
+// suppression.
+#[test]
+fn na_capable_integer_count_keeps_the_coercion_nudge() {
+    let position = check("x <- c(1, 2, 3)\nif (Position(is.na, x)) 1\n");
+    assert!(
+        position.iter().any(|d| d.code == "RY003"),
+        "Position's NA-capable return must not feed the non-empty idiom: {position:?}"
+    );
+    for suppressed in [
+        "x <- c(1, 2, 3)\nif (length(x)) 1\n",
+        "d <- data.frame(a = 1)\nif (nrow(d)) 1\n",
+        "d <- data.frame(a = 1)\nif (ncol(d)) 1\n",
+        "l <- list(1)\nif (NROW(l)) 1\n",
+        "l <- list(1)\nif (NCOL(l)) 1\n",
+        "fit <- NULL\nif (nobs(fit)) 1\n",
+        "library(vctrs)\nx <- c(1, 2, 3)\nif (vec_size(x)) 1\n",
+    ] {
+        let diags = check(suppressed);
+        assert!(
+            diags.iter().all(|d| d.code != "RY003"),
+            "a never-NA integer count keeps the idiom suppression: {suppressed} -> {diags:?}"
+        );
+    }
+}
+
 #[test]
 fn loop_carried_bindings_are_available_at_the_start_of_each_iteration() {
     for src in [

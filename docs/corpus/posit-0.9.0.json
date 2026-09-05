@@ -535,15 +535,6 @@
     },
     {
       "package": "broom",
-      "code": "RY030",
-      "path": "tests/testthat/test-survival-survfit.R",
-      "line": 18,
-      "column": 13,
-      "label": "false_positive",
-      "audit_group": "data-masking-nse"
-    },
-    {
-      "package": "broom",
       "code": "RY032",
       "path": "R/utilities.R",
       "line": 459,
@@ -1456,15 +1447,6 @@
       "code": "RY090",
       "path": "tests/testthat/test-verb-set-ops.R",
       "line": 114,
-      "column": 30,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "dbplyr",
-      "code": "RY092",
-      "path": "tests/testthat/test-verb-summarise.R",
-      "line": 258,
       "column": 30,
       "label": "false_positive",
       "audit_group": "type-narrowing"
@@ -3532,195 +3514,6 @@
     },
     {
       "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-fmt.R",
-      "line": 146,
-      "column": 17,
-      "label": "false_positive",
-      "audit_group": "data-masking-nse"
-    },
-    {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-fmt.R",
-      "line": 169,
-      "column": 17,
-      "label": "false_positive",
-      "audit_group": "data-masking-nse"
-    },
-    {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-fmt.R",
-      "line": 193,
-      "column": 17,
-      "label": "false_positive",
-      "audit_group": "data-masking-nse"
-    },
-    {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-fmt.R",
-      "line": 218,
-      "column": 17,
-      "label": "false_positive",
-      "audit_group": "data-masking-nse"
-    },
-    {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-fmt_auto.R",
-      "line": 21,
-      "column": 19,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-fmt_auto.R",
-      "line": 21,
-      "column": 41,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-l_fmt.R",
-      "line": 143,
-      "column": 17,
-      "label": "false_positive",
-      "audit_group": "data-masking-nse"
-    },
-    {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-l_fmt.R",
-      "line": 166,
-      "column": 17,
-      "label": "false_positive",
-      "audit_group": "data-masking-nse"
-    },
-    {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-l_fmt.R",
-      "line": 190,
-      "column": 17,
-      "label": "false_positive",
-      "audit_group": "data-masking-nse"
-    },
-    {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-l_fmt.R",
-      "line": 219,
-      "column": 17,
-      "label": "false_positive",
-      "audit_group": "data-masking-nse"
-    },
-    {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-resolver.R",
-      "line": 161,
-      "column": 35,
-      "label": "false_positive",
-      "audit_group": "data-masking-nse"
-    },
-    {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-summary_rows.R",
-      "line": 6,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-summary_rows.R",
-      "line": 7,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-summary_rows.R",
-      "line": 818,
-      "column": 19,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-summary_rows.R",
-      "line": 818,
-      "column": 41,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-summary_rows.R",
-      "line": 1610,
-      "column": 19,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-summary_rows.R",
-      "line": 1610,
-      "column": 41,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-tab_footnote.R",
-      "line": 660,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-tab_footnote.R",
-      "line": 661,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-tab_style_body.R",
-      "line": 6,
-      "column": 19,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY030",
-      "path": "tests/testthat/test-tab_style_body.R",
-      "line": 6,
-      "column": 41,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
       "code": "RY032",
       "path": "R/opts.R",
       "line": 117,
@@ -4474,24 +4267,6 @@
       "column": 14,
       "label": "true_positive",
       "audit_group": "manual-audit"
-    },
-    {
-      "package": "parsnip",
-      "code": "RY030",
-      "path": "tests/testthat/test-predict_formats.R",
-      "line": 173,
-      "column": 58,
-      "label": "false_positive",
-      "audit_group": "data-masking-nse"
-    },
-    {
-      "package": "parsnip",
-      "code": "RY030",
-      "path": "tests/testthat/test-predict_formats.R",
-      "line": 181,
-      "column": 52,
-      "label": "false_positive",
-      "audit_group": "data-masking-nse"
     },
     {
       "package": "pkgdown",
@@ -6994,16 +6769,70 @@
       "column": 20,
       "label": "false_positive",
       "audit_group": "type-narrowing"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY091",
+      "path": "tests/testthat/test-backend-.R",
+      "line": 110,
+      "column": 36,
+      "label": "true_positive",
+      "audit_group": "test-fixture"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY091",
+      "path": "tests/testthat/test-backend-.R",
+      "line": 110,
+      "column": 36,
+      "label": "true_positive",
+      "audit_group": "test-fixture"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY091",
+      "path": "tests/testthat/test-backend-.R",
+      "line": 111,
+      "column": 36,
+      "label": "true_positive",
+      "audit_group": "test-fixture"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY091",
+      "path": "tests/testthat/test-translate-sql-string.R",
+      "line": 13,
+      "column": 36,
+      "label": "true_positive",
+      "audit_group": "test-fixture"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY091",
+      "path": "tests/testthat/test-translate-sql-string.R",
+      "line": 13,
+      "column": 36,
+      "label": "true_positive",
+      "audit_group": "test-fixture"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY091",
+      "path": "tests/testthat/test-translate-sql-string.R",
+      "line": 14,
+      "column": 36,
+      "label": "true_positive",
+      "audit_group": "test-fixture"
     }
   ],
   "classification": {
-    "true_positive": 37,
-    "false_positive": 691,
+    "true_positive": 43,
+    "false_positive": 666,
     "uncertain": 0
   },
   "audit_group_counts": {
-    "manual-audit": 390,
-    "data-masking-nse": 16,
+    "manual-audit": 378,
+    "data-masking-nse": 4,
     "delayed-assign": 15,
     "function-shadowing": 3,
     "local-closure-forward-ref": 31,
@@ -7011,8 +6840,8 @@
     "numeric-if-idiom": 3,
     "reassign-scope": 10,
     "s3-method-dispatch": 7,
-    "test-fixture": 70,
-    "type-narrowing": 106,
+    "test-fixture": 76,
+    "type-narrowing": 105,
     "upstream-package": 31
   },
   "notes": [

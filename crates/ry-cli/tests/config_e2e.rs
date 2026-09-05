@@ -709,7 +709,7 @@ fn package_namespace_bindings_do_not_leak_across_checked_roots() {
 }
 
 #[test]
-fn package_test_context_promotes_suggests_but_not_imports() {
+fn package_test_context_supplies_suggests_and_namespace_imports() {
     let tmp = tempfile::tempdir().unwrap();
     fs::create_dir_all(tmp.path().join("R")).unwrap();
     fs::create_dir_all(tmp.path().join("tests/testthat")).unwrap();
@@ -725,6 +725,10 @@ fn package_test_context_promotes_suggests_but_not_imports() {
         "daemons\nenquo\n",
     )
     .unwrap();
+    // R CMD check executes `tests/` root scripts in the global environment
+    // after `library(package)`: the namespace's wholesale imports stay
+    // internal there, so the same bare name is genuinely unbound.
+    fs::write(tmp.path().join("tests/spellcheck.R"), "enquo\n").unwrap();
 
     let output = ry_check(tmp.path());
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -733,8 +737,12 @@ fn package_test_context_promotes_suggests_but_not_imports() {
         "stubbed Suggests must supply their names in tests: {stdout}"
     );
     assert!(
-        stdout.matches("variable `enquo` is not bound").count() == 1,
-        "NAMESPACE import() must supply bare names only to R/: {stdout}"
+        !stdout.contains("test-context.R:1") && !stdout.contains("test-context.R:2"),
+        "testthat runs tests/ in a clone of the package namespace, so import(rlang) must supply bare names there too: {stdout}"
+    );
+    assert!(
+        stdout.contains("variable `enquo` is not bound") && stdout.contains("spellcheck.R"),
+        "a tests/ root script runs outside the namespace: enquo must stay unbound there: {stdout}"
     );
 }
 

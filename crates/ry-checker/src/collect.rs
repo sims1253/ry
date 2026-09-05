@@ -6,10 +6,6 @@ use std::ops::ControlFlow;
 
 impl Checker {
     pub(crate) fn collect_fns(&mut self, stmts: &[Stmt]) {
-        // Collection rewrites `fn_table.fns`, which the cached defuser set is
-        // derived from; the quoting propagators and signature seeding clear it
-        // after collection. Starting a collection round drops it.
-        self.trusted_defusers = None;
         // Statement-level walk on the shared core: a binding statement can
         // appear at the top level, in `if` branches, and in `for`/`while`
         // bodies, so those are the only statements whose children this
@@ -561,8 +557,10 @@ fn signature_captures_promises(signature: &FunctionSig, dots: bool) -> bool {
 }
 
 /// One-time global index over the embedded base and package stubs:
-/// function name -> (named-parameter capture, `...` capture). Built
-/// lazily on first use; `is_promise_capture` consults it for
+/// function name -> (named-parameter capture, `...` capture), the two
+/// flags `is_promise_capture(function, dots)` selects between — whether
+/// the stub declares `captures_promise` on a named formal, on `...`, or
+/// both. Built lazily on first use; `is_promise_capture` consults it for
 /// unqualified names instead of re-scanning every package's function
 /// table on every call-site check.
 fn promise_capture_index() -> &'static std::collections::HashMap<String, (bool, bool)> {

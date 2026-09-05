@@ -22,3 +22,6 @@
 /comms.md
 /plan-forward-report.html
 /time
+
+# Python bytecode from the ecosystem harness
+__pycache__/

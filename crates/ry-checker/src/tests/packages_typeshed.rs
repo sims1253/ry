@@ -120,6 +120,24 @@ fn typeshed_required_arguments_are_still_checked() {
     );
 }
 
+// Table-driven over stub formals R treats as missing()-optional: each
+// zero-arg call runs without error in R (verified in r-typeshed's
+// audit_function_semantics.R), so the stub must not mark them required —
+// unlike Filter(), whose required f genuinely errors.
+#[test]
+fn missing_optional_stub_formals_accept_zero_arg_calls() {
+    for src in [
+        "f <- function(lazy) {\n  if (missing(lazy)) return(quo())\n  lazy\n}\n",
+        "g <- function(lazy) {\n  if (missing(lazy)) return(rlang::quo())\n  lazy\n}\n",
+    ] {
+        let diags = check(src);
+        assert!(
+            diags.iter().all(|diagnostic| diagnostic.code != "RY091"),
+            "quo() defuses a missing argument into an empty quosure: {diags:?}"
+        );
+    }
+}
+
 #[test]
 fn classed_and_null_generic_arguments_do_not_report_type_mismatches() {
     let diags =
@@ -391,12 +409,32 @@ fn nse_symbol_fallback_does_not_overlap_stub_eval_modes() {
     // `data_mask_exemptions` with a reason. The list is a local test
     // fixture, not checker knowledge, so it stays out of the semantic
     // list registry.
+    //
+    // The check is bidirectional on stub existence: a member whose stub
+    // ships WITHOUT `eval` fields is equally wrong, because per
+    // SCHEMA.md an absent `eval` block declares ordinary eager
+    // evaluation. rlang's `sym`/`abort`/`inform`/`new_formula`/
+    // `new_quosure` lived here that way — their stubs exist eval-less,
+    // R evaluates their arguments eagerly (`rlang::sym(undefined_name)`
+    // errors with "object not found"), and the fallback wrongly
+    // suppressed RY010 inside them.
+    //
+    // Residual gap, deliberately accepted: this guard proves stub
+    // coverage, not call-site reachability. A bare-name call consults a
+    // stub only when the file's environment attaches or imports the
+    // package (see ry-workspace's `import(pkg)` handling and the
+    // testthat runner-file extension), so an unattached verb still
+    // falls back to this list's judgment at call sites that cannot see
+    // the stub.
     let data_mask_exemptions: &[&str] = &[
         // Empty today. dplyr's stub declares all_vars' `expr` as
-        // data_mask, so all_vars left the fallback list.
+        // data_mask, so all_vars left the fallback list. Add a name
+        // here only with a linked issue documenting why its data-mask
+        // mode must not own the call.
     ];
     use ry_typeshed::EvalMode;
     let mut stub_eval = std::collections::HashMap::new();
+    let mut stub_declares_eager = std::collections::HashSet::new();
     let mut add_typeshed = |typeshed: &ry_typeshed::Typeshed| {
         for (name, signature) in &typeshed.functions {
             for mode in signature.eval.values() {
@@ -404,6 +442,9 @@ fn nse_symbol_fallback_does_not_overlap_stub_eval_modes() {
                     stub_eval.insert(name.clone(), *mode);
                 }
             }
+            // A shipped stub with no non-Normal eval entry is an eager
+            // evaluation declaration for every parameter.
+            stub_declares_eager.insert(name.clone());
         }
     };
     if let Ok(base) = ry_typeshed::load_base_cached() {
@@ -427,4 +468,141 @@ fn nse_symbol_fallback_does_not_overlap_stub_eval_modes() {
         overlap.is_empty(),
         "is_nse_symbol_fn members already covered by stub eval metadata; delete them or add a documented exemption: {overlap:?}"
     );
+    let eager: Vec<&str> = crate::infer::NSE_SYMBOL_FNS
+        .iter()
+        .copied()
+        .filter(|name| stub_declares_eager.contains(*name) && !stub_eval.contains_key(*name))
+        .collect();
+    assert!(
+        eager.is_empty(),
+        "is_nse_symbol_fn members whose stubs declare ordinary eager evaluation (a shipped stub without NSE eval fields) must be deleted; R reads their arguments: {eager:?}"
+    );
+}
+
+#[test]
+fn rlang_eager_helpers_read_their_arguments() {
+    // rlang's sym/abort/inform/new_formula/new_quosure evaluate their
+    // arguments eagerly — verified in R, `rlang::sym(undefined_name)`
+    // and `rlang::abort(undefined_name)` both error with "object not
+    // found" — so an undefined name inside them is a real bug that
+    // RY010 must catch. They left `NSE_SYMBOL_FNS` (whose members treat
+    // every argument as a bare symbol); the same call with a literal
+    // argument stays silent because there is nothing to read.
+    for (note, src) in [
+        (
+            "attached abort",
+            "library(rlang)\nf <- function() abort(undefined_name)\n",
+        ),
+        (
+            "attached inform",
+            "library(rlang)\nf <- function() inform(undefined_name)\n",
+        ),
+        (
+            "attached sym",
+            "library(rlang)\nf <- function() sym(undefined_name)\n",
+        ),
+        (
+            "attached new_formula",
+            "library(rlang)\nf <- function() new_formula(undefined_name, 2)\n",
+        ),
+        (
+            "attached new_quosure",
+            "library(rlang)\nf <- function() new_quosure(undefined_name, env())\n",
+        ),
+        (
+            "qualified abort",
+            "f <- function() rlang::abort(undefined_name)\n",
+        ),
+        (
+            "qualified sym",
+            "f <- function() rlang::sym(undefined_name)\n",
+        ),
+    ] {
+        let diags = check(src);
+        assert!(
+            diags.iter().any(|d| d.code == "RY010"),
+            "{note}: the argument is read eagerly and must fire RY010: {diags:?}"
+        );
+    }
+    for (note, src) in [
+        (
+            "literal message",
+            "library(rlang)\nf <- function() abort(\"must be a string\")\n",
+        ),
+        ("string symbol", "library(rlang)\ns <- sym(\"name\")\n"),
+        (
+            "control paste still reads",
+            "f <- function() paste(undefined_name)\n",
+        ),
+    ] {
+        let diags = check(src);
+        let fires = src.contains("paste");
+        assert_eq!(
+            diags.iter().any(|d| d.code == "RY010"),
+            fires,
+            "{note}: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn delayed_assign_reads_only_its_evaluated_arguments() {
+    // The base stub declares only `value: captures_promise` for
+    // delayedAssign; the variable name and the environment arguments
+    // are ordinary evaluated arguments. The pre-stub fallback wrongly
+    // suppressed the whole call.
+    for (note, src, expected) in [
+        (
+            "captured value is silent",
+            "delayedAssign(\"x\", undefined_value)\n",
+            vec![],
+        ),
+        (
+            "name argument is read",
+            "delayedAssign(undefined_name, 1)\n",
+            vec!["undefined_name"],
+        ),
+        (
+            "arguments past the captured one are read",
+            "v <- 1\ndelayedAssign(\"x\", v, eval.env = undefined_env)\n",
+            vec!["undefined_env"],
+        ),
+    ] {
+        let diags = check(src);
+        let fired: Vec<&str> = diags
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "RY010")
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect();
+        assert_eq!(
+            fired.len(),
+            expected.len(),
+            "{note}: expected RY010 on {expected:?}, got {diags:?}"
+        );
+        for name in expected {
+            assert!(
+                fired.iter().any(|message| message.contains(name)),
+                "{note}: expected RY010 naming {name}, got {diags:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn qualified_deferring_calls_do_not_force_lazy_defaults() {
+    // RY098's walker treats every call except the explicitly qualified
+    // strict builtins as possibly deferring its arguments, so a
+    // self-referential default captured by one stays silent — including
+    // calls into packages beyond base/rlang whose stubs record the
+    // deferral (`join_by`). The strict builtins demonstrably force and
+    // keep firing.
+    for (note, body, expect_ry098) in [
+        ("dplyr join_by defers", "dplyr::join_by(x == y)", false),
+        ("base quote defers", "base::quote(x)", false),
+        ("strict builtin abort forces", "rlang::abort(x)", true),
+    ] {
+        let diags = check(&format!("f <- function(x = x) {body}\n"));
+        let fired = diags.iter().any(|diagnostic| diagnostic.code == "RY098");
+        assert_eq!(fired, expect_ry098, "{note}: {diags:?}");
+    }
 }

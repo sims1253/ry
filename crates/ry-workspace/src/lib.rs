@@ -722,42 +722,28 @@ fn serialized_inventory_uncached(path: &Path, cap: u64) -> SerializedInventory {
         degraded: false,
     };
 
-    let read_cap = cap.saturating_add(1);
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
         Err(_) => return empty(),
     };
-    let compression = if bytes.starts_with(b"BZh") {
-        Some(Compression::Bzip2)
-    } else if bytes.starts_with(&[0x1f, 0x8b]) {
-        Some(Compression::Gzip)
-    } else if bytes.starts_with(&[0xfd, b'7', b'z', b'X', b'Z', 0x00]) {
-        Some(Compression::Xz)
-    } else {
-        None
+    let decoded = {
+        let decoder: Option<Box<dyn std::io::Read + '_>> = if bytes.starts_with(b"BZh") {
+            Some(Box::new(bzip2::read::BzDecoder::new(bytes.as_slice())))
+        } else if bytes.starts_with(&[0x1f, 0x8b]) {
+            Some(Box::new(flate2::read::GzDecoder::new(bytes.as_slice())))
+        } else if bytes.starts_with(&[0xfd, b'7', b'z', b'X', b'Z', 0x00]) {
+            Some(Box::new(xz2::read::XzDecoder::new(bytes.as_slice())))
+        } else {
+            None
+        };
+        decoder.map(|decoder| decode_capped(decoder, cap))
     };
-    let bytes = match compression {
-        Some(format) => {
-            let decoder: Box<dyn std::io::Read> = match format {
-                Compression::Bzip2 => Box::new(bzip2::read::BzDecoder::new(bytes.as_slice())),
-                Compression::Gzip => Box::new(flate2::read::GzDecoder::new(bytes.as_slice())),
-                Compression::Xz => Box::new(xz2::read::XzDecoder::new(bytes.as_slice())),
-            };
-            match decode_capped(decoder, read_cap, cap) {
-                Decoded::Bytes(decoded) => decoded,
-                Decoded::OverCap => return degraded(path),
-                Decoded::Failed => return empty(),
-            }
-        }
-        None => {
-            // An uncompressed file already has a known size from `metadata.len()`
-            // checked in the cached wrapper. Short-circuit before parsing if it
-            // exceeds the cap — no need to read the whole payload.
-            if bytes.len() as u64 > cap {
-                return degraded(path);
-            }
-            bytes
-        }
+    let bytes = match decoded {
+        Some(Decoded::Bytes(decoded)) => decoded,
+        Some(Decoded::OverCap) => return degraded(path),
+        Some(Decoded::Failed) => return empty(),
+        None if bytes.len() as u64 > cap => return degraded(path),
+        None => bytes,
     };
     let payload = bytes
         .strip_prefix(b"RDX2\n")
@@ -779,14 +765,6 @@ fn serialized_inventory_uncached(path: &Path, cap: u64) -> SerializedInventory {
     }
 }
 
-/// Container format of a compressed serialization, detected by magic bytes.
-#[derive(Clone, Copy)]
-enum Compression {
-    Bzip2,
-    Gzip,
-    Xz,
-}
-
 /// Outcome of decoding a compressed serialization under the byte cap.
 enum Decoded {
     /// Payload decoded and fits within the cap.
@@ -798,11 +776,15 @@ enum Decoded {
 }
 
 /// Decode `decoder` fully, stopping once the payload provably exceeds
-/// `cap`. Reading at most `read_cap` (`cap + 1`) bytes distinguishes an
+/// `cap`. Reading at most `cap + 1` bytes distinguishes an
 /// exact-cap payload from a larger one without decoding all of it.
-fn decode_capped(decoder: impl std::io::Read, read_cap: u64, cap: u64) -> Decoded {
+fn decode_capped(decoder: impl std::io::Read, cap: u64) -> Decoded {
     let mut decoded = Vec::new();
-    if decoder.take(read_cap).read_to_end(&mut decoded).is_err() {
+    if decoder
+        .take(cap.saturating_add(1))
+        .read_to_end(&mut decoded)
+        .is_err()
+    {
         return Decoded::Failed;
     }
     if decoded.len() as u64 > cap {

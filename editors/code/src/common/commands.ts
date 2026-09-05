@@ -42,11 +42,10 @@ export async function debugInformationCommand(
 }
 
 export async function explainRuleCommand(binaryPath: string): Promise<void> {
-  // Show a quick-pick over all rules, then render the explanation.
-  // `ry explain rule <code> --output-format json` already exists.
   try {
-    const listOutput = cp.execSync(
-      `"${binaryPath}" explain rules --output-format json`,
+    const listOutput = cp.execFileSync(
+      binaryPath,
+      ["explain", "rule", "--output-format", "json"],
       {
         encoding: "utf-8",
         timeout: 5000,
@@ -55,27 +54,24 @@ export async function explainRuleCommand(binaryPath: string): Promise<void> {
     const rules = JSON.parse(listOutput) as Array<{
       code: string;
       name: string;
+      summary: string;
     }>;
     const items = rules.map((r) => ({
       label: r.code,
       description: r.name,
+      summary: r.summary,
     }));
     const picked = await vscode.window.showQuickPick(items, {
       placeHolder: "Select a rule to explain",
     });
     if (!picked) return;
 
-    const explainOutput = cp.execSync(
-      `"${binaryPath}" explain rule ${picked.label} --output-format json`,
-      { encoding: "utf-8", timeout: 5000 },
-    );
-    const explanation = JSON.parse(explainOutput);
-    const md = `# ${explanation.code}: ${explanation.name}\n\n${explanation.explanation ?? ""}`;
-    const doc = vscode.workspace.openTextDocument({
+    const md = `# ${picked.label}: ${picked.description}\n\n${picked.summary}`;
+    const doc = await vscode.workspace.openTextDocument({
       content: md,
       language: "markdown",
     });
-    doc.then((d) => vscode.window.showTextDocument(d, { preview: true }));
+    await vscode.window.showTextDocument(doc, { preview: true });
   } catch (e) {
     vscode.window.showErrorMessage(`Failed to explain rule: ${e}`);
   }

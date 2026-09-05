@@ -1047,13 +1047,8 @@ fn attach_opens_search_path_via_unknown_bindings_scope_effect() {
 
 #[test]
 fn parameter_default_preserves_lexical_and_list_origin_markers() {
-    // Pre-deduplication, `insert_parameter_default` removed only the
-    // function-alias and narrowed markers; `lexical_functions` and
-    // `list_origin_bindings` were left untouched. Delegating to
-    // `Scope::insert` must not silently drop those two: a defaulted
-    // parameter shadowing a captured-scope name keeps its markers
-    // through `build_function_signature`'s walk, which clones the
-    // captured scope and layers parameter defaults on top.
+    // A defaulted parameter shadows a captured name while preserving its
+    // lexical-function and list-origin markers.
     let mut scope = Scope::default();
     scope.insert("d", RType::new(Mode::List, Length::One));
     scope.insert_narrowed("d", RType::unknown());

@@ -54,6 +54,11 @@ message or severity drift. A full non-check run updates all entries.
 (`RY_NO_INSTALLED_LIBRARIES=1`) against a ledger. The ledger's `reconciliation`
 field selects how a delta is treated:
 
+> Reproducing reports outside `run.sh` requires the same variable: without
+> `RY_NO_INSTALLED_LIBRARIES=1` the checker consults the machine's installed R
+> packages and produces different findings, so a hand-run diff against the
+> committed reports will show phantom rows.
+
 - **`hermetic`** (default when absent; every committed ledger). The ledger *is*
   the hermetic CI baseline: any missing or unowned identity fails the build.
 - **`audit-transcript`** (no committed ledger uses it today; previously the

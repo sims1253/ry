@@ -59,14 +59,14 @@ export async function explainRuleCommand(binaryPath: string): Promise<void> {
     const items = rules.map((r) => ({
       label: r.code,
       description: r.name,
-      summary: r.summary,
+      detail: r.summary,
     }));
     const picked = await vscode.window.showQuickPick(items, {
       placeHolder: "Select a rule to explain",
     });
     if (!picked) return;
 
-    const md = `# ${picked.label}: ${picked.description}\n\n${picked.summary}`;
+    const md = `# ${picked.label}: ${picked.description}\n\n${picked.detail}`;
     const doc = await vscode.workspace.openTextDocument({
       content: md,
       language: "markdown",

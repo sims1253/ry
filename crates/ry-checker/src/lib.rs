@@ -316,7 +316,8 @@ impl Scope {
     }
 
     pub(crate) fn insert_narrowed(&mut self, name: impl Into<String>, t: RType) {
-        // Narrowing preserves parameter and list-origin provenance.
+        // Preserve parameter, default-parameter, and list-origin markers;
+        // clear function aliases and lexical-function markers, then mark narrowed.
         let name = name.into();
         self.function_aliases.remove(&name);
         self.lexical_functions.remove(&name);
@@ -331,9 +332,8 @@ impl Scope {
     }
 
     pub(crate) fn insert_parameter_default(&mut self, name: impl Into<String>, t: RType) {
-        // Unlike a plain rebinding, a defaulted parameter shadows its
-        // captured-scope namesake without disturbing the lexical-function
-        // and list-origin markers (`insert` would clear both).
+        // Preserve lexical-function and list-origin markers; clear function
+        // aliases and narrowing, then set both parameter markers.
         let name = name.into();
         self.function_aliases.remove(&name);
         self.narrowed_bindings.remove(&name);

@@ -34,26 +34,6 @@ struct GithubReleaseDetails {
     downloaded_binary_path: String,
 }
 
-/// Where `language_server_binary` obtains the `ry` binary from, in
-/// precedence order. Split out from the resolution flow so the precedence
-/// itself is unit-testable: the settings and PATH lookups are host calls
-/// (`LspSettings::for_worktree`, `Worktree::which`) that only answer
-/// inside a running Zed process.
-#[derive(Debug, PartialEq)]
-enum BinarySource {
-    /// Explicit `binary.path` from the user's language-server settings.
-    Settings(String),
-
-    /// `ry` found through the worktree's PATH lookup.
-    PathLookup(String),
-
-    /// A previously downloaded binary that is still on disk.
-    Cache(String),
-
-    /// No local candidate; download from the latest GitHub release.
-    Download,
-}
-
 impl RyExtension {
     fn language_server_binary(
         &mut self,
@@ -83,20 +63,15 @@ impl RyExtension {
             .as_deref()
             .filter(|path| Self::cached_binary_on_disk(path));
 
-        match Self::resolve_binary_source(
+        if let Some(path) = Self::resolve_binary_path(
             binary_settings.and_then(|binary_settings| binary_settings.path),
             worktree.which("ry"),
             cached_path,
         ) {
-            BinarySource::Settings(path)
-            | BinarySource::PathLookup(path)
-            | BinarySource::Cache(path) => {
-                return Ok(RyBinary {
-                    path,
-                    args: binary_args,
-                });
-            }
-            BinarySource::Download => {}
+            return Ok(RyBinary {
+                path,
+                args: binary_args,
+            });
         }
 
         // All local candidates failed; download the binary from the latest
@@ -230,25 +205,15 @@ impl GithubReleaseDetails {
 }
 
 impl RyExtension {
-    /// Resolve the binary source by precedence: the user-specified path,
-    /// then a PATH lookup, then a previous download, and only then a
-    /// fresh download. The caller offers the cached path as a candidate
-    /// only while the file is still on disk.
-    fn resolve_binary_source(
+    /// Prefer settings, then PATH, then an existing cached download.
+    fn resolve_binary_path(
         settings_path: Option<String>,
         path_lookup: Option<String>,
         cached_path: Option<&str>,
-    ) -> BinarySource {
-        if let Some(path) = settings_path {
-            return BinarySource::Settings(path);
-        }
-        if let Some(path) = path_lookup {
-            return BinarySource::PathLookup(path);
-        }
-        if let Some(path) = cached_path {
-            return BinarySource::Cache(path.to_string());
-        }
-        BinarySource::Download
+    ) -> Option<String> {
+        settings_path
+            .or(path_lookup)
+            .or_else(|| cached_path.map(str::to_owned))
     }
 
     /// Whether a cached download still exists as a regular file.
@@ -332,35 +297,31 @@ zed::register_extension!(RyExtension);
 
 #[cfg(test)]
 mod test {
-    use crate::{BinarySource, GithubReleaseDetails, RyExtension};
+    use crate::{GithubReleaseDetails, RyExtension};
 
-    /// Binary resolution precedence: the user-specified path, then a PATH
-    /// hit, then a previous download. Only when no candidate exists does
-    /// the extension fall back to a download.
     #[test]
-    fn binary_source_precedence() {
-        let cached = "ry-0.9.0/ry-cli-x86_64-unknown-linux-gnu/ry";
-
-        assert_eq!(
-            RyExtension::resolve_binary_source(
-                Some("/opt/ry".into()),
-                Some("/usr/bin/ry".into()),
-                Some(cached),
+    fn binary_path_precedence() {
+        for (settings, path, cache, expected) in [
+            (
+                Some("settings"),
+                Some("path"),
+                Some("cache"),
+                Some("settings"),
             ),
-            BinarySource::Settings("/opt/ry".into())
-        );
-        assert_eq!(
-            RyExtension::resolve_binary_source(None, Some("/usr/bin/ry".into()), Some(cached),),
-            BinarySource::PathLookup("/usr/bin/ry".into())
-        );
-        assert_eq!(
-            RyExtension::resolve_binary_source(None, None, Some(cached)),
-            BinarySource::Cache(cached.into())
-        );
-        assert_eq!(
-            RyExtension::resolve_binary_source(None, None, None),
-            BinarySource::Download
-        );
+            (None, Some("path"), Some("cache"), Some("path")),
+            (None, None, Some("cache"), Some("cache")),
+            (None, None, None, None),
+        ] {
+            assert_eq!(
+                RyExtension::resolve_binary_path(
+                    settings.map(str::to_owned),
+                    path.map(str::to_owned),
+                    cache
+                )
+                .as_deref(),
+                expected,
+            );
+        }
     }
 
     /// The cache candidate is offered only while the downloaded file is

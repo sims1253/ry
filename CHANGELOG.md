@@ -246,6 +246,9 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Fixed
 
+- Typeshed loading and validation now discover mixed-case nested filenames,
+  including `rcpp/Rcpp.json` and `s7/S7.json`.
+
 - **VS Code Explain Rule**: use the CLI's actual rule-list command and display
   its summary without a second subprocess. Binary paths are passed literally,
   and document-opening errors reach the command's error message.

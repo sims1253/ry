@@ -33,16 +33,6 @@ pub(crate) fn discover_config(
     }
 }
 
-/// One successfully parsed input file.
-pub(crate) struct ParsedFile {
-    /// Path exactly as diagnostics and dumps report it.
-    pub path: String,
-    /// File contents (UTF-8 or Latin-1 decoded).
-    pub src: String,
-    /// Parsed syntax tree.
-    pub file: ry_core::SourceFile,
-}
-
 /// Why one input file could not be parsed.
 #[derive(Debug)]
 pub(crate) enum ParseError {
@@ -93,9 +83,9 @@ pub(crate) enum FailureAction {
 pub(crate) fn parse_files(
     paths: &[PathBuf],
     on_failure: impl Fn(&Path, &ParseError) -> FailureAction + Sync,
-) -> Result<Vec<ParsedFile>, ParseFailure> {
+) -> Result<Vec<Arc<ry_core::SourceFile>>, ParseFailure> {
     use rayon::prelude::*;
-    let outcomes: Vec<(Result<ParsedFile, ParseFailure>, FailureAction)> = paths
+    let outcomes: Vec<_> = paths
         .par_iter()
         .map(|path| {
             let outcome = parse_one(path);
@@ -126,7 +116,7 @@ pub(crate) fn parse_files(
 
 /// Read and parse one file on the calling thread, using that thread's
 /// parser from the pool (see [`parse_files`]).
-fn parse_one(path: &Path) -> Result<ParsedFile, ParseFailure> {
+fn parse_one(path: &Path) -> Result<Arc<ry_core::SourceFile>, ParseFailure> {
     thread_local! {
         static PARSER: std::cell::RefCell<Option<ry_core::RParser>> =
             const { std::cell::RefCell::new(None) };
@@ -147,17 +137,10 @@ fn parse_one(path: &Path) -> Result<ParsedFile, ParseFailure> {
             .get_or_insert_with(|| ry_core::RParser::new().expect("parser init (thread-local)"));
         parser.parse(&path_str, &src)
     });
-    match file {
-        Ok(file) => Ok(ParsedFile {
-            path: path_str,
-            src,
-            file,
-        }),
-        Err(message) => Err(ParseFailure {
-            path: path.to_path_buf(),
-            error: ParseError::Parse(message.to_string()),
-        }),
-    }
+    file.map(Arc::new).map_err(|message| ParseFailure {
+        path: path.to_path_buf(),
+        error: ParseError::Parse(message.to_string()),
+    })
 }
 
 /// Read an R source file, accepting both UTF-8 and Latin-1 encodings.
@@ -227,7 +210,7 @@ pub(crate) struct ResolvedGroup {
 /// differently: check summarizes them in its summary line, dump-types
 /// prints one note per scope on stderr to keep stdout's JSON clean.
 pub(crate) fn resolve_groups(
-    parsed: &[ParsedFile],
+    parsed: &[Arc<ry_core::SourceFile>],
     cfg: &config::Config,
     user_stubs: &Arc<BTreeMap<String, ry_typeshed::Typeshed>>,
     fallback_roots: &[Option<&Path>],
@@ -250,7 +233,10 @@ pub(crate) fn resolve_groups(
             &resolution_root,
             cfg,
             ry_workspace::ResolutionEnvironment {
-                files: indices.iter().map(|index| &parsed[*index].file).collect(),
+                files: indices
+                    .iter()
+                    .map(|index| parsed[*index].as_ref())
+                    .collect(),
                 user_stubs,
             },
         )
@@ -259,7 +245,7 @@ pub(crate) fn resolve_groups(
             .iter()
             .map(|index| {
                 let parsed_file = &parsed[*index];
-                (parsed_file.path.clone(), Arc::new(parsed_file.file.clone()))
+                (parsed_file.path.clone(), Arc::clone(parsed_file))
             })
             .collect();
         let degraded_scopes = std::mem::take(&mut package_scope.degraded_scopes);

@@ -753,7 +753,7 @@ pub fn is_known_package(name: &str) -> bool {
 }
 
 /// Load stub files from a user-supplied directory. Both flat
-/// (`<dir>/<pkg>.json`) and nested (`<dir>/<pkg>/<pkg>.json`) layouts are
+/// (`<dir>/<pkg>.json`) and nested (`<dir>/<folder>/<pkg>.json`) layouts are
 /// accepted. The `package` header names the package; legacy files fall back
 /// to their file stem. A user package replaces an embedded package wholesale.
 pub fn load_stub_dir(dir: &Path) -> Result<BTreeMap<String, Typeshed>, TypeshedError> {
@@ -794,28 +794,21 @@ pub fn load_stub_dir_with_warnings(
 /// Discover the files accepted by [`load_stub_dir`], in both flat and
 /// nested layouts.
 fn discover_stub_files(dir: &Path) -> Result<Vec<PathBuf>, TypeshedError> {
-    let entries = std::fs::read_dir(dir).map_err(|source| TypeshedError::Io {
-        path: dir.to_path_buf(),
-        source,
-    })?;
+    let mut directories = vec![dir.to_path_buf()];
     let mut paths = Vec::new();
-    for entry in entries {
-        let entry = entry.map_err(|source| TypeshedError::Io {
-            path: dir.to_path_buf(),
+    while let Some(directory) = directories.pop() {
+        let io_error = |source| TypeshedError::Io {
+            path: directory.clone(),
             source,
-        })?;
-        let path = entry.path();
-        if path.extension().and_then(|value| value.to_str()) == Some("json") {
-            paths.push(path);
-            continue;
-        }
-        if path.is_dir() {
-            let Some(name) = path.file_name() else {
-                continue;
-            };
-            let nested = path.join(name).with_extension("json");
-            if nested.is_file() {
-                paths.push(nested);
+        };
+        for entry in std::fs::read_dir(&directory).map_err(io_error)? {
+            let path = entry.map_err(io_error)?.path();
+            if path.is_dir() {
+                if directory == dir {
+                    directories.push(path);
+                }
+            } else if path.extension().is_some_and(|ext| ext == "json") {
+                paths.push(path);
             }
         }
     }
@@ -1350,17 +1343,35 @@ mod tests {
     #[test]
     fn load_stub_dir_accepts_flat_and_nested_layouts() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("flat.json"), fixture(Some("flat"), "one")).unwrap();
-        std::fs::create_dir(dir.path().join("nested")).unwrap();
-        std::fs::write(
-            dir.path().join("nested/nested.json"),
-            fixture(Some("nested"), "two"),
-        )
-        .unwrap();
+        let paths = [
+            "flat.json",
+            "nested/nested.json",
+            "rcpp/Rcpp.json",
+            "s7/S7.json",
+        ];
+        for path in paths {
+            let path = dir.path().join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let package = path.file_stem().unwrap().to_str().unwrap();
+            std::fs::write(&path, fixture(Some(package), "one")).unwrap();
+        }
+        // Discovery stops after one directory level and ignores non-JSON files.
+        std::fs::create_dir_all(dir.path().join("nested/deeper")).unwrap();
+        std::fs::write(dir.path().join("nested/deeper/ignored.json"), "invalid").unwrap();
+        std::fs::write(dir.path().join("nested/README.md"), "not a stub").unwrap();
 
         let stubs = load_stub_dir(dir.path()).unwrap();
-        assert!(stubs["flat"].functions.contains_key("one"));
-        assert!(stubs["nested"].functions.contains_key("two"));
+        assert_eq!(stubs.len(), paths.len());
+        for package in ["flat", "nested", "Rcpp", "S7"] {
+            assert!(stubs[package].functions.contains_key("one"));
+        }
+        assert_eq!(
+            discover_stub_files(dir.path()).unwrap(),
+            paths.map(|p| dir.path().join(p))
+        );
+        let report = validate_stub_dirs(&[dir.path().to_path_buf()]);
+        assert_eq!(report.files, paths.len());
+        assert_eq!(report.error_count(), 0, "{report:?}");
     }
 
     #[test]

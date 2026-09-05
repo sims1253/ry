@@ -243,6 +243,11 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Fixed
 
+- Typeshed validation rejects empty recycled-value parameter sets, mismatched
+  callback names and positions, and unsupported conditional-scope values.
+  Return-length rules also reject unknown or misplaced control fields.
+  Update the vendored stubs with the existing purrr callback corrections.
+
 - Invalid config reloads retain the language server's last valid settings.
   A missing explicit configuration path is also a load failure; removing an
   automatically discovered `ry.toml` restores ancestor settings or defaults.

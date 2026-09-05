@@ -159,10 +159,8 @@ fn collect_local_bindings(stmts: &[ry_core::ast::Stmt], out: &mut HashMap<String
     );
 }
 
-/// Map every function body in the file to its start byte, so each
-/// recorded scope can look up its own local bindings. Walks into
-/// function bodies (that is what is being indexed) but skips assignment
-/// targets; each discovered body is indexed and pruned in one step.
+/// Index local definition sites by function start byte. The shared walker
+/// visits nested functions; collecting locals stops at each function boundary.
 fn index_scope_bodies(
     stmts: &[ry_core::ast::Stmt],
     index: &mut HashMap<usize, HashMap<String, ry_core::Span>>,
@@ -175,33 +173,20 @@ fn index_scope_bodies(
         },
         |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
             match node {
-                AstNode::Stmt(Stmt::FunctionDef { body, span, .. }) => {
-                    index_function_body(*span, body, index);
-                    return ControlFlow::Continue(Descend::Skip);
-                }
-                AstNode::Stmt(Stmt::Assign {
+                AstNode::Stmt(Stmt::FunctionDef { body, span, .. })
+                | AstNode::Stmt(Stmt::Assign {
                     value: Expr::Function { body, span, .. },
                     ..
                 }) => {
-                    index_function_body(*span, body, index);
-                    return ControlFlow::Continue(Descend::Skip);
+                    let mut locals = HashMap::new();
+                    collect_local_bindings(body, &mut locals);
+                    index.insert(span.start, locals);
                 }
                 _ => {}
             }
             ControlFlow::Continue(Descend::Into)
         },
     );
-}
-
-fn index_function_body(
-    span: ry_core::Span,
-    body: &[ry_core::ast::Stmt],
-    index: &mut HashMap<usize, HashMap<String, ry_core::Span>>,
-) {
-    let mut locals = HashMap::new();
-    collect_local_bindings(body, &mut locals);
-    index.insert(span.start, locals);
-    index_scope_bodies(body, index);
 }
 
 /// Per-scope classification inputs derived once per file.
@@ -549,7 +534,7 @@ pub(crate) fn run_dump_types(
                 let records = records_by_path
                     .remove(&parsed_file.path)
                     .unwrap_or_default();
-                assemble_file_dump(&parsed_file.path, &parsed_file.file, records, &positions)
+                assemble_file_dump(&parsed_file.path, parsed_file, records, &positions)
             })
             .collect(),
     };

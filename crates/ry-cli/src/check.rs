@@ -448,13 +448,13 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
     let parsed = pipeline::parse_files(paths, report_check_parse_failure)
         .expect("check's parse-failure policy never aborts");
     parse_errors += paths.len() - parsed.len();
-    let parsed: Vec<pipeline::ParsedFile> = parsed
+    let parsed: Vec<Arc<ry_core::SourceFile>> = parsed
         .into_iter()
         .filter(|parsed_file| {
             file_count += 1;
-            srcs.insert(parsed_file.path.clone(), parsed_file.src.clone());
-            comments.insert(parsed_file.path.clone(), parsed_file.file.comments.clone());
-            if is_probably_not_r_source(&parsed_file.file) {
+            srcs.insert(parsed_file.path.clone(), parsed_file.source.clone());
+            comments.insert(parsed_file.path.clone(), parsed_file.comments.clone());
+            if is_probably_not_r_source(parsed_file) {
                 not_r_diagnostics.push(ry_checker::Diagnostic::new(
                     ry_checker::Severity::Info,
                     ry_core::Span::new(0, 1, 0, 0),

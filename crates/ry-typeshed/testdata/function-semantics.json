@@ -1,0 +1,57 @@
+{
+  "schema_version": "2",
+  "package": "fixture",
+  "version": "test",
+  "functions": {
+    "apply": {
+      "params": ["x", "f"],
+      "return": {"mode": "list", "length": "unknown"},
+      "higher_order": {"callback_param": "f", "callback_position": 1, "callback_args": ["element_of_arg0"], "result": {"kind": "list_of_callback_return"}}
+    },
+    "predicate": {
+      "params": [{"name": "x", "required": true}],
+      "return": {"mode": "logical", "length": "1", "na": false},
+      "predicate": {"subject_param": "x", "target": {"mode": "null", "length": "0", "na": false}}
+    },
+    "check_string": {
+      "params": ["x", "allow_null", "allow_na", "arg", "call"],
+      "return": {"mode": "null", "length": "0", "na": false},
+      "assertion": {
+        "subject_param": "x",
+        "target": {"mode": "character", "length": "1", "na": false},
+        "allow_null_param": "allow_null",
+        "allow_na_param": "allow_na",
+        "provenance": {"kind": "standalone_types_check", "fingerprint_params": ["arg", "call"]}
+      }
+    },
+    "intersect_like": {
+      "params": ["x", "y"],
+      "return": {"mode": "opaque", "length": "unknown", "na": true},
+      "return_length": {
+        "kind": "zero_if_any_param_zero",
+        "params": ["x", "y"]
+      }
+    },
+    "recycle": {
+      "params": ["...", "collapse", "recycle0"],
+      "return": {"mode": "character", "length": "longest_arg", "na": true},
+      "return_length": {
+        "kind": "recycled_values",
+        "value_params": ["..."],
+        "control_params": ["collapse", "recycle0"],
+        "all_values_zero": "zero",
+        "collapse": {"param": "collapse", "when": "non_null", "length": "1"},
+        "recycle0": {"param": "recycle0", "when": "true", "any_value_zero": "zero"}
+      }
+    },
+    "source_like": {
+      "params": ["local"],
+      "return": {"mode": "opaque", "length": "unknown", "na": false},
+      "conditional_scope_effect": {
+        "effect": "unknown_bindings",
+        "current_scope_when": {"param": "local", "equals": true},
+        "default_current_scope": "top_level"
+      }
+    }
+  }
+}

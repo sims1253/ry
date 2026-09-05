@@ -94,7 +94,7 @@ pub enum DefaultCurrentScope {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ReturnLengthSpec {
     /// An exact zero fact only: all nonzero outcomes remain unknown.
     ZeroIfAnyParamZero {
@@ -109,19 +109,24 @@ pub struct RecycledValuesLengthSpec {
     pub value_params: Vec<String>,
     pub control_params: Vec<String>,
     pub all_values_zero: String,
-    pub collapse: RecycledLengthControl,
-    pub recycle0: RecycledLengthControl,
+    pub collapse: CollapseLengthControl,
+    pub recycle0: RecycleZeroLengthControl,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct RecycledLengthControl {
+pub struct CollapseLengthControl {
     pub param: String,
     pub when: String,
-    #[serde(default)]
-    pub length: Option<String>,
-    #[serde(default)]
-    pub any_value_zero: Option<String>,
+    pub length: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecycleZeroLengthControl {
+    pub param: String,
+    pub when: String,
+    pub any_value_zero: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -1026,6 +1031,23 @@ fn validate_signature(
             format!("{location}.higher_order.result.mode: invalid mode `{mode}`"),
         );
     }
+    if let Some(higher_order) = &signature.higher_order {
+        for (field, index) in [
+            ("length_arg", higher_order.result.length_arg),
+            ("source_arg", higher_order.result.source_arg),
+            ("template_position", higher_order.result.template_position),
+        ] {
+            if index.is_some_and(|index| index >= signature.params.len()) {
+                validation_error(
+                    report,
+                    path,
+                    format!(
+                        "{location}.higher_order.result.{field}: must identify a formal parameter"
+                    ),
+                );
+            }
+        }
+    }
     validate_function_semantics(report, path, location, signature);
 }
 
@@ -1045,6 +1067,22 @@ fn validate_function_semantics(
             );
         }
     };
+    if let Some(higher_order) = &signature.higher_order
+        && signature
+            .params
+            .get(higher_order.callback_position)
+            .map(|param| &param.name)
+            != Some(&higher_order.callback_param)
+    {
+        validation_error(
+            report,
+            path,
+            format!(
+                "{location}.higher_order.callback_position: must identify callback_param `{}`",
+                higher_order.callback_param
+            ),
+        );
+    }
     if let Some(predicate) = &signature.predicate {
         validate_param(report, "predicate.subject_param", &predicate.subject_param);
         validate_rtype(
@@ -1092,6 +1130,17 @@ fn validate_function_semantics(
         }
     }
     if let Some(effect) = &signature.conditional_scope_effect {
+        // Schema 2 restricts this rule to a true trigger, even though the checker
+        // can compare either boolean. Keep producers within the documented contract.
+        if !effect.current_scope_when.equals {
+            validation_error(
+                report,
+                path,
+                format!(
+                    "{location}.conditional_scope_effect.current_scope_when.equals: only `equals: true` is supported"
+                ),
+            );
+        }
         validate_param(
             report,
             "conditional_scope_effect.current_scope_when.param",
@@ -1099,18 +1148,21 @@ fn validate_function_semantics(
         );
     }
     if let Some(length) = &signature.return_length {
+        let has_duplicates = |params: &[String]| {
+            params
+                .iter()
+                .enumerate()
+                .any(|(index, param)| params[..index].contains(param))
+        };
         match length {
             ReturnLengthSpec::ZeroIfAnyParamZero { params } => {
-                if params.len() < 2
-                    || params
-                        .iter()
-                        .enumerate()
-                        .any(|(index, param)| params[..index].contains(param))
-                {
+                if params.len() < 2 || has_duplicates(params) {
                     validation_error(
                         report,
                         path,
-                        format!("{location}.return_length.params: require distinct parameters"),
+                        format!(
+                            "{location}.return_length.params: require at least two distinct parameters"
+                        ),
                     );
                 }
                 for param in params {
@@ -1118,17 +1170,18 @@ fn validate_function_semantics(
                 }
             }
             ReturnLengthSpec::RecycledValues(spec) => {
-                for param in spec.value_params.iter().chain(&spec.control_params) {
-                    validate_param(report, "return_length parameter", param);
+                if spec.value_params.is_empty() {
+                    validation_error(
+                        report,
+                        path,
+                        format!("{location}.return_length.value_params: must not be empty"),
+                    );
                 }
-                let repeated = |params: &[String]| {
-                    params
-                        .iter()
-                        .enumerate()
-                        .any(|(index, param)| params[..index].contains(param))
-                };
-                if repeated(&spec.value_params)
-                    || repeated(&spec.control_params)
+                for param in spec.value_params.iter().chain(&spec.control_params) {
+                    validate_param(report, "return_length.params", param);
+                }
+                if has_duplicates(&spec.value_params)
+                    || has_duplicates(&spec.control_params)
                     || spec
                         .value_params
                         .iter()
@@ -1157,9 +1210,9 @@ fn validate_function_semantics(
                 }
                 if spec.all_values_zero != "zero"
                     || spec.collapse.when != "non_null"
-                    || spec.collapse.length.as_deref() != Some("1")
+                    || spec.collapse.length != "1"
                     || spec.recycle0.when != "true"
-                    || spec.recycle0.any_value_zero.as_deref() != Some("zero")
+                    || spec.recycle0.any_value_zero != "zero"
                 {
                     validation_error(
                         report,
@@ -1432,47 +1485,164 @@ mod tests {
     }
 
     #[test]
-    fn recycled_values_controls_and_exact_zero_parameters_are_validated() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            dir.path().join("fixture.json"),
-            r#"{"schema_version":"2","package":"fixture","version":"test","functions":{"zero":{"params":["a","b"],"return":{"mode":"logical","length":"unknown"},"return_length":{"kind":"zero_if_any_param_zero","params":["a","b","a"]}},"recycled":{"params":["x","collapse"],"return":{"mode":"character","length":"unknown"},"return_length":{"kind":"recycled_values","value_params":["x"],"control_params":[],"all_values_zero":"zero","collapse":{"param":"collapse","when":"non_null","length":"1"},"recycle0":{"param":"collapse","when":"true","any_value_zero":"zero"}}}}}"#,
-        )
-        .unwrap();
-        let report = validate_stub_dirs(&[dir.path().to_path_buf()]);
-        assert_eq!(report.error_count(), 3, "{report:?}");
-        assert!(
-            report
-                .problems
-                .iter()
-                .any(|problem| problem.message.contains("distinct parameters"))
-        );
-        assert_eq!(
-            report
-                .problems
-                .iter()
-                .filter(|problem| problem.message.contains("must declare a control parameter"))
-                .count(),
-            2
-        );
-    }
-
-    #[test]
-    fn invalid_assertion_provenance_is_reported_without_discarding_schema_two() {
+    fn function_semantics_contracts_are_validated() {
+        use serde_json::json;
+        let valid: serde_json::Value =
+            serde_json::from_str(include_str!("../testdata/function-semantics.json")).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("fixture.json");
-        std::fs::write(
-            &path,
-            r#"{"schema_version":"2","package":"fixture","version":"test","functions":{"check":{"params":["x","arg"],"return":{"mode":"null","length":"0"},"assertion":{"subject_param":"x","target":{"mode":"character","length":"1"},"provenance":{"kind":"standalone_types_check","fingerprint_params":["arg","call"]}}}}}"#,
-        )
-        .unwrap();
-        let report = validate_stub_dirs(&[dir.path().to_path_buf()]);
-        assert_eq!(report.error_count(), 1);
-        assert!(
-            report.problems[0]
-                .message
-                .contains("unknown parameter `call`")
-        );
+        let validate = |value: &serde_json::Value| {
+            std::fs::write(&path, serde_json::to_string(value).unwrap()).unwrap();
+            validate_stub_dirs(&[dir.path().to_path_buf()])
+        };
+        let report = validate(&valid);
+        assert_eq!(report.error_count(), 0, "{report:?}");
+        assert_eq!(report.files, 1);
+
+        for (pointer, value, message) in [
+            (
+                "/functions/recycle/return_length/all_values_zero",
+                json!("unsupported"),
+                "unsupported recycled-values rule",
+            ),
+            (
+                "/functions/recycle/return_length/collapse/when",
+                json!("unsupported"),
+                "unsupported recycled-values rule",
+            ),
+            (
+                "/functions/recycle/return_length/collapse/length",
+                json!("unsupported"),
+                "unsupported recycled-values rule",
+            ),
+            (
+                "/functions/recycle/return_length/recycle0/when",
+                json!("unsupported"),
+                "unsupported recycled-values rule",
+            ),
+            (
+                "/functions/recycle/return_length/recycle0/any_value_zero",
+                json!("unsupported"),
+                "unsupported recycled-values rule",
+            ),
+            (
+                "/functions/intersect_like/return_length/params",
+                json!(["x"]),
+                "require at least two distinct parameters",
+            ),
+            (
+                "/functions/check_string/assertion/provenance/fingerprint_params",
+                json!(["call", "arg"]),
+                "unsupported provenance",
+            ),
+            (
+                "/functions/check_string/assertion/provenance/kind",
+                json!("unsupported"),
+                "unknown variant",
+            ),
+            (
+                "/functions/apply/higher_order/result",
+                json!({"kind":"list_of_callback_return", "length_arg":99}),
+                "result.length_arg: must identify a formal parameter",
+            ),
+            (
+                "/functions/apply/higher_order/result",
+                json!({"kind":"list_of_callback_return", "source_arg":99}),
+                "result.source_arg: must identify a formal parameter",
+            ),
+            (
+                "/functions/apply/higher_order/result",
+                json!({"kind":"list_of_callback_return", "template_position":99}),
+                "result.template_position: must identify a formal parameter",
+            ),
+            (
+                "/functions/check_string/params",
+                json!(["x", "allow_null", "allow_na", "arg"]),
+                "unknown parameter `call`",
+            ),
+            (
+                "/functions/recycle/return_length/control_params",
+                json!(["recycle0"]),
+                "collapse.param: must declare a control parameter",
+            ),
+            (
+                "/functions/recycle/return_length/control_params",
+                json!(["collapse"]),
+                "recycle0.param: must declare a control parameter",
+            ),
+            (
+                "/functions/intersect_like/return_length/params",
+                json!(["x", "y", "x"]),
+                "require at least two distinct parameters",
+            ),
+            (
+                "/functions/recycle/return_length/value_params",
+                json!([]),
+                "must not be empty",
+            ),
+            (
+                "/functions/recycle/return_length/value_params",
+                json!(["...", "..."]),
+                "disjoint and unique",
+            ),
+            (
+                "/functions/recycle/return_length/control_params",
+                json!(["collapse", "recycle0", "collapse"]),
+                "disjoint and unique",
+            ),
+            (
+                "/functions/recycle/return_length/value_params",
+                json!(["collapse"]),
+                "disjoint and unique",
+            ),
+            (
+                "/functions/source_like/conditional_scope_effect/current_scope_when/equals",
+                json!(false),
+                "only `equals: true` is supported",
+            ),
+            (
+                "/functions/apply/higher_order/callback_position",
+                json!(2),
+                "callback_position",
+            ),
+            (
+                "/functions/apply/higher_order/callback_position",
+                json!(0),
+                "callback_position",
+            ),
+            (
+                "/functions/apply/higher_order/callback_param",
+                json!("missing"),
+                "callback_position",
+            ),
+            (
+                "/functions/intersect_like/return_length",
+                json!({"kind":"zero_if_any_param_zero", "params":["x","y"], "extra":true}),
+                "unknown field",
+            ),
+            (
+                "/functions/recycle/return_length/collapse",
+                json!({"param":"collapse", "when":"non_null", "length":"1", "any_value_zero":null}),
+                "unknown field",
+            ),
+            (
+                "/functions/recycle/return_length/recycle0",
+                json!({"param":"recycle0", "when":"true", "any_value_zero":"zero", "length":null}),
+                "unknown field",
+            ),
+        ] {
+            let mut invalid = valid.clone();
+            *invalid.pointer_mut(pointer).unwrap() = value;
+            let report = validate(&invalid);
+            assert!(
+                report
+                    .problems
+                    .iter()
+                    .any(|problem| problem.level == ValidationLevel::Error
+                        && problem.message.contains(message)),
+                "{pointer}: expected {message}: {report:?}"
+            );
+        }
     }
 
     #[test]
@@ -1496,6 +1666,9 @@ mod tests {
 
     #[test]
     fn every_known_package_loads() {
+        let report = validate_stub_dirs(&[Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor")]);
+        assert_eq!(report.error_count(), 0, "{report:?}");
+        assert!(report.files > 0, "vendored stubs must be discovered");
         for name in known_packages() {
             assert!(load_package(name).is_some(), "{name} must load");
         }

@@ -1659,43 +1659,19 @@ fn load_stubs_from_config(
     Arc::new(merged)
 }
 
-/// Discover the effective `ry.toml` config for a folder. An editor
-/// `configuration` override is resolved relative to `folder_root` (unless
-/// absolute) and loaded directly, falling back to directory discovery on
-/// failure. Returns `Ok(default)` when no `ry.toml` is found, and `Err`
-/// only when discovery itself fails so callers can decide whether to
-/// retain a previous config. Disk I/O happens here — callers MUST run
-/// this outside the state lock.
+/// Load a folder's explicit configuration or discover its nearest `ry.toml`.
+/// Missing discovered configuration uses defaults; read and parse failures
+/// reach the caller so reloads can retain the last valid configuration.
+/// Callers must keep this disk I/O outside the state lock.
 fn discover_folder_config(
     folder_settings: &FolderSettings,
     folder_root: &std::path::Path,
 ) -> std::result::Result<ry_config::Config, ry_config::ConfigError> {
-    if let Some(config_rel) = &folder_settings.configuration {
-        let config_path = if PathBuf::from(config_rel).is_absolute() {
-            PathBuf::from(config_rel)
-        } else {
-            folder_root.join(config_rel)
-        };
-        match ry_config::Config::load_file(&config_path) {
-            Ok(cfg) => return Ok(cfg),
-            Err(error) => {
-                tracing::warn!(
-                    path = %config_path.display(),
-                    %error,
-                    "failed to load configuration override; falling back to discovery"
-                );
-                return Ok(ry_config::Config::discover(folder_root)
-                    .ok()
-                    .flatten()
-                    .map(|(_, c)| c)
-                    .unwrap_or_default());
-            }
-        }
+    if let Some(config_path) = &folder_settings.configuration {
+        return ry_config::Config::load_file(&folder_root.join(config_path));
     }
-    Ok(ry_config::Config::discover(folder_root)
-        .ok()
-        .flatten()
-        .map(|(_, c)| c)
+    Ok(ry_config::Config::discover(folder_root)?
+        .map(|(_, config)| config)
         .unwrap_or_default())
 }
 
@@ -1810,8 +1786,8 @@ fn build_folder_contexts(
 /// Rebuild a single folder's analysis context from disk.
 ///
 /// Each field is reloaded independently. On any sub-failure (config parse,
-/// baseline parse) the **last valid value for that field is retained** and a
-/// visible warning emitted — a corrupt reload never silently clears the
+/// baseline parse) the last valid value for that field is retained and the
+/// failure is logged — a corrupt reload never silently clears the
 /// baseline. `folder_settings`, `workspace_context`, and `project_cache`
 /// are not config-file-derived (they come from editor push / the background
 /// indexer / incremental checks respectively) and are carried over

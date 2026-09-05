@@ -36,8 +36,10 @@ Install from Open VSX via Positron's extension gallery.
 | `ry.lint.warn`         | `[]`              | Rules to treat as warnings                                      |
 | `ry.minConfidence`     | `low`             | Minimum confidence (`low`, `medium`, `high`)                    |
 | `ry.baseline`          |                   | Path to a baseline diagnostics file                             |
-| `ry.checkTestFixtures` | `false`           | Check fixture data under `tests/`                               |
 | `ry.logLevel`          | `warn`            | Server log level                                                |
+
+To check fixture data under `tests/`, set `check-test-fixtures = true` in
+your project’s `ry.toml`.
 
 ## Commands
 

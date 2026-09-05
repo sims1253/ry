@@ -6,14 +6,9 @@
 //! support `workspace/configuration` pull) receive full per-folder
 //! settings, while VS Code can additionally use the pull mechanism.
 //!
-//! Only settings the server acts on are modeled. The editor owns the
-//! rest, in two groups. `path`, `importStrategy`, and `logLevel` are
-//! resolved by the VS Code extension (binary discovery in
-//! `common/binary.ts`, the `--log-level` launch argument in
-//! `common/server.ts`). `checkTestFixtures` is read and forwarded by
-//! the extension, but nothing applies it anywhere yet. Either way the
-//! server ignores unknown keys, so accepting them here would only
-//! pretend to honor them.
+//! Only settings the server acts on are modeled. The VS Code extension
+//! handles `path`, `importStrategy`, and `logLevel`; the server ignores
+//! unknown keys.
 
 use serde::{Deserialize, Serialize};
 

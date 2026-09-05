@@ -165,11 +165,8 @@ suppression actions — and fixes a parser panic plus several editor issues.
 - **`enable` is honored per folder**: a workspace folder whose settings
   set `enable: false` is skipped: the language server publishes no
   diagnostics and returns no inlay hints for it. The setting was
-  accepted and ignored before. The server also stops modeling the five
-  settings it never read (`path`, `importStrategy`,
-  `addExecutableToTerminalPath`, `logLevel`, `checkTestFixtures`); the
-  editor extensions own those, and the server ignores unknown settings
-  keys either way.
+  accepted and ignored before. The server also stops modeling settings
+  it never read; unknown settings keys remain ignored.
 - **Less work per `if` during checking**: a condition that proves no type
   refinement skips the narrowing machinery, and merging branch bindings no
   longer copies the branch scopes. Diagnostics and inferred types are
@@ -245,6 +242,12 @@ suppression actions — and fixes a parser panic plus several editor issues.
   inferred types are unchanged.
 
 ### Fixed
+
+- Invalid config reloads retain the language server's last valid settings.
+  A missing explicit configuration path is also a load failure; removing an
+  automatically discovered `ry.toml` restores ancestor settings or defaults.
+- Removed the nonfunctional VS Code setting `ry.checkTestFixtures`. Set
+  `check-test-fixtures = true` in `ry.toml` to enable fixture checks.
 
 - Typeshed loading and validation now discover mixed-case nested filenames,
   including `rcpp/Rcpp.json` and `s7/S7.json`.

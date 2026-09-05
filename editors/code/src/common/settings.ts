@@ -17,7 +17,6 @@ export interface ISettings {
   lint: ILintSettings;
   minConfidence?: "low" | "medium" | "high";
   baseline?: string;
-  checkTestFixtures?: boolean;
   logLevel?: string;
 }
 
@@ -53,31 +52,14 @@ export function getWorkspaceSettings(
   namespace: string,
   folder: vscode.WorkspaceFolder,
 ): ISettings {
-  const config = getConfiguration(namespace, folder.uri);
-  return {
-    enable: config.get<boolean>("enable"),
-    path: config.get<string[]>("path"),
-    configuration: config.get<string>("configuration"),
-    importStrategy: config.get<"fromEnvironment" | "useBundled">(
-      "importStrategy",
-      "fromEnvironment",
-    ),
-    lint: {
-      select: getExplicitValue<string[]>(config, "lint.select"),
-      extendSelect: getExplicitValue<string[]>(config, "lint.extendSelect"),
-      ignore: getExplicitValue<string[]>(config, "lint.ignore"),
-      error: getExplicitValue<string[]>(config, "lint.error"),
-      warn: getExplicitValue<string[]>(config, "lint.warn"),
-    },
-    minConfidence: config.get<"low" | "medium" | "high">("minConfidence"),
-    baseline: config.get<string>("baseline"),
-    checkTestFixtures: config.get<boolean>("checkTestFixtures"),
-    logLevel: config.get<string>("logLevel"),
-  };
+  return readSettings(getConfiguration(namespace, folder.uri));
 }
 
 export function getGlobalSettings(namespace: string): ISettings {
-  const config = getConfiguration(namespace);
+  return readSettings(getConfiguration(namespace));
+}
+
+function readSettings(config: vscode.WorkspaceConfiguration): ISettings {
   return {
     enable: config.get<boolean>("enable"),
     path: config.get<string[]>("path"),
@@ -95,7 +77,6 @@ export function getGlobalSettings(namespace: string): ISettings {
     },
     minConfidence: config.get<"low" | "medium" | "high">("minConfidence"),
     baseline: config.get<string>("baseline"),
-    checkTestFixtures: config.get<boolean>("checkTestFixtures"),
     logLevel: config.get<string>("logLevel"),
   };
 }

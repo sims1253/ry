@@ -9,7 +9,9 @@ testFixture/**
 
 # Build tooling and configs are not needed at runtime.
 esbuild.js
-tsconfig.json
+eslint.config.mjs
+.vscode-test.js
+tsconfig*.json
 justfile
 .gitignore
 bun.lock

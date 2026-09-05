@@ -39,8 +39,10 @@ where
 fn count_code(publish: &Value, code: &str) -> usize {
     publish["params"]["diagnostics"]
         .as_array()
-        .map(|diags| diags.iter().filter(|d| d["code"] == code).count())
-        .unwrap_or(0)
+        .expect("publishDiagnostics array")
+        .iter()
+        .filter(|diagnostic| diagnostic["code"] == code)
+        .count()
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -285,4 +287,122 @@ fn enable_false_skips_inlay_hints_for_the_folder() {
         drop(session);
         let _ = tokio::time::timeout(std::time::Duration::from_secs(3), server).await;
     })
+}
+
+#[test]
+fn config_reload_retains_valid_settings_on_failure() {
+    run(async {
+        for mode in ["discovered", "relative", "absolute", "ancestor"] {
+            let fixture = FixtureProject::empty().unwrap();
+            let config_name = match mode {
+                "discovered" => "ry.toml",
+                "ancestor" => "nested/ry.toml",
+                _ => "config/ry.toml",
+            };
+            let workspace_root = fixture.path(if mode == "ancestor" { "nested" } else { "" });
+            fixture
+                .write_file(
+                    "ry.toml",
+                    if mode == "ancestor" {
+                        "error = ['RY002']\n"
+                    } else {
+                        ""
+                    },
+                )
+                .unwrap();
+            fixture
+                .write_file(config_name, "ignore = ['RY002']\n")
+                .unwrap();
+            let config_uri = file_uri(&fixture.path(config_name)).unwrap();
+            let source = "if (c(TRUE, FALSE)) print(1)\n";
+            let source_name = if mode == "ancestor" {
+                "nested/main.R"
+            } else {
+                "main.R"
+            };
+            fixture.write_file(source_name, source).unwrap();
+            let options = match mode {
+                "relative" => Some(json!({"settings": [{"configuration": config_name}]})),
+                "absolute" => {
+                    Some(json!({"settings": [{"configuration": fixture.path(config_name)}]}))
+                }
+                _ => None,
+            };
+            let (mut session, server) =
+                spawn_session(&[&workspace_root], json!({}), options.clone()).await;
+            let uri = file_uri(&fixture.path(source_name)).unwrap();
+            let mark = session.publication_mark();
+            session.open(&uri, 1, source).await.unwrap();
+            let initial = session
+                .published_diagnostics_after(&uri, mark)
+                .await
+                .unwrap();
+            assert_eq!(count_code(&initial, "RY002"), 0, "{mode}: {initial}");
+
+            let mut latest = initial;
+            // A missing discovered config restores ancestor settings or defaults.
+            // A missing explicit override is a load failure and retains its settings.
+            for (content, expected) in [
+                (Some("ignore = ["), 0),
+                (None, usize::from(matches!(mode, "discovered" | "ancestor"))),
+                (Some("ignore = ['RY002']\n"), 0),
+                (Some(""), 1),
+            ] {
+                match content {
+                    Some(content) => {
+                        fixture.write_file(config_name, content).unwrap();
+                    }
+                    None => std::fs::remove_file(fixture.path(config_name)).unwrap(),
+                }
+                harness::sync_barrier(&mut session, &uri).await;
+                let mark = session.publication_mark();
+                session.notify("workspace/didChangeWatchedFiles", json!({
+                    "changes": [{"uri": config_uri, "type": if content.is_some() { 2 } else { 3 }}]
+                })).await.unwrap();
+                let after = session
+                    .published_diagnostics_after(&uri, mark)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    count_code(&after, "RY002"),
+                    expected,
+                    "{mode}, {content:?}: {after}"
+                );
+                if mode == "ancestor" && content.is_none() {
+                    // The ancestor promotes RY002 to an error; defaults only warn.
+                    let diagnostic = after["params"]["diagnostics"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|diagnostic| diagnostic["code"] == "RY002")
+                        .unwrap();
+                    assert_eq!(
+                        diagnostic["severity"], 1,
+                        "ancestor config must apply: {after}"
+                    );
+                }
+                latest = after;
+            }
+            harness::join_session(session, server).await;
+
+            // A cold server has no previous config to retain. Failed explicit
+            // overrides use defaults, even if a different ry.toml is valid.
+            for content in ["", "ignore = ["] {
+                fixture
+                    .write_file("ry.toml", "ignore = ['RY002']\n")
+                    .unwrap();
+                fixture.write_file(config_name, content).unwrap();
+                let (mut cold, server) =
+                    spawn_session(&[&workspace_root], json!({}), options.clone()).await;
+                let mark = cold.publication_mark();
+                cold.open(&uri, 1, source).await.unwrap();
+                let publish = cold.published_diagnostics_after(&uri, mark).await.unwrap();
+                assert_eq!(
+                    publish["params"]["diagnostics"], latest["params"]["diagnostics"],
+                    "{mode}, {content:?}: cold config"
+                );
+                harness::join_session(cold, server).await;
+            }
+        }
+    });
 }

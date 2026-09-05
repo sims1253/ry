@@ -292,20 +292,35 @@ fn enable_false_skips_inlay_hints_for_the_folder() {
 #[test]
 fn config_reload_retains_valid_settings_on_failure() {
     run(async {
-        for mode in ["discovered", "relative", "absolute"] {
+        for mode in ["discovered", "relative", "absolute", "ancestor"] {
             let fixture = FixtureProject::empty().unwrap();
-            let config_name = if mode == "discovered" {
-                "ry.toml"
-            } else {
-                "config/ry.toml"
+            let config_name = match mode {
+                "discovered" => "ry.toml",
+                "ancestor" => "nested/ry.toml",
+                _ => "config/ry.toml",
             };
-            fixture.write_file("ry.toml", "").unwrap();
+            let workspace_root = fixture.path(if mode == "ancestor" { "nested" } else { "" });
+            fixture
+                .write_file(
+                    "ry.toml",
+                    if mode == "ancestor" {
+                        "error = ['RY002']\n"
+                    } else {
+                        ""
+                    },
+                )
+                .unwrap();
             fixture
                 .write_file(config_name, "ignore = ['RY002']\n")
                 .unwrap();
             let config_uri = file_uri(&fixture.path(config_name)).unwrap();
             let source = "if (c(TRUE, FALSE)) print(1)\n";
-            fixture.write_file("main.R", source).unwrap();
+            let source_name = if mode == "ancestor" {
+                "nested/main.R"
+            } else {
+                "main.R"
+            };
+            fixture.write_file(source_name, source).unwrap();
             let options = match mode {
                 "relative" => Some(json!({"settings": [{"configuration": config_name}]})),
                 "absolute" => {
@@ -314,8 +329,8 @@ fn config_reload_retains_valid_settings_on_failure() {
                 _ => None,
             };
             let (mut session, server) =
-                spawn_session(&[fixture.root()], json!({}), options.clone()).await;
-            let uri = file_uri(&fixture.path("main.R")).unwrap();
+                spawn_session(&[&workspace_root], json!({}), options.clone()).await;
+            let uri = file_uri(&fixture.path(source_name)).unwrap();
             let mark = session.publication_mark();
             session.open(&uri, 1, source).await.unwrap();
             let initial = session
@@ -325,11 +340,11 @@ fn config_reload_retains_valid_settings_on_failure() {
             assert_eq!(count_code(&initial, "RY002"), 0, "{mode}: {initial}");
 
             let mut latest = initial;
-            // A missing discovered config removes its settings. A missing
-            // explicit override is a load failure and retains its settings.
+            // A missing discovered config restores ancestor settings or defaults.
+            // A missing explicit override is a load failure and retains its settings.
             for (content, expected) in [
                 (Some("ignore = ["), 0),
-                (None, usize::from(mode == "discovered")),
+                (None, usize::from(matches!(mode, "discovered" | "ancestor"))),
                 (Some("ignore = ['RY002']\n"), 0),
                 (Some(""), 1),
             ] {
@@ -353,6 +368,19 @@ fn config_reload_retains_valid_settings_on_failure() {
                     expected,
                     "{mode}, {content:?}: {after}"
                 );
+                if mode == "ancestor" && content.is_none() {
+                    // The ancestor promotes RY002 to an error; defaults only warn.
+                    let diagnostic = after["params"]["diagnostics"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|diagnostic| diagnostic["code"] == "RY002")
+                        .unwrap();
+                    assert_eq!(
+                        diagnostic["severity"], 1,
+                        "ancestor config must apply: {after}"
+                    );
+                }
                 latest = after;
             }
             harness::join_session(session, server).await;
@@ -365,7 +393,7 @@ fn config_reload_retains_valid_settings_on_failure() {
                     .unwrap();
                 fixture.write_file(config_name, content).unwrap();
                 let (mut cold, server) =
-                    spawn_session(&[fixture.root()], json!({}), options.clone()).await;
+                    spawn_session(&[&workspace_root], json!({}), options.clone()).await;
                 let mark = cold.publication_mark();
                 cold.open(&uri, 1, source).await.unwrap();
                 let publish = cold.published_diagnostics_after(&uri, mark).await.unwrap();

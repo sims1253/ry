@@ -1031,6 +1031,23 @@ fn validate_signature(
             format!("{location}.higher_order.result.mode: invalid mode `{mode}`"),
         );
     }
+    if let Some(higher_order) = &signature.higher_order {
+        for (field, index) in [
+            ("length_arg", higher_order.result.length_arg),
+            ("source_arg", higher_order.result.source_arg),
+            ("template_position", higher_order.result.template_position),
+        ] {
+            if index.is_some_and(|index| index >= signature.params.len()) {
+                validation_error(
+                    report,
+                    path,
+                    format!(
+                        "{location}.higher_order.result.{field}: must identify a formal parameter"
+                    ),
+                );
+            }
+        }
+    }
     validate_function_semantics(report, path, location, signature);
 }
 
@@ -1113,12 +1130,14 @@ fn validate_function_semantics(
         }
     }
     if let Some(effect) = &signature.conditional_scope_effect {
+        // Schema 2 restricts this rule to a true trigger, even though the checker
+        // can compare either boolean. Keep producers within the documented contract.
         if !effect.current_scope_when.equals {
             validation_error(
                 report,
                 path,
                 format!(
-                    "{location}.conditional_scope_effect.current_scope_when.equals: must be true"
+                    "{location}.conditional_scope_effect.current_scope_when.equals: only `equals: true` is supported"
                 ),
             );
         }
@@ -1129,7 +1148,7 @@ fn validate_function_semantics(
         );
     }
     if let Some(length) = &signature.return_length {
-        let repeated = |params: &[String]| {
+        let has_duplicates = |params: &[String]| {
             params
                 .iter()
                 .enumerate()
@@ -1137,11 +1156,13 @@ fn validate_function_semantics(
         };
         match length {
             ReturnLengthSpec::ZeroIfAnyParamZero { params } => {
-                if params.len() < 2 || repeated(params) {
+                if params.len() < 2 || has_duplicates(params) {
                     validation_error(
                         report,
                         path,
-                        format!("{location}.return_length.params: require distinct parameters"),
+                        format!(
+                            "{location}.return_length.params: require at least two distinct parameters"
+                        ),
                     );
                 }
                 for param in params {
@@ -1157,10 +1178,10 @@ fn validate_function_semantics(
                     );
                 }
                 for param in spec.value_params.iter().chain(&spec.control_params) {
-                    validate_param(report, "return_length parameter", param);
+                    validate_param(report, "return_length.params", param);
                 }
-                if repeated(&spec.value_params)
-                    || repeated(&spec.control_params)
+                if has_duplicates(&spec.value_params)
+                    || has_duplicates(&spec.control_params)
                     || spec
                         .value_params
                         .iter()
@@ -1480,6 +1501,61 @@ mod tests {
 
         for (pointer, value, message) in [
             (
+                "/functions/recycle/return_length/all_values_zero",
+                json!("unsupported"),
+                "unsupported recycled-values rule",
+            ),
+            (
+                "/functions/recycle/return_length/collapse/when",
+                json!("unsupported"),
+                "unsupported recycled-values rule",
+            ),
+            (
+                "/functions/recycle/return_length/collapse/length",
+                json!("unsupported"),
+                "unsupported recycled-values rule",
+            ),
+            (
+                "/functions/recycle/return_length/recycle0/when",
+                json!("unsupported"),
+                "unsupported recycled-values rule",
+            ),
+            (
+                "/functions/recycle/return_length/recycle0/any_value_zero",
+                json!("unsupported"),
+                "unsupported recycled-values rule",
+            ),
+            (
+                "/functions/intersect_like/return_length/params",
+                json!(["x"]),
+                "require at least two distinct parameters",
+            ),
+            (
+                "/functions/check_string/assertion/provenance/fingerprint_params",
+                json!(["call", "arg"]),
+                "unsupported provenance",
+            ),
+            (
+                "/functions/check_string/assertion/provenance/kind",
+                json!("unsupported"),
+                "unknown variant",
+            ),
+            (
+                "/functions/apply/higher_order/result",
+                json!({"kind":"list_of_callback_return", "length_arg":99}),
+                "result.length_arg: must identify a formal parameter",
+            ),
+            (
+                "/functions/apply/higher_order/result",
+                json!({"kind":"list_of_callback_return", "source_arg":99}),
+                "result.source_arg: must identify a formal parameter",
+            ),
+            (
+                "/functions/apply/higher_order/result",
+                json!({"kind":"list_of_callback_return", "template_position":99}),
+                "result.template_position: must identify a formal parameter",
+            ),
+            (
                 "/functions/check_string/params",
                 json!(["x", "allow_null", "allow_na", "arg"]),
                 "unknown parameter `call`",
@@ -1497,7 +1573,7 @@ mod tests {
             (
                 "/functions/intersect_like/return_length/params",
                 json!(["x", "y", "x"]),
-                "require distinct parameters",
+                "require at least two distinct parameters",
             ),
             (
                 "/functions/recycle/return_length/value_params",
@@ -1522,7 +1598,7 @@ mod tests {
             (
                 "/functions/source_like/conditional_scope_effect/current_scope_when/equals",
                 json!(false),
-                "must be true",
+                "only `equals: true` is supported",
             ),
             (
                 "/functions/apply/higher_order/callback_position",
@@ -1590,6 +1666,9 @@ mod tests {
 
     #[test]
     fn every_known_package_loads() {
+        let report = validate_stub_dirs(&[Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor")]);
+        assert_eq!(report.error_count(), 0, "{report:?}");
+        assert!(report.files > 0, "vendored stubs must be discovered");
         for name in known_packages() {
             assert!(load_package(name).is_some(), "{name} must load");
         }

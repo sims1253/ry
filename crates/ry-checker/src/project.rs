@@ -559,7 +559,7 @@ impl Project {
         // changed, rather than the entire project. On the first call or
         // when `loaded` changed, fall back to refining everything.
         if let Some(ref scope) = fixpoint_scope {
-            refiner.seed_return_types(&self.prev_fn_returns);
+            refiner.seed_return_types(&self.prev_fn_returns, scope);
             refiner.seed_caller_visible_signatures(&self.prev_fn_signatures, scope);
             refiner.run_fixpoint_scoped(scope);
         } else {

@@ -1479,3 +1479,38 @@ fn full_invalidation_does_not_seed_recursive_returns() {
         callback_project(&sources).check()
     );
 }
+
+#[test]
+fn scoped_invalidation_does_not_seed_replaced_recursive_returns() {
+    let mut sources = vec![
+        ("callee.R", "target <- function() 'old'"),
+        ("use.R", "target() + 1"),
+    ];
+    let mut project = callback_project(&sources);
+    project.check_incremental();
+    sources[0].1 = "target <- function() target()";
+    project.update_file("callee.R".into(), Arc::new(parse("callee.R", sources[0].1)));
+    assert_eq!(
+        project.check_incremental(),
+        callback_project(&sources).check()
+    );
+}
+
+#[test]
+fn scoped_invalidation_does_not_seed_mutually_recursive_returns() {
+    let mut sources = vec![
+        (
+            "callee.R",
+            "target <- function() 'old'\nother <- function() 'old'",
+        ),
+        ("use.R", "target() + 1"),
+    ];
+    let mut project = callback_project(&sources);
+    project.check_incremental();
+    sources[0].1 = "target <- function() other()\nother <- function() target()";
+    project.update_file("callee.R".into(), Arc::new(parse("callee.R", sources[0].1)));
+    assert_eq!(
+        project.check_incremental(),
+        callback_project(&sources).check()
+    );
+}

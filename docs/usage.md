@@ -198,6 +198,10 @@ actions that insert suppression comments.
 Diagnostics cover the whole project, using the same analysis as `ry check`. The
 inlay hints and quick-fix actions apply to the open document only.
 
+The [editor playground](../editors/example-project/README.md) has a small
+package with expected diagnostics and steps for checking edits, hints,
+and suppression actions in VS Code, Positron, or Zed.
+
 ### VS Code / Positron
 
 Install the **ry** extension from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=sims1253.ry)

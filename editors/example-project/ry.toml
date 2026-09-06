@@ -1,0 +1,6 @@
+# ry configuration for the editor-testing example project.
+#
+# `packages` lists packages attached outside the checked sources.
+# dplyr is attached here so the NSE file (R/daily-report.R) gets the
+# data-mask model even before its `library(dplyr)` line is reached.
+packages = ["dplyr"]

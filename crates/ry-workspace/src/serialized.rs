@@ -126,7 +126,7 @@ fn read_serialized(reader: impl std::io::Read, cap: u64) -> Decoded {
     } else if prefix.starts_with(&[0x1f, 0x8b]) {
         decode_capped(flate2::read::GzDecoder::new(reader), cap)
     } else if prefix.starts_with(&[0xfd, b'7', b'z', b'X', b'Z', 0x00]) {
-        decode_capped(xz2::read::XzDecoder::new(reader), cap)
+        decode_capped(liblzma::read::XzDecoder::new(reader), cap)
     } else {
         decode_capped(reader, cap)
     }
@@ -185,7 +185,7 @@ mod tests {
         gzip.write_all(&payload).unwrap();
         let mut bzip = bzip2::write::BzEncoder::new(Vec::new(), Default::default());
         bzip.write_all(&payload).unwrap();
-        let mut xz = xz2::write::XzEncoder::new(Vec::new(), 6);
+        let mut xz = liblzma::write::XzEncoder::new(Vec::new(), 6);
         xz.write_all(&payload).unwrap();
         for bytes in [
             payload.clone(),

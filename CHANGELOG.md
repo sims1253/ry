@@ -11,6 +11,8 @@ All notable changes to ry are documented in this file.
 - Validate typeshed updates before replacing the vendored snapshot. Failed
   validation leaves the existing stubs and provenance intact.
 - Shorten the README and move the inferred-types reference to `docs/types.md`.
+- Replace the unmaintained xz2 bindings with liblzma for compressed R data.
+  Pin rds2rust to a tested fork revision with the same dependency switch.
 - Infer vector-constructor lengths from size values, including empty defaults
   and fractional sizes. Correct factor arithmetic with NULL and unary minus.
 - Check typed purrr callback contracts independently of output-length inference.

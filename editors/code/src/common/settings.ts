@@ -1,13 +1,4 @@
-/**
- * Settings module — mirrors ruff-vscode's `settings.ts`.
- *
- * Provides `ISettings`, `getWorkspaceSettings`, `getGlobalSettings`,
- * `getExtensionSettings` (returning the per-folder array that feeds
- * `initializationOptions`), and `checkIfConfigurationChanged`.
- */
-
 import * as vscode from "vscode";
-import { getConfiguration, getWorkspaceFolders } from "./vscodeapi";
 
 export interface ISettings {
   enable?: boolean;
@@ -52,11 +43,11 @@ export function getWorkspaceSettings(
   namespace: string,
   folder: vscode.WorkspaceFolder,
 ): ISettings {
-  return readSettings(getConfiguration(namespace, folder.uri));
+  return readSettings(vscode.workspace.getConfiguration(namespace, folder.uri));
 }
 
 export function getGlobalSettings(namespace: string): ISettings {
-  return readSettings(getConfiguration(namespace));
+  return readSettings(vscode.workspace.getConfiguration(namespace));
 }
 
 function readSettings(config: vscode.WorkspaceConfiguration): ISettings {
@@ -86,8 +77,7 @@ function readSettings(config: vscode.WorkspaceConfiguration): ISettings {
  * `initializationOptions` at `initialize` time.
  */
 export function getExtensionSettings(namespace: string): ISettings[] {
-  const folders = getWorkspaceFolders();
-  if (!folders) return [];
+  const folders = vscode.workspace.workspaceFolders ?? [];
   return folders.map((folder) => getWorkspaceSettings(namespace, folder));
 }
 

@@ -1,12 +1,8 @@
 import * as vscode from "vscode";
 import { LOG_CHANNEL_NAME, RY_SETTINGS_NAMESPACE } from "./common/constants";
 import { LazyOutputChannel, logger } from "./common/logger";
-import { type ServerState, startServer, stopServer } from "./common/server";
-import {
-  getConfiguration,
-  onDidChangeConfiguration,
-  registerCommand,
-} from "./common/vscodeapi";
+import { startServer, stopServer } from "./common/server";
+import type { LanguageClient } from "vscode-languageclient/node";
 import {
   getWorkspaceSettings,
   checkIfConfigurationChanged,
@@ -21,7 +17,7 @@ import { MINIMUM_SETTINGS_CHANNEL_VERSION } from "./common/version";
 import { StatusItem } from "./common/status";
 import { debugInformationCommand, explainRuleCommand } from "./common/commands";
 
-let serverState: ServerState | null = null;
+let serverState: LanguageClient | null = null;
 let restartQueued = false;
 let restartPromise: Promise<void> | null = null;
 let statusItem: StatusItem | null = null;
@@ -51,7 +47,9 @@ export async function activate(
   statusItem.setBusy();
   context.subscriptions.push(statusItem);
 
-  const enable = getConfiguration(serverId).get<boolean>("enable", true);
+  const enable = vscode.workspace
+    .getConfiguration(serverId)
+    .get<boolean>("enable", true);
   if (!enable) {
     logger.info(
       `Extension is disabled. To enable, change \`${serverId}.enable\` to \`true\` and restart VS Code.`,
@@ -88,7 +86,7 @@ export async function activate(
 
   const runServer = async () => {
     if (serverState != null) {
-      await stopServer(serverState.client);
+      await stopServer(serverState);
       serverState = null;
     }
 
@@ -137,43 +135,48 @@ export async function activate(
   // that need a respawn. Live-updatable settings go via
   // didChangeConfiguration instead.
   context.subscriptions.push(
-    onDidChangeConfiguration(async (e: vscode.ConfigurationChangeEvent) => {
-      if (e.affectsConfiguration(`${serverId}.enable`)) {
-        vscode.window.showWarningMessage(
-          `To enable or disable ${LOG_CHANNEL_NAME} after changing the \`enable\` setting, you must restart VS Code.`,
-        );
-        return;
-      }
+    vscode.workspace.onDidChangeConfiguration(
+      async (e: vscode.ConfigurationChangeEvent) => {
+        if (e.affectsConfiguration(`${serverId}.enable`)) {
+          vscode.window.showWarningMessage(
+            `To enable or disable ${LOG_CHANNEL_NAME} after changing the \`enable\` setting, you must restart VS Code.`,
+          );
+          return;
+        }
 
-      const oldSettings = settings;
-      const newSettings = getWorkspaceSettings(serverId, {
-        uri: vscode.Uri.file(process.cwd()),
-        index: 0,
-        name: "root",
-      } as vscode.WorkspaceFolder);
+        const oldSettings = settings;
+        const newSettings = getWorkspaceSettings(serverId, {
+          uri: vscode.Uri.file(process.cwd()),
+          index: 0,
+          name: "root",
+        } as vscode.WorkspaceFolder);
 
-      if (checkIfConfigurationChanged(oldSettings, newSettings)) {
-        await requestRestart();
-      }
-    }),
+        if (checkIfConfigurationChanged(oldSettings, newSettings)) {
+          await requestRestart();
+        }
+      },
+    ),
     // Workspace trust changes respawn because trust affects binary resolution.
     vscode.workspace.onDidGrantWorkspaceTrust(async () => {
       await requestRestart();
     }),
     // Commands
-    registerCommand(`${serverId}.restart`, async () => {
+    vscode.commands.registerCommand(`${serverId}.restart`, async () => {
       await requestRestart();
     }),
-    registerCommand(`${serverId}.showLogs`, () => {
+    vscode.commands.registerCommand(`${serverId}.showLogs`, () => {
       logger.channel.show();
     }),
-    registerCommand(`${serverId}.showServerLogs`, () => {
+    vscode.commands.registerCommand(`${serverId}.showServerLogs`, () => {
       outputChannel.show();
     }),
-    registerCommand(`${serverId}.debugInformation`, async () => {
-      await debugInformationCommand(resolvedBinary ?? undefined, settings);
-    }),
-    registerCommand(`${serverId}.explainRule`, async () => {
+    vscode.commands.registerCommand(
+      `${serverId}.debugInformation`,
+      async () => {
+        await debugInformationCommand(resolvedBinary ?? undefined, settings);
+      },
+    ),
+    vscode.commands.registerCommand(`${serverId}.explainRule`, async () => {
       if (resolvedBinary) {
         await explainRuleCommand(resolvedBinary.path);
       }
@@ -201,7 +204,7 @@ export async function deactivate(): Promise<void> {
     }
   }
   if (serverState != null) {
-    await stopServer(serverState.client);
+    await stopServer(serverState);
     serverState = null;
   }
 }

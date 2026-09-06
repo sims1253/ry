@@ -31,6 +31,14 @@ impl LanguageServer for Backend {
             .and_then(|w| w.configuration)
             .unwrap_or(false);
 
+        let supports_diagnostic_data = params
+            .capabilities
+            .text_document
+            .as_ref()
+            .and_then(|document| document.publish_diagnostics.as_ref())
+            .and_then(|diagnostics| diagnostics.data_support)
+            .unwrap_or(false);
+
         let supports_document_changes = params
             .capabilities
             .workspace
@@ -110,6 +118,7 @@ impl LanguageServer for Backend {
         state.server_settings = server_settings;
         state.supports_workspace_configuration = supports_workspace_configuration;
         state.supports_document_changes = supports_document_changes;
+        state.supports_diagnostic_data = supports_diagnostic_data;
         state.supports_did_change_watched_files = supports_did_change_watched_files;
         state.supports_relative_patterns = supports_relative_patterns;
         state.folder_contexts = folder_contexts;
@@ -483,7 +492,7 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        let versioned_edits = {
+        let (versioned_edits, required_origin) = {
             let state = self.state.lock().await;
             let Some((version, cached)) = state.parsed.get(&path) else {
                 return Ok(None);
@@ -494,18 +503,35 @@ impl LanguageServer for Backend {
             {
                 return Ok(None);
             }
-            state.supports_document_changes.then_some(*version)
+            (
+                state.supports_document_changes.then_some(*version),
+                state
+                    .supports_diagnostic_data
+                    .then(|| diagnostic_origin(&path, *version, state.diag_generation)),
+            )
         };
+
+        let diagnostics: Vec<_> = params
+            .context
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.source.as_deref() == Some("ry"))
+            .filter(|diagnostic| {
+                required_origin
+                    .as_ref()
+                    .is_none_or(|origin| diagnostic.data.as_ref() == Some(origin))
+            })
+            .collect();
+        // Stale ranges must not suppress unrelated current lines. Requiring
+        // preserved data is safe only for clients that negotiated it.
+        if diagnostics.is_empty() {
+            return Ok(None);
+        }
 
         // One quick-fix per diagnostic visible at the cursor; helpers skip
         // lines that already carry a suppression.
         let mut actions: CodeActionResponse = Vec::new();
-        for diag in params
-            .context
-            .diagnostics
-            .iter()
-            .filter(|diag| diag.source.as_deref() == Some("ry"))
-        {
+        for diag in diagnostics {
             if let Some(action) = make_ignore_action(&uri, diag, &file) {
                 actions.push(CodeActionOrCommand::CodeAction(action));
             }

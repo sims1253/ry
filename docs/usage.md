@@ -6,6 +6,7 @@
 - [Package awareness](#package-awareness)
 - [Data masking and NSE](#data-masking-and-nse)
 - [Dumping inferred types](#dumping-inferred-types)
+- [Exporting analysis facts](#exporting-analysis-facts)
 - [Editors](#editors)
 - [Known limits](#known-limits)
 - [Building from source](#building-from-source)
@@ -122,6 +123,12 @@ Use `ry dump-types types.R` to inspect bindings and inferred types as JSON.
 Add `--position LINE:COL` to query the scope at a specific position.
 See the [inferred types reference](types.md) for an example, output fields,
 and scope limits.
+
+## Exporting analysis facts
+
+Use `ry dump-facts R/ --format json` to export versioned scope snapshots as
+JSON. Add `--references` to include reference facts. See the
+[structured facts reference](facts.md) for schemas, output fields, and limits.
 
 ## Editors
 

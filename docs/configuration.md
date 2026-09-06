@@ -98,7 +98,7 @@ the custom directories active from the current workspace's `ry.toml`.
 
 ry accepts schema 1 and schema 2 stubs. Schema 2 can describe predicates,
 assertions tied to specific package functions, return lengths, and conditional
-scope effects. See the [r-typeshed schema reference](https://github.com/sims1253/r-typeshed/blob/main/schema/SCHEMA.md)
+scope effects. See the [r-typeshed schema reference](https://github.com/sims1253/r-typeshed/blob/master/schema/SCHEMA.md)
 when writing custom stubs.
 
 ## Inline suppression

@@ -91,6 +91,7 @@ export async function startServer(
     traceOutputChannel,
     revealOutputChannelOn: RevealOutputChannelOn.Never,
     initializationOptions,
+    synchronize: { configurationSection: namespace },
     middleware: {
       workspace: {
         configuration: async (params, token, next) => {

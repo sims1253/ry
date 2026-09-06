@@ -417,8 +417,19 @@ Settings (in `settings.json`):
 
 ### Zed
 
-Install the **ry** extension from Zed's extension gallery. The extension
-downloads the `ry` binary from GitHub releases on first use.
+Install the **R** extension for R language support, then install **ry**.
+The ry extension uses a local `ry` executable or downloads one from GitHub
+releases. To use ry as the R language server, add this to Zed's settings:
+
+```json
+{
+  "languages": {
+    "R": { "language_servers": ["ry"] }
+  }
+}
+```
+
+If you already use other R language servers, add `"ry"` to that list.
 
 ### Other editors (Neovim, Helix, Emacs)
 

@@ -224,7 +224,10 @@ impl RyExtension {
     /// Map Zed settings into the server settings envelope.
     /// Rejects malformed values with actionable errors.
     fn map_settings(lsp_settings: &LspSettings) -> Result<zed_extension_api::serde_json::Value> {
-        let settings = lsp_settings.settings.clone().unwrap_or_default();
+        let settings = lsp_settings
+            .settings
+            .clone()
+            .unwrap_or_else(|| zed::serde_json::json!({}));
 
         // Validate known settings fields if present.
         if let Some(obj) = settings.as_object() {
@@ -239,7 +242,8 @@ impl RyExtension {
             }
         }
 
-        Ok(settings)
+        // Zed selects the section requested by workspace/configuration.
+        Ok(zed::serde_json::json!({ "ry": settings }))
     }
 }
 
@@ -286,9 +290,7 @@ impl zed::Extension for RyExtension {
                 let settings = Self::map_settings(&ls)?;
                 Ok(Some(settings))
             }
-            None => Ok(Some(zed_extension_api::serde_json::Value::Object(
-                Default::default(),
-            ))),
+            None => Ok(Some(zed::serde_json::json!({ "ry": {} }))),
         }
     }
 }
@@ -298,6 +300,25 @@ zed::register_extension!(RyExtension);
 #[cfg(test)]
 mod test {
     use crate::{GithubReleaseDetails, RyExtension};
+
+    #[test]
+    fn workspace_configuration_exposes_requested_ry_section() {
+        use zed_extension_api::{serde_json, settings::LspSettings};
+        for settings in [
+            serde_json::json!({ "lint": { "ignore": ["RY040"] } }),
+            serde_json::json!({}),
+        ] {
+            let lsp: LspSettings =
+                serde_json::from_value(serde_json::json!({ "settings": settings })).unwrap();
+            let configuration = RyExtension::map_settings(&lsp).unwrap();
+            assert_eq!(configuration.get("ry"), Some(&settings));
+        }
+        let defaults: LspSettings = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert_eq!(
+            RyExtension::map_settings(&defaults).unwrap()["ry"],
+            serde_json::json!({})
+        );
+    }
 
     #[test]
     fn binary_path_precedence() {

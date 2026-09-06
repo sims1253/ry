@@ -44,7 +44,7 @@ jobs:
       - name: Test
         run: cargo test --workspace
       - name: Performance regression tests
-        run: cargo test -p ry-checker --test perf --release -- --ignored
+        run: cargo test -p ry-checker --test perf --release -- --ignored --test-threads=1
       - name: Clippy (deny warnings)
         # RUSTFLAGS in the env block denies warnings workflow-wide; cargo
         # forwards it to the clippy driver, so a step-level flag is

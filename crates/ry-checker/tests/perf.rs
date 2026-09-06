@@ -1,7 +1,7 @@
 //! Performance regression tests.
 //!
 //! `#[ignore]`'d so CI is opt-in. Run with `cargo test -p ry-checker --test
-//! perf -- --ignored --nocapture`. Generates a 20k-line file, parses +
+//! perf --release -- --ignored --nocapture --test-threads=1`. Generates a 20k-line file, parses +
 //! checks it, and asserts wall time under 2 seconds (release-mode budget).
 //! The budget guards the linear-time parsing contract (the parser was
 //! once O(n^2): `char_col` rescanned from byte 0 per node).
@@ -154,7 +154,8 @@ fn warm_edit_checks_quickly() {
 //      `scaling_branch_depth` report slope ≫ 2.
 //
 // All tests are `#[ignore]`'d like the budget tests; CI runs them via
-// `cargo test -p ry-checker --test perf --release -- --ignored`.
+// `cargo test -p ry-checker --test perf --release -- --ignored --test-threads=1`.
+// Run timing tests serially so their workloads do not compete for CPU time.
 // ===========================================================================
 
 /// Fitted log-log slope above this value is treated as a complexity

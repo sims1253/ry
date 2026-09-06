@@ -626,7 +626,7 @@ pub(crate) fn is_operator_generic(name: &str) -> bool {
 
 pub(crate) fn insert_s3_dispatch_context(method_name: &str, scope: &mut Scope, globals: &Globals) {
     let method_name = semantic_argument_name(method_name);
-    let group_method = split_s3_method_name(&method_name, globals)
+    let group_method = split_s3_method_name(method_name, globals)
         .is_some_and(|(generic, _)| crate::semantic_lists::is_group_generic(&generic));
     if group_method {
         scope.insert(".Generic", RType::scalar(Mode::Character));
@@ -705,7 +705,7 @@ mod assigned_names_in_body_tests {
     /// body from the literal first), so wrap the test source in one.
     fn assigned(body_src: &str) -> HashSet<String> {
         let src = format!("f <- function() {{\n{body_src}\n}}\n");
-        let file = crate::tests::parse_snippet("assigned_names_test.R", &src);
+        let file = crate::tests::parse_file("assigned_names_test.R", &src);
         let [
             Stmt::Assign {
                 value: Expr::Function { body, .. },

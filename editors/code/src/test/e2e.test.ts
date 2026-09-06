@@ -59,6 +59,24 @@ describe("Installed ry extension", () => {
     const pid = Number(fs.readFileSync(`${replacement}.pid`, "utf8").trim());
     process.kill(pid, 0);
 
+    await config.update(
+      "lint.ignore",
+      ["RY040"],
+      vscode.ConfigurationTarget.Workspace,
+    );
+    await waitFor(() => !hasArithmeticError(0), "live rule suppression");
+    expect(await debugInformation()).to.include("RY040");
+    await config.update(
+      "lint.ignore",
+      [],
+      vscode.ConfigurationTarget.Workspace,
+    );
+    await waitFor(() => hasArithmeticError(0), "live rule restoration");
+    expect(
+      Number(fs.readFileSync(`${replacement}.pid`, "utf8").trim()),
+    ).to.equal(pid);
+    process.kill(pid, 0);
+
     for (const failure of ["probe", "startup"]) {
       const invalid = path.join(root, `invalid-${failure}`);
       fs.writeFileSync(

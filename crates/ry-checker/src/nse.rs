@@ -40,29 +40,30 @@ impl Checker {
         let mut tidy_args = Vec::new();
         for (index, argument) in args.iter().enumerate().skip(1) {
             let mode = argument_eval_mode(&sig, args, index).unwrap_or(EvalMode::Normal);
+            let injection = argument_supports_injection(&sig, args, index);
             let inferred = match mode {
                 EvalMode::Normal => self.infer(&argument.value, scope),
                 EvalMode::DataMask => {
                     local.insert(".", RType::unknown());
-                    self.infer(&argument.value, &mut local)
+                    self.infer_with_injection(&argument.value, &mut local, injection)
                 }
                 EvalMode::TidySelect => {
                     tidy_args.push(&argument.value);
-                    self.infer_tidyselect_expr(&argument.value, &mut local)
+                    self.infer_tidyselect_expr(&argument.value, &mut local, injection)
                 }
                 EvalMode::QuotedSymbol => {
                     if matches!(argument.value, Expr::Ident { .. }) {
                         RType::unknown()
                     } else {
-                        self.infer(&argument.value, &mut local)
+                        self.infer_with_injection(&argument.value, &mut local, injection)
                     }
                 }
                 EvalMode::QuotedExpression | EvalMode::CapturesPromise => RType::unknown(),
             };
             if let Some(raw_name) = argument.name.as_deref() {
                 let column = semantic_argument_name(raw_name);
-                if !is_dplyr_control_arg(&column) {
-                    local.insert(column.clone(), inferred.clone());
+                if !is_dplyr_control_arg(column) {
+                    local.insert(column, inferred.clone());
                     local.insert(
                         format!("{DATA_MASK_COLUMN_PREFIX}{column}"),
                         RType::unknown(),
@@ -78,14 +79,14 @@ impl Checker {
             SchemaEffect::AddNamedArgs => named_results
                 .into_iter()
                 .fold(data_type, |result, (name, ty)| {
-                    type_with_assigned_column(result, &name, ty)
+                    type_with_assigned_column(result, name, ty)
                 }),
             SchemaEffect::Select => schema_selected_type(data_type, &tidy_args),
             SchemaEffect::Aggregate => {
                 let mut result = RType::new(Mode::List, Length::One)
                     .with_class(ClassVector::single("data.frame"));
                 for (name, ty) in named_results {
-                    result = type_with_assigned_column(result, &name, ty);
+                    result = type_with_assigned_column(result, name, ty);
                 }
                 result
             }
@@ -99,8 +100,15 @@ impl Checker {
         Some(result)
     }
 
-    pub(crate) fn infer_tidyselect_expr(&mut self, expr: &Expr, scope: &mut Scope) -> RType {
-        match expr {
+    pub(crate) fn infer_tidyselect_expr(
+        &mut self,
+        expr: &Expr,
+        scope: &mut Scope,
+        injection: Option<InjectionMode>,
+    ) -> RType {
+        let previous = scope.tidy_injection;
+        scope.tidy_injection = injection.max(previous);
+        let result = match expr {
             Expr::String(_, _) => RType::scalar(Mode::Character),
             Expr::Ident { name, .. } => scope.get(name).cloned().unwrap_or_else(RType::unknown),
             Expr::UnaryOp {
@@ -108,7 +116,7 @@ impl Checker {
                 expr,
                 ..
             } => {
-                let _ = self.infer_tidyselect_expr(expr, scope);
+                let _ = self.infer_tidyselect_expr(expr, scope, None);
                 RType::unknown()
             }
             Expr::Call { func, args, .. }
@@ -116,12 +124,14 @@ impl Checker {
                     .is_some_and(|name| crate::semantic_lists::bare_name(name) == "c") =>
             {
                 for a in args {
-                    let _ = self.infer_tidyselect_expr(&a.value, scope);
+                    let _ = self.infer_tidyselect_expr(&a.value, scope, None);
                 }
                 RType::unknown()
             }
             _ => self.infer(expr, scope),
-        }
+        };
+        scope.tidy_injection = previous;
+        result
     }
 
     pub(crate) fn dplyr_data_mask_scope(&self, base_scope: &Scope, df_type: &RType) -> Scope {

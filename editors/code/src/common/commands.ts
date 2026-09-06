@@ -3,7 +3,10 @@
  */
 
 import * as vscode from "vscode";
-import * as cp from "child_process";
+import { execFile } from "child_process";
+import { promisify } from "util";
+
+const execFileAsync = promisify(execFile);
 import { ResolvedBinary } from "./binary";
 import { type ISettings } from "./settings";
 
@@ -43,7 +46,7 @@ export async function debugInformationCommand(
 
 export async function explainRuleCommand(binaryPath: string): Promise<void> {
   try {
-    const listOutput = cp.execFileSync(
+    const { stdout } = await execFileAsync(
       binaryPath,
       ["explain", "rule", "--output-format", "json"],
       {
@@ -51,16 +54,23 @@ export async function explainRuleCommand(binaryPath: string): Promise<void> {
         timeout: 5000,
       },
     );
-    const rules = JSON.parse(listOutput) as Array<{
-      code: string;
-      name: string;
-      summary: string;
-    }>;
-    const items = rules.map((r) => ({
-      label: r.code,
-      description: r.name,
-      detail: r.summary,
-    }));
+    const rules: unknown = JSON.parse(stdout);
+    if (!Array.isArray(rules)) throw new Error("Expected a rule list");
+    const items = rules.map((rule: unknown) => {
+      if (
+        typeof rule !== "object" ||
+        rule === null ||
+        !("code" in rule) ||
+        typeof rule.code !== "string" ||
+        !("name" in rule) ||
+        typeof rule.name !== "string" ||
+        !("summary" in rule) ||
+        typeof rule.summary !== "string"
+      ) {
+        throw new Error("Invalid rule description");
+      }
+      return { label: rule.code, description: rule.name, detail: rule.summary };
+    });
     const picked = await vscode.window.showQuickPick(items, {
       placeHolder: "Select a rule to explain",
     });

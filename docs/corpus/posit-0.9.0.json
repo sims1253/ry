@@ -3621,15 +3621,6 @@
       "audit_group": "type-narrowing"
     },
     {
-      "package": "infer",
-      "code": "RY040",
-      "path": "R/get_p_value.R",
-      "line": 213,
-      "column": 21,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
       "package": "keras3",
       "code": "RY010",
       "path": "R/model-training.R",
@@ -6827,7 +6818,7 @@
   ],
   "classification": {
     "true_positive": 43,
-    "false_positive": 666,
+    "false_positive": 665,
     "uncertain": 0
   },
   "audit_group_counts": {
@@ -6841,7 +6832,7 @@
     "reassign-scope": 10,
     "s3-method-dispatch": 7,
     "test-fixture": 76,
-    "type-narrowing": 105,
+    "type-narrowing": 104,
     "upstream-package": 31
   },
   "notes": [

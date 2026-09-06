@@ -1,17 +1,12 @@
-# Rule evidence for 0.9
+# 0.9 rule audit snapshot
 
-This is the final evidence-backed verdict table. The corpus audit established the
-measured corpus baseline, semantic-claim oracle, and probe direction. The closing pass
-adds the R7 literal-to-parameter lifting report, targeted mutation pilot,
-and per-rule verdicts. Every rule has an executed verdict backed by multiple
-independent kinds of evidence; no single column determines the verdict.
+This records the rule audit at commit
+`ec702b587f2ab5a78f64182654d2b1865b44adb0`: 709 Posit findings, including
+43 true positives and 666 false positives. The tables preserve that audit;
+use the live corpus ledgers and oracle tests for current results.
 
-Corpus counts come from the strict hermetic `posit-0.9.0.json` ledger (709
-findings; 43 TP / 666 FP). Probe coverage comes from
-`crates/ry-checker/tests/probes.rs`. Claim fixtures come from the
-completeness-gated `crates/ry-checker/tests/oracle.rs` registry. The R7
-literal-lift report comes from `crates/ry-checker/tests/rule_evidence.rs`.
-The mutation pilot covers RY032, RY040, RY093, and RY103.
+The audit combined the corpus, semantic-claim oracle, probes, literal-to-parameter
+lifting tests, and a mutation pilot for RY032, RY040, RY093, and RY103.
 
 ## R7 literal-to-parameter lifting report
 

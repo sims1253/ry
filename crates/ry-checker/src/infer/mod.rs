@@ -1,14 +1,20 @@
 use super::*;
+pub(crate) use args::*;
 pub(crate) use index::*;
-pub(crate) use misc::*;
+pub(crate) use narrow::*;
 pub(crate) use pipe::PipeForm;
+pub(crate) use quoting::*;
+pub(crate) use types::*;
+mod args;
 pub(crate) mod binop;
 pub(crate) mod call;
 pub(crate) mod construct;
 pub(crate) mod index;
-pub(crate) mod misc;
+mod narrow;
 pub(crate) mod pipe;
+mod quoting;
 pub(crate) mod recall;
+mod types;
 
 /// Join an entire collection of types into one: the lattice join of every
 /// element, with `unknown` for an empty collection (no branch contributes
@@ -618,9 +624,8 @@ impl Checker {
     /// assignment is textually later than its use in the body.
     fn insert_loop_carried_bindings(&self, body: &[Stmt], scope: &mut Scope) {
         for name in assigned_names_in_body(body) {
-            if scope.get(&name).is_none() {
-                scope.insert(name, RType::unknown());
-            }
+            // The pre-loop value need not survive a later iteration.
+            scope.insert(name, RType::unknown());
         }
     }
 
@@ -682,8 +687,7 @@ impl Checker {
 
         // Collect the candidate names (only those that differ from the
         // parent) without holding a borrow of `scope` while we mutate it.
-        let mut branch_types: HashMap<String, (Option<RType>, Option<RType>)> =
-            HashMap::with_capacity(then_scope.bindings.len());
+        let mut branch_types: HashMap<&str, (Option<&RType>, Option<&RType>)> = HashMap::new();
         for (name, t) in &then_scope.bindings {
             // Only the marker installed by `apply_narrowing` is
             // branch-local. An ordinary `Scope::insert` clears that marker,
@@ -695,7 +699,7 @@ impl Checker {
             match scope.get(name) {
                 Some(existing) if existing == t => {}
                 _ => {
-                    branch_types.entry(name.clone()).or_insert((None, None)).0 = Some(t.clone());
+                    branch_types.entry(name).or_insert((None, None)).0 = Some(t);
                 }
             }
         }
@@ -709,15 +713,14 @@ impl Checker {
                 match scope.get(name) {
                     Some(existing) if existing == t => {}
                     _ => {
-                        branch_types.entry(name.clone()).or_insert((None, None)).1 =
-                            Some(t.clone());
+                        branch_types.entry(name).or_insert((None, None)).1 = Some(t);
                     }
                 }
             }
         }
         for (name, (then_t, else_t)) in branch_types {
             let merged = match (then_t, else_t) {
-                (Some(a), Some(b)) => a.join(b),
+                (Some(a), Some(b)) => a.clone().join(b.clone()),
                 (Some(a), None) | (None, Some(a)) => {
                     // The name is assigned in only one branch (no
                     // `else`). When the name is already bound in the
@@ -731,10 +734,10 @@ impl Checker {
                     // sound type, so it degrades to opaque. Joining with
                     // `RType::unknown()` here would be absorbing and make
                     // the parent fold below dead code.
-                    if scope.get(&name).is_some() {
-                        a
+                    if scope.get(name).is_some() {
+                        a.clone()
                     } else {
-                        a.join(RType::unknown())
+                        a.clone().join(RType::unknown())
                     }
                 }
                 (None, None) => continue,
@@ -744,7 +747,7 @@ impl Checker {
             // reassignment doesn't silently degrade a precise parent type
             // to unknown (e.g. `s <- 1L; if (c) { s <- "x" }` keeps `s` as
             // union[integer, character] rather than collapsing to unknown).
-            let merged = match scope.get(&name) {
+            let merged = match scope.get(name) {
                 Some(p) => p.clone().join(merged),
                 None => merged,
             };
@@ -755,13 +758,13 @@ impl Checker {
             // that keeps the parent binding (inherited into the clone)
             // demands the parent's marker instead.
             let then_origin =
-                !then_scope.bindings.contains_key(&name) || then_scope.has_list_origin(&name);
+                !then_scope.bindings.contains_key(name) || then_scope.has_list_origin(name);
             let else_origin =
-                !else_scope.bindings.contains_key(&name) || else_scope.has_list_origin(&name);
+                !else_scope.bindings.contains_key(name) || else_scope.has_list_origin(name);
             let keeps_list_origin = then_origin && else_origin;
-            scope.insert(&name, merged);
+            scope.insert(name, merged);
             if keeps_list_origin {
-                scope.mark_list_origin(&name);
+                scope.mark_list_origin(name);
             }
         }
     }
@@ -1699,21 +1702,17 @@ impl Checker {
                 )
             }
             Expr::UnaryOp { op, expr, span } => {
-                // Detect tidyeval `!!` (unquote) and `!!!` (splice)
-                // operators BEFORE inferring the inner expression.
-                // tree-sitter parses these as nested unary `!`:
-                // `!!x` -> `!(!x)`, `!!!x` -> `!(!(!x))`.
-                // These are NSE operators, not actual negation. We must
-                // strip ALL nested `!` operators and only infer the
-                // innermost operand, so RY021 doesn't fire on the
-                // intermediate `!` applied to a list/function.
-                if matches!(op, UnaryOpKind::Not)
+                // Injection is syntax only in arguments whose signatures opt in.
+                if scope.tidy_injection.is_some()
+                    && matches!(op, UnaryOpKind::Not)
                     && matches!(
                         expr.as_ref(),
                         Expr::UnaryOp {
                             op: UnaryOpKind::Not,
+                            expr: inner,
                             ..
-                        }
+                        } if scope.tidy_injection == Some(InjectionMode::Full)
+                            || matches!(inner.as_ref(), Expr::UnaryOp { op: UnaryOpKind::Not, .. })
                     )
                 {
                     // Strip all consecutive `!` operators to find
@@ -1730,6 +1729,9 @@ impl Checker {
                 }
                 if let Some(dispatched) = self.try_s3_unary_dispatch(*op, &t) {
                     return dispatched;
+                }
+                if matches!(op, UnaryOpKind::Neg) && t.class.contains("factor") {
+                    return self.infer_factor_arithmetic(&t, None, *span);
                 }
                 match op {
                     UnaryOpKind::Neg => {

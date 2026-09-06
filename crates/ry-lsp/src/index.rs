@@ -61,8 +61,8 @@ mod tests {
 
     #[test]
     fn discovers_r_files() {
-        let dir = std::env::temp_dir().join(format!("ry_index_test_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let fixture = ry_testkit::FixtureProject::empty().unwrap();
+        let dir = fixture.root();
 
         // Create some .R files
         std::fs::write(dir.join("a.R"), "x <- 1\n").unwrap();
@@ -80,7 +80,7 @@ mod tests {
         std::fs::write(hidden.join("e.R"), "hidden <- TRUE\n").unwrap();
 
         let config = Config::default();
-        let discovered = index_workspace(&dir, &config);
+        let discovered = index_workspace(dir, &config);
 
         let paths: Vec<&str> = discovered.files.keys().map(String::as_str).collect();
         assert_eq!(paths.len(), 3, "a.R, b.r and sub/d.R: {paths:?}");
@@ -95,14 +95,12 @@ mod tests {
             !paths.iter().any(|p| p.ends_with("e.R")),
             "hidden dir skipped"
         );
-
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn respects_exclude_globs() {
-        let dir = std::env::temp_dir().join(format!("ry_index_excl_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let fixture = ry_testkit::FixtureProject::empty().unwrap();
+        let dir = fixture.root();
 
         std::fs::write(dir.join("keep.R"), "x <- 1\n").unwrap();
 
@@ -115,7 +113,7 @@ mod tests {
             exclude: vec!["vendor".to_string()],
             ..Default::default()
         };
-        let discovered = index_workspace(&dir, &cfg);
+        let discovered = index_workspace(dir, &cfg);
         let paths: Vec<&str> = discovered.files.keys().map(String::as_str).collect();
 
         assert_eq!(paths.len(), 1, "only keep.R: {paths:?}");
@@ -124,16 +122,14 @@ mod tests {
             !paths.iter().any(|p| p.ends_with("skip.R")),
             "vendor/ skipped"
         );
-
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// The LSP must skip `target/` directories just like
     /// the CLI, so both modes discover the same file set.
     #[test]
     fn skips_target_directory_like_cli() {
-        let dir = std::env::temp_dir().join(format!("ry_index_target_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let fixture = ry_testkit::FixtureProject::empty().unwrap();
+        let dir = fixture.root();
 
         std::fs::write(dir.join("keep.R"), "x <- 1\n").unwrap();
 
@@ -142,7 +138,7 @@ mod tests {
         std::fs::write(target.join("skip.R"), "y <- 2\n").unwrap();
 
         let config = Config::default();
-        let discovered = index_workspace(&dir, &config);
+        let discovered = index_workspace(dir, &config);
 
         let paths: Vec<&str> = discovered.files.keys().map(String::as_str).collect();
         assert_eq!(paths.len(), 1, "only keep.R: {paths:?}");
@@ -151,15 +147,13 @@ mod tests {
             !paths.iter().any(|p| p.ends_with("skip.R")),
             "target/ must be skipped"
         );
-
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// Truncated state must be exposed to tests.
     #[test]
     fn exposes_truncation_when_max_files_hit() {
-        let dir = std::env::temp_dir().join(format!("ry_index_cap_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let fixture = ry_testkit::FixtureProject::empty().unwrap();
+        let dir = fixture.root();
 
         // Write more files than the cap allows.
         for i in 0..5 {
@@ -173,14 +167,12 @@ mod tests {
             },
             ..Default::default()
         };
-        let outcome = index_workspace(&dir, &config);
+        let outcome = index_workspace(dir, &config);
 
         assert!(
             outcome.truncated.iter().any(|t| t.max_files_hit),
             "max-files cap must be reported"
         );
         assert_eq!(outcome.files.len(), 2, "only 2 files discovered under cap");
-
-        std::fs::remove_dir_all(&dir).ok();
     }
 }

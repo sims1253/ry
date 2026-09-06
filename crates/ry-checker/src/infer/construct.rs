@@ -294,11 +294,8 @@ impl Checker {
     // Infer the result type of `vector(mode, length)`: pin the mode and
     // length from literal arguments when possible.
     pub(crate) fn infer_vector(&self, args: &[Arg]) -> RType {
-        let mode_expr = args
-            .iter()
-            .find(|a| a.name.as_deref() == Some("mode"))
-            .or_else(|| args.iter().find(|a| a.name.is_none()))
-            .map(|a| &a.value);
+        let bindings = match_arguments(&["mode", "length"], args);
+        let mode_expr = bindings.arg_for_param(0).map(|index| &args[index].value);
         let mode = match mode_expr {
             Some(Expr::String(mode, _)) => match mode.as_str() {
                 "logical" => Mode::Logical,
@@ -314,25 +311,8 @@ impl Checker {
             _ => Mode::Opaque,
         };
 
-        let length_expr = args
-            .iter()
-            .find(|a| a.name.as_deref() == Some("length"))
-            .or_else(|| {
-                let mut positional = args.iter().filter(|a| a.name.is_none());
-                let _ = positional.next();
-                positional.next()
-            })
-            .map(|a| &a.value);
-        let length = length_expr
-            .and_then(extract_literal_int)
-            .map(|n| {
-                if n <= 0 {
-                    Length::Zero
-                } else {
-                    Length::Known(n as usize)
-                }
-            })
-            .unwrap_or(Length::Unknown);
+        let length =
+            size_argument_length(bindings.arg_for_param(1).map(|index| &args[index].value), 0);
 
         RType::new(mode, length)
     }
@@ -679,6 +659,13 @@ fn semantic_return_length(
             })
     };
     match semantics {
+        ReturnLengthSpec::ParamValue {
+            param,
+            default_length,
+        } => Some(size_argument_length(
+            bound_args(param).next().map(|index| &args[index].value),
+            *default_length,
+        )),
         ReturnLengthSpec::ZeroIfAnyParamZero { params } => {
             if params
                 .iter()
@@ -750,4 +737,27 @@ fn semantic_return_length(
             }
         }
     }
+}
+
+/// R truncates numeric sizes towards zero; dynamic and invalid sizes stay unknown.
+fn size_argument_length(value: Option<&Expr>, default: usize) -> Length {
+    let number = match value {
+        None => return json_length_to_length(Some(JsonLength::Known(default))),
+        Some(Expr::Integer(n, _)) => *n as f64,
+        Some(Expr::Double(n, _)) => *n,
+        Some(Expr::UnaryOp {
+            op: UnaryOpKind::Neg,
+            expr,
+            ..
+        }) => match expr.as_ref() {
+            Expr::Integer(n, _) => -(*n as f64),
+            Expr::Double(n, _) => -*n,
+            _ => return Length::Unknown,
+        },
+        _ => return Length::Unknown,
+    };
+    if !number.is_finite() || number.trunc() < 0.0 || number >= usize::MAX as f64 {
+        return Length::Unknown;
+    }
+    json_length_to_length(Some(JsonLength::Known(number.trunc() as usize)))
 }

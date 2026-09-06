@@ -2,13 +2,7 @@ import * as path from "path";
 
 const folderName = path.basename(__dirname);
 
-/**
- * Path to the root directory of this extension.
- *
- * Resolves correctly whether the compiled file lives at `dist/`
- * (bundled, where `__dirname` is the extension root) or at
- * `out/src/common/` (tsc-only, where `__dirname` ends in `common`).
- */
+// Resolve the root from dist/, src/common/, or out/common/.
 export const EXTENSION_ROOT_DIR =
   folderName === "common"
     ? path.dirname(path.dirname(__dirname))

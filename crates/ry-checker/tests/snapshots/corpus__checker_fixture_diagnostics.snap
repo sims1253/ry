@@ -252,8 +252,8 @@ expression: snapshots
   fixture: err_partial_column_indexed_assignment.R
 - diagnostics:
     - code: RY080
-      message: "`map_dbl` expects `double` returns but the callback returns `character`; R will coerce silently"
-      severity: warning
+      message: "`map_dbl` requires a scalar `double` callback result, but the callback returns `character<len=1>`; R rejects this result"
+      severity: error
       span:
         column: 6
         end: 275

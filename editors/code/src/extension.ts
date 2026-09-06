@@ -171,6 +171,8 @@ export async function activate(
         const newSettings = readSettings();
         if (!settings || checkIfConfigurationChanged(settings, newSettings)) {
           await requestRestart();
+        } else {
+          settings = newSettings;
         }
       },
     ),

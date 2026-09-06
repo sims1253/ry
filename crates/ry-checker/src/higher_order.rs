@@ -47,13 +47,14 @@ impl Checker {
     pub(crate) fn infer_higher_order_call(
         &mut self,
         name: &str,
+        signature: &FunctionSig,
         args: &[Arg],
         arg_types: &[RType],
-        scope: &Scope,
+        scope: &mut Scope,
         span: Span,
     ) -> Option<RType> {
-        let signature = self.resolve_typeshed_sig(name)?;
         let spec = signature.higher_order.as_ref()?;
+        self.walk_callback_for_diagnostics(signature, args, arg_types, scope);
         let argument_match = match_params(&signature.params, args);
         let declared_length = match &signature.return_ {
             ReturnSpec::Concrete(ty) => json_length_to_length(JsonLength::parse(&ty.length)),
@@ -88,11 +89,33 @@ impl Checker {
         scope: &Scope,
         span: Span,
     ) -> RType {
-        let callback_types = self.higher_order_callback_types(spec, arg_types, argument_match);
+        let inputs = self.higher_order_input_types(spec, arg_types, argument_match);
+        let callback_runs = !inputs.is_empty()
+            && !inputs.iter().any(|ty| {
+                matches!(ty.length, Length::Zero | Length::Known(0)) || ty.mode == Mode::Function
+            });
+        let callback_types = inputs.iter().map(RType::element).collect::<Vec<_>>();
         let callback = argument_bound_to_formal(args, argument_match, spec.callback_position)
             .map(|argument| &argument.value);
         let callback_return = callback
+            .filter(|_| callback_runs)
             .and_then(|callback| self.callback_return_type(callback, &callback_types, scope));
+        if let Some(target) = spec
+            .callback_return_mode
+            .as_deref()
+            .and_then(concrete_json_mode)
+            && let Some(actual) = &callback_return
+            && (!modes_compatible(&actual.mode, &target)
+                || matches!(actual.length, Length::Zero | Length::Known(0 | 2..)))
+        {
+            let bare_name = crate::semantic_lists::bare_name(name);
+            self.emit(
+                Severity::Error,
+                span,
+                "RY080",
+                format!("`{bare_name}` requires a scalar `{target}` callback result, but the callback returns `{actual}`; R rejects this result"),
+            );
+        }
         match spec.result.kind {
             HigherOrderResultKind::ListOfCallbackReturn => {
                 let length = spec
@@ -125,21 +148,6 @@ impl Checker {
                 let mode = higher_order_mode(spec.result.mode.as_deref());
                 if matches!(mode, Mode::Opaque) {
                     return RType::unknown();
-                }
-                if spec.result.length_arg.is_some()
-                    && let Some(return_type) = &callback_return
-                    && !modes_compatible(&return_type.mode, &mode)
-                {
-                    let bare_name = crate::semantic_lists::bare_name(name);
-                    self.emit(
-                        Severity::Warning,
-                        span,
-                        "RY080",
-                        format!(
-                            "`{bare_name}` expects `{mode}` returns but the callback returns `{}`; R will coerce silently",
-                            return_type.mode
-                        ),
-                    );
                 }
                 let length = spec
                     .result
@@ -227,7 +235,7 @@ impl Checker {
         }
     }
 
-    fn higher_order_callback_types(
+    fn higher_order_input_types(
         &self,
         spec: &HigherOrderSpec,
         arg_types: &[RType],
@@ -238,24 +246,40 @@ impl Checker {
             match callback_arg {
                 CallbackArg::ElementOfArg0 => types.push(
                     matched_argument_type(arg_types, argument_match, 0)
-                        .map(RType::element)
+                        .cloned()
                         .unwrap_or_else(RType::unknown),
                 ),
                 CallbackArg::ElementOfArg1 => types.push(
                     matched_argument_type(arg_types, argument_match, 1)
-                        .map(RType::element)
+                        .cloned()
                         .unwrap_or_else(RType::unknown),
                 ),
+                CallbackArg::ElementsOfArg0 => {
+                    if matched_argument_type(arg_types, argument_match, 0)
+                        .is_some_and(|ty| matches!(ty.length, Length::Zero | Length::Known(0)))
+                    {
+                        continue;
+                    }
+                    if let Some(schema) = matched_argument_type(arg_types, argument_match, 0)
+                        .and_then(|ty| ty.columns.as_ref())
+                        .filter(|schema| schema.complete)
+                    {
+                        types.extend(schema.columns.iter().map(|(_, ty)| ty.clone()));
+                    } else {
+                        types.push(RType::unknown());
+                    }
+                }
                 CallbackArg::Unknown => types.push(RType::unknown()),
                 CallbackArg::AccumulatorAndElement => {
                     let data_index = if spec.callback_position == 0 { 1 } else { 0 };
                     let element = matched_argument_type(arg_types, argument_match, data_index)
-                        .map(RType::element)
+                        .cloned()
                         .unwrap_or_else(RType::unknown);
                     types.extend([element.clone(), element]);
                 }
-                CallbackArg::ElementsAfterCallback => types
-                    .extend(arguments_bound_to_dots(arg_types, argument_match).map(RType::element)),
+                CallbackArg::ElementsAfterCallback => {
+                    types.extend(arguments_bound_to_dots(arg_types, argument_match).cloned())
+                }
             }
         }
         types
@@ -423,7 +447,7 @@ impl Checker {
                 }
                 // User-defined function in the FnTable?
                 if let Some(f) = self.fn_table.fns.get(lookup_name) {
-                    let rt = self.return_slots.get(f.return_slot);
+                    let rt = self.read_return_slot(f.return_slot);
                     if !matches!(rt.mode, Mode::Opaque) {
                         return Some(rt);
                     }
@@ -476,17 +500,13 @@ impl Checker {
     /// statements via `check_stmt` (which emits diagnostics). Named
     /// callbacks (user-fn, typeshed) don't need this: their bodies are
     /// walked during the user-fn fixpoint or are built-in.
-    pub(crate) fn walk_callback_for_diagnostics(
+    fn walk_callback_for_diagnostics(
         &mut self,
-        name: &str,
+        signature: &FunctionSig,
         args: &[Arg],
         arg_types: &[RType],
         scope: &mut Scope,
     ) {
-        let signature = match self.resolve_typeshed_sig(name) {
-            Some(signature) => signature,
-            None => return,
-        };
         let spec = match signature.higher_order.as_ref() {
             Some(spec) => spec,
             None => return,
@@ -495,7 +515,15 @@ impl Checker {
             return;
         }
         let argument_match = match_params(&signature.params, args);
-        let elem_types = self.higher_order_callback_types(spec, arg_types, &argument_match);
+        let inputs = self.higher_order_input_types(spec, arg_types, &argument_match);
+        if inputs.is_empty()
+            || inputs.iter().any(|ty| {
+                matches!(ty.length, Length::Zero | Length::Known(0)) || ty.mode == Mode::Function
+            })
+        {
+            return;
+        }
+        let elem_types = inputs.iter().map(RType::element).collect::<Vec<_>>();
         let cb = match argument_bound_to_formal(args, &argument_match, spec.callback_position) {
             Some(argument) => &argument.value,
             None => return,
@@ -595,7 +623,7 @@ impl Checker {
     /// only promises that the operation is supported, not its shape.
     pub(crate) fn s3_specific_or_group_return(&self, specific: bool, slot: usize) -> RType {
         if specific {
-            self.return_slots.get(slot)
+            self.read_return_slot(slot)
         } else {
             RType::unknown()
         }

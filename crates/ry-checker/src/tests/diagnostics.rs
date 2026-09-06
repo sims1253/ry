@@ -3,7 +3,7 @@ use super::*;
 // ---- inline suppression comment tests ----
 
 fn scan_comments(src: &str) -> Vec<ry_core::ast::Comment> {
-    parse_snippet("test.R", src).comments
+    parse_file("test.R", src).comments
 }
 
 #[test]

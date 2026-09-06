@@ -118,10 +118,16 @@ export async function getRyVersion(
         timeout: 5000,
       },
     );
-    const parsed = JSON.parse(stdout);
-    const version = parsed.version as string | undefined;
-    if (!version) return undefined;
-    return versionFromString(version);
+    const parsed: unknown = JSON.parse(stdout);
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      !("version" in parsed) ||
+      typeof parsed.version !== "string"
+    ) {
+      return undefined;
+    }
+    return versionFromString(parsed.version);
   } catch {
     return undefined;
   }

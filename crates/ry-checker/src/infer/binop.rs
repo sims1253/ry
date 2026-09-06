@@ -12,24 +12,10 @@ impl Checker {
         span: Span,
         known_null_is_actionable: bool,
     ) -> RType {
-        // `:` sequence operator. Always produces a vector; mode depends
-        // on operand modes per R's coercion (int:int -> int, otherwise
-        // double). If both operands are integer literals we can even
-        // pin the length exactly.
         if matches!(op, BinOpKind::Colon) {
-            // Delegate to the type lattice's `seq` method, which models
-            // R's `:` behavior (integer for whole-number endpoints).
             return lt.seq(rt);
         }
-        // `%in%` matching. In R `x %in% table` returns a logical vector of
-        // length(x) -- one membership test per element of the LHS -- and the
-        // RHS (`table`) length is irrelevant. Routing it through the generic
-        // `compare` path wrongly took `binary(lt.len, rt.len)` (the max), so
-        // `x %in% c("a","b")` on a length-1 `x` came out length-2 and drove
-        // both RY002 (`if` condition length 2) and RY032 (`&&` on a length-2
-        // operand) false positives. `%in%` never errors on mismatched modes
-        // (it coerces to a common type), so the result is always plain
-        // logical with the LHS length (Unknown LHS length stays Unknown).
+        // Membership returns one logical per LHS element, regardless of RHS length.
         if matches!(op, BinOpKind::In) {
             return RType::new(Mode::Logical, lt.length);
         }
@@ -90,9 +76,6 @@ impl Checker {
                         ),
                     );
                 }
-                if matches!(op, BinOpKind::AndAnd | BinOpKind::OrOr) {
-                    return RType::new(Mode::Logical, Length::One);
-                }
                 return t;
             }
             self.emit(
@@ -128,6 +111,9 @@ impl Checker {
             }
             return RType::new(Mode::Logical, length);
         }
+        if lt.class.contains("factor") || rt.class.contains("factor") {
+            return self.infer_factor_arithmetic(&lt, Some(&rt), span);
+        }
         // Arithmetic.
         let lt_mode = lt.mode;
         let rt_mode = rt.mode;
@@ -147,20 +133,6 @@ impl Checker {
                 "arithmetic with `NULL` produces `numeric(0)`; the operand is known to be NULL",
             );
             return RType::unknown();
-        }
-        if lt.class.contains("factor") || rt.class.contains("factor") {
-            // Base `Ops.factor` preempts the primitive for *any* factor
-            // arithmetic and returns `NA` without ever recycling
-            // (verified against R 4.6, even where the modes would
-            // arith-combine): RY042 only -- never RY041, and a list
-            // counterpart stays a warning instead of RY040.
-            self.emit(
-                Severity::Warning,
-                span,
-                "RY042",
-                "arithmetic on a factor produces `NA`; operate on its levels or convert it explicitly",
-            );
-            return lt.arith(rt).unwrap_or_else(RType::unknown);
         }
         let recycles = non_divisible_recycling(lt.length, rt.length);
         if let Some(t) = lt.arith(rt) {
@@ -186,6 +158,26 @@ impl Checker {
             ),
         );
         RType::unknown()
+    }
+
+    pub(crate) fn infer_factor_arithmetic(
+        &mut self,
+        lhs: &RType,
+        rhs: Option<&RType>,
+        span: Span,
+    ) -> RType {
+        self.emit(
+            Severity::Warning,
+            span,
+            "RY042",
+            "arithmetic on a factor produces `NA`; operate on its levels or convert it explicitly",
+        );
+        // Ops.factor returns rep.int(NA, max(length(e1), length(e2))).
+        let length = match (lhs.length, rhs.map_or(Length::Zero, |ty| ty.length)) {
+            (Length::Zero, x) | (x, Length::Zero) => x,
+            (a, b) => a.binary(b),
+        };
+        RType::new(Mode::Logical, length)
     }
 
     /// Resolve operator S3 dispatch for one operand: the operator's own
@@ -575,7 +567,7 @@ mod collect_condition_assignment_names_tests {
     /// expression -- the position `merge_condition_assignments` scans.
     fn collected(operand_src: &str) -> HashSet<String> {
         let src = format!("flag && {operand_src}\n");
-        let file = crate::tests::parse_snippet("cond_assign_test.R", &src);
+        let file = crate::tests::parse_file("cond_assign_test.R", &src);
         let [Stmt::Expr(Expr::BinOp { rhs, .. })] = file.stmts.as_slice() else {
             panic!("test source must be a single `flag && ...` expression");
         };

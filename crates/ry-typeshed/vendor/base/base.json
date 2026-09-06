@@ -2385,7 +2385,7 @@
     },
     ".packages": {
       "params": [
-        "all"
+        "all.available"
       ],
       "return": {
         "mode": "character",
@@ -3041,7 +3041,7 @@
     "ave": {
       "params": [
         "x",
-        "f"
+        "FUN"
       ],
       "return": {
         "mode": "double_or_int",
@@ -3160,13 +3160,17 @@
     },
     "character": {
       "params": [
-        "length"
+        {
+          "name": "length",
+          "default": true
+        }
       ],
       "return": {
         "mode": "character",
-        "length": "arg0",
+        "length": "unknown",
         "na": false
-      }
+      },
+      "return_length": {"kind": "param_value", "param": "length", "default_length": 0}
     },
     "charmatch": {
       "params": [
@@ -3263,11 +3267,30 @@
     },
     "complex": {
       "params": [
-        "length"
+        {
+          "name": "length.out",
+          "default": true
+        },
+        {
+          "name": "real",
+          "default": true
+        },
+        {
+          "name": "imaginary",
+          "default": true
+        },
+        {
+          "name": "modulus",
+          "default": true
+        },
+        {
+          "name": "argument",
+          "default": true
+        }
       ],
       "return": {
         "mode": "complex",
-        "length": "arg0",
+        "length": "unknown",
         "na": false
       }
     },
@@ -3698,13 +3721,17 @@
     },
     "double": {
       "params": [
-        "length"
+        {
+          "name": "length",
+          "default": true
+        }
       ],
       "return": {
         "mode": "double",
-        "length": "arg0",
+        "length": "unknown",
         "na": false
-      }
+      },
+      "return_length": {"kind": "param_value", "param": "length", "default_length": 0}
     },
     "dpois": {
       "params": [
@@ -3920,7 +3947,7 @@
     },
     "fft": {
       "params": [
-        "x"
+        "z"
       ],
       "return": {
         "mode": "complex",
@@ -3997,7 +4024,7 @@
     },
     "formals": {
       "params": [
-        "fn"
+        "fun"
       ],
       "return": {
         "mode": "list",
@@ -4041,7 +4068,7 @@
     },
     "friedman.test": {
       "params": [
-        "x"
+        "y"
       ],
       "return": {
         "mode": "list",
@@ -4342,13 +4369,17 @@
     },
     "integer": {
       "params": [
-        "length"
+        {
+          "name": "length",
+          "default": true
+        }
       ],
       "return": {
         "mode": "integer",
-        "length": "arg0",
+        "length": "unknown",
         "na": false
-      }
+      },
+      "return_length": {"kind": "param_value", "param": "length", "default_length": 0}
     },
     "interaction": {
       "params": [
@@ -4922,13 +4953,17 @@
     },
     "logical": {
       "params": [
-        "length"
+        {
+          "name": "length",
+          "default": true
+        }
       ],
       "return": {
         "mode": "logical",
-        "length": "arg0",
+        "length": "unknown",
         "na": false
-      }
+      },
+      "return_length": {"kind": "param_value", "param": "length", "default_length": 0}
     },
     "ls": {
       "params": [],
@@ -5008,7 +5043,7 @@
     },
     "match.arg": {
       "params": [
-        "x"
+        "arg"
       ],
       "return": {
         "mode": "character",
@@ -5040,7 +5075,7 @@
     },
     "mauchly.test": {
       "params": [
-        "x"
+        "object"
       ],
       "return": {
         "mode": "list",
@@ -5186,7 +5221,7 @@
     },
     "mvfft": {
       "params": [
-        "x"
+        "z"
       ],
       "return": {
         "mode": "complex",
@@ -5196,7 +5231,7 @@
     },
     "na.omit": {
       "params": [
-        "x"
+        "object"
       ],
       "return": "arg0"
     },
@@ -5330,13 +5365,17 @@
     },
     "numeric": {
       "params": [
-        "length"
+        {
+          "name": "length",
+          "default": true
+        }
       ],
       "return": {
         "mode": "double",
-        "length": "arg0",
+        "length": "unknown",
         "na": false
-      }
+      },
+      "return_length": {"kind": "param_value", "param": "length", "default_length": 0}
     },
     "nzchar": {
       "params": [
@@ -5360,7 +5399,7 @@
     },
     "oneway.test": {
       "params": [
-        "x"
+        "formula"
       ],
       "return": {
         "mode": "list",
@@ -5928,7 +5967,7 @@
     },
     "quade.test": {
       "params": [
-        "x"
+        "y"
       ],
       "return": {
         "mode": "list",
@@ -6033,13 +6072,17 @@
     },
     "raw": {
       "params": [
-        "length"
+        {
+          "name": "length",
+          "default": true
+        }
       ],
       "return": {
         "mode": "raw",
-        "length": "arg0",
+        "length": "unknown",
         "na": false
-      }
+      },
+      "return_length": {"kind": "param_value", "param": "length", "default_length": 0}
     },
     "rbind": {
       "params": [
@@ -6533,7 +6576,7 @@
     },
     "set.seed": {
       "params": [
-        "n"
+        "seed"
       ],
       "return": {
         "mode": "null",
@@ -7042,7 +7085,10 @@
       "params": [
         "file",
         "envir",
-        "..."
+        "chdir",
+        "keep.source",
+        "keep.parse.data",
+        "toplevel.env"
       ],
       "scope_effect": "unknown_bindings",
       "return": {
@@ -7177,7 +7223,7 @@
     },
     "terms": {
       "params": [
-        "object"
+        "x"
       ],
       "return": {
         "mode": "opaque",
@@ -7414,7 +7460,7 @@
     "update": {
       "params": [
         "object",
-        "formula"
+        "formula."
       ],
       "return": {
         "mode": "opaque",
@@ -7494,12 +7540,18 @@
     },
     "vector": {
       "params": [
-        "mode",
-        "length"
+        {
+          "name": "mode",
+          "default": true
+        },
+        {
+          "name": "length",
+          "default": true
+        }
       ],
       "return": {
         "mode": "arg0",
-        "length": "arg1",
+        "length": "unknown",
         "na": false
       }
     },

@@ -96,6 +96,11 @@ pub enum DefaultCurrentScope {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ReturnLengthSpec {
+    /// A vector size supplied as a numeric value, rather than a vector length.
+    ParamValue {
+        param: String,
+        default_length: usize,
+    },
     /// An exact zero fact only: all nonzero outcomes remain unknown.
     ZeroIfAnyParamZero {
         params: Vec<String>,
@@ -133,6 +138,7 @@ pub struct RecycleZeroLengthControl {
 #[serde(rename_all = "snake_case")]
 pub enum CallbackArg {
     ElementOfArg0,
+    ElementsOfArg0,
     ElementOfArg1,
     Unknown,
     AccumulatorAndElement,
@@ -220,14 +226,6 @@ pub enum JsonLength {
 }
 
 impl JsonLength {
-    /// The literal lengths that appear in the vendored stubs. A new one is
-    /// deliberate: add it to the data and here together.
-    const KNOWN: &[usize] = &[
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 15, 19, 20, 21, 24, 26, 30, 31, 32, 35, 39, 43, 47,
-        48, 49, 50, 54, 60, 64, 66, 70, 71, 72, 84, 88, 98, 100, 132, 141, 150, 153, 176, 240, 248,
-        272, 289, 468, 578, 1000, 2820,
-    ];
-
     pub fn parse(value: &str) -> Option<Self> {
         Some(match value {
             "arg0" => Self::Arg0,
@@ -238,11 +236,10 @@ impl JsonLength {
             "test" => Self::Test,
             "unknown" => Self::Unknown,
             value => {
-                let parsed = value.parse().ok()?;
-                if !Self::KNOWN.contains(&parsed) {
+                if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
                     return None;
                 }
-                Self::Known(parsed)
+                Self::Known(value.parse().ok()?)
             }
         })
     }
@@ -269,6 +266,8 @@ pub struct HigherOrderResult {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct HigherOrderSpec {
+    #[serde(default)]
+    pub callback_return_mode: Option<String>,
     pub callback_param: String,
     pub callback_position: usize,
     pub callback_args: Vec<CallbackArg>,
@@ -477,6 +476,14 @@ pub enum ReturnSpec {
     Concrete(JsonRType),
 }
 
+/// Dynamic dots splice lists; quoting contexts also unquote expressions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InjectionMode {
+    Splice,
+    Full,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FunctionSig {
@@ -488,6 +495,9 @@ pub struct FunctionSig {
     pub aliases: Vec<String>,
     #[serde(default)]
     pub eval: std::collections::BTreeMap<String, EvalMode>,
+    /// Formals whose expressions support tidy-evaluation injection.
+    #[serde(default)]
+    pub injection: std::collections::BTreeMap<String, InjectionMode>,
     /// Whether calls to this function do not return to their caller.
     #[serde(default)]
     pub no_return: bool,
@@ -999,6 +1009,29 @@ fn validate_signature(
         );
     }
     if let Some(higher_order) = &signature.higher_order {
+        if higher_order
+            .callback_return_mode
+            .as_deref()
+            .is_some_and(|mode| {
+                !matches!(
+                    JsonMode::parse(mode),
+                    Some(
+                        JsonMode::Logical
+                            | JsonMode::Integer
+                            | JsonMode::Double
+                            | JsonMode::Character
+                    )
+                )
+            })
+        {
+            validation_error(
+                report,
+                path,
+                format!(
+                    "{location}.higher_order.callback_return_mode: expected a typed atomic mode"
+                ),
+            );
+        }
         for (field, index) in [
             ("length_arg", higher_order.result.length_arg),
             ("source_arg", higher_order.result.source_arg),
@@ -1034,6 +1067,9 @@ fn validate_function_semantics(
             );
         }
     };
+    for param in signature.injection.keys() {
+        validate_param(report, "injection", param);
+    }
     if let Some(higher_order) = &signature.higher_order
         && signature
             .params
@@ -1122,6 +1158,9 @@ fn validate_function_semantics(
                 .any(|(index, param)| params[..index].contains(param))
         };
         match length {
+            ReturnLengthSpec::ParamValue { param, .. } => {
+                validate_param(report, "return_length.param", param);
+            }
             ReturnLengthSpec::ZeroIfAnyParamZero { params } => {
                 if params.len() < 2 || has_duplicates(params) {
                     validation_error(
@@ -1462,6 +1501,30 @@ mod tests {
             std::fs::write(&path, serde_json::to_string(value).unwrap()).unwrap();
             validate_stub_dirs(&[dir.path().to_path_buf()])
         };
+        for (field, value, message) in [
+            (
+                "injection",
+                json!({"missing": "full"}),
+                "unknown parameter `missing`",
+            ),
+            ("injection", json!({"f": "invalid"}), "unknown variant"),
+            (
+                "return_length",
+                json!({"kind": "param_value", "param": "missing", "default_length": 0}),
+                "unknown parameter `missing`",
+            ),
+        ] {
+            let mut invalid = valid.clone();
+            invalid["functions"]["apply"][field] = value;
+            let report = validate(&invalid);
+            assert!(
+                report.problems.iter().any(|p| p.message.contains(message)),
+                "{report:?}"
+            );
+        }
+        let mut invalid = valid.clone();
+        invalid["functions"]["apply"]["higher_order"]["callback_return_mode"] = json!("list");
+        assert!(validate(&invalid).error_count() > 0);
         let report = validate(&valid);
         assert_eq!(report.error_count(), 0, "{report:?}");
         assert_eq!(report.files, 1);
@@ -1728,37 +1791,16 @@ mod tests {
     }
 
     #[test]
-    fn known_literal_lengths_mirror_the_vendored_data() {
-        fn collect(value: &serde_json::Value, lengths: &mut std::collections::BTreeSet<usize>) {
-            match value {
-                serde_json::Value::Object(fields) => {
-                    for (key, value) in fields {
-                        if key == "length"
-                            && let serde_json::Value::String(text) = value
-                            && let Ok(parsed) = text.parse::<usize>()
-                        {
-                            lengths.insert(parsed);
-                        }
-                        collect(value, lengths);
-                    }
-                }
-                serde_json::Value::Array(items) => {
-                    for item in items {
-                        collect(item, lengths);
-                    }
-                }
-                _ => {}
-            }
+    fn literal_lengths_are_not_limited_to_the_vendored_inventory() {
+        for length in [0, 1, 10, 999_999, usize::MAX] {
+            assert_eq!(
+                JsonLength::parse(&length.to_string()),
+                Some(JsonLength::Known(length))
+            );
         }
-        let mut lengths = std::collections::BTreeSet::new();
-        for json in std::iter::once(BASE_JSON).chain(PACKAGE_SPECS.iter().map(|&(_, json)| json)) {
-            collect(&serde_json::from_str(json).unwrap(), &mut lengths);
+        for invalid in ["", "-1", "+1", "1.5", " 1", "184467440737095516160"] {
+            assert_eq!(JsonLength::parse(invalid), None);
         }
-        assert_eq!(
-            lengths.into_iter().collect::<Vec<_>>(),
-            JsonLength::KNOWN,
-            "the vendored data and `JsonLength::KNOWN` drifted apart"
-        );
     }
 
     #[test]

@@ -90,6 +90,10 @@
         "length": "unknown",
         "na": true
       }
-    }
+    },
+    "vec_c": {"params": ["...", {"name": ".ptype", "default": true}, {"name": ".name_spec", "default": true}, {"name": ".name_repair", "default": true}, {"name": ".error_arg", "default": true}, {"name": ".error_call", "default": true}], "return": {"mode": "opaque", "length": "unknown", "na": true}, "injection": {"...": "splice"}},
+    "vec_size_common": {"params": ["...", {"name": ".size", "default": true}, {"name": ".absent", "default": true}, {"name": ".arg", "default": true}, {"name": ".call", "default": true}], "return": {"mode": "opaque", "length": "unknown", "na": true}, "injection": {"...": "splice"}},
+    "vec_recycle_common": {"params": ["...", {"name": ".size", "default": true}, {"name": ".arg", "default": true}, {"name": ".call", "default": true}], "return": {"mode": "opaque", "length": "unknown", "na": true}, "injection": {"...": "splice"}},
+    "vec_cast_common": {"params": ["...", {"name": ".to", "default": true}, {"name": ".arg", "default": true}, {"name": ".call", "default": true}], "return": {"mode": "opaque", "length": "unknown", "na": true}, "injection": {"...": "splice"}}
   }
 }

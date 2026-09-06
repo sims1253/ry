@@ -504,6 +504,7 @@ impl Project {
             std::mem::take(&mut self.fn_table),
             std::mem::take(&mut self.return_slots),
         );
+        refiner.set_loaded(self.loaded.clone());
         refiner.set_user_stubs(Arc::clone(&self.user_stubs));
         refiner.seed_return_types(&self.prev_fn_returns);
 

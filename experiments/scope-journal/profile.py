@@ -11,6 +11,7 @@ import subprocess
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--out", type=Path, required=True)
+parser.add_argument("--target-dir", type=Path)
 parser.add_argument("--tools", nargs="+", choices=["callgrind", "dhat"], default=["callgrind"])
 args = parser.parse_args()
 repo = Path(__file__).resolve().parents[2]
@@ -40,13 +41,15 @@ shutil.copyfile(Path(__file__).with_name("main.rs"), harness / "src/main.rs")
     + '\n[profile.release]\ndebug=0\n'
 )
 shutil.copyfile(Path(__file__).with_name("Cargo.lock"), harness / "Cargo.lock")
-env = dict(os.environ, CARGO_TARGET_DIR=str(out / "target"), RAYON_NUM_THREADS="1")
+target_dir = (args.target_dir or out / "target").resolve()
+env = dict(os.environ, CARGO_TARGET_DIR=str(target_dir), RAYON_NUM_THREADS="1", RY_NO_INSTALLED_LIBRARIES="1")
 subprocess.run(["cargo", "build", "--release", "--locked", "--manifest-path", str(harness / "Cargo.toml")], env=env, check=True)
-binary = out / "target/release/ry-scope-probe"
+binary = target_dir / "release/ry-scope-probe"
 results = {
     "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip(),
     "rustc": subprocess.check_output(["rustc", "--version"], text=True).strip(),
     "valgrind": subprocess.check_output(["valgrind", "--version"], text=True).strip(),
+    "settings": {"rayon_threads": 1, "no_installed_libraries": True},
     "inputs": {}, "measurements": [],
 }
 for workload in ["sparse", "dense", "alternating", "corpus"]:
@@ -61,7 +64,7 @@ for workload in ["sparse", "dense", "alternating", "corpus"]:
             environment = dict(env, RY_SCOPE_JOURNAL=enabled)
             flag = f"--callgrind-out-file={stem}.profile" if tool == "callgrind" else f"--dhat-out-file={stem}.profile"
             with stem.with_suffix(".log").open("w") as log:
-                subprocess.run(["valgrind", f"--tool={tool}", flag, str(binary), str(directory), str(stem.with_suffix(".diagnostics"))], env=environment, stdout=log, stderr=log, check=True)
+                subprocess.run(["valgrind", "--command-line-only=yes", f"--tool={tool}", flag, str(binary), str(directory), str(stem.with_suffix(".diagnostics"))], env=environment, stdout=log, stderr=log, check=True)
             text = stem.with_suffix(".log").read_text()
             row = {"workload": workload, "tool": tool, "journal": enabled == "1"}
             if tool == "callgrind":

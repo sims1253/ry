@@ -964,6 +964,14 @@ impl LanguageServer for Backend {
     }
 
     async fn code_action(&self, params: CodeActionParams) -> LspResult<Option<CodeActionResponse>> {
+        if !params
+            .context
+            .diagnostics
+            .iter()
+            .any(|diag| diag.source.as_deref() == Some("ry"))
+        {
+            return Ok(None);
+        }
         let uri = params.text_document.uri.clone();
         let path = uri_to_path(&uri);
 
@@ -974,7 +982,12 @@ impl LanguageServer for Backend {
         // One quick-fix per diagnostic visible at the cursor; helpers skip
         // lines that already carry a suppression.
         let mut actions: CodeActionResponse = Vec::new();
-        for diag in &params.context.diagnostics {
+        for diag in params
+            .context
+            .diagnostics
+            .iter()
+            .filter(|diag| diag.source.as_deref() == Some("ry"))
+        {
             if let Some(action) = make_ignore_action(&uri, diag, &file) {
                 actions.push(CodeActionOrCommand::CodeAction(action));
             }

@@ -396,8 +396,7 @@ fn code_action_ignore_line_skips_already_suppressed() {
 
 #[test]
 fn code_action_ignore_line_rule_list_must_cover_diagnostic_code() {
-    // A different rule must not withhold the action. Whether the edit
-    // actually suppresses it is a separate known gap (#210).
+    // A different rule must not withhold the action; the edit merges codes.
     let text = "x <- 1L + \"s\"  # ry: ignore[RY010]\n";
     let diag = lsp_diag(0, 0, 1, "RY040");
     let uri = Url::parse("file:///tmp/test.R").unwrap();
@@ -616,6 +615,25 @@ fn code_action_ignore_file_inserts_at_line_zero() {
 }
 
 #[test]
+fn file_suppression_preserves_the_shebang() {
+    let uri = Url::parse("file:///tmp/script.R").unwrap();
+    for source in [
+        "#!/usr/bin/env Rscript\nx <- missing\n",
+        "#!/usr/bin/env Rscript",
+    ] {
+        let action = make_ignore_file_action(&uri, &parse_src("script.R", source)).unwrap();
+        let edit = &action.edit.unwrap().changes.unwrap()[&uri][0];
+        assert_eq!(edit.range.start, edit.range.end);
+        let offset =
+            position_to_byte_offset(source, edit.range.start.line, edit.range.start.character)
+                .unwrap();
+        let mut updated = source.to_string();
+        updated.insert_str(offset, &edit.new_text);
+        assert!(updated.starts_with("#!/usr/bin/env Rscript\n# ry: ignore-file\n"));
+    }
+}
+
+#[test]
 fn code_action_ignore_file_skips_already_suppressed() {
     // A file that already has `# ry: ignore-file` must not get a
     // second file-level action.
@@ -625,6 +643,19 @@ fn code_action_ignore_file_skips_already_suppressed() {
         make_ignore_file_action(&uri, &parse_src("test.R", text)).is_none(),
         "should not offer a file-level action when one already exists"
     );
+}
+
+#[test]
+fn line_suppression_never_inserts_inside_multiline_tokens() {
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    for source in [
+        "x <- \"first\nlast\"\n",
+        "identity(`first\nlast` = 1)\n",
+        "x <- r\"(first\nlast)\"\n",
+    ] {
+        let file = parse_src("test.R", source);
+        assert!(make_ignore_action(&uri, &lsp_diag(0, 0, 1, "RY040"), &file).is_none());
+    }
 }
 
 #[test]

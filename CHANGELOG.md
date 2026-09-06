@@ -243,6 +243,10 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Fixed
 
+- Suppression quick fixes preserve existing comments and rule lists, ignore
+  diagnostics from other tools, and refuse line edits inside multiline tokens
+  or malformed source. File suppression preserves a script's shebang.
+
 - Reject duplicate function keys and S3 dispatch definitions when loading
   typesheds. Function key ordering no longer produces a validation warning.
 - CLI and LSP use the same UTF-8/Latin-1 source decoder for on-disk R files.

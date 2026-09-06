@@ -266,6 +266,8 @@ suppression actions — and fixes a parser panic plus several editor issues.
   different methods. Keep the result unknown when dispatch is uncertain.
 - Correct RY002 and RY032 explanations: R rejects conditions and scalar
   logical operands with more than one element.
+- Avoid RY098 warnings for recursive names in default expressions when literal
+  `if` conditions or short-circuit operators skip their evaluation.
 
 - Correct typed purrr multi-input map results and remove an unsupported scalar-length fallback. Await the mirai oracle result before shutting down its daemons.
 

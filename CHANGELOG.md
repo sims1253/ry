@@ -6,6 +6,10 @@ All notable changes to ry are documented in this file.
 
 ### Cleanup
 
+- Show editor type hints from each assignment, including function locals,
+  rather than applying the file's final binding type to earlier assignments.
+  Refresh cached hints when local stubs change.
+
 - Avoid recursive-default warnings for signaling arguments that may be ignored
   or evaluated conditionally.
 

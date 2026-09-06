@@ -2,7 +2,7 @@
 //! document cache / debounce machinery.
 //!
 //! All request handlers read the cached parse (`State::parsed`) and the
-//! cached single-file scope (`State::scopes`); diagnostics are debounced
+//! cached assignment hints (`State::hints`); diagnostics are debounced
 //! via `schedule_diagnostics`.
 
 mod handlers;
@@ -46,6 +46,12 @@ pub(super) struct Backend {
     pub(super) state: Arc<Mutex<State>>,
 }
 
+struct CachedHints {
+    version: i32,
+    stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
+    hints: Vec<InlayHint>,
+}
+
 #[derive(Default)]
 pub(super) struct State {
     /// Open documents: path -> current source text. Keeping every open
@@ -61,9 +67,8 @@ pub(super) struct State {
     /// `Send` but `RParser` is not, so the parser is constructed per
     /// request and only the result is cached.
     parsed: HashMap<String, (i32, Arc<SourceFile>)>,
-    /// path -> (version, top-level Scope). Cached for inlay hints;
-    /// invalidated by `update_doc` alongside the parse cache.
-    scopes: HashMap<String, (i32, ry_checker::Scope)>,
+    /// Hints belong to one document version and loaded stub snapshot.
+    hints: HashMap<String, CachedHints>,
     /// Workspace-wide debounce generation; see `schedule_diagnostics`.
     diag_generation: u64,
     /// Index generation stamp, bumped each time `spawn_background_index`
@@ -381,14 +386,14 @@ impl State {
         }
     }
 
-    /// Drop the cached parse and scope for `path`, mirroring the
+    /// Drop the cached parse and hints for `path`, mirroring the
     /// cache-invalidation half of `Backend::update_doc`. Test-only;
     /// lets the cache acceptance test simulate a `did_change` on a bare
     /// `State` without a `tower_lsp::Client`.
     #[cfg(test)]
     pub(super) fn invalidate_parse(&mut self, path: &str) {
         self.parsed.remove(path);
-        self.scopes.remove(path);
+        self.hints.remove(path);
     }
 
     /// Open / replace a document at `version`, mirroring the doc-store
@@ -639,9 +644,9 @@ impl Backend {
         let mut state = self.state.lock().await;
         state.docs.insert(path.clone(), text);
         state.versions.insert(path.clone(), version);
-        // Invalidate the cached parse and scope; the next read repopulates.
+        // Invalidate the cached parse and hints; the next read repopulates.
         state.parsed.remove(&path);
-        state.scopes.remove(&path);
+        state.hints.remove(&path);
     }
 
     /// Return the current AST for `path` together with the exact source
@@ -705,49 +710,60 @@ impl Backend {
         }
     }
 
-    /// Return the top-level `Scope` for `path`, reusing the cached
-    /// `check_with_scope` result when its version matches. Returns `None`
-    /// when the document is not open or parsing fails.
-    async fn scope_for(&self, path: &str) -> Option<ry_checker::Scope> {
+    /// Return hints from one current parse and its assignment-site inference.
+    async fn hints_for(&self, path: &str) -> Option<Vec<InlayHint>> {
         {
             let state = self.state.lock().await;
+            let stubs = state
+                .folder_context_for_path(path)
+                .map(|ctx| &ctx.stubs)
+                .unwrap_or(&state.user_stubs);
             if let Some(version) = state.versions.get(path).copied()
-                && let Some((cached_v, scope)) = state.scopes.get(path)
-                && *cached_v == version
+                && let Some(cached) = state.hints.get(path)
+                && cached.version == version
+                && Arc::ptr_eq(&cached.stubs, stubs)
             {
-                return Some(scope.clone());
+                return Some(cached.hints.clone());
             }
         }
-        let (file, _) = self.parsed_file(path).await?;
+        let (file, text) = self.parsed_file(path).await?;
         let mut checker = ry_checker::Checker::new(path);
         let user_stubs = {
             let state = self.state.lock().await;
-            // The owning folder's stubs for single-file checks.
             state
                 .folder_context_for_path(path)
                 .map(|ctx| Arc::clone(&ctx.stubs))
                 .unwrap_or_else(|| Arc::clone(&state.user_stubs))
         };
-        checker.set_user_stubs(user_stubs);
-        let (_, scope) = checker.check_with_scope(&file);
-        // Cache only when the parse behind this scope is still current
-        // (Arc identity + version match in the parse cache). One post-check
-        // suffices: `record_parse` only ever installs Arc/version pairings
-        // stamped against the then-current document version.
-        {
-            let mut state = self.state.lock().await;
-            let current_version = state.parsed.get(path).and_then(|(cached_version, cached)| {
+        checker.set_user_stubs(Arc::clone(&user_stubs));
+        checker.enable_assignment_capture();
+        checker.check(&file);
+        let hints = collect_inlay_hints(&checker.take_assignment_types(), &text);
+        let mut state = self.state.lock().await;
+        let current_stubs = state
+            .folder_context_for_path(path)
+            .map(|ctx| &ctx.stubs)
+            .unwrap_or(&state.user_stubs);
+        if !Arc::ptr_eq(current_stubs, &user_stubs) {
+            return None;
+        }
+        let version = state
+            .parsed
+            .get(path)
+            .and_then(|(cached_version, cached)| {
                 (Arc::ptr_eq(cached, &file)
                     && state.versions.get(path).copied() == Some(*cached_version))
                 .then_some(*cached_version)
-            });
-            if let Some(version) = current_version {
-                state
-                    .scopes
-                    .insert(path.to_string(), (version, scope.clone()));
-            }
-        }
-        Some(scope)
+            })?;
+        state.hints.insert(
+            path.to_string(),
+            CachedHints {
+                version,
+                stubs: user_stubs,
+                hints: hints.clone(),
+            },
+        );
+        Some(hints)
     }
 
     /// Pull `ry` settings per folder scope via `workspace/configuration`:

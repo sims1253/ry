@@ -243,6 +243,10 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Fixed
 
+- Suppression quick fixes use the cached document parse. File-level actions
+  recognize case-insensitive directives and ignore markers inside strings or
+  prose comments; line-level detection retains multiline string context.
+
 - Typeshed validation rejects empty recycled-value parameter sets, mismatched
   callback names and positions, and unsupported conditional-scope values.
   Return-length rules also reject unknown or misplaced control fields.

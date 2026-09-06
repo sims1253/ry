@@ -1353,10 +1353,10 @@ fn per_file_publication_matches_cli_across_differing_files() {
 // ──────────────────────────────────────────────────────────────────────────
 // Shared, bounded discovery (#48)
 //
-// Bug being pinned: the CLI (`collect_r_files`) and LSP
-// (`index::discover_r_files`) used different discovery rules — for example,
-// the CLI skipped `target/` while the LSP did not. The fix moved discovery
-// behind a shared module so both modes agree.
+// Bug being pinned: the CLI and LSP used different discovery rules —
+// for example, the CLI skipped `target/` while the LSP did not. The fix
+// moved discovery behind the shared `ry_workspace` module so both modes
+// agree.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// (#48): the same fixture tree must produce the same discovered path

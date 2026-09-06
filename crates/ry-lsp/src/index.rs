@@ -21,26 +21,6 @@ pub(crate) struct IndexOutcome {
     pub truncated: Vec<ry_workspace::TruncationReport>,
 }
 
-/// Discover all eligible R files under `root` using the shared bounded
-/// discovery module and read their source text.
-///
-/// Paths are returned as absolute strings (matching the LSP's `uri_to_path`
-/// convention). Used by unit tests; production code calls
-/// [`index_workspace`] which returns parsed files and cap reports.
-#[cfg(test)]
-pub(crate) fn discover_r_files(root: &Path, config: &Config) -> Vec<(String, String)> {
-    let result =
-        ry_workspace::discover_r_files(root, Some(root), config, config.check_test_fixtures);
-    result
-        .files
-        .into_iter()
-        .filter_map(|path| {
-            let source = std::fs::read_to_string(&path).ok()?;
-            Some((path.to_string_lossy().into_owned(), source))
-        })
-        .collect()
-}
-
 /// Discover and parse all eligible R files under `root`, honouring
 /// `exclude` patterns and bounded caps. Returns parsed files plus
 /// any cap reports for the caller to surface as warnings.
@@ -100,9 +80,10 @@ mod tests {
         std::fs::write(hidden.join("e.R"), "hidden <- TRUE\n").unwrap();
 
         let config = Config::default();
-        let discovered = discover_r_files(&dir, &config);
+        let discovered = index_workspace(&dir, &config);
 
-        let paths: Vec<&str> = discovered.iter().map(|(p, _)| p.as_str()).collect();
+        let paths: Vec<&str> = discovered.files.keys().map(String::as_str).collect();
+        assert_eq!(paths.len(), 3, "a.R, b.r and sub/d.R: {paths:?}");
         assert!(paths.iter().any(|p| p.ends_with("a.R")), "a.R found");
         assert!(paths.iter().any(|p| p.ends_with("b.r")), "b.r found");
         assert!(paths.iter().any(|p| p.ends_with("d.R")), "d.R in sub found");
@@ -134,32 +115,15 @@ mod tests {
             exclude: vec!["vendor".to_string()],
             ..Default::default()
         };
-        let discovered = discover_r_files(&dir, &cfg);
-        let paths: Vec<&str> = discovered.iter().map(|(p, _)| p.as_str()).collect();
+        let discovered = index_workspace(&dir, &cfg);
+        let paths: Vec<&str> = discovered.files.keys().map(String::as_str).collect();
 
+        assert_eq!(paths.len(), 1, "only keep.R: {paths:?}");
         assert!(paths.iter().any(|p| p.ends_with("keep.R")), "keep.R found");
         assert!(
             !paths.iter().any(|p| p.ends_with("skip.R")),
             "vendor/ skipped"
         );
-
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn parses_discovered_files() {
-        let dir = std::env::temp_dir().join(format!("ry_index_parse_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-
-        std::fs::write(dir.join("a.R"), "f <- function(x) x + 1\n").unwrap();
-        std::fs::write(dir.join("b.R"), "g <- function() f(2)\n").unwrap();
-
-        let config = Config::default();
-        let outcome = index_workspace(&dir, &config);
-
-        assert_eq!(outcome.files.len(), 2, "two files parsed");
-        assert!(outcome.files.keys().any(|p| p.ends_with("a.R")));
-        assert!(outcome.files.keys().any(|p| p.ends_with("b.R")));
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -178,9 +142,10 @@ mod tests {
         std::fs::write(target.join("skip.R"), "y <- 2\n").unwrap();
 
         let config = Config::default();
-        let discovered = discover_r_files(&dir, &config);
+        let discovered = index_workspace(&dir, &config);
 
-        let paths: Vec<&str> = discovered.iter().map(|(p, _)| p.as_str()).collect();
+        let paths: Vec<&str> = discovered.files.keys().map(String::as_str).collect();
+        assert_eq!(paths.len(), 1, "only keep.R: {paths:?}");
         assert!(paths.iter().any(|p| p.ends_with("keep.R")), "keep.R found");
         assert!(
             !paths.iter().any(|p| p.ends_with("skip.R")),

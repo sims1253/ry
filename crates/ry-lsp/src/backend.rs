@@ -967,12 +967,7 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri.clone();
         let path = uri_to_path(&uri);
 
-        let text = {
-            let state = self.state.lock().await;
-            state.docs.get(&path).cloned()
-        };
-
-        let Some(text) = text else {
+        let Some((file, _)) = self.parsed_file(&path).await else {
             return Ok(None);
         };
 
@@ -980,12 +975,12 @@ impl LanguageServer for Backend {
         // lines that already carry a suppression.
         let mut actions: CodeActionResponse = Vec::new();
         for diag in &params.context.diagnostics {
-            if let Some(action) = make_ignore_action(&uri, diag, &text) {
+            if let Some(action) = make_ignore_action(&uri, diag, &file) {
                 actions.push(CodeActionOrCommand::CodeAction(action));
             }
         }
 
-        if let Some(action) = make_ignore_file_action(&uri, &text) {
+        if let Some(action) = make_ignore_file_action(&uri, &file) {
             actions.push(CodeActionOrCommand::CodeAction(action));
         }
 

@@ -55,7 +55,7 @@ ry does not execute R or load package code.
 
 ry bundles stubs from [r-typeshed](https://github.com/sims1253/r-typeshed)
 for base R, tidyverse packages, Bayesian tools, testing frameworks, and other
-packages. See the [stub directory](https://github.com/sims1253/r-typeshed/tree/main/stubs)
+packages. See the [stub directory](https://github.com/sims1253/r-typeshed/tree/master/stubs)
 for current coverage, or run `ry explain typeshed` to list the packages in your
 installed version. Declare packages attached outside the checked sources in
 `ry.toml`.

@@ -1,11 +1,8 @@
-# Editor-safe defaults — evidence and policy
+# Editor defaults
 
-## Overview
-
-The default editor configuration (`minConfidence: "low"`, default rule set)
-is designed to be safe for untrusted workspaces and broad real-world code.
-This document records the corpus evidence behind those defaults and the
-policy decisions behind them.
+The editor uses `ry.minConfidence: "low"` and the default rule set. This
+document records the corpus evidence and policy behind those choices.
+See the [extension guide](../editors/code/README.md) for setup and settings.
 
 ## Corpus baseline
 
@@ -18,11 +15,9 @@ runtime.
 
 ## Default profile policy
 
-The default-enabled rules use the ordinary ry configuration/filter seam
-(no client-only suppression), preserving CLI/LSP parity. Every rule is
-enabled by default except RY003 (numeric-condition). `minConfidence`
-stays `"low"`: it filters zero-confidence heuristics and retains every
-corpus TP.
+The CLI and language server use the same rule configuration and filters. Every rule
+is enabled by default except RY003 (numeric-condition). `ry.minConfidence`
+stays `"low"`, which includes all three confidence tiers.
 
 The table below is a curated subset of the registry, not the full rule
 list. Codes, names, severities, and defaults mirror
@@ -31,26 +26,26 @@ list. Codes, names, severities, and defaults mirror
 
 | Rule | Severity | Default | Verdict | Evidence |
 | :-- | :-- | :-- | :-- | :-- |
-| RY003 (numeric-condition) | info | Disabled | **Default-off** | 0 corpus findings. Valid claim, but style advice. |
-| RY010 (unbound-variable) | warning | Enabled | **Keep** | 4 TP / 472 FP. Dominant FP source, but the TP are real bugs. |
-| RY020 (unary-minus-type) | error | Enabled | **Keep** | 0 TP / 0 FP in the corpus. Verified claim; lift-reachable through scalar defaults. |
-| RY030 (invalid-comparison) | error | Enabled | **Keep** | 0 TP / 25 FP. FPs come from typeshed coverage gaps. |
-| RY032 (scalar-logical-length) | warning | Enabled | **Keep** | 1 TP / 47 FP. Fires on non-literal parameter-dependent expressions. |
-| RY040 (invalid-arithmetic) | error | Enabled | **Keep** | 0 TP / 23 FP. FPs come from typeshed coverage gaps. |
-| RY090 (unknown-argument) | warning | Enabled | **Keep** | 0 TP / 4 FP. Valid syntactic claim. |
+| RY003 (numeric-condition) | info | Disabled | Default-off | 0 corpus findings. Valid claim, but style advice. |
+| RY010 (unbound-variable) | warning | Enabled | Keep | 4 true positives / 472 false positives. Largest source of false positives; also catches real bugs. |
+| RY020 (unary-minus-type) | error | Enabled | Keep | 0 true positives / 0 false positives in the corpus. Verified by an oracle fixture; scalar parameter defaults can trigger it. |
+| RY030 (invalid-comparison) | error | Enabled | Keep | 0 true positives / 25 false positives. False positives come from typeshed coverage gaps. |
+| RY032 (scalar-logical-length) | warning | Enabled | Keep | 1 true positive / 47 false positives. Fires on non-literal parameter-dependent expressions. |
+| RY040 (invalid-arithmetic) | error | Enabled | Keep | 0 true positives / 23 false positives. False positives come from typeshed coverage gaps. |
+| RY090 (unknown-argument) | warning | Enabled | Keep | 0 true positives / 4 false positives. Valid syntactic claim. |
 
 ## Precision implications
 
-At `minConfidence: "low"` with the default rule set, the editor shows all
-rules with at least low confidence. Some false positives still appear,
+At `ry.minConfidence: "low"` with the default rule set, the editor includes all
+confidence tiers for enabled rules. Some false positives still appear,
 particularly for RY010 in packages with dynamic bindings. To reduce them:
 
-1. Set `minConfidence: "medium"` or `"high"` to filter lower-confidence findings.
+1. Set `ry.minConfidence: "medium"` or `"high"` to filter lower-confidence findings.
 2. Use `ry.toml` to disable specific rules per-project.
 3. Use baselines to suppress known false positives.
 
 ## No client-only suppression
 
-Editor defaults are enforced through the server configuration, not through
-client-side filtering, so CLI and LSP produce identical diagnostics for
-the same project (the differential test contract).
+The server applies editor settings before publishing diagnostics. The CLI
+and language server produce the same findings when they use the same
+configuration and source contents. Differential tests check this contract.

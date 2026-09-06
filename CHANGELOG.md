@@ -75,6 +75,9 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Changed
 
+- Shorten the README to installation and first-use examples. Move detailed
+  configuration, usage, and rule references into linked guides.
+
 - **More accurate `if`-condition nudges**: the "non-empty check" idiom
   (`if (length(x))`, `if (nrow(df))`, ...) is now recognized from the
   function's declared return type instead of a fixed name list, so it
@@ -259,6 +262,10 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Fixed
 
+- Avoid assuming the left S3 method wins when operator operands resolve to
+  different methods. Keep the result unknown when dispatch is uncertain.
+- Correct RY002 and RY032 explanations: R rejects conditions and scalar
+  logical operands with more than one element.
 - Avoid RY098 warnings for recursive names in default expressions when literal
   `if` conditions or short-circuit operators skip their evaluation.
 
@@ -329,9 +336,9 @@ suppression actions — and fixes a parser panic plus several editor issues.
   fallback. `&&`/`||` never dispatch through `Ops`, so their
   RY031/RY032 diagnostics cannot be hidden. Factor arithmetic warns RY042
   for any counterpart (`factor + list` warns instead of erroring RY040)
-  without a false RY041 recycling warning. Differing methods on both operands still
-  resolve first-applicable; R's `chooseOpsMethod` is tracked
-  separately (#193).
+  without a false RY041 recycling warning. When operands resolve to different
+  methods, ry keeps the result unknown. Full `chooseOpsMethod` selection and
+  primitive-fallback warnings remain tracked in #193.
 - **`bquote` quotes unquotes inside braced bodies**: a `.(x)` in
   `bquote({ 1 == .(x) })` was not recognized as quoting, so the
   argument passed at the call site was treated as eagerly evaluated and

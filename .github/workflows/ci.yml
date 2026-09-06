@@ -95,19 +95,13 @@ jobs:
         # would let the job pass with zero coverage. Guard against that.
         run: |
           Rscript --version
-      - name: Install R packages (oracle fixtures + parallel driver + audit)
-        # setup-r-dependencies FAILS the job when a package cannot be
-        # installed (a bare `Rscript -e 'install.packages(...)'` only
-        # warns and exits 0 -- that silent failure previously left the
-        # oracle without purrr, breaking the purrr fixtures and dropping
-        # the parallel driver). It also installs system requirements and
-        # caches the package library between runs. dplyr is used by
-        # oracle fixtures.
+      - name: Install R packages (oracle fixtures)
+        # Fail if fixture dependencies cannot be installed.
         uses: r-lib/actions/setup-r-dependencies@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2.12.1
         with:
           # carrier is purrr's SUGGESTED (not imported) dependency that
           # in_parallel() hard-requires at call time (carrier::crate);
-          # without it every in_parallel fixture and the parallel driver
+          # without it in_parallel fixtures
           # error even though requireNamespace("purrr") succeeds.
           packages: |
             any::purrr
@@ -115,15 +109,13 @@ jobs:
             any::carrier
             any::dplyr
       - name: Verify oracle R packages are importable
-        # Same philosophy as the Rscript guard above: the oracle fixtures
-        # must not silently degrade to the serial path. requireNamespace
-        # is what both the parallel driver and the fixtures rely on.
+        # Missing fixture packages must not silently reduce CI coverage.
         run: |
           Rscript -e 'stopifnot(requireNamespace("purrr"), requireNamespace("mirai"), requireNamespace("carrier"), requireNamespace("dplyr"))'
       # Typeshed auditing and stub generation moved to the r-typeshed
       # repository together with the stubs; its CI covers them.
       - name: Oracle suite
-        run: cargo test -p ry-checker --test oracle -- --ignored --nocapture
+        run: cargo test -p ry-checker --test oracle -- --include-ignored --nocapture
 
   # The Zed extension is excluded from the root workspace because
   # zed_extension_api does not follow ry's MSRV (CONTRIBUTING.md), so

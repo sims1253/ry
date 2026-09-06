@@ -21,12 +21,12 @@ Run the complete checker-vs-R matrix as well when R is installed (CI always
 does):
 
 ```sh
-cargo test -p ry-checker --test oracle -- --ignored
+cargo test -p ry-checker --test oracle -- --include-ignored
 ```
 
-The complete oracle uses a parallel R driver (`scripts/oracle_driver.R`, purrr
-+ mirai) when those packages are available and falls back to one `Rscript`
-process per fixture otherwise.
+Each oracle fixture runs in a fresh `Rscript --vanilla` process. Its exit
+status determines whether R errored; fixtures cannot leak bindings, attached
+packages, or daemon state into later fixtures.
 
 ## Fixture conventions
 

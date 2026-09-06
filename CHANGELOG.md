@@ -243,6 +243,9 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Fixed
 
+- `ry typeshed validate` rejects duplicate formal names, including repeated
+  `...`, in function and S3 method signatures.
+
 - Suppression quick fixes use the cached document parse. File-level actions
   recognize case-insensitive directives and ignore markers inside strings or
   prose comments; line-level detection retains multiline string context.

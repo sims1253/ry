@@ -807,6 +807,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_qualified_nse_aes.R
 - diagnostics: []
+  fixture: ok_quoted_default_dependencies.R
+- diagnostics: []
   fixture: ok_quoted_formula_symbols.R
 - diagnostics: []
   fixture: ok_r6_class_body_bindings.R

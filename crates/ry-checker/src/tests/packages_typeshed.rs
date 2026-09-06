@@ -606,3 +606,84 @@ fn qualified_deferring_calls_do_not_force_lazy_defaults() {
         assert_eq!(fired, expect_ry098, "{note}: {diags:?}");
     }
 }
+
+#[test]
+fn lazy_default_dependencies_respect_qualified_defusing_metadata() {
+    for (default, warned) in [
+        ("base::quote(body_value)", false),
+        ("base::quote(!!body_value)", false),
+        ("base::quote(function() !!body_value)", false),
+        ("base::expression({{ body_value }})", false),
+        ("base:::quote(expr = body_value)", false),
+        ("base::substitute(body_value)", false),
+        ("base::expression(body_value, body_value + 1L)", false),
+        ("rlang::expr(body_value)", false),
+        ("rlang::enexpr(body_value)", false),
+        ("rlang::expr(function() body_value)", false),
+        ("rlang::expr(!!base::quote(body_value))", false),
+        ("rlang::expr(list(!!1L, body_value))", false),
+        ("base::identity(body_value)", true),
+        ("base::bquote(.(body_value))", true),
+        ("base::bquote(list(..(body_value)), splice = TRUE)", true),
+        ("shiny::isolate(body_value)", true),
+        ("base::substitute(other, env = body_value)", true),
+        ("rlang::expr(!!body_value)", true),
+        ("rlang::expr(list(!!!body_value))", true),
+        ("rlang::expr({{ body_value }})", true),
+        ("rlang::expr(function() !!body_value)", true),
+        ("rlang::expr(function(arg = !!body_value) arg)", false),
+        ("unknownpkg::capture(body_value)", true),
+        ("capture(body_value)", true),
+    ] {
+        let source =
+            format!("f <- function(x = {default}) {{ out <- x; body_value <- 1L; out }}\n");
+        let diagnostics = check(&source);
+        assert_eq!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY098"),
+            warned,
+            "{default}: {diagnostics:?}"
+        );
+    }
+    let diagnostics = check(
+        "quote <- function(expr) expr\nf <- function(x = quote(body_value)) { out <- x; body_value <- 1L; out }\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY098")
+    );
+}
+
+#[test]
+fn lazy_default_multiple_dependencies_have_deterministic_diagnostics() {
+    let diagnostics = check("f <- function(x = z + a) { out <- x; z <- 1L; a <- 2L; out }\n");
+    let diagnostic = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "RY098")
+        .unwrap();
+    assert!(diagnostic.message.contains("`a`"), "{diagnostic:?}");
+}
+
+#[test]
+fn quoted_metadata_alone_does_not_suppress_lazy_default_dependencies() {
+    let (diagnostics, _) = check_with_stubs(
+        "f <- function(x = custom::run(body_value)) { out <- x; body_value <- 1L; out }\n",
+        &[(
+            "custom.json",
+            r#"{
+            "schema_version": "2", "package": "custom", "version": "test",
+            "functions": {"run": {
+                "params": ["expr"], "eval": {"expr": "quoted_expression"},
+                "return": {"mode": "opaque", "length": "unknown"}
+            }}
+        }"#,
+        )],
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY098")
+    );
+}

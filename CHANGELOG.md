@@ -6,6 +6,9 @@ All notable changes to ry are documented in this file.
 
 ### Cleanup
 
+- Avoid RY098 warnings for body-local names captured by qualified `base::quote`,
+  `substitute`, `expression`, and `rlang::expr`/`enexpr` calls in defaults. Keep
+  checking evaluated control arguments and tidy-injection payloads.
 - Resolve S3 operators before inferring data-frame results, so subclass methods
   can return other types and conflicting methods do not retain column schemas.
 - Validate typeshed updates before replacing the vendored snapshot. Failed

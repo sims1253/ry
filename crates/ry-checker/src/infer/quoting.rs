@@ -87,8 +87,8 @@ impl Checker {
                 continue;
             }
 
-            let mut references = HashSet::new();
-            collect_executed_identifiers(default, &mut references);
+            let mut references = std::collections::BTreeSet::new();
+            self.collect_executed_identifiers(default, &mut references);
 
             for local in references
                 .iter()
@@ -372,24 +372,109 @@ fn first_executed_identifier(expr: &Expr, wanted: &str) -> Option<Span> {
     }
 }
 
-/// Identifiers the expression evaluates when forced. Skips assignment
-/// targets (R does not evaluate them), `$` subscript idents, and nested
-/// function bodies.
-fn collect_executed_identifiers(expr: &Expr, names: &mut HashSet<String>) {
-    let _ = walk_expr(
-        expr,
-        Walk {
-            assign_targets: false,
-            assign_operands: false,
-            dollar_args: false,
-            fn_bodies: false,
-            ..Walk::ALL
-        },
-        |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
-            if let AstNode::Expr(Expr::Ident { name, .. }) = node {
-                names.insert(name.clone());
+impl Checker {
+    /// Possible dependencies of a forced default. Only reviewed capture-only
+    /// helpers can suppress their quoted arguments: other quoted-expression
+    /// consumers, such as isolate(), capture and then execute their code.
+    fn collect_executed_identifiers(
+        &self,
+        expr: &Expr,
+        names: &mut std::collections::BTreeSet<String>,
+    ) {
+        let _ = walk_expr(
+            expr,
+            Walk {
+                assign_targets: false,
+                assign_operands: false,
+                dollar_args: false,
+                fn_bodies: false,
+                ..Walk::ALL
+            },
+            |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+                if let AstNode::Expr(Expr::Call { func, args, .. }) = node
+                    && let Some(callee) = ident_name(func)
+                    && let Some(capture) = default_capture_mode(callee)
+                    && let Some(signature) = self.resolve_typeshed_sig(callee)
+                {
+                    self.collect_executed_identifiers(func, names);
+                    let bindings = match_params(&signature.params, args);
+                    for (index, argument) in args.iter().enumerate() {
+                        if matches!(
+                            eval_mode_for_arg(&signature, &bindings, index),
+                            Some(EvalMode::QuotedExpression | EvalMode::CapturesPromise)
+                        ) {
+                            if matches!(capture, DefaultCapture::Tidy) {
+                                self.collect_possible_injection_dependencies(
+                                    &argument.value,
+                                    names,
+                                );
+                            }
+                        } else {
+                            self.collect_executed_identifiers(&argument.value, names);
+                        }
+                    }
+                    return ControlFlow::Continue(Descend::Skip);
+                }
+                if let AstNode::Expr(Expr::Ident { name, .. }) = node {
+                    names.insert(name.clone());
+                }
+                ControlFlow::Continue(Descend::Into)
+            },
+        );
+    }
+
+    /// The reviewed rlang helpers process tidy injection while capturing code.
+    /// Retain dependencies of !!, !!!, and {{ }} payloads, including those inside
+    /// quoted function bodies. Like rlang, the walker leaves defaults untouched.
+    fn collect_possible_injection_dependencies(
+        &self,
+        expr: &Expr,
+        names: &mut std::collections::BTreeSet<String>,
+    ) {
+        let _ = walk_expr(expr, Walk::ALL, |node: AstNode<'_>, _: usize| {
+            match node {
+                AstNode::Expr(Expr::UnaryOp {
+                    op: UnaryOpKind::Not,
+                    expr,
+                    ..
+                }) => {
+                    if let Expr::UnaryOp {
+                        op: UnaryOpKind::Not,
+                        expr: payload,
+                        ..
+                    } = expr.as_ref()
+                    {
+                        self.collect_executed_identifiers(payload, names);
+                        return ControlFlow::<(), Descend>::Continue(Descend::Skip);
+                    }
+                }
+                AstNode::Expr(Expr::Block { body, .. }) => {
+                    if let [Stmt::Expr(inner @ Expr::Block { .. })] = body.as_slice() {
+                        self.collect_executed_identifiers(inner, names);
+                        return ControlFlow::Continue(Descend::Skip);
+                    }
+                }
+                _ => {}
             }
             ControlFlow::Continue(Descend::Into)
-        },
-    );
+        });
+    }
+}
+
+#[derive(Clone, Copy)]
+enum DefaultCapture {
+    Literal,
+    Tidy,
+}
+
+// EvalMode describes how an argument is received, not whether the callee
+// later evaluates it. Keep this subset explicit until further helpers have
+// runtime evidence; bquote(), for example, has different escape syntax.
+fn default_capture_mode(name: &str) -> Option<DefaultCapture> {
+    let (package, function) = name.rsplit_once("::")?;
+    match (package.trim_end_matches(':'), function) {
+        ("base", "quote" | "substitute" | "expression") => Some(DefaultCapture::Literal),
+        ("rlang", "expr" | "enexpr") => Some(DefaultCapture::Tidy),
+        _ => None,
+    }
 }

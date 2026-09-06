@@ -31,6 +31,8 @@ packages, or daemon state into later fixtures.
 The [instruction-count corpus guide](docs/corpus/instructions.md) explains
 the fixed performance sample, local measurements, and warn-only CI deltas.
 Run `python3 ecosystem/test-instructions.py` after changing that harness.
+The [performance tracking guide](docs/performance.md) covers core timings,
+extension activation, package sizes, and the historical dashboard.
 
 ## Fixture conventions
 

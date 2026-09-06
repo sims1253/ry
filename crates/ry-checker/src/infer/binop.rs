@@ -328,19 +328,17 @@ impl Checker {
         self.check_class_equality_operand(lhs, scope);
         let lt = self.infer(lhs, scope);
         let narrowing = self.extract_type_narrowing(lhs, scope);
-        let (then_scope, else_scope, _) = apply_narrowing(scope, &narrowing);
         let rhs_parameter_vector = self.short_circuit_parameter_vector(op, lhs, rhs, scope);
         let rt = match op {
-            BinOpKind::AndAnd => {
-                self.check_class_equality_operand(rhs, &then_scope);
-                let mut rhs_scope = then_scope;
-                let rt = self.infer(rhs, &mut rhs_scope);
-                merge_condition_assignments(scope, &rhs_scope, rhs);
-                rt
-            }
-            BinOpKind::OrOr => {
-                self.check_class_equality_operand(rhs, &else_scope);
-                let mut rhs_scope = else_scope;
+            BinOpKind::AndAnd | BinOpKind::OrOr => {
+                let branch = if matches!(op, BinOpKind::AndAnd) {
+                    NarrowingBranch::Then
+                } else {
+                    NarrowingBranch::Else
+                };
+                let mut rhs_scope = scope.clone();
+                apply_narrowing_branch(&mut rhs_scope, &narrowing, branch);
+                self.check_class_equality_operand(rhs, &rhs_scope);
                 let rt = self.infer(rhs, &mut rhs_scope);
                 merge_condition_assignments(scope, &rhs_scope, rhs);
                 rt

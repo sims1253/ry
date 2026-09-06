@@ -75,6 +75,9 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Changed
 
+- Shorten the README to installation and first-use examples. Move detailed
+  configuration, usage, and rule references into linked guides.
+
 - **More accurate `if`-condition nudges**: the "non-empty check" idiom
   (`if (length(x))`, `if (nrow(df))`, ...) is now recognized from the
   function's declared return type instead of a fixed name list, so it
@@ -258,6 +261,11 @@ suppression actions — and fixes a parser panic plus several editor issues.
   inferred types are unchanged.
 
 ### Fixed
+
+- Avoid assuming the left S3 method wins when operator operands resolve to
+  different methods. Keep the result unknown when dispatch is uncertain.
+- Correct RY002 and RY032 explanations: R rejects conditions and scalar
+  logical operands with more than one element.
 
 - Correct typed purrr multi-input map results and remove an unsupported scalar-length fallback. Await the mirai oracle result before shutting down its daemons.
 

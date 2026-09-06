@@ -356,13 +356,13 @@ expression: snapshots
   fixture: err_s7_callable_reassigned.R
 - diagnostics:
     - code: RY032
-      message: "`&&` applied to a length-3 operand; only the first element is used"
+      message: "`&&` applied to a length-3 operand; R requires a single logical value and raises an error"
       severity: warning
       span:
         column: 7
-        end: 118
+        end: 113
         line: 3
-        start: 109
+        start: 104
   fixture: err_scalar_logical.R
 - diagnostics:
     - code: RY040

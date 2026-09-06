@@ -79,3 +79,17 @@ payload_binding <- function(x = rlang::expr(function() !!{ body_value <- 1L; bod
   out
 }
 stopifnot(identical(payload_binding(), quote(function() 1L)))
+
+splice_binding <- function(x = rlang::expr(function() list(!!!{ body_value <- list(1L); body_value }))) {
+  out <- x
+  body_value <- 1L
+  out
+}
+stopifnot(identical(splice_binding(), quote(function() list(1L))))
+
+pruned_statement <- function(x = rlang::expr(function() !!{ if (FALSE) body_value; 1L })) {
+  out <- x
+  body_value <- 1L
+  out
+}
+stopifnot(identical(pruned_statement(), quote(function() 1L)))

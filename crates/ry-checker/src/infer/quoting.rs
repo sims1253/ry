@@ -474,6 +474,26 @@ impl Checker {
                     self.collect_injection_dependencies(value, &mut dependencies);
                     None
                 }
+                Stmt::If {
+                    cond: Expr::Logical(condition, _),
+                    then,
+                    else_,
+                    span,
+                } => {
+                    let selected = if *condition {
+                        then.as_slice()
+                    } else {
+                        else_.as_deref().unwrap_or_default()
+                    };
+                    self.collect_injection_dependencies(
+                        &Expr::Block {
+                            body: selected.to_vec(),
+                            span: *span,
+                        },
+                        &mut dependencies,
+                    );
+                    None
+                }
                 _ => {
                     // Branches and loops do not establish a guaranteed binding.
                     let _ = walk_stmt(
@@ -521,6 +541,14 @@ impl Checker {
                         ..
                     } = expr.as_ref()
                     {
+                        let payload = match payload.as_ref() {
+                            Expr::UnaryOp {
+                                op: UnaryOpKind::Not,
+                                expr,
+                                ..
+                            } => expr.as_ref(),
+                            other => other,
+                        };
                         self.collect_injection_dependencies(payload, names);
                         return ControlFlow::<(), Descend>::Continue(Descend::Skip);
                     }

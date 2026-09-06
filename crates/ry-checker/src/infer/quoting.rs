@@ -220,6 +220,27 @@ fn definitely_forced_identifier(expr: &Expr, wanted: &str) -> Option<Span> {
             .then(|| definitely_forced_identifier(rhs, wanted))
             .flatten()
         }),
+        // Keep guaranteed traversal through wrappers; falling back to the
+        // possible-dependency walker here would inspect untaken inner branches.
+        Expr::UnaryOp { expr, .. } => definitely_forced_identifier(expr, wanted),
+        Expr::BinOp { lhs, rhs, op, .. } => {
+            if matches!(op, BinOpKind::Assign | BinOpKind::SuperAssign) {
+                definitely_forced_identifier(rhs, wanted)
+            } else {
+                definitely_forced_identifier(lhs, wanted)
+                    .or_else(|| definitely_forced_identifier(rhs, wanted))
+            }
+        }
+        Expr::Index {
+            base, kind, args, ..
+        } => definitely_forced_identifier(base, wanted).or_else(|| {
+            if matches!(kind, IndexKind::Dollar) {
+                None
+            } else {
+                args.iter()
+                    .find_map(|argument| definitely_forced_identifier(&argument.value, wanted))
+            }
+        }),
         Expr::Block { body, span } => {
             guaranteed_force_before_replacement(body, wanted).then_some(*span)
         }
@@ -291,23 +312,34 @@ fn first_executed_identifier(expr: &Expr, wanted: &str) -> Option<Span> {
                     _ => None,
                 };
             }
-            // Only explicitly qualified strict builtins establish
-            // guaranteed argument forcing. Bare names may be shadowed by
-            // lazy user functions, and any other call may defuse
-            // (`enquo(x)`, `join_by(x == y)`), so neither walks arguments.
-            if ident_name(func).is_some_and(|name| {
-                name.rsplit_once("::").is_some_and(|(package, bare)| {
-                    matches!(package.trim_end_matches(':'), "base" | "rlang")
-                        && matches!(bare, "abort" | "stop" | "warning" | "message")
-                })
-            }) {
-                first_executed_identifier(func, wanted).or_else(|| {
-                    args.iter()
-                        .find_map(|argument| first_executed_identifier(&argument.value, wanted))
-                })
-            } else {
-                first_executed_identifier(func, wanted)
-            }
+            // Reviewed signaling helpers force a sole unnamed message argument.
+            // Control arguments may be ignored for condition objects. Multiple
+            // arguments also need a separate matching and forcing-order contract.
+            let strict_message = matches!(
+                ident_name(func),
+                Some(
+                    "base::stop"
+                        | "base:::stop"
+                        | "base::warning"
+                        | "base:::warning"
+                        | "base::message"
+                        | "base:::message"
+                        | "rlang::abort"
+                        | "rlang:::abort"
+                )
+            );
+            first_executed_identifier(func, wanted).or_else(|| {
+                if strict_message {
+                    match args.as_slice() {
+                        [argument] if argument.name.is_none() => {
+                            definitely_forced_identifier(&argument.value, wanted)
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            })
         }
         Expr::BinOp { lhs, rhs, op, .. } => {
             // A literal short-circuit operand can make the recursive name

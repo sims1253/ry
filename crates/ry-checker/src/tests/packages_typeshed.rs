@@ -740,3 +740,41 @@ fn quoted_metadata_alone_does_not_suppress_lazy_default_dependencies() {
             .any(|diagnostic| diagnostic.code == "RY098")
     );
 }
+
+#[test]
+fn signaling_calls_only_establish_reviewed_argument_forcing() {
+    for (body, warned) in [
+        (
+            "base::warning(base::simpleWarning('hello'), immediate. = x)",
+            false,
+        ),
+        (
+            "base::message(base::simpleMessage('hello'), appendLF = x)",
+            false,
+        ),
+        ("base::stop(base::simpleError('hello'), call. = x)", false),
+        ("base::warning(if (flag) x else 'hello')", false),
+        ("base::warning(!(if (flag) x else FALSE))", false),
+        ("base::warning(1L + (if (flag) x else 2L))", false),
+        ("base::warning((if (flag) x else 1L)[1L])", false),
+        ("base::warning(!(if (TRUE) x else FALSE))", true),
+        ("base::warning(1L + (if (TRUE) x else 2L))", true),
+        ("base::warning((if (TRUE) x else 1L)[1L])", true),
+        ("base::message(FALSE && x)", false),
+        ("base::ifelse(no = x, test = TRUE, yes = 1L)", false),
+        ("base::abort(x)", false),
+        ("rlang::stop(x)", false),
+        ("base::warning(x)", true),
+        ("base:::message(x)", true),
+        ("base::stop(x)", true),
+        ("rlang::abort(x)", true),
+        ("base::warning(if (TRUE) x else 'hello')", true),
+    ] {
+        let diagnostics = check(&format!("f <- function(x = x, flag = FALSE) {body}\n"));
+        assert_eq!(
+            diagnostics.iter().any(|d| d.code == "RY098"),
+            warned,
+            "{body}: {diagnostics:?}"
+        );
+    }
+}

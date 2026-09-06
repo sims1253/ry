@@ -6,6 +6,9 @@ All notable changes to ry are documented in this file.
 
 ### Cleanup
 
+- Avoid recursive-default warnings for signaling arguments that may be ignored
+  or evaluated conditionally.
+
 - Avoid RY098 warnings for body-local names captured by qualified `base::quote`,
   `substitute`, `expression`, and `rlang::expr` calls in defaults. Keep
   checking evaluated control arguments and tidy-injection payloads.

@@ -109,7 +109,7 @@ fn byte_spans_round_trip_unicode_tabs_and_multiline_functions() {
         binding(inner, "結果")["declaration"]["span"]["end"],
         json!([3, 4])
     );
-    assert_eq!(binding(inner, "é")["kind"], "closed_over");
+    assert_eq!(binding(inner, "é")["kind"], "unclassified");
 }
 
 #[test]
@@ -125,7 +125,7 @@ fn aliases_and_unknown_search_paths_are_explicit() {
     assert_eq!(scope["search_path_unknown"], true);
     assert_eq!(scope["data_mask_unknown"], false);
     assert_eq!(
-        binding(scope, "f")["origin"]["function_alias_target"],
+        binding(scope, "f")["origin"]["callee_alias"]["target"],
         "base::identity"
     );
     assert_eq!(binding(scope, "x")["type"]["mode"], "opaque");
@@ -186,7 +186,7 @@ fn captured_data_masks_keep_uncertainty_in_nested_scopes() {
     assert_eq!(outer["data_mask_unknown"], false);
     assert_eq!(masked["data_mask_unknown"], true);
     assert_eq!(masked["snapshot_kind"], "scope_exit");
-    assert_eq!(binding(masked, "df")["kind"], "closed_over");
+    assert_eq!(binding(masked, "df")["kind"], "unclassified");
 }
 
 #[test]
@@ -247,4 +247,40 @@ fn unnamed_list_elements_export_schema_keys_without_named_field_claims() {
     assert_eq!(columns["entries"][0]["key"], "[[1]]");
     assert_eq!(columns["entries"][1]["key"], "label");
     assert!(columns["entries"][0].get("name").is_none());
+}
+
+#[test]
+fn dynamic_assignments_do_not_invent_imported_or_captured_provenance() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir(dir.path().join("R")).unwrap();
+    fs::write(
+        dir.path().join("DESCRIPTION"),
+        "Package: factsfixture\nVersion: 1.0\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("NAMESPACE"), "importFrom(stats, median)\n").unwrap();
+    fs::write(
+        dir.path().join("R/main.R"),
+        concat!(
+            "assign(\"median\", 1L)\ny <- median\n",
+            "x <- \"outer\"\nf <- function() { assign(\"x\", 1L); x }\n",
+        ),
+    )
+    .unwrap();
+    let output = facts(dir.path(), &["R/main.R"]);
+    let scopes = output["files"][0]["scopes"].as_array().unwrap();
+    let top = scopes.iter().find(|scope| scope["kind"] == "top").unwrap();
+    let nested = scopes.iter().find(|scope| scope["name"] == "f").unwrap();
+    assert_eq!(output["files"][0]["imports"]["median"], "stats");
+    for entry in [binding(top, "median"), binding(nested, "x")] {
+        assert_eq!(entry["type"]["mode"], "integer");
+        assert_eq!(entry["kind"], "unclassified");
+        assert_eq!(entry["declaration"]["kind"], "unavailable");
+        assert!(entry["declaration"]["span"].is_null());
+        assert!(entry["origin"].get("imported_from").is_none());
+    }
+    let y = binding(top, "y");
+    assert_eq!(y["type"]["mode"], "integer");
+    assert_eq!(y["origin"]["callee_alias"]["target"], "median");
+    assert_eq!(y["origin"]["callee_alias"]["resolution"], "not_established");
 }

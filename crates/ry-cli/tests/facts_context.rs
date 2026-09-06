@@ -262,26 +262,25 @@ fn unselected_shiny_marker_invalidates_ambient_binding_facts() {
 
 #[cfg(unix)]
 #[test]
-fn oversized_non_utf8_path_returns_an_error_without_panicking() {
+fn non_utf8_discovered_and_truncated_paths_return_explicit_errors() {
     use std::ffi::OsString;
     use std::os::unix::ffi::OsStringExt;
 
     let temp = tempfile::tempdir().unwrap();
-    fs::write(temp.path().join("ry.toml"), "[index]\nmax-file-bytes = 1\n").unwrap();
-    let filename = OsString::from_vec(b"oversized\xff.R".to_vec());
+    let filename = OsString::from_vec(b"source\xff.R".to_vec());
     fs::write(temp.path().join(filename), b"x <- 1L\n").unwrap();
-    let output = run(temp.path(), &["."]);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!output.status.success());
-    assert_ne!(
-        output.status.code(),
-        Some(101),
-        "must report an input error: {stderr}"
-    );
-    assert!(!stderr.contains("panicked"), "{stderr}");
-    assert!(stderr.contains("UTF-8"), "{stderr}");
-    assert!(
-        output.stdout.is_empty(),
-        "must not emit unusable truncation paths"
-    );
+    for config in ["[index]\nmax-file-bytes = 1\n", ""] {
+        fs::write(temp.path().join("ry.toml"), config).unwrap();
+        let output = run(temp.path(), &["."]);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success());
+        assert_ne!(
+            output.status.code(),
+            Some(101),
+            "must report an input error: {stderr}"
+        );
+        assert!(!stderr.contains("panicked"), "{stderr}");
+        assert!(stderr.contains("UTF-8"), "{stderr}");
+        assert!(output.stdout.is_empty(), "must not emit unusable paths");
+    }
 }

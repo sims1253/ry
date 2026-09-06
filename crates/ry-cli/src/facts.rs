@@ -128,51 +128,47 @@ fn scope_kind(kind: ScopeRecordKind) -> &'static str {
     }
 }
 
-fn export_scopes(
-    file: &SourceFile,
-    mut records: Vec<ScopeRecord>,
-    imported_from: Option<&HashMap<String, String>>,
-) -> Vec<Value> {
+fn export_scopes(file: &SourceFile, mut records: Vec<ScopeRecord>) -> Vec<Value> {
     records.sort_by_key(|record| (record.span.start, record.span.end, scope_kind(record.kind)));
     records.dedup_by(|a, b| a.kind == b.kind && a.span == b.span);
     let mut function_locals = HashMap::new();
     dump::index_scope_bodies(&file.stmts, &mut function_locals);
     let mut top_locals = HashMap::new();
     dump::collect_local_bindings(&file.stmts, &mut top_locals);
-    let locals: Vec<_> = records
-        .iter()
-        .map(|record| match record.kind {
-            ScopeRecordKind::Top => top_locals.clone(),
+    let empty_locals = HashMap::new();
+    let mut scopes = Vec::new();
+    for record in records {
+        let locals = match record.kind {
+            ScopeRecordKind::Top => &top_locals,
             ScopeRecordKind::Function => function_locals
                 .get(&record.span.start)
-                .cloned()
-                .unwrap_or_default(),
-        })
-        .collect();
-    records.iter().enumerate().map(|(index, record)| {
-        let mut enclosing: Vec<_> = records.iter().enumerate().filter(|(other, outer)| {
-            *other != index && outer.span.start <= record.span.start && record.span.end <= outer.span.end
-                && (outer.span != record.span || outer.kind == ScopeRecordKind::Top)
-        }).collect();
-        enclosing.sort_by_key(|(_, outer)| (outer.span.end - outer.span.start, scope_kind(outer.kind)));
-        let mut bindings: Vec<_> = record.scope.bindings.iter().map(|(name, ty)| {
+                .unwrap_or(&empty_locals),
+        };
+        let mut bindings = Vec::new();
+        for (name, ty) in &record.scope.bindings {
             let parameter = record.params.iter().find(|(param, _)| param == name);
-            let local = locals[index].get(name);
-            let (kind, site_kind, site) = if let Some((_, span)) = parameter.filter(|_| record.scope.parameter_bindings.contains(name)) {
+            let (kind, site_kind, site) = if let Some((_, span)) =
+                parameter.filter(|_| record.scope.parameter_bindings.contains(name))
+            {
                 ("param", "formal", Some(*span))
-            } else if let Some(span) = local {
+            } else if let Some(span) = locals.get(name) {
                 ("local", "first_assignment", Some(*span))
-            } else if record.kind == ScopeRecordKind::Function {
-                let site = enclosing.iter().find_map(|(outer_index, outer)| {
-                    outer.params.iter().find(|(param, _)| param == name).map(|(_, span)| ("formal", *span))
-                        .or_else(|| locals[*outer_index].get(name).map(|span| ("first_assignment", *span)))
-                });
-                ("closed_over", site.map_or("unavailable", |(kind, _)| kind), site.map(|(_, span)| span))
             } else {
-                ("imported", "unavailable", None)
+                // Scope does not track provenance for every insertion.
+                // assign() can shadow inherited or imported names without
+                // leaving an AST assignment site in this scope.
+                ("unclassified", "unavailable", None)
             };
-            let span = site.filter(|span| span.start < span.end).map(|span| source_span(&file.source, span)).unwrap_or(Value::Null);
-            json!({
+            let span = site
+                .filter(|span| span.start < span.end)
+                .map(|span| source_span(&file.source, span))
+                .unwrap_or(Value::Null);
+            let callee_alias = record
+                .scope
+                .function_aliases
+                .get(name)
+                .map(|target| json!({"target": target, "resolution": "not_established"}));
+            bindings.push(json!({
                 "name": name,
                 "kind": kind,
                 "snapshot_kind": "scope_exit",
@@ -183,17 +179,14 @@ fn export_scopes(
                     "defines_final_value": "not_established",
                 },
                 "origin": {
-                    "function_alias_target": record.scope.function_aliases.get(name),
-                    "imported_from": if kind == "imported" || (kind == "closed_over" && site.is_none()) {
-                        imported_from.and_then(|imports| imports.get(name))
-                    } else { None },
+                    "callee_alias": callee_alias,
                     "list_derived": record.scope.list_origin_bindings.contains(name),
                     "default_parameter_derived": record.scope.default_parameter_bindings.contains(name),
                 },
-            })
-        }).collect();
-        bindings.sort_by(|a,b| a["name"].as_str().cmp(&b["name"].as_str()));
-        json!({
+            }));
+        }
+        bindings.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+        scopes.push(json!({
             "kind": scope_kind(record.kind),
             "name": record.name,
             "snapshot_kind": "scope_exit",
@@ -204,8 +197,9 @@ fn export_scopes(
             "data_mask_unknown": record.scope.data_mask_unknown,
             "search_path_unknown": record.scope.search_path_unknown,
             "bindings": bindings,
-        })
-    }).collect()
+        }));
+    }
+    scopes
 }
 
 pub(crate) fn run_dump_facts(
@@ -226,6 +220,7 @@ pub(crate) fn run_dump_facts(
     let mut paths = Vec::new();
     let mut truncations = Vec::new();
     for root in &files {
+        utf8_path(root)?;
         if !root.exists() {
             return Err(miette::miette!(
                 "{}: no such file or directory",
@@ -260,6 +255,9 @@ pub(crate) fn run_dump_facts(
         paths.extend(found.files);
     }
     check::sort_and_deduplicate_paths(&mut paths);
+    for path in &paths {
+        utf8_path(path)?;
+    }
     let parsed = pipeline::parse_files(&paths, |_, _| pipeline::FailureAction::Abort)
         .map_err(|failure| miette::miette!("{}: {}", failure.path.display(), failure.error))?;
     let mut sources = BTreeMap::new();
@@ -370,7 +368,7 @@ pub(crate) fn run_dump_facts(
                 "path": sources[&path]["path"],
                 "source_hash": sources[&path]["source_hash"],
                 "context_id": context_id,
-                "scopes": export_scopes(&file, records, imported.get(&path)),
+                "scopes": export_scopes(&file, records),
                 "imports": imported.get(&path).map(|imports| imports.iter().collect::<BTreeMap<_,_>>()).unwrap_or_default(),
             }));
         }
@@ -419,7 +417,7 @@ mod tests {
             params: vec![("synthetic".into(), Span::default())],
             scope,
         };
-        let output = export_scopes(&file, vec![record], None);
+        let output = export_scopes(&file, vec![record]);
         assert!(output[0]["span"].is_null());
         assert_eq!(output[0]["data_mask_unknown"], true);
         assert_eq!(output[0]["search_path_unknown"], true);

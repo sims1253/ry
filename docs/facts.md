@@ -82,32 +82,42 @@ A binding has:
 | Field | Meaning |
 | --- | --- |
 | `name` | The binding's name in this scope snapshot. |
-| `kind` | `"param"`, `"local"`, `"closed_over"`, or `"imported"`. |
+| `kind` | `"param"`, `"local"`, or `"unclassified"`. |
 | `snapshot_kind` | `"scope_exit"`. |
 | `type` | The structured type below. |
 | `declaration` | A source site and its role, when available. |
-| `origin` | Available alias, import, and derivation information. |
+| `origin` | Raw checker alias and derivation metadata. |
 
-A reassigned formal is `local`. A `closed_over` binding comes from the
-captured enclosing scope. `imported` covers top-level bindings supplied by
-the analysis environment, including runtime globals declared in config.
+`param` identifies an own formal that still has the checker's parameter marker.
+`local` identifies a name with a syntactic assignment site in this scope's AST.
+These categories describe recorded metadata, not proof that an assignment
+executes or supplies the final value. An AST walker can see assignments in
+quoted or defused code.
+
+Other bindings are `unclassified`. The scope model does not record enough
+provenance to distinguish captured names, runtime bindings, and names inserted
+by dynamic operations such as `assign()`. A name without an own syntactic site
+therefore has no declaration span, even if an enclosing scope or package import
+has the same name. Static package imports remain available in the file's
+`imports` map.
 
 `declaration.kind` is `"formal"`, `"first_assignment"`, or `"unavailable"`.
-`declaration.span` is a span or `null`. For a captured name, the site comes
-from the nearest recorded enclosing scope that declares it. Synthetic,
-missing, empty, or invalid declaration spans become `null`.
+`declaration.span` is a span or `null`. `first_assignment` means the first
+syntactic assignment in this scope, not the first executed assignment.
+Synthetic, missing, empty, or invalid declaration spans become `null`.
 `declaration.defines_final_value` is always `"not_established"`.
 
 `origin` contains:
 
-- `function_alias_target`: the checker's semantic callee name, or `null`.
-- `imported_from`: a package name when the workspace resolver supplies one,
-  or `null`.
+- `callee_alias`: raw checker metadata with `target` (a name) and
+  `resolution: "not_established"`, or `null`.
 - `list_derived`: whether the checker marks the binding as list-derived.
 - `default_parameter_derived`: whether its type came from a parameter default.
 
-These fields are snapshot metadata. An alias target is a name, not a resolved
-cross-file symbol ID or a safe rename target.
+These fields are snapshot metadata. Callee-alias metadata can remain on a
+binding with a non-function type, such as an integer copied from a name that
+shadows a package function. It does not establish that a value is callable,
+that the name resolves to a particular definition, or that a rename is safe.
 
 ### Types
 

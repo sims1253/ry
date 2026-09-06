@@ -115,6 +115,8 @@ pub(super) struct State {
     /// Whether the client supports dynamic registration of
     /// `workspace/didChangeWatchedFiles`.
     supports_did_change_watched_files: bool,
+    supports_relative_patterns: bool,
+    watcher_paths: Arc<Mutex<Option<Vec<PathBuf>>>>,
 
     // --- multi-root workspace folders ---
     /// Per-root analysis contexts, ordered by root path length descending
@@ -496,6 +498,13 @@ impl LanguageServer for Backend {
             .and_then(|f| f.dynamic_registration)
             .unwrap_or(false);
 
+        let supports_relative_patterns = params
+            .capabilities
+            .workspace
+            .as_ref()
+            .and_then(|w| w.did_change_watched_files.as_ref())
+            .and_then(|f| f.relative_pattern_support)
+            .unwrap_or(false);
         let server_settings_clone = server_settings.clone();
         let root_clone = root.clone();
         let ws_folder_paths: Vec<(usize, PathBuf)> = params
@@ -552,6 +561,7 @@ impl LanguageServer for Backend {
         state.server_settings = server_settings;
         state.supports_workspace_configuration = supports_workspace_configuration;
         state.supports_did_change_watched_files = supports_did_change_watched_files;
+        state.supports_relative_patterns = supports_relative_patterns;
         state.folder_contexts = folder_contexts;
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
@@ -599,32 +609,10 @@ impl LanguageServer for Backend {
         };
         if should_pull {
             self.pull_folder_settings().await;
+            self.reload_folder_contexts().await;
         }
 
-        // Register workspace-resolution watchers so configuration, package
-        // metadata, serialized data, and local stubs refresh without restart.
-        let supports_watchers = self.state.lock().await.supports_did_change_watched_files;
-        if supports_watchers {
-            let watcher_registration = Registration {
-                id: "ry-workspace-watcher".to_string(),
-                method: "workspace/didChangeWatchedFiles".into(),
-                register_options: Some(serde_json::json!({
-                    "watchers": [
-                        {"globPattern": "**/ry.toml"},
-                        {"globPattern": "**/DESCRIPTION"},
-                        {"globPattern": "**/NAMESPACE"},
-                        {"globPattern": "**/*.{rda,RData,rdata,json}"}
-                    ]
-                })),
-            };
-            if let Err(e) = self
-                .client
-                .register_capability(vec![watcher_registration])
-                .await
-            {
-                tracing::warn!("failed to register workspace watcher: {e}");
-            }
-        }
+        self.refresh_watchers().await;
 
         self.spawn_background_index().await;
     }
@@ -690,6 +678,8 @@ impl LanguageServer for Backend {
             }
         }
 
+        self.reload_folder_contexts().await;
+        self.refresh_watchers().await;
         self.spawn_background_index().await;
 
         self.republish_all_open_documents().await;
@@ -774,6 +764,8 @@ impl LanguageServer for Backend {
             state.index_generation = state.index_generation.wrapping_add(1);
         }
 
+        self.refresh_watchers().await;
+
         // Skip indexing when no folder contexts remain (all removed) so
         // state.root does not re-index a removed directory.
         let has_contexts = !self.state.lock().await.folder_contexts.is_empty();
@@ -798,9 +790,15 @@ impl LanguageServer for Backend {
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
         // Refresh configuration and filesystem-backed resolution when any
         // registered package metadata, data, stub, or config file changes.
+        let config_paths = custom_config_paths(&*self.state.lock().await);
         let config_or_baseline_changed = params.changes.iter().any(|change| {
             let path = change.uri.path();
-            path.ends_with("ry.toml") || path.ends_with(".json")
+            path.ends_with("ry.toml")
+                || path.ends_with(".json")
+                || change
+                    .uri
+                    .to_file_path()
+                    .is_ok_and(|path| config_paths.contains(&path))
         });
         let resolution_changed = config_or_baseline_changed
             || params.changes.iter().any(|change| {
@@ -815,55 +813,8 @@ impl LanguageServer for Backend {
             return;
         }
 
-        // Rebuild folder contexts outside the write lock and swap them in
-        // atomically; a failed reload retains the last valid fields (see
-        // `rebuild_folder_context`).
         if config_or_baseline_changed {
-            let (old_contexts, root) = {
-                let state = self.state.lock().await;
-                (state.folder_contexts.clone(), state.root.clone())
-            };
-            let old_contexts_for_task = old_contexts.clone();
-            // spawn_blocking keeps every disk read off the async runtime.
-            let new_contexts = match tokio::task::spawn_blocking(move || {
-                old_contexts_for_task
-                    .iter()
-                    .map(rebuild_folder_context)
-                    .collect::<Vec<_>>()
-            })
-            .await
-            {
-                Ok(new_contexts) => new_contexts,
-                Err(error) => {
-                    tracing::warn!(%error, "folder context reload task failed; retaining previous contexts");
-                    old_contexts
-                }
-            };
-            {
-                let mut state = self.state.lock().await;
-                state.folder_contexts = new_contexts.clone();
-                // Sync root-level fallback state from the rebuilt root context.
-                for ctx in &new_contexts {
-                    if state.root.as_deref() == Some(ctx.root.as_path()) {
-                        state.file_config = ctx.config.clone();
-                        state.root_baseline = ctx.baseline.clone();
-                        state.root_filter = ctx.filter.clone();
-                        state.root_min_confidence = ctx.min_confidence;
-                        state.root_excludes = ctx.excludes.clone();
-                    }
-                }
-                tracing::info!("workspace config/baseline reloaded");
-            }
-
-            // Reload root-level stubs off the async runtime too.
-            if let Some(root) = root
-                && let Ok((_, stubs)) =
-                    tokio::task::spawn_blocking(move || load_root_config_and_stubs(Some(&root)))
-                        .await
-            {
-                let mut state = self.state.lock().await;
-                state.user_stubs = stubs;
-            }
+            self.reload_folder_contexts().await;
         }
 
         self.spawn_background_index().await;
@@ -1006,6 +957,113 @@ impl LanguageServer for Backend {
 }
 
 impl Backend {
+    /// Reload off the runtime; retain the last valid config on parse errors.
+    async fn reload_folder_contexts(&self) {
+        let contexts = self.state.lock().await.folder_contexts.clone();
+        let contexts = match tokio::task::spawn_blocking(move || {
+            contexts
+                .iter()
+                .map(rebuild_folder_context)
+                .collect::<Vec<_>>()
+        })
+        .await
+        {
+            Ok(contexts) => contexts,
+            Err(error) => {
+                tracing::warn!(%error, "folder context reload task failed; retaining previous contexts");
+                return;
+            }
+        };
+        let mut state = self.state.lock().await;
+        // Reuse the root context's loaded stubs and filters for fallback checks.
+        if let Some(ctx) = contexts
+            .iter()
+            .find(|ctx| state.root.as_deref() == Some(ctx.root.as_path()))
+        {
+            state.file_config = ctx.config.clone();
+            state.user_stubs = ctx.stubs.clone();
+            state.root_baseline = ctx.baseline.clone();
+            state.root_filter = ctx.filter.clone();
+            state.root_min_confidence = ctx.min_confidence;
+            state.root_excludes = ctx.excludes.clone();
+        }
+        state.folder_contexts = contexts;
+        tracing::info!("workspace config/baseline reloaded");
+    }
+
+    async fn refresh_watchers(&self) {
+        let registered = Arc::clone(&self.state.lock().await.watcher_paths);
+        // Serialize replacement registrations without holding the document lock.
+        let mut registered = registered.lock().await;
+        let (paths, relative) = {
+            let state = self.state.lock().await;
+            if !state.supports_did_change_watched_files {
+                return;
+            }
+            (
+                custom_config_paths(&state),
+                state.supports_relative_patterns,
+            )
+        };
+        if registered.as_ref() == Some(&paths) {
+            return;
+        }
+        if registered.is_some() {
+            if let Err(error) = self
+                .client
+                .unregister_capability(vec![Unregistration {
+                    id: "ry-workspace-watcher".into(),
+                    method: "workspace/didChangeWatchedFiles".into(),
+                }])
+                .await
+            {
+                tracing::warn!(%error, "failed to unregister workspace watcher");
+                return;
+            }
+            *registered = None;
+        }
+        let mut watchers = vec![
+            serde_json::json!({"globPattern": "**/ry.toml"}),
+            serde_json::json!({"globPattern": "**/DESCRIPTION"}),
+            serde_json::json!({"globPattern": "**/NAMESPACE"}),
+            serde_json::json!({"globPattern": "**/*.{rda,RData,rdata,json}"}),
+        ];
+        for path in &paths {
+            let pattern = if relative {
+                path.parent()
+                    .zip(path.file_name())
+                    .and_then(|(parent, name)| {
+                        Url::from_directory_path(parent).ok().map(|base| serde_json::json!({
+                        "baseUri": base, "pattern": escape_watch_path(&name.to_string_lossy())
+                    }))
+                    })
+            } else {
+                None
+            }
+            .unwrap_or_else(|| {
+                // String patterns are best effort: clients may only watch
+                // workspace files. External watches need RelativePattern.
+                let path = path.to_string_lossy();
+                let path = if cfg!(windows) {
+                    path.replace('\\', "/")
+                } else {
+                    path.into_owned()
+                };
+                serde_json::json!(escape_watch_path(&path))
+            });
+            watchers.push(serde_json::json!({"globPattern": pattern}));
+        }
+        let registration = Registration {
+            id: "ry-workspace-watcher".into(),
+            method: "workspace/didChangeWatchedFiles".into(),
+            register_options: Some(serde_json::json!({"watchers": watchers})),
+        };
+        match self.client.register_capability(vec![registration]).await {
+            Ok(()) => *registered = Some(paths),
+            Err(error) => tracing::warn!(%error, "failed to register workspace watcher"),
+        }
+    }
+
     /// Apply a single incremental text change. A ranged change is spliced
     /// into the old text and drives a tree-sitter `InputEdit` so the
     /// reparse is incremental; everything else replaces the document
@@ -1665,6 +1723,35 @@ fn load_stubs_from_config(
         }
     }
     Arc::new(merged)
+}
+
+fn custom_config_paths(state: &State) -> Vec<PathBuf> {
+    let mut paths: Vec<_> = state
+        .folder_contexts
+        .iter()
+        .filter_map(|ctx| {
+            ctx.folder_settings.configuration.as_ref().and_then(|path| {
+                // Parsing normalizes dot segments as client event URIs do;
+                // from_file_path alone preserves them.
+                let uri = Url::from_file_path(ctx.root.join(path)).ok()?;
+                Url::parse(uri.as_str()).ok()?.to_file_path().ok()
+            })
+        })
+        .collect();
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+// LSP does not define literal escaping. Use VS Code/minimatch's bracket
+// convention; support for literal brackets varies across client engines.
+fn escape_watch_path(path: &str) -> String {
+    path.chars()
+        .map(|ch| match ch {
+            '*' | '?' | '[' | ']' | '{' | '}' => format!("[{ch}]"),
+            _ => ch.to_string(),
+        })
+        .collect()
 }
 
 /// Load a folder's explicit configuration or discover its nearest `ry.toml`.

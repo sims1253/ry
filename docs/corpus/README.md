@@ -26,6 +26,11 @@ the pre-change baseline (729 identities, hermetic, measured on the
 audited starting tree). Neither gated CI; both are re-derivable from the
 audit records summarized in [`pre-governance-measurement.md`](pre-governance-measurement.md).
 
+## Instruction counts
+
+The [instruction baseline](instructions-baseline.json) records the fixed performance
+sample. See the [measurement guide](instructions.md) for local runs and CI deltas.
+
 ## Parser invariant evidence
 
 [`parser-option-audit-0.9.md`](parser-option-audit-0.9.md) records the complete

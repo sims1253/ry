@@ -222,6 +222,19 @@ fn first_executed_identifier_in_stmt(statement: &Stmt, wanted: &str) -> Option<S
         Stmt::Assign { value, .. } => first_executed_identifier(value, wanted),
         Stmt::Expr(expr) => first_executed_identifier(expr, wanted),
         Stmt::If {
+            cond: Expr::Logical(taken, _),
+            then,
+            else_,
+            ..
+        } => {
+            let branch = if *taken { Some(then) } else { else_.as_ref() };
+            branch.and_then(|statements| {
+                statements
+                    .iter()
+                    .find_map(|statement| first_executed_identifier_in_stmt(statement, wanted))
+            })
+        }
+        Stmt::If {
             cond, then, else_, ..
         } => first_executed_identifier(cond, wanted)
             .or_else(|| {
@@ -274,7 +287,16 @@ fn first_executed_identifier(expr: &Expr, wanted: &str) -> Option<Span> {
             }
         }
         Expr::BinOp { lhs, rhs, op, .. } => {
-            if matches!(op, BinOpKind::Assign | BinOpKind::SuperAssign) {
+            // A literal short-circuit operand can make the recursive name
+            // in the RHS unreachable even though the default is forced.
+            let skips_rhs = matches!(
+                (op, lhs.as_ref()),
+                (BinOpKind::AndAnd, Expr::Logical(false, _))
+                    | (BinOpKind::OrOr, Expr::Logical(true, _))
+            );
+            if skips_rhs {
+                first_executed_identifier(lhs, wanted)
+            } else if matches!(op, BinOpKind::Assign | BinOpKind::SuperAssign) {
                 first_executed_identifier(rhs, wanted)
             } else {
                 first_executed_identifier(lhs, wanted)
@@ -296,6 +318,17 @@ fn first_executed_identifier(expr: &Expr, wanted: &str) -> Option<Span> {
         Expr::Block { body, .. } => body
             .iter()
             .find_map(|statement| first_executed_identifier_in_stmt(statement, wanted)),
+        Expr::If {
+            cond, then, else_, ..
+        } if matches!(cond.as_ref(), Expr::Logical(_, _)) => {
+            if matches!(cond.as_ref(), Expr::Logical(true, _)) {
+                first_executed_identifier(then, wanted)
+            } else {
+                else_
+                    .as_ref()
+                    .and_then(|else_| first_executed_identifier(else_, wanted))
+            }
+        }
         Expr::If {
             cond, then, else_, ..
         } => first_executed_identifier(cond, wanted)

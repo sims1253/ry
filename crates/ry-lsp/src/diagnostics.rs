@@ -138,8 +138,16 @@ pub(super) fn make_ignore_action(
         format!("# ry: ignore[{}]", codes.join(", "))
     };
     let new_line = match comment {
-        Some(comment) if !trailing.is_empty() => {
-            // Keep prose after a bracketed directive, replacing only the directive.
+        Some(comment)
+            if !trailing.is_empty()
+                && !comment
+                    .body
+                    .trim_start()
+                    .to_ascii_lowercase()
+                    .starts_with("noqa:") =>
+        {
+            // Replace bracketed directives. Colon-form noqa has no delimiter
+            // separating codes from prose, so preserve that comment below.
             let suffix = comment
                 .body
                 .find(']')

@@ -1000,6 +1000,19 @@ fn validate_signature(
                 format!("{param_location}.name: must not be empty"),
             );
         }
+        if signature.params[..index]
+            .iter()
+            .any(|previous| previous.name == param.name)
+        {
+            validation_error(
+                report,
+                path,
+                format!(
+                    "{param_location}.name: duplicate parameter `{}`",
+                    param.name
+                ),
+            );
+        }
         if param.name == "..." && (param.required || param.type_.is_some()) {
             validation_error(
                 report,
@@ -1501,6 +1514,16 @@ mod tests {
 
         for (pointer, value, message) in [
             (
+                "/functions/apply/params",
+                json!(["f", "f"]),
+                "duplicate parameter `f`",
+            ),
+            (
+                "/functions/recycle/params",
+                json!(["...", "collapse", "recycle0", "..."]),
+                "duplicate parameter `...`",
+            ),
+            (
                 "/functions/recycle/return_length/all_values_zero",
                 json!("unsupported"),
                 "unsupported recycled-values rule",
@@ -1642,6 +1665,35 @@ mod tests {
                         && problem.message.contains(message)),
                 "{pointer}: expected {message}: {report:?}"
             );
+        }
+    }
+
+    #[test]
+    fn s3_method_parameter_names_must_be_unique() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fixture.json");
+        for (params, errors) in [
+            (serde_json::json!(["x", "..."]), 0),
+            (serde_json::json!(["x", {"name": "x"}]), 1),
+            (serde_json::json!(["...", "..."]), 1),
+        ] {
+            let stub = serde_json::json!({
+                "schema_version": "2", "package": "fixture", "version": "test", "functions": {},
+                "s3_methods": [{
+                    "generic": "print", "class": "example",
+                    "params": params, "return": {"mode": "opaque", "length": "unknown", "na": false}
+                }]
+            });
+            std::fs::write(&path, stub.to_string()).unwrap();
+            let report = validate_stub_dirs(&[dir.path().to_path_buf()]);
+            assert_eq!(report.error_count(), errors, "{report:?}");
+            if errors > 0 {
+                assert!(
+                    report.problems[0].message.starts_with(
+                        "s3_methods[print.example].params[1].name: duplicate parameter"
+                    )
+                );
+            }
         }
     }
 

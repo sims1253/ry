@@ -318,6 +318,56 @@ expression: snapshots
   fixture: err_recursive_default_literal_false_block.R
 - diagnostics:
     - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 36
+        end: 149
+        line: 2
+        start: 148
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 46
+        end: 208
+        line: 3
+        start: 207
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 30
+        end: 243
+        line: 4
+        start: 242
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 30
+        end: 278
+        line: 5
+        start: 277
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 36
+        end: 319
+        line: 6
+        start: 318
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 32
+        end: 362
+        line: 7
+        start: 361
+  fixture: err_recursive_default_taken_operands.R
+- diagnostics:
+    - code: RY098
       message: "parameter `copy` has a self-referential default that recurses when forced"
       severity: warning
       span:
@@ -672,6 +722,8 @@ expression: snapshots
   fixture: ok_recursive_default_shadowed_strict.R
 - diagnostics: []
   fixture: ok_recursive_default_short_circuit.R
+- diagnostics: []
+  fixture: ok_recursive_default_skipped_operands.R
 - diagnostics: []
   fixture: ok_recursive_default_unforced_branch.R
 - diagnostics: []

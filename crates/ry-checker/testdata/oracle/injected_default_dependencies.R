@@ -55,9 +55,14 @@ quoted_unreachable <- function(x = rlang::expr(function() if (FALSE) !!body_valu
   body_value <- 1L
   out
 }
+promise_capture <- function(x = rlang::enexpr(body_value)) {
+  out <- x
+  body_value <- 1L
+  out
+}
 for (fn in list(ordinary, substitution_environment, injected, spliced, embraced,
                 quoted_function, bquoted, bquote_spliced, read_before_assignment,
-                read_in_assignment, quoted_unreachable)) {
+                read_in_assignment, quoted_unreachable, promise_capture)) {
   result <- tryCatch(fn(), error = function(error) error)
   stopifnot(inherits(result, "error"))
 }

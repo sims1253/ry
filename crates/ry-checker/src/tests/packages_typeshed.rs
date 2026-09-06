@@ -618,7 +618,7 @@ fn lazy_default_dependencies_respect_qualified_defusing_metadata() {
         ("base::substitute(body_value)", false),
         ("base::expression(body_value, body_value + 1L)", false),
         ("rlang::expr(body_value)", false),
-        ("rlang::enexpr(body_value)", false),
+        ("rlang::enexpr(body_value)", true),
         ("rlang::expr(function() body_value)", false),
         ("rlang::expr(!!base::quote(body_value))", false),
         ("rlang::expr(list(!!1L, body_value))", false),

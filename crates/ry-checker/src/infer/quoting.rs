@@ -579,7 +579,7 @@ fn default_capture_mode(name: &str) -> Option<DefaultCapture> {
     let (package, function) = name.rsplit_once("::")?;
     match (package.trim_end_matches(':'), function) {
         ("base", "quote" | "substitute" | "expression") => Some(DefaultCapture::Literal),
-        ("rlang", "expr" | "enexpr") => Some(DefaultCapture::Tidy),
+        ("rlang", "expr") => Some(DefaultCapture::Tidy),
         _ => None,
     }
 }

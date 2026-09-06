@@ -456,6 +456,13 @@ impl LanguageServer for Backend {
     }
 
     async fn code_action(&self, params: CodeActionParams) -> LspResult<Option<CodeActionResponse>> {
+        if params.context.only.as_ref().is_some_and(|kinds| {
+            !kinds
+                .iter()
+                .any(|kind| kind.as_str().is_empty() || *kind == CodeActionKind::QUICKFIX)
+        }) {
+            return Ok(None);
+        }
         if !params
             .context
             .diagnostics
@@ -467,6 +474,9 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri.clone();
         let path = uri_to_path(&uri);
 
+        if !self.state.lock().await.eligibility_for_path(&path) {
+            return Ok(None);
+        }
         let Some((file, _)) = self.parsed_file(&path).await else {
             return Ok(None);
         };

@@ -115,7 +115,7 @@ jobs:
       # Typeshed auditing and stub generation moved to the r-typeshed
       # repository together with the stubs; its CI covers them.
       - name: Oracle suite
-        run: cargo test -p ry-checker --test oracle -- --ignored --nocapture
+        run: cargo test -p ry-checker --test oracle -- --include-ignored --nocapture
 
   # The Zed extension is excluded from the root workspace because
   # zed_extension_api does not follow ry's MSRV (CONTRIBUTING.md), so

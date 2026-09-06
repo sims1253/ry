@@ -203,6 +203,7 @@ fn next_code_line(lines: &[&str], start: usize) -> Option<usize> {
 /// `# TODO: add ry: ignore`.
 ///
 /// Recognized forms (case-insensitive on the `ry:` / `noqa` markers):
+///   - `# ry: ignore[]` (all codes, with optional trailing prose)
 ///   - `# ry: ignore`
 ///   - `# ry:ignore`
 ///   - `# ry: ignore[RY040]`

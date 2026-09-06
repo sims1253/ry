@@ -9,7 +9,7 @@ fn suppression_edits_remove_only_the_target_and_preserve_source() {
     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
         for (source, target_line, code, editable) in [
             ("x <- never_bound_here # explanation\ny <- other\n", 0, "RY010", true),
-            ("x <- 1L + \"s\"; y <- never_bound_here # ry: ignore[RY040]\nz <- other\n", 0, "RY010", true),
+            ("x <- 1L + \"s\"; y <- never_bound_here # ry: ignore[RY040] reason\nz <- other\n", 0, "RY010", true),
             ("x <- \"café # text\nlast\"\ny <- never_bound_here # explanation\nz <- other\n", 2, "RY010", true),
             ("x <- \"first\nlast\" + 1L\ny <- other\n", 0, "RY040", false),
         ] {
@@ -39,7 +39,10 @@ fn suppression_edits_remove_only_the_target_and_preserve_source() {
                 let start: usize = source.split_inclusive('\n').take(line).map(str::len).sum();
                 let mut updated = source.to_string();
                 updated.replace_range(start..start + old_line.len(), edit["newText"].as_str().unwrap());
-                if let Some(comment) = old_line.find("# ") {
+                if old_line.contains("# ry: ignore[") {
+                    assert!(updated.contains("# ry: ignore[RY010, RY040] reason"));
+                    assert_eq!(updated.matches("# ry: ignore[").count(), 1);
+                } else if let Some(comment) = old_line.find("# ") {
                     assert!(updated.contains(&old_line[comment..]));
                 }
                 assert_eq!(&updated[..start], &source[..start]);

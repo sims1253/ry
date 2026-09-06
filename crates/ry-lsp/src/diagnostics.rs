@@ -117,6 +117,9 @@ pub(super) fn make_ignore_action(
         return None;
     }
     let comment = file.comments.iter().find(|comment| comment.line == line);
+    let trailing = comment.map_or_else(Vec::new, |comment| {
+        ry_checker::parse_suppressions_from_comments(std::slice::from_ref(comment), text)
+    });
     let directive = if code.is_empty() {
         if comment.is_some() {
             "# ry: ignore[]"
@@ -125,9 +128,8 @@ pub(super) fn make_ignore_action(
         }
         .to_string()
     } else {
-        let mut codes = suppressions
+        let mut codes = trailing
             .iter()
-            .filter(|s| s.line == line)
             .flat_map(|s| s.rules.iter().cloned())
             .collect::<Vec<_>>();
         codes.push(code.clone());
@@ -136,6 +138,14 @@ pub(super) fn make_ignore_action(
         format!("# ry: ignore[{}]", codes.join(", "))
     };
     let new_line = match comment {
+        Some(comment) if !trailing.is_empty() => {
+            // Keep prose after a bracketed directive, replacing only the directive.
+            let suffix = comment
+                .body
+                .find(']')
+                .map_or("", |end| &comment.body[end + 1..]);
+            format!("{}{}{}", &line_text[..comment.col], directive, suffix)
+        }
         Some(comment) => format!(
             "{}{}  {}",
             &line_text[..comment.col],

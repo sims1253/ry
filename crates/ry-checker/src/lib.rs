@@ -349,7 +349,7 @@ impl Scope {
 
     pub fn insert(&mut self, name: impl Into<String>, t: RType) {
         let name = name.into();
-        let journal = self.begin_binding_change(&name);
+        let journal = self.begin_assignment_change(&name, &t);
         if let Some(provenance) = self.reference_provenance.as_mut() {
             provenance.invalidate(&name);
         }
@@ -381,6 +381,7 @@ impl Scope {
     pub(crate) fn insert_parameter(&mut self, name: impl Into<String>, t: RType) {
         let name = name.into();
         self.insert(name.clone(), t);
+        self.journal_marker(&name, scope_journal::MarkerKind::Parameter);
         self.parameter_bindings.insert(name);
     }
 

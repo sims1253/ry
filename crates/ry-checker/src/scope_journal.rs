@@ -82,6 +82,7 @@ impl BindingState {
 pub(crate) enum MarkerKind {
     ListOrigin,
     Lexical,
+    Parameter,
 }
 
 #[derive(Debug)]
@@ -135,6 +136,27 @@ impl BranchDelta {
 }
 
 impl Scope {
+    pub(crate) fn begin_assignment_change(&mut self, name: &str, ty: &RType) -> Option<usize> {
+        if self.snapshot_depth == 0 {
+            return None;
+        }
+        if self.get(name) == Some(ty)
+            && !self.narrowed_bindings.contains(name)
+            && !self.parameter_bindings.contains(name)
+            && !self.list_origin_bindings.contains(name)
+            && !self.default_parameter_bindings.contains(name)
+            && !self.lexical_functions.contains(name)
+            && !self.function_aliases.contains_key(name)
+            && self
+                .reference_provenance
+                .as_ref()
+                .is_none_or(|p| !p.bindings.contains_key(name))
+        {
+            return None;
+        }
+        self.begin_binding_change(name)
+    }
+
     pub(crate) fn begin_binding_change(&mut self, name: &str) -> Option<usize> {
         if self.snapshot_depth == 0 {
             return None;
@@ -169,6 +191,7 @@ impl Scope {
             let present = match kind {
                 MarkerKind::ListOrigin => self.list_origin_bindings.contains(name),
                 MarkerKind::Lexical => self.lexical_functions.contains(name),
+                MarkerKind::Parameter => self.parameter_bindings.contains(name),
             };
             self.undo
                 .push(Undo::Marker(kind, name.to_string(), present));
@@ -251,6 +274,7 @@ impl Scope {
                     let set = match kind {
                         MarkerKind::ListOrigin => &mut self.list_origin_bindings,
                         MarkerKind::Lexical => &mut self.lexical_functions,
+                        MarkerKind::Parameter => &mut self.parameter_bindings,
                     };
                     if present {
                         set.insert(name);

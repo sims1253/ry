@@ -59,3 +59,11 @@ fn pmap_binds_each_component_to_the_corresponding_callback_parameter() {
         "{diags:?}"
     );
 }
+
+#[test]
+fn conditional_maps_and_accumulations_do_not_claim_one_callback_shape() {
+    let source = "x <- purrr::map_if(list(1, 2), c(FALSE, TRUE), function(x) 'text')\nx[[1]] + 1\ny <- purrr::accumulate(1:3, function(x, y) x + y)";
+    let (diags, scope) = check_with_scope(source);
+    assert!(diags.is_empty(), "{diags:?}");
+    assert_eq!(scope.get("y").unwrap().length, Length::Unknown);
+}

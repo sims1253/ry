@@ -13,11 +13,10 @@
         ".simplify",
         ".ptype"
       ],
-      "higher_order": {"callback_param": ".f", "callback_position": 1, "callback_args": ["accumulator_and_element"], "result": {"kind": "callback_return"}},
       "return": {
         "mode": "opaque",
-        "length": "arg0",
-        "na": false
+        "length": "unknown",
+        "na": true
       }
     },
     "as_mapper": {
@@ -159,7 +158,7 @@
         ".f",
         "..."
       ],
-      "higher_order": {"callback_param": ".f", "callback_position": 1, "callback_args": ["element_of_arg0"], "result": {"kind": "list_of_callback_return", "length_arg": 0, "include_callback_schema": true}},
+      "higher_order": {"callback_param": ".f", "callback_position": 1, "callback_args": ["element_of_arg0", "unknown"], "result": {"kind": "list_of_callback_return", "length_arg": 0, "include_callback_schema": true}},
       "return": {
         "mode": "list",
         "length": "arg0",
@@ -337,7 +336,6 @@
         "...",
         ".else"
       ],
-      "higher_order": {"callback_param": ".f", "callback_position": 2, "callback_args": ["element_of_arg0"], "result": {"kind": "list_of_callback_return", "length_arg": 0, "include_callback_schema": true}},
       "return": {
         "mode": "list",
         "length": "arg0",

@@ -13,7 +13,8 @@
  */
 
 import * as path from "path";
-import * as cp from "child_process";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import * as fs from "fs";
 import { BUNDLED_RY_EXECUTABLE, RY_BINARY_NAME } from "./constants";
 import {
@@ -103,18 +104,21 @@ function findOnPath(binary: string): string | undefined {
  * Returns undefined if the binary cannot be executed or the output
  * cannot be parsed.
  */
-export function getRyVersion(binaryPath: string): VersionInfo | undefined {
+const execFileAsync = promisify(execFile);
+
+export async function getRyVersion(
+  binaryPath: string,
+): Promise<VersionInfo | undefined> {
   try {
-    const output = cp.execFileSync(
+    const { stdout } = await execFileAsync(
       binaryPath,
       ["version", "--output-format", "json"],
       {
         encoding: "utf-8",
         timeout: 5000,
-        stdio: ["pipe", "pipe", "pipe"],
       },
     );
-    const parsed = JSON.parse(output);
+    const parsed = JSON.parse(stdout);
     const version = parsed.version as string | undefined;
     if (!version) return undefined;
     return versionFromString(version);

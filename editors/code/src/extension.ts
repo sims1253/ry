@@ -85,7 +85,7 @@ export async function activate(
   const runServer = async () => {
     const nextSettings = readSettings();
     const path = findRyBinaryPath(nextSettings, !vscode.workspace.isTrusted);
-    const nextBinary = { path, version: getRyVersion(path) };
+    const nextBinary = { path, version: await getRyVersion(path) };
     const error = checkVersionCapability(
       nextBinary,
       MINIMUM_SETTINGS_CHANNEL_VERSION,

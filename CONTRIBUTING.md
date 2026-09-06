@@ -21,7 +21,7 @@ Run the complete checker-vs-R matrix as well when R is installed (CI always
 does):
 
 ```sh
-cargo test -p ry-checker --test oracle -- --ignored
+cargo test -p ry-checker --test oracle -- --include-ignored
 ```
 
 Each oracle fixture runs in a fresh `Rscript --vanilla` process. Its exit

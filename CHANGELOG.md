@@ -9,7 +9,9 @@ All notable changes to ry are documented in this file.
 - Resolve S3 operators before inferring data-frame results, so subclass methods
   can return other types and conflicting methods do not retain column schemas.
 - Validate typeshed updates before replacing the vendored snapshot. Failed
-  validation leaves the existing stubs and provenance intact.
+  validation leaves the existing stubs and provenance intact. Restore the old
+  snapshot if installation fails or receives a handled interrupt, and retain a
+  recovery copy if restoration fails.
 - Shorten the README and move the inferred-types reference to `docs/types.md`.
 - Infer vector-constructor lengths from size values, including empty defaults
   and fractional sizes. Correct factor arithmetic with NULL and unary minus.

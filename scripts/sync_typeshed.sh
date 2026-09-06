@@ -20,7 +20,36 @@ stubs_sha256=$(
 
 # Validate a staged copy before replacing the last usable snapshot.
 staged=$(mktemp -d "${vendor}.XXXXXX")
-trap 'rm -rf "$staged"' EXIT
+backup=
+installed=false
+cleanup() {
+  status=$?
+  trap - EXIT
+  # Finish recovery if another handled signal arrives during cleanup.
+  trap '' HUP INT TERM
+  if [[ -n "$backup" ]]; then
+    if [[ -e "$backup/snapshot" || -L "$backup/snapshot" ]]; then
+      if [[ "$installed" == true ]]; then
+        rm -rf "$backup"
+      elif { [[ ! -e "$vendor" && ! -L "$vendor" ]] || rm -rf "$vendor"; } \
+        && mv "$backup/snapshot" "$vendor"; then
+        rmdir "$backup"
+        echo "ry: restored the previous typeshed snapshot after installation failed or was interrupted" >&2
+      else
+        echo "ry: could not restore the previous typeshed snapshot; recover it from $backup/snapshot" >&2
+        [[ "$status" != 0 ]] || status=1
+      fi
+    else
+      rmdir "$backup"
+    fi
+  fi
+  rm -rf "$staged"
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 cp -R "$checkout/stubs/." "$staged/"
 cat > "$staged/SOURCE" <<EOF
 repository: https://github.com/sims1253/r-typeshed
@@ -32,5 +61,12 @@ EOF
 cargo run --manifest-path "$repo_root/Cargo.toml" -p ry-cli -- \
   typeshed validate "$staged"
 
-rm -rf "$vendor"
+# Both directories stay on the same filesystem. Keep the old snapshot until
+# the staged directory is installed; EXIT restores it on a failed move or a
+# handled signal. SIGKILL and power loss can still require manual recovery.
+if [[ -e "$vendor" || -L "$vendor" ]]; then
+  backup=$(mktemp -d "${vendor}.backup.XXXXXX")
+  mv "$vendor" "$backup/snapshot"
+fi
 mv "$staged" "$vendor"
+installed=true

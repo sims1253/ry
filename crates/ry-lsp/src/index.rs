@@ -45,7 +45,7 @@ fn parse_paths(paths: &[PathBuf]) -> HashMap<String, Arc<SourceFile>> {
         Err(_) => return parsed,
     };
     for path in paths {
-        let Ok(source) = std::fs::read_to_string(path) else {
+        let Ok(source) = ry_workspace::read_r_source(path) else {
             continue;
         };
         if let Ok(file) = parser.parse(&path.to_string_lossy(), &source) {

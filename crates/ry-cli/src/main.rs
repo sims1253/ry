@@ -440,20 +440,12 @@ fn run_explain_typeshed() -> Result<ExitCode> {
 fn run_typeshed_validate(dirs: &[PathBuf], quiet: bool) -> Result<ExitCode> {
     let report = ry_typeshed::validate_stub_dirs(dirs);
     let errors = report.error_count();
-    let warnings = report.warning_count();
     if !quiet {
         for problem in &report.problems {
-            let level = match problem.level {
-                ry_typeshed::ValidationLevel::Error => "error",
-                ry_typeshed::ValidationLevel::Warning => "warning",
-            };
-            eprintln!("{}: {level}: {}", problem.path.display(), problem.message);
+            eprintln!("{}: error: {}", problem.path.display(), problem.message);
         }
     }
-    println!(
-        "Validated {} stub files: {errors} errors, {warnings} warnings.",
-        report.files
-    );
+    println!("Validated {} stub files: {errors} errors.", report.files);
     Ok(if errors == 0 {
         ExitCode::SUCCESS
     } else {

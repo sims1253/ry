@@ -43,6 +43,8 @@ pub struct WorkspaceContext {
 pub enum ResolveError {
     #[error("workspace root is not a directory: {0}")]
     InvalidRoot(PathBuf),
+    #[error("invalid environment path pattern: {0}")]
+    InvalidEnvironmentPattern(#[from] glob::PatternError),
 }
 
 /// Inventory of a serialized R data file (`.rda`/`.rdata`). `bindings`
@@ -76,6 +78,15 @@ fn file_stem_binding(path: &Path) -> HashSet<String> {
         .unwrap_or_default()
 }
 
+/// Read R source as UTF-8, falling back to Latin-1 for invalid UTF-8.
+/// Both frontends use this policy for on-disk source; open editor buffers
+/// already arrive as Unicode through LSP.
+pub fn read_r_source(path: &Path) -> std::io::Result<String> {
+    let bytes = std::fs::read(path)?;
+    Ok(String::from_utf8(bytes)
+        .unwrap_or_else(|error| error.into_bytes().into_iter().map(char::from).collect()))
+}
+
 struct LibraryRoot {
     path: PathBuf,
     max_depth: usize,
@@ -105,6 +116,22 @@ pub fn resolve_workspace_context<'a>(
     if !root.is_dir() {
         return Err(ResolveError::InvalidRoot(root.to_path_buf()));
     }
+    let profiles = config
+        .environments
+        .iter()
+        .map(|profile| {
+            let patterns = profile
+                .paths
+                .iter()
+                .map(|pattern| glob::Pattern::new(&pattern.replace('\\', "/")))
+                .collect::<Result<Vec<_>, _>>()?;
+            let anchor = profile.root.as_deref().unwrap_or(root);
+            let anchor = anchor
+                .canonicalize()
+                .unwrap_or_else(|_| anchor.to_path_buf());
+            Ok((profile, patterns, anchor))
+        })
+        .collect::<Result<Vec<_>, glob::PatternError>>()?;
     let files = environment.files;
     let user_stubs = environment.user_stubs;
     let all_paths: Vec<PathBuf> = files.iter().map(|file| PathBuf::from(&file.path)).collect();
@@ -147,13 +174,27 @@ pub fn resolve_workspace_context<'a>(
         let mut file_imported_from = HashMap::new();
         let mut source_package = None;
         file_bindings.extend(configured_globals.iter().cloned());
-        for profile in &config.environments {
-            if profile.paths.iter().any(|pattern| {
-                file.path
-                    .replace('\\', "/")
-                    .contains(pattern.trim_end_matches("/**"))
-            }) {
-                file_bindings.extend(profile.bindings.iter().cloned());
+        if !profiles.is_empty()
+            && let Ok(path) = Path::new(&file.path)
+                .canonicalize()
+                .or_else(|_| std::path::absolute(&file.path))
+        {
+            for (profile, patterns, anchor) in &profiles {
+                let Ok(relative) = path.strip_prefix(anchor) else {
+                    continue;
+                };
+                let relative = relative.to_string_lossy().replace('\\', "/");
+                if patterns.iter().any(|pattern| {
+                    pattern.matches_with(
+                        &relative,
+                        glob::MatchOptions {
+                            require_literal_separator: true,
+                            ..Default::default()
+                        },
+                    )
+                }) {
+                    file_bindings.extend(profile.bindings.iter().cloned());
+                }
             }
         }
         if let Some(root) = r_package_root(Path::new(&file.path)) {
@@ -393,7 +434,7 @@ fn source_package_dynamic_bindings(root: &Path) -> SourceBindings {
         return found;
     };
     for path in paths {
-        let Ok(source) = std::fs::read_to_string(&path) else {
+        let Ok(source) = read_r_source(&path) else {
             continue;
         };
         let Ok(file) = parser.parse(&path.to_string_lossy(), &source) else {
@@ -548,7 +589,7 @@ fn testthat_helper_context(root: &Path) -> TestthatHelperContext {
         {
             continue;
         }
-        let Ok(source) = std::fs::read_to_string(&path) else {
+        let Ok(source) = read_r_source(&path) else {
             continue;
         };
         let Ok(file) = parser.parse(&path.to_string_lossy(), &source) else {
@@ -629,7 +670,7 @@ fn source_package_datasets(root: &Path, max_serialized_bytes: u64) -> DataInvent
                 }
             }
             "r" => {
-                let Ok(source) = std::fs::read_to_string(&path) else {
+                let Ok(source) = read_r_source(&path) else {
                     continue;
                 };
                 let Ok(mut parser) = ry_core::RParser::new() else {
@@ -722,28 +763,14 @@ fn serialized_inventory_uncached(path: &Path, cap: u64) -> SerializedInventory {
         degraded: false,
     };
 
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
         Err(_) => return empty(),
     };
-    let decoded = {
-        let decoder: Option<Box<dyn std::io::Read + '_>> = if bytes.starts_with(b"BZh") {
-            Some(Box::new(bzip2::read::BzDecoder::new(bytes.as_slice())))
-        } else if bytes.starts_with(&[0x1f, 0x8b]) {
-            Some(Box::new(flate2::read::GzDecoder::new(bytes.as_slice())))
-        } else if bytes.starts_with(&[0xfd, b'7', b'z', b'X', b'Z', 0x00]) {
-            Some(Box::new(xz2::read::XzDecoder::new(bytes.as_slice())))
-        } else {
-            None
-        };
-        decoder.map(|decoder| decode_capped(decoder, cap))
-    };
-    let bytes = match decoded {
-        Some(Decoded::Bytes(decoded)) => decoded,
-        Some(Decoded::OverCap) => return degraded(path),
-        Some(Decoded::Failed) => return empty(),
-        None if bytes.len() as u64 > cap => return degraded(path),
-        None => bytes,
+    let bytes = match read_serialized(file, cap) {
+        Decoded::Bytes(bytes) => bytes,
+        Decoded::OverCap => return degraded(path),
+        Decoded::Failed => return empty(),
     };
     let payload = bytes
         .strip_prefix(b"RDX2\n")
@@ -762,6 +789,25 @@ fn serialized_inventory_uncached(path: &Path, cap: u64) -> SerializedInventory {
     SerializedInventory {
         bindings,
         degraded: false,
+    }
+}
+
+fn read_serialized(reader: impl std::io::Read, cap: u64) -> Decoded {
+    use std::io::Read;
+    let mut reader = reader;
+    let mut prefix = Vec::with_capacity(6);
+    if reader.by_ref().take(6).read_to_end(&mut prefix).is_err() {
+        return Decoded::Failed;
+    }
+    let reader = prefix.as_slice().chain(reader);
+    if prefix.starts_with(b"BZh") {
+        decode_capped(bzip2::read::BzDecoder::new(reader), cap)
+    } else if prefix.starts_with(&[0x1f, 0x8b]) {
+        decode_capped(flate2::read::GzDecoder::new(reader), cap)
+    } else if prefix.starts_with(&[0xfd, b'7', b'z', b'X', b'Z', 0x00]) {
+        decode_capped(xz2::read::XzDecoder::new(reader), cap)
+    } else {
+        decode_capped(reader, cap)
     }
 }
 
@@ -2160,5 +2206,78 @@ mod shared_tests {
                 .unwrap()
                 .matches(r"file\x")
         );
+    }
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+    use std::io::{Read, Write};
+
+    struct TinyReads<'a> {
+        bytes: &'a [u8],
+        consumed: usize,
+    }
+    impl Read for TinyReads<'_> {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            let length = buffer.len().min(1);
+            let count = self.bytes.read(&mut buffer[..length])?;
+            self.consumed += count;
+            Ok(count)
+        }
+    }
+
+    #[test]
+    fn serialization_reads_are_capped_and_detect_fragmented_headers() {
+        let payload: Vec<u8> = (0..=255).collect();
+        let mut gzip = flate2::write::GzEncoder::new(Vec::new(), Default::default());
+        gzip.write_all(&payload).unwrap();
+        let mut bzip = bzip2::write::BzEncoder::new(Vec::new(), Default::default());
+        bzip.write_all(&payload).unwrap();
+        let mut xz = xz2::write::XzEncoder::new(Vec::new(), 6);
+        xz.write_all(&payload).unwrap();
+        for bytes in [
+            payload.clone(),
+            gzip.finish().unwrap(),
+            bzip.finish().unwrap(),
+            xz.finish().unwrap(),
+        ] {
+            let mut reader = TinyReads {
+                bytes: &bytes,
+                consumed: 0,
+            };
+            assert!(
+                matches!(read_serialized(&mut reader, 256), Decoded::Bytes(result) if result == payload)
+            );
+            assert!(matches!(
+                read_serialized(bytes.as_slice(), 255),
+                Decoded::OverCap
+            ));
+        }
+        let bytes = vec![b'x'; 65536];
+        let mut reader = TinyReads {
+            bytes: &bytes,
+            consumed: 0,
+        };
+        assert!(matches!(read_serialized(&mut reader, 16), Decoded::OverCap));
+        assert_eq!(reader.consumed, 17);
+        for corrupt in [
+            b"BZh".as_slice(),
+            &[0x1f, 0x8b],
+            &[0xfd, b'7', b'z', b'X', b'Z', 0],
+        ] {
+            assert!(matches!(read_serialized(corrupt, 256), Decoded::Failed));
+        }
+    }
+
+    #[test]
+    fn source_decoding_is_shared_and_read_errors_remain_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("source.R");
+        for bytes in ["café <- 1\n".as_bytes(), b"caf\xe9 <- 1\n"] {
+            std::fs::write(&path, bytes).unwrap();
+            assert_eq!(read_r_source(&path).unwrap(), "café <- 1\n");
+        }
+        assert!(read_r_source(&dir.path().join("missing.R")).is_err());
     }
 }

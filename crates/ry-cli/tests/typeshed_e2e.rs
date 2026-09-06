@@ -152,7 +152,7 @@ fn quiet_prints_summary_only() {
 }
 
 #[test]
-fn warns_without_failing_on_unsorted_function_keys() {
+fn function_key_order_does_not_affect_validation() {
     let tmp = tempfile::tempdir().unwrap();
     fs::write(
         tmp.path().join("order.json"),
@@ -169,10 +169,7 @@ fn warns_without_failing_on_unsorted_function_keys() {
     let output = validate(tmp.path());
     let text = output_text(&output);
     assert!(output.status.success(), "{text}");
-    assert!(
-        text.contains("warning: function keys are not sorted"),
-        "{text}"
-    );
+    assert!(text.contains("0 errors."), "{text}");
 }
 
 #[test]

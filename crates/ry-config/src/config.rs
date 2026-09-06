@@ -73,6 +73,9 @@ pub struct EnvironmentConfig {
     pub bindings: Vec<String>,
     #[serde(default)]
     pub paths: Vec<String>,
+    /// Directory containing the configuration, assigned when it is loaded.
+    #[serde(skip)]
+    pub root: Option<PathBuf>,
 }
 
 /// Parsed contents of a `ry.toml` project config file.
@@ -206,6 +209,23 @@ impl Config {
             source,
         })?;
         let root = path.parent().unwrap_or(Path::new("."));
+        for profile in &mut cfg.environments {
+            profile.root = Some(
+                std::path::absolute(root).map_err(|source| ConfigError::Read {
+                    path: path.to_path_buf(),
+                    source,
+                })?,
+            );
+            for pattern in &profile.paths {
+                glob::Pattern::new(&pattern.replace('\\', "/")).map_err(|source| {
+                    ConfigError::InvalidEnvironmentPattern {
+                        path: path.to_path_buf(),
+                        pattern: pattern.clone(),
+                        source,
+                    }
+                })?;
+            }
+        }
         for dir in &mut cfg.typeshed {
             if dir.is_relative() {
                 *dir = root.join(&*dir);
@@ -434,6 +454,12 @@ pub enum ConfigError {
         "config file {path} has invalid value for {field}: bounded discovery limits must be positive integers, zero is not permitted"
     )]
     InvalidIndex { path: PathBuf, field: &'static str },
+    #[error("config file {path} has invalid environment path pattern `{pattern}`: {source}")]
+    InvalidEnvironmentPattern {
+        path: PathBuf,
+        pattern: String,
+        source: glob::PatternError,
+    },
 }
 
 #[cfg(test)]
@@ -441,6 +467,17 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn invalid_environment_globs_are_configuration_errors() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("ry.toml");
+        fs::write(&path, "[[environments]]\nname = 'broken'\npaths = ['[']\n").unwrap();
+        assert!(matches!(
+            Config::load_file(&path),
+            Err(ConfigError::InvalidEnvironmentPattern { .. })
+        ));
+    }
 
     #[test]
     fn defaults_match_expectations() {

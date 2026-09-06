@@ -59,7 +59,7 @@ pub(crate) struct ParseFailure {
 }
 
 /// What a command does with a failed file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) enum FailureAction {
     /// Drop the file and keep going.
     Skip,
@@ -105,7 +105,7 @@ fn parse_one(path: &Path) -> Result<Arc<ry_core::SourceFile>, ParseFailure> {
         static PARSER: std::cell::RefCell<Option<ry_core::RParser>> =
             const { std::cell::RefCell::new(None) };
     }
-    let src = match read_r_source(path) {
+    let src = match ry_workspace::read_r_source(path) {
         Ok(src) => src,
         Err(error) => {
             return Err(ParseFailure {
@@ -125,20 +125,6 @@ fn parse_one(path: &Path) -> Result<Arc<ry_core::SourceFile>, ParseFailure> {
         path: path.to_path_buf(),
         error: ParseError::Parse(message.to_string()),
     })
-}
-
-/// Read an R source file, accepting both UTF-8 and Latin-1 encodings.
-///
-/// R accepts Latin-1 source files, so retry an invalid UTF-8 decode by mapping
-/// every input byte directly to the corresponding Unicode code point.
-fn read_r_source(path: &Path) -> std::io::Result<String> {
-    match std::fs::read_to_string(path) {
-        Ok(source) => Ok(source),
-        Err(error) if error.kind() == std::io::ErrorKind::InvalidData => {
-            std::fs::read(path).map(|bytes| bytes.into_iter().map(char::from).collect())
-        }
-        Err(error) => Err(error),
-    }
 }
 
 /// Nearest ancestor directory (starting at the path itself for

@@ -243,6 +243,16 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Fixed
 
+- Reject duplicate function keys and S3 dispatch definitions when loading
+  typesheds. Function key ordering no longer produces a validation warning.
+- CLI and LSP use the same UTF-8/Latin-1 source decoder for on-disk R files.
+- Environment profile paths use anchored glob matching, preventing bindings
+  from leaking into directories with similar names.
+- Serialized workspace files stream through the decoded-byte limit instead
+  of allocating the complete input before checking the limit. The setting
+  continues to limit decoded bytes, so compression overhead does not reject
+  an otherwise valid exact-cap payload.
+
 - `ry typeshed validate` rejects duplicate formal names, including repeated
   `...`, in function and S3 method signatures.
 

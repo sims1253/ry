@@ -43,6 +43,8 @@ fn qualified_force_contract_uses_metadata_and_requires_reviewed_call_shape() {
         ("fixture::capture(x)", 0),
         ("fixture::strict(if (FALSE) x else 1L)", 0),
         ("fixture::strict(FALSE && x)", 0),
+        ("fixture::strict(fixture::halt() + x)", 0),
+        ("fixture::strict(fixture::halt()[x])", 0),
         ("fixture::strict(if (flag) x else 1L)", 0),
         ("fixture::strict(if (TRUE) x else 1L)", 1),
         ("fixture::strict(function() x)", 0),
@@ -92,4 +94,35 @@ fn replacement_base_stub_controls_forcing_without_builtin_fallback() {
         recursive_warnings("f <- function(x = x) stats::identity(x)", BTreeMap::new()),
         0
     );
+}
+
+#[test]
+fn default_blocks_stop_before_unreachable_or_replaced_reads() {
+    for (default, expected) in [
+        ("{ fixture::halt(); fixture::strict(x) }", 0),
+        ("fixture::halt() + fixture::strict(x)", 0),
+        ("fixture::strict(x) + fixture::halt()", 1),
+        ("fixture::halt()[fixture::strict(x)]", 0),
+        ("matrix[fixture::halt(), fixture::strict(x)]", 0),
+        ("{ return(1L); fixture::strict(x) }", 0),
+        ("{ x <- 1L; fixture::strict(x) }", 0),
+        ("{ x <- fixture::strict(x); 1L }", 1),
+        ("{ if (TRUE) x <- 1L else x <- 2L; fixture::strict(x) }", 0),
+        ("{ if (flag) x <- 1L else x <- 2L; fixture::strict(x) }", 0),
+        ("{ if (flag) x <- 1L; fixture::strict(x) }", 0),
+        ("{ inner <- function() { x <- 1L }; fixture::strict(x) }", 1),
+        ("{ fixture::strict(x); fixture::halt() }", 1),
+        (
+            "{ if (flag) { fixture::halt(); fixture::strict(x) } else 1L }",
+            0,
+        ),
+        ("{ if (flag) 1L else { x <- 1L; fixture::strict(x) } }", 0),
+    ] {
+        let source = format!("f <- function(flag = FALSE, x = {default}) x");
+        assert_eq!(
+            recursive_warnings(&source, BTreeMap::from([("fixture".into(), fixture())])),
+            expected,
+            "{default}"
+        );
+    }
 }

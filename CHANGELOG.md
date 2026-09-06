@@ -46,7 +46,8 @@ suppression actions — and fixes a parser panic plus several editor issues.
 - Use reviewed typeshed forcing contracts for RY098. Qualified calls to
   `typeof()`, `length()`, `is.null()`, `is.function()`, and `invisible()` can
   expose recursive defaults or force defaults before local assignments. Stop
-  that analysis after reviewed non-returning calls, including forced wrappers.
+  that analysis after reviewed non-returning calls, including forced wrappers,
+  and after possible replacement of the default's binding.
 
 - `ry dump-facts` exports versioned structured types, scope-exit snapshots,
   UTF-8 source spans, and analysis context hashes for downstream tools.

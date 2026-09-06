@@ -27,3 +27,19 @@ stopifnot(identical(returned(), 1L))
 early_halt <- function(x = local) { base::stop("done"); base::typeof(x); local <- 1L }
 result <- tryCatch(early_halt(), error = identity)
 stopifnot(identical(conditionMessage(result), "done"))
+default_halt <- function(x = { base::stop("done"); base::typeof(x) }) x
+result <- tryCatch(default_halt(), error = identity)
+stopifnot(identical(conditionMessage(result), "done"))
+default_return <- function(x = { return(1L); base::typeof(x) }) x
+stopifnot(identical(default_return(), 1L))
+default_replace <- function(x = { x <- 1L; base::typeof(x) }) x
+stopifnot(identical(default_replace(), "integer"))
+default_conditional_replace <- function(flag, x = { if (flag) x <- 1L else x <- 2L; base::typeof(x) }) x
+stopifnot(identical(default_conditional_replace(TRUE), "integer"))
+stopifnot(identical(default_conditional_replace(FALSE), "integer"))
+default_binary_halt <- function(x = base::stop("done") + base::typeof(x)) x
+default_index_halt <- function(x = base::stop("done")[base::typeof(x)]) x
+for (f in list(default_binary_halt, default_index_halt)) {
+  result <- tryCatch(f(), error = identity)
+  stopifnot(identical(conditionMessage(result), "done"))
+}

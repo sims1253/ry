@@ -242,19 +242,26 @@ fn definitely_forced_identifier(checker: &Checker, expr: &Expr, wanted: &str) ->
             if matches!(op, BinOpKind::Assign | BinOpKind::SuperAssign) {
                 definitely_forced_identifier(checker, rhs, wanted)
             } else {
-                definitely_forced_identifier(checker, lhs, wanted)
-                    .or_else(|| definitely_forced_identifier(checker, rhs, wanted))
+                first_reference_before_exit(
+                    checker,
+                    [lhs.as_ref(), rhs.as_ref()],
+                    wanted,
+                    definitely_forced_identifier,
+                )
             }
         }
         Expr::Index {
             base, kind, args, ..
         } => definitely_forced_identifier(checker, base, wanted).or_else(|| {
-            if matches!(kind, IndexKind::Dollar) {
+            if matches!(kind, IndexKind::Dollar) || expression_cannot_complete(checker, base) {
                 None
             } else {
-                args.iter().find_map(|argument| {
-                    definitely_forced_identifier(checker, &argument.value, wanted)
-                })
+                first_reference_before_exit(
+                    checker,
+                    args.iter().map(|argument| &argument.value),
+                    wanted,
+                    definitely_forced_identifier,
+                )
             }
         }),
         Expr::Block { body, span } => {
@@ -262,6 +269,44 @@ fn definitely_forced_identifier(checker: &Checker, expr: &Expr, wanted: &str) ->
         }
         _ => first_executed_identifier(checker, expr, wanted),
     }
+}
+
+fn first_reference_before_exit<'a>(
+    checker: &Checker,
+    expressions: impl IntoIterator<Item = &'a Expr>,
+    wanted: &str,
+    visit: fn(&Checker, &Expr, &str) -> Option<Span>,
+) -> Option<Span> {
+    for expression in expressions {
+        if let Some(span) = visit(checker, expression, wanted) {
+            return Some(span);
+        }
+        if expression_cannot_complete(checker, expression) {
+            return None;
+        }
+    }
+    None
+}
+
+fn first_executed_identifier_in_stmts(
+    checker: &Checker,
+    body: &[Stmt],
+    wanted: &str,
+) -> Option<Span> {
+    for statement in body {
+        // An assignment can force its old value on the RHS before replacing
+        // the binding. A possible replacement is enough to stop: later reads
+        // cannot be attributed to the original promise without flow analysis.
+        if let Some(span) = first_executed_identifier_in_stmt(checker, statement, wanted) {
+            return Some(span);
+        }
+        if assigned_names_in_body(std::slice::from_ref(statement)).contains(wanted)
+            || statement_cannot_complete(checker, statement)
+        {
+            return None;
+        }
+    }
+    None
 }
 
 fn first_executed_identifier_in_stmt(
@@ -280,40 +325,22 @@ fn first_executed_identifier_in_stmt(
         } => {
             let branch = if *taken { Some(then) } else { else_.as_ref() };
             branch.and_then(|statements| {
-                statements.iter().find_map(|statement| {
-                    first_executed_identifier_in_stmt(checker, statement, wanted)
-                })
+                first_executed_identifier_in_stmts(checker, statements, wanted)
             })
         }
         Stmt::If {
             cond, then, else_, ..
         } => first_executed_identifier(checker, cond, wanted)
-            .or_else(|| {
-                then.iter().find_map(|statement| {
-                    first_executed_identifier_in_stmt(checker, statement, wanted)
-                })
-            })
+            .or_else(|| first_executed_identifier_in_stmts(checker, then, wanted))
             .or_else(|| {
                 else_.as_ref().and_then(|statements| {
-                    statements.iter().find_map(|statement| {
-                        first_executed_identifier_in_stmt(checker, statement, wanted)
-                    })
+                    first_executed_identifier_in_stmts(checker, statements, wanted)
                 })
             }),
-        Stmt::For { iter, body, .. } => {
-            first_executed_identifier(checker, iter, wanted).or_else(|| {
-                body.iter().find_map(|statement| {
-                    first_executed_identifier_in_stmt(checker, statement, wanted)
-                })
-            })
-        }
-        Stmt::While { cond, body, .. } => {
-            first_executed_identifier(checker, cond, wanted).or_else(|| {
-                body.iter().find_map(|statement| {
-                    first_executed_identifier_in_stmt(checker, statement, wanted)
-                })
-            })
-        }
+        Stmt::For { iter, body, .. } => first_executed_identifier(checker, iter, wanted)
+            .or_else(|| first_executed_identifier_in_stmts(checker, body, wanted)),
+        Stmt::While { cond, body, .. } => first_executed_identifier(checker, cond, wanted)
+            .or_else(|| first_executed_identifier_in_stmts(checker, body, wanted)),
         Stmt::Return { value, .. } => value
             .as_ref()
             .and_then(|value| first_executed_identifier(checker, value, wanted)),
@@ -368,7 +395,8 @@ fn statement_cannot_complete(checker: &Checker, statement: &Stmt) -> bool {
 fn expression_cannot_complete(checker: &Checker, expression: &Expr) -> bool {
     match expression {
         Expr::Call { func, args, .. } => {
-            qualified_signature(checker, func).is_some_and(|signature| signature.no_return)
+            matches!(func.as_ref(), Expr::Ident { name, .. } if name == "return")
+                || qualified_signature(checker, func).is_some_and(|signature| signature.no_return)
                 || forced_argument(checker, func, args)
                     .is_some_and(|argument| expression_cannot_complete(checker, argument))
         }
@@ -402,8 +430,12 @@ fn first_executed_identifier(checker: &Checker, expr: &Expr, wanted: &str) -> Op
             } else if matches!(op, BinOpKind::Assign | BinOpKind::SuperAssign) {
                 first_executed_identifier(checker, rhs, wanted)
             } else {
-                first_executed_identifier(checker, lhs, wanted)
-                    .or_else(|| first_executed_identifier(checker, rhs, wanted))
+                first_reference_before_exit(
+                    checker,
+                    [lhs.as_ref(), rhs.as_ref()],
+                    wanted,
+                    first_executed_identifier,
+                )
             }
         }
         Expr::UnaryOp { expr, .. } => first_executed_identifier(checker, expr, wanted),
@@ -413,15 +445,18 @@ fn first_executed_identifier(checker: &Checker, expr: &Expr, wanted: &str) -> Op
             // `$field` stores `field` as a synthesized identifier in the AST,
             // but R does not evaluate it as an expression. Counting that name
             // would turn `vars = parent$vars` into a self-reference.
-            (!matches!(kind, IndexKind::Dollar)).then(|| {
-                args.iter().find_map(|argument| {
-                    first_executed_identifier(checker, &argument.value, wanted)
-                })
-            })?
+            if matches!(kind, IndexKind::Dollar) || expression_cannot_complete(checker, base) {
+                None
+            } else {
+                first_reference_before_exit(
+                    checker,
+                    args.iter().map(|argument| &argument.value),
+                    wanted,
+                    first_executed_identifier,
+                )
+            }
         }),
-        Expr::Block { body, .. } => body
-            .iter()
-            .find_map(|statement| first_executed_identifier_in_stmt(checker, statement, wanted)),
+        Expr::Block { body, .. } => first_executed_identifier_in_stmts(checker, body, wanted),
         Expr::If {
             cond, then, else_, ..
         } if matches!(cond.as_ref(), Expr::Logical(_, _)) => {

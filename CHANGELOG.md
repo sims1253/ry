@@ -9,7 +9,9 @@ All notable changes to ry are documented in this file.
 - Resolve S3 operators before inferring data-frame results, so subclass methods
   can return other types and conflicting methods do not retain column schemas.
 - Validate typeshed updates before replacing the vendored snapshot. Failed
-  validation leaves the existing stubs and provenance intact.
+  validation leaves the existing stubs and provenance intact. Restore the old
+  snapshot if installation fails or receives a handled interrupt, and retain a
+  recovery copy if restoration fails.
 - Shorten the README and move the inferred-types reference to `docs/types.md`.
 - Replace the unmaintained xz2 bindings with liblzma for compressed R data.
   Pin rds2rust to a tested fork revision with the same dependency switch.

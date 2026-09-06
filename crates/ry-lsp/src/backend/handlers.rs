@@ -459,7 +459,7 @@ impl LanguageServer for Backend {
         if params.context.only.as_ref().is_some_and(|kinds| {
             !kinds
                 .iter()
-                .any(|kind| kind.as_str().is_empty() || *kind == CodeActionKind::QUICKFIX)
+                .any(|kind| *kind == CodeActionKind::EMPTY || *kind == CodeActionKind::QUICKFIX)
         }) {
             return Ok(None);
         }

@@ -10,6 +10,8 @@ fn suppression_edits_remove_only_the_target_and_preserve_source() {
         for (source, target_line, code, editable) in [
             ("x <- never_bound_here # explanation\ny <- other\n", 0, "RY010", true),
             ("x <- never_bound_here # noqa: RY040 [note]\ny <- other\n", 0, "RY010", true),
+            ("x <- never_bound_here # noqa RY040 reason\ny <- other\n", 0, "RY010", true),
+            ("x <- never_bound_here # ry:ignore RY040 reason\ny <- other\n", 0, "RY010", true),
             ("x <- 1L + \"s\"; y <- never_bound_here # ry: ignore[RY040] reason\nz <- other\n", 0, "RY010", true),
             ("x <- \"café # text\nlast\"\ny <- never_bound_here # explanation\nz <- other\n", 2, "RY010", true),
             ("x <- \"first\nlast\" + 1L\ny <- other\n", 0, "RY040", false),

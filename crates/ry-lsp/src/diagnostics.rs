@@ -139,15 +139,16 @@ pub(super) fn make_ignore_action(
     };
     let new_line = match comment {
         Some(comment)
-            if !trailing.is_empty()
-                && !comment
-                    .body
-                    .trim_start()
-                    .to_ascii_lowercase()
-                    .starts_with("noqa:") =>
+            if !trailing.is_empty() && {
+                let body = comment.body.trim_start().to_ascii_lowercase();
+                ["ry: ignore", "ry:ignore", "noqa"].iter().any(|marker| {
+                    body.strip_prefix(marker).is_some_and(|rest| {
+                        rest.trim_start().starts_with('[') && rest.contains(']')
+                    })
+                })
+            } =>
         {
-            // Replace bracketed directives. Colon-form noqa has no delimiter
-            // separating codes from prose, so preserve that comment below.
+            // Only bracketed directives delimit their codes from trailing prose.
             let suffix = comment
                 .body
                 .find(']')

@@ -633,6 +633,22 @@ fn lazy_default_dependencies_respect_qualified_defusing_metadata() {
         ("rlang::expr(function() !!body_value)", true),
         ("rlang::expr(function(arg = !!body_value) arg)", false),
         (
+            "rlang::expr(function() !!{ for (i in 1:2) body_value <- 1L; 1L })",
+            false,
+        ),
+        (
+            "rlang::expr(function() !!{ for (i in 1:2) other <- body_value; 1L })",
+            true,
+        ),
+        (
+            "rlang::expr(function() !!{ if (unknown) body_value <- 1L; 1L })",
+            false,
+        ),
+        (
+            "rlang::expr(function() !!{ if (unknown) other <- body_value; 1L })",
+            true,
+        ),
+        (
             "rlang::expr(function() !!{ if (FALSE) body_value; 1L })",
             false,
         ),

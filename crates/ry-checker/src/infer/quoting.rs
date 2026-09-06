@@ -499,6 +499,9 @@ impl Checker {
                     let _ = walk_stmt(
                         statement,
                         Walk {
+                            assign_targets: false,
+                            assign_operands: false,
+                            dollar_args: false,
                             fn_bodies: false,
                             ..Walk::ALL
                         },

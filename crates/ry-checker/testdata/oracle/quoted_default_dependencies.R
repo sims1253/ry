@@ -93,3 +93,10 @@ pruned_statement <- function(x = rlang::expr(function() !!{ if (FALSE) body_valu
   out
 }
 stopifnot(identical(pruned_statement(), quote(function() 1L)))
+
+loop_target <- function(x = rlang::expr(function() !!{ for (i in 1:2) body_value <- 1L; 1L })) {
+  out <- x
+  body_value <- 1L
+  out
+}
+stopifnot(identical(loop_target(), quote(function() 1L)))

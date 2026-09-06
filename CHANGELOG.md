@@ -4,6 +4,12 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Stop S3 operator lookup at the winning group method, avoiding false
+  column-access errors when later classes define another operator method.
+  Keep custom opaque method results unknown.
+
 ### Cleanup
 
 - Show editor type hints from each assignment, including function locals,

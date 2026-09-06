@@ -177,8 +177,9 @@ fn inlay_hints(src: &str) -> Vec<InlayHint> {
     let mut parser = RParser::new().unwrap();
     let file = parser.parse("test.R", src).unwrap();
     let mut checker = ry_checker::Checker::new("test.R");
-    let (_, scope) = checker.check_with_scope(&file);
-    collect_inlay_hints(&file, &scope, src)
+    checker.enable_assignment_capture();
+    checker.check(&file);
+    collect_inlay_hints(&checker.take_assignment_types(), src)
 }
 
 #[test]
@@ -308,6 +309,63 @@ fn inlay_hints_for_function_definition() {
         ),
         other => panic!("expected String label, got {:?}", other),
     }
+}
+
+#[test]
+fn inlay_hints_keep_each_assignments_type() {
+    let hints = inlay_hints("x <- 1L\nx <- \"later\"\ny <- x\nx <- FALSE\n");
+    assert_eq!(hints.len(), 4, "{hints:?}");
+    for (hint, mode) in hints
+        .iter()
+        .zip(["integer", "character", "character", "logical"])
+    {
+        assert!(
+            matches!(&hint.label, InlayHintLabel::String(label) if label.contains(mode)),
+            "{hint:?}"
+        );
+    }
+}
+
+#[test]
+fn inlay_hints_use_the_assignments_lexical_scope() {
+    let hints = inlay_hints("x <- 1L\nf <- function() {\n  x <- \"local\"\n  x\n}\n");
+    assert_eq!(hints.len(), 3, "{hints:?}");
+    assert_eq!(hints[2].position, Position::new(2, 3));
+    assert!(
+        matches!(&hints[2].label, InlayHintLabel::String(label) if label.contains("character"))
+    );
+}
+
+#[test]
+fn inlay_hints_skip_quoted_assignments() {
+    let hints = inlay_hints("base::quote(x <- 1L)\nz <- TRUE\n");
+    assert_eq!(hints.len(), 1, "{hints:?}");
+    assert_eq!(hints[0].position, Position::new(1, 1));
+}
+
+#[test]
+fn inlay_hints_do_not_use_later_mutations() {
+    let hints = inlay_hints("x <- 1L\nclass(x) <- \"special\"\nnames(x) <- \"name\"\n");
+    assert_eq!(hints.len(), 1, "{hints:?}");
+    assert!(
+        matches!(&hints[0].label, InlayHintLabel::String(label) if label == ": integer<len=1>")
+    );
+}
+
+#[test]
+fn inlay_hints_for_nested_assignments_and_unicode() {
+    let hints = inlay_hints("变量 <- other <- 1L\n");
+    assert_eq!(hints.len(), 2, "{hints:?}");
+    assert_eq!(hints[0].position, Position::new(0, 2));
+    assert_eq!(hints[1].position, Position::new(0, 11));
+}
+
+#[test]
+fn inlay_hints_follow_backtick_token_ends() {
+    let hints = inlay_hints("`a b` <- 1L\n`multi\nline` <- FALSE\n");
+    assert_eq!(hints.len(), 2, "{hints:?}");
+    assert_eq!(hints[0].position, Position::new(0, 5));
+    assert_eq!(hints[1].position, Position::new(2, 5));
 }
 
 // ---- code action helpers ----

@@ -1156,6 +1156,16 @@ impl Checker {
         {
             return false;
         }
+        if !self.discarding
+            && let Some(types) = &mut self.assignment_types
+            && let Expr::Ident { name, span } = target
+            && self.source.get(span.start..span.end) == Some(name.as_str())
+        {
+            types
+                .entry(*span)
+                .and_modify(|previous| *previous = previous.clone().join(vt.clone()))
+                .or_insert_with(|| vt.clone());
+        }
         self.assign_target(target, vt, scope);
         true
     }

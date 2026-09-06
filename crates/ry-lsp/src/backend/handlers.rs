@@ -262,7 +262,7 @@ impl LanguageServer for Backend {
             state.disk_files.retain(|p, _| !under_removed_root(p));
             state.trees.retain(|p, _| !under_removed_root(p));
             state.parsed.retain(|p, _| !under_removed_root(p));
-            state.scopes.retain(|p, _| !under_removed_root(p));
+            state.hints.retain(|p, _| !under_removed_root(p));
 
             // Rebuild folder contexts from the surviving + added roots
             // through the shared builder used at initialize.
@@ -371,7 +371,7 @@ impl LanguageServer for Backend {
             state.docs.remove(&path);
             state.versions.remove(&path);
             state.parsed.remove(&path);
-            state.scopes.remove(&path);
+            state.hints.remove(&path);
             state.trees.remove(&path);
             // Invalidate any in-flight debounced publish for this file.
             state.diag_generation = state.diag_generation.wrapping_add(1);
@@ -427,17 +427,10 @@ impl LanguageServer for Backend {
             }
         }
 
-        // On parse failure return `None` (no hints) rather than erroring,
-        // so the editor shows nothing instead of a broken state.
-        let Some((file, text)) = self.parsed_file(&path).await else {
+        let Some(mut hints) = self.hints_for(&path).await else {
             return Ok(None);
         };
 
-        let Some(scope) = self.scope_for(&path).await else {
-            return Ok(None);
-        };
-
-        let mut hints = collect_inlay_hints(&file, &scope, &text);
         // Filter to the visible range; off-screen hints are dropped.
         hints.retain(|h| {
             let within_start = h.position.line > range.start.line

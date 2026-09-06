@@ -23,6 +23,112 @@ mod harness;
 
 use harness::{Published, file_uri, published_from_cli_value, published_from_lsp, ry_binary};
 
+#[test]
+fn assignment_hints_keep_source_types_across_edits_and_ranges() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture.write_file("main.R", "").unwrap();
+    let uri = ry_testkit::file_uri(&fixture.path("main.R")).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let (mut session, server) =
+            harness::spawn_session(&[fixture.root()], json!({}), None).await;
+        session
+            .open(&uri, 1, "x <- 1L\nx <- \"later\"\n")
+            .await
+            .unwrap();
+        let request = json!({
+            "textDocument": {"uri": uri},
+            "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 10}}
+        });
+        for _ in 0..2 {
+            let hints = session
+                .request("textDocument/inlayHint", request.clone())
+                .await
+                .unwrap();
+            assert_eq!(hints.as_array().unwrap().len(), 1, "{hints}");
+            assert_eq!(hints[0]["label"], ": integer<len=1>");
+        }
+        session
+            .notify(
+                "textDocument/didChange",
+                json!({
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": "x <- FALSE\nx <- 1L\n"}]
+                }),
+            )
+            .await
+            .unwrap();
+        let hints = session
+            .request("textDocument/inlayHint", request)
+            .await
+            .unwrap();
+        assert_eq!(hints.as_array().unwrap().len(), 1, "{hints}");
+        assert_eq!(hints[0]["label"], ": logical<len=1>");
+        harness::join_session(session, server).await;
+    });
+}
+
+#[test]
+fn assignment_hints_refresh_when_local_stubs_change() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture
+        .write_file("ry.toml", "typeshed = [\"stubs\"]\n")
+        .unwrap();
+    let write_stub =
+        |mode| {
+            fixture.write_file("stubs/localdep.json", serde_json::to_string(&json!({
+            "schema_version": "1", "package": "localdep", "version": "test",
+            "functions": {"value": {"params": [], "return": {"mode": mode, "length": "1"}}}
+        })).unwrap()).unwrap();
+        };
+    write_stub("integer");
+    fixture.write_file("main.R", "").unwrap();
+    let uri = ry_testkit::file_uri(&fixture.path("main.R")).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let (mut session, server) =
+            harness::spawn_session(&[fixture.root()], json!({}), None).await;
+        session
+            .open(&uri, 1, "x <- localdep::value()\n")
+            .await
+            .unwrap();
+        let request = json!({
+            "textDocument": {"uri": uri},
+            "range": {"start": {"line": 0, "character": 0}, "end": {"line": 1, "character": 0}}
+        });
+        let hints = session
+            .request("textDocument/inlayHint", request.clone())
+            .await
+            .unwrap();
+        assert_eq!(hints[0]["label"], ": integer<len=1>");
+        // Finish the initial publication before using the config-triggered
+        // publication as proof that the asynchronous reload has completed.
+        session.published_diagnostics_after(&uri, 0).await.unwrap();
+        write_stub("character");
+        let mark = session.publication_mark();
+        session
+            .notify("workspace/didChangeConfiguration", json!({"settings": {}}))
+            .await
+            .unwrap();
+        session
+            .published_diagnostics_after(&uri, mark)
+            .await
+            .unwrap();
+        let hints = session
+            .request("textDocument/inlayHint", request)
+            .await
+            .unwrap();
+        assert_eq!(hints[0]["label"], ": character<len=1>");
+        harness::join_session(session, server).await;
+    });
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Shared helpers (adapted from tests/protocol.rs for multi-root support)
 // ──────────────────────────────────────────────────────────────────────────

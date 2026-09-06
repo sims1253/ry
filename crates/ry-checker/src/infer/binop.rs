@@ -19,12 +19,6 @@ impl Checker {
         if matches!(op, BinOpKind::In) {
             return RType::new(Mode::Logical, lt.length);
         }
-        // `Ops.data.frame` is implemented by base R, but its stub is
-        // necessarily opaque. Keep the useful record shape here instead of
-        // letting that opaque S3 result erase it.
-        if let Some(result) = data_frame_binop_result(op, &lt, &rt) {
-            return result;
-        }
         // Primitive operators dispatch through `+.foo` then the `Ops.foo`
         // group generic before the storage-mode rules below; a miss is
         // silent, as in R -- the primitive itself is the fallback (issue
@@ -33,6 +27,12 @@ impl Checker {
         // method from another package.
         if let Some(dispatched) = self.try_s3_binop_dispatch(op, &lt, &rt) {
             return dispatched;
+        }
+        // The opaque base `Ops.data.frame` stub falls through to schema
+        // modeling. Resolve overrides and conflicting methods first: they
+        // need not return a data frame.
+        if let Some(result) = data_frame_binop_result(op, &lt, &rt) {
+            return result;
         }
         let is_compare = is_comparison(op);
         let is_logic = matches!(

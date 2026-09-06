@@ -847,6 +847,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_s3_data_frame.R
 - diagnostics: []
+  fixture: ok_s3_data_frame_operator_override.R
+- diagnostics: []
   fixture: ok_s3_dispatch.R
 - diagnostics: []
   fixture: ok_s3_operator_absence_arithmetic.R

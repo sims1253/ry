@@ -18,10 +18,11 @@ stubs_sha256=$(
     | cut -d' ' -f1
 )
 
-rm -rf "$vendor"
-mkdir -p "$vendor"
-cp -R "$checkout/stubs/." "$vendor/"
-cat > "$vendor/SOURCE" <<EOF
+# Validate a staged copy before replacing the last usable snapshot.
+staged=$(mktemp -d "${vendor}.XXXXXX")
+trap 'rm -rf "$staged"' EXIT
+cp -R "$checkout/stubs/." "$staged/"
+cat > "$staged/SOURCE" <<EOF
 repository: https://github.com/sims1253/r-typeshed
 commit: $commit
 tree-state: $tree_state
@@ -29,4 +30,7 @@ stubs-sha256: $stubs_sha256
 EOF
 
 cargo run --manifest-path "$repo_root/Cargo.toml" -p ry-cli -- \
-  typeshed validate "$vendor"
+  typeshed validate "$staged"
+
+rm -rf "$vendor"
+mv "$staged" "$vendor"

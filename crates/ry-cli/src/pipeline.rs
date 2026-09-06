@@ -162,6 +162,7 @@ where
 /// workspace context wrapped as a `CheckInput`, plus the degraded-scope
 /// notes the command reports in its own voice.
 pub(crate) struct ResolvedGroup {
+    pub resolution_root: PathBuf,
     pub check_input: crate::check::CheckInput,
     pub degraded_scopes: Vec<(PathBuf, &'static str)>,
 }
@@ -199,6 +200,13 @@ pub(crate) fn resolve_groups(
                     .map(PathBuf::from)
             })
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        // A relative file such as R/main.R can find DESCRIPTION at the
+        // empty ancestor path. That ancestor is the working directory.
+        let resolution_root = if resolution_root.as_os_str().is_empty() {
+            PathBuf::from(".")
+        } else {
+            resolution_root
+        };
         let mut package_scope = ry_workspace::resolve_workspace_context(
             &resolution_root,
             cfg,
@@ -221,6 +229,7 @@ pub(crate) fn resolve_groups(
         let degraded_scopes = std::mem::take(&mut package_scope.degraded_scopes);
         let workspace = package_scope;
         resolved.push(ResolvedGroup {
+            resolution_root,
             check_input: crate::check::CheckInput {
                 files: analysis_files,
                 user_stubs: Arc::clone(user_stubs),

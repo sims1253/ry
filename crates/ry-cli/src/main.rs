@@ -1,5 +1,7 @@
 mod check;
 mod dump;
+mod facts;
+mod facts_types;
 mod pipeline;
 
 use std::io::IsTerminal;
@@ -193,6 +195,18 @@ enum Cmd {
         #[arg(long = "position", value_name = "LINE:COL", value_parser = dump::parse_dump_position)]
         positions: Vec<(usize, usize)>,
     },
+    /// Export versioned structured facts at scope exit, as JSON.
+    DumpFacts {
+        /// R files or directories to analyze.
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+        /// Analysis root for files outside an R package.
+        #[arg(long, value_name = "DIR")]
+        project_root: Option<PathBuf>,
+        /// Output format. Only `json` is supported.
+        #[arg(long, value_name = "FORMAT", default_value = "json")]
+        format: String,
+    },
     /// Start the language server. Speaks the Language Server Protocol
     /// (LSP) over stdio, publishing type-check diagnostics for open R
     /// files. Connect to it from any LSP-aware editor (VS Code, Neovim,
@@ -292,6 +306,11 @@ fn main() -> Result<ExitCode> {
             format,
             positions,
         } => dump::run_dump_types(files, project_root, &format, positions),
+        Cmd::DumpFacts {
+            files,
+            project_root,
+            format,
+        } => facts::run_dump_facts(files, project_root, &format),
         Cmd::Server { log_level } => {
             // The LSP server reads JSON-RPC from stdin and writes
             // JSON-RPC to stdout. CRITICAL: any tracing or log output

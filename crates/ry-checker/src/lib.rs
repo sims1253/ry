@@ -268,6 +268,17 @@ fn is_shiny_app_fragment_path(path: &str) -> bool {
     })
 }
 
+/// Built-in runtime names supplied to this file by path-based host detection.
+/// Consumers of analysis snapshots can include this effective environment in
+/// cache identities. Detection reads Shiny marker files but never executes R.
+pub fn builtin_environment_bindings(path: &str) -> &'static [&'static str] {
+    if is_shiny_app_fragment_path(path) {
+        crate::semantic_lists::BUILTIN_ENVIRONMENT_BINDINGS
+    } else {
+        &[]
+    }
+}
+
 /// A single scope's binding table.
 #[derive(Debug, Clone, Default)]
 pub struct Scope {
@@ -1001,10 +1012,8 @@ impl Checker {
         {
             scope.mark_search_path_unknown();
         }
-        if is_shiny_app_fragment_path(&self.path) {
-            for name in crate::semantic_lists::BUILTIN_ENVIRONMENT_BINDINGS {
-                scope.insert(*name, RType::unknown());
-            }
+        for name in builtin_environment_bindings(&self.path) {
+            scope.insert(*name, RType::unknown());
         }
         scope
     }

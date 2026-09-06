@@ -117,7 +117,10 @@ fn line_char_col_to_offset(source: &str, row: usize, col: usize) -> Option<usize
 /// arguments, so the dump reports exactly what a `ry check` run
 /// infers). The *name* bound to a function literal
 /// (`inner <- function(...)`) is itself a local of this scope.
-fn collect_local_bindings(stmts: &[ry_core::ast::Stmt], out: &mut HashMap<String, ry_core::Span>) {
+pub(crate) fn collect_local_bindings(
+    stmts: &[ry_core::ast::Stmt],
+    out: &mut HashMap<String, ry_core::Span>,
+) {
     let _ = walk_stmts(
         stmts,
         Walk {
@@ -161,7 +164,7 @@ fn collect_local_bindings(stmts: &[ry_core::ast::Stmt], out: &mut HashMap<String
 
 /// Index local definition sites by function start byte. The shared walker
 /// visits nested functions; collecting locals stops at each function boundary.
-fn index_scope_bodies(
+pub(crate) fn index_scope_bodies(
     stmts: &[ry_core::ast::Stmt],
     index: &mut HashMap<usize, HashMap<String, ry_core::Span>>,
 ) {

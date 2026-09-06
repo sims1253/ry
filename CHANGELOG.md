@@ -36,6 +36,10 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Added
 
+- `ry dump-facts` exports versioned structured types, scope-exit snapshots,
+  UTF-8 source spans, and analysis context hashes for downstream tools.
+  See the [facts schema](docs/facts.md). Existing `dump-types` output is unchanged.
+
 - Zed verifies downloaded server executables against published SHA-256 sidecars
   and rechecks cached binaries before starting them. Missing or invalid sidecars
   and mismatched binaries fail installation and remove the download directory.

@@ -3231,15 +3231,6 @@
       "severity": "error",
       "message": "`callback` is `NULL`, not a function; cannot call it"
     },
-    "infer::RY040::R/get_p_value.R:213:21": {
-      "package": "infer",
-      "code": "RY040",
-      "path": "R/get_p_value.R",
-      "line": 213,
-      "column": 21,
-      "severity": "error",
-      "message": "cannot apply arithmetic op to `double` and `character`"
-    },
     "keras3::RY010::R/model-training.R:596:35": {
       "package": "keras3",
       "code": "RY010",
@@ -3993,8 +3984,8 @@
       "path": "tests/testthat/test-map.R",
       "line": 82,
       "column": 20,
-      "severity": "warning",
-      "message": "`map_chr` expects `character` returns but the callback returns `logical`; R will coerce silently"
+      "severity": "error",
+      "message": "`map_chr` requires a scalar `character` callback result, but the callback returns `logical<len=1>`; R rejects this result"
     },
     "purrr::RY080::tests/testthat/test-parallel.R:120:20": {
       "package": "purrr",
@@ -4002,8 +3993,8 @@
       "path": "tests/testthat/test-parallel.R",
       "line": 120,
       "column": 20,
-      "severity": "warning",
-      "message": "`map_chr` expects `character` returns but the callback returns `logical`; R will coerce silently"
+      "severity": "error",
+      "message": "`map_chr` requires a scalar `character` callback result, but the callback returns `logical<len=1>`; R rejects this result"
     },
     "recipes::RY033::tests/testthat/test-skipping.R:43:28": {
       "package": "recipes",

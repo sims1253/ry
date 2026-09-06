@@ -629,7 +629,8 @@
         "mode": "opaque",
         "length": "unknown",
         "na": false
-      }
+      },
+      "injection": {"...": "splice"}
     },
     "call_name": {
       "params": [
@@ -1049,7 +1050,8 @@
         "mode": "opaque",
         "length": "unknown",
         "na": false
-      }
+      },
+      "injection": {"...": "splice"}
     },
     "chr_unserialise_unicode": {
       "params": [
@@ -1376,7 +1378,8 @@
         "mode": "opaque",
         "length": "unknown",
         "na": false
-      }
+      },
+      "injection": {"...": "splice"}
     },
     "dots_values": {
       "params": [
@@ -1390,7 +1393,8 @@
         "mode": "opaque",
         "length": "unknown",
         "na": false
-      }
+      },
+      "injection": {"...": "splice"}
     },
     "duplicate": {
       "params": [
@@ -1579,7 +1583,8 @@
         "mode": "opaque",
         "length": "unknown",
         "na": false
-      }
+      },
+      "injection": {"...": "splice"}
     },
     "env_bind": {
       "params": [
@@ -1593,7 +1598,8 @@
         "mode": "opaque",
         "length": "unknown",
         "na": false
-      }
+      },
+      "injection": {"...": "splice"}
     },
     "env_bind_active": {
       "params": [
@@ -1622,7 +1628,8 @@
         "mode": "opaque",
         "length": "unknown",
         "na": false
-      }
+      },
+      "injection": {"...": "full"}
     },
     "env_binding_are_active": {
       "params": [
@@ -4984,7 +4991,8 @@
         "mode": "opaque",
         "length": "unknown",
         "na": false
-      }
+      },
+      "injection": {"...": "splice"}
     },
     "parse_bytes": {
       "params": [
@@ -5909,7 +5917,8 @@
         "mode": "opaque",
         "length": "unknown",
         "na": false
-      }
+      },
+      "injection": {"...": "splice"}
     },
     "type_of": {
       "params": [
@@ -6087,7 +6096,8 @@
         "mode": "opaque",
         "length": "unknown",
         "na": false
-      }
+      },
+      "injection": {"...": "splice"}
     },
     "with_interactive": {
       "params": [

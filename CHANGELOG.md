@@ -10,8 +10,11 @@ All notable changes to ry are documented in this file.
   and fractional sizes. Correct factor arithmetic with NULL and unary minus.
 - Check typed purrr callback contracts independently of output-length inference.
   RY080 now reports incompatible results as errors; empty inputs stay silent.
-- Preserve ordinary double negation outside tidy-evaluation contexts and
-  propagate splicing support through wrappers using R argument matching.
+- Preserve ordinary double negation in known evaluation contexts and
+  propagate splicing and data-mask behavior through wrappers and S3 methods.
+  Keep unresolved callables conservative about argument capture.
+- Discard initial values for bindings reassigned inside loops, preventing
+  stale lengths and types from being applied to later iterations.
 - Split inference, workspace discovery/serialization, and LSP handlers into
   focused modules. Avoid allocating names and scanning infix methods on ordinary calls.
 - Validate editor JSON responses, remove unsafe type assertions, and keep rule

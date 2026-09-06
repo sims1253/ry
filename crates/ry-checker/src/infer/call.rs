@@ -298,7 +298,9 @@ impl Checker {
             return RType::unknown();
         }
         self.infer(func, scope);
-        self.infer_args_for_diagnostics(args, scope);
+        for argument in args {
+            self.infer_with_injection(&argument.value, scope, Some(InjectionMode::Full));
+        }
         RType::unknown()
     }
 
@@ -908,7 +910,20 @@ impl Checker {
             let injection = resolved_sig
                 .as_ref()
                 .and_then(|sig| argument_supports_injection(sig, args, index))
-                .max(user_param.and_then(|parameter| parameter.injection));
+                .max(user_param.and_then(|parameter| parameter.injection))
+                // An unresolved callable may capture its arguments. Absence of
+                // metadata cannot prove that repeated negation is evaluated.
+                .or_else(|| {
+                    (resolved_sig.is_none() && user_function.is_none())
+                        .then_some(InjectionMode::Full)
+                });
+            // Dynamic dots allow name injection on the left of `:=`, even
+            // when value arguments accept splicing only.
+            let injection = if lookup_name == ":=" && index == 0 && scope.tidy_injection.is_some() {
+                Some(InjectionMode::Full)
+            } else {
+                injection
+            };
             let is_defused = user_param.is_some_and(|parameter| parameter.defused);
             let is_quoting = user_param.is_some_and(|parameter| parameter.quoting);
             if is_quoting {
@@ -981,7 +996,7 @@ impl Checker {
                         if user_dispatch {
                             local = local.with_unknown_data_mask();
                         }
-                        self.infer_tidyselect_expr(&a.value, &mut local)
+                        self.infer_tidyselect_expr(&a.value, &mut local, injection)
                     }
                 };
                 arg_types.push(inferred);

@@ -1369,3 +1369,43 @@ fn project_refinement_resolves_forwarded_library_calls() {
         assert!(diags.is_empty(), "{diags:?}");
     }
 }
+
+#[test]
+fn unresolved_callables_do_not_prove_that_injection_is_negation() {
+    for source in [
+        "unknown_capture(!!!list(1))",
+        "unknown_object$method(!!!list(1))",
+        "wrap <- function(...) unknown_capture(...); wrap(!!!list(1))",
+        "dplyr::select(data.frame(x = 1), !!!list())",
+        "dplyr::tibble(!!'x' := 1)",
+        "dplyr::tibble(!!!list(x = 1))",
+        "rlang::pairlist2(!!!list(x = 1))",
+        "rlang::env(!!!list(x = 1))",
+    ] {
+        let diags = check(source);
+        assert!(
+            diags.iter().all(|d| d.code != "RY021"),
+            "{source}: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn dynamic_dot_names_and_s3_methods_preserve_injection() {
+    for source in [
+        "rlang::exec(identity, !!'x' := 1)",
+        "patch <- function(x, ...) UseMethod('patch'); patch.foo <- function(x, ...) rlang::list2(...); patch(structure(1, class = 'foo'), !!!list(1))",
+    ] {
+        let diags = check(source);
+        assert!(
+            diags.iter().all(|d| d.code != "RY021"),
+            "{source}: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn forwarded_data_mask_dots_do_not_use_lexical_column_types() {
+    let source = "wrap <- function(data, ...) dplyr::summarise(data, ...)\nx <- list(1)\nwrap(data.frame(x = 1), result = mean(x))";
+    assert!(check(source).is_empty(), "{:?}", check(source));
+}

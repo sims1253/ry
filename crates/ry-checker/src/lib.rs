@@ -975,22 +975,19 @@ impl Checker {
             for name in names {
                 self.refine_fn_return(&name);
             }
-            let generic_quoting_changed = self.propagate_s3_generic_quoting();
-            let quoting_changed = self.propagate_forwarded_quoting();
-            if self.return_slots.0 == before.0 && !generic_quoting_changed && !quoting_changed {
+            let generic_metadata_changed = self.propagate_s3_generic_evaluation();
+            let quoting_changed = self.propagate_forwarded_evaluation();
+            if self.return_slots.0 == before.0 && !generic_metadata_changed && !quoting_changed {
                 break;
             }
         }
         self.discarding = prev_discarding;
     }
 
-    /// A `UseMethod()` generic is evaluated before its selected method, but
-    /// its callers must still supply promises compatible with that method's
-    /// NSE behavior.  Derive the generic's quoting formals from every known
-    /// `generic.class` implementation.  This is intentionally a union: one
-    /// quoting method is enough to make the corresponding generic argument
-    /// opaque at a call site.
-    fn propagate_s3_generic_quoting(&mut self) -> bool {
+    /// A generic must allow the quoting and injection behavior of its known
+    /// methods. Union their parameter metadata because any selected method
+    /// may capture the supplied arguments.
+    fn propagate_s3_generic_evaluation(&mut self) -> bool {
         let mut inherited = Vec::new();
 
         for (name, generic) in &self.fn_table.fns {
@@ -1034,7 +1031,7 @@ impl Checker {
                     continue;
                 };
                 for parameter in &method.params {
-                    if !parameter.quoting {
+                    if !parameter.quoting && parameter.injection.is_none() {
                         continue;
                     }
                     let target = match generic
@@ -1052,7 +1049,12 @@ impl Checker {
                         None => dots,
                     };
                     if let Some(target) = target {
-                        inherited.push((name.clone(), target));
+                        inherited.push((
+                            name.clone(),
+                            target,
+                            parameter.quoting,
+                            parameter.injection,
+                        ));
                     }
                 }
             }
@@ -1060,15 +1062,20 @@ impl Checker {
 
         let table = Arc::make_mut(&mut self.fn_table);
         let mut changed = false;
-        for (generic, position) in inherited {
+        for (generic, position, quoting, injection) in inherited {
             if let Some(parameter) = table
                 .fns
                 .get_mut(&generic)
                 .and_then(|function| function.params.get_mut(position))
-                && !parameter.quoting
             {
-                parameter.quoting = true;
-                changed = true;
+                if quoting && !parameter.quoting {
+                    parameter.quoting = true;
+                    changed = true;
+                }
+                if injection > parameter.injection {
+                    parameter.injection = injection;
+                    changed = true;
+                }
             }
         }
         changed
@@ -1080,7 +1087,7 @@ impl Checker {
     /// here only when its value was an identifier.  This deliberately excludes
     /// expressions such as `callee(p + 1)` and nested calls such as
     /// `callee(f(p))`, which evaluate `p` before the callee can capture it.
-    fn propagate_forwarded_quoting(&mut self) -> bool {
+    fn propagate_forwarded_evaluation(&mut self) -> bool {
         let mut inherited = Vec::new();
 
         for call in &self.fn_table.forwarded_calls {
@@ -1095,6 +1102,19 @@ impl Checker {
                 .flatten();
             let stub_callee = self.resolve_typeshed_sig(&call.stub_callee);
             if user_callee.is_none() && stub_callee.is_none() {
+                for (_, source) in &call.arguments {
+                    if let Some(source) = source
+                        && caller.params.iter().any(|param| param.name == *source)
+                    {
+                        inherited.push((
+                            call.caller.clone(),
+                            source.clone(),
+                            false,
+                            false,
+                            Some(InjectionMode::Full),
+                        ));
+                    }
+                }
                 continue;
             }
 
@@ -1146,8 +1166,16 @@ impl Checker {
                 // that stronger behavior while forwarding `...` to another
                 // dots-capturing user function.
                 let inherits_defusing = source == "..."
-                    && user_callee
-                        .is_some_and(|callee| callee.params.get(target).is_some_and(|p| p.defused));
+                    && if let Some(callee) = user_callee {
+                        callee.params[target].defused
+                    } else {
+                        stub_callee.as_ref().is_some_and(|sig| {
+                            matches!(
+                                sig.eval.get(names[target]),
+                                Some(EvalMode::DataMask | EvalMode::TidySelect)
+                            )
+                        })
+                    };
                 let inherits_injection = if let Some(callee) = user_callee {
                     callee.params[target].injection
                 } else {

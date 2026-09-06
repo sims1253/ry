@@ -1198,3 +1198,9 @@ fn guarded_unknown_parameter_vector_emits_ry032_without_other_vector_intent() {
         "got {reassigned:?}"
     );
 }
+
+#[test]
+fn loop_carried_values_do_not_keep_the_initial_empty_length() {
+    let source = "quote <- raw()\nfor (x in as.raw(c(1, 2))) {\nif (length(quote)) { if (x == quote) print(x) }\nquote <- x\n}";
+    assert!(check(source).is_empty(), "{:?}", check(source));
+}

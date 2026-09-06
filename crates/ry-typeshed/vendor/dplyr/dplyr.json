@@ -113,7 +113,8 @@
         "class": [
           "data.frame"
         ]
-      }
+      },
+      "injection": {"...": "splice"}
     },
     "bind_rows": {
       "params": [
@@ -127,7 +128,8 @@
         "class": [
           "data.frame"
         ]
-      }
+      },
+      "injection": {"...": "splice"}
     },
     "c_across": {
       "params": [
@@ -814,7 +816,8 @@
           "tbl",
           "data.frame"
         ]
-      }
+      },
+      "injection": {"...": "full"}
     },
     "transmute": {
       "params": [

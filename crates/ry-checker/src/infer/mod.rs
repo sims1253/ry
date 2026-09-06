@@ -624,9 +624,8 @@ impl Checker {
     /// assignment is textually later than its use in the body.
     fn insert_loop_carried_bindings(&self, body: &[Stmt], scope: &mut Scope) {
         for name in assigned_names_in_body(body) {
-            if scope.get(&name).is_none() {
-                scope.insert(name, RType::unknown());
-            }
+            // The pre-loop value need not survive a later iteration.
+            scope.insert(name, RType::unknown());
         }
     }
 

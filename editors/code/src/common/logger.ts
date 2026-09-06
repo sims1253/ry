@@ -2,19 +2,10 @@ import * as util from "util";
 import * as vscode from "vscode";
 
 class ExtensionLogger {
-  /**
-   * The output channel used to log messages for the extension.
-   */
   readonly channel = vscode.window.createOutputChannel("ry", { log: true });
 
-  /**
-   * Whether the extension is running in a CI environment.
-   */
   private readonly isCI = process.env.CI === "true";
 
-  /**
-   * Logs messages to the console if the extension is running in a CI environment.
-   */
   private logForCI(...messages: unknown[]): void {
     if (this.isCI) {
       console.log(...messages);
@@ -47,27 +38,13 @@ class ExtensionLogger {
   }
 }
 
-/**
- * The structural interface satisfied by [`ExtensionLogger`].
- *
- * Consumers that want to log (binary resolution, status reporting, etc.)
- * depend on this type rather than the concrete class, so they can be
- * unit-tested with a stub.
- */
+// Public logging surface; tests can provide a stub.
 export type Logger = Pick<
   ExtensionLogger,
   "channel" | "error" | "warn" | "info" | "debug" | "trace"
 >;
 
-/**
- * The logger used by the extension.
- *
- * This logs messages to the "ry" output channel, optionally mirroring them
- * to the console in a CI environment (e.g. GitHub Actions).
- *
- * Use this for messages intended for the user. The server's own stderr
- * is written to a separate channel (see `server.ts`).
- */
+// Client logs, mirrored to the console in CI. Server stderr uses its own channel.
 export const logger = new ExtensionLogger();
 
 /**

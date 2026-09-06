@@ -4,6 +4,11 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Stop offering suppression actions for disabled or excluded files. Skip
+  computing them when the editor requests other action kinds.
+
 ### Cleanup
 
 - Avoid recursive-default warnings for signaling arguments that may be ignored

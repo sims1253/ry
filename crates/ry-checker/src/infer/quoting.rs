@@ -207,9 +207,19 @@ fn definitely_forced_identifier(expr: &Expr, wanted: &str) -> Option<Span> {
         },
         Expr::BinOp {
             lhs,
-            op: BinOpKind::AndAnd | BinOpKind::OrOr,
+            rhs,
+            op: op @ (BinOpKind::AndAnd | BinOpKind::OrOr),
             ..
-        } => definitely_forced_identifier(lhs, wanted),
+        } => definitely_forced_identifier(lhs, wanted).or_else(|| {
+            // Only these literal operands guarantee evaluation of the RHS.
+            matches!(
+                (op, lhs.as_ref()),
+                (BinOpKind::AndAnd, Expr::Logical(true, _))
+                    | (BinOpKind::OrOr, Expr::Logical(false, _))
+            )
+            .then(|| definitely_forced_identifier(rhs, wanted))
+            .flatten()
+        }),
         Expr::Block { body, span } => {
             guaranteed_force_before_replacement(body, wanted).then_some(*span)
         }

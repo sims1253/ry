@@ -70,7 +70,8 @@ jobs:
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
               summary.write('## Performance measurements\n\n| Metric | Value | Unit |\n|---|---:|---|\n')
               for row in data:
-                  summary.write(f"| {row['name']} | {row['value']:.2f} | {row['unit']} |\n")
+                  value = f"{row['value']:,d}" if row['unit'] == 'bytes' else f"{row['value']:.2f}"
+                  summary.write(f"| {row['name']} | {value} | {row['unit']} |\n")
           PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

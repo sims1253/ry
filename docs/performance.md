@@ -24,7 +24,7 @@ against the latest recorded `main` result. The first run establishes a baseline.
 A slowdown or size increase above 20% is advisory; it does not fail the workflow.
 The existing performance budget and scaling tests in `CI` remain enforced.
 
-Only runs on `main` push history to the separate `performance-data` branch.
+Runs on `main` write history to the separate `performance-data` branch.
 Manual runs on other branches compare without publishing history. The workflow
 does not post comments. The history contains numeric measurements and
 commit metadata in `benchmarks/data.js`, plus a static chart page. No executables,

@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from "bun:test";
-import { findRyBinaryPath } from "../common/binary";
+import { findRyBinaryPath, getRyVersion } from "../common/binary";
 import { BUNDLED_RY_EXECUTABLE } from "../common/constants";
 import * as fs from "fs";
 import * as os from "os";
@@ -67,3 +67,45 @@ describe("findRyBinaryPath trust behavior", () => {
     expect(resolved).toBe(BUNDLED_RY_EXECUTABLE);
   });
 });
+
+it("skips directories and non-executable files before a runnable candidate", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ry-candidates-"));
+  try {
+    const plain = path.join(dir, "plain");
+    const executable = path.join(dir, "executable");
+    fs.writeFileSync(plain, "not executable", { mode: 0o644 });
+    fs.writeFileSync(executable, "#!/bin/sh\n", { mode: 0o755 });
+    const settings = {
+      path: [dir, ...(process.platform === "win32" ? [] : [plain]), executable],
+      importStrategy: "useBundled",
+    } as unknown as import("../common/settings").ISettings;
+    expect(findRyBinaryPath(settings, false)).toBe(executable);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+it.skipIf(process.platform === "win32")(
+  "version probing leaves the event loop responsive",
+  async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ry-version-"));
+    try {
+      const binary = path.join(dir, "ry");
+      fs.writeFileSync(
+        binary,
+        `#!/bin/sh\nsleep 0.1\necho '{"version":"0.9.0"}'\n`,
+        { mode: 0o755 },
+      );
+      let resolved = false;
+      const probe = getRyVersion(binary).then((version) => {
+        resolved = true;
+        return version;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(resolved).toBe(false);
+      expect(await probe).toEqual({ major: 0, minor: 9, patch: 0 });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);

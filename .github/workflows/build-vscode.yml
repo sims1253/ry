@@ -98,7 +98,13 @@ jobs:
       - name: Unit tests
         run: bun test src/test/binary.test.ts
 
-      - name: Run E2E tests (xvfb)
+      - name: Package the built binary
+        run: |
+          mkdir -p bundled/bin
+          cp ../../target/release/ry bundled/bin/ry
+          bun run vsce-package
+
+      - name: Test installed VSIX (xvfb)
         run: xvfb-run -a bun run test
 
   # Publisher identity consistency check

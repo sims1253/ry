@@ -763,3 +763,27 @@ fn user_fn_as_value_not_unbound() {
         diags
     );
 }
+
+#[test]
+fn typed_multi_input_maps_preserve_atomic_modes_without_claiming_a_length() {
+    for (suffix, value, mode) in [
+        ("chr", "\"x\"", Mode::Character),
+        ("dbl", "1.0", Mode::Double),
+        ("int", "1L", Mode::Integer),
+        ("lgl", "TRUE", Mode::Logical),
+    ] {
+        for (prefix, inputs) in [("map2", "1L, 1:3"), ("pmap", "list(1L, 1:3)")] {
+            for qualifier in ["", "purrr::"] {
+                let source = format!(
+                    "library(purrr)\nresult <- {qualifier}{prefix}_{suffix}({inputs}, function(...) {value})\n"
+                );
+                let (_, scope) = check_with_scope(&source);
+                let result = scope.get("result").unwrap();
+                assert_eq!(result.mode, mode, "{source}");
+                assert_eq!(result.length, Length::Unknown, "{source}");
+            }
+        }
+    }
+    let (_, scope) = check_with_scope("position <- Position(is.na, c(1, 2, 3))\n");
+    assert_eq!(scope.get("position").unwrap().length, Length::One);
+}

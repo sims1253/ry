@@ -55,7 +55,20 @@ impl Checker {
         let signature = self.resolve_typeshed_sig(name)?;
         let spec = signature.higher_order.as_ref()?;
         let argument_match = match_params(&signature.params, args);
-        Some(self.infer_ho_result(name, spec, args, arg_types, &argument_match, scope, span))
+        let declared_length = match &signature.return_ {
+            ReturnSpec::Concrete(ty) => json_length_to_length(JsonLength::parse(&ty.length)),
+            ReturnSpec::Slot(_) => Length::Unknown,
+        };
+        Some(self.infer_ho_result(
+            name,
+            spec,
+            declared_length,
+            args,
+            arg_types,
+            &argument_match,
+            scope,
+            span,
+        ))
     }
 
     /// Per-builtin result-type computation. Used by both pass 2 (pure,
@@ -68,6 +81,7 @@ impl Checker {
         &mut self,
         name: &str,
         spec: &HigherOrderSpec,
+        declared_length: Length,
         args: &[Arg],
         arg_types: &[RType],
         argument_match: &ArgumentMatch,
@@ -132,7 +146,7 @@ impl Checker {
                     .length_arg
                     .and_then(|i| matched_argument_type(arg_types, argument_match, i))
                     .map(|ty| ty.length)
-                    .unwrap_or(Length::One);
+                    .unwrap_or(declared_length);
                 RType::new(mode, length)
             }
             HigherOrderResultKind::SameAsArg0 => {

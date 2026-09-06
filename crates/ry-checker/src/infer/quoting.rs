@@ -62,22 +62,23 @@ impl Checker {
         assigned: &HashSet<String>,
         scope: &Scope,
     ) {
+        if params.iter().all(|param| param.default.is_none()) {
+            return;
+        }
         // Syntax operators can be rebound to lazy closures. This narrow rule
         // does not resolve such closures, so abandon its primitive assumptions
         // when a visible binding or local assignment could replace one.
         let syntax_names = [
-            "+", "-", "*", "/", "^", "%%", "%/%", ":", "<", "<=", ">", ">=", "==", "!=", "&", "&&",
-            "|", "||", "!", "[", "[[", "$", "if", "while", "for", "return", "{", "(", "<-", "<<-",
-            "=",
+            "+", "`+`", "-", "`-`", "*", "`*`", "/", "`/`", "^", "`^`", "%%", "`%%`", "%/%",
+            "`%/%`", ":", "`:`", "<", "`<`", "<=", "`<=`", ">", "`>`", ">=", "`>=`", "==", "`==`",
+            "!=", "`!=`", "&", "`&`", "&&", "`&&`", "|", "`|`", "||", "`||`", "!", "`!`", "[",
+            "`[`", "[[", "`[[`", "$", "`$`", "if", "`if`", "while", "`while`", "for", "`for`",
+            "return", "`return`", "{", "`{`", "(", "`(`", "<-", "`<-`", "<<-", "`<<-`", "=", "`=`",
         ];
         if syntax_names.iter().any(|name| {
-            [name.to_string(), format!("`{name}`")]
-                .iter()
-                .any(|spelling| {
-                    assigned.contains(spelling)
-                        || scope.get(spelling).is_some()
-                        || !self.resolves_to_base_lenient(spelling, scope)
-                })
+            assigned.contains(*name)
+                || scope.get(name).is_some()
+                || !self.resolves_to_base_lenient(name, scope)
         }) {
             return;
         }

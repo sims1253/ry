@@ -61,8 +61,10 @@ sample small enough to fit the CI budget.
 
 [Corpus instruction counts](../../.github/workflows/instructions.yml) runs on
 merges to main, daily, and on manual dispatch. Changes to the harness also run
-it in pull requests. The job has a 20-minute limit and is warn-only. The normal
-single-file performance tests remain the blocking latency checks.
+it in pull requests. The job has a 20-minute limit. Count growth and measurement
+failures are warn-only; failed harness tests or an invalid reference revision
+fail the check. The normal single-file performance tests remain the blocking
+latency checks.
 
 The committed [baseline ledger](instructions-baseline.json) contains actual
 Callgrind measurements. Its host may differ from a CI runner. CI therefore

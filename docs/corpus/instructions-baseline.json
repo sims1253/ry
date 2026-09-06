@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "created_at": "2026-09-06T17:49:34.534792+00:00",
+  "created_at": "2026-09-06T18:41:56.071281+00:00",
   "source_revision": "24b4cbfbfa4a7d65473640fa6eaeb7611a223d81",
   "source_dirty": false,
   "binary_sha256": "c251aeb91903bfa136990430e3a0f97eb21ef25387d5fa98949c4115a63d336f",
@@ -36,12 +36,10 @@
     "config": "empty R/ry.toml",
     "counter_environment": "fixed variables plus tool PATH and empty temporary HOME",
     "manifest_sha256": "9828c69304bb77c0402297e8b15d18611cae6de6c00f84c77836b5d2c0abf1bc",
-    "harness_sha256": "b649dc6e0b8505c89ec491f5ae2d616d8bfe5584f82069dd8e91858566ce38f3",
+    "harness_sha256": "13c5d3482f9a4280f8718fc13034da7567ab038279c96ddee32636ba32539dc3",
     "repetitions": 3
   },
-  "fallback_notes": [
-    "perf is not installed"
-  ],
+  "fallback_notes": [],
   "packages": [
     {
       "package": "glue",
@@ -50,11 +48,11 @@
       "status": "measured",
       "tree": "b6d7f2771e0824206123c0cb140d92ec0c963b0d",
       "counts": [
-        299325684,
-        299408590,
-        299499612
+        299454159,
+        299393861,
+        299251257
       ],
-      "instructions": 299408590
+      "instructions": 299393861
     },
     {
       "package": "stringr",
@@ -63,11 +61,11 @@
       "status": "measured",
       "tree": "daa0d49a54b5bfec88035b9377b9fa522e551ccc",
       "counts": [
-        895313413,
-        896140032,
-        893662138
+        894529652,
+        894101245,
+        893771548
       ],
-      "instructions": 895313413
+      "instructions": 894101245
     },
     {
       "package": "withr",
@@ -76,11 +74,11 @@
       "status": "measured",
       "tree": "c51c9c9f4c5c2e83c02762c6fb31273e81a5de77",
       "counts": [
-        467718298,
-        467920767,
-        467914577
+        467563344,
+        467603912,
+        467813669
       ],
-      "instructions": 467914577
+      "instructions": 467603912
     }
   ]
 }

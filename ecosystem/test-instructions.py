@@ -2,11 +2,17 @@
 """Counter parsing and comparison guards; no hardware counter required."""
 
 import copy
+import contextlib
+import io
+import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
+import tempfile
 import unittest
+from unittest import mock
 
 import instructions
 
@@ -72,6 +78,27 @@ class ComparisonTests(unittest.TestCase):
     def test_failed_build_ledgers_need_no_revision_or_counts(self):
         failed = {"schema_version": 1, "metadata": {"backend": "unavailable"}, "packages": []}
         self.assertIn("UNAVAILABLE", instructions.compare(failed, failed, 10))
+
+
+class ManifestFailureTests(unittest.TestCase):
+    def test_invalid_manifest_still_writes_failure_ledger(self):
+        valid = "glue https://example.invalid/glue " + "a" * 40 + "\n"
+        for contents in ("glue https://example.invalid/glue not-a-pin\n", valid + valid, "glue missing-column\n"):
+            with self.subTest(contents=contents), tempfile.TemporaryDirectory() as directory:
+                manifest = Path(directory) / "packages.txt"
+                output = Path(directory) / "ledger.json"
+                manifest.write_text(contents)
+                stderr = io.StringIO()
+                with mock.patch.object(instructions, "MANIFEST", manifest), \
+                     mock.patch.object(sys, "argv", ["instructions.py", "measure", "--output", str(output)]), \
+                     mock.patch.object(instructions, "measure") as measure, contextlib.redirect_stderr(stderr):
+                    self.assertEqual(instructions.main(), 1)
+                measure.assert_not_called()
+                ledger = json.loads(output.read_text())
+                self.assertEqual(ledger["packages"], [])
+                self.assertEqual(ledger["metadata"]["backend"], "unavailable")
+                self.assertTrue(ledger["reason"])
+                self.assertNotIn("Traceback", stderr.getvalue())
 
 
 if __name__ == "__main__":

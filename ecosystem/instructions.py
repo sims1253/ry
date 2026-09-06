@@ -141,7 +141,7 @@ def prepare_sample(sample, cache):
     return directory, run(["git", "rev-parse", "HEAD^{tree}"], cwd=directory)
 
 
-def measure(args):
+def measure(args, selected_samples):
     source = args.source.resolve()
     env = dict(os.environ, **ENVIRONMENT, GIT_TERMINAL_PROMPT="0")
     if env.get("CARGO_BUILD_TARGET"):
@@ -180,7 +180,7 @@ def measure(args):
     deadline = time.monotonic() + args.budget
     cache = args.cache.resolve()
     cache.mkdir(parents=True, exist_ok=True)
-    for sample in samples():
+    for sample in selected_samples:
         row = dict(sample, status="unavailable")
         try:
             if time.monotonic() >= deadline:
@@ -262,9 +262,11 @@ def main():
     compare_parser.add_argument("current", type=Path)
     compare_parser.add_argument("--threshold", type=float, default=10.0)
     args = parser.parse_args()
+    selected_samples = []
     try:
         if args.command == "measure":
-            return measure(args)
+            selected_samples = samples()
+            return measure(args, selected_samples)
         print(compare(json.loads(args.baseline.read_text()), json.loads(args.current.read_text()), args.threshold), end="")
         return 0  # Growth is warn-only; measurement/format errors still fail.
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
@@ -273,7 +275,7 @@ def main():
             # Even an unavailable counter or failed build gets an explicit report.
             ledger = {"schema_version": 1, "created_at": datetime.now(timezone.utc).isoformat(),
                       "metadata": {"backend": "unavailable"}, "reason": str(error),
-                      "packages": [dict(sample, status="unavailable", reason=str(error)) for sample in samples()]}
+                      "packages": [dict(sample, status="unavailable", reason=str(error)) for sample in selected_samples]}
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(json.dumps(ledger, indent=2) + "\n")
         return 1

@@ -25,8 +25,6 @@ jobs:
   instructions:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    # Gather a noise floor before making count growth a blocking check.
-    continue-on-error: true
     env:
       RAYON_NUM_THREADS: "1"
       RY_NO_INSTALLED_LIBRARIES: "1"
@@ -47,6 +45,7 @@ jobs:
           baseline_ref=$(python3 -c 'import json; print(json.load(open("docs/corpus/instructions-baseline.json"))["source_revision"])')
           [[ "$baseline_ref" =~ ^[0-9a-f]{40}$ ]]
           git worktree add --detach "$RUNNER_TEMP/instructions-reference" "$baseline_ref"
+      # Measurement failures and count growth are warn-only; harness guards are not.
       # Re-measure the frozen reference under the same counter/libc/compiler.
       # Updating its source revision requires a separately reviewed baseline change.
       - name: Measure reference
@@ -68,9 +67,10 @@ jobs:
           if [[ -f instruction-reference.json && -f instruction-current.json ]]; then
             python3 ecosystem/instructions.py compare instruction-reference.json instruction-current.json > instruction-summary.md
             printf '\n### Historical ledger comparability\n\n' >> instruction-summary.md
-            python3 ecosystem/instructions.py compare docs/corpus/instructions-baseline.json instruction-current.json >> instruction-summary.md
+            python3 ecosystem/instructions.py compare docs/corpus/instructions-baseline.json instruction-current.json > instruction-historical.md
+            tail -n +3 instruction-historical.md >> instruction-summary.md
           else
-            printf '## Corpus instruction counts\n\nUNAVAILABLE: a build or counter failed. See the measurement logs.\n' > instruction-summary.md
+            printf '## Corpus instruction counts\n\nUNAVAILABLE: a required ledger was not produced. See the preceding steps.\n' > instruction-summary.md
           fi
           cat instruction-summary.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

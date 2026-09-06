@@ -25,3 +25,12 @@ default_index_halt <- function(x = base::stop("done")[base::typeof(x)]) x
 object <- structure(1L, class = "force_fixture")
 ignored_subscript <- function(x = x) object[base::typeof(x)]
 ignored_double_subscript <- function(x = x) object[[base::typeof(x)]]
+dynamic_replace <- function(x = x) { assign("x", 1L); base::typeof(x) }
+dynamic_default <- function(x = { assign("x", 1L); base::length(x) }) x
+nested_replace <- function(x = x) { y <- (x <- 1L); base::typeof(x) }
+operand_replace <- function(x = (x <- 1L) + base::length(x)) x
+condition_replace <- function(x = { if ((x <- TRUE)) 1L; base::typeof(x) }) x
+promise_replace <- function(x = x, y = { x <- 1L; NULL }) { y; base::typeof(x) }
+quoted_replace <- function(x = x) { `x` <- 1L; base::typeof(x) }
+replace_in <- function(env) { assign("x", 1L, envir = env); NULL }
+opaque_replace <- function(x = x) { replace_in(environment()); base::typeof(x) }

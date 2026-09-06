@@ -63,7 +63,7 @@ fn qualified_force_contract_uses_metadata_and_requires_reviewed_call_shape() {
         ),
         (
             "fixture::strict({ fixture::ordinary(fixture::halt()); x })",
-            1,
+            0,
         ),
         ("fixture::strict({ return(1L); x })", 0),
         (
@@ -134,6 +134,71 @@ fn default_blocks_stop_before_unreachable_or_replaced_reads() {
             recursive_warnings(&source, BTreeMap::from([("fixture".into(), fixture())])),
             expected,
             "{default}"
+        );
+    }
+}
+
+#[test]
+fn opaque_prefixes_cannot_preserve_the_original_promise() {
+    for (source, expected) in [
+        (
+            "f <- function(x = x) { assign('x', 1L); fixture::strict(x) }",
+            0,
+        ),
+        (
+            "f <- function(x = { assign('x', 1L); fixture::strict(x) }) x",
+            0,
+        ),
+        (
+            "f <- function(x = x) { y <- (x <- 1L); fixture::strict(x) }",
+            0,
+        ),
+        ("f <- function(x = (x <- 1L) + fixture::strict(x)) x", 0),
+        (
+            "f <- function(x = { if ((x <- TRUE)) 1L; fixture::strict(x) }) x",
+            0,
+        ),
+        ("f <- function(x = x) { helper(); fixture::strict(x) }", 0),
+        (
+            "f <- function(x = x, y = NULL) { y; fixture::strict(x) }",
+            0,
+        ),
+        (
+            "f <- function(x = x) { fixture::strict(1L); fixture::strict(x) }",
+            0,
+        ),
+        (
+            "f <- function(flag, x = if (flag) fixture::strict(x) else 1L) x",
+            0,
+        ),
+        (
+            "f <- function(x = x) { 1L; NULL; y <- 2L; fixture::strict(x) }",
+            1,
+        ),
+        (
+            "f <- function(x = x) { y <- fixture::strict(x); helper() }",
+            1,
+        ),
+    ] {
+        assert_eq!(
+            recursive_warnings(source, BTreeMap::from([("fixture".into(), fixture())])),
+            expected,
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn quoted_binding_spellings_are_not_treated_as_independent() {
+    for (source, expected) in [
+        ("f <- function(x = x) { `x` <- 1L; fixture::strict(x) }", 0),
+        ("f <- function(x = (`x` <- 1L) + fixture::strict(x)) x", 0),
+        ("f <- function(`x` = `x`) fixture::strict(`x`)", 1),
+    ] {
+        assert_eq!(
+            recursive_warnings(source, BTreeMap::from([("fixture".into(), fixture())])),
+            expected,
+            "{source}"
         );
     }
 }

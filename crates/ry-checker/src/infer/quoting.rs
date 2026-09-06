@@ -107,7 +107,7 @@ impl Checker {
                 let mut forced = None;
                 for statement in &body[..assign_index] {
                     forced = definitely_forced_identifier_in_stmt(self, statement, &param.name);
-                    if forced.is_some() || statement_cannot_complete(self, statement) {
+                    if forced.is_some() || !statement_preserves_binding(statement, &param.name) {
                         break;
                     }
                 }
@@ -134,43 +134,19 @@ impl Checker {
 // `ry_core::walk`: its rules select individual children of a node —
 // call arguments are skipped unless the callee has a reviewed forcing
 // contract, an `if` with a literal condition visits only the taken
-// branch, a `$` subscript's synthesized ident is skipped while the base
+// branch, subscript promises are skipped while the dispatch object
 // is kept — and the walk must stop at the first identifier forced in
 // evaluation order. That is an evaluation-order analysis with
 // per-child laziness rules, not a subtree-skip policy, so it keeps its
 // hand-rolled recursion.
 fn guaranteed_force_before_replacement(checker: &Checker, body: &[Stmt], wanted: &str) -> bool {
     for statement in body {
-        match statement {
-            Stmt::Assign {
-                target: Expr::Ident { name, .. },
-                value,
-                ..
-            } if name == wanted => {
-                return definitely_forced_identifier(checker, value, wanted).is_some();
-            }
-            _ => {}
-        }
         if definitely_forced_identifier_in_stmt(checker, statement, wanted).is_some() {
             return true;
         }
-        if statement_cannot_complete(checker, statement) {
-            // Check the statement's own force first: stop(x) can expose the
-            // recursive promise even though later statements cannot execute.
-            return false;
-        }
-        if matches!(statement, Stmt::If { .. }) {
-            // A non-literal condition may take a diverging branch, so later
-            // statements are not guaranteed to execute.
-            return false;
-        }
-        let explicit_return = matches!(statement, Stmt::Return { .. })
-            || matches!(
-                statement,
-                Stmt::Expr(Expr::Call { func, .. })
-                    if matches!(func.as_ref(), Expr::Ident { name, .. } if name == "return")
-            );
-        if explicit_return {
+        if !statement_preserves_binding(statement, wanted) {
+            // Check the statement's own force before dropping certainty about
+            // the binding. Unknown calls and other promise reads may replace it.
             return false;
         }
     }
@@ -242,7 +218,7 @@ fn definitely_forced_identifier(checker: &Checker, expr: &Expr, wanted: &str) ->
             if matches!(op, BinOpKind::Assign | BinOpKind::SuperAssign) {
                 definitely_forced_identifier(checker, rhs, wanted)
             } else {
-                first_reference_before_exit(
+                first_reference_in_order(
                     checker,
                     [lhs.as_ref(), rhs.as_ref()],
                     wanted,
@@ -260,7 +236,7 @@ fn definitely_forced_identifier(checker: &Checker, expr: &Expr, wanted: &str) ->
     }
 }
 
-fn first_reference_before_exit<'a>(
+fn first_reference_in_order<'a>(
     checker: &Checker,
     expressions: impl IntoIterator<Item = &'a Expr>,
     wanted: &str,
@@ -270,7 +246,7 @@ fn first_reference_before_exit<'a>(
         if let Some(span) = visit(checker, expression, wanted) {
             return Some(span);
         }
-        if expression_cannot_complete(checker, expression) {
+        if !expression_preserves_binding(expression, wanted) {
             return None;
         }
     }
@@ -289,9 +265,7 @@ fn first_executed_identifier_in_stmts(
         if let Some(span) = first_executed_identifier_in_stmt(checker, statement, wanted) {
             return Some(span);
         }
-        if assigned_names_in_body(std::slice::from_ref(statement)).contains(wanted)
-            || statement_cannot_complete(checker, statement)
-        {
+        if !statement_preserves_binding(statement, wanted) {
             return None;
         }
     }
@@ -304,60 +278,23 @@ fn first_executed_identifier_in_stmt(
     wanted: &str,
 ) -> Option<Span> {
     match statement {
-        Stmt::Assign { value, .. } => first_executed_identifier(checker, value, wanted),
-        Stmt::Expr(expr) => first_executed_identifier(checker, expr, wanted),
-        Stmt::If {
-            cond: Expr::Logical(taken, _),
-            then,
-            else_,
-            ..
-        } => {
-            let branch = if *taken { Some(then) } else { else_.as_ref() };
-            branch.and_then(|statements| {
-                first_executed_identifier_in_stmts(checker, statements, wanted)
-            })
+        Stmt::Assign { value, .. } | Stmt::Expr(value) => {
+            first_executed_identifier(checker, value, wanted)
         }
         Stmt::If {
             cond, then, else_, ..
-        } => first_executed_identifier(checker, cond, wanted)
-            .or_else(|| {
-                if expression_cannot_complete(checker, cond) {
-                    None
-                } else {
-                    first_executed_identifier_in_stmts(checker, then, wanted)
-                }
-            })
-            .or_else(|| {
-                if expression_cannot_complete(checker, cond) {
-                    None
-                } else {
-                    else_.as_ref().and_then(|statements| {
-                        first_executed_identifier_in_stmts(checker, statements, wanted)
-                    })
-                }
-            }),
-        Stmt::For { iter, body, .. } => {
-            first_executed_identifier(checker, iter, wanted).or_else(|| {
-                if expression_cannot_complete(checker, iter) {
-                    None
-                } else {
-                    first_executed_identifier_in_stmts(checker, body, wanted)
-                }
-            })
-        }
-        Stmt::While { cond, body, .. } => {
-            first_executed_identifier(checker, cond, wanted).or_else(|| {
-                if expression_cannot_complete(checker, cond) {
-                    None
-                } else {
-                    first_executed_identifier_in_stmts(checker, body, wanted)
-                }
-            })
-        }
+        } => match cond {
+            Expr::Logical(true, _) => first_executed_identifier_in_stmts(checker, then, wanted),
+            Expr::Logical(false, _) => else_
+                .as_ref()
+                .and_then(|body| first_executed_identifier_in_stmts(checker, body, wanted)),
+            _ => first_executed_identifier(checker, cond, wanted),
+        },
+        Stmt::For { iter, .. } => first_executed_identifier(checker, iter, wanted),
+        Stmt::While { cond, .. } => first_executed_identifier(checker, cond, wanted),
         Stmt::Return { value, .. } => value
             .as_ref()
             .and_then(|value| first_executed_identifier(checker, value, wanted)),
-        // Defining a closure does not evaluate its body or force captures.
         Stmt::FunctionDef { .. } => None,
     }
 }
@@ -395,68 +332,71 @@ fn forced_argument<'a>(checker: &Checker, func: &Expr, args: &'a [Arg]) -> Optio
     Some(&argument.value)
 }
 
-fn statement_cannot_complete(checker: &Checker, statement: &Stmt) -> bool {
+// Only cross prefixes that cannot replace the promise or invoke user code.
+// Even another identifier can force a default or active binding that mutates
+// the current frame. A forcing contract says nothing about effects after the
+// guaranteed argument evaluation, so calls are barriers too.
+fn plain_distinct_bindings(left: &str, right: &str) -> bool {
+    // The parser retains backticks and escapes. Do not mistake alternate
+    // spellings of the same R symbol for independent bindings.
+    !left.starts_with('`') && !right.starts_with('`') && left != right
+}
+
+fn statement_preserves_binding(statement: &Stmt, wanted: &str) -> bool {
     match statement {
-        Stmt::Expr(value) | Stmt::Assign { value, .. } => {
-            expression_cannot_complete(checker, value)
-        }
-        Stmt::Return { .. } => true,
+        Stmt::Assign {
+            target: Expr::Ident { name, .. },
+            value,
+            ..
+        } => plain_distinct_bindings(name, wanted) && expression_preserves_binding(value, wanted),
+        Stmt::Expr(value) => expression_preserves_binding(value, wanted),
+        Stmt::FunctionDef { .. } => true,
         Stmt::If {
             cond, then, else_, ..
-        } => {
-            expression_cannot_complete(checker, cond)
-                || match cond {
-                    Expr::Logical(true, _) => then
-                        .iter()
-                        .any(|stmt| statement_cannot_complete(checker, stmt)),
-                    Expr::Logical(false, _) => else_.as_ref().is_some_and(|body| {
-                        body.iter()
-                            .any(|stmt| statement_cannot_complete(checker, stmt))
-                    }),
-                    _ => {
-                        then.iter()
-                            .any(|stmt| statement_cannot_complete(checker, stmt))
-                            && else_.as_ref().is_some_and(|body| {
-                                body.iter()
-                                    .any(|stmt| statement_cannot_complete(checker, stmt))
-                            })
-                    }
-                }
-        }
-        Stmt::While { cond, .. } => expression_cannot_complete(checker, cond),
-        Stmt::For { iter, .. } => expression_cannot_complete(checker, iter),
+        } => match cond {
+            Expr::Logical(true, _) => then
+                .iter()
+                .all(|stmt| statement_preserves_binding(stmt, wanted)),
+            Expr::Logical(false, _) => else_.as_ref().is_none_or(|body| {
+                body.iter()
+                    .all(|stmt| statement_preserves_binding(stmt, wanted))
+            }),
+            _ => false,
+        },
         _ => false,
     }
 }
 
-fn expression_cannot_complete(checker: &Checker, expression: &Expr) -> bool {
+fn expression_preserves_binding(expression: &Expr, wanted: &str) -> bool {
     match expression {
-        Expr::Call { func, args, .. } => {
-            matches!(func.as_ref(), Expr::Ident { name, .. } if name == "return")
-                || qualified_signature(checker, func).is_some_and(|signature| signature.no_return)
-                || forced_argument(checker, func, args)
-                    .is_some_and(|argument| expression_cannot_complete(checker, argument))
+        Expr::Logical(_, _)
+        | Expr::Integer(_, _)
+        | Expr::Double(_, _)
+        | Expr::String(_, _)
+        | Expr::Null(_)
+        | Expr::Na(_, _)
+        | Expr::Function { .. } => true,
+        Expr::BinOp {
+            lhs,
+            rhs,
+            op: BinOpKind::Assign,
+            ..
+        } => {
+            matches!(lhs.as_ref(), Expr::Ident { name, .. } if plain_distinct_bindings(name, wanted))
+                && expression_preserves_binding(rhs, wanted)
         }
         Expr::Block { body, .. } => body
             .iter()
-            .any(|statement| statement_cannot_complete(checker, statement)),
+            .all(|stmt| statement_preserves_binding(stmt, wanted)),
         Expr::If {
             cond, then, else_, ..
-        } => {
-            expression_cannot_complete(checker, cond)
-                || match cond.as_ref() {
-                    Expr::Logical(true, _) => expression_cannot_complete(checker, then),
-                    Expr::Logical(false, _) => else_
-                        .as_ref()
-                        .is_some_and(|branch| expression_cannot_complete(checker, branch)),
-                    _ => {
-                        expression_cannot_complete(checker, then)
-                            && else_
-                                .as_ref()
-                                .is_some_and(|branch| expression_cannot_complete(checker, branch))
-                    }
-                }
-        }
+        } => match cond.as_ref() {
+            Expr::Logical(true, _) => expression_preserves_binding(then, wanted),
+            Expr::Logical(false, _) => else_
+                .as_ref()
+                .is_none_or(|branch| expression_preserves_binding(branch, wanted)),
+            _ => false,
+        },
         _ => false,
     }
 }
@@ -472,19 +412,12 @@ fn first_executed_identifier(checker: &Checker, expr: &Expr, wanted: &str) -> Op
         }
 
         Expr::BinOp { lhs, rhs, op, .. } => {
-            // A literal short-circuit operand can make the recursive name
-            // in the RHS unreachable even though the default is forced.
-            let skips_rhs = matches!(
-                (op, lhs.as_ref()),
-                (BinOpKind::AndAnd, Expr::Logical(false, _))
-                    | (BinOpKind::OrOr, Expr::Logical(true, _))
-            );
-            if skips_rhs {
-                first_executed_identifier(checker, lhs, wanted)
+            if matches!(op, BinOpKind::AndAnd | BinOpKind::OrOr) {
+                definitely_forced_identifier(checker, expr, wanted)
             } else if matches!(op, BinOpKind::Assign | BinOpKind::SuperAssign) {
                 first_executed_identifier(checker, rhs, wanted)
             } else {
-                first_reference_before_exit(
+                first_reference_in_order(
                     checker,
                     [lhs.as_ref(), rhs.as_ref()],
                     wanted,
@@ -497,38 +430,13 @@ fn first_executed_identifier(checker: &Checker, expr: &Expr, wanted: &str) -> Op
         Expr::Block { body, .. } => first_executed_identifier_in_stmts(checker, body, wanted),
         Expr::If {
             cond, then, else_, ..
-        } if matches!(cond.as_ref(), Expr::Logical(_, _)) => {
-            if matches!(cond.as_ref(), Expr::Logical(true, _)) {
-                first_executed_identifier(checker, then, wanted)
-            } else {
-                if expression_cannot_complete(checker, cond) {
-                    None
-                } else {
-                    else_
-                        .as_ref()
-                        .and_then(|else_| first_executed_identifier(checker, else_, wanted))
-                }
-            }
-        }
-        Expr::If {
-            cond, then, else_, ..
-        } => first_executed_identifier(checker, cond, wanted)
-            .or_else(|| {
-                if expression_cannot_complete(checker, cond) {
-                    None
-                } else {
-                    first_executed_identifier(checker, then, wanted)
-                }
-            })
-            .or_else(|| {
-                if expression_cannot_complete(checker, cond) {
-                    None
-                } else {
-                    else_
-                        .as_ref()
-                        .and_then(|else_| first_executed_identifier(checker, else_, wanted))
-                }
-            }),
+        } => match cond.as_ref() {
+            Expr::Logical(true, _) => first_executed_identifier(checker, then, wanted),
+            Expr::Logical(false, _) => else_
+                .as_ref()
+                .and_then(|branch| first_executed_identifier(checker, branch, wanted)),
+            _ => first_executed_identifier(checker, cond, wanted),
+        },
         Expr::Function { .. }
         | Expr::Logical(_, _)
         | Expr::Integer(_, _)

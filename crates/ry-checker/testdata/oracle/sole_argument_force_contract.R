@@ -62,3 +62,20 @@ result <- tryCatch(branches_halt(TRUE), error = identity)
 stopifnot(identical(conditionMessage(result), "done"))
 result <- tryCatch(branches_halt(FALSE), error = identity)
 stopifnot(identical(conditionMessage(result), "done"))
+dynamic_replace <- function(x = x) { assign("x", 1L); base::typeof(x) }
+dynamic_default <- function(x = { assign("x", 1L); base::length(x) }) x
+nested_replace <- function(x = x) { y <- (x <- 1L); base::typeof(x) }
+operand_replace <- function(x = (x <- 1L) + base::length(x)) x
+condition_replace <- function(x = { if ((x <- TRUE)) 1L; base::typeof(x) }) x
+promise_replace <- function(x = x, y = { x <- 1L; NULL }) { y; base::typeof(x) }
+stopifnot(identical(dynamic_replace(), "integer"))
+stopifnot(identical(dynamic_default(), 1L))
+stopifnot(identical(nested_replace(), "integer"))
+stopifnot(identical(operand_replace(), 2L))
+stopifnot(identical(condition_replace(), "logical"))
+stopifnot(identical(promise_replace(), "integer"))
+quoted_replace <- function(x = x) { `x` <- 1L; base::typeof(x) }
+stopifnot(identical(quoted_replace(), "integer"))
+replace_in <- function(env) { assign("x", 1L, envir = env); NULL }
+opaque_replace <- function(x = x) { replace_in(environment()); base::typeof(x) }
+stopifnot(identical(opaque_replace(), "integer"))

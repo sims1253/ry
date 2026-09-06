@@ -81,7 +81,7 @@ See the [VS Code / Positron guide](editors/code/README.md) for settings and the
 
 - [Usage](docs/usage.md): package handling, data masking, CI, and editors.
 - [Inferred types](docs/types.md): inspect bindings with `ry dump-types`.
-- [Structured facts](docs/facts.md): versioned types and source spans for tooling.
+- [Structured facts](docs/facts.md): versioned scope snapshots and opt-in reference facts for tooling.
 - [Rules](docs/rules.md): diagnostic codes and default severities.
   Run `ry explain rule RY040` for one rule or `ry explain rule` for all rules.
 - [Changelog](CHANGELOG.md): release notes and upgrade guidance.

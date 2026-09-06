@@ -185,6 +185,8 @@ impl Checker {
         }
         match s {
             Stmt::Assign { target, value, .. } => {
+                let reference_type_known =
+                    self.capture_references && self.reference_value_known(value, scope);
                 let scope_marked_origin = expression_has_list_origin(value, scope);
                 let vt = self.infer(value, scope);
                 // The value keeps list origin whenever its inferred mode
@@ -196,6 +198,14 @@ impl Checker {
                 if self.try_assign_value(target, value, vt, scope)
                     && let Some(name) = binding_name(target)
                 {
+                    if self.capture_references {
+                        self.install_reference_definition(
+                            scope,
+                            name,
+                            span_of(target),
+                            reference_type_known,
+                        );
+                    }
                     if value_has_list_origin {
                         scope.mark_list_origin(name.to_string());
                     }
@@ -395,6 +405,7 @@ impl Checker {
         scope: &Scope,
     ) {
         let mut fn_scope = scope.clone();
+        self.start_reference_scope(&mut fn_scope, span);
         if let Some(captures) = self.deferred_captures.last() {
             for capture in captures {
                 if fn_scope.get(capture).is_none() {
@@ -428,6 +439,15 @@ impl Checker {
                 fn_scope.insert_parameter_default(p.name.clone(), t);
             } else {
                 fn_scope.insert_parameter(p.name.clone(), t);
+            }
+        }
+        if self.capture_references {
+            for p in params {
+                let declaration_span = Span {
+                    end: p.span.start + p.name.len(),
+                    ..p.span
+                };
+                self.install_reference_definition(&mut fn_scope, &p.name, declaration_span, false);
             }
         }
         self.deferred_captures.push(assigned);
@@ -1457,6 +1477,183 @@ impl Checker {
         }
     }
 
+    // Keep reference observation after every exit from the existing value
+    // lookup ladder. Calls retain their distinct function-lookup path.
+    fn infer_identifier(&mut self, name: &str, span: &Span, scope: &mut Scope) -> RType {
+        let mut found_lexical = false;
+        let mut unresolved = false;
+        let result = (|| match scope.get(name) {
+            Some(t) => {
+                found_lexical = true;
+                let is_lexical_binding_under_unknown_mask = scope.data_mask_unknown
+                    && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some()
+                    && scope
+                        .get(&format!("{}{name}", crate::nse::DATA_MASK_ENV_PREFIX))
+                        .is_some()
+                    && scope
+                        .get(&format!("{}{name}", crate::nse::DATA_MASK_COLUMN_PREFIX))
+                        .is_none();
+                if is_lexical_binding_under_unknown_mask {
+                    RType::unknown()
+                } else {
+                    t.clone()
+                }
+            }
+            None => {
+                // A defused/data-mask scope resolves its names against
+                // an environment ry cannot enumerate (a data mask, or
+                // the closure a quoting helper splices the block
+                // into — withr's `wrap()` even re-derives its formals
+                // via `formals(fun) <- formals(f)`). The lexical arm
+                // above already treats that as shadowing; the same
+                // reasoning demotes the search-path function-value
+                // rungs below, so a bare `append` inside a defused
+                // block types as unknown instead of borrowing
+                // `base::append`'s function type.
+                let under_unknown_data_mask =
+                    scope.data_mask_unknown && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some();
+                // Typed package values take precedence over existence-only
+                // import bindings so constants retain their declared type.
+                if let Some(value_type) = self.resolve_typeshed_value(name) {
+                    return value_type;
+                }
+                if self.external_bindings.contains(name) {
+                    return RType::unknown();
+                }
+                if self.external_bindings.iter().any(|binding| {
+                    binding
+                        .strip_prefix(ry_workspace::packages::NATIVE_ROUTINE_PREFIX_SENTINEL)
+                        .is_some_and(|prefix| {
+                            name.strip_prefix(prefix)
+                                .is_some_and(|rest| !rest.is_empty())
+                        })
+                }) {
+                    return RType::unknown();
+                }
+                // Known typeshed function used as a value (e.g.
+                // `sapply(x, sqrt)` passes `sqrt` as a bare
+                // identifier)? Return an opaque function value
+                // rather than flagging it as unbound. The higher-
+                // order call handlers resolve the signature when
+                // the callback is invoked.
+                //
+                // Skipped under an unknown data mask: the mask may
+                // shadow the search path, so the name is unknown
+                // there rather than a base function value.
+                if !under_unknown_data_mask && self.typeshed.functions.contains_key(name) {
+                    return RType::scalar(Mode::Function);
+                }
+                // A function from a loaded package (e.g. purrr's
+                // `map` used as a value) resolves to a function too.
+                // Equally shadowable by an unknown mask.
+                if !under_unknown_data_mask
+                    && self.bare_loaded.iter().any(|pkg| {
+                        self.package_is_known(pkg)
+                            && self
+                                .package_typeshed(pkg)
+                                .map(|t| t.functions.contains_key(name))
+                                .unwrap_or(false)
+                    })
+                {
+                    return RType::scalar(Mode::Function);
+                }
+                // User-defined function in the FnTable used as a
+                // value? Same treatment.
+                if !under_unknown_data_mask && self.fn_table.fns.contains_key(name) {
+                    return RType::scalar(Mode::Function);
+                }
+                // Cross-file variable defined in another file of
+                // the project (or a top-level assignment later in
+                // this same file)? Return opaque rather than
+                // flagging it as unbound. Without this, multi-file
+                // projects like ggplot2 (where `GeomRect <-
+                // ggproto(...)` is a CALL, not a function literal)
+                // generate hundreds of false-positive RY010
+                // warnings for references to symbols defined in
+                // sibling files.
+                if self.known_vars.contains(name) {
+                    return RType::unknown();
+                }
+                if !under_unknown_data_mask
+                    && self
+                        .typeshed
+                        .globals
+                        .ambient_functions
+                        .iter()
+                        .any(|function| function == name)
+                {
+                    // Value-position uses of ambient functions are
+                    // overwhelmingly legitimate higher-order idioms
+                    // (`lapply(x, enc2utf8)`, `do.call(rbind, z)`), so
+                    // resolve silently as a function value. The typo
+                    // class (`col`, `oldClass` misused as data) is still
+                    // caught downstream when the function type flows
+                    // into comparisons or arithmetic (RY030/RY033).
+                    return RType::scalar(Mode::Function);
+                }
+                // Existence-only standard and ambient globals are a
+                // fallback after typed datasets, functions, and project
+                // bindings so inventory overlap cannot erase precision.
+                if self
+                    .typeshed
+                    .globals
+                    .ambient
+                    .iter()
+                    .any(|global| global == name)
+                {
+                    return RType::unknown();
+                }
+                // Namespace-qualified reference (`pkg::name`),
+                // including the bare reexport pattern
+                // (`rlang::set_names` or `magrittr::`%>%`` in
+                // statement position) and qualified values
+                // (`x <- S7::class_any`). We don't model other
+                // packages' export tables, so we treat these as
+                // opaque cross-package references and never emit
+                // RY010. The `contains("::")` test matches both
+                // `::` and `:::`.
+                if name.contains("::") {
+                    return RType::unknown();
+                }
+                // Special/operator names referenced via backticks
+                // (e.g. `` `%+%` ``, `` `+` ``) or bare operator
+                // symbols. The parser preserves the surrounding
+                // backticks in the identifier name, so a leading
+                // backtick is the primary signal. These are commonly
+                // user-defined operators or package reexports that
+                // we cannot resolve against any scope, typeshed, or
+                // FnTable -- suppressing RY010 here avoids
+                // false positives on code like ggplot2's `` `%+%` ``
+                // operator. We return opaque rather than flagging.
+                if name.starts_with('`') || name.contains('%') || is_operator_symbol(name) {
+                    return RType::unknown();
+                }
+                if scope.data_mask_unknown || scope.search_path_unknown {
+                    return RType::unknown();
+                }
+                unresolved = true;
+                self.emit(
+                    Severity::Warning,
+                    *span,
+                    "RY010",
+                    format!("variable `{}` is not bound in this scope", name),
+                );
+                RType::unknown()
+            }
+        })();
+        if self.capture_references {
+            self.observe_reference(
+                name,
+                *span,
+                scope,
+                found_lexical.then_some(&result),
+                unresolved,
+            );
+            self.finish_reference_read(name, scope);
+        }
+        result
+    }
+
     /// Infer the type of an expression, emitting diagnostics for misuse.
     pub(crate) fn infer(&mut self, e: &Expr, scope: &mut Scope) -> RType {
         // `infer_pipe` has already inferred the expression it injects into
@@ -1472,163 +1669,7 @@ impl Checker {
             Expr::String(_, _) => RType::scalar(Mode::Character),
             Expr::Null(_) => RType::new(Mode::Null, Length::Zero),
             Expr::Na(t, _) => t.clone(),
-            Expr::Ident { name, span } => match scope.get(name) {
-                Some(t) => {
-                    let is_lexical_binding_under_unknown_mask = scope.data_mask_unknown
-                        && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some()
-                        && scope
-                            .get(&format!("{}{name}", crate::nse::DATA_MASK_ENV_PREFIX))
-                            .is_some()
-                        && scope
-                            .get(&format!("{}{name}", crate::nse::DATA_MASK_COLUMN_PREFIX))
-                            .is_none();
-                    if is_lexical_binding_under_unknown_mask {
-                        RType::unknown()
-                    } else {
-                        t.clone()
-                    }
-                }
-                None => {
-                    // A defused/data-mask scope resolves its names against
-                    // an environment ry cannot enumerate (a data mask, or
-                    // the closure a quoting helper splices the block
-                    // into — withr's `wrap()` even re-derives its formals
-                    // via `formals(fun) <- formals(f)`). The lexical arm
-                    // above already treats that as shadowing; the same
-                    // reasoning demotes the search-path function-value
-                    // rungs below, so a bare `append` inside a defused
-                    // block types as unknown instead of borrowing
-                    // `base::append`'s function type.
-                    let under_unknown_data_mask = scope.data_mask_unknown
-                        && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some();
-                    // Typed package values take precedence over existence-only
-                    // import bindings so constants retain their declared type.
-                    if let Some(value_type) = self.resolve_typeshed_value(name) {
-                        return value_type;
-                    }
-                    if self.external_bindings.contains(name) {
-                        return RType::unknown();
-                    }
-                    if self.external_bindings.iter().any(|binding| {
-                        binding
-                            .strip_prefix(ry_workspace::packages::NATIVE_ROUTINE_PREFIX_SENTINEL)
-                            .is_some_and(|prefix| {
-                                name.strip_prefix(prefix)
-                                    .is_some_and(|rest| !rest.is_empty())
-                            })
-                    }) {
-                        return RType::unknown();
-                    }
-                    // Known typeshed function used as a value (e.g.
-                    // `sapply(x, sqrt)` passes `sqrt` as a bare
-                    // identifier)? Return an opaque function value
-                    // rather than flagging it as unbound. The higher-
-                    // order call handlers resolve the signature when
-                    // the callback is invoked.
-                    //
-                    // Skipped under an unknown data mask: the mask may
-                    // shadow the search path, so the name is unknown
-                    // there rather than a base function value.
-                    if !under_unknown_data_mask && self.typeshed.functions.contains_key(name) {
-                        return RType::scalar(Mode::Function);
-                    }
-                    // A function from a loaded package (e.g. purrr's
-                    // `map` used as a value) resolves to a function too.
-                    // Equally shadowable by an unknown mask.
-                    if !under_unknown_data_mask
-                        && self.bare_loaded.iter().any(|pkg| {
-                            self.package_is_known(pkg)
-                                && self
-                                    .package_typeshed(pkg)
-                                    .map(|t| t.functions.contains_key(name))
-                                    .unwrap_or(false)
-                        })
-                    {
-                        return RType::scalar(Mode::Function);
-                    }
-                    // User-defined function in the FnTable used as a
-                    // value? Same treatment.
-                    if !under_unknown_data_mask && self.fn_table.fns.contains_key(name) {
-                        return RType::scalar(Mode::Function);
-                    }
-                    // Cross-file variable defined in another file of
-                    // the project (or a top-level assignment later in
-                    // this same file)? Return opaque rather than
-                    // flagging it as unbound. Without this, multi-file
-                    // projects like ggplot2 (where `GeomRect <-
-                    // ggproto(...)` is a CALL, not a function literal)
-                    // generate hundreds of false-positive RY010
-                    // warnings for references to symbols defined in
-                    // sibling files.
-                    if self.known_vars.contains(name) {
-                        return RType::unknown();
-                    }
-                    if !under_unknown_data_mask
-                        && self
-                            .typeshed
-                            .globals
-                            .ambient_functions
-                            .iter()
-                            .any(|function| function == name)
-                    {
-                        // Value-position uses of ambient functions are
-                        // overwhelmingly legitimate higher-order idioms
-                        // (`lapply(x, enc2utf8)`, `do.call(rbind, z)`), so
-                        // resolve silently as a function value. The typo
-                        // class (`col`, `oldClass` misused as data) is still
-                        // caught downstream when the function type flows
-                        // into comparisons or arithmetic (RY030/RY033).
-                        return RType::scalar(Mode::Function);
-                    }
-                    // Existence-only standard and ambient globals are a
-                    // fallback after typed datasets, functions, and project
-                    // bindings so inventory overlap cannot erase precision.
-                    if self
-                        .typeshed
-                        .globals
-                        .ambient
-                        .iter()
-                        .any(|global| global == name)
-                    {
-                        return RType::unknown();
-                    }
-                    // Namespace-qualified reference (`pkg::name`),
-                    // including the bare reexport pattern
-                    // (`rlang::set_names` or `magrittr::`%>%`` in
-                    // statement position) and qualified values
-                    // (`x <- S7::class_any`). We don't model other
-                    // packages' export tables, so we treat these as
-                    // opaque cross-package references and never emit
-                    // RY010. The `contains("::")` test matches both
-                    // `::` and `:::`.
-                    if name.contains("::") {
-                        return RType::unknown();
-                    }
-                    // Special/operator names referenced via backticks
-                    // (e.g. `` `%+%` ``, `` `+` ``) or bare operator
-                    // symbols. The parser preserves the surrounding
-                    // backticks in the identifier name, so a leading
-                    // backtick is the primary signal. These are commonly
-                    // user-defined operators or package reexports that
-                    // we cannot resolve against any scope, typeshed, or
-                    // FnTable -- suppressing RY010 here avoids
-                    // false positives on code like ggplot2's `` `%+%` ``
-                    // operator. We return opaque rather than flagging.
-                    if name.starts_with('`') || name.contains('%') || is_operator_symbol(name) {
-                        return RType::unknown();
-                    }
-                    if scope.data_mask_unknown || scope.search_path_unknown {
-                        return RType::unknown();
-                    }
-                    self.emit(
-                        Severity::Warning,
-                        *span,
-                        "RY010",
-                        format!("variable `{}` is not bound in this scope", name),
-                    );
-                    RType::unknown()
-                }
-            },
+            Expr::Ident { name, span } => self.infer_identifier(name, span, scope),
             Expr::BinOp { op, lhs, rhs, span } => {
                 // Pipes need structural access to `rhs` (to build a
                 // desugared call), so they bypass `infer_binop`'s

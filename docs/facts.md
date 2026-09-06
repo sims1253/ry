@@ -19,7 +19,8 @@ first input anchors `ry.toml` discovery, as it does for `dump-types`.
 
 Every exported scope and binding has `snapshot_kind: "scope_exit"`. Types
 describe the state at the end of the recorded scope body. There is no
-`--position` option and no type-at-reference or resolved-symbol contract.
+`--position` option. Schema 1 has no type-at-reference or resolved-symbol
+contract. Add `--references` for the bounded reference facts in schema 2.
 
 For example:
 
@@ -40,6 +41,84 @@ Anonymous function arguments are usually analyzed without recording their
 scopes. Named functions inside those arguments can still have records. A
 missing record means that ry did not export that fact; it does not prove that
 a scope or binding does not exist.
+
+## Reference facts (schema version 2)
+
+```sh
+ry dump-facts R/ --references > facts.json
+```
+
+`--references` selects schema 2. Without this flag, `dump-facts` emits schema 1.
+`dump-types` keeps its own output format. Reference capture runs alongside
+scope capture in the same project check, without changing diagnostic inference.
+
+Schema 2 keeps the scope and binding snapshots below. At the root it replaces
+`snapshot_kind` with `scope_snapshot_kind: "scope_exit"` and adds:
+
+```json
+"capabilities": {
+  "scope_snapshots": true,
+  "reference_facts": "same_file_straight_line",
+  "reference_coverage": "partial"
+}
+```
+
+Each file also has `definitions` and `references`. A definition contains `id`,
+`name`, `kind` (`"assignment"` or `"formal"`), `span`, and `scope_span`.
+The span identifies the source definition; the scope span identifies its
+lexical scope. Reference and definition names retain the checker's raw
+spelling, including backticks; these are not canonical R symbol names.
+Use the reference-to-definition ID for identity, not a join by name.
+IDs are local to this file and analysis snapshot. Join them
+only within the same file, source hash, and context ID. Unchanged inputs
+produce deterministic output. IDs carry no identity outside that snapshot;
+do not reuse them after its source hash or context ID changes.
+
+Each reference contains:
+
+| Field | Meaning |
+| --- | --- |
+| `name`, `span` | The read name and its source token. |
+| `snapshot_kind` | `"reference"`; evidence at this read, not scope exit. |
+| `resolution_status` | `"resolved"`, `"ambiguous"`, `"unresolved"`, or `"unsupported"`. |
+| `definition_id` | An ID in this file's `definitions`, or `null`. |
+| `type_at_reference` | A structured type, or `null` when resolution is not established. |
+| `reason` | The checker's explanation for missing evidence, or `null`. |
+
+The checker supports a conservative subset of straight-line, same-file code:
+literal assignments, copies of established bindings, and a function's own
+formals and locals. A copy gets its own definition ID and carries the source
+binding's established type. A formal has unknown type even when it has a
+default. R callers can supply a different value. Reading a formal can force
+caller or default code that changes the frame. After that read, the checker
+discards binding identities for the rest of the scope, including nested
+functions analyzed from it. A fresh assignment cannot restore that evidence.
+The formal read itself may resolve with unknown type, but a copy made from
+that read and later reads remain unsupported. Reads without an established
+own-scope assignment value, including outer, external, and unresolved names,
+apply the same barrier.
+
+For example, in `x <- 1L; y <- x; y`, the read of `x` resolves to its assignment
+with integer type. The read of `y` resolves to the copy assignment with the
+same type.
+
+The supported subset assumes ordinary initial bindings. It does not certify
+behavior under arbitrary ambient active bindings. Consistently spelled
+backtick names without escapes are supported. Unquoted namespace-qualified
+names, dots arguments, escaped names, syntax-primitive names, and reassignment
+through equivalent plain/backtick spellings are excluded. A differently
+spelled read cannot resolve by matching a decoded name.
+
+Eligibility applies to a whole lexical scope. Calls, operators, indexing,
+control flow, nonstandard evaluation, or reassignment anywhere in that scope
+make its references unsupported, including reads before that operation. Nested
+functions inherit this restriction. Default expressions and reads captured
+from enclosing scopes are unsupported. Unresolved, ambiguous, and
+unsupported records have no definition ID or type. A missing record is also
+unavailable evidence: the export does not promise to enumerate every possible
+runtime read. Check the status of each record. A concrete scope-exit type
+cannot fill a gap in reference evidence, and a resolved reference alone does
+not establish that a rename or other edit is safe.
 
 ## Schema version 1
 
@@ -183,14 +262,15 @@ A source-backed span has this shape:
 `bytes` is a zero-based, half-open UTF-8 byte range. Slice the original source
 as `source[start_byte:end_byte]` after checking its hash. Declaration spans
 cover the raw source token: a backtick-quoted name includes its backticks,
-while the binding's `name` contains the decoded name. `start` and `end`
+while `name` retains the checker's spelling. `start` and `end`
 are one-based `[line, column]` pairs. Columns count Unicode scalar values;
 a tab counts as one character, not a display-width expansion. Lines advance
 at LF, so CRLF bytes remain part of the source and byte ranges.
 
 Function scope spans cover the function literal when the original AST has
 that site. The top-level span covers the file. A scope synthesized during
-analysis can have `span: null`. No span establishes a resolved symbol identity.
+analysis can have `span: null`. A span alone establishes no resolved symbol
+identity; schema 2 uses explicit reference-to-definition IDs for that evidence.
 
 ### Cache identities and ordering
 
@@ -219,7 +299,9 @@ that remain stable when a project moves. These hashes describe the resolved
 inputs for this run; they are not a filesystem watcher or a promise that R's
 runtime environment matches the static model.
 
-Files sort by canonical path; contexts by ID; scopes by byte start, byte end,
+Reference records sort by byte start and end. Definitions retain the checker's
+deterministic declaration order. Files sort by canonical path; contexts by ID;
+scopes by byte start, byte end,
 then kind; bindings by name. JSON object keys sort lexically. Union alternatives
 sort by their compact structured JSON. Class names, columns, and parameter
 types retain their meaningful order. No timestamps appear in the output.

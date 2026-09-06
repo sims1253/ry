@@ -26,6 +26,14 @@ use ry_typeshed::Typeshed;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
+struct FileEmission {
+    index: usize,
+    path: String,
+    diagnostics: Vec<Diagnostic>,
+    scopes: Vec<crate::ScopeRecord>,
+    references: crate::ReferenceFacts,
+}
+
 /// A multi-file R project. Functions defined in any file are visible
 /// to all other files. The fixpoint loop refines returns across the
 /// whole project at once.
@@ -113,6 +121,8 @@ pub struct Project {
     /// When true, pass-3 emitters snapshot each file's lexical scopes.
     /// Off by default; see [`Checker::enable_scope_capture`].
     capture_scopes: bool,
+    capture_references: bool,
+    reference_facts: Vec<(String, crate::ReferenceFacts)>,
     /// Scope records from the most recent emission, one entry per
     /// re-emitted file. Files served from the incremental cache keep no
     /// records, so a cold `check()` (which emits every file) is the
@@ -251,6 +261,18 @@ impl Project {
     /// called before it.
     pub fn take_scope_records(&mut self) -> Vec<(String, Vec<crate::ScopeRecord>)> {
         std::mem::take(&mut self.scope_records)
+    }
+
+    /// Capture reference facts for every file on each subsequent check.
+    /// This bypasses the diagnostic cache so the snapshot is complete.
+    pub fn enable_reference_capture(&mut self) {
+        self.capture_references = true;
+        self.reference_facts.clear();
+    }
+
+    /// Take the reference facts from the most recent check.
+    pub fn take_reference_facts(&mut self) -> Vec<(String, crate::ReferenceFacts)> {
+        std::mem::take(&mut self.reference_facts)
     }
 
     /// Install runtime package stubs. User packages, including `base`,
@@ -636,13 +658,14 @@ impl Project {
             .files
             .iter()
             .enumerate()
-            .filter(|(_, (path, _))| must_emit.contains(path.as_str()))
+            .filter(|(_, (path, _))| self.capture_references || must_emit.contains(path.as_str()))
             .map(|(i, _)| i)
             .collect();
         self.emit_count = emit_indices.len();
         let capture_scopes = self.capture_scopes;
+        let capture_references = self.capture_references;
 
-        let per_file: Vec<(usize, String, Vec<Diagnostic>, Vec<crate::ScopeRecord>)> = emit_indices
+        let per_file: Vec<FileEmission> = emit_indices
             .par_iter()
             .map(|&i| {
                 let (path, file) = &self.files[i];
@@ -674,9 +697,19 @@ impl Project {
                 if capture_scopes {
                     emitter.enable_scope_capture();
                 }
+                if capture_references {
+                    emitter.enable_reference_capture();
+                }
                 emitter.emit_diagnostics(file);
                 let records = emitter.take_scope_records();
-                (i, path.clone(), emitter.take_diagnostics(), records)
+                let references = emitter.take_reference_facts();
+                FileEmission {
+                    index: i,
+                    path: path.clone(),
+                    diagnostics: emitter.take_diagnostics(),
+                    scopes: records,
+                    references,
+                }
             })
             .collect();
 
@@ -702,13 +735,25 @@ impl Project {
         if capture_scopes {
             self.scope_records = per_file
                 .iter_mut()
-                .map(|(_, path, _, records)| (path.clone(), std::mem::take(records)))
+                .map(|emission| (emission.path.clone(), std::mem::take(&mut emission.scopes)))
+                .collect();
+        }
+
+        if capture_references {
+            self.reference_facts = per_file
+                .iter_mut()
+                .map(|emission| {
+                    (
+                        emission.path.clone(),
+                        std::mem::take(&mut emission.references),
+                    )
+                })
                 .collect();
         }
 
         let mut emitted_map: HashMap<usize, (String, Vec<Diagnostic>)> = per_file
             .into_iter()
-            .map(|(i, p, d, _)| (i, (p, d)))
+            .map(|emission| (emission.index, (emission.path, emission.diagnostics)))
             .collect();
 
         for (i, (path, _)) in self.files.iter().enumerate() {

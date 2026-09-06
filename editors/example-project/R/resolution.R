@@ -25,8 +25,8 @@ per_unit <- map_dbl(lines, function(l) l[1] * l[2])
 revenue <- daily_revenue(totals)
 
 # KNOWN NON-DIAGNOSTIC: order_total() has required formals (units,
-# item_price) but the project-wide check path does not argument-check
-# user-defined functions, so this missing-everything call is silent too.
+# item_price), yet this call stays silent in the package check.
+# This is an observed analysis limit, not evidence that the call is valid.
 short <- order_total()
 
 # purrr export, but not named in NAMESPACE and not attached.

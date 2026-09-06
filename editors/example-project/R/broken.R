@@ -2,7 +2,7 @@
 # around it matter: they keep the file above the not-r-source heuristic
 # (RY097) so the parse errors surface as RY000 instead of suppressing the
 # whole file. Diagnostics leaking out of a recovered region (e.g. an
-# RY010 for `dose` below) are expected: RY000's message says later
+# RY010 for `daily_shots` below) are expected: RY000's message says later
 # findings in the file may be unreliable.
 #
 # Expected diagnostics: several RY000 spans inside brew_ratio(), plus one

@@ -1,12 +1,12 @@
 # Purpose: dplyr non-standard evaluation. `library(dplyr)` plus the
 # `packages = ["dplyr"]` key in ry.toml give the data-mask model, so bare
-# column names inside select/mutate/summarise resolve against the data
-# frame's schema.
+# column names inside mutate/summarise resolve against the data frame
+# schema. Bare select() picks stay conservative (see the last example).
 #
 # Expected diagnostics: RY010 exactly once - the misspelled column
 # `unitss` in the top-level summarise() call at the bottom, where the
 # schema of `sales` is known. Note the deliberate contrast: the same typo
-# inside units_summary() would be SILENT, because the parameter `df` has
+# inside units_summary() would be silent, because the parameter `df` has
 # an unknown schema and unknown-schema column candidates stay silent
 # (verified; see README).
 #
@@ -44,6 +44,6 @@ bad_summary <- summarise(sales, total_units = sum(unitss))
 
 # KNOWN NON-DIAGNOSTIC: tidyselect bare columns are not schema-checked in
 # select() (they may be tidyselect helpers, strings, or negative picks),
-# so `itemm` here is SILENT even though the schema of `sales` is known.
+# so `itemm` here is silent even though the schema of `sales` is known.
 # Contrast with the summarise() line above, which is checked.
 picked_bad <- select(sales, itemm)

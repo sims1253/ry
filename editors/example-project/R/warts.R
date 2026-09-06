@@ -4,7 +4,7 @@
 #
 # Expected diagnostics:
 #   RY031 x2 - logical ops on non-coercible operands
-#   RY032    - && with a length-2 operand
+#   RY032    - && with a length-3 operand
 #   RY033    - character vs numeric comparison
 #   RY034 x2 - == and != against NA
 #   RY040    - arithmetic on incompatible types
@@ -13,7 +13,7 @@
 #   RY060    - data-frame column not in schema
 #   RY061    - $ on an atomic vector
 #   RY070    - calling a non-function value
-#   RY002    - if condition of length 2
+#   RY002    - if condition of length 3
 #   RY099    - discarded one-arm if value
 
 flags <- c(TRUE, FALSE, TRUE)
@@ -23,7 +23,7 @@ bad_logical_or <- TRUE | "yes"        # RY031: `logical` and `character`
 
 bad_scalar_logical <- flags && TRUE   # RY032: length-3 operand
 
-bad_mode_compare <- "small" < 42      # RY033: byte-wise lexicographic
+bad_mode_compare <- "small" < 42      # RY033: numeric coerced to character
 
 prices <- c(3.5, NA, 4.25)
 na_eq <- prices == NA                 # RY034: use is.na()

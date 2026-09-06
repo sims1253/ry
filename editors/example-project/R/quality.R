@@ -1,7 +1,7 @@
 # Purpose: call-argument diagnostics on base/stats functions, plus the
-# inline-suppression contract. User-defined functions are NOT argument-
-# checked by `ry check`/the LSP (see README, known non-diagnostics), so
-# this file uses typeshed-known functions only.
+# inline-suppression contract. These calls use known base signatures.
+# R/resolution.R also includes a project function call that currently
+# stays silent despite missing arguments (see README).
 #
 # Expected diagnostics:
 #   RY090 + RY091 - length(xx = 1L)   (unknown arg `xx`, `x` left unbound)
@@ -48,6 +48,6 @@ suppressed_b <- misspelled_variable  # noqa: RY010
 unsuppressed <- misspelled_variable  # <- RY010 fires here
 
 # Same rule with a non-ASCII identifier: the span covers accented
-# characters, a cheap probe that the editor reports UTF-8 positions
-# correctly (LSP uses UTF-16 code units).
+# characters. Check the full underline: the server converts byte spans
+# to UTF-16 code-unit positions for LSP clients.
 unsuppressed_unicode <- misspelled_variablé  # <- RY010 fires here too

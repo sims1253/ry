@@ -1,123 +1,148 @@
-# coffeestats — ry editor-testing example
+# coffeestats: editor playground
 
-A tiny, fake R package for manually eyeballing ry diagnostics in VS Code
-and Zed. It is not a real package: most of `R/` contains intentional
-defects, one per section, each labelled in a `#` comment with the rule
-code a reader should see.
+Open this folder in VS Code, Positron, or Zed to try ry's diagnostics,
+inferred type hints, and suppression actions. The seven R files contain
+intentional errors. Check them with ry; do not source or install this example
+as an R package.
 
-**Everything below is verified reality.** The table was produced by
-running `ry check .` on this exact tree — not by intent — and every
-"silent" claim was run the same way. Line numbers refer to this tree.
+## Use the current checker
 
-## Layout
+From the repository root, build and check the playground:
 
-| path | purpose |
-| :--- | :--- |
-| `DESCRIPTION` | makes the directory a plausible package root (Imports: dplyr, purrr) |
-| `NAMESPACE` | `importFrom(dplyr, mutate, select)` + `importFrom(purrr, map_dbl)`; exercised by `R/daily-report.R` and `R/resolution.R` |
-| `ry.toml` | `packages = ["dplyr"]`: attaches dplyr project-wide for the data-mask NSE model |
-| `R/prices.R` | clean control; unicode identifiers (`café_latte_price`, `` `☕` ``, `` `📈` ``); defines `TAX_RATE`/`price_with_tax()` read cross-file |
-| `R/menu.R` | clean control; cross-file reads; defines `order_total()` called from `R/resolution.R` |
-| `R/resolution.R` | project-wide name resolution: cross-file call, NAMESPACE import, unknown callee, non-imported name |
-| `R/daily-report.R` | dplyr NSE (`library(dplyr)`, `select`/`mutate`/`summarise`) with one schema-checked typo |
-| `R/quality.R` | call-argument diagnostics on base functions + inline-suppression contract |
-| `R/warts.R` | one verified type/operator diagnostic per line |
-| `R/broken.R` | deliberate syntax-error region |
-
-## Verified diagnostics
-
-From this directory, `ry check .` reports
-`checked 7 file(s), 11 error(s), 18 warning(s)` and exits 1.
-
-| file | diagnostics actually reported |
-| :--- | :--- |
-| `R/prices.R` | none — unicode names must be squiggle-free |
-| `R/menu.R` | none — cross-file reads resolve |
-| `R/resolution.R` | RY010 @ 33 (`walker <- walk`: purrr name absent from NAMESPACE) |
-| `R/daily-report.R` | RY010 @ 43 (`sum(unitss)` typo in a top-level `summarise()` with a known schema) |
-| `R/quality.R` | RY091 @ 17 + RY090 @ 17 (`length(xx = 1L)`); RY091 @ 20 (`length()`); RY092 @ 29 (`mean("not numeric")`); RY093 @ 33; RY094 @ 36; RY010 @ 48 and @ 53 (the two unsuppressed twins; @ 53 spans a non-ASCII identifier) |
-| `R/warts.R` | RY031 @ 21, 22; RY032 @ 24; RY033 @ 26; RY034 @ 29, 30; RY040 @ 32; RY041 @ 34; RY042 @ 37; RY060 @ 40; RY061 @ 43; RY070 @ 46; RY099 @ 49; RY002 @ 54 |
-| `R/broken.R` | RY000 @ 16 (three spans: cols 12, 24, 29), RY000 @ 18; RY010 @ 21 (`daily_shots`) leaked from the recovered region |
-
-Column positions are visible in `--output-format concise` / `json` output.
-
-## Suppression contract
-
-The end of `R/quality.R` writes the same RY010 four times: two lines are
-suppressed (`# ry: ignore[RY010]` and the `# noqa: RY010` alias), two are
-live — one ASCII, one with `misspelled_variablé`. Only the two live lines
-may squiggle. ry also supports a standalone next-line form (`# ry: ignore`
-alone on a line) and `# ry: ignore-file`; neither is used here.
-
-## Known non-diagnostics (verified silent — not editor bugs)
-
-Each of these looks diagnosable and produced **no** diagnostic under
-`ry check` on this tree:
-
-1. **Call to a nonexistent function.** `daily_revenue(totals)` in
-   `R/resolution.R` resolves nowhere; unknown callees stay opaque and
-   nothing fires (no RY010, no RY070).
-2. **User-defined functions get no argument checking on the project-wide
-   path.** `short <- order_total()` in `R/resolution.R` supplies none of
-   the required formals and is silent. The single-file checker used by
-   the unit-test fixtures does flag this shape (fixture
-   `err_user_fn_missing_required.R`), but the project-wide path shared by
-   `ry check` and the LSP does not. That is why `R/quality.R` uses base
-   functions (`length`, `mean`, `sprintf`) for the argument rules.
-3. **Misspelled column on an unknown schema.** A typo inside
-   `summarise()` is silent when the data frame is a function *parameter*
-   (unknown-schema policy); the identical typo at top level with a known
-   schema fires RY010. `R/daily-report.R`'s header documents the
-   contrast; only the top-level instance is present in the file.
-4. **Bare tidyselect columns in `select()` are not schema-checked.**
-   `select(sales, itemm)` in `R/daily-report.R` is silent even though the
-   schema of `sales` is known.
-5. `list(1) > 2` (comparison against a list) is no-diag by design per the
-   upstream fixture `ry030_compare.R`; verified during construction and
-   deliberately not included in this tree.
-
-## How to verify quickly
-
-``` bash
-# from the ry repo root
-cargo build -p ry-cli
-cargo run -p ry-cli -- check editors/example-project
-
-# or directly, from this directory
-../../target/debug/ry check .
-../../target/debug/ry check . --statistics
-../../target/debug/ry check . --output-format concise
+```sh
+cargo build --locked -p ry-cli
+cargo run --locked -p ry-cli -- check editors/example-project
 ```
 
-Expected summary: `checked 7 file(s), 11 error(s), 18 warning(s)`,
-exit code 1. The same diagnostics are what the LSP should publish: the
-CLI and the LSP wrap the same checker core (`ry-checker::Project`), so
-any divergence between this table and an editor's squiggles is a
-finding, not a rendering quirk (#89).
+The check exits with status 1 and reports seven files, 11 errors, and
+18 warnings. Use the binary you just built in the editor too; an older
+bundled or PATH binary may produce different findings.
 
-## What to eyeball in the LSP beyond squiggles
+Open `editors/example-project` as the editor workspace. Opening the repository
+root also includes the checker's other intentionally failing R fixtures.
+The example's `ry.toml` attaches dplyr, and its `NAMESPACE` declares dplyr
+and purrr imports. You do not need to install or run those R packages to
+check these files.
 
-- **Publish on open.** Each opened file should show exactly its row from
-  the table — codes and severities (errors and warnings render
-  differently in both editors).
-- **Publish on edit.** In `R/daily-report.R` fix `unitss` -> `units`: the
-  squiggle must clear on the next publish without closing the file;
-  undo, and it returns.
-- **Cross-file republish.** With `R/menu.R` open, rename `TAX_RATE` to
-  `TAX_RATE_OLD` in `R/prices.R` and save. Verified CLI behaviour:
-  `menu.R` line 16 gains an RY010 on the `TAX_RATE` default. Check that
-  this appears while the menu.R tab is open but not focused, and clears
-  when the rename is reverted.
-- **Close / reopen (the interesting case).** Close `R/warts.R` (14
-  diagnostics) and reopen it: the identical diagnostics must be
-  republished with the same spans and severities — neither missing nor
-  stale positions from edits made before closing. Also confirm closing
-  one file neither clears nor duplicates diagnostics in other open
-  files.
-- **Recovered-region columns.** In `R/broken.R` the RY000 spans and the
-  leaked RY010 must point at plausible columns. Anything after a syntax
-  error is documented as unreliable (RY000's own message says so).
-- **Non-ASCII positions.** The RY010 on `misspelled_variablé`
-  (`R/quality.R` @ 53) must underline the whole identifier: the server
-  converts its byte columns to LSP UTF-16 code-unit positions, and an
-  off-by-encoding shows up immediately there.
+### VS Code / Positron
+
+Install the ry extension, then set this in your workspace settings using
+your actual absolute path:
+
+```json
+{
+  "ry.path": ["/absolute/path/to/ry/target/debug/ry"]
+}
+```
+
+On Windows use the path to `ry.exe`, with escaped backslashes or forward
+slashes. Trust your own checkout so the extension can use this explicit
+binary; untrusted workspaces use the bundled binary. Leave confidence,
+rule filters, baseline, and configuration overrides at their defaults for
+comparison with the table below. Run `ry: Debug Information` to confirm the
+binary path and version. See the [extension guide](../code/README.md) for
+settings and restart commands.
+
+### Zed
+
+Install the R and ry extensions. Select ry for R and point it at the same
+local binary:
+
+```json
+{
+  "languages": {
+    "R": { "language_servers": ["ry"] }
+  },
+  "lsp": {
+    "ry": {
+      "binary": {
+        "path": "/absolute/path/to/ry/target/debug/ry",
+        "arguments": ["server"]
+      }
+    }
+  }
+}
+```
+
+Use `ry.exe` on Windows. This explicit path also works when the latest
+published release lacks the executable checksum sidecars required by the
+extension's automatic downloader.
+
+## Files and expected diagnostics
+
+`prices.R` and `menu.R` are clean controls with Unicode names, ordinary
+arithmetic, and references between files. `resolution.R` exercises package
+imports and unresolved names. `daily-report.R` contains dplyr data masking.
+`quality.R` covers argument checks and suppressions, `warts.R` covers operator
+and type errors, and `broken.R` exercises recovery after a syntax error.
+
+The table records code, line, and column from the CLI's JSON output with
+bundled stubs and installed-library discovery disabled. Positions are 1-based.
+The CLI integration test checks this table against the current source files:
+
+```sh
+cargo test -p ry-cli --test editor_playground
+```
+
+<!-- playground-diagnostics:start -->
+| File | Errors | Warnings | Code at line:column |
+| :--- | ---: | ---: | :--- |
+| R/broken.R | 4 | 1 | RY000@16:12; RY000@16:24; RY000@16:29; RY000@18:1; RY010@21:11 |
+| R/daily-report.R | 0 | 1 | RY010@43:51 |
+| R/menu.R | 0 | 0 | none |
+| R/prices.R | 0 | 0 | none |
+| R/quality.R | 1 | 7 | RY091@17:12; RY090@17:19; RY091@20:14; RY092@29:19; RY093@33:20; RY094@36:20; RY010@48:17; RY010@53:25 |
+| R/resolution.R | 0 | 1 | RY010@33:11 |
+| R/warts.R | 6 | 8 | RY031@21:20; RY031@22:19; RY032@24:23; RY033@26:21; RY034@29:10; RY034@30:10; RY040@32:14; RY041@34:16; RY042@37:15; RY060@40:16; RY061@43:18; RY070@46:18; RY099@49:19; RY002@54:7 |
+<!-- playground-diagnostics:end -->
+
+To inspect messages and positions from this folder:
+
+```sh
+../../target/debug/ry check . --output-format concise
+../../target/debug/ry check . --statistics
+```
+
+## Editor checks
+
+Use default checker settings and saved files when comparing CLI and editor
+results. The language server analyzes the project, including unopened files;
+type hints and suppression actions apply to open documents. ry does not
+provide completion, hover, navigation, or rename.
+
+- Open `R/warts.R`. Compare its diagnostics with the table, then close and
+  reopen it. The same findings should return without duplicated diagnostics
+  in other files.
+- In `R/daily-report.R`, change `sum(unitss)` to `sum(units)`. Its RY010
+  should clear after the next analysis. Undo the edit and check that it returns.
+- Keep `R/menu.R` open. In `R/prices.R`, rename the `TAX_RATE` binding to
+  `TAX_RATE_OLD` and save. The default argument in `order_total()` should gain
+  RY010 while `menu.R` is still open. Restore the binding and check that it clears.
+- In `R/quality.R`, compare the two suppressed `misspelled_variable` lines
+  with their live twins. Only the live lines should report RY010. Apply the
+  suppression quick fix to a live line; confirm it clears, then undo the edit.
+- On `misspelled_variablé`, check that the underline covers the full identifier.
+  In `R/prices.R`, the accented and emoji bindings should remain free of errors.
+- Enable inlay hints in your editor and inspect the simple assignments in
+  `R/prices.R`. Compare inferred types with
+  `../../target/debug/ry dump-types R/prices.R`; an unknown type is an analysis limit.
+- In `R/broken.R`, inspect the RY000 spans. Findings after the syntax error
+  come from a recovered parse tree and can be unreliable.
+
+The table is the CLI expectation, not a record of a manual editor session.
+If editor results differ, first check the binary path, settings, and unsaved
+contents; record any remaining difference with its rule code and location.
+
+## Cases that currently stay silent
+
+Silence does not prove that R will accept a call. These examples deliberately
+record current limits:
+
+- `daily_revenue(totals)` in `resolution.R` has an unknown callee and stays opaque.
+- `order_total()` in the same file supplies neither required argument and
+  still receives no diagnostic in this package check.
+- `select(sales, itemm)` in `daily-report.R` stays silent. Bare tidyselect
+  picks are not checked like the known-schema `summarise()` typo above it.
+- A data frame parameter has an unknown schema, so names inside
+  `units_summary()` are treated as possible columns. A misspelling there can
+  stay silent even when the same name is caught against the top-level `sales`.

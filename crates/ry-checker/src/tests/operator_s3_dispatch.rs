@@ -340,3 +340,21 @@ fn unary_factor_arithmetic_warns_and_returns_logical() {
         Some(&RType::new(Mode::Logical, Length::Known(3)))
     );
 }
+
+#[test]
+fn opaque_custom_group_winner_keeps_result_unknown() {
+    let json = stub_file(&[op_method("Ops", "custom", "opaque")]);
+    for (file, attachment) in [("custom.json", "library(custom)\n"), ("base.json", "")] {
+        let source = format!(
+            "{attachment}`+.parent` <- function(e1, e2) 1L\n\
+             `-.parent` <- function(e1, e2) 1L\n\
+             x <- structure(list(), class = c('custom', 'parent'))\n\
+             left <- x + 1\nright <- 1 + x\nnegated <- -x\n"
+        );
+        let (diagnostics, scope) = check_with_stubs(&source, &[(file, &json)]);
+        assert!(diagnostics.is_empty(), "{file}: {diagnostics:?}");
+        for name in ["left", "right", "negated"] {
+            assert_eq!(scope.get(name).map(|ty| ty.mode), Some(Mode::Opaque));
+        }
+    }
+}

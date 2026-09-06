@@ -1,0 +1,160 @@
+name: Performance
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_TERM_COLOR: never
+      RAYON_NUM_THREADS: '2'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          targets: wasm32-wasip2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: performance
+          workspaces: |
+            . -> target
+            editors/zed -> target
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - name: Benchmark core
+        run: |
+          rm -rf target/criterion
+          cargo bench --locked -p ry-checker --bench performance -- --noplot
+      - name: Build CLI and Zed extension
+        run: |
+          cargo build --locked --release -p ry-cli
+          cargo build --locked --release --manifest-path editors/zed/Cargo.toml --target wasm32-wasip2
+      - name: Package VS Code extension without bundled server
+        working-directory: editors/code
+        run: |
+          bun install --frozen-lockfile
+          bun run vsce-package
+      - name: Measure VS Code activation and first diagnostic
+        working-directory: editors/code
+        run: |
+          mkdir -p ../../performance-results
+          xvfb-run -a node test/performance.cjs ../../performance-results/activation.json
+      - name: Collect measurements
+        run: |
+          mkdir -p performance-results
+          python3 scripts/performance/collect.py --activation performance-results/activation.json --output performance-results/results.json
+          {
+            rustc -Vv
+            bun --version
+            uname -a
+            lscpu
+            echo 'RAYON_NUM_THREADS=2'
+          } > performance-results/environment.txt
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          data = json.loads(Path('performance-results/results.json').read_text())
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write('## Performance measurements\n\n| Metric | Value | Unit |\n|---|---:|---|\n')
+              for row in data:
+                  value = f"{row['value']:,d}" if row['unit'] == 'bytes' else f"{row['value']:.2f}"
+                  summary.write(f"| {row['name']} | {value} | {row['unit']} |\n")
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: performance-results
+          path: performance-results/
+          if-no-files-found: error
+          retention-days: 14
+
+  report:
+    needs: measure
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Only pinned actions and inline reporting commands run with this token.
+    # Builds and dependency installation run in the read-only measure job.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: performance-results
+          path: ${{ runner.temp }}/performance-results
+      - name: Prepare text-only history branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          # ls-remote exits 2 only when the branch does not exist. Network
+          # or authentication errors must fail instead of resetting history.
+          gh auth setup-git
+          status=0
+          git ls-remote --exit-code origin refs/heads/performance-data || status=$?
+          if [ "$status" = 0 ]; then
+            git fetch origin performance-data:performance-data
+          elif [ "$status" = 2 ]; then
+            source_revision=$(git rev-parse HEAD)
+            git switch --orphan performance-data
+            git commit --allow-empty -m 'Initialize performance history'
+            git checkout --detach "$source_revision"
+          else
+            exit "$status"
+          fi
+      - name: Compare measurements and update main history
+        uses: benchmark-action/github-action-benchmark@a7bc2366eda11037936ea57d811a43b3418d3073 # v1.21.0
+        with:
+          name: ry performance
+          tool: customSmallerIsBetter
+          output-file-path: ${{ runner.temp }}/performance-results/results.json
+          gh-pages-branch: performance-data
+          benchmark-data-dir-path: benchmarks
+          skip-fetch-gh-pages: true
+          github-token: ${{ github.token }}
+          auto-push: ${{ github.ref == 'refs/heads/main' }}
+          summary-always: true
+          comment-on-alert: false
+          alert-threshold: '120%'
+          fail-on-alert: false
+          max-items-in-chart: 365
+      - name: Export dashboard
+        if: github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p "$RUNNER_TEMP/performance-site"
+          git archive performance-data benchmarks | tar -x -C "$RUNNER_TEMP/performance-site"
+      - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
+        if: github.ref == 'refs/heads/main' && vars.BENCHMARK_PAGES == 'true'
+        with:
+          path: ${{ runner.temp }}/performance-site
+
+  deploy:
+    needs: report
+    if: github.ref == 'refs/heads/main' && vars.BENCHMARK_PAGES == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}benchmarks/
+    steps:
+      - name: Deploy dashboard
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

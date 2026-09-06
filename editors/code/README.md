@@ -3,6 +3,8 @@
 [ry](https://github.com/sims1253/ry) checks R code as you type. The extension
 provides project diagnostics, inlay hints for inferred types, and code actions
 to insert suppression comments. Hints and code actions apply to open documents.
+Type hints describe inferred assignment values, including locals in named
+functions. Unknown types and assignments the checker does not visit are omitted.
 
 ## Installation
 

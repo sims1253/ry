@@ -759,6 +759,7 @@ mod tests {
     fn deferred_functions_and_formal_writes_do_not_gain_prefix_evidence() {
         for source in [
             "f <- function() { x <- 1L; x }; mutate()",
+            "f <- function() { x <- 1L; x }; f <- function() { 2L }",
             "f <- function(p) { p <- 1L; p }",
             "f <- function(p) { p; p <- 1L; p }",
             "f <- function() { x <- 1L; x }; if (flag) mutate()",

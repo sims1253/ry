@@ -268,6 +268,9 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Fixed
 
+- Detect recursive and prematurely forced defaults passed to `base::identity` or
+  `base::force`, while preserving laziness in quoted, masked, and conditional calls.
+
 - Avoid assuming the left S3 method wins when operator operands resolve to
   different methods. Keep the result unknown when dispatch is uncertain.
 - Correct RY002 and RY032 explanations: R rejects conditions and scalar

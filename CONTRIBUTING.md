@@ -124,5 +124,7 @@ cargo test --manifest-path editors/zed/Cargo.toml
 - Conventional-commit subjects, as in the log
   (`fix(scope): ...`, `feat(area): ...`, `test: ...`).
 - No emojis anywhere in code, comments, docs, or commit messages.
-- Edit `README.md` directly. Keep examples self-contained or backed by
-  fixtures/tests so they do not depend on a separate examples tree.
+- Keep `README.md` focused on installation and getting started. Put detailed
+  usage, configuration, and rule reference material in `docs/`. Update
+  `docs/rules.md` when the rule registry changes. Keep examples
+  self-contained or backed by fixtures/tests.

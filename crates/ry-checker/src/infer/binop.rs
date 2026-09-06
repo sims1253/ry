@@ -256,10 +256,49 @@ impl Checker {
             return None;
         }
         let symbol = op_symbol(op);
+        // R resolves both sides before choosing an Ops method. Different
+        // methods can fall back to the primitive, or be selected by
+        // chooseOpsMethod; neither outcome justifies taking the left return
+        // type. Include opaque group stubs in this identity check even though
+        // their return shapes use the storage-mode fallback below.
+        if [lhs, rhs].iter().any(|operand| {
+            operand.class.is_unknown() && !matches!(operand.mode, Mode::Opaque | Mode::Union)
+        }) {
+            return Some(RType::unknown());
+        }
+        let left_method = self.s3_operator_method_identity(symbol, lhs);
+        let right_method = self.s3_operator_method_identity(symbol, rhs);
+        if matches!((&left_method, &right_method), (Some(left), Some(right)) if left != right) {
+            return Some(RType::unknown());
+        }
         let operands = [lhs, rhs];
         operands
             .iter()
             .find_map(|operand| self.s3_dispatch_on_operand(symbol, &operands, operand))
+    }
+
+    fn s3_operator_method_identity(
+        &self,
+        symbol: &str,
+        operand: &RType,
+    ) -> Option<(String, String)> {
+        for class in operand
+            .class
+            .names
+            .iter()
+            .take(operand.class.len as usize)
+            .flatten()
+        {
+            if &**class == "default" {
+                continue;
+            }
+            for generic in [symbol, "Ops"] {
+                if self.s3_lookup_method(generic, class).is_some() {
+                    return Some((generic.to_owned(), class.to_string()));
+                }
+            }
+        }
+        None
     }
 
     pub(crate) fn try_s3_unary_dispatch(
@@ -340,7 +379,7 @@ impl Checker {
             && n > 1
         {
             let message = format!(
-                "`{}` applied to a length-{} operand; only the first element is used",
+                "`{}` applied to a length-{} operand; R requires a single logical value and raises an error",
                 op_symbol(op),
                 n
             );

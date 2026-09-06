@@ -37,7 +37,7 @@ pub const RULES: &[Rule] = &[
         code: "RY002",
         name: "condition-length",
         default_severity: Severity::Warning,
-        summary: "`if` condition length is known to be greater than 1; only the first element is used.",
+        summary: "`if` condition length is known to be greater than 1. R requires a single value and errors on longer conditions.",
     },
     Rule {
         code: "RY003",
@@ -79,7 +79,7 @@ pub const RULES: &[Rule] = &[
         code: "RY032",
         name: "scalar-logical-length",
         default_severity: Severity::Warning,
-        summary: "`&&` and `||` only use the first element of their operands; using them with vectors of length > 1 is almost always a bug. Use `&`/`|` for vectorized operations.",
+        summary: "`&&` and `||` require single values and error on operands of length greater than 1. Use `&`/`|` for vectorized operations.",
     },
     Rule {
         code: "RY033",

@@ -1,0 +1,252 @@
+# Usage
+
+[Getting started](../README.md) · [Configuration](configuration.md) · [Rules](rules.md)
+
+- [Checking files and CI](#checking-files-and-ci)
+- [Package awareness](#package-awareness)
+- [Data masking and NSE](#data-masking-and-nse)
+- [Dumping inferred types](#dumping-inferred-types)
+- [Editors](#editors)
+- [Known limits](#known-limits)
+
+## Checking files and CI
+
+Run `ry check` to check the current directory. Supply files or directories to
+narrow the check. ry collects `.R` and `.r` files recursively in each directory.
+
+```sh
+ry check .
+ry check R/analysis.R R/helpers.R
+ry check --watch .
+```
+
+The exit status is nonzero when an error remains after filtering.
+`--error-on-warning` also fails on warnings; `--exit-zero` lets the check
+succeed despite findings. Usage and I/O failures still return a nonzero status.
+Human-readable diagnostics use ANSI color on terminals; select the
+color policy with `--color auto|always|never`. Automatic color respects
+`NO_COLOR`, and machine-readable formats never contain ANSI escapes.
+
+### CI
+
+`--output-format github` emits GitHub Actions annotations. Use `gitlab` for
+GitLab Code Quality reports or `junit` for JUnit XML reports. `--statistics` prints
+per-rule counts after a run. Once ry is installed, a GitHub Actions step
+can run:
+
+``` yaml
+- run: ry check --output-format github .
+```
+
+## Package awareness
+
+ry tracks `library()` and `require()` calls to resolve function names.
+For example, `filter()` means `stats::filter` until dplyr is loaded.
+`dplyr::filter(df, x > 0)` resolves the column `x` against `df`'s schema
+whether or not dplyr is attached. `requireNamespace()` does not make
+unqualified names available.
+
+When checking an R package, ry reads its `NAMESPACE` imports.
+`importFrom(pkg, name)` records which package supplies each name. If ry has
+no stub for that dependency, it treats the imported value as opaque: the
+name is known, but its type is not. Whole-package imports, `library()`, and
+`require()` also use installed packages' static `NAMESPACE` exports.
+ry does not execute R or load package code.
+
+ry bundles stubs from [r-typeshed](https://github.com/sims1253/r-typeshed)
+for base R, tidyverse packages, Bayesian tools, testing frameworks, and other
+packages. See the [stub directory](https://github.com/sims1253/r-typeshed/tree/master/stubs)
+for current coverage, or run `ry explain typeshed` to list the packages in your
+installed version. Declare packages attached outside the checked sources in
+`ry.toml`.
+
+When checking a package source tree, ry uses the package's namespace.
+Files under `tests/`, `inst/`, `demo/`, and `vignettes/` also see DESCRIPTION
+`Depends` / `Suggests` and testthat. Only files under `tests/testthat/`
+inherit bindings and attached packages from testthat `helper*` / `setup*`
+files. For tinytest, declare the dependency in DESCRIPTION or attach it
+in the checked source; ry does not load a tinytest helper context.
+
+`revdep/`, `src/`, snapshot data, and
+`.Rbuildignore` matches (never `R/` or `tests/`) are skipped. R files nested
+under `tests/` are treated as fixture data unless they are runners at
+`tests/` root or `test*`, `helper*`, `setup*`, or `teardown*` files directly
+under `tests/testthat/`; set `check-test-fixtures = true` to check fixture data.
+
+Typed purrr maps check the callback's return type. For example, save this as
+`parallel.R` and run `ry check parallel.R`:
+
+```r
+library(purrr)
+bad <- map_dbl(1:4, function(i) as.character(i))
+```
+
+ry reports RY080 because the callback returns character values where `map_dbl`
+requires doubles. `in_parallel()` preserves the callback's inferred type.
+
+## Data masking and NSE
+
+Non-standard evaluation (NSE) lets an R function interpret an argument as
+an expression. Data masking uses this to make data frame columns available
+as bare names, such as `mpg` inside `summarise()`.
+
+Stubs declare which parameters are data-masked, tidy-selected, or
+quoted (for tidyverse packages this metadata is generated from the
+`<data-masking>` / `<tidy-select>` markers in their documentation).
+Columns inside a masked argument resolve against the data frame's
+schema instead of the lexical scope.
+
+Save this as `nse.R` and run `ry check nse.R`:
+
+``` r
+library(dplyr)
+d <- data.frame(mpg = c(21, 22.8), cyl = c(6, 4))
+summarise(d, m = mean(mpg))                                # resolves
+summarise(d, m = mean(mgp))                                # typo, caught
+my_mean <- function(df, var) summarise(df, m = mean({{ var }}))  # silent
+```
+
+ry reports RY010 for `mgp`.
+
+rlang's `{{ }}` embrace, the `.data` / `.env` pronouns, `!!` / `!!!`,
+and functions that defuse their own arguments (a parameter whose first
+use is `enquo()` / `substitute()` / ...) are recognized, so wrapper
+functions do not produce false unbound-variable reports. When the
+masked data's schema is unknown, ry stays silent rather than guessing
+at column candidates.
+
+## Dumping inferred types
+
+`ry dump-types` prints names and inferred types as JSON on stdout. It uses
+the same analysis and package context as `ry check`, and the same type
+strings as editor inlay hints. The output groups bindings by lexical scope
+(the top level or a function body), so tools can query several positions
+without running the checker again.
+
+Save this as `types.R`:
+
+```r
+offset <- 1L
+add_offset <- function(x = 2L) {
+  result <- x + offset
+  result
+}
+```
+
+```sh
+ry dump-types types.R
+ry dump-types types.R --position 4:3
+```
+
+The second command returns the `add_offset` scope. Its `bindings` array
+includes this entry:
+
+```json
+{"name": "offset", "kind": "closed-over", "type": "integer<len=1>", "start": [1, 1]}
+```
+
+Positions are 1-based `[row, column]` pairs; columns count characters,
+not bytes. Scopes are ordered by start position, bindings by name.
+`unknown` marks bindings whose types ry could not infer. It does not cause
+the command to fail.
+
+Binding kinds:
+
+- `param`, a formal of this scope that the body never reassigns. A
+  reassigned formal degrades to `local` at its reassignment site
+  (R rebinds rather than narrows).
+- `local`, first assigned inside this scope's own body (assignments in
+  `if` / `for` / `while` bodies and braced value blocks count; they bind
+  in the enclosing function in R).
+- `closed-over`, function scopes only: present because the body's
+  scope is cloned from the enclosing one at the point of definition.
+- `imported`, top-level bindings the file never assigns, supplied by
+  the host environment (for example Shiny server fragments, where
+  `input` / `output` / `session` are ambient).
+
+Each binding's `start` points at its definition site, the formal, the
+first assignment, or, for `closed-over`, the site in the nearest
+enclosing scope that defines the name (`null` when none is recorded).
+
+`--position LINE:COL` (repeatable) restricts output to the innermost
+scope containing each position and drops locals assigned after it,
+so you can query the bindings available at a given line.
+
+A directory argument expands to every discoverable R file under it,
+using `ry check`'s discovery rules, including the discovered `ry.toml`'s
+`exclude` patterns. `--project-root <DIR>` overrides the analysis root
+for non-package files; by default each file is analyzed in the context
+of its nearest enclosing package (the ancestor directory with a
+`DESCRIPTION`), else the directory owning the discovered `ry.toml`, else
+the working directory, mirroring `ry check`'s per-package grouping. The
+exit code is 0 even when the analyzed code has
+diagnostics; it is non-zero only for usage, IO, or internal failure.
+Scopes reflect the checker's snapshot semantics: each table is the
+scope's state at the end of its body, and a nested function captures the
+enclosing scope as of its definition point (ry's documented closure
+approximation). Anonymous function literals used as call arguments are
+inferred in discarding mode and are therefore not recorded as scopes,
+but named functions defined *inside* such a callback do complete and are
+recorded, so a dump can contain a scope whose enclosing scope is absent.
+
+## Editors
+
+`ry server` speaks the Language Server Protocol over stdio: diagnostics
+as you type (debounced, cached parses), inlay hints, and quick-fix
+actions that insert suppression comments.
+
+Diagnostics cover the whole project, using the same analysis as `ry check`. The
+inlay hints and quick-fix actions apply to the open document only.
+
+### VS Code / Positron
+
+Install the **ry** extension from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=sims1253.ry)
+or Open VSX (for Positron). The extension bundles the `ry` binary.
+
+See the [extension guide](../editors/code/README.md) for settings, commands,
+and binary selection.
+
+### Zed
+
+Install the **R** extension for R language support, then install **ry**.
+The ry extension uses a local `ry` executable or downloads one from GitHub
+releases. To use ry as the R language server, add this to Zed's settings:
+
+```json
+{
+  "languages": {
+    "R": { "language_servers": ["ry"] }
+  }
+}
+```
+
+If you already use other R language servers, add `"ry"` to that list.
+
+### Other editors (Neovim, Helix, Emacs)
+
+Connect manually by pointing your LSP client at `ry server`. For
+example, with Neovim's built-in LSP:
+
+```lua
+local root_marker =
+  vim.fs.find({'ry.toml', 'DESCRIPTION', '.git'}, { upward = true })[1]
+
+vim.lsp.start({
+  name = 'ry',
+  cmd = {'ry', 'server'},
+  root_dir = root_marker and vim.fs.dirname(root_marker) or vim.fn.getcwd(),
+})
+```
+
+## Known limits
+
+When both operator operands resolve to different S3 methods, ry keeps the result
+unknown. It does not yet model the full `chooseOpsMethod` selection or report
+the warning from primitive fallback. See [#193](https://github.com/sims1253/ry/issues/193).
+
+S4 modeling covers in-package `setClass` / `setGeneric` /
+`setMethod` and `@` slot access but not full method resolution order;
+R6 modeling covers `self` / `private` / `super` in method bodies, not
+field types. No expansion of dynamic `exportPattern()` directives and no
+NA tracking yet. Cross-package names without stubs resolve to opaque
+values when static package metadata proves that they exist.

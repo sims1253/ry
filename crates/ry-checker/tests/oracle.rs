@@ -24,6 +24,9 @@ use std::process::Command;
 
 use ry_checker::{Checker, Severity};
 use ry_core::RParser;
+use ry_core::ast::Expr;
+use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
+use std::ops::ControlFlow;
 
 #[derive(Debug)]
 enum Tag {
@@ -132,26 +135,70 @@ fn tail_snippet(s: &str) -> String {
     lines[start..].join(" | ")
 }
 
-/// R packages a fixture declares via `library(pkg)`, `require(pkg)`, or
-/// `requireNamespace("pkg")`. Scanned lexically (the fixtures are flat
-/// scripts); comment lines are ignored so a comment MENTIONING library()
-/// does not count.
-fn fixture_packages(src: &str) -> Vec<String> {
-    let mut pkgs: Vec<String> = Vec::new();
-    for line in src.lines() {
-        let code = line.split('#').next().unwrap_or("");
-        for prefix in ["library(", "require(", "requireNamespace("] {
-            let Some(pos) = code.find(prefix) else {
-                continue;
-            };
-            let rest = &code[pos + prefix.len()..];
-            let end = rest.find([')', ',']).unwrap_or(rest.len());
-            let name = rest[..end].trim().trim_matches(['"', '\'']).to_string();
-            if !name.is_empty() && !pkgs.contains(&name) {
-                pkgs.push(name);
-            }
+/// Packages named by loading calls or namespace references in a fixture.
+/// Parse the source so comments and string contents do not add dependencies.
+/// This is a syntax inventory; references in quoted or untaken code are included.
+fn fixture_packages(name: &str, src: &str) -> Vec<String> {
+    let mut parser = RParser::new().expect("parser init");
+    let file = parser
+        .parse(name, src)
+        .unwrap_or_else(|error| panic!("parse {name}: {error}"));
+    let mut pkgs = Vec::new();
+    let mut add = |name: &str| {
+        if !name.is_empty() && !pkgs.iter().any(|pkg| pkg == name) {
+            pkgs.push(name.to_owned());
         }
-    }
+    };
+    let _ = walk_stmts(
+        &file.stmts,
+        Walk {
+            dollar_args: false,
+            ..Walk::ALL
+        },
+        |node, _| -> ControlFlow<(), Descend> {
+            if let AstNode::Expr(Expr::Ident { name, span }) = node {
+                // A backtick-quoted identifier can contain literal colons.
+                let text = &src[span.start..span.end];
+                let mut chars = text.chars();
+                let quoted_identifier = chars.next() == Some('`')
+                    && loop {
+                        match chars.next() {
+                            Some('\\') => {
+                                chars.next();
+                            }
+                            Some('`') => break chars.next().is_none(),
+                            None => break false,
+                            _ => {}
+                        }
+                    };
+                if !quoted_identifier && let Some((package, _)) = name.split_once("::") {
+                    add(package.trim_matches(['`', '"', '\'']));
+                }
+            }
+            if let AstNode::Expr(Expr::Call { func, args, .. }) = node
+                && let Expr::Ident { name, .. } = func.as_ref()
+                && matches!(
+                    name.as_str(),
+                    "library"
+                        | "require"
+                        | "requireNamespace"
+                        | "base::library"
+                        | "base::require"
+                        | "base::requireNamespace"
+                )
+                && let Some(argument) = args
+                    .iter()
+                    .find(|arg| arg.name.as_deref() == Some("package"))
+                    .or_else(|| args.iter().find(|arg| arg.name.is_none()))
+            {
+                match &argument.value {
+                    Expr::Ident { name, .. } | Expr::String(name, _) => add(name),
+                    _ => {}
+                }
+            }
+            ControlFlow::Continue(Descend::Into)
+        },
+    );
     pkgs
 }
 
@@ -238,7 +285,7 @@ fn oracle_check_each_fixture() {
         // machine does not have: R erroring for an environmental reason
         // is not a semantic ry-vs-R disagreement. CI installs everything
         // the fixtures use, so skips cannot hide a regression there.
-        let missing: Vec<String> = fixture_packages(&src)
+        let missing: Vec<String> = fixture_packages(&name, &src)
             .into_iter()
             .filter(|p| !r_package_available(p, &mut pkg_cache))
             .collect();
@@ -539,7 +586,7 @@ fn claim_fixtures_demonstrate_their_r_premise() {
             continue;
         }
 
-        let missing: Vec<String> = fixture_packages(&src)
+        let missing: Vec<String> = fixture_packages(&name, &src)
             .into_iter()
             .filter(|pkg| !r_package_available(pkg, &mut pkg_cache))
             .collect();
@@ -583,12 +630,15 @@ fn fixture_packages_scans_library_require_and_namespace_calls() {
                if (requireNamespace(\"dplyr\", quietly = TRUE)) print(1)\n\
                library(purrr)  # duplicate, deduplicated\n\
                x <- 1\n";
-    assert_eq!(fixture_packages(src), vec!["purrr", "mirai", "dplyr"]);
+    assert_eq!(
+        fixture_packages("fixture.R", src),
+        vec!["purrr", "mirai", "dplyr"]
+    );
 }
 
 #[test]
 fn fixture_packages_empty_for_plain_fixtures() {
-    assert!(fixture_packages("# oracle: must-flag\nx <- \"a\" + 1\n").is_empty());
+    assert!(fixture_packages("plain.R", "# oracle: must-flag\nx <- \"a\" + 1\n").is_empty());
 }
 
 // ── R-oracle setup falsification ────────────────────────────────
@@ -672,4 +722,59 @@ fn oracle_does_not_treat_error_text_as_process_failure() {
     let path = dir.path().join("message.R");
     fs::write(&path, "message('Error is also ordinary text')\n").unwrap();
     assert!(!r_errors(&path).0);
+}
+
+#[test]
+fn fixture_packages_finds_qualified_references_and_multiline_loads() {
+    let src = r#"
+        purrr::map(1, identity)
+        callback <- rlang:::internal
+        library (
+            package = "dplyr"
+        )
+        require("tidyr"); requireNamespace("withr")
+        purrr::map(2, identity)
+    "#;
+    assert_eq!(
+        fixture_packages("fixture.R", src),
+        vec!["purrr", "rlang", "dplyr", "tidyr", "withr"]
+    );
+}
+
+#[test]
+fn fixture_packages_ignores_comments_strings_and_literal_names() {
+    let src = r##"
+        # fake::fun(); library(fake)
+        text <- "library(fake); fake::fun() # require(fake)"
+        text <- 'fake:::internal'
+        `fake::fun` <- function() NULL
+        `fake::fun\`x` <- function() NULL
+        x$`fake::fun`
+        library("purrr") # fake::fun()
+    "##;
+    assert_eq!(fixture_packages("fixture.R", src), vec!["purrr"]);
+}
+
+#[test]
+fn fixture_packages_covers_namespace_only_oracles() {
+    assert_eq!(
+        fixture_packages(
+            "conditional_maps.R",
+            include_str!("../testdata/oracle/conditional_maps.R")
+        ),
+        vec!["purrr"]
+    );
+    assert_eq!(
+        fixture_packages(
+            "tidy_injection.R",
+            include_str!("../testdata/oracle/tidy_injection.R")
+        ),
+        vec!["rlang", "dplyr", "purrr"]
+    );
+}
+
+#[test]
+fn fixture_packages_accepts_quoted_namespace_packages() {
+    let src = r#"`stats`::median(1); "stats"::median(2); 'stats':::median.default(3)"#;
+    assert_eq!(fixture_packages("fixture.R", src), vec!["stats"]);
 }

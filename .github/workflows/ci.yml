@@ -68,6 +68,8 @@ jobs:
         run: |
           version=$(sed -n 's/^cargo-dist-version = "\(.*\)"/\1/p' dist-workspace.toml)
           curl --proto '=https' --tlsv1.2 -LsSf "https://github.com/axodotdev/cargo-dist/releases/download/v${version}/cargo-dist-installer.sh" | sh
+      - name: Test executable checksum generation
+        run: python3 -m unittest discover -s scripts/release -p 'test_*.py'
       - name: Check release.yml matches generated output
         run: dist generate --check
 

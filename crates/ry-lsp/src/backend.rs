@@ -972,10 +972,13 @@ impl LanguageServer for Backend {
         };
 
         // One quick-fix per diagnostic visible at the cursor; helpers skip
-        // lines that already carry a suppression.
+        // lines that already carry a suppression. The suppression scan is
+        // shared by every per-diagnostic fix, so run it once per request.
+        let suppressions =
+            ry_checker::parse_suppressions_from_comments(&file.comments, &file.source);
         let mut actions: CodeActionResponse = Vec::new();
         for diag in &params.context.diagnostics {
-            if let Some(action) = make_ignore_action(&uri, diag, &file) {
+            if let Some(action) = make_ignore_action(&uri, diag, &file, &suppressions) {
                 actions.push(CodeActionOrCommand::CodeAction(action));
             }
         }

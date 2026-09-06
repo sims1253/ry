@@ -123,6 +123,100 @@ fn file_level_marker_not_treated_as_line_level() {
 }
 
 #[test]
+fn parse_standalone_directive_stops_at_string_opening_line() {
+    // A standalone directive resolves to the line that OPENS the
+    // multiline string (a code line). The `#`-leading line inside the
+    // string can never be reached by the scan: it is string content,
+    // not a comment, and the opening line halts the scan first.
+    let src = "# ry: ignore\nx <- \"\n# looks like a comment\n\"\n";
+    let supps = parse_suppressions_from_comments(&scan_comments(src), src);
+    assert_eq!(supps.len(), 1);
+    assert_eq!(supps[0].line, 1);
+}
+
+// ---- directive amendment (quick-fix edit construction) ----
+
+#[test]
+fn amend_merges_code_into_bracket_rule_list() {
+    // Lead whitespace and the original marker spelling survive; the new
+    // code joins the existing bracket list.
+    assert_eq!(
+        amend_ignore_comment_body(" ry: ignore[RY040]", "RY010").unwrap(),
+        " ry: ignore[RY040, RY010]"
+    );
+    assert_eq!(
+        amend_ignore_comment_body("RY: IGNORE[RY040]", "RY010").unwrap(),
+        "RY: IGNORE[RY040, RY010]"
+    );
+}
+
+#[test]
+fn amended_body_parses_with_merged_rules() {
+    // The #210 property: the amended body must itself be a directive
+    // the suppression parser recognizes, covering both codes.
+    let body = amend_ignore_comment_body(" ry: ignore[RY040]", "RY010").unwrap();
+    let src = format!("x <- bad  #{body}\n");
+    let supps = parse_suppressions_from_comments(&scan_comments(&src), &src);
+    assert_eq!(supps.len(), 1);
+    assert!(supps[0].rules.contains(&"RY040".to_string()));
+    assert!(supps[0].rules.contains(&"RY010".to_string()));
+}
+
+#[test]
+fn amend_preserves_trailing_prose() {
+    assert_eq!(
+        amend_ignore_comment_body(" ry: ignore[RY040] note", "RY010").unwrap(),
+        " ry: ignore[RY040, RY010] note"
+    );
+    // Colon-style rule lists are rewritten in bracket form, with the
+    // prose still separated by its original space.
+    assert_eq!(
+        amend_ignore_comment_body(" noqa: RY040 note", "RY010").unwrap(),
+        " noqa[RY040, RY010] note"
+    );
+}
+
+#[test]
+fn amend_returns_none_for_prose_and_file_markers() {
+    // Prose bodies and file-level markers are not line directives; the
+    // caller must place a fresh directive instead of rewriting these.
+    assert!(amend_ignore_comment_body(" see docs for ry: ignore", "RY010").is_none());
+    assert!(amend_ignore_comment_body(" ry: ignore-file", "RY010").is_none());
+    assert!(amend_ignore_comment_body("", "RY010").is_none());
+}
+
+#[test]
+fn amend_leaves_bare_and_covering_directives_unchanged() {
+    // A bare directive suppresses everything and a list that already
+    // names the code needs no edit — both return the body verbatim
+    // (case-insensitively, like the parser).
+    assert_eq!(
+        amend_ignore_comment_body(" ry: ignore", "RY040").unwrap(),
+        " ry: ignore"
+    );
+    assert_eq!(
+        amend_ignore_comment_body(" ry: ignore[RY040]", "RY040").unwrap(),
+        " ry: ignore[RY040]"
+    );
+    assert_eq!(
+        amend_ignore_comment_body(" ry: ignore[ry040]", "RY040").unwrap(),
+        " ry: ignore[ry040]"
+    );
+}
+
+#[test]
+fn amend_uppercases_and_dedupes_the_new_code() {
+    assert_eq!(
+        amend_ignore_comment_body(" ry: ignore[RY040]", "ry010").unwrap(),
+        " ry: ignore[RY040, RY010]"
+    );
+    assert_eq!(
+        amend_ignore_comment_body(" ry: ignore[RY040, RY010]", "ry010").unwrap(),
+        " ry: ignore[RY040, RY010]"
+    );
+}
+
+#[test]
 fn is_suppressed_matches_line_and_code() {
     let supps = vec![Suppression {
         line: 2,

@@ -253,6 +253,33 @@ fn factor_arithmetic_does_not_warn_about_recycling() {
 }
 
 #[test]
+fn factor_arithmetic_returns_logical_missing_values() {
+    for (other, length) in [
+        ("NULL", Length::Known(2)),
+        ("numeric(0)", Length::Known(2)),
+        ("1", Length::Known(2)),
+        ("list(1, 2, 3)", Length::Known(3)),
+    ] {
+        for expression in [format!("f + {other}"), format!("{other} + f")] {
+            let (diags, scope) = check_with_scope(&format!(
+                "f <- structure(1:2, class = \"factor\")\nx <- {expression}\n"
+            ));
+            assert_eq!(diags.len(), 1, "{expression}: {diags:?}");
+            assert_eq!(diags[0].code, "RY042", "{expression}");
+            assert_eq!(scope.get("x"), Some(&RType::new(Mode::Logical, length)));
+        }
+    }
+    let (diags, scope) =
+        check_with_scope("x <- structure(vector(\"integer\", 0), class = \"factor\") + NULL\n");
+    assert_eq!(diags.len(), 1);
+    assert_eq!(diags[0].code, "RY042");
+    assert_eq!(
+        scope.get("x"),
+        Some(&RType::new(Mode::Logical, Length::Zero))
+    );
+}
+
+#[test]
 fn operator_dispatch_tries_rhs_and_class_vector_order() {
     // R tries the LHS operand's classes, then the RHS's, and within one
     // operand the class vector in order: `1 + y` dispatches on `y`, and
@@ -277,4 +304,15 @@ fn operator_dispatch_tries_rhs_and_class_vector_order() {
             "`{name}` must use the dispatched method's return"
         );
     }
+}
+
+#[test]
+fn unary_factor_arithmetic_warns_and_returns_logical() {
+    let (diags, scope) = check_with_scope("x <- -structure(1:3, class = 'factor')");
+    assert_eq!(diags.len(), 1);
+    assert_eq!(diags[0].code, "RY042");
+    assert_eq!(
+        scope.get("x"),
+        Some(&RType::new(Mode::Logical, Length::Known(3)))
+    );
 }

@@ -684,7 +684,8 @@
         "mode": "opaque",
         "length": "unknown",
         "na": false
-      }
+      },
+      "injection": {"...": "splice"}
     },
     "caller_arg": {
       "params": [
@@ -1350,7 +1351,8 @@
         "mode": "opaque",
         "length": "unknown",
         "na": false
-      }
+      },
+      "injection": {"...": "splice"}
     },
     "dots_n": {
       "params": [
@@ -2134,7 +2136,8 @@
         "mode": "opaque",
         "length": "unknown",
         "na": false
-      }
+      },
+      "injection": {"...": "splice"}
     },
     "exiting": {
       "params": [
@@ -2927,7 +2930,8 @@
         "mode": "opaque",
         "length": "unknown",
         "na": false
-      }
+      },
+      "injection": {"expr": "full"}
     },
     "int": {
       "params": [
@@ -4266,7 +4270,8 @@
         "mode": "opaque",
         "length": "unknown",
         "na": false
-      }
+      },
+      "injection": {"...": "splice"}
     },
     "ll": {
       "params": [

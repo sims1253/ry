@@ -71,9 +71,9 @@ impl Checker {
             // Other dotted names retain the first-parameter heuristic
             // so ordinary helpers are not misregistered as methods.
             let semantic_name = semantic_argument_name(name);
-            let looks_like_s3 = split_s3_method_name(&semantic_name, &self.typeshed.globals)
+            let looks_like_s3 = split_s3_method_name(semantic_name, &self.typeshed.globals)
                 .or_else(|| {
-                    split_s3_operator_method_name(&semantic_name)
+                    split_s3_operator_method_name(semantic_name)
                         .map(|(generic, class)| (generic.to_string(), class))
                 })
                 .filter(|(generic, _)| {
@@ -290,6 +290,7 @@ impl Checker {
                     required,
                     defused: parameter_is_defused(&body, &p.name),
                     quoting: parameter_is_quoted(&body, params, &p.name),
+                    injection: None,
                 }
             })
             .collect();
@@ -746,7 +747,7 @@ fn collect_parameter_uses_in_stmt(statement: &Stmt, parameter: &str, uses: &mut 
 // the other), while the walker's `Break` halts the entire walk at the
 // first payload; and a `for` loop's variable re-binding is checked
 // strictly between the iterator walk and the body walk, where the walker
-// provides no hook. Same judgment as the force family in `infer/misc.rs`.
+// provides no hook. Same judgment as the force family in `infer/quoting.rs`.
 fn first_parameter_use_in_stmt(statement: &Stmt, parameter: &str) -> Option<FirstParameterUse> {
     match statement {
         Stmt::Assign { target, value, .. } => first_parameter_use_in_expr(value, parameter)
@@ -1028,7 +1029,7 @@ mod collect_walker_tests {
     use super::*;
 
     fn parse_stmts(src: &str) -> Vec<Stmt> {
-        crate::tests::parse_snippet("collect_walker_test.R", src).stmts
+        crate::tests::parse_file("collect_walker_test.R", src).stmts
     }
 
     fn parameter_uses(src: &str, parameter: &str) -> ParameterUses {
@@ -1046,7 +1047,7 @@ mod collect_walker_tests {
     }
 
     fn collect(src: &str) -> Checker {
-        let file = crate::tests::parse_snippet("collect_walker_test.R", src);
+        let file = crate::tests::parse_file("collect_walker_test.R", src);
         let mut checker = Checker::new("collect_walker_test.R");
         checker.collect_file_fns(&file);
         checker

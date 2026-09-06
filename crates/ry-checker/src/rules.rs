@@ -138,8 +138,8 @@ pub const RULES: &[Rule] = &[
     Rule {
         code: "RY080",
         name: "map-return-type-mismatch",
-        default_severity: Severity::Warning,
-        summary: "A purrr typed-map (`map_dbl`, `map_int`, ...) callback returns a value whose mode is incompatible with the target vector type. R coerces at runtime, but the mismatch is almost always unintended.",
+        default_severity: Severity::Error,
+        summary: "A typed-map callback returns an incompatible mode or a result whose known length is not one. R rejects that callback result.",
     },
     Rule {
         code: "RY090",

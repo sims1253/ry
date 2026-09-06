@@ -18,7 +18,8 @@
         "mode": "opaque",
         "length": "unknown",
         "na": false
-      }
+      },
+      "injection": {".cols": "full"}
     },
     "add_count": {
       "params": [
@@ -36,7 +37,8 @@
       "eval": {
         "...": "data_mask",
         "wt": "data_mask"
-      }
+      },
+      "injection": {"...": "full", "wt": "full"}
     },
     "add_tally": {
       "params": [
@@ -51,7 +53,8 @@
       },
       "eval": {
         "wt": "data_mask"
-      }
+      },
+      "injection": {"wt": "full"}
     },
     "all_vars": {
       "params": [
@@ -63,7 +66,8 @@
       },
       "eval": {
         "expr": "data_mask"
-      }
+      },
+      "injection": {"expr": "full"}
     },
     "any_vars": {
       "params": [
@@ -75,7 +79,8 @@
       },
       "eval": {
         "expr": "data_mask"
-      }
+      },
+      "injection": {"expr": "full"}
     },
     "arrange": {
       "params": [
@@ -94,7 +99,8 @@
         "class": [
           "data.frame"
         ]
-      }
+      },
+      "injection": {"...": "full"}
     },
     "bind_cols": {
       "params": [
@@ -133,7 +139,8 @@
       },
       "eval": {
         "cols": "tidy_select"
-      }
+      },
+      "injection": {"cols": "full"}
     },
     "count": {
       "params": [
@@ -154,7 +161,8 @@
         "class": [
           "data.frame"
         ]
-      }
+      },
+      "injection": {"...": "full", "wt": "full"}
     },
     "distinct": {
       "params": [
@@ -173,7 +181,8 @@
         "class": [
           "data.frame"
         ]
-      }
+      },
+      "injection": {"...": "full"}
     },
     "do": {
       "params": [
@@ -186,7 +195,8 @@
       },
       "eval": {
         "...": "data_mask"
-      }
+      },
+      "injection": {"...": "full"}
     },
     "filter": {
       "params": [
@@ -207,7 +217,8 @@
         "class": [
           "data.frame"
         ]
-      }
+      },
+      "injection": {"...": "full", ".by": "full"}
     },
     "filter_out": {
       "params": [
@@ -223,7 +234,8 @@
       "eval": {
         "...": "data_mask",
         ".by": "tidy_select"
-      }
+      },
+      "injection": {"...": "full", ".by": "full"}
     },
     "full_join": {
       "params": [
@@ -252,7 +264,8 @@
       },
       "eval": {
         "...": "data_mask"
-      }
+      },
+      "injection": {"...": "full"}
     },
     "group_by": {
       "params": [
@@ -273,7 +286,8 @@
           "grouped_df",
           "data.frame"
         ]
-      }
+      },
+      "injection": {"...": "full"}
     },
     "if_all": {
       "params": [
@@ -288,7 +302,8 @@
       },
       "eval": {
         ".cols": "tidy_select"
-      }
+      },
+      "injection": {".cols": "full"}
     },
     "if_any": {
       "params": [
@@ -303,7 +318,8 @@
       },
       "eval": {
         ".cols": "tidy_select"
-      }
+      },
+      "injection": {".cols": "full"}
     },
     "inner_join": {
       "params": [
@@ -366,7 +382,8 @@
         "class": [
           "data.frame"
         ]
-      }
+      },
+      "injection": {"...": "full"}
     },
     "n": {
       "params": [],
@@ -389,7 +406,8 @@
       },
       "eval": {
         "...": "data_mask"
-      }
+      },
+      "injection": {"...": "full"}
     },
     "pick": {
       "params": [
@@ -405,7 +423,8 @@
         "class": [
           "data.frame"
         ]
-      }
+      },
+      "injection": {"...": "full"}
     },
     "pull": {
       "params": [
@@ -419,7 +438,8 @@
         "mode": "opaque",
         "length": "unknown",
         "na": false
-      }
+      },
+      "injection": {"var": "full"}
     },
     "reframe": {
       "params": [
@@ -439,7 +459,8 @@
         "class": [
           "data.frame"
         ]
-      }
+      },
+      "injection": {"...": "full", ".by": "full"}
     },
     "relocate": {
       "params": [
@@ -461,7 +482,8 @@
         "class": [
           "data.frame"
         ]
-      }
+      },
+      "injection": {"...": "full", ".before": "full", ".after": "full"}
     },
     "rename": {
       "params": [
@@ -479,7 +501,8 @@
         "class": [
           "data.frame"
         ]
-      }
+      },
+      "injection": {"...": "full"}
     },
     "rename_with": {
       "params": [
@@ -495,7 +518,8 @@
       "eval": {
         "...": "tidy_select",
         ".cols": "tidy_select"
-      }
+      },
+      "injection": {"...": "full", ".cols": "full"}
     },
     "right_join": {
       "params": [
@@ -524,7 +548,8 @@
       },
       "eval": {
         "...": "tidy_select"
-      }
+      },
+      "injection": {"...": "full"}
     },
     "sample_frac": {
       "params": [
@@ -542,7 +567,8 @@
       "eval": {
         "size": "tidy_select",
         "weight": "tidy_select"
-      }
+      },
+      "injection": {"size": "full", "weight": "full"}
     },
     "sample_n": {
       "params": [
@@ -560,7 +586,8 @@
       "eval": {
         "size": "tidy_select",
         "weight": "tidy_select"
-      }
+      },
+      "injection": {"size": "full", "weight": "full"}
     },
     "select": {
       "params": [
@@ -578,7 +605,8 @@
         "class": [
           "data.frame"
         ]
-      }
+      },
+      "injection": {"...": "full"}
     },
     "slice": {
       "params": [
@@ -599,7 +627,8 @@
         "class": [
           "data.frame"
         ]
-      }
+      },
+      "injection": {"...": "full", ".by": "full"}
     },
     "slice_head": {
       "params": [
@@ -616,7 +645,8 @@
       "eval": {
         "...": "data_mask",
         "by": "tidy_select"
-      }
+      },
+      "injection": {"...": "full", "by": "full"}
     },
     "slice_max": {
       "params": [
@@ -642,7 +672,8 @@
         "class": [
           "data.frame"
         ]
-      }
+      },
+      "injection": {"order_by": "full", "by": "full", "...": "full"}
     },
     "slice_min": {
       "params": [
@@ -668,7 +699,8 @@
         "class": [
           "data.frame"
         ]
-      }
+      },
+      "injection": {"order_by": "full", "by": "full", "...": "full"}
     },
     "slice_sample": {
       "params": [
@@ -688,7 +720,8 @@
         "...": "data_mask",
         "by": "tidy_select",
         "weight_by": "data_mask"
-      }
+      },
+      "injection": {"...": "full", "by": "full", "weight_by": "full"}
     },
     "slice_tail": {
       "params": [
@@ -705,7 +738,8 @@
       "eval": {
         "...": "data_mask",
         "by": "tidy_select"
-      }
+      },
+      "injection": {"...": "full", "by": "full"}
     },
     "summarise": {
       "params": [
@@ -726,7 +760,8 @@
         "class": [
           "data.frame"
         ]
-      }
+      },
+      "injection": {"...": "full", ".by": "full"}
     },
     "summarize": {
       "params": [
@@ -747,7 +782,8 @@
         "class": [
           "data.frame"
         ]
-      }
+      },
+      "injection": {"...": "full", ".by": "full"}
     },
     "tally": {
       "params": [
@@ -762,7 +798,8 @@
       },
       "eval": {
         "wt": "data_mask"
-      }
+      },
+      "injection": {"wt": "full"}
     },
     "tibble": {
       "params": [
@@ -790,7 +827,8 @@
       },
       "eval": {
         "...": "data_mask"
-      }
+      },
+      "injection": {"...": "full"}
     },
     "ungroup": {
       "params": [
@@ -807,7 +845,8 @@
       },
       "eval": {
         "...": "data_mask"
-      }
+      },
+      "injection": {"...": "full"}
     },
     "vars": {
       "params": [
@@ -819,7 +858,8 @@
       },
       "eval": {
         "...": "tidy_select"
-      }
+      },
+      "injection": {"...": "full"}
     },
     "with_groups": {
       "params": [
@@ -834,7 +874,8 @@
       },
       "eval": {
         ".groups": "tidy_select"
-      }
+      },
+      "injection": {".groups": "full"}
     }
   }
 }

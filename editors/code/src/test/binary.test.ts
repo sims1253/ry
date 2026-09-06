@@ -7,6 +7,7 @@
  * arbitrary binary.
  */
 
+import type { ISettings } from "../common/settings";
 import { describe, it, expect } from "bun:test";
 import { findRyBinaryPath, getRyVersion } from "../common/binary";
 import { BUNDLED_RY_EXECUTABLE } from "../common/constants";
@@ -25,7 +26,8 @@ describe("findRyBinaryPath trust behavior", () => {
     const settings = {
       path: [decoyPath],
       importStrategy: "useBundled" as const,
-    } as unknown as import("../common/settings").ISettings;
+      lint: {},
+    } satisfies ISettings;
 
     // Untrusted: must return the bundled binary, NOT the decoy.
     const resolved = findRyBinaryPath(settings, true);
@@ -46,7 +48,8 @@ describe("findRyBinaryPath trust behavior", () => {
     const settings = {
       path: [decoyPath],
       importStrategy: "useBundled" as const,
-    } as unknown as import("../common/settings").ISettings;
+      lint: {},
+    } satisfies ISettings;
 
     // Trusted: should use the decoy from ry.path.
     const resolved = findRyBinaryPath(settings, false);
@@ -61,7 +64,8 @@ describe("findRyBinaryPath trust behavior", () => {
     const settings = {
       path: ["/nonexistent/decoy-ry"],
       importStrategy: "useBundled" as const,
-    } as unknown as import("../common/settings").ISettings;
+      lint: {},
+    } satisfies ISettings;
 
     const resolved = findRyBinaryPath(settings, false);
     expect(resolved).toBe(BUNDLED_RY_EXECUTABLE);
@@ -78,7 +82,8 @@ it("skips directories and non-executable files before a runnable candidate", () 
     const settings = {
       path: [dir, ...(process.platform === "win32" ? [] : [plain]), executable],
       importStrategy: "useBundled",
-    } as unknown as import("../common/settings").ISettings;
+      lint: {},
+    } satisfies ISettings;
     expect(findRyBinaryPath(settings, false)).toBe(executable);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -104,6 +109,31 @@ it.skipIf(process.platform === "win32")(
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(resolved).toBe(false);
       expect(await probe).toEqual({ major: 0, minor: 9, patch: 0 });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "version probing rejects malformed and non-string responses",
+  async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ry-version-json-"));
+    try {
+      const binary = path.join(dir, "ry");
+      for (const output of [
+        "not JSON",
+        "null",
+        "[]",
+        "{}",
+        '{"version": 9}',
+        '{"version": ["0.9.0"]}',
+      ]) {
+        fs.writeFileSync(binary, `#!/bin/sh\nprintf '%s\\n' '${output}'\n`, {
+          mode: 0o755,
+        });
+        expect(await getRyVersion(binary)).toBeUndefined();
+      }
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

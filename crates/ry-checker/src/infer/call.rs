@@ -223,17 +223,17 @@ impl Checker {
         // unbound name inside it still fires. Must run before the
         // FnTable stage below so a project-local `lapply` wrapper still
         // gets callback inference.
-        if call
-            .resolved_sig
-            .as_ref()
-            .is_some_and(|signature| signature.higher_order.is_some())
+        if let Some(signature) = &call.resolved_sig
+            && let Some(result) = self.infer_higher_order_call(
+                &semantic_name,
+                signature,
+                args,
+                &call.arg_types,
+                scope,
+                span,
+            )
         {
-            self.walk_callback_for_diagnostics(&lookup_name, args, &call.arg_types, scope);
-        }
-        if let Some(rt) =
-            self.infer_higher_order_call(&lookup_name, args, &call.arg_types, scope, span)
-        {
-            return rt;
+            return result;
         }
 
         // User functions: the refined FnTable return slot (stabilized by
@@ -341,13 +341,16 @@ impl Checker {
         args: &[Arg],
         scope: &mut Scope,
     ) -> Option<RType> {
+        if !is_user_infix_name(semantic_name) && semantic_name != "." {
+            return None;
+        }
         let custom_infix_is_known = self.has_function_anywhere(semantic_name)
             || self
                 .fn_table
                 .fns
                 .keys()
                 .any(|name| semantic_argument_name(name) == semantic_name);
-        if (is_user_infix_name(semantic_name) || semantic_name == ".") && !custom_infix_is_known {
+        if !custom_infix_is_known {
             let mut quoted_scope = scope.clone();
             for argument in args {
                 self.infer_discarding(&argument.value, &mut quoted_scope);
@@ -902,6 +905,10 @@ impl Checker {
                 .as_ref()
                 .and_then(|matches| matches.param_for_arg[index].or(matches.dots))
                 .and_then(|parameter| user_function.as_ref()?.params.get(parameter));
+            let injection = resolved_sig
+                .as_ref()
+                .and_then(|sig| argument_supports_injection(sig, args, index))
+                .max(user_param.and_then(|parameter| parameter.injection));
             let is_defused = user_param.is_some_and(|parameter| parameter.defused);
             let is_quoting = user_param.is_some_and(|parameter| parameter.quoting);
             if is_quoting {
@@ -917,7 +924,11 @@ impl Checker {
             }
             if is_defused && declared_mode.is_none_or(|mode| matches!(mode, EvalMode::Normal)) {
                 let mut local = self.dplyr_data_mask_scope(scope, &RType::unknown());
-                arg_types.push(self.infer(&a.value, &mut local));
+                arg_types.push(self.infer_with_injection(
+                    &a.value,
+                    &mut local,
+                    Some(InjectionMode::Full),
+                ));
                 continue;
             }
             if let Some((_, data)) = supplied_data_mask_source
@@ -929,7 +940,7 @@ impl Checker {
             }
             if let Some(mode) = declared_mode {
                 let inferred = match mode {
-                    EvalMode::Normal => self.infer(&a.value, scope),
+                    EvalMode::Normal => self.infer_with_injection(&a.value, scope, injection),
                     EvalMode::QuotedSymbol => {
                         if matches!(a.value, Expr::Ident { .. }) {
                             RType::unknown()
@@ -954,7 +965,7 @@ impl Checker {
                                     })
                             })
                         else {
-                            arg_types.push(self.infer(&a.value, scope));
+                            arg_types.push(self.infer_with_injection(&a.value, scope, injection));
                             continue;
                         };
                         let mut local = self.dplyr_data_mask_scope(scope, &data);
@@ -962,7 +973,7 @@ impl Checker {
                         if user_dispatch {
                             local = local.with_unknown_data_mask();
                         }
-                        self.infer(&a.value, &mut local)
+                        self.infer_with_injection(&a.value, &mut local, injection)
                     }
                     EvalMode::TidySelect => {
                         let data = arg_types.first().cloned().unwrap_or_else(RType::unknown);
@@ -975,7 +986,7 @@ impl Checker {
                 };
                 arg_types.push(inferred);
             } else {
-                arg_types.push(self.infer(&a.value, scope));
+                arg_types.push(self.infer_with_injection(&a.value, scope, injection));
             }
         }
         CallResolution {

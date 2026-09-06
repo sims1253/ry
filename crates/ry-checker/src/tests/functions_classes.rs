@@ -655,8 +655,7 @@ fn purrr_map_dbl_infers_double_vector() {
 
 #[test]
 fn purrr_map_dbl_type_mismatch_fires_ry080() {
-    // map_dbl whose callback returns character fires
-    // RY080 (R coerces silently, but the mismatch is a likely bug).
+    // A character result cannot be coerced into a typed double map.
     let diags = check(
         "library(purrr)\n\
              xs <- map_dbl(1:3, function(x) paste(\"n\", x))\n",
@@ -665,7 +664,7 @@ fn purrr_map_dbl_type_mismatch_fires_ry080() {
         diags.iter().any(|d| {
             d.code == "RY080"
                 && d.message
-                    == "`map_dbl` expects `double` returns but the callback returns `character`; R will coerce silently"
+                    == "`map_dbl` requires a scalar `double` callback result, but the callback returns `character<len=1>`; R rejects this result"
         }),
         "map_dbl with character callback should fire RY080, got {:?}",
         diags

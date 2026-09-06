@@ -13,7 +13,6 @@
 //! multi-file/multi-core runs, not a license to regress single-file
 //! latency.
 
-use std::io::Write;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -29,13 +28,6 @@ fn large_file_checks_under_two_seconds() {
         .collect();
     let src = lines.join("\n");
 
-    let mut tmp_path = std::env::temp_dir();
-    tmp_path.push(format!("ry_perf_{}.R", std::process::id()));
-    {
-        let mut f = std::fs::File::create(&tmp_path).expect("create temp file");
-        f.write_all(src.as_bytes()).expect("write temp file");
-    }
-
     let start = Instant::now();
     let mut parser = RParser::new().expect("parser init");
     let file = parser
@@ -45,8 +37,6 @@ fn large_file_checks_under_two_seconds() {
     c.check(&file);
     let _ = c.take_diagnostics();
     let elapsed = start.elapsed();
-
-    let _ = std::fs::remove_file(&tmp_path);
 
     assert!(
         elapsed.as_secs_f64() < 2.0,

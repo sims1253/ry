@@ -75,9 +75,9 @@ use ry_core::types::{ClassVector, ColumnSchema, FunctionSignature, Length, Mode,
 use ry_typeshed::{
     AssertionProvenanceKind, AssertionSpec, CallbackArg, ConditionalScopeEffect,
     DefaultCurrentScope, EvalMode, FunctionSig, Globals, HigherOrderResultKind, HigherOrderSpec,
-    JsonLength, JsonMode, JsonRType, ParamSpec, ReturnLengthSpec, ReturnSlot, ReturnSpec,
-    SchemaEffect, ScopeEffect, Typeshed, is_known_package, known_packages, load_base_cached,
-    load_package,
+    InjectionMode, JsonLength, JsonMode, JsonRType, ParamSpec, ReturnLengthSpec, ReturnSlot,
+    ReturnSpec, SchemaEffect, ScopeEffect, Typeshed, is_known_package, known_packages,
+    load_base_cached, load_package,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -293,6 +293,7 @@ pub struct Scope {
     /// not be resolved through the project-wide, name-only function table.
     pub(crate) lexical_functions: HashSet<String>,
     pub data_mask_unknown: bool,
+    pub(crate) tidy_injection: Option<InjectionMode>,
     pub search_path_unknown: bool,
     /// Execution cannot continue in this block because a preceding operation
     /// is known to throw. Cloned scopes keep this fact local to that path.
@@ -450,6 +451,7 @@ pub(crate) struct UserParam {
     /// Whether the function captures this argument as an unevaluated
     /// expression (for example through `substitute(x)`).
     pub(crate) quoting: bool,
+    pub(crate) injection: Option<InjectionMode>,
 }
 
 /// The complete portion of a user-defined function signature that can affect
@@ -1096,95 +1098,49 @@ impl Checker {
                 continue;
             }
 
-            let mut claimed = std::collections::HashSet::new();
-            let mut next_positional = 0;
-            for (argument_name, source) in &call.arguments {
+            let names: Vec<&str> = if let Some(callee) = user_callee {
+                callee
+                    .params
+                    .iter()
+                    .map(|param| param.name.as_str())
+                    .collect()
+            } else {
+                stub_callee
+                    .as_ref()
+                    .unwrap()
+                    .params
+                    .iter()
+                    .map(|param| param.name.as_str())
+                    .collect()
+            };
+            let bindings = infer::match_argument_names(
+                &names,
+                call.arguments.iter().map(|(name, _)| name.as_deref()),
+            );
+            for (index, (_, source)) in call.arguments.iter().enumerate() {
                 let Some(source) = source else {
                     continue;
                 };
                 let target = if source == "..." {
-                    // `callee(...)` forwards the caller's dots only to the
-                    // callee's dots promise, never to an arbitrary formal.
-                    user_callee
-                        .and_then(|callee| {
-                            callee.params.iter().position(|param| param.name == "...")
-                        })
-                        .or_else(|| {
-                            stub_callee.as_ref().and_then(|sig| {
-                                sig.params.iter().position(|param| param.name == "...")
-                            })
-                        })
-                } else if let Some(argument_name) = argument_name {
-                    user_callee
-                        .and_then(|callee| {
-                            callee
-                                .params
-                                .iter()
-                                .position(|param| param.name == *argument_name)
-                                .or_else(|| {
-                                    callee.params.iter().position(|param| param.name == "...")
-                                })
-                        })
-                        .or_else(|| {
-                            stub_callee.as_ref().and_then(|sig| {
-                                sig.params
-                                    .iter()
-                                    .position(|param| param.name == *argument_name)
-                                    .or_else(|| {
-                                        sig.params.iter().position(|param| param.name == "...")
-                                    })
-                            })
-                        })
+                    bindings.dots
                 } else {
-                    let params: Vec<&str> = if let Some(callee) = user_callee {
-                        callee
-                            .params
-                            .iter()
-                            .map(|param| param.name.as_str())
-                            .collect()
-                    } else {
-                        stub_callee
-                            .as_ref()
-                            .map(|sig| sig.params.iter().map(|param| param.name.as_str()).collect())
-                            .unwrap_or_default()
-                    };
-                    while next_positional < params.len()
-                        && (params[next_positional] == "..." || claimed.contains(&next_positional))
-                    {
-                        next_positional += 1;
-                    }
-                    let target = (next_positional < params.len()).then_some(next_positional);
-                    next_positional += usize::from(target.is_some());
-                    target
+                    bindings.param_for_arg[index].or(bindings.dots)
                 };
                 let Some(target) = target else {
                     continue;
                 };
-                claimed.insert(target);
-                // `target` was computed against whichever params list was
-                // selected above; the other source's list may be shorter, so
-                // every index below must stay bounds-checked.
-                //
-                // `CapturesPromise` deliberately does NOT propagate quoting
-                // here. Letting it through silences every call site of the
-                // `p <- substitute(p)` wrapper idiom wholesale — including
-                // genuine argument bugs inside those blocks (the six ledgered
-                // dbplyr RY091 true positives in tests/testthat/
-                // test-backend-.R and test-translate-sql-string.R, whose
-                // `expect_translation_snapshot()` helper is exactly this
-                // shape). The defused-parameter arm keeps inferring such
-                // blocks with diagnostics, while unknown data-mask scoping
-                // keeps their mask-shadowable names opaque; see the
-                // Ident ladder in `infer/mod.rs`.
-                let inherits_quoting = user_callee
-                    .is_some_and(|callee| callee.params.get(target).is_some_and(|p| p.quoting))
-                    || stub_callee.as_ref().is_some_and(|sig| {
-                        sig.params.get(target).is_some_and(|param| {
-                            sig.eval.get(&param.name).is_some_and(|mode| {
-                                matches!(mode, EvalMode::QuotedExpression | EvalMode::QuotedSymbol)
-                            })
-                        })
-                    });
+                // Capturing a promise does not imply quoting every caller expression:
+                // mixed-use wrappers still need diagnostics inside their arguments.
+                let inherits_quoting = if let Some(callee) = user_callee {
+                    callee.params[target].quoting
+                } else {
+                    stub_callee.as_ref().is_some_and(|sig| {
+                        matches!(
+                            sig.eval.get(names[target]),
+                            Some(EvalMode::QuotedExpression | EvalMode::QuotedSymbol)
+                        )
+                    })
+                };
                 // Dots capture is already modeled as defusing (rather than
                 // quoting) so its direct arguments remain opaque.  Preserve
                 // that stronger behavior while forwarding `...` to another
@@ -1192,17 +1148,30 @@ impl Checker {
                 let inherits_defusing = source == "..."
                     && user_callee
                         .is_some_and(|callee| callee.params.get(target).is_some_and(|p| p.defused));
-                if (inherits_quoting || inherits_defusing)
+                let inherits_injection = if let Some(callee) = user_callee {
+                    callee.params[target].injection
+                } else {
+                    stub_callee
+                        .as_ref()
+                        .and_then(|sig| sig.injection.get(names[target]).copied())
+                };
+                if (inherits_quoting || inherits_defusing || inherits_injection.is_some())
                     && caller.params.iter().any(|param| param.name == *source)
                 {
-                    inherited.push((call.caller.clone(), source.clone(), inherits_quoting));
+                    inherited.push((
+                        call.caller.clone(),
+                        source.clone(),
+                        inherits_quoting,
+                        inherits_defusing,
+                        inherits_injection,
+                    ));
                 }
             }
         }
 
         let table = Arc::make_mut(&mut self.fn_table);
         let mut changed = false;
-        for (caller, parameter, quoting) in inherited {
+        for (caller, parameter, quoting, defused, injection) in inherited {
             if let Some(parameter) = table
                 .fns
                 .get_mut(&caller)
@@ -1211,8 +1180,13 @@ impl Checker {
                 if quoting && !parameter.quoting {
                     parameter.quoting = true;
                     changed = true;
-                } else if !quoting && !parameter.defused {
+                }
+                if defused && !parameter.defused {
                     parameter.defused = true;
+                    changed = true;
+                }
+                if injection > parameter.injection {
+                    parameter.injection = injection;
                     changed = true;
                 }
             }

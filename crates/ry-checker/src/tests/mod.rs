@@ -1,6 +1,7 @@
 use super::*;
 use ry_core::RParser;
 
+mod constructors;
 mod data_frames_s3;
 mod diagnostics;
 mod functions_classes;
@@ -10,20 +11,19 @@ mod packages_typeshed;
 mod quoting_data_mask;
 mod scope_resolution;
 mod type_inference;
+mod typed_maps;
 
 // Shared fixtures used across topic modules.
 
-/// Parse one checker-test snippet: the single parser entry point shared
-/// by these topic modules and the inline `#[cfg(test)]` units, so
-/// parser setup cannot drift between them.
-pub(super) fn parse_snippet(path: &str, src: &str) -> SourceFile {
+/// Parse a checker test snippet under the given source path.
+pub(super) fn parse_file(path: &str, src: &str) -> SourceFile {
     let mut p = RParser::new().unwrap();
     p.parse(path, src).unwrap()
 }
 
 fn check(src: &str) -> Vec<Diagnostic> {
     let mut c = Checker::new("test.R");
-    c.check(&parse_snippet("test.R", src));
+    c.check(&parse_file("test.R", src));
     c.take_diagnostics()
 }
 
@@ -33,7 +33,7 @@ fn check(src: &str) -> Vec<Diagnostic> {
 fn check_with(src: &str, setup: impl FnOnce(&mut Checker)) -> Vec<Diagnostic> {
     let mut c = Checker::new("test.R");
     setup(&mut c);
-    c.check(&parse_snippet("test.R", src));
+    c.check(&parse_file("test.R", src));
     c.take_diagnostics()
 }
 
@@ -44,7 +44,7 @@ fn check_with(src: &str, setup: impl FnOnce(&mut Checker)) -> Vec<Diagnostic> {
 /// structure and cannot diverge from it.
 fn check_with_scope(src: &str) -> (Vec<Diagnostic>, Scope) {
     let mut c = Checker::new("test.R");
-    c.check_with_scope(&parse_snippet("test.R", src))
+    c.check_with_scope(&parse_file("test.R", src))
 }
 
 /// `check_with_scope` plus stub typeshed files (file name, raw JSON)
@@ -58,11 +58,5 @@ fn check_with_stubs(src: &str, stub_files: &[(&str, &str)]) -> (Vec<Diagnostic>,
     }
     let mut c = Checker::new("test.R");
     c.set_user_stubs(Arc::new(ry_typeshed::load_stub_dir(dir.path()).unwrap()));
-    c.check_with_scope(&parse_snippet("test.R", src))
-}
-
-/// Parse helper for tests that check a `SourceFile` under a custom path
-/// (project mode, non-`test.R` names). Also used by `project::tests`.
-pub(super) fn parse_file(path: &str, src: &str) -> SourceFile {
-    parse_snippet(path, src)
+    c.check_with_scope(&parse_file("test.R", src))
 }

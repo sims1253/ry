@@ -111,8 +111,12 @@ export class LazyOutputChannel implements vscode.OutputChannel {
 
   show(preserveFocus?: boolean): void;
   show(column?: vscode.ViewColumn, preserveFocus?: boolean): void;
-  show(column?: unknown, preserveFocus?: unknown): void {
-    this.channel.show(column as vscode.ViewColumn, preserveFocus as boolean);
+  show(column?: vscode.ViewColumn | boolean, preserveFocus?: boolean): void {
+    if (typeof column === "boolean") {
+      this.channel.show(column);
+    } else {
+      this.channel.show(column, preserveFocus);
+    }
   }
 
   hide(): void {

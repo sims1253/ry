@@ -1299,3 +1299,73 @@ fn foreach_user_infix_binds_named_iteration_variables() {
         diagnostic.code == "RY010" && diagnostic.message.contains("genuinely_missing")
     }));
 }
+
+#[test]
+fn ordinary_double_negation_keeps_base_r_semantics() {
+    let (diags, scope) = check_with_scope("truth <- !!1\nbad <- !!list(1)\n");
+    assert_eq!(scope.get("truth"), Some(&RType::scalar(Mode::Logical)));
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert_eq!(diags[0].code, "RY021");
+    let diags = check("with(data.frame(x = 'text'), !!x)");
+    assert!(diags.iter().any(|d| d.code == "RY021"), "{diags:?}");
+}
+
+#[test]
+fn injection_contexts_do_not_leak_into_following_expressions() {
+    for source in [
+        "rlang::inject(list(!!list(1)))",
+        "rlang::expr(!!list(1))",
+        "dplyr::mutate(data.frame(x = 1), y = !!'text')",
+        "library(dplyr)\nmutate(data.frame(x = 1), y = !!'text')",
+    ] {
+        assert!(check(source).is_empty(), "{source}: {:?}", check(source));
+        let diags = check(&format!("{source}\n!!list(1)"));
+        assert_eq!(
+            diags.iter().filter(|d| d.code == "RY021").count(),
+            1,
+            "{source}: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn forwarded_dynamic_dots_support_splicing() {
+    for source in [
+        "rlang::list2(!!!list(1))",
+        "wrap <- function(...) rlang::list2(...); wrap(!!!list(1))",
+        "inner <- function(x, ...) rlang::list2(...); wrap <- function(...) inner(1, ...); wrap(!!!list(1))",
+        "purrr::pluck(list(1), !!!list(1))",
+    ] {
+        assert!(check(source).is_empty(), "{source}: {:?}", check(source));
+    }
+    for source in [
+        "rlang::list2(!!list(1))",
+        "plain <- function(x) x; plain(!!list(1))",
+    ] {
+        assert!(check(source).iter().any(|d| d.code == "RY021"), "{source}");
+    }
+}
+
+#[test]
+fn forwarded_quoting_uses_complete_r_argument_matching() {
+    for forwarding in [
+        "capture(1, value)",
+        "capture(expr = value, first = 1)",
+        "capture(expression = value, 1)",
+    ] {
+        let source = format!(
+            "capture <- function(first, expression) substitute(expression)\nwrap <- function(value) {forwarding}\nwrap(unbound)"
+        );
+        assert!(check(&source).is_empty(), "{source}: {:?}", check(&source));
+    }
+}
+
+#[test]
+fn project_refinement_resolves_forwarded_library_calls() {
+    let source = "library(rlang)\nwrap <- function(...) list2(...)\nwrap(!!!list(1))";
+    let mut project = crate::Project::new();
+    project.add_file("test.R".into(), parse_file("test.R", source));
+    for (_, diags) in project.check() {
+        assert!(diags.is_empty(), "{diags:?}");
+    }
+}

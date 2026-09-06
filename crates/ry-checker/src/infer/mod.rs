@@ -1,14 +1,20 @@
 use super::*;
+pub(crate) use args::*;
 pub(crate) use index::*;
-pub(crate) use misc::*;
+pub(crate) use narrow::*;
 pub(crate) use pipe::PipeForm;
+pub(crate) use quoting::*;
+pub(crate) use types::*;
+mod args;
 pub(crate) mod binop;
 pub(crate) mod call;
 pub(crate) mod construct;
 pub(crate) mod index;
-pub(crate) mod misc;
+mod narrow;
 pub(crate) mod pipe;
+mod quoting;
 pub(crate) mod recall;
+mod types;
 
 /// Join an entire collection of types into one: the lattice join of every
 /// element, with `unknown` for an empty collection (no branch contributes
@@ -1699,21 +1705,17 @@ impl Checker {
                 )
             }
             Expr::UnaryOp { op, expr, span } => {
-                // Detect tidyeval `!!` (unquote) and `!!!` (splice)
-                // operators BEFORE inferring the inner expression.
-                // tree-sitter parses these as nested unary `!`:
-                // `!!x` -> `!(!x)`, `!!!x` -> `!(!(!x))`.
-                // These are NSE operators, not actual negation. We must
-                // strip ALL nested `!` operators and only infer the
-                // innermost operand, so RY021 doesn't fire on the
-                // intermediate `!` applied to a list/function.
-                if matches!(op, UnaryOpKind::Not)
+                // Injection is syntax only in arguments whose signatures opt in.
+                if scope.tidy_injection.is_some()
+                    && matches!(op, UnaryOpKind::Not)
                     && matches!(
                         expr.as_ref(),
                         Expr::UnaryOp {
                             op: UnaryOpKind::Not,
+                            expr: inner,
                             ..
-                        }
+                        } if scope.tidy_injection == Some(InjectionMode::Full)
+                            || matches!(inner.as_ref(), Expr::UnaryOp { op: UnaryOpKind::Not, .. })
                     )
                 {
                     // Strip all consecutive `!` operators to find
@@ -1730,6 +1732,9 @@ impl Checker {
                 }
                 if let Some(dispatched) = self.try_s3_unary_dispatch(*op, &t) {
                     return dispatched;
+                }
+                if matches!(op, UnaryOpKind::Neg) && t.class.contains("factor") {
+                    return self.infer_factor_arithmetic(&t, None, *span);
                 }
                 match op {
                     UnaryOpKind::Neg => {

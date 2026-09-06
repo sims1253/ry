@@ -24,6 +24,9 @@ use std::process::Command;
 
 use ry_checker::{Checker, Severity};
 use ry_core::RParser;
+use ry_core::ast::Expr;
+use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
+use std::ops::ControlFlow;
 
 #[derive(Debug)]
 enum Tag {
@@ -132,26 +135,61 @@ fn tail_snippet(s: &str) -> String {
     lines[start..].join(" | ")
 }
 
-/// R packages a fixture declares via `library(pkg)`, `require(pkg)`, or
-/// `requireNamespace("pkg")`. Scanned lexically (the fixtures are flat
-/// scripts); comment lines are ignored so a comment MENTIONING library()
-/// does not count.
+/// Packages named by loading calls or namespace references in a fixture.
+/// Parse the source so comments and string contents do not add dependencies.
 fn fixture_packages(src: &str) -> Vec<String> {
-    let mut pkgs: Vec<String> = Vec::new();
-    for line in src.lines() {
-        let code = line.split('#').next().unwrap_or("");
-        for prefix in ["library(", "require(", "requireNamespace("] {
-            let Some(pos) = code.find(prefix) else {
-                continue;
-            };
-            let rest = &code[pos + prefix.len()..];
-            let end = rest.find([')', ',']).unwrap_or(rest.len());
-            let name = rest[..end].trim().trim_matches(['"', '\'']).to_string();
-            if !name.is_empty() && !pkgs.contains(&name) {
-                pkgs.push(name);
-            }
+    let mut parser = RParser::new().expect("parser init");
+    let file = parser
+        .parse("oracle-packages.R", src)
+        .expect("parse fixture");
+    let mut pkgs = Vec::new();
+    let mut add = |name: &str| {
+        if !name.is_empty() && !pkgs.iter().any(|pkg| pkg == name) {
+            pkgs.push(name.to_owned());
         }
-    }
+    };
+    let _ = walk_stmts(
+        &file.stmts,
+        Walk {
+            dollar_args: false,
+            ..Walk::ALL
+        },
+        |node, _| -> ControlFlow<(), Descend> {
+            if let AstNode::Expr(Expr::Ident { name, span }) = node {
+                // A backtick-quoted identifier can contain literal colons.
+                let text = &src[span.start..span.end];
+                let quoted_identifier = text
+                    .strip_prefix('`')
+                    .and_then(|text| text.strip_suffix('`'))
+                    .is_some_and(|text| !text.contains('`'));
+                if !quoted_identifier && let Some((package, _)) = name.split_once("::") {
+                    add(package);
+                }
+            }
+            if let AstNode::Expr(Expr::Call { func, args, .. }) = node
+                && let Expr::Ident { name, .. } = func.as_ref()
+                && matches!(
+                    name.as_str(),
+                    "library"
+                        | "require"
+                        | "requireNamespace"
+                        | "base::library"
+                        | "base::require"
+                        | "base::requireNamespace"
+                )
+                && let Some(argument) = args
+                    .iter()
+                    .find(|arg| arg.name.as_deref() == Some("package"))
+                    .or_else(|| args.iter().find(|arg| arg.name.is_none()))
+            {
+                match &argument.value {
+                    Expr::Ident { name, .. } | Expr::String(name, _) => add(name),
+                    _ => {}
+                }
+            }
+            ControlFlow::Continue(Descend::Into)
+        },
+    );
     pkgs
 }
 
@@ -672,4 +710,46 @@ fn oracle_does_not_treat_error_text_as_process_failure() {
     let path = dir.path().join("message.R");
     fs::write(&path, "message('Error is also ordinary text')\n").unwrap();
     assert!(!r_errors(&path).0);
+}
+
+#[test]
+fn fixture_packages_finds_qualified_references_and_multiline_loads() {
+    let src = r#"
+        purrr::map(1, identity)
+        callback <- rlang:::internal
+        library (
+            package = "dplyr"
+        )
+        require("tidyr"); requireNamespace("withr")
+        purrr::map(2, identity)
+    "#;
+    assert_eq!(
+        fixture_packages(src),
+        vec!["purrr", "rlang", "dplyr", "tidyr", "withr"]
+    );
+}
+
+#[test]
+fn fixture_packages_ignores_comments_strings_and_literal_names() {
+    let src = r##"
+        # fake::fun(); library(fake)
+        text <- "library(fake); fake::fun() # require(fake)"
+        text <- 'fake:::internal'
+        `fake::fun` <- function() NULL
+        x$`fake::fun`
+        library("purrr") # fake::fun()
+    "##;
+    assert_eq!(fixture_packages(src), vec!["purrr"]);
+}
+
+#[test]
+fn fixture_packages_covers_namespace_only_oracles() {
+    assert!(
+        fixture_packages(include_str!("../testdata/oracle/conditional_maps.R"))
+            .contains(&"purrr".to_owned())
+    );
+    assert_eq!(
+        fixture_packages(include_str!("../testdata/oracle/tidy_injection.R")),
+        vec!["rlang", "dplyr", "purrr"]
+    );
 }

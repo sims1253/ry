@@ -6,6 +6,8 @@ y <- structure(2, class = "right")
 # Distinct methods fall back to numeric storage under default selection.
 stopifnot(unclass(suppressWarnings(x + y)) + 1 == 4)
 stopifnot(unclass(suppressWarnings(y + x)) + 1 == 4)
+# The primitive result retains the left operand's class. Without unclass(),
+# the following addition dispatches again through that class's method.
 stopifnot(identical(suppressWarnings(x + y) + 1, "left"))
 stopifnot(identical(suppressWarnings(y + x) + 1, "right"))
 # One-sided and identical-method dispatch still choose the method.

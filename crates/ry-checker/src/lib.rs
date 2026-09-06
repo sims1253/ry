@@ -28,9 +28,9 @@ pub use project::Project;
 // crate root for back-compat (callers and tests reference
 // `ry_checker::{Severity, Diagnostic, ...}` directly).
 pub use diagnostics::{
-    Confidence, Diagnostic, Severity, SeverityFilter, Suppression, amend_ignore_comment_body,
-    apply_filter_to_diagnostics, filter_suppressed_with_comments,
-    has_file_suppression_from_comments, is_suppressed, parse_suppressions_from_comments,
+    Confidence, Diagnostic, Severity, SeverityFilter, Suppression, apply_filter_to_diagnostics,
+    filter_suppressed_with_comments, has_file_suppression_from_comments, is_suppressed,
+    parse_suppressions_from_comments,
 };
 
 // These builders live here, not in ry-config, because ry-checker depends

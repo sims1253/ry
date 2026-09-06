@@ -488,53 +488,6 @@ fn file_suppression_actions_follow_the_current_document_comments() {
                 );
             }
         }
-
-        // Line-level quick fix on a live document: prose already trails
-        // the diagnostic's line, so the edit must place the directive
-        // at the start of the comment body — a second `#` marker
-        // appended after the prose would not be recognized (#210).
-        let mark = session.publication_mark();
-        session
-            .change(
-                &uri,
-                4,
-                json!([{"text": "y <- never_defined_name  # explanation\n"}]),
-            )
-            .await
-            .unwrap();
-        let published = session
-            .published_diagnostics_after(&uri, mark)
-            .await
-            .unwrap();
-        let diagnostics = published["params"]["diagnostics"].as_array().unwrap();
-        assert!(
-            !diagnostics.is_empty(),
-            "the prose comment must not suppress the diagnostic"
-        );
-        let actions = session.request("textDocument/codeAction", json!({
-            "textDocument": {"uri": uri},
-            "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 1}},
-            "context": {"diagnostics": diagnostics}
-        })).await.unwrap();
-        let line_action = actions.as_array().and_then(|actions| {
-            actions.iter().find(|action| {
-                action["title"]
-                    .as_str()
-                    .is_some_and(|title| title.ends_with("on this line"))
-            })
-        });
-        let action = line_action.expect("line-level action offered across the live document");
-        let new_text = action["edit"]["changes"][&uri][0]["newText"]
-            .as_str()
-            .unwrap();
-        assert!(
-            new_text.starts_with("y <- never_defined_name  # ry: ignore["),
-            "the directive must lead the comment body, got: {new_text}"
-        );
-        assert!(
-            new_text.ends_with(" explanation"),
-            "the existing prose must survive the edit, got: {new_text}"
-        );
         harness::join_session(session, server).await;
     });
 }

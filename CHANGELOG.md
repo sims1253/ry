@@ -246,12 +246,6 @@ suppression actions — and fixes a parser panic plus several editor issues.
 - Suppression quick fixes use the cached document parse. File-level actions
   recognize case-insensitive directives and ignore markers inside strings or
   prose comments; line-level detection retains multiline string context.
-  Line-level edits now merge into a comment that already sits on the line —
-  extending an existing directive's rule list, or placing the directive at
-  the start of a prose comment's body — instead of appending a second `#`
-  marker the checker cannot recognize, and are withheld when the line ends
-  inside an open multiline string, where an append would change the
-  string's value.
 
 - Typeshed validation rejects empty recycled-value parameter sets, mismatched
   callback names and positions, and unsupported conditional-scope values.

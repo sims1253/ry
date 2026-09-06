@@ -83,9 +83,6 @@ mod tests {
         let discovered = index_workspace(&dir, &config);
 
         let paths: Vec<&str> = discovered.files.keys().map(String::as_str).collect();
-        // Exact count keeps discovery regressions (an over- or
-        // under-inclusive rule) visible even when the membership
-        // assertions below still pass.
         assert_eq!(paths.len(), 3, "a.R, b.r and sub/d.R: {paths:?}");
         assert!(paths.iter().any(|p| p.ends_with("a.R")), "a.R found");
         assert!(paths.iter().any(|p| p.ends_with("b.r")), "b.r found");

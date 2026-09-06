@@ -7,12 +7,9 @@
 //! live outside the `Backend` impl.
 
 use std::collections::HashMap;
-use std::ops::ControlFlow;
 
-use ry_checker::{Diagnostic as RyDiagnostic, Severity, Suppression};
+use ry_checker::{Diagnostic as RyDiagnostic, Severity};
 use ry_core::SourceFile;
-use ry_core::ast::Expr;
-use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
 use tower_lsp::lsp_types::{
     CodeAction, CodeActionKind, Diagnostic as LspDiagnostic, DiagnosticSeverity, NumberOrString,
     Position, Range, TextEdit, Url, WorkspaceEdit,
@@ -92,70 +89,36 @@ pub(super) fn diag_code_from_lsp(d: &LspDiagnostic) -> String {
     }
 }
 
-/// Build a `CodeAction` that suppresses the diagnostic with a
-/// `# ry: ignore[CODE]` comment on its line. Returns `None` when the
+/// Build a `CodeAction` that appends a `# ry: ignore[CODE]` suppression
+/// comment to the end of the diagnostic's line. Returns `None` when the
 /// checker would already suppress the diagnostic (no redundant no-op):
 /// either a trailing directive on its line or a standalone directive on
 /// the comment-only lines directly above it.
-///
-/// The edit merges into a comment that already sits on the line rather
-/// than appending a second `#` marker after it — everything after the
-/// first `#` is one comment and the checker only recognizes a directive
-/// at the start of its body (#210). An existing directive's rule list is
-/// extended in place; a prose comment keeps its text behind a fresh
-/// directive. With no comment on the line one is appended — unless the
-/// line ends inside an open multiline string, where an append would
-/// change the string's value, so the action is withheld.
 pub(super) fn make_ignore_action(
     uri: &Url,
     diag: &LspDiagnostic,
     file: &SourceFile,
-    suppressions: &[Suppression],
 ) -> Option<CodeAction> {
     let text = &file.source;
     let line = diag.range.start.line as usize;
     let line_text = text.lines().nth(line)?;
     let code = diag_code_from_lsp(diag);
 
-    let already_ignored = suppressions.iter().any(|suppression| {
-        suppression.line == line
-            && (suppression.rules.is_empty() || suppression.rules.iter().any(|rule| rule == &code))
-    });
+    let already_ignored = ry_checker::parse_suppressions_from_comments(&file.comments, text)
+        .iter()
+        .any(|suppression| {
+            suppression.line == line
+                && (suppression.rules.is_empty()
+                    || suppression.rules.iter().any(|rule| rule == &code))
+        });
     if already_ignored {
         return None;
     }
 
-    let new_line = match file.comments.iter().find(|c| c.line == line) {
-        Some(comment) => {
-            // A comment already trails the line. The checker only
-            // recognizes a directive at the START of a comment body, so
-            // merge into an existing directive or prepend a fresh one
-            // ahead of the prose — never append a second `#` marker.
-            // Trailing whitespace is trimmed because the whole-line
-            // edit range ends before the line terminator, and a CRLF
-            // `\r` swallowed by the comment node would otherwise be
-            // duplicated.
-            let body = comment.body.trim_end();
-            let head = &line_text[..comment.col];
-            match ry_checker::amend_ignore_comment_body(body, &code) {
-                Some(amended) => format!("{head}#{amended}"),
-                None if code.is_empty() => {
-                    format!("{head}# ry: ignore {}", body.trim_start())
-                }
-                None => format!("{head}# ry: ignore[{code}] {}", body.trim_start()),
-            }
-        }
-        None => {
-            // No comment on the line: append one.
-            if line_end_inside_string(file, line, line_text) {
-                return None;
-            }
-            if code.is_empty() {
-                format!("{line_text}  # ry: ignore")
-            } else {
-                format!("{line_text}  # ry: ignore[{code}]")
-            }
-        }
+    let new_line = if code.is_empty() {
+        format!("{}  # ry: ignore", line_text)
+    } else {
+        format!("{}  # ry: ignore[{}]", line_text, code)
     };
 
     let start = Position {
@@ -231,22 +194,4 @@ pub(super) fn make_ignore_file_action(uri: &Url, file: &SourceFile) -> Option<Co
         }),
         ..Default::default()
     })
-}
-
-/// Whether the end of `line` sits strictly inside a string literal —
-/// a multiline string that opened on this line and continues below it.
-/// A `#` appended there is string content, not a comment, so the edit
-/// would silently change the string's value (#210); the caller
-/// withholds the action instead.
-fn line_end_inside_string(file: &SourceFile, line: usize, line_text: &str) -> bool {
-    let line_end = line_start(&file.source, line) + line_text.len();
-    let mut inside = false;
-    let _ = walk_stmts(&file.stmts, Walk::ALL, |node, _| match node {
-        AstNode::Expr(Expr::String(_, span)) if span.start < line_end && line_end < span.end => {
-            inside = true;
-            ControlFlow::Break(())
-        }
-        _ => ControlFlow::Continue(Descend::Into),
-    });
-    inside
 }

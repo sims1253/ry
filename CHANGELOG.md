@@ -259,6 +259,9 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Fixed
 
+- Detect recursive and prematurely forced defaults passed to `base::identity`,
+  while preserving laziness in quoted, masked, and conditional calls.
+
 - Avoid RY098 warnings for recursive names in default expressions when literal
   `if` conditions or short-circuit operators skip their evaluation.
 

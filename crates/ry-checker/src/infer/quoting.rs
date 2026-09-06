@@ -268,6 +268,16 @@ fn first_executed_identifier(expr: &Expr, wanted: &str) -> Option<Span> {
     match expr {
         Expr::Ident { name, span } => (name == wanted).then_some(*span),
         Expr::Call { func, args, .. } => {
+            // identity forces its sole argument after argument matching. Bare
+            // names can be masked; malformed calls fail before forcing x.
+            if matches!(ident_name(func), Some("base::identity" | "base:::identity")) {
+                return match args.as_slice() {
+                    [argument] if argument.name.as_deref().is_none_or(|name| name == "x") => {
+                        definitely_forced_identifier(&argument.value, wanted)
+                    }
+                    _ => None,
+                };
+            }
             // Only explicitly qualified strict builtins establish
             // guaranteed argument forcing. Bare names may be shadowed by
             // lazy user functions, and any other call may defuse

@@ -261,6 +261,40 @@ expression: snapshots
         start: 236
   fixture: err_purrr_map_dbl_type_mismatch.R
 - diagnostics:
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 26
+        end: 64
+        line: 1
+        start: 63
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 22
+        end: 107
+        line: 2
+        start: 106
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 39
+        end: 172
+        line: 3
+        start: 171
+    - code: RY098
+      message: "parameter `x` may force its default before body-local `value` is assigned"
+      severity: warning
+      span:
+        column: 17
+        end: 225
+        line: 5
+        start: 224
+  fixture: err_qualified_identity_forces_default.R
+- diagnostics:
     - code: RY102
       message: "`<-` inside `list()` assigns `github-ref` and leaves the element unnamed; write `\"github-ref\" = ...` to name it"
       severity: warning
@@ -692,6 +726,10 @@ expression: snapshots
   fixture: ok_purrr_map_dbl.R
 - diagnostics: []
   fixture: ok_qualified_call_not_shadowed.R
+- diagnostics: []
+  fixture: ok_qualified_identity_skips_lazy_arguments.R
+- diagnostics: []
+  fixture: ok_qualified_identity_unmatched_arguments.R
 - diagnostics: []
   fixture: ok_qualified_nse_aes.R
 - diagnostics: []

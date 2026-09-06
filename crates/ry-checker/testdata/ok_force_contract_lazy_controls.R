@@ -20,3 +20,8 @@ default_branch <- function(flag, x = { if (flag) { base::stop("done"); base::typ
 default_conditional_replace <- function(flag, x = { if (flag) x <- 1L else x <- 2L; base::typeof(x) }) x
 default_binary_halt <- function(x = base::stop("done") + base::typeof(x)) x
 default_index_halt <- function(x = base::stop("done")[base::typeof(x)]) x
+`[.force_fixture` <- function(x, i, ...) 1L
+`[[.force_fixture` <- function(x, i, ...) 1L
+object <- structure(1L, class = "force_fixture")
+ignored_subscript <- function(x = x) object[base::typeof(x)]
+ignored_double_subscript <- function(x = x) object[[base::typeof(x)]]

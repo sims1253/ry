@@ -43,3 +43,22 @@ for (f in list(default_binary_halt, default_index_halt)) {
   result <- tryCatch(f(), error = identity)
   stopifnot(identical(conditionMessage(result), "done"))
 }
+`[.force_fixture` <- function(x, i, ...) 1L
+`[[.force_fixture` <- function(x, i, ...) 1L
+object <- structure(1L, class = "force_fixture")
+ignored_subscript <- function(x = x) object[base::typeof(x)]
+ignored_double_subscript <- function(x = x) object[[base::typeof(x)]]
+stopifnot(identical(ignored_subscript(), 1L))
+stopifnot(identical(ignored_double_subscript(), 1L))
+condition_halt <- function(x = if (base::stop("done")) base::typeof(x) else 1L) x
+branches_halt <- function(flag, x = { if (flag) base::stop("done") else base::stop("done"); base::typeof(x) }) x
+while_halt <- function(x = { while (base::stop("done")) base::typeof(x) }) x
+for_halt <- function(x = { for (i in base::stop("done")) base::typeof(x) }) x
+for (f in list(condition_halt, while_halt, for_halt)) {
+  result <- tryCatch(f(), error = identity)
+  stopifnot(identical(conditionMessage(result), "done"))
+}
+result <- tryCatch(branches_halt(TRUE), error = identity)
+stopifnot(identical(conditionMessage(result), "done"))
+result <- tryCatch(branches_halt(FALSE), error = identity)
+stopifnot(identical(conditionMessage(result), "done"))

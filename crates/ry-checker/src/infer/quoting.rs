@@ -250,20 +250,9 @@ fn definitely_forced_identifier(checker: &Checker, expr: &Expr, wanted: &str) ->
                 )
             }
         }
-        Expr::Index {
-            base, kind, args, ..
-        } => definitely_forced_identifier(checker, base, wanted).or_else(|| {
-            if matches!(kind, IndexKind::Dollar) || expression_cannot_complete(checker, base) {
-                None
-            } else {
-                first_reference_before_exit(
-                    checker,
-                    args.iter().map(|argument| &argument.value),
-                    wanted,
-                    definitely_forced_identifier,
-                )
-            }
-        }),
+        // Index methods can ignore subscript promises. Only the object is
+        // forced before dispatch, so subscripts supply no force guarantee.
+        Expr::Index { base, .. } => definitely_forced_identifier(checker, base, wanted),
         Expr::Block { body, span } => {
             guaranteed_force_before_replacement(checker, body, wanted).then_some(*span)
         }
@@ -331,16 +320,40 @@ fn first_executed_identifier_in_stmt(
         Stmt::If {
             cond, then, else_, ..
         } => first_executed_identifier(checker, cond, wanted)
-            .or_else(|| first_executed_identifier_in_stmts(checker, then, wanted))
             .or_else(|| {
-                else_.as_ref().and_then(|statements| {
-                    first_executed_identifier_in_stmts(checker, statements, wanted)
-                })
+                if expression_cannot_complete(checker, cond) {
+                    None
+                } else {
+                    first_executed_identifier_in_stmts(checker, then, wanted)
+                }
+            })
+            .or_else(|| {
+                if expression_cannot_complete(checker, cond) {
+                    None
+                } else {
+                    else_.as_ref().and_then(|statements| {
+                        first_executed_identifier_in_stmts(checker, statements, wanted)
+                    })
+                }
             }),
-        Stmt::For { iter, body, .. } => first_executed_identifier(checker, iter, wanted)
-            .or_else(|| first_executed_identifier_in_stmts(checker, body, wanted)),
-        Stmt::While { cond, body, .. } => first_executed_identifier(checker, cond, wanted)
-            .or_else(|| first_executed_identifier_in_stmts(checker, body, wanted)),
+        Stmt::For { iter, body, .. } => {
+            first_executed_identifier(checker, iter, wanted).or_else(|| {
+                if expression_cannot_complete(checker, iter) {
+                    None
+                } else {
+                    first_executed_identifier_in_stmts(checker, body, wanted)
+                }
+            })
+        }
+        Stmt::While { cond, body, .. } => {
+            first_executed_identifier(checker, cond, wanted).or_else(|| {
+                if expression_cannot_complete(checker, cond) {
+                    None
+                } else {
+                    first_executed_identifier_in_stmts(checker, body, wanted)
+                }
+            })
+        }
         Stmt::Return { value, .. } => value
             .as_ref()
             .and_then(|value| first_executed_identifier(checker, value, wanted)),
@@ -388,6 +401,30 @@ fn statement_cannot_complete(checker: &Checker, statement: &Stmt) -> bool {
             expression_cannot_complete(checker, value)
         }
         Stmt::Return { .. } => true,
+        Stmt::If {
+            cond, then, else_, ..
+        } => {
+            expression_cannot_complete(checker, cond)
+                || match cond {
+                    Expr::Logical(true, _) => then
+                        .iter()
+                        .any(|stmt| statement_cannot_complete(checker, stmt)),
+                    Expr::Logical(false, _) => else_.as_ref().is_some_and(|body| {
+                        body.iter()
+                            .any(|stmt| statement_cannot_complete(checker, stmt))
+                    }),
+                    _ => {
+                        then.iter()
+                            .any(|stmt| statement_cannot_complete(checker, stmt))
+                            && else_.as_ref().is_some_and(|body| {
+                                body.iter()
+                                    .any(|stmt| statement_cannot_complete(checker, stmt))
+                            })
+                    }
+                }
+        }
+        Stmt::While { cond, .. } => expression_cannot_complete(checker, cond),
+        Stmt::For { iter, .. } => expression_cannot_complete(checker, iter),
         _ => false,
     }
 }
@@ -403,6 +440,23 @@ fn expression_cannot_complete(checker: &Checker, expression: &Expr) -> bool {
         Expr::Block { body, .. } => body
             .iter()
             .any(|statement| statement_cannot_complete(checker, statement)),
+        Expr::If {
+            cond, then, else_, ..
+        } => {
+            expression_cannot_complete(checker, cond)
+                || match cond.as_ref() {
+                    Expr::Logical(true, _) => expression_cannot_complete(checker, then),
+                    Expr::Logical(false, _) => else_
+                        .as_ref()
+                        .is_some_and(|branch| expression_cannot_complete(checker, branch)),
+                    _ => {
+                        expression_cannot_complete(checker, then)
+                            && else_
+                                .as_ref()
+                                .is_some_and(|branch| expression_cannot_complete(checker, branch))
+                    }
+                }
+        }
         _ => false,
     }
 }
@@ -439,23 +493,7 @@ fn first_executed_identifier(checker: &Checker, expr: &Expr, wanted: &str) -> Op
             }
         }
         Expr::UnaryOp { expr, .. } => first_executed_identifier(checker, expr, wanted),
-        Expr::Index {
-            base, kind, args, ..
-        } => first_executed_identifier(checker, base, wanted).or_else(|| {
-            // `$field` stores `field` as a synthesized identifier in the AST,
-            // but R does not evaluate it as an expression. Counting that name
-            // would turn `vars = parent$vars` into a self-reference.
-            if matches!(kind, IndexKind::Dollar) || expression_cannot_complete(checker, base) {
-                None
-            } else {
-                first_reference_before_exit(
-                    checker,
-                    args.iter().map(|argument| &argument.value),
-                    wanted,
-                    first_executed_identifier,
-                )
-            }
-        }),
+        Expr::Index { base, .. } => first_executed_identifier(checker, base, wanted),
         Expr::Block { body, .. } => first_executed_identifier_in_stmts(checker, body, wanted),
         Expr::If {
             cond, then, else_, ..
@@ -463,19 +501,33 @@ fn first_executed_identifier(checker: &Checker, expr: &Expr, wanted: &str) -> Op
             if matches!(cond.as_ref(), Expr::Logical(true, _)) {
                 first_executed_identifier(checker, then, wanted)
             } else {
-                else_
-                    .as_ref()
-                    .and_then(|else_| first_executed_identifier(checker, else_, wanted))
+                if expression_cannot_complete(checker, cond) {
+                    None
+                } else {
+                    else_
+                        .as_ref()
+                        .and_then(|else_| first_executed_identifier(checker, else_, wanted))
+                }
             }
         }
         Expr::If {
             cond, then, else_, ..
         } => first_executed_identifier(checker, cond, wanted)
-            .or_else(|| first_executed_identifier(checker, then, wanted))
             .or_else(|| {
-                else_
-                    .as_ref()
-                    .and_then(|else_| first_executed_identifier(checker, else_, wanted))
+                if expression_cannot_complete(checker, cond) {
+                    None
+                } else {
+                    first_executed_identifier(checker, then, wanted)
+                }
+            })
+            .or_else(|| {
+                if expression_cannot_complete(checker, cond) {
+                    None
+                } else {
+                    else_
+                        .as_ref()
+                        .and_then(|else_| first_executed_identifier(checker, else_, wanted))
+                }
             }),
         Expr::Function { .. }
         | Expr::Logical(_, _)

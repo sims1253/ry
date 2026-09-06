@@ -3,5 +3,5 @@
 library(mirai)
 daemons(2)
 m <- mirai(sqrt(2))
-print(m)
+print(m[])
 daemons(0)

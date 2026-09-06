@@ -3,6 +3,7 @@ name: Executable checksums
 on:
   workflow_call:
     inputs:
+      # cargo-dist always passes plan; the caller requires this declaration even though this hook does not read it.
       plan:
         required: true
         type: string

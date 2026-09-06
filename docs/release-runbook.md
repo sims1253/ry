@@ -127,6 +127,11 @@ v{version}  (e.g. v0.9.0)
    its executable, then uploads the sidecars with the release. A failed hook
    blocks publication. Reproduce generation with
    `python3 scripts/release/binary_checksums.py --artifacts <archive-directory> --output <sidecar-directory>`.
+   Before publishing, run
+   `gh workflow run release.yml --ref <release-branch> -f tag=dry-run`.
+   Confirm `custom-binary-checksums` succeeds and the `artifacts-binary-checksums`
+   artifact contains all six `.bin.sha256` sidecars. Confirm the `host` publication
+   job is skipped; `dry-run` builds artifacts without creating a release.
 5. Submit to the Zed extension gallery after the server release is available.
    Automatic downloads require executable sidecars, published from 0.9.0 onward.
    The extension verifies existing downloads and rehashes cached binaries on

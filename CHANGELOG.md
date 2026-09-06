@@ -4,6 +4,11 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Refresh incremental diagnostics when a callback changes, including callbacks
+  passed as values and their downstream callers.
+
 ### Cleanup
 
 - Avoid recursive-default warnings for signaling arguments that may be ignored

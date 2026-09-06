@@ -32,6 +32,7 @@ struct FileEmission {
     diagnostics: Vec<Diagnostic>,
     scopes: Vec<crate::ScopeRecord>,
     references: crate::ReferenceFacts,
+    read_fns: HashSet<String>,
 }
 
 /// A multi-file R project. Functions defined in any file are visible
@@ -106,6 +107,9 @@ pub struct Project {
     /// so the dirty-set computation in `refine_and_emit` can check whether
     /// a file references any function whose return slot changed.
     file_called_fns: HashMap<String, HashSet<String>>,
+    /// Actual callable reads during emission include callbacks and aliases
+    /// absent from syntactic call sites. Names survive return-slot renumbering.
+    file_read_fns: HashMap<String, HashSet<String>>,
     /// Previous pass-2 refined return types, keyed by function name.
     /// Used to seed the next fixpoint iteration so already-converged
     /// entries start from their refined value rather than re-converging
@@ -209,6 +213,7 @@ impl Project {
                 .extend(previous.fn_table.fns.keys().cloned());
         }
         self.file_known_vars.remove(path);
+        self.file_read_fns.remove(path);
         // Removing a file changes the shared function table and pooled
         // known_vars. Conservatively mark all remaining files dirty so
         // callers of the removed file's functions are re-emitted.
@@ -358,6 +363,7 @@ impl Project {
         self.prev_loaded = None;
         self.has_prev_emit = false;
         self.prev_fn_returns.clear();
+        self.file_read_fns.clear();
         self.prev_fn_signatures.clear();
         self.prev_known_vars.clear();
         self.invalidated_fns.clear();
@@ -440,6 +446,11 @@ impl Project {
         {
             return None;
         }
+        // A new callable can resolve a previously unknown callback or alias;
+        // no observed dependency exists for that earlier lookup miss.
+        if self.callable_names_changed() {
+            return None;
+        }
         // Nothing changed → nothing to refine.
         if self.dirty_paths.is_empty() {
             return Some(HashSet::new());
@@ -486,19 +497,34 @@ impl Project {
         Some(affected)
     }
 
+    fn callable_names_changed(&self) -> bool {
+        self.fn_table.fns.len() != self.prev_fn_returns.len()
+            || self
+                .fn_table
+                .fns
+                .keys()
+                .any(|name| !self.prev_fn_returns.contains_key(name))
+    }
+
+    fn file_depends_on(&self, path: &str, affected: &HashSet<String>) -> bool {
+        self.file_called_fns
+            .get(path)
+            .into_iter()
+            .chain(self.file_read_fns.get(path))
+            .flatten()
+            .any(|callee| affected.contains(callee))
+    }
+
     /// Expand a set of changed callees through the cached reverse call graph.
-    /// `FnTable::call_sites` is collected per file, so every function defined
-    /// in a file that calls an affected function is a conservative caller.
+    /// Syntactic calls and observed callable reads are collected per file,
+    /// so every function in a dependent file is a conservative caller.
     /// Repeating to a fixpoint reaches callers in other files transitively.
     fn with_transitive_callers(&self, mut affected: HashSet<String>) -> HashSet<String> {
         let mut changed = true;
         while changed {
             changed = false;
             for (path, collected) in &self.collected_files {
-                let Some(calls) = self.file_called_fns.get(path) else {
-                    continue;
-                };
-                if !calls.iter().any(|callee| affected.contains(callee)) {
+                if !self.file_depends_on(path, &affected) {
                     continue;
                 }
                 for caller in collected.fn_table.fns.keys() {
@@ -607,7 +633,11 @@ impl Project {
         // the incremental dirty set.
         let known_vars_changed = self.prev_known_vars != self.fn_table.known_vars;
         let first_call = !self.has_prev_emit;
-        let must_emit: HashSet<&str> = if first_call || loaded_changed || known_vars_changed {
+        let must_emit: HashSet<&str> = if first_call
+            || loaded_changed
+            || known_vars_changed
+            || self.callable_names_changed()
+        {
             self.files.iter().map(|(p, _)| p.as_str()).collect()
         } else {
             let mut dirty: HashSet<&str> = self.dirty_paths.iter().map(|s| s.as_str()).collect();
@@ -616,11 +646,7 @@ impl Project {
                     continue;
                 }
                 // Does this file call any function whose return type changed?
-                if let Some(called) = self.file_called_fns.get(path)
-                    && called
-                        .iter()
-                        .any(|name| changed_fns.contains(name.as_str()))
-                {
+                if self.file_depends_on(path, &changed_fns) {
                     dirty.insert(path.as_str());
                 }
                 // Conservatively: if any S3/S4 method slot changed, emit
@@ -665,6 +691,13 @@ impl Project {
         let capture_scopes = self.capture_scopes;
         let capture_references = self.capture_references;
 
+        let mut names_by_slot: HashMap<usize, Vec<&String>> = HashMap::new();
+        for (name, function) in &fn_table.fns {
+            names_by_slot
+                .entry(function.return_slot)
+                .or_default()
+                .push(name);
+        }
         let per_file: Vec<FileEmission> = emit_indices
             .par_iter()
             .map(|&i| {
@@ -700,7 +733,21 @@ impl Project {
                 if capture_references {
                     emitter.enable_reference_capture();
                 }
+                *emitter.refinement_reads.get_mut() = Some(Vec::new());
                 emitter.emit_diagnostics(file);
+                let read_slots: HashSet<_> = emitter
+                    .refinement_reads
+                    .get_mut()
+                    .take()
+                    .unwrap()
+                    .into_iter()
+                    .collect();
+                let read_fns = read_slots
+                    .iter()
+                    .filter_map(|slot| names_by_slot.get(slot))
+                    .flatten()
+                    .map(|name| (*name).clone())
+                    .collect();
                 let records = emitter.take_scope_records();
                 let references = emitter.take_reference_facts();
                 FileEmission {
@@ -709,6 +756,7 @@ impl Project {
                     diagnostics: emitter.take_diagnostics(),
                     scopes: records,
                     references,
+                    read_fns,
                 }
             })
             .collect();
@@ -732,6 +780,12 @@ impl Project {
         // Scope records replace the previous emission's; files served
         // from cache contribute none (see `scope_records` on the struct).
         let mut per_file = per_file;
+        for emission in &mut per_file {
+            self.file_read_fns.insert(
+                emission.path.clone(),
+                std::mem::take(&mut emission.read_fns),
+            );
+        }
         if capture_scopes {
             self.scope_records = per_file
                 .iter_mut()

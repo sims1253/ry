@@ -687,8 +687,7 @@ impl Checker {
 
         // Collect the candidate names (only those that differ from the
         // parent) without holding a borrow of `scope` while we mutate it.
-        let mut branch_types: HashMap<String, (Option<RType>, Option<RType>)> =
-            HashMap::with_capacity(then_scope.bindings.len());
+        let mut branch_types: HashMap<&str, (Option<&RType>, Option<&RType>)> = HashMap::new();
         for (name, t) in &then_scope.bindings {
             // Only the marker installed by `apply_narrowing` is
             // branch-local. An ordinary `Scope::insert` clears that marker,
@@ -700,7 +699,7 @@ impl Checker {
             match scope.get(name) {
                 Some(existing) if existing == t => {}
                 _ => {
-                    branch_types.entry(name.clone()).or_insert((None, None)).0 = Some(t.clone());
+                    branch_types.entry(name).or_insert((None, None)).0 = Some(t);
                 }
             }
         }
@@ -714,15 +713,14 @@ impl Checker {
                 match scope.get(name) {
                     Some(existing) if existing == t => {}
                     _ => {
-                        branch_types.entry(name.clone()).or_insert((None, None)).1 =
-                            Some(t.clone());
+                        branch_types.entry(name).or_insert((None, None)).1 = Some(t);
                     }
                 }
             }
         }
         for (name, (then_t, else_t)) in branch_types {
             let merged = match (then_t, else_t) {
-                (Some(a), Some(b)) => a.join(b),
+                (Some(a), Some(b)) => a.clone().join(b.clone()),
                 (Some(a), None) | (None, Some(a)) => {
                     // The name is assigned in only one branch (no
                     // `else`). When the name is already bound in the
@@ -736,10 +734,10 @@ impl Checker {
                     // sound type, so it degrades to opaque. Joining with
                     // `RType::unknown()` here would be absorbing and make
                     // the parent fold below dead code.
-                    if scope.get(&name).is_some() {
-                        a
+                    if scope.get(name).is_some() {
+                        a.clone()
                     } else {
-                        a.join(RType::unknown())
+                        a.clone().join(RType::unknown())
                     }
                 }
                 (None, None) => continue,
@@ -749,7 +747,7 @@ impl Checker {
             // reassignment doesn't silently degrade a precise parent type
             // to unknown (e.g. `s <- 1L; if (c) { s <- "x" }` keeps `s` as
             // union[integer, character] rather than collapsing to unknown).
-            let merged = match scope.get(&name) {
+            let merged = match scope.get(name) {
                 Some(p) => p.clone().join(merged),
                 None => merged,
             };
@@ -760,13 +758,13 @@ impl Checker {
             // that keeps the parent binding (inherited into the clone)
             // demands the parent's marker instead.
             let then_origin =
-                !then_scope.bindings.contains_key(&name) || then_scope.has_list_origin(&name);
+                !then_scope.bindings.contains_key(name) || then_scope.has_list_origin(name);
             let else_origin =
-                !else_scope.bindings.contains_key(&name) || else_scope.has_list_origin(&name);
+                !else_scope.bindings.contains_key(name) || else_scope.has_list_origin(name);
             let keeps_list_origin = then_origin && else_origin;
-            scope.insert(&name, merged);
+            scope.insert(name, merged);
             if keeps_list_origin {
-                scope.mark_list_origin(&name);
+                scope.mark_list_origin(name);
             }
         }
     }

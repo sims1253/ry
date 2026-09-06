@@ -1,0 +1,5 @@
+# Fixed instruction-count sample. Keep these pins stable across ry releases.
+# Selected from packages.txt; package code is never executed.
+glue	https://github.com/tidyverse/glue.git	da9c73f7a3de6a27f3103cb5bb2355820a4c3a6a
+stringr	https://github.com/tidyverse/stringr.git	ae054b1d28f630fee22ddb3cb7525396e62af4fe
+withr	https://github.com/r-lib/withr.git	c8539fe735a5b6cdb496c68bca8248f8b6b4d419

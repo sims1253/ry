@@ -28,6 +28,10 @@ Each oracle fixture runs in a fresh `Rscript --vanilla` process. Its exit
 status determines whether R errored; fixtures cannot leak bindings, attached
 packages, or daemon state into later fixtures.
 
+The [instruction-count corpus guide](docs/corpus/instructions.md) explains
+the fixed performance sample, local measurements, and warn-only CI deltas.
+Run `python3 ecosystem/test-instructions.py` after changing that harness.
+
 ## Fixture conventions
 
 - `crates/ry-checker/testdata/ok_*.R` -- must produce zero diagnostics.

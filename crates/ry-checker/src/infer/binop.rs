@@ -222,11 +222,10 @@ impl Checker {
                         if generic == symbol || !matches!(result.mode, Mode::Opaque) {
                             return Some(result);
                         }
-                        // An opaque group stub (every embedded `Ops.*`
-                        // entry) offers no shape: fall through like a
-                        // miss, so the storage-mode rules keep modeling
-                        // these base classes with their own diagnostics
-                        // (`Ops.factor`'s warning, `Ops.Date` arithmetic).
+                        // An opaque group stub still wins dispatch. Stop
+                        // before later classes: the storage-mode rules model
+                        // this base method (including its diagnostics).
+                        return None;
                     }
                     None => {}
                 }

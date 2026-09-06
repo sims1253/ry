@@ -43,6 +43,8 @@ jobs:
         run: cargo build --workspace --all-targets
       - name: Test
         run: cargo test --workspace
+      - name: Test typeshed sync
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
       - name: Performance regression tests
         run: cargo test -p ry-checker --test perf --release -- --ignored --test-threads=1
       - name: Clippy (deny warnings)

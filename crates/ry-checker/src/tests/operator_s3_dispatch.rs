@@ -27,6 +27,30 @@ fn code_lines(diags: &[Diagnostic], code: &str) -> Vec<usize> {
 }
 
 #[test]
+fn data_frame_operator_overrides_precede_schema_inference() {
+    let (diags, scope) = check_with_scope(
+        "`+.left` <- function(e1, e2) \"left\"\n\
+         `+.right` <- function(e1, e2) \"right\"\n\
+         chooseOpsMethod.left <- function(x, y, mx, my, cl, reverse) TRUE\n\
+         x <- structure(data.frame(a = 1), class = c(\"left\", \"data.frame\"))\n\
+         y <- structure(2, class = \"right\")\n\
+         one_sided <- x + 1\n\
+         same_method <- x + x\n\
+         conflict <- x + y\n\
+         reversed <- y + x\n",
+    );
+    assert!(diags.is_empty(), "{diags:?}");
+    for name in ["one_sided", "same_method"] {
+        assert_eq!(scope.get(name).map(|ty| ty.mode), Some(Mode::Character));
+    }
+    for name in ["conflict", "reversed"] {
+        let ty = scope.get(name).expect("operator result should be bound");
+        assert_eq!(ty.mode, Mode::Opaque);
+        assert!(ty.columns.is_none(), "{name}: {ty:?}");
+    }
+}
+
+#[test]
 fn operator_dispatches_stub_typeshed_methods() {
     // Operators share the call path's method-source ladder (#165), so a
     // method declared only in a typeshed is visible to `w1 + w2` and its

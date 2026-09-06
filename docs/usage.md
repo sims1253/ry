@@ -8,6 +8,7 @@
 - [Dumping inferred types](#dumping-inferred-types)
 - [Editors](#editors)
 - [Known limits](#known-limits)
+- [Building from source](#building-from-source)
 
 ## Checking files and CI
 
@@ -117,77 +118,10 @@ at column candidates.
 
 ## Dumping inferred types
 
-`ry dump-types` prints names and inferred types as JSON on stdout. It uses
-the same analysis and package context as `ry check`, and the same type
-strings as editor inlay hints. The output groups bindings by lexical scope
-(the top level or a function body), so tools can query several positions
-without running the checker again.
-
-Save this as `types.R`:
-
-```r
-offset <- 1L
-add_offset <- function(x = 2L) {
-  result <- x + offset
-  result
-}
-```
-
-```sh
-ry dump-types types.R
-ry dump-types types.R --position 4:3
-```
-
-The second command returns the `add_offset` scope. Its `bindings` array
-includes this entry:
-
-```json
-{"name": "offset", "kind": "closed-over", "type": "integer<len=1>", "start": [1, 1]}
-```
-
-Positions are 1-based `[row, column]` pairs; columns count characters,
-not bytes. Scopes are ordered by start position, bindings by name.
-`unknown` marks bindings whose types ry could not infer. It does not cause
-the command to fail.
-
-Binding kinds:
-
-- `param`, a formal of this scope that the body never reassigns. A
-  reassigned formal degrades to `local` at its reassignment site
-  (R rebinds rather than narrows).
-- `local`, first assigned inside this scope's own body (assignments in
-  `if` / `for` / `while` bodies and braced value blocks count; they bind
-  in the enclosing function in R).
-- `closed-over`, function scopes only: present because the body's
-  scope is cloned from the enclosing one at the point of definition.
-- `imported`, top-level bindings the file never assigns, supplied by
-  the host environment (for example Shiny server fragments, where
-  `input` / `output` / `session` are ambient).
-
-Each binding's `start` points at its definition site, the formal, the
-first assignment, or, for `closed-over`, the site in the nearest
-enclosing scope that defines the name (`null` when none is recorded).
-
-`--position LINE:COL` (repeatable) restricts output to the innermost
-scope containing each position and drops locals assigned after it,
-so you can query the bindings available at a given line.
-
-A directory argument expands to every discoverable R file under it,
-using `ry check`'s discovery rules, including the discovered `ry.toml`'s
-`exclude` patterns. `--project-root <DIR>` overrides the analysis root
-for non-package files; by default each file is analyzed in the context
-of its nearest enclosing package (the ancestor directory with a
-`DESCRIPTION`), else the directory owning the discovered `ry.toml`, else
-the working directory, mirroring `ry check`'s per-package grouping. The
-exit code is 0 even when the analyzed code has
-diagnostics; it is non-zero only for usage, IO, or internal failure.
-Scopes reflect the checker's snapshot semantics: each table is the
-scope's state at the end of its body, and a nested function captures the
-enclosing scope as of its definition point (ry's documented closure
-approximation). Anonymous function literals used as call arguments are
-inferred in discarding mode and are therefore not recorded as scopes,
-but named functions defined *inside* such a callback do complete and are
-recorded, so a dump can contain a scope whose enclosing scope is absent.
+Use `ry dump-types types.R` to inspect bindings and inferred types as JSON.
+Add `--position LINE:COL` to query the scope at a specific position.
+See the [inferred types reference](types.md) for an example, output fields,
+and scope limits.
 
 ## Editors
 
@@ -254,3 +188,17 @@ R6 modeling covers `self` / `private` / `super` in method bodies, not
 field types. No expansion of dynamic `exportPattern()` directives and no
 NA tracking yet. Cross-package names without stubs resolve to opaque
 values when static package metadata proves that they exist.
+
+## Building from source
+
+Install Rust 1.88 or newer, then run:
+
+```sh
+git clone https://github.com/sims1253/ry
+cd ry
+cargo build --release
+# binary at target/release/ry
+```
+
+See [Contributing](../CONTRIBUTING.md) for tests and development instructions.
+For prebuilt binaries, see the [installation instructions](../README.md#install).

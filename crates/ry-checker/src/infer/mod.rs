@@ -279,6 +279,10 @@ impl Checker {
                 self.infer_condition(cond, scope, ConditionContext::If);
                 let narrowing = self.extract_type_narrowing(cond, scope);
                 let has_else = else_.is_some();
+                if crate::scope_journal::enabled() {
+                    self.walk_journal_if(scope, &narrowing, then, else_.as_deref(), returns);
+                    return;
+                }
                 let (mut then_scope, mut else_scope, narrowed) = apply_narrowing(scope, &narrowing);
                 for s in then {
                     self.walk_stmt(s, &mut then_scope, returns.as_deref_mut());
@@ -786,6 +790,132 @@ impl Checker {
             if keeps_list_origin {
                 scope.mark_list_origin(name);
             }
+        }
+    }
+
+    fn walk_journal_if(
+        &mut self,
+        scope: &mut Scope,
+        narrowing: &Narrowing,
+        then: &[Stmt],
+        else_: Option<&[Stmt]>,
+        mut returns: Option<&mut Vec<RType>>,
+    ) {
+        let mut narrowed = HashSet::new();
+        let mark = scope.begin_snapshot();
+        if let Some(name) = apply_narrowing_branch(scope, narrowing, NarrowingBranch::Then) {
+            narrowed.insert(name.to_string());
+        }
+        for statement in then {
+            self.walk_stmt(statement, scope, returns.as_deref_mut());
+        }
+        let then_delta = scope.finish_snapshot(mark);
+        let mark = scope.begin_snapshot();
+        if let Some(name) = apply_narrowing_branch(scope, narrowing, NarrowingBranch::Else) {
+            narrowed.insert(name.to_string());
+        }
+        if let Some(statements) = else_ {
+            for statement in statements {
+                self.walk_stmt(statement, scope, returns.as_deref_mut());
+            }
+        }
+        let else_delta = scope.finish_snapshot(mark);
+        let has_else = else_.is_some();
+        let then_reaches = !then_delta.unreachable;
+        let else_reaches = has_else && !else_delta.unreachable;
+        let candidates: HashSet<_> = then_delta
+            .changed
+            .keys()
+            .chain(else_delta.changed.keys())
+            .collect();
+        let mut changes = Vec::new();
+        for name in candidates {
+            let then_binding = then_delta.binding(scope, name);
+            let else_binding = else_delta.binding(scope, name);
+            if has_else && then_reaches != else_reaches {
+                let continuation = if then_reaches {
+                    then_binding
+                } else {
+                    else_binding
+                };
+                if narrowed.contains(name) && continuation.narrowed {
+                    continue;
+                }
+                if let Some(ty) = continuation.ty {
+                    if scope.get(name) != Some(&ty) {
+                        changes.push((name.clone(), ty, continuation.list_origin));
+                    }
+                }
+                continue;
+            }
+            let changed = |binding: &crate::scope_journal::BindingState| {
+                if narrowed.contains(name) && binding.narrowed {
+                    return None;
+                }
+                binding
+                    .ty
+                    .as_ref()
+                    .filter(|ty| scope.get(name) != Some(*ty))
+                    .cloned()
+            };
+            let then_ty = changed(&then_binding);
+            let else_ty = if has_else {
+                changed(&else_binding)
+            } else {
+                None
+            };
+            let merged = match (then_ty, else_ty) {
+                (Some(a), Some(b)) => a.join(b),
+                (Some(a), None) | (None, Some(a)) => {
+                    if scope.get(name).is_some() {
+                        a
+                    } else {
+                        a.join(RType::unknown())
+                    }
+                }
+                (None, None) => continue,
+            };
+            let merged = if let Some(parent) = scope.get(name) {
+                parent.clone().join(merged)
+            } else {
+                merged
+            };
+            let list_origin = (then_binding.ty.is_none() || then_binding.list_origin)
+                && (else_binding.ty.is_none() || else_binding.list_origin);
+            changes.push((name.clone(), merged, list_origin));
+        }
+        let then_diverges = self.block_diverges(then);
+        let else_diverges = else_.is_some_and(|statements| self.block_diverges(statements));
+        let continuation = match (then_diverges, has_else, else_diverges) {
+            (true, true, false) | (true, false, _) => Some(&else_delta),
+            (false, true, true) => Some(&then_delta),
+            _ => None,
+        };
+        let continuation_facts: Vec<_> = continuation
+            .into_iter()
+            .flat_map(|delta| {
+                narrowed
+                    .iter()
+                    .map(|name| (name.clone(), delta.binding(scope, name)))
+            })
+            .collect();
+        for (name, ty, list_origin) in changes {
+            scope.insert(name.clone(), ty);
+            if list_origin {
+                scope.mark_list_origin(name);
+            }
+        }
+        for (name, binding) in continuation_facts {
+            if let Some(ty) = binding.ty {
+                if binding.default_parameter {
+                    scope.insert_parameter_default(name, ty);
+                } else {
+                    scope.insert(name, ty);
+                }
+            }
+        }
+        if has_else && then_delta.unreachable && else_delta.unreachable {
+            scope.unreachable = true;
         }
     }
 

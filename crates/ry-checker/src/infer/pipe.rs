@@ -53,12 +53,12 @@ impl Checker {
         f: impl FnOnce(&mut Self, &mut Scope) -> R,
     ) -> R {
         let restore = matches!(form, PipeForm::Magrittr)
-            .then(|| scope.bindings.insert(".".to_string(), lhs_t.clone()));
+            .then(|| scope.replace_binding_only(".", Some(lhs_t.clone())));
         let result = f(self, scope);
         if let Some(previous) = restore {
             match previous {
-                Some(t) => scope.bindings.insert(".".to_string(), t),
-                None => scope.bindings.remove("."),
+                Some(t) => scope.replace_binding_only(".", Some(t)),
+                None => scope.replace_binding_only(".", None),
             };
         }
         result

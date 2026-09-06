@@ -22,6 +22,7 @@ mod nse;
 pub mod project;
 mod reference_facts;
 mod resolve;
+mod scope_journal;
 pub use reference_facts::{
     DefinitionId, ReferenceDefinition, ReferenceDefinitionKind, ReferenceFacts, ReferenceRecord,
     ReferenceResolution,
@@ -285,8 +286,10 @@ pub fn builtin_environment_bindings(path: &str) -> &'static [&'static str] {
 }
 
 /// A single scope's binding table.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct Scope {
+    undo: Vec<scope_journal::Undo>,
+    snapshot_depth: usize,
     pub(crate) reference_provenance: Option<Box<reference_facts::ScopeProvenance>>,
     pub bindings: HashMap<String, RType>,
     /// Names whose current binding was installed by flow narrowing rather
@@ -318,6 +321,27 @@ pub struct Scope {
     pub(crate) unreachable: bool,
 }
 
+impl Clone for Scope {
+    fn clone(&self) -> Self {
+        Self {
+            reference_provenance: self.reference_provenance.clone(),
+            bindings: self.bindings.clone(),
+            narrowed_bindings: self.narrowed_bindings.clone(),
+            parameter_bindings: self.parameter_bindings.clone(),
+            list_origin_bindings: self.list_origin_bindings.clone(),
+            default_parameter_bindings: self.default_parameter_bindings.clone(),
+            function_aliases: self.function_aliases.clone(),
+            lexical_functions: self.lexical_functions.clone(),
+            data_mask_unknown: self.data_mask_unknown,
+            tidy_injection: self.tidy_injection,
+            search_path_unknown: self.search_path_unknown,
+            unreachable: self.unreachable,
+            undo: Vec::new(),
+            snapshot_depth: 0,
+        }
+    }
+}
+
 impl Scope {
     pub fn get(&self, name: &str) -> Option<&RType> {
         self.bindings.get(name)
@@ -325,6 +349,7 @@ impl Scope {
 
     pub fn insert(&mut self, name: impl Into<String>, t: RType) {
         let name = name.into();
+        self.journal_binding(&name);
         if let Some(provenance) = self.reference_provenance.as_mut() {
             provenance.invalidate(&name);
         }
@@ -341,6 +366,7 @@ impl Scope {
         // Preserve parameter, default-parameter, and list-origin markers;
         // clear function aliases and lexical-function markers, then mark narrowed.
         let name = name.into();
+        self.journal_binding(&name);
         if let Some(provenance) = self.reference_provenance.as_mut() {
             provenance.invalidate(&name);
         }
@@ -360,6 +386,7 @@ impl Scope {
         // Preserve lexical-function and list-origin markers; clear function
         // aliases and narrowing, then set both parameter markers.
         let name = name.into();
+        self.journal_binding(&name);
         if let Some(provenance) = self.reference_provenance.as_mut() {
             provenance.invalidate(&name);
         }
@@ -371,7 +398,9 @@ impl Scope {
     }
 
     pub(crate) fn mark_list_origin(&mut self, name: impl Into<String>) {
-        self.list_origin_bindings.insert(name.into());
+        let name = name.into();
+        self.journal_binding(&name);
+        self.list_origin_bindings.insert(name);
     }
 
     pub(crate) fn has_list_origin(&self, name: &str) -> bool {
@@ -387,11 +416,15 @@ impl Scope {
     }
 
     pub(crate) fn set_function_alias(&mut self, name: impl Into<String>, target: String) {
-        self.function_aliases.insert(name.into(), target);
+        let name = name.into();
+        self.journal_binding(&name);
+        self.function_aliases.insert(name, target);
     }
 
     pub(crate) fn mark_lexical_function(&mut self, name: impl Into<String>) {
-        self.lexical_functions.insert(name.into());
+        let name = name.into();
+        self.journal_binding(&name);
+        self.lexical_functions.insert(name);
     }
 
     pub(crate) fn is_lexical_function(&self, name: &str) -> bool {

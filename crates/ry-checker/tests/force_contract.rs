@@ -20,6 +20,7 @@ fn fixture() -> Typeshed {
     serde_json::from_str(r#"{"package":"fixture","version":"test","functions":{
         "strict":{"params":["value"],"return":"arg0","force":{"kind":"sole_argument","param":"value","allow_named":true}},
         "unnamed":{"params":["..."],"return":"arg0","force":{"kind":"sole_argument","param":"...","allow_named":false}},
+        "halt":{"params":["..."],"return":"arg0","no_return":true},
         "ordinary":{"params":["value"],"return":"arg0","eval":{"value":"normal"}},
         "capture":{"params":["value"],"return":"arg0","eval":{"value":"quoted_expression"}}
     }}"#).unwrap()
@@ -45,6 +46,25 @@ fn qualified_force_contract_uses_metadata_and_requires_reviewed_call_shape() {
         ("fixture::strict(if (flag) x else 1L)", 0),
         ("fixture::strict(if (TRUE) x else 1L)", 1),
         ("fixture::strict(function() x)", 0),
+        ("fixture::strict({ fixture::halt(); x })", 0),
+        ("fixture::strict({ y <- fixture::halt(); x })", 0),
+        (
+            "fixture::strict({ fixture::strict(fixture::halt()); x })",
+            0,
+        ),
+        (
+            "fixture::strict({ fixture::strict({ fixture::halt() }); x })",
+            0,
+        ),
+        (
+            "fixture::strict({ fixture::ordinary(fixture::halt()); x })",
+            1,
+        ),
+        ("fixture::strict({ return(1L); x })", 0),
+        (
+            "fixture::strict({ fixture::strict(x); fixture::halt() })",
+            1,
+        ),
         ("other::strict(x)", 0),
         ("strict(x)", 0),
     ] {

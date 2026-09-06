@@ -104,9 +104,13 @@ impl Checker {
                     continue;
                 };
 
-                let forced = body[..assign_index].iter().find_map(|statement| {
-                    definitely_forced_identifier_in_stmt(self, statement, &param.name)
-                });
+                let mut forced = None;
+                for statement in &body[..assign_index] {
+                    forced = definitely_forced_identifier_in_stmt(self, statement, &param.name);
+                    if forced.is_some() || statement_cannot_complete(self, statement) {
+                        break;
+                    }
+                }
                 if let Some(span) = forced {
                     self.emit(
                         Severity::Warning,
@@ -149,6 +153,11 @@ fn guaranteed_force_before_replacement(checker: &Checker, body: &[Stmt], wanted:
         }
         if definitely_forced_identifier_in_stmt(checker, statement, wanted).is_some() {
             return true;
+        }
+        if statement_cannot_complete(checker, statement) {
+            // Check the statement's own force first: stop(x) can expose the
+            // recursive promise even though later statements cannot execute.
+            return false;
         }
         if matches!(statement, Stmt::If { .. }) {
             // A non-literal condition may take a diverging branch, so later
@@ -313,37 +322,70 @@ fn first_executed_identifier_in_stmt(
     }
 }
 
+fn qualified_signature<'a>(
+    checker: &'a Checker,
+    func: &Expr,
+) -> Option<&'a ry_typeshed::FunctionSig> {
+    let name = ident_name(func)?;
+    let (package, function) = name.rsplit_once("::")?;
+    let package = package.trim_end_matches(':');
+    // Bare names may be masked. Do not borrow base metadata for another
+    // namespace merely because it shares the base database.
+    let typeshed = if package == "base" {
+        &checker.typeshed
+    } else {
+        checker.package_typeshed(package)?
+    };
+    typeshed.functions.get(function)
+}
+
+fn forced_argument<'a>(checker: &Checker, func: &Expr, args: &'a [Arg]) -> Option<&'a Expr> {
+    let signature = qualified_signature(checker, func)?;
+    let ry_typeshed::ForceSpec::SoleArgument { param, allow_named } = signature.force.as_ref()?;
+    let [argument] = args else { return None };
+    if argument
+        .name
+        .as_ref()
+        .is_some_and(|name| !allow_named || name != param)
+        || matches!(&argument.value, Expr::Unknown(_))
+        || matches!(&argument.value, Expr::Ident { name, .. } if name == "...")
+    {
+        return None;
+    }
+    Some(&argument.value)
+}
+
+fn statement_cannot_complete(checker: &Checker, statement: &Stmt) -> bool {
+    match statement {
+        Stmt::Expr(value) | Stmt::Assign { value, .. } => {
+            expression_cannot_complete(checker, value)
+        }
+        Stmt::Return { .. } => true,
+        _ => false,
+    }
+}
+
+fn expression_cannot_complete(checker: &Checker, expression: &Expr) -> bool {
+    match expression {
+        Expr::Call { func, args, .. } => {
+            qualified_signature(checker, func).is_some_and(|signature| signature.no_return)
+                || forced_argument(checker, func, args)
+                    .is_some_and(|argument| expression_cannot_complete(checker, argument))
+        }
+        Expr::Block { body, .. } => body
+            .iter()
+            .any(|statement| statement_cannot_complete(checker, statement)),
+        _ => false,
+    }
+}
+
 fn first_executed_identifier(checker: &Checker, expr: &Expr, wanted: &str) -> Option<Span> {
     match expr {
         Expr::Ident { name, span } => (name == wanted).then_some(*span),
         Expr::Call { func, args, .. } => {
             first_executed_identifier(checker, func, wanted).or_else(|| {
-                let name = ident_name(func)?;
-                let (package, function) = name.rsplit_once("::")?;
-                let package = package.trim_end_matches(':');
-                // Bare names may be masked. Do not borrow base metadata for
-                // another namespace merely because it shares the base database.
-                let typeshed = if package == "base" {
-                    &checker.typeshed
-                } else {
-                    checker.package_typeshed(package)?
-                };
-                let signature = typeshed.functions.get(function)?;
-                let ry_typeshed::ForceSpec::SoleArgument { param, allow_named } =
-                    signature.force.as_ref()?;
-                let [argument] = args.as_slice() else {
-                    return None;
-                };
-                if argument
-                    .name
-                    .as_ref()
-                    .is_some_and(|name| !allow_named || name != param)
-                    || matches!(&argument.value, Expr::Unknown(_))
-                    || matches!(&argument.value, Expr::Ident { name, .. } if name == "...")
-                {
-                    return None;
-                }
-                definitely_forced_identifier(checker, &argument.value, wanted)
+                let argument = forced_argument(checker, func, args)?;
+                definitely_forced_identifier(checker, argument, wanted)
             })
         }
 

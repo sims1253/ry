@@ -299,9 +299,9 @@ that remain stable when a project moves. These hashes describe the resolved
 inputs for this run; they are not a filesystem watcher or a promise that R's
 runtime environment matches the static model.
 
-Reference records sort by byte start and end. Definitions retain the checker's
-deterministic declaration order. Files sort by canonical path; contexts by ID;
-scopes by byte start, byte end,
+References and definitions sort by byte start and end. Definition IDs retain
+the checker's allocation order, so IDs need not increase through the array.
+Files sort by canonical path; contexts by ID; scopes by byte start, byte end,
 then kind; bindings by name. JSON object keys sort lexically. Union alternatives
 sort by their compact structured JSON. Class names, columns, and parameter
 types retain their meaningful order. No timestamps appear in the output.

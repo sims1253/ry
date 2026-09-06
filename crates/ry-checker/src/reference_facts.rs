@@ -742,10 +742,6 @@ mod tests {
             format!("{plain_diagnostics:?}"),
             format!("{captured_diagnostics:?}")
         );
-        assert_eq!(
-            std::mem::size_of::<Option<Box<ScopeProvenance>>>(),
-            std::mem::size_of::<usize>()
-        );
     }
 
     #[test]

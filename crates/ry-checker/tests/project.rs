@@ -1407,3 +1407,75 @@ fn incremental_callback_removal_and_readdition_match_cold() {
         callback_project(&sources).check()
     );
 }
+
+#[test]
+fn full_invalidation_keeps_fresh_shadowed_signatures() {
+    let operations = [
+        Operation::RepeatedUpdate {
+            file: 2,
+            first: SourceModel::UnrelatedInteger,
+            second: SourceModel::IntegerReturn,
+        },
+        Operation::RemoveThenReadd {
+            file: 1,
+            source: SourceModel::QuotingParameter,
+        },
+        Operation::Update {
+            file: 1,
+            source: SourceModel::ForwardingCaller,
+        },
+        Operation::Add {
+            file: 0,
+            source: SourceModel::DirectCaller,
+        },
+    ];
+    let mut project = Project::new();
+    let mut state = ProjectState::default();
+    for operation in operations {
+        apply_operation(&mut project, &mut state, operation);
+        assert_eq!(project.check_incremental(), cold_check(&state));
+    }
+    assert!(
+        project
+            .check_incremental()
+            .iter()
+            .flat_map(|(_, d)| d)
+            .any(|d| d.code == "RY010")
+    );
+}
+
+#[test]
+fn loaded_change_keeps_fresh_signatures() {
+    let mut sources = vec![
+        ("callee.R", "target <- function(value) substitute(value)"),
+        ("use.R", "target(not_bound)"),
+    ];
+    let mut project = callback_project(&sources);
+    project.check_incremental();
+    sources[0].1 = "library(stats)\ntarget <- function(value) 1L";
+    project.update_file("callee.R".into(), Arc::new(parse("callee.R", sources[0].1)));
+    let incremental = project.check_incremental();
+    assert_eq!(incremental, callback_project(&sources).check());
+    assert!(
+        incremental
+            .iter()
+            .flat_map(|(_, d)| d)
+            .any(|d| d.code == "RY010")
+    );
+}
+
+#[test]
+fn full_invalidation_does_not_seed_recursive_returns() {
+    let mut sources = vec![
+        ("callee.R", "target <- function() 'old'"),
+        ("use.R", "target() + 1"),
+    ];
+    let mut project = callback_project(&sources);
+    project.check_incremental();
+    sources[0].1 = "target <- function() target()\nadded <- function() 1";
+    project.update_file("callee.R".into(), Arc::new(parse("callee.R", sources[0].1)));
+    assert_eq!(
+        project.check_incremental(),
+        callback_project(&sources).check()
+    );
+}

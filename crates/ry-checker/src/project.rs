@@ -554,15 +554,18 @@ impl Project {
         );
         refiner.set_loaded(self.loaded.clone());
         refiner.set_user_stubs(Arc::clone(&self.user_stubs));
-        refiner.seed_return_types(&self.prev_fn_returns);
 
         // Scoping: refine only functions whose return type can have
         // changed, rather than the entire project. On the first call or
         // when `loaded` changed, fall back to refining everything.
-        refiner.seed_caller_visible_signatures(&self.prev_fn_signatures, fixpoint_scope.as_ref());
         if let Some(ref scope) = fixpoint_scope {
+            refiner.seed_return_types(&self.prev_fn_returns);
+            refiner.seed_caller_visible_signatures(&self.prev_fn_signatures, scope);
             refiner.run_fixpoint_scoped(scope);
         } else {
+            // Full invalidation starts from fresh collection, like a cold
+            // check. Old metadata can belong to a replaced or shadowed
+            // definition, and recursive returns can preserve an old seed.
             refiner.run_fixpoint();
         }
         let (fn_table, return_slots) = refiner.into_tables();

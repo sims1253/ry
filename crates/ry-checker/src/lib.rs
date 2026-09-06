@@ -942,11 +942,11 @@ impl Checker {
     pub(crate) fn seed_caller_visible_signatures(
         &mut self,
         seed: &HashMap<String, CallerVisibleSignature>,
-        scope: Option<&HashSet<String>>,
+        scope: &HashSet<String>,
     ) {
         let table = Arc::make_mut(&mut self.fn_table);
         for (name, function) in &mut table.fns {
-            if scope.is_some_and(|scope| scope.contains(name)) {
+            if scope.contains(name) {
                 continue;
             }
             if let Some(signature) = seed.get(name) {

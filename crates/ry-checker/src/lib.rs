@@ -20,7 +20,12 @@ mod higher_order;
 mod infer;
 mod nse;
 pub mod project;
+mod reference_facts;
 mod resolve;
+pub use reference_facts::{
+    DefinitionId, ReferenceDefinition, ReferenceDefinitionKind, ReferenceFacts, ReferenceRecord,
+    ReferenceResolution,
+};
 pub mod rules;
 pub mod semantic_lists;
 
@@ -282,6 +287,7 @@ pub fn builtin_environment_bindings(path: &str) -> &'static [&'static str] {
 /// A single scope's binding table.
 #[derive(Debug, Clone, Default)]
 pub struct Scope {
+    pub(crate) reference_provenance: Option<Box<reference_facts::ScopeProvenance>>,
     pub bindings: HashMap<String, RType>,
     /// Names whose current binding was installed by flow narrowing rather
     /// than an R assignment. `insert` clears this marker, so branch merging
@@ -319,6 +325,9 @@ impl Scope {
 
     pub fn insert(&mut self, name: impl Into<String>, t: RType) {
         let name = name.into();
+        if let Some(provenance) = self.reference_provenance.as_mut() {
+            provenance.invalidate(&name);
+        }
         self.function_aliases.remove(&name);
         self.lexical_functions.remove(&name);
         self.list_origin_bindings.remove(&name);
@@ -332,6 +341,9 @@ impl Scope {
         // Preserve parameter, default-parameter, and list-origin markers;
         // clear function aliases and lexical-function markers, then mark narrowed.
         let name = name.into();
+        if let Some(provenance) = self.reference_provenance.as_mut() {
+            provenance.invalidate(&name);
+        }
         self.function_aliases.remove(&name);
         self.lexical_functions.remove(&name);
         self.bindings.insert(name.clone(), t);
@@ -348,6 +360,9 @@ impl Scope {
         // Preserve lexical-function and list-origin markers; clear function
         // aliases and narrowing, then set both parameter markers.
         let name = name.into();
+        if let Some(provenance) = self.reference_provenance.as_mut() {
+            provenance.invalidate(&name);
+        }
         self.function_aliases.remove(&name);
         self.narrowed_bindings.remove(&name);
         self.bindings.insert(name.clone(), t);
@@ -714,6 +729,8 @@ pub struct Checker {
     // signature-building walks (the same walker in discarding mode) from
     // double-capturing a body.
     capture_scopes: bool,
+    capture_references: bool,
+    reference_capture: Option<Box<reference_facts::ReferenceCapture>>,
     scope_records: Vec<ScopeRecord>,
 }
 
@@ -835,6 +852,8 @@ impl Checker {
             enclosing_formals: Vec::new(),
             pipe_argument_types: HashMap::new(),
             capture_scopes: false,
+            capture_references: false,
+            reference_capture: None,
             scope_records: Vec::new(),
         }
     }
@@ -945,6 +964,10 @@ impl Checker {
         self.source.clone_from(&file.source);
         self.emit_parse_errors(file);
         let mut scope = self.top_level_scope();
+        if self.capture_references {
+            self.reference_capture = Some(Box::new(reference_facts::ReferenceCapture::new(file)));
+            self.start_reference_scope(&mut scope, whole_file_span(&file.source));
+        }
         for s in &file.stmts {
             self.check_stmt(s, &mut scope);
         }

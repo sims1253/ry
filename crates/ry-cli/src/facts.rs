@@ -202,10 +202,46 @@ fn export_scopes(file: &SourceFile, mut records: Vec<ScopeRecord>) -> Vec<Value>
     scopes
 }
 
+fn export_references(file: &SourceFile, facts: ry_checker::ReferenceFacts) -> (Value, Value) {
+    use ry_checker::{ReferenceDefinitionKind, ReferenceResolution};
+    let definitions: Vec<_> = facts
+        .definitions
+        .into_iter()
+        .map(|definition| {
+            json!({
+                "id": definition.id.0,
+                "name": definition.name,
+                "kind": match definition.kind {
+                    ReferenceDefinitionKind::Assignment => "assignment",
+                    ReferenceDefinitionKind::Formal => "formal",
+                },
+                "scope_span": source_span(&file.source, definition.scope_span),
+                "span": source_span(&file.source, definition.span),
+            })
+        })
+        .collect();
+    let references: Vec<_> = facts.references.into_iter().map(|reference| json!({
+        "name": reference.name,
+        "span": source_span(&file.source, reference.span),
+        "snapshot_kind": "reference",
+        "resolution_status": match reference.resolution {
+            ReferenceResolution::Resolved => "resolved",
+            ReferenceResolution::Ambiguous => "ambiguous",
+            ReferenceResolution::Unresolved => "unresolved",
+            ReferenceResolution::Unsupported => "unsupported",
+        },
+        "definition_id": reference.definition.map(|id| id.0),
+        "type_at_reference": reference.type_at_reference.as_ref().map(facts_types::export_type),
+        "reason": reference.reason,
+    })).collect();
+    (json!(definitions), json!(references))
+}
+
 pub(crate) fn run_dump_facts(
     files: Vec<PathBuf>,
     project_root: Option<PathBuf>,
     format: &str,
+    references: bool,
 ) -> Result<ExitCode> {
     if format != "json" {
         return Err(miette::miette!(
@@ -352,9 +388,9 @@ pub(crate) fn run_dump_facts(
         contexts.push(json!({"id": context_id, "inputs": context}));
         let imported = workspace.imported_bindings.clone();
         let group_files = input.files.clone();
-        let mut captures: HashMap<_, _> = check::check_project_with_scope_capture(input)
-            .into_iter()
-            .collect();
+        let facts = check::check_project_with_facts_capture(input, references);
+        let mut captures: HashMap<_, _> = facts.scopes.into_iter().collect();
+        let mut reference_captures: HashMap<_, _> = facts.references.into_iter().collect();
         for (path, file) in group_files {
             if builtin_environments[sources[&path]["path"].as_str().expect("canonical path")]
                 != ry_checker::builtin_environment_bindings(&path)
@@ -364,19 +400,26 @@ pub(crate) fn run_dump_facts(
                 ));
             }
             let records = captures.remove(&path).unwrap_or_default();
-            exported.push(json!({
+            let mut exported_file = json!({
                 "path": sources[&path]["path"],
                 "source_hash": sources[&path]["source_hash"],
                 "context_id": context_id,
                 "scopes": export_scopes(&file, records),
                 "imports": imported.get(&path).map(|imports| imports.iter().collect::<BTreeMap<_,_>>()).unwrap_or_default(),
-            }));
+            });
+            if references {
+                let facts = reference_captures.remove(&path).unwrap_or_default();
+                let (definitions, records) = export_references(&file, facts);
+                exported_file["definitions"] = definitions;
+                exported_file["references"] = records;
+            }
+            exported.push(exported_file);
         }
     }
     exported.sort_by(|a, b| a["path"].as_str().cmp(&b["path"].as_str()));
     contexts.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
     truncations.sort_by_key(Value::to_string);
-    let result = json!({
+    let mut result = json!({
         "schema_version": 1,
         "producer": build,
         "snapshot_kind": "scope_exit",
@@ -386,6 +429,19 @@ pub(crate) fn run_dump_facts(
         "discovery": {"complete": truncations.is_empty(), "truncations": truncations},
         "files": exported,
     });
+    if references {
+        result["schema_version"] = json!(2);
+        result
+            .as_object_mut()
+            .expect("facts object")
+            .remove("snapshot_kind");
+        result["scope_snapshot_kind"] = json!("scope_exit");
+        result["capabilities"] = json!({
+            "scope_snapshots": true,
+            "reference_facts": "same_file_straight_line",
+            "reference_coverage": "partial",
+        });
+    }
     println!(
         "{}",
         serde_json::to_string_pretty(&result).into_diagnostic()?

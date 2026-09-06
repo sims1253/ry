@@ -70,6 +70,19 @@ pub fn check_project(input: CheckInput) -> CheckOutput {
 pub fn check_project_with_scope_capture(
     input: CheckInput,
 ) -> Vec<(String, Vec<ry_checker::ScopeRecord>)> {
+    check_project_with_facts_capture(input, false).scopes
+}
+
+pub(crate) struct CapturedFacts {
+    pub scopes: Vec<(String, Vec<ry_checker::ScopeRecord>)>,
+    pub references: Vec<(String, ry_checker::ReferenceFacts)>,
+}
+
+/// Capture scope snapshots and optional reference evidence in one project check.
+pub(crate) fn check_project_with_facts_capture(
+    input: CheckInput,
+    references: bool,
+) -> CapturedFacts {
     let mut project = apply_workspace(
         ry_checker::Project::new(),
         input.workspace.as_ref(),
@@ -79,8 +92,14 @@ pub fn check_project_with_scope_capture(
         project.add_file_arc(path.clone(), Arc::clone(file));
     }
     project.enable_scope_capture();
+    if references {
+        project.enable_reference_capture();
+    }
     project.check();
-    project.take_scope_records()
+    CapturedFacts {
+        scopes: project.take_scope_records(),
+        references: project.take_reference_facts(),
+    }
 }
 
 /// Install the workspace metadata onto a fresh project. Shared by

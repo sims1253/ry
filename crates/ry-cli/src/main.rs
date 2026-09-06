@@ -195,7 +195,7 @@ enum Cmd {
         #[arg(long = "position", value_name = "LINE:COL", value_parser = dump::parse_dump_position)]
         positions: Vec<(usize, usize)>,
     },
-    /// Export versioned structured facts at scope exit, as JSON.
+    /// Export versioned structured analysis facts as JSON.
     DumpFacts {
         /// R files or directories to analyze.
         #[arg(required = true)]
@@ -206,6 +206,9 @@ enum Cmd {
         /// Output format. Only `json` is supported.
         #[arg(long, value_name = "FORMAT", default_value = "json")]
         format: String,
+        /// Include conservative reference facts using schema version 2.
+        #[arg(long)]
+        references: bool,
     },
     /// Start the language server. Speaks the Language Server Protocol
     /// (LSP) over stdio, publishing type-check diagnostics for open R
@@ -310,7 +313,8 @@ fn main() -> Result<ExitCode> {
             files,
             project_root,
             format,
-        } => facts::run_dump_facts(files, project_root, &format),
+            references,
+        } => facts::run_dump_facts(files, project_root, &format, references),
         Cmd::Server { log_level } => {
             // The LSP server reads JSON-RPC from stdin and writes
             // JSON-RPC to stdout. CRITICAL: any tracing or log output

@@ -47,3 +47,35 @@ literal_bangs <- function(x = base::quote(function() !!body_value)) {
   out
 }
 stopifnot(identical(literal_bangs(), quote(function() !!body_value)))
+
+pruned_if <- function(x = rlang::expr(function() !!(if (FALSE) body_value else 1L))) {
+  out <- x
+  body_value <- 1L
+  out
+}
+pruned_else <- function(x = rlang::expr(function() !!(if (TRUE) 1L else body_value))) {
+  out <- x
+  body_value <- 1L
+  out
+}
+pruned_and <- function(x = rlang::expr(function() !!(FALSE && body_value))) {
+  out <- x
+  body_value <- 1L
+  out
+}
+pruned_or <- function(x = rlang::expr(function() !!(TRUE || body_value))) {
+  out <- x
+  body_value <- 1L
+  out
+}
+stopifnot(identical(pruned_if(), quote(function() 1L)))
+stopifnot(identical(pruned_else(), quote(function() 1L)))
+stopifnot(identical(pruned_and(), quote(function() FALSE)))
+stopifnot(identical(pruned_or(), quote(function() TRUE)))
+
+payload_binding <- function(x = rlang::expr(function() !!{ body_value <- 1L; body_value })) {
+  out <- x
+  body_value <- 1L
+  out
+}
+stopifnot(identical(payload_binding(), quote(function() 1L)))

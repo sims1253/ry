@@ -40,8 +40,24 @@ bquote_spliced <- function(x = base::bquote(list(..(body_value)), splice = TRUE)
   body_value <- list()
   out
 }
+read_before_assignment <- function(x = rlang::expr(function() !!{ body_value; body_value <- 1L })) {
+  out <- x
+  body_value <- 1L
+  out
+}
+read_in_assignment <- function(x = rlang::expr(function() !!{ body_value <- body_value + 1L; body_value })) {
+  out <- x
+  body_value <- 1L
+  out
+}
+quoted_unreachable <- function(x = rlang::expr(function() if (FALSE) !!body_value)) {
+  out <- x
+  body_value <- 1L
+  out
+}
 for (fn in list(ordinary, substitution_environment, injected, spliced, embraced,
-                quoted_function, bquoted, bquote_spliced)) {
+                quoted_function, bquoted, bquote_spliced, read_before_assignment,
+                read_in_assignment, quoted_unreachable)) {
   result <- tryCatch(fn(), error = function(error) error)
   stopifnot(inherits(result, "error"))
 }

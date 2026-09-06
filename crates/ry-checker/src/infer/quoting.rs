@@ -1,7 +1,7 @@
 //! Forwarded promises and guaranteed evaluation of lazy defaults.
 
 use super::*;
-use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmts};
+use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmt, walk_stmts};
 use std::ops::ControlFlow;
 
 /// Walk `stmts` collecting calls inside `caller`'s body that forward its
@@ -391,6 +391,30 @@ impl Checker {
                 ..Walk::ALL
             },
             |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+                // Prune only code being evaluated. The separate capture walker
+                // must still find injections under quoted, unreachable branches.
+                match node {
+                    AstNode::Expr(Expr::If {
+                        cond, then, else_, ..
+                    }) if matches!(cond.as_ref(), Expr::Logical(_, _)) => {
+                        if matches!(cond.as_ref(), Expr::Logical(true, _)) {
+                            self.collect_executed_identifiers(then, names);
+                        } else if let Some(otherwise) = else_ {
+                            self.collect_executed_identifiers(otherwise, names);
+                        }
+                        return ControlFlow::Continue(Descend::Skip);
+                    }
+                    AstNode::Expr(Expr::BinOp { lhs, op, .. })
+                        if matches!(
+                            (op, lhs.as_ref()),
+                            (BinOpKind::AndAnd, Expr::Logical(false, _))
+                                | (BinOpKind::OrOr, Expr::Logical(true, _))
+                        ) =>
+                    {
+                        return ControlFlow::Continue(Descend::Skip);
+                    }
+                    _ => {}
+                }
                 if let AstNode::Expr(Expr::Call { func, args, .. }) = node
                     && let Some(callee) = ident_name(func)
                     && let Some(capture) = default_capture_mode(callee)
@@ -423,6 +447,59 @@ impl Checker {
         );
     }
 
+    fn collect_injection_dependencies(
+        &self,
+        expr: &Expr,
+        names: &mut std::collections::BTreeSet<String>,
+    ) {
+        let Expr::Block { body, .. } = expr else {
+            self.collect_executed_identifiers(expr, names);
+            return;
+        };
+        let mut established = std::collections::BTreeSet::new();
+        for statement in body {
+            let mut dependencies = std::collections::BTreeSet::new();
+            let assigned = match statement {
+                Stmt::Assign { target, value, .. } => {
+                    // R evaluates the RHS before establishing the local binding.
+                    self.collect_injection_dependencies(value, &mut dependencies);
+                    if let Expr::Ident { name, .. } = target {
+                        Some(name)
+                    } else {
+                        self.collect_executed_identifiers(target, &mut dependencies);
+                        None
+                    }
+                }
+                Stmt::Expr(value) => {
+                    self.collect_injection_dependencies(value, &mut dependencies);
+                    None
+                }
+                _ => {
+                    // Branches and loops do not establish a guaranteed binding.
+                    let _ = walk_stmt(
+                        statement,
+                        Walk {
+                            fn_bodies: false,
+                            ..Walk::ALL
+                        },
+                        |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+                            if let AstNode::Expr(value) = node {
+                                self.collect_executed_identifiers(value, &mut dependencies);
+                                return ControlFlow::Continue(Descend::Skip);
+                            }
+                            ControlFlow::Continue(Descend::Into)
+                        },
+                    );
+                    None
+                }
+            };
+            names.extend(dependencies.difference(&established).cloned());
+            if let Some(name) = assigned {
+                established.insert(name.clone());
+            }
+        }
+    }
+
     /// The reviewed rlang helpers process tidy injection while capturing code.
     /// Retain dependencies of !!, !!!, and {{ }} payloads, including those inside
     /// quoted function bodies. Like rlang, the walker leaves defaults untouched.
@@ -444,13 +521,13 @@ impl Checker {
                         ..
                     } = expr.as_ref()
                     {
-                        self.collect_executed_identifiers(payload, names);
+                        self.collect_injection_dependencies(payload, names);
                         return ControlFlow::<(), Descend>::Continue(Descend::Skip);
                     }
                 }
                 AstNode::Expr(Expr::Block { body, .. }) => {
                     if let [Stmt::Expr(inner @ Expr::Block { .. })] = body.as_slice() {
-                        self.collect_executed_identifiers(inner, names);
+                        self.collect_injection_dependencies(inner, names);
                         return ControlFlow::Continue(Descend::Skip);
                     }
                 }

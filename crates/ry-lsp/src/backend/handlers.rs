@@ -31,6 +31,22 @@ impl LanguageServer for Backend {
             .and_then(|w| w.configuration)
             .unwrap_or(false);
 
+        let supports_diagnostic_data = params
+            .capabilities
+            .text_document
+            .as_ref()
+            .and_then(|document| document.publish_diagnostics.as_ref())
+            .and_then(|diagnostics| diagnostics.data_support)
+            .unwrap_or(false);
+
+        let supports_document_changes = params
+            .capabilities
+            .workspace
+            .as_ref()
+            .and_then(|workspace| workspace.workspace_edit.as_ref())
+            .and_then(|edit| edit.document_changes)
+            .unwrap_or(false);
+
         let supports_did_change_watched_files = params
             .capabilities
             .workspace
@@ -101,6 +117,8 @@ impl LanguageServer for Backend {
         state.folder_settings = folder_settings;
         state.server_settings = server_settings;
         state.supports_workspace_configuration = supports_workspace_configuration;
+        state.supports_document_changes = supports_document_changes;
+        state.supports_diagnostic_data = supports_diagnostic_data;
         state.supports_did_change_watched_files = supports_did_change_watched_files;
         state.supports_relative_patterns = supports_relative_patterns;
         state.folder_contexts = folder_contexts;
@@ -449,6 +467,13 @@ impl LanguageServer for Backend {
     }
 
     async fn code_action(&self, params: CodeActionParams) -> LspResult<Option<CodeActionResponse>> {
+        if params.context.only.as_ref().is_some_and(|kinds| {
+            !kinds
+                .iter()
+                .any(|kind| *kind == CodeActionKind::EMPTY || *kind == CodeActionKind::QUICKFIX)
+        }) {
+            return Ok(None);
+        }
         if !params
             .context
             .diagnostics
@@ -460,19 +485,53 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri.clone();
         let path = uri_to_path(&uri);
 
+        if !self.state.lock().await.eligibility_for_path(&path) {
+            return Ok(None);
+        }
         let Some((file, _)) = self.parsed_file(&path).await else {
             return Ok(None);
         };
 
-        // One quick-fix per diagnostic visible at the cursor; helpers skip
-        // lines that already carry a suppression.
-        let mut actions: CodeActionResponse = Vec::new();
-        for diag in params
+        let (versioned_edits, required_origin) = {
+            let state = self.state.lock().await;
+            let Some((version, cached)) = state.parsed.get(&path) else {
+                return Ok(None);
+            };
+            if !Arc::ptr_eq(cached, &file)
+                || state.versions.get(&path) != Some(version)
+                || !state.eligibility_for_path(&path)
+            {
+                return Ok(None);
+            }
+            (
+                state.supports_document_changes.then_some(*version),
+                state
+                    .supports_diagnostic_data
+                    .then(|| diagnostic_origin(&path, *version, state.diag_generation)),
+            )
+        };
+
+        let diagnostics: Vec<_> = params
             .context
             .diagnostics
             .iter()
-            .filter(|diag| diag.source.as_deref() == Some("ry"))
-        {
+            .filter(|diagnostic| diagnostic.source.as_deref() == Some("ry"))
+            .filter(|diagnostic| {
+                required_origin
+                    .as_ref()
+                    .is_none_or(|origin| diagnostic.data.as_ref() == Some(origin))
+            })
+            .collect();
+        // Stale ranges must not suppress unrelated current lines. Requiring
+        // preserved data is safe only for clients that negotiated it.
+        if diagnostics.is_empty() {
+            return Ok(None);
+        }
+
+        // One quick-fix per diagnostic visible at the cursor; helpers skip
+        // lines that already carry a suppression.
+        let mut actions: CodeActionResponse = Vec::new();
+        for diag in diagnostics {
             if let Some(action) = make_ignore_action(&uri, diag, &file) {
                 actions.push(CodeActionOrCommand::CodeAction(action));
             }
@@ -480,6 +539,28 @@ impl LanguageServer for Backend {
 
         if let Some(action) = make_ignore_file_action(&uri, &file) {
             actions.push(CodeActionOrCommand::CodeAction(action));
+        }
+
+        if let Some(version) = versioned_edits {
+            for action in &mut actions {
+                if let CodeActionOrCommand::CodeAction(action) = action
+                    && let Some(edit) = &mut action.edit
+                    && let Some(changes) = edit.changes.take()
+                {
+                    edit.document_changes = Some(DocumentChanges::Edits(
+                        changes
+                            .into_iter()
+                            .map(|(uri, edits)| TextDocumentEdit {
+                                text_document: OptionalVersionedTextDocumentIdentifier {
+                                    uri,
+                                    version: Some(version),
+                                },
+                                edits: edits.into_iter().map(OneOf::Left).collect(),
+                            })
+                            .collect(),
+                    ));
+                }
+            }
         }
 
         if actions.is_empty() {

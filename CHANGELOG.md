@@ -8,6 +8,16 @@ All notable changes to ry are documented in this file.
 
 - Refresh incremental diagnostics when a callback changes, including callbacks
   passed as values and their downstream callers.
+
+- Reject suppression requests that reuse stale diagnostics when the editor
+  supports preserving diagnostic data.
+
+- Stamp suppression edits with the analyzed document version when the editor
+  supports versioned edits, so it can reject actions after the source changes.
+
+- Stop offering suppression actions for disabled or excluded files. Skip
+  computing them when the editor requests other action kinds.
+
 - Stop S3 operator lookup at the winning group method, avoiding false
   column-access errors when later classes define another operator method.
   Keep custom opaque method results unknown.

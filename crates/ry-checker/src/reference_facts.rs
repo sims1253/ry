@@ -373,7 +373,7 @@ impl Checker {
         if self.reference_capture.is_none() || scope.reference_provenance.is_none() {
             return;
         }
-        scope.journal_binding(name);
+        scope.journal_reference_binding(name);
         let (Some(capture), Some(provenance)) = (
             self.reference_capture.as_mut(),
             scope.reference_provenance.as_mut(),

@@ -349,7 +349,7 @@ impl Scope {
 
     pub fn insert(&mut self, name: impl Into<String>, t: RType) {
         let name = name.into();
-        self.journal_binding(&name);
+        let journal = self.begin_binding_change(&name);
         if let Some(provenance) = self.reference_provenance.as_mut() {
             provenance.invalidate(&name);
         }
@@ -359,20 +359,22 @@ impl Scope {
         self.parameter_bindings.remove(&name);
         self.default_parameter_bindings.remove(&name);
         self.narrowed_bindings.remove(&name);
-        self.bindings.insert(name, t);
+        let previous = self.bindings.insert(name, t);
+        self.finish_binding_change(journal, previous);
     }
 
     pub(crate) fn insert_narrowed(&mut self, name: impl Into<String>, t: RType) {
         // Preserve parameter, default-parameter, and list-origin markers;
         // clear function aliases and lexical-function markers, then mark narrowed.
         let name = name.into();
-        self.journal_binding(&name);
+        let journal = self.begin_binding_change(&name);
         if let Some(provenance) = self.reference_provenance.as_mut() {
             provenance.invalidate(&name);
         }
         self.function_aliases.remove(&name);
         self.lexical_functions.remove(&name);
-        self.bindings.insert(name.clone(), t);
+        let previous = self.bindings.insert(name.clone(), t);
+        self.finish_binding_change(journal, previous);
         self.narrowed_bindings.insert(name);
     }
 
@@ -386,20 +388,21 @@ impl Scope {
         // Preserve lexical-function and list-origin markers; clear function
         // aliases and narrowing, then set both parameter markers.
         let name = name.into();
-        self.journal_binding(&name);
+        let journal = self.begin_binding_change(&name);
         if let Some(provenance) = self.reference_provenance.as_mut() {
             provenance.invalidate(&name);
         }
         self.function_aliases.remove(&name);
         self.narrowed_bindings.remove(&name);
-        self.bindings.insert(name.clone(), t);
+        let previous = self.bindings.insert(name.clone(), t);
+        self.finish_binding_change(journal, previous);
         self.parameter_bindings.insert(name.clone());
         self.default_parameter_bindings.insert(name);
     }
 
     pub(crate) fn mark_list_origin(&mut self, name: impl Into<String>) {
         let name = name.into();
-        self.journal_binding(&name);
+        self.journal_marker(&name, scope_journal::MarkerKind::ListOrigin);
         self.list_origin_bindings.insert(name);
     }
 
@@ -417,13 +420,13 @@ impl Scope {
 
     pub(crate) fn set_function_alias(&mut self, name: impl Into<String>, target: String) {
         let name = name.into();
-        self.journal_binding(&name);
+        self.journal_alias(&name);
         self.function_aliases.insert(name, target);
     }
 
     pub(crate) fn mark_lexical_function(&mut self, name: impl Into<String>) {
         let name = name.into();
-        self.journal_binding(&name);
+        self.journal_marker(&name, scope_journal::MarkerKind::Lexical);
         self.lexical_functions.insert(name);
     }
 

@@ -21,8 +21,14 @@ pub(crate) struct BindingState {
 
 impl BindingState {
     fn capture(scope: &Scope, name: &str) -> Self {
+        let mut state = Self::capture_metadata(scope, name);
+        state.ty = scope.get(name).cloned();
+        state
+    }
+
+    fn capture_metadata(scope: &Scope, name: &str) -> Self {
         Self {
-            ty: scope.get(name).cloned(),
+            ty: None,
             narrowed: scope.narrowed_bindings.contains(name),
             parameter: scope.parameter_bindings.contains(name),
             list_origin: scope.list_origin_bindings.contains(name),
@@ -72,9 +78,18 @@ impl BindingState {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum MarkerKind {
+    ListOrigin,
+    Lexical,
+}
+
 #[derive(Debug)]
 pub(crate) enum Undo {
     Binding(String, BindingState),
+    Marker(MarkerKind, String, bool),
+    Alias(String, Option<String>),
+    Reference(String, Option<BindingProvenance>),
     Provenance(HashMap<String, BindingProvenance>),
 }
 
@@ -92,21 +107,90 @@ pub(crate) struct BranchDelta {
     pub unreachable: bool,
 }
 
+pub(crate) struct BindingView<'a> {
+    pub ty: Option<&'a RType>,
+    pub narrowed: bool,
+    pub list_origin: bool,
+    pub default_parameter: bool,
+}
+
 impl BranchDelta {
-    pub fn binding(&self, base: &Scope, name: &str) -> BindingState {
-        self.changed
-            .get(name)
-            .cloned()
-            .unwrap_or_else(|| BindingState::capture(base, name))
+    pub fn binding<'a>(&'a self, base: &'a Scope, name: &str) -> BindingView<'a> {
+        if let Some(state) = self.changed.get(name) {
+            BindingView {
+                ty: state.ty.as_ref(),
+                narrowed: state.narrowed,
+                list_origin: state.list_origin,
+                default_parameter: state.default_parameter,
+            }
+        } else {
+            BindingView {
+                ty: base.get(name),
+                narrowed: base.narrowed_bindings.contains(name),
+                list_origin: base.has_list_origin(name),
+                default_parameter: base.is_default_parameter(name),
+            }
+        }
     }
 }
 
 impl Scope {
+    pub(crate) fn begin_binding_change(&mut self, name: &str) -> Option<usize> {
+        if self.snapshot_depth == 0 {
+            return None;
+        }
+        let index = self.undo.len();
+        self.undo.push(Undo::Binding(
+            name.to_string(),
+            BindingState::capture_metadata(self, name),
+        ));
+        Some(index)
+    }
+
+    pub(crate) fn finish_binding_change(&mut self, index: Option<usize>, previous: Option<RType>) {
+        if let Some(index) = index {
+            if let Undo::Binding(_, state) = &mut self.undo[index] {
+                state.ty = previous;
+            }
+        }
+    }
+
     pub(crate) fn journal_binding(&mut self, name: &str) {
         if self.snapshot_depth > 0 {
             self.undo.push(Undo::Binding(
                 name.to_string(),
                 BindingState::capture(self, name),
+            ));
+        }
+    }
+
+    pub(crate) fn journal_marker(&mut self, name: &str, kind: MarkerKind) {
+        if self.snapshot_depth > 0 {
+            let present = match kind {
+                MarkerKind::ListOrigin => self.list_origin_bindings.contains(name),
+                MarkerKind::Lexical => self.lexical_functions.contains(name),
+            };
+            self.undo
+                .push(Undo::Marker(kind, name.to_string(), present));
+        }
+    }
+
+    pub(crate) fn journal_alias(&mut self, name: &str) {
+        if self.snapshot_depth > 0 {
+            self.undo.push(Undo::Alias(
+                name.to_string(),
+                self.function_aliases.get(name).cloned(),
+            ));
+        }
+    }
+
+    pub(crate) fn journal_reference_binding(&mut self, name: &str) {
+        if self.snapshot_depth > 0 {
+            self.undo.push(Undo::Reference(
+                name.to_string(),
+                self.reference_provenance
+                    .as_ref()
+                    .and_then(|p| p.bindings.get(name).cloned()),
             ));
         }
     }
@@ -140,8 +224,14 @@ impl Scope {
     pub(crate) fn finish_snapshot(&mut self, mark: Mark) -> BranchDelta {
         let mut names = HashSet::new();
         for undo in &self.undo[mark.len..] {
-            if let Undo::Binding(name, _) = undo {
-                names.insert(name.clone());
+            match undo {
+                Undo::Binding(name, _)
+                | Undo::Marker(_, name, _)
+                | Undo::Alias(name, _)
+                | Undo::Reference(name, _) => {
+                    names.insert(name.clone());
+                }
+                Undo::Provenance(_) => {}
             }
         }
         let delta = BranchDelta {
@@ -157,6 +247,33 @@ impl Scope {
         while self.undo.len() > mark.len {
             match self.undo.pop().unwrap() {
                 Undo::Binding(name, state) => state.restore(self, name),
+                Undo::Marker(kind, name, present) => {
+                    let set = match kind {
+                        MarkerKind::ListOrigin => &mut self.list_origin_bindings,
+                        MarkerKind::Lexical => &mut self.lexical_functions,
+                    };
+                    if present {
+                        set.insert(name);
+                    } else {
+                        set.remove(&name);
+                    }
+                }
+                Undo::Alias(name, previous) => {
+                    if let Some(value) = previous {
+                        self.function_aliases.insert(name, value);
+                    } else {
+                        self.function_aliases.remove(&name);
+                    }
+                }
+                Undo::Reference(name, previous) => {
+                    if let Some(p) = self.reference_provenance.as_mut() {
+                        if let Some(value) = previous {
+                            p.bindings.insert(name, value);
+                        } else {
+                            p.bindings.remove(&name);
+                        }
+                    }
+                }
                 Undo::Provenance(bindings) => {
                     if let Some(p) = self.reference_provenance.as_mut() {
                         p.bindings = bindings;

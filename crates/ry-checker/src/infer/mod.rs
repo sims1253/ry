@@ -842,19 +842,18 @@ impl Checker {
                     continue;
                 }
                 if let Some(ty) = continuation.ty {
-                    if scope.get(name) != Some(&ty) {
-                        changes.push((name.clone(), ty, continuation.list_origin));
+                    if scope.get(name) != Some(ty) {
+                        changes.push((name.clone(), ty.clone(), continuation.list_origin));
                     }
                 }
                 continue;
             }
-            let changed = |binding: &crate::scope_journal::BindingState| {
+            let changed = |binding: &crate::scope_journal::BindingView<'_>| {
                 if narrowed.contains(name) && binding.narrowed {
                     return None;
                 }
                 binding
                     .ty
-                    .as_ref()
                     .filter(|ty| scope.get(name) != Some(*ty))
                     .cloned()
             };
@@ -894,9 +893,10 @@ impl Checker {
         let continuation_facts: Vec<_> = continuation
             .into_iter()
             .flat_map(|delta| {
-                narrowed
-                    .iter()
-                    .map(|name| (name.clone(), delta.binding(scope, name)))
+                narrowed.iter().map(|name| {
+                    let binding = delta.binding(scope, name);
+                    (name.clone(), binding.ty.cloned(), binding.default_parameter)
+                })
             })
             .collect();
         for (name, ty, list_origin) in changes {
@@ -905,9 +905,9 @@ impl Checker {
                 scope.mark_list_origin(name);
             }
         }
-        for (name, binding) in continuation_facts {
-            if let Some(ty) = binding.ty {
-                if binding.default_parameter {
+        for (name, ty, default_parameter) in continuation_facts {
+            if let Some(ty) = ty {
+                if default_parameter {
                     scope.insert_parameter_default(name, ty);
                 } else {
                     scope.insert(name, ty);

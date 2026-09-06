@@ -308,6 +308,21 @@ max-file-bytes = 2097152 # bytes per R file (default: 2 MiB)
 max-depth      = 64      # directory depth (default: 64)
 ```
 
+Use an environment profile for bindings supplied only to selected files:
+
+```toml
+[[environments]]
+name = "shiny"
+bindings = ["input", "output", "session"]
+paths = ["inst/shiny/**"]
+```
+
+Profile paths are glob patterns relative to the configuration directory, even
+when checking a nested package. `*` stays within one path component; `**`
+includes descendants. Use forward slashes on every platform. Existing paths
+are resolved through symlinks before matching. A programmatically constructed
+configuration without a file location uses the analysis root.
+
 CLI flags override the config only when passed explicitly.
 When multiple paths are checked, the first path anchors config discovery;
 that one configuration applies to the complete invocation.

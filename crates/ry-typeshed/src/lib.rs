@@ -370,6 +370,12 @@ pub enum TypeshedError {
         path: PathBuf,
         schema_version: String,
     },
+    #[error("duplicate S3 method `{generic}.{class}` in `{path}", path = path.display())]
+    DuplicateMethod {
+        path: PathBuf,
+        generic: String,
+        class: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -586,21 +592,8 @@ pub fn load_base() -> Result<Typeshed, TypeshedError> {
     parse_typeshed(BASE_JSON, Path::new("<embedded base>"))
 }
 
-/// File-level insertion order of the `functions` map.
-///
-/// This visitor and the `_with_order` parse twins exist only for
-/// `validate_stub_file`'s "function keys are not sorted" warning; every
-/// other consumer reads the sorted `BTreeMap` (#172). Load-bearing, not
-/// dead: the vendored stubs still contain adjacent inversions (base.json
-/// `load` > `lm`, rlang.json `:=` > `!!`, shiny.json `testServer` >
-/// `reactive`), `scripts/sync_typeshed.sh` runs `ry typeshed validate`
-/// over the tree it syncs, and ry-cli's
-/// `warns_without_failing_on_unsorted_function_keys` e2e test pins the
-/// warning plus a successful exit. Delete once the complete upstream
-/// pipeline emits sorted maps; without this visitor a sortedness check
-/// needs a second JSON pass or serde_json's `preserve_order`, which
-/// changes map ordering workspace-wide.
-struct RawFunctions(Vec<(String, FunctionSig)>);
+/// Reject duplicate JSON keys before they can overwrite a signature.
+struct RawFunctions(BTreeMap<String, FunctionSig>);
 
 impl<'de> Deserialize<'de> for RawFunctions {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -620,9 +613,13 @@ impl<'de> Deserialize<'de> for RawFunctions {
             where
                 A: MapAccess<'de>,
             {
-                let mut entries = Vec::with_capacity(map.size_hint().unwrap_or(0));
-                while let Some(entry) = map.next_entry()? {
-                    entries.push(entry);
+                let mut entries = BTreeMap::new();
+                while let Some((name, signature)) = map.next_entry::<String, FunctionSig>()? {
+                    if entries.insert(name.clone(), signature).is_some() {
+                        return Err(serde::de::Error::custom(format!(
+                            "duplicate function `{name}`"
+                        )));
+                    }
                 }
                 Ok(RawFunctions(entries))
             }
@@ -649,10 +646,7 @@ struct RawFile {
     s3_methods: Vec<RawS3Method>,
 }
 
-fn parse_typeshed_with_order(
-    json: &str,
-    path: &Path,
-) -> Result<(Typeshed, Vec<String>), TypeshedError> {
+fn parse_typeshed(json: &str, path: &Path) -> Result<Typeshed, TypeshedError> {
     let raw: RawFile = serde_json::from_str(json).map_err(|source| TypeshedError::JsonAtPath {
         path: path.to_path_buf(),
         source,
@@ -665,36 +659,26 @@ fn parse_typeshed_with_order(
             schema_version: schema_version.to_string(),
         });
     }
-    let mut functions = std::collections::BTreeMap::new();
-    let function_order = raw
-        .functions
-        .0
-        .iter()
-        .map(|(name, _)| name.clone())
-        .collect();
-    for (k, v) in raw.functions.0 {
-        functions.insert(k, v);
-    }
-    let mut s3_methods = std::collections::BTreeMap::new();
+    let mut s3_methods = BTreeMap::new();
     for m in raw.s3_methods {
-        s3_methods.insert((m.generic, m.class), m.signature);
+        let key = (m.generic, m.class);
+        if s3_methods.insert(key.clone(), m.signature).is_some() {
+            return Err(TypeshedError::DuplicateMethod {
+                path: path.to_path_buf(),
+                generic: key.0,
+                class: key.1,
+            });
+        }
     }
-    Ok((
-        Typeshed {
-            schema_version: raw.schema_version,
-            package: raw.package,
-            version: raw.version,
-            functions,
-            globals: raw.globals,
-            datasets: raw.datasets,
-            s3_methods,
-        },
-        function_order,
-    ))
-}
-
-fn parse_typeshed(json: &str, path: &Path) -> Result<Typeshed, TypeshedError> {
-    parse_typeshed_with_order(json, path).map(|(typeshed, _)| typeshed)
+    Ok(Typeshed {
+        schema_version: raw.schema_version,
+        package: raw.package,
+        version: raw.version,
+        functions: raw.functions.0,
+        globals: raw.globals,
+        datasets: raw.datasets,
+        s3_methods,
+    })
 }
 
 /// Load the base typeshed and cache it for the life of the process.
@@ -823,27 +807,16 @@ fn discover_stub_files(dir: &Path) -> Result<Vec<PathBuf>, TypeshedError> {
 
 /// Load one stub through the normative parser used by the runtime loader.
 fn load_stub_file(path: &Path) -> Result<Typeshed, TypeshedError> {
-    load_stub_file_with_order(path).map(|(typeshed, _)| typeshed)
-}
-
-fn load_stub_file_with_order(path: &Path) -> Result<(Typeshed, Vec<String>), TypeshedError> {
     let json = std::fs::read_to_string(path).map_err(|source| TypeshedError::Io {
         path: path.to_path_buf(),
         source,
     })?;
-    parse_typeshed_with_order(&json, path)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ValidationLevel {
-    Error,
-    Warning,
+    parse_typeshed(&json, path)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationProblem {
     pub path: PathBuf,
-    pub level: ValidationLevel,
     pub message: String,
 }
 
@@ -855,17 +828,7 @@ pub struct ValidationReport {
 
 impl ValidationReport {
     pub fn error_count(&self) -> usize {
-        self.problems
-            .iter()
-            .filter(|problem| problem.level == ValidationLevel::Error)
-            .count()
-    }
-
-    pub fn warning_count(&self) -> usize {
-        self.problems
-            .iter()
-            .filter(|problem| problem.level == ValidationLevel::Warning)
-            .count()
+        self.problems.len()
     }
 }
 
@@ -878,7 +841,6 @@ pub fn validate_stub_dirs(dirs: &[PathBuf]) -> ValidationReport {
             Err(error) => {
                 report.problems.push(ValidationProblem {
                     path: dir.clone(),
-                    level: ValidationLevel::Error,
                     message: validation_error_message(&error),
                 });
                 continue;
@@ -887,7 +849,6 @@ pub fn validate_stub_dirs(dirs: &[PathBuf]) -> ValidationReport {
         if paths.is_empty() {
             report.problems.push(ValidationProblem {
                 path: dir.clone(),
-                level: ValidationLevel::Error,
                 message: "no stub files found".to_string(),
             });
             continue;
@@ -902,6 +863,9 @@ pub fn validate_stub_dirs(dirs: &[PathBuf]) -> ValidationReport {
 
 fn validation_error_message(error: &TypeshedError) -> String {
     match error {
+        TypeshedError::DuplicateMethod { generic, class, .. } => {
+            format!("duplicate S3 method `{generic}.{class}`")
+        }
         TypeshedError::Io { source, .. } => format!("failed to read typeshed: {source}"),
         TypeshedError::JsonAtPath { source, .. } => format!("typeshed parse error: {source}"),
         TypeshedError::UnsupportedSchema { schema_version, .. } => {
@@ -911,12 +875,11 @@ fn validation_error_message(error: &TypeshedError) -> String {
 }
 
 fn validate_stub_file(path: &Path, report: &mut ValidationReport) {
-    let (typeshed, function_order) = match load_stub_file_with_order(path) {
+    let typeshed = match load_stub_file(path) {
         Ok(parsed) => parsed,
         Err(error) => {
             report.problems.push(ValidationProblem {
                 path: path.to_path_buf(),
-                level: ValidationLevel::Error,
                 message: validation_error_message(&error),
             });
             return;
@@ -935,14 +898,6 @@ fn validate_stub_file(path: &Path, report: &mut ValidationReport) {
             format!("package `{actual}` does not match file name `{expected}.json`"),
         ),
         _ => {}
-    }
-
-    if !function_order.windows(2).all(|pair| pair[0] <= pair[1]) {
-        report.problems.push(ValidationProblem {
-            path: path.to_path_buf(),
-            level: ValidationLevel::Warning,
-            message: "function keys are not sorted".to_string(),
-        });
     }
 
     let mut owners: HashMap<&str, &str> = typeshed
@@ -980,7 +935,6 @@ fn validate_stub_file(path: &Path, report: &mut ValidationReport) {
 fn validation_error(report: &mut ValidationReport, path: &Path, message: impl Into<String>) {
     report.problems.push(ValidationProblem {
         path: path.to_path_buf(),
-        level: ValidationLevel::Error,
         message: message.into(),
     });
 }
@@ -1661,8 +1615,7 @@ mod tests {
                 report
                     .problems
                     .iter()
-                    .any(|problem| problem.level == ValidationLevel::Error
-                        && problem.message.contains(message)),
+                    .any(|problem| problem.message.contains(message)),
                 "{pointer}: expected {message}: {report:?}"
             );
         }
@@ -1692,6 +1645,54 @@ mod tests {
                     report.problems[0].message.starts_with(
                         "s3_methods[print.example].params[1].name: duplicate parameter"
                     )
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn duplicate_definitions_are_rejected_before_loading() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fixture.json");
+        let signature = r#"{"params": [], "return": "arg0"}"#;
+        let duplicate_functions = format!(
+            r#"{{"schema_version":"2","package":"fixture","version":"test","functions":{{"f":{signature},"f":{signature}}}}}"#
+        );
+        std::fs::write(&path, duplicate_functions).unwrap();
+        assert!(
+            load_stub_file(&path)
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate function `f`")
+        );
+        assert_eq!(
+            validate_stub_dirs(&[dir.path().to_path_buf()]).error_count(),
+            1
+        );
+        for (generic, class, errors) in [
+            ("print", "example", 1),
+            ("print", "other", 0),
+            ("summary", "example", 0),
+        ] {
+            let stub = serde_json::json!({
+                "schema_version": "2", "package": "fixture", "version": "test", "functions": {},
+                "s3_methods": [
+                    {"generic": "print", "class": "example", "params": [], "return": "arg0"},
+                    {"generic": generic, "class": class, "params": [], "return": "arg0"}
+                ]
+            });
+            std::fs::write(&path, stub.to_string()).unwrap();
+            assert_eq!(
+                validate_stub_dirs(&[dir.path().to_path_buf()]).error_count(),
+                errors
+            );
+            if errors == 0 {
+                assert_eq!(load_stub_file(&path).unwrap().s3_methods.len(), 2);
+            } else {
+                let error = load_stub_file(&path).unwrap_err().to_string();
+                assert!(
+                    error.contains("print.example") && error.contains("fixture.json"),
+                    "{error}"
                 );
             }
         }

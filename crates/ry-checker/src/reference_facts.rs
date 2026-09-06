@@ -123,15 +123,19 @@ impl ReferenceCapture {
         inherited_unsupported: bool,
     ) {
         let mut unsafe_scope = inherited_unsupported;
+        let mut spellings = HashMap::<String, String>::new();
         let mut writes = HashMap::<String, usize>::new();
+        let mut formals = HashSet::new();
         let mut declarations = Vec::new();
-        let mut excluded_targets = HashSet::new();
         let mut references = Vec::new();
         let mut functions = Vec::new();
         let mut defaults = Vec::new();
         for param in params {
             if let Some(key) = ordinary_spelling(&param.name) {
-                *writes.entry(key.to_string()).or_default() += 1;
+                if !formals.insert(key.to_string()) {
+                    unsafe_scope = true;
+                }
+                spellings.insert(key.to_string(), param.name.clone());
             } else {
                 unsafe_scope = true;
             }
@@ -141,7 +145,12 @@ impl ReferenceCapture {
                 ..param.span
             };
             if source.get(span.start..span.end) == Some(param.name.as_str()) {
-                declarations.push((param.name.clone(), span, ReferenceDefinitionKind::Formal));
+                declarations.push((
+                    param.name.clone(),
+                    span,
+                    ReferenceDefinitionKind::Formal,
+                    true,
+                ));
             } else {
                 unsafe_scope = true;
             }
@@ -149,77 +158,110 @@ impl ReferenceCapture {
                 defaults.push(Stmt::Expr(default.clone()));
             }
         }
-        let _ = walk_stmts(
-            stmts,
-            Walk {
-                dollar_args: false,
-                assign_operands: false,
-                ..Walk::ALL
-            },
-            |node, _| {
-                match node {
-                    AstNode::Stmt(Stmt::Assign { target, value, .. }) => {
-                        if let Expr::Ident { name, span } = target {
-                            excluded_targets.insert(*span);
-                            if let Some(key) = ordinary_spelling(name) {
-                                *writes.entry(key.to_string()).or_default() += 1;
+        let mut supported_prefix = true;
+        for statement in stmts {
+            let mut unsupported_statement = false;
+            let mut statement_declarations = Vec::new();
+            let mut statement_references = Vec::new();
+            let mut excluded_targets = HashSet::new();
+            let _ = walk_stmts(
+                std::slice::from_ref(statement),
+                Walk {
+                    dollar_args: false,
+                    assign_operands: false,
+                    ..Walk::ALL
+                },
+                |node, _| {
+                    match node {
+                        AstNode::Stmt(Stmt::Assign { target, value, .. }) => {
+                            if let Expr::Ident { name, span } = target {
+                                excluded_targets.insert(*span);
+                                if let Some(key) = ordinary_spelling(name) {
+                                    // Equivalent spellings and writes to formals
+                                    // remain outside the ordinary-local contract.
+                                    if formals.contains(key)
+                                        || spellings.get(key).is_some_and(|raw| raw != name)
+                                    {
+                                        unsafe_scope = true;
+                                    }
+                                    spellings.insert(key.to_string(), name.clone());
+                                    let count = writes.entry(key.to_string()).or_default();
+                                    *count += 1;
+                                    if *count > 1 && matches!(value, Expr::Function { .. }) {
+                                        unsupported_statement = true;
+                                    }
+                                } else {
+                                    unsafe_scope = true;
+                                }
+                                statement_declarations.push((
+                                    name.clone(),
+                                    *span,
+                                    ReferenceDefinitionKind::Assignment,
+                                ));
+                                // Only certify ordinary left assignment from
+                                // source tokens; the AST drops some operators.
+                                let rhs = span_of(value);
+                                let operator = source.get(span.end..rhs.start).map(str::trim);
+                                if !matches!(operator, Some("<-" | "=")) || !simple_value(value) {
+                                    unsupported_statement = true;
+                                }
                             } else {
-                                unsafe_scope = true;
+                                unsupported_statement = true;
                             }
-                            declarations.push((
-                                name.clone(),
-                                *span,
-                                ReferenceDefinitionKind::Assignment,
-                            ));
-                            // The small AST drops some assignment operators. Only
-                            // certify ordinary left assignment from source tokens.
-                            let rhs = span_of(value);
-                            let operator = source.get(span.end..rhs.start).map(str::trim);
-                            if !matches!(operator, Some("<-" | "=")) || !simple_value(value) {
-                                unsafe_scope = true;
+                        }
+                        AstNode::Stmt(Stmt::FunctionDef { params, body, span })
+                        | AstNode::Expr(Expr::Function { params, body, span }) => {
+                            functions.push((params.clone(), body.clone(), *span));
+                            return ControlFlow::<(), Descend>::Continue(Descend::Skip);
+                        }
+                        AstNode::Stmt(
+                            Stmt::If { .. }
+                            | Stmt::For { .. }
+                            | Stmt::While { .. }
+                            | Stmt::Return { .. },
+                        ) => unsupported_statement = true,
+                        AstNode::Expr(Expr::Ident { name, span }) => {
+                            if ordinary_spelling(name).is_none() {
+                                unsupported_statement = true;
                             }
-                        } else {
-                            unsafe_scope = true;
+                            if !excluded_targets.contains(span)
+                                && Self::source_backed(source, *span)
+                            {
+                                statement_references.push((name.clone(), *span));
+                            }
                         }
+                        AstNode::Expr(
+                            Expr::Call { .. }
+                            | Expr::BinOp { .. }
+                            | Expr::UnaryOp { .. }
+                            | Expr::Index { .. }
+                            | Expr::If { .. }
+                            | Expr::Unknown(_),
+                        ) => unsupported_statement = true,
+                        _ => {}
                     }
-                    AstNode::Stmt(Stmt::FunctionDef { params, body, span })
-                    | AstNode::Expr(Expr::Function { params, body, span }) => {
-                        functions.push((params.clone(), body.clone(), *span));
-                        return ControlFlow::<(), Descend>::Continue(Descend::Skip);
-                    }
-                    AstNode::Stmt(
-                        Stmt::If { .. }
-                        | Stmt::For { .. }
-                        | Stmt::While { .. }
-                        | Stmt::Return { .. },
-                    ) => unsafe_scope = true,
-                    AstNode::Expr(Expr::Ident { name, span }) => {
-                        if ordinary_spelling(name).is_none() {
-                            unsafe_scope = true;
-                        }
-                        if !excluded_targets.contains(span) && Self::source_backed(source, *span) {
-                            references.push((name.clone(), *span));
-                        }
-                    }
-                    AstNode::Expr(
-                        Expr::Call { .. }
-                        | Expr::BinOp { .. }
-                        | Expr::UnaryOp { .. }
-                        | Expr::Index { .. }
-                        | Expr::If { .. }
-                        | Expr::Unknown(_),
-                    ) => unsafe_scope = true,
-                    _ => {}
-                }
-                ControlFlow::Continue(Descend::Into)
-            },
-        );
-        unsafe_scope |= writes.values().any(|count| *count != 1);
+                    ControlFlow::Continue(Descend::Into)
+                },
+            );
+            // Reject the entire opaque statement, including earlier children.
+            // This boundary makes no argument/subexpression ordering claims.
+            supported_prefix &= !unsupported_statement;
+            declarations.extend(
+                statement_declarations
+                    .into_iter()
+                    .map(|(name, span, kind)| (name, span, kind, supported_prefix)),
+            );
+            references.extend(
+                statement_references
+                    .into_iter()
+                    .map(|(name, span)| (name, span, supported_prefix)),
+            );
+        }
         if !unsafe_scope {
             self.eligible_scopes.insert(owner);
-            declarations.sort_by_key(|(_, span, _)| (span.start, span.end));
-            for (name, span, kind) in declarations {
-                if !Self::source_backed(source, span) {
+            declarations.sort_by_key(|(_, span, _, _)| (span.start, span.end));
+            for (name, span, kind, eligible) in declarations {
+                if !eligible || !Self::source_backed(source, span) {
                     continue;
                 }
                 let id = DefinitionId(self.definitions.len() as u32);
@@ -233,7 +275,8 @@ impl ReferenceCapture {
                 self.declarations.insert(span, id);
             }
         }
-        for (name, span) in references {
+        for (name, span, eligible) in references {
+            let eligible = eligible && !unsafe_scope;
             self.occurrences.entry(span).or_insert(Occurrence {
                 record: ReferenceRecord {
                     name,
@@ -241,24 +284,31 @@ impl ReferenceCapture {
                     resolution: ReferenceResolution::Unsupported,
                     definition: None,
                     type_at_reference: None,
-                    reason: Some(if unsafe_scope {
-                        "unsupported_scope"
-                    } else {
+                    reason: Some(if eligible {
                         "not_observed"
+                    } else {
+                        "unsupported_scope"
                     }),
                 },
                 owner,
-                eligible: !unsafe_scope,
+                eligible,
                 observed: false,
             });
         }
         // Defaults are lazy expressions, not the function's runtime contract.
-        // Their references and any nested functions remain unsupported.
         if !defaults.is_empty() {
             self.inventory_scope(source, owner, &[], &defaults, true);
         }
         for (params, body, span) in functions {
-            self.inventory_scope(source, span, &params, &body, unsafe_scope);
+            // A body can run after the enclosing prefix has ended. Its textual
+            // definition position cannot make later enclosing effects safe.
+            self.inventory_scope(
+                source,
+                span,
+                &params,
+                &body,
+                unsafe_scope || !supported_prefix,
+            );
         }
     }
 
@@ -278,7 +328,7 @@ impl ReferenceCapture {
     }
 }
 
-// Canonical spelling is used ONLY to reject multiple syntactic writes and
+// Canonical spelling is used ONLY to reject equivalent mixed spellings and
 // unsupported names. The semantic lookup and provenance retain the checker's
 // raw names. Escaped names need a full R decoder and are outside this subset.
 fn ordinary_spelling(name: &str) -> Option<&str> {
@@ -538,6 +588,214 @@ mod tests {
     }
 
     #[test]
+    fn fixed_reference_panel_preserves_counts_and_inference() {
+        let panel: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../docs/corpus/reference-prefix-panel.json"
+        ))
+        .unwrap();
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut sources: Vec<_> = panel["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|case| {
+                (
+                    case["name"].as_str().unwrap().to_string(),
+                    case["source"].as_str().unwrap().to_string(),
+                    case["references"].as_u64().unwrap() as usize,
+                    case["resolved"].as_u64().unwrap() as usize,
+                )
+            })
+            .collect();
+        for case in panel["files"].as_array().unwrap() {
+            let path = case["path"].as_str().unwrap();
+            sources.push((
+                path.to_string(),
+                std::fs::read_to_string(root.join(path)).unwrap(),
+                case["references"].as_u64().unwrap() as usize,
+                case["resolved"].as_u64().unwrap() as usize,
+            ));
+        }
+        for (name, source, references, resolved) in sources {
+            let file = file(&source);
+            let mut plain = Checker::new("refs.R");
+            let (plain_diagnostics, plain_scope) = plain.check_with_scope(&file);
+            let mut captured = Checker::new("refs.R");
+            captured.enable_reference_capture();
+            let (captured_diagnostics, captured_scope) = captured.check_with_scope(&file);
+            assert_eq!(plain_scope.bindings, captured_scope.bindings, "{name}");
+            assert_eq!(
+                format!("{plain_diagnostics:?}"),
+                format!("{captured_diagnostics:?}"),
+                "{name}"
+            );
+            let facts = captured.take_reference_facts();
+            assert_eq!(facts.references.len(), references, "{name}");
+            assert_eq!(
+                facts
+                    .references
+                    .iter()
+                    .filter(|read| read.resolution == ReferenceResolution::Resolved)
+                    .count(),
+                resolved,
+                "{name}"
+            );
+            captured.check(&file);
+            assert_eq!(
+                format!("{facts:?}"),
+                format!("{:?}", captured.take_reference_facts()),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn ordered_reassignments_keep_each_read_at_its_installed_definition() {
+        let source = "x <- 1L\nx\ny <- x\nx <- x\nx\nx <- 'later'\nx\ny\n";
+        let facts = facts(source);
+        let reads = named(&facts, "x");
+        assert_eq!(reads.len(), 5);
+        assert!(
+            reads
+                .iter()
+                .all(|read| read.resolution == ReferenceResolution::Resolved)
+        );
+        assert_eq!(reads[0].definition, reads[1].definition);
+        assert_eq!(reads[1].definition, reads[2].definition);
+        assert_ne!(reads[2].definition, reads[3].definition);
+        assert_ne!(reads[3].definition, reads[4].definition);
+        for read in &reads[..4] {
+            assert_eq!(read.type_at_reference.as_ref().unwrap().mode, Mode::Integer);
+        }
+        assert_eq!(
+            reads[4].type_at_reference.as_ref().unwrap().mode,
+            Mode::Character
+        );
+        let copied = named(&facts, "y")[0];
+        assert_eq!(copied.resolution, ReferenceResolution::Resolved);
+        assert_ne!(copied.definition, reads[0].definition);
+        assert_eq!(
+            copied.type_at_reference.as_ref().unwrap().mode,
+            Mode::Integer
+        );
+    }
+
+    #[test]
+    fn opaque_statements_preserve_only_the_proven_prefix() {
+        for opaque in [
+            "mutate()",
+            "base::identity(1L)",
+            "x + 1L",
+            "if (flag) mutate()",
+            "z <- { x; mutate() }",
+        ] {
+            let source = format!("x <- 1L\nx\n{opaque}\nx <- 2L\nx\n");
+            let facts = facts(&source);
+            let reads = named(&facts, "x");
+            assert_eq!(
+                reads[0].resolution,
+                ReferenceResolution::Resolved,
+                "{source}: {facts:?}"
+            );
+            assert_eq!(
+                reads[0].type_at_reference.as_ref().unwrap().mode,
+                Mode::Integer
+            );
+            for read in &reads[1..] {
+                assert_eq!(
+                    read.resolution,
+                    ReferenceResolution::Unsupported,
+                    "{source}: {facts:?}"
+                );
+                assert!(read.definition.is_none() && read.type_at_reference.is_none());
+            }
+            assert_eq!(facts.definitions.len(), 1, "no later definition: {facts:?}");
+        }
+        let facts = facts("mutate()\nx <- 1L\nx\n");
+        assert_eq!(
+            named(&facts, "x")[0].resolution,
+            ReferenceResolution::Unsupported
+        );
+    }
+
+    #[test]
+    fn prefix_changes_do_not_rewrite_an_earlier_fact() {
+        let original = facts("x <- 1L\ny <- x\n");
+        for suffix in [
+            "mutate()\ny\n",
+            "base::identity(x)\ny\n",
+            "if (flag) mutate()\ny\n",
+        ] {
+            let extended = facts(&format!("x <- 1L\ny <- x\n{suffix}"));
+            let before = &original.references[0];
+            let after = &extended.references[0];
+            assert_eq!(before.span, after.span);
+            assert_eq!(before.definition, after.definition);
+            assert_eq!(before.type_at_reference, after.type_at_reference);
+            assert_eq!(after.resolution, ReferenceResolution::Resolved);
+        }
+    }
+
+    #[test]
+    fn reassignment_does_not_recover_after_formal_or_unknown_reads() {
+        for source in [
+            "f <- function(p) { x <- 1L; x; p; x <- 2L; x }",
+            "x <- 1L; x; unknown_name; x <- 2L; x",
+        ] {
+            let facts = facts(source);
+            let reads = named(&facts, "x");
+            assert_eq!(reads[0].resolution, ReferenceResolution::Resolved);
+            assert_eq!(reads[1].resolution, ReferenceResolution::Unsupported);
+            assert!(reads[1].definition.is_none() && reads[1].type_at_reference.is_none());
+        }
+        let facts = facts("f <- function(p) { x <- 1L; x; p; x }");
+        assert_eq!(
+            named(&facts, "p")[0].resolution,
+            ReferenceResolution::Resolved
+        );
+    }
+
+    #[test]
+    fn deferred_functions_and_formal_writes_do_not_gain_prefix_evidence() {
+        for source in [
+            "f <- function() { x <- 1L; x }; mutate()",
+            "f <- function(p) { p <- 1L; p }",
+            "f <- function(p) { p; p <- 1L; p }",
+            "f <- function() { x <- 1L; x }; if (flag) mutate()",
+            "f <- function() { x <- 1L; x }; base::identity(1L)",
+        ] {
+            let facts = facts(source);
+            assert!(
+                facts
+                    .references
+                    .iter()
+                    .all(|read| read.resolution == ReferenceResolution::Unsupported),
+                "{source}: {facts:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ordered_shadowing_keeps_unicode_sites_separate() {
+        let source = "`空 白` <- 1L\n`空 白`\nf <- function() { `空 白` <- 'local'; `空 白`; `空 白` <- FALSE; `空 白` }\n`空 白`\n";
+        let facts = facts(source);
+        let reads = named(&facts, "`空 白`");
+        assert_eq!(reads.len(), 4);
+        assert_eq!(reads[0].definition, reads[3].definition);
+        assert_ne!(reads[0].definition, reads[1].definition);
+        assert_ne!(reads[1].definition, reads[2].definition);
+        for (read, mode) in
+            reads
+                .iter()
+                .zip([Mode::Integer, Mode::Character, Mode::Logical, Mode::Integer])
+        {
+            assert_eq!(read.resolution, ReferenceResolution::Resolved);
+            assert_eq!(read.type_at_reference.as_ref().unwrap().mode, mode);
+            assert_eq!(&source[read.span.start..read.span.end], "`空 白`");
+        }
+    }
+
+    #[test]
     fn reference_capture_uses_the_semantic_write_and_lookup() {
         let source = "x <- 1L\ny <- x\nz <- y\n";
         let facts = facts(source);
@@ -563,9 +821,8 @@ mod tests {
     }
 
     #[test]
-    fn reference_capture_rejects_reassignment_and_nonordinary_operators() {
+    fn reference_capture_rejects_nonordinary_operators() {
         for source in [
-            "x <- 1L\ny <- x\nx <- 'later'",
             "x := 1L\ny <- x",
             "1L ->> x\ny <- x",
             "x <<- 1L\ny <- x",

@@ -99,13 +99,13 @@ function findOnPath(binary: string): string | undefined {
   return undefined;
 }
 
+const execFileAsync = promisify(execFile);
+
 /**
  * Probe the ry binary version by executing `ry version --output-format json`.
  * Returns undefined if the binary cannot be executed or the output
  * cannot be parsed.
  */
-const execFileAsync = promisify(execFile);
-
 export async function getRyVersion(
   binaryPath: string,
 ): Promise<VersionInfo | undefined> {

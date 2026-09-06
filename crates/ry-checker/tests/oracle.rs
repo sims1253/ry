@@ -163,7 +163,7 @@ fn fixture_packages(src: &str) -> Vec<String> {
                     .and_then(|text| text.strip_suffix('`'))
                     .is_some_and(|text| !text.contains('`'));
                 if !quoted_identifier && let Some((package, _)) = name.split_once("::") {
-                    add(package);
+                    add(package.trim_matches(['`', '"', '\'']));
                 }
             }
             if let AstNode::Expr(Expr::Call { func, args, .. }) = node
@@ -752,4 +752,10 @@ fn fixture_packages_covers_namespace_only_oracles() {
         fixture_packages(include_str!("../testdata/oracle/tidy_injection.R")),
         vec!["rlang", "dplyr", "purrr"]
     );
+}
+
+#[test]
+fn fixture_packages_accepts_quoted_namespace_packages() {
+    let src = r#"`stats`::median(1); "stats"::median(2); 'stats':::median.default(3)"#;
+    assert_eq!(fixture_packages(src), vec!["stats"]);
 }

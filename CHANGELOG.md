@@ -6,6 +6,9 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Reject suppression requests that reuse stale diagnostics when the editor
+  supports preserving diagnostic data.
+
 - Stamp suppression edits with the analyzed document version when the editor
   supports versioned edits, so it can reject actions after the source changes.
 

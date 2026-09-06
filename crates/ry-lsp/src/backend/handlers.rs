@@ -31,6 +31,14 @@ impl LanguageServer for Backend {
             .and_then(|w| w.configuration)
             .unwrap_or(false);
 
+        let supports_document_changes = params
+            .capabilities
+            .workspace
+            .as_ref()
+            .and_then(|workspace| workspace.workspace_edit.as_ref())
+            .and_then(|edit| edit.document_changes)
+            .unwrap_or(false);
+
         let supports_did_change_watched_files = params
             .capabilities
             .workspace
@@ -101,6 +109,7 @@ impl LanguageServer for Backend {
         state.folder_settings = folder_settings;
         state.server_settings = server_settings;
         state.supports_workspace_configuration = supports_workspace_configuration;
+        state.supports_document_changes = supports_document_changes;
         state.supports_did_change_watched_files = supports_did_change_watched_files;
         state.supports_relative_patterns = supports_relative_patterns;
         state.folder_contexts = folder_contexts;
@@ -474,6 +483,20 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
+        let versioned_edits = {
+            let state = self.state.lock().await;
+            let Some((version, cached)) = state.parsed.get(&path) else {
+                return Ok(None);
+            };
+            if !Arc::ptr_eq(cached, &file)
+                || state.versions.get(&path) != Some(version)
+                || !state.eligibility_for_path(&path)
+            {
+                return Ok(None);
+            }
+            state.supports_document_changes.then_some(*version)
+        };
+
         // One quick-fix per diagnostic visible at the cursor; helpers skip
         // lines that already carry a suppression.
         let mut actions: CodeActionResponse = Vec::new();
@@ -490,6 +513,28 @@ impl LanguageServer for Backend {
 
         if let Some(action) = make_ignore_file_action(&uri, &file) {
             actions.push(CodeActionOrCommand::CodeAction(action));
+        }
+
+        if let Some(version) = versioned_edits {
+            for action in &mut actions {
+                if let CodeActionOrCommand::CodeAction(action) = action
+                    && let Some(edit) = &mut action.edit
+                    && let Some(changes) = edit.changes.take()
+                {
+                    edit.document_changes = Some(DocumentChanges::Edits(
+                        changes
+                            .into_iter()
+                            .map(|(uri, edits)| TextDocumentEdit {
+                                text_document: OptionalVersionedTextDocumentIdentifier {
+                                    uri,
+                                    version: Some(version),
+                                },
+                                edits: edits.into_iter().map(OneOf::Left).collect(),
+                            })
+                            .collect(),
+                    ));
+                }
+            }
         }
 
         if actions.is_empty() {

@@ -119,6 +119,8 @@ pub(super) struct State {
     /// Whether the client supports `workspace/configuration` pull (then
     /// `didChangeConfiguration` re-pulls instead of parsing the payload).
     supports_workspace_configuration: bool,
+    /// Whether workspace edits can carry the document version they modify.
+    supports_document_changes: bool,
     /// Whether the client supports dynamic registration of
     /// `workspace/didChangeWatchedFiles`.
     supports_did_change_watched_files: bool,

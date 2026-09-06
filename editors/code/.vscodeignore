@@ -8,7 +8,7 @@ test/**
 
 # Build tooling and configs are not needed at runtime.
 esbuild.js
-eslint.config.mjs
+.oxlintrc.json
 tsconfig*.json
 justfile
 .gitignore

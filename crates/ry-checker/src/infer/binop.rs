@@ -222,11 +222,19 @@ impl Checker {
                         if generic == symbol || !matches!(result.mode, Mode::Opaque) {
                             return Some(result);
                         }
-                        // An opaque group stub (every embedded `Ops.*`
-                        // entry) offers no shape: fall through like a
-                        // miss, so the storage-mode rules keep modeling
-                        // these base classes with their own diagnostics
-                        // (`Ops.factor`'s warning, `Ops.Date` arithmetic).
+                        // Only embedded base group methods have storage-mode
+                        // models below. An opaque custom stub still wins over
+                        // later classes, but its result is unknown.
+                        let modeled_base = !self.user_stubs.contains_key("base")
+                            && self
+                                .typeshed
+                                .s3_methods
+                                .contains_key(&(generic.to_owned(), class.to_string()));
+                        return if modeled_base {
+                            None
+                        } else {
+                            Some(RType::unknown())
+                        };
                     }
                     None => {}
                 }

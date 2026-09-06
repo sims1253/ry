@@ -732,6 +732,8 @@ pub struct Checker {
     capture_references: bool,
     reference_capture: Option<Box<reference_facts::ReferenceCapture>>,
     scope_records: Vec<ScopeRecord>,
+    // Assignment-site types for editor hints, captured only on request.
+    assignment_types: Option<HashMap<Span, RType>>,
 }
 
 impl Checker {
@@ -757,8 +759,7 @@ impl Checker {
     }
 
     // Check a file and return both diagnostics and the final top-level
-    // scope. Used by the LSP server's scope cache: the scope maps variable
-    // names to their inferred types, feeding inlay hint lookups.
+    // scope. This snapshot describes scope exit, not individual assignments.
     pub fn check_with_scope(&mut self, file: &SourceFile) -> (Vec<Diagnostic>, Scope) {
         self.run_passes(file);
         // Emit parse errors after the collection/refinement passes (both
@@ -855,6 +856,7 @@ impl Checker {
             capture_references: false,
             reference_capture: None,
             scope_records: Vec::new(),
+            assignment_types: None,
         }
     }
 
@@ -966,10 +968,13 @@ impl Checker {
     // Pass 3: emit diagnostics for this file using the refined tables.
     // Diagnostics are appended to `self.diagnostics`; clear that vec
     // first if you want only this file's diagnostics. Returns the final
-    // top-level scope (also what `check_with_scope` hands to the LSP).
+    // top-level scope (also returned by `check_with_scope`).
     pub(crate) fn emit_diagnostics(&mut self, file: &SourceFile) -> Scope {
         self.path = file.path.clone();
         self.source.clone_from(&file.source);
+        if let Some(types) = &mut self.assignment_types {
+            types.clear();
+        }
         self.emit_parse_errors(file);
         let mut scope = self.top_level_scope();
         if self.capture_references {
@@ -1004,6 +1009,26 @@ impl Checker {
     /// [`enable_scope_capture`](Self::enable_scope_capture) was called.
     pub fn take_scope_records(&mut self) -> Vec<ScopeRecord> {
         std::mem::take(&mut self.scope_records)
+    }
+
+    /// Capture inferred types at identifier assignments during the diagnostic
+    /// walk. Types describe the assigned value, not the scope's final state.
+    /// Coverage follows that walk; unknown types and unvisited code can be absent.
+    pub fn enable_assignment_capture(&mut self) {
+        self.assignment_types = Some(HashMap::new());
+    }
+
+    /// Take assignment types from the latest check, sorted by source position.
+    /// Repeated observations of one source site are joined. This is inference
+    /// evidence, not a guarantee about execution or symbol identity.
+    pub fn take_assignment_types(&mut self) -> Vec<(Span, RType)> {
+        let mut records: Vec<_> = self
+            .assignment_types
+            .as_mut()
+            .map(|types| types.drain().collect())
+            .unwrap_or_default();
+        records.sort_by_key(|(span, _)| (span.start, span.end));
+        records
     }
 
     // Snapshot one completed function-body scope. Called at the end of

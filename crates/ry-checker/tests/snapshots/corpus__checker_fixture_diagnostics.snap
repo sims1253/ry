@@ -266,33 +266,65 @@ expression: snapshots
       severity: warning
       span:
         column: 26
-        end: 64
+        end: 92
         line: 1
-        start: 63
+        start: 91
     - code: RY098
       message: "parameter `x` has a self-referential default that recurses when forced"
       severity: warning
       span:
         column: 22
-        end: 107
+        end: 135
         line: 2
-        start: 106
+        start: 134
     - code: RY098
       message: "parameter `x` has a self-referential default that recurses when forced"
       severity: warning
       span:
         column: 39
-        end: 172
+        end: 200
         line: 3
-        start: 171
+        start: 199
     - code: RY098
       message: "parameter `x` may force its default before body-local `value` is assigned"
       severity: warning
       span:
         column: 17
-        end: 225
+        end: 253
         line: 5
-        start: 224
+        start: 252
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 32
+        end: 304
+        line: 8
+        start: 303
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 28
+        end: 350
+        line: 9
+        start: 349
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 42
+        end: 415
+        line: 10
+        start: 414
+    - code: RY098
+      message: "parameter `x` may force its default before body-local `value` is assigned"
+      severity: warning
+      span:
+        column: 14
+        end: 471
+        line: 12
+        start: 470
   fixture: err_qualified_identity_forces_default.R
 - diagnostics:
     - code: RY102

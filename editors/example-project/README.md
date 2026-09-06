@@ -76,8 +76,8 @@ imports and unresolved names. `daily-report.R` contains dplyr data masking.
 `quality.R` covers argument checks and suppressions, `warts.R` covers operator
 and type errors, and `broken.R` exercises recovery after a syntax error.
 
-The table records code, line, and column from the CLI's JSON output with
-bundled stubs and installed-library discovery disabled. Positions are 1-based.
+The table records code, line, and column from the CLI's JSON output using
+the bundled stubs, with installed-library discovery disabled. Positions are 1-based.
 The CLI integration test checks this table against the current source files:
 
 ```sh

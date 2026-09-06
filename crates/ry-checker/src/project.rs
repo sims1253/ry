@@ -35,6 +35,7 @@ use std::sync::Arc;
 /// a top-level function with the same name, the later `add_file` wins
 /// (matching R's own `source()` ordering, where the most recently
 /// sourced file's bindings override earlier ones).
+#[derive(Default)]
 pub struct Project {
     /// Shared function table. Populated by pass 1 from all files, then
     /// refined by pass 2. Kept on `Project` rather than recreated each
@@ -131,12 +132,6 @@ pub(crate) struct CollectedFile {
     pub(crate) loaded: HashSet<String>,
 }
 
-impl Default for Project {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Replace `current` with `new` when they differ, returning whether the
 /// replacement happened. The equality-aware setters below use this to
 /// skip the all-dirty invalidation an unchanged value would cause.
@@ -152,33 +147,7 @@ fn set_if_changed<T: PartialEq>(current: &mut T, new: T) -> bool {
 impl Project {
     /// Construct an empty project with no files and empty tables.
     pub fn new() -> Self {
-        Self {
-            fn_table: FnTable::default(),
-            return_slots: ReturnSlots::default(),
-            files: Vec::new(),
-            diagnostics: Vec::new(),
-            loaded: std::collections::HashSet::new(),
-            declared_loaded: HashSet::new(),
-            bare_loaded: HashMap::new(),
-            external_bindings: HashMap::new(),
-            imported_from: HashMap::new(),
-            external_s3_methods: HashMap::new(),
-            load_bindings: HashMap::new(),
-            user_stubs: Arc::new(BTreeMap::new()),
-            collected_files: HashMap::new(),
-            file_known_vars: HashMap::new(),
-            dirty_paths: HashSet::new(),
-            invalidated_fns: HashSet::new(),
-            prev_loaded: None,
-            has_prev_emit: false,
-            file_called_fns: HashMap::new(),
-            prev_fn_returns: HashMap::new(),
-            prev_fn_signatures: HashMap::new(),
-            prev_known_vars: HashSet::new(),
-            capture_scopes: false,
-            scope_records: Vec::new(),
-            emit_count: 0,
-        }
+        Self::default()
     }
 
     /// Add a parsed file to the project. Call this for every file
@@ -190,8 +159,7 @@ impl Project {
     /// the most recently sourced file's top-level bindings override
     /// earlier ones.
     pub fn add_file(&mut self, path: String, file: SourceFile) {
-        self.dirty_paths.insert(path.clone());
-        self.files.push((path, Arc::new(file)));
+        self.add_file_arc(path, Arc::new(file));
     }
 
     /// Add a pre-parsed file without wrapping. Use when the caller

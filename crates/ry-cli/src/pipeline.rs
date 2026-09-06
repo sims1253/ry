@@ -87,31 +87,15 @@ pub(crate) fn parse_files(
     use rayon::prelude::*;
     let outcomes: Vec<_> = paths
         .par_iter()
-        .map(|path| {
-            let outcome = parse_one(path);
-            let action = match &outcome {
-                Ok(_) => FailureAction::Skip,
-                Err(failure) => on_failure(&failure.path, &failure.error),
-            };
-            (outcome, action)
+        .map(|path| match parse_one(path) {
+            Ok(file) => Some(Ok(file)),
+            Err(failure) => match on_failure(&failure.path, &failure.error) {
+                FailureAction::Skip => None,
+                FailureAction::Abort => Some(Err(failure)),
+            },
         })
         .collect();
-    let mut files = Vec::with_capacity(paths.len());
-    let mut abort: Option<ParseFailure> = None;
-    for (outcome, action) in outcomes {
-        match outcome {
-            Ok(file) => files.push(file),
-            Err(failure) => {
-                if action == FailureAction::Abort && abort.is_none() {
-                    abort = Some(failure);
-                }
-            }
-        }
-    }
-    match abort {
-        Some(failure) => Err(failure),
-        None => Ok(files),
-    }
+    outcomes.into_iter().flatten().collect()
 }
 
 /// Read and parse one file on the calling thread, using that thread's
@@ -260,4 +244,40 @@ pub(crate) fn resolve_groups(
         });
     }
     Ok(resolved)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn parallel_parsing_preserves_order_and_reports_every_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths =
+            ["z.R", "missing-first.R", "missing-second.R", "a.R"].map(|name| dir.path().join(name));
+        for index in [0, 3] {
+            std::fs::write(&paths[index], "x <- 1\n").unwrap();
+        }
+        for action in [FailureAction::Skip, FailureAction::Abort] {
+            let failures = AtomicUsize::new(0);
+            let result = parse_files(&paths, |_, error| {
+                assert!(matches!(error, ParseError::Read(_)));
+                failures.fetch_add(1, Ordering::Relaxed);
+                action
+            });
+            assert_eq!(failures.load(Ordering::Relaxed), 2);
+            match action {
+                FailureAction::Skip => assert_eq!(
+                    result
+                        .unwrap()
+                        .iter()
+                        .map(|file| Path::new(&file.path))
+                        .collect::<Vec<_>>(),
+                    [&paths[0], &paths[3]],
+                ),
+                FailureAction::Abort => assert_eq!(result.unwrap_err().path, paths[1]),
+            }
+        }
+    }
 }

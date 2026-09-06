@@ -110,7 +110,7 @@ fn which(prog: &str) -> Option<std::path::PathBuf> {
     None
 }
 
-/// Whether R errored on this file (nonzero exit or "Error" on stderr),
+/// Whether R errored on this file (nonzero exit),
 /// plus a diagnostic snippet of R's stderr so a failure report says WHY
 /// R errored (an environment problem reads very differently from a
 /// semantic one, and the bare boolean forced guesswork on CI).
@@ -121,7 +121,7 @@ fn r_errors(path: &std::path::Path) -> (bool, String) {
     };
     let stderr = String::from_utf8_lossy(&output.stderr);
     let snippet = tail_snippet(&stderr);
-    let errored = !output.status.success() || stderr.contains("Error");
+    let errored = !output.status.success();
     (errored, snippet)
 }
 
@@ -177,106 +177,6 @@ fn r_package_available(pkg: &str, cache: &mut HashMap<String, bool>) -> bool {
     available
 }
 
-/// Run the parallel oracle driver once over the whole fixture directory
-/// and return a map from fixture filename to whether R errored on it.
-/// Returns `None` if the driver could not run (missing purrr/mirai, bad
-/// exit) -- the caller falls back to the serial per-fixture path.
-///
-/// The driver emits one JSON object per line on stdout
-/// (`{"file":..,"errored":..,"message":..}`); errors are reported
-/// structurally so the old stderr-contains-"Error" heuristic is no
-/// longer needed (a latent locale-dependent bug in the serial path).
-fn r_errors_via_driver(fixture_dir: &std::path::Path) -> Option<HashMap<String, (bool, String)>> {
-    let driver = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("scripts")
-        .join("oracle_driver.R");
-    let output = Command::new("Rscript")
-        .arg(&driver)
-        .arg(fixture_dir)
-        .output()
-        .ok()?;
-    // The driver exits 3 to signal "required packages not installed";
-    // treat any failure as "unavailable" (None) so the caller falls back
-    // to serial -- but SAY WHY on stderr. Two CI rounds were spent
-    // guessing at a silent driver failure (a missing suggested package,
-    // carrier) that this line would have named immediately.
-    if !output.status.success() {
-        eprintln!(
-            "oracle: driver exited {:?}: {}",
-            output.status.code(),
-            tail_snippet(&String::from_utf8_lossy(&output.stderr))
-        );
-        return None;
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut map = HashMap::new();
-    for line in stdout.lines() {
-        let line = line.trim();
-        if line.is_empty() || !line.starts_with('{') {
-            continue;
-        }
-        // Minimal JSON parse: {"file":"<name>","errored":<bool>,...}.
-        // Pull out the file, errored, and message fields without a JSON
-        // dep. The message travels into failure reports so a must-pass
-        // violation names R's actual error.
-        if let (Some(file), Some(errored)) = (
-            extract_json_field(line, "file"),
-            extract_json_bool(line, "errored"),
-        ) {
-            let message = extract_json_field(line, "message").unwrap_or_default();
-            map.insert(file, (errored, message));
-        }
-    }
-    Some(map)
-}
-
-/// Extract the string value of `"<field>"` from a flat JSON line.
-fn extract_json_field(line: &str, field: &str) -> Option<String> {
-    let needle = format!("\"{field}\":\"");
-    let start = line.find(&needle)? + needle.len();
-    let rest = &line[start..];
-    let mut out = String::new();
-    let mut chars = rest.chars();
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            if let Some(esc) = chars.next() {
-                match esc {
-                    'n' => out.push('\n'),
-                    'r' => out.push('\r'),
-                    't' => out.push('\t'),
-                    '"' => out.push('"'),
-                    '\\' => out.push('\\'),
-                    other => {
-                        out.push('\\');
-                        out.push(other);
-                    }
-                }
-            }
-        } else if c == '"' {
-            return Some(out);
-        } else {
-            out.push(c);
-        }
-    }
-    None
-}
-
-/// Extract a boolean field's value from a flat JSON line.
-fn extract_json_bool(line: &str, field: &str) -> Option<bool> {
-    let needle = format!("\"{field}\":");
-    let start = line.find(&needle)? + needle.len();
-    let rest = line[start..].trim_start();
-    if rest.starts_with("true") {
-        Some(true)
-    } else if rest.starts_with("false") {
-        Some(false)
-    } else {
-        None
-    }
-}
-
 fn checker_diagnostics(name: &str, src: &str) -> Vec<(String, Severity)> {
     let mut parser = RParser::new().expect("parser init");
     let file = parser
@@ -308,18 +208,6 @@ fn oracle_check_each_fixture() {
         }
     };
     entries.sort_by_key(|e| e.path());
-
-    // Prefer the parallel oracle driver (a single
-    // Rscript invocation that evaluates every fixture via purrr::map +
-    // mirai::in_parallel, dogfooding the very pattern the tool checks).
-    // Fall back to the serial per-fixture Rscript path when purrr/mirai
-    // are not installed or the driver fails.
-    let driver_map = r_errors_via_driver(&dir);
-    if driver_map.is_some() {
-        eprintln!("oracle: using parallel driver (purrr + mirai)");
-    } else {
-        eprintln!("oracle: parallel driver unavailable; using serial per-fixture Rscript path");
-    }
 
     let mut failures: Vec<String> = Vec::new();
     let mut total: usize = 0;
@@ -364,13 +252,7 @@ fn oracle_check_each_fixture() {
         }
         total += 1;
 
-        let (r_errored, r_message) = match &driver_map {
-            Some(map) => map
-                .get(&name)
-                .cloned()
-                .unwrap_or((true, "fixture missing from driver output".to_string())),
-            None => r_errors(&path),
-        };
+        let (r_errored, r_message) = r_errors(&path);
         let diagnostics = checker_diagnostics(&name, &src);
         let errs: Vec<&str> = diagnostics
             .iter()
@@ -714,20 +596,7 @@ fn fixture_packages_empty_for_plain_fixtures() {
 /// Prove the R oracle verification actually fails when a wrong
 /// answer is given.
 ///
-/// This is not a meta-test proving an ordinary assertion can fail. It
-/// protects the orchestration seam where `r_errors` interprets Rscript's
-/// exit status and stderr, and where the oracle tag logic must reject a
-/// `must-pass` fixture whose R execution actually errors. If `r_errors`
-/// stopped checking `output.status.success()` or stopped scanning stderr
-/// for "Error" (the locale-dependent heuristic the parallel driver replaces
-/// but the serial path still uses), a real semantic disagreement would
-/// pass silently through CI.
-///
-/// The test creates a temporary fixture tagged `must-pass` that R errors
-/// on (`"a" + 1` — non-numeric to binary operator), then:
-///   1. Asserts `r_errors` detects the R error.
-///   2. Asserts the oracle tag logic classifies this as a failure
-///      (`must-pass` + `r_errored=true` is never the `ok` branch).
+/// A nonzero Rscript exit must fail a `must-pass` fixture.
 #[test]
 fn oracle_r_error_detection_fails_on_wrong_answer() {
     if !rscript_on_path() {
@@ -792,4 +661,15 @@ fn oracle_must_flag_fails_when_r_does_not_error() {
         !ok,
         "must-flag + R-success should classify as oracle failure",
     );
+}
+
+#[test]
+fn oracle_does_not_treat_error_text_as_process_failure() {
+    if !rscript_on_path() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("message.R");
+    fs::write(&path, "message('Error is also ordinary text')\n").unwrap();
+    assert!(!r_errors(&path).0);
 }

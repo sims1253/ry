@@ -8,7 +8,8 @@
 mod handlers;
 
 use crate::diagnostics::{
-    diagnostic_to_lsp, diagnostic_to_lsp_with_source, make_ignore_action, make_ignore_file_action,
+    diagnostic_origin, diagnostic_to_lsp, diagnostic_to_lsp_with_source, make_ignore_action,
+    make_ignore_file_action,
 };
 use crate::hints::collect_inlay_hints;
 use crate::positions::{byte_offset_to_point, position_to_byte_offset};
@@ -119,6 +120,10 @@ pub(super) struct State {
     /// Whether the client supports `workspace/configuration` pull (then
     /// `didChangeConfiguration` re-pulls instead of parsing the payload).
     supports_workspace_configuration: bool,
+    /// Whether workspace edits can carry the document version they modify.
+    supports_document_changes: bool,
+    /// Whether the client preserves diagnostic data in code-action requests.
+    supports_diagnostic_data: bool,
     /// Whether the client supports dynamic registration of
     /// `workspace/didChangeWatchedFiles`.
     supports_did_change_watched_files: bool,
@@ -828,7 +833,7 @@ impl Backend {
         // the lock, then drop it before checking so a slow check doesn't
         // block other LSP requests (e.g. didOpen of a second file). Only
         // eligible documents' versions are snapshotted.
-        let (doc_versions, requested_is_eligible) = {
+        let (doc_versions, requested_is_eligible, supports_diagnostic_data) = {
             let state = self.state.lock().await;
             (
                 state
@@ -844,6 +849,7 @@ impl Backend {
                     })
                     .collect::<Vec<_>>(),
                 state.eligibility_for_path(&path),
+                state.supports_diagnostic_data,
             )
         };
         if !requested_is_eligible {
@@ -954,6 +960,8 @@ impl Backend {
             }
         }
 
+        let diagnostic_versions: HashMap<_, _> = doc_versions.into_iter().collect();
+
         // Publish per-file diagnostics through the folder's
         // filter/confidence/exclude/baseline state. The partition carried
         // the owning context through the check, so publication uses the
@@ -1016,9 +1024,18 @@ impl Backend {
                     .filter(|diagnostic| {
                         !file_level && !ry_checker::is_suppressed(diagnostic, &suppressions)
                     })
-                    .map(|diagnostic| match source_text {
-                        Some(text) => diagnostic_to_lsp_with_source(&diagnostic, text),
-                        None => diagnostic_to_lsp(diagnostic),
+                    .map(|diagnostic| {
+                        let mut diagnostic = match source_text {
+                            Some(text) => diagnostic_to_lsp_with_source(&diagnostic, text),
+                            None => diagnostic_to_lsp(diagnostic),
+                        };
+                        if supports_diagnostic_data
+                            && let Some(version) = diagnostic_versions.get(&diagnostic_path)
+                        {
+                            diagnostic.data =
+                                Some(diagnostic_origin(&diagnostic_path, *version, generation));
+                        }
+                        diagnostic
                     })
                     .collect();
                 let diagnostic_uri = if diagnostic_path == path {

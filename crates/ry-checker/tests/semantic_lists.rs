@@ -94,6 +94,57 @@ fn check_source_with_messages(src: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+// ── Operator dispatch ───────────────────────────────────────────────────
+
+#[test]
+fn conflicting_s3_operator_methods_do_not_invent_a_left_return() {
+    for right_method in ["+.right", "Ops.right"] {
+        let source = format!(
+            "`+.left` <- function(e1, e2) \"left\"\n\
+             `{right_method}` <- function(e1, e2) \"right\"\n\
+             x <- structure(1, class = \"left\")\n\
+             y <- structure(2, class = \"right\")\n\
+             (x + y) + 1\n(y + x) + 1\n"
+        );
+        assert!(
+            !check_source(&source).iter().any(|code| code == "RY040"),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn same_or_one_sided_s3_operator_method_keeps_its_return() {
+    for operands in ["x + x", "x + 1", "1 + x"] {
+        let source = format!(
+            "`+.left` <- function(e1, e2) \"left\"\n\
+             x <- structure(1, class = \"left\")\n\
+             ({operands}) + 1\n"
+        );
+        assert!(
+            check_source(&source).iter().any(|code| code == "RY040"),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn s3_operator_dispatch_preserves_uncertain_counterparts() {
+    for counterpart in ["factor(1)", "structure(2, class = classes)"] {
+        let source = format!(
+            "`+.left` <- function(e1, e2) \"left\"\n\
+             f <- function(classes) {{\n\
+             x <- structure(1, class = \"left\")\n\
+             y <- {counterpart}\n\
+             (x + y) + 1\n(y + x) + 1\n}}\n"
+        );
+        assert!(
+            !check_source(&source).iter().any(|code| code == "RY040"),
+            "{source}"
+        );
+    }
+}
+
 // ── Deliverable 1: SEMANTIC_LISTS registry coherence ─────────────────────
 
 /// Every registered list has a non-empty name and non-empty items.

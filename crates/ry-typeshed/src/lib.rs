@@ -484,6 +484,13 @@ pub enum InjectionMode {
     Full,
 }
 
+/// A reviewed call shape that starts evaluating its sole supplied argument.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ForceSpec {
+    SoleArgument { param: String, allow_named: bool },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FunctionSig {
@@ -495,6 +502,8 @@ pub struct FunctionSig {
     pub aliases: Vec<String>,
     #[serde(default)]
     pub eval: std::collections::BTreeMap<String, EvalMode>,
+    #[serde(default)]
+    pub force: Option<ForceSpec>,
     /// Formals whose expressions support tidy-evaluation injection.
     #[serde(default)]
     pub injection: std::collections::BTreeMap<String, InjectionMode>,
@@ -1067,6 +1076,46 @@ fn validate_function_semantics(
             );
         }
     };
+    if let Some(ForceSpec::SoleArgument { param, allow_named }) = &signature.force {
+        validate_param(report, "force.param", param);
+        if signature.params.first().map(|formal| &formal.name) != Some(param) {
+            validation_error(
+                report,
+                path,
+                format!("{location}.force.param: must be the first formal"),
+            );
+        }
+        if param == "..." && *allow_named {
+            validation_error(
+                report,
+                path,
+                format!("{location}.force.allow_named: must be false for `...`"),
+            );
+        }
+        if signature
+            .params
+            .iter()
+            .skip(1)
+            .any(|formal| formal.required)
+        {
+            validation_error(
+                report,
+                path,
+                format!("{location}.force: other formals must not be required"),
+            );
+        }
+        if signature
+            .eval
+            .get(param)
+            .is_some_and(|mode| *mode != EvalMode::Normal)
+        {
+            validation_error(
+                report,
+                path,
+                format!("{location}.force.param: must use normal evaluation"),
+            );
+        }
+    }
     for param in signature.injection.keys() {
         validate_param(report, "injection", param);
     }
@@ -1491,6 +1540,84 @@ mod tests {
     }
 
     #[test]
+    fn sole_argument_force_contracts_are_validated() {
+        use serde_json::json;
+        let valid = json!({"schema_version":"2", "package":"fixture", "version":"test",
+            "functions":{"f":{"params":["x"], "return":"arg0",
+                "force":{"kind":"sole_argument", "param":"x", "allow_named":true}}}});
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fixture.json");
+        let validate = |value: &serde_json::Value| {
+            std::fs::write(&path, serde_json::to_string(value).unwrap()).unwrap();
+            validate_stub_dirs(&[dir.path().to_path_buf()])
+        };
+        assert_eq!(validate(&valid).error_count(), 0);
+        for (pointer, value, message) in [
+            (
+                "/functions/f/force/kind",
+                json!("always"),
+                "unknown variant",
+            ),
+            ("/functions/f/force/extra", json!(true), "unknown field"),
+            (
+                "/functions/f/force/param",
+                json!("absent"),
+                "unknown parameter",
+            ),
+            ("/functions/f/params", json!(["y", "x"]), "first formal"),
+            (
+                "/functions/f/params",
+                json!(["x", {"name":"y", "required":true}]),
+                "must not be required",
+            ),
+            (
+                "/functions/f/eval",
+                json!({"x":"captures_promise"}),
+                "normal evaluation",
+            ),
+            (
+                "/functions/f/eval",
+                json!({"x":"quoted_expression"}),
+                "normal evaluation",
+            ),
+            (
+                "/functions/f/force/allow_named",
+                json!("yes"),
+                "invalid type",
+            ),
+        ] {
+            let mut invalid = valid.clone();
+            let (parent, key) = pointer.rsplit_once('/').unwrap();
+            invalid.pointer_mut(parent).unwrap()[key] = value;
+            let report = validate(&invalid);
+            assert!(
+                report
+                    .problems
+                    .iter()
+                    .any(|problem| problem.message.contains(message)),
+                "{pointer}: {report:?}"
+            );
+        }
+        let mut dots = valid.clone();
+        dots["functions"]["f"]["params"] = json!(["..."]);
+        dots["functions"]["f"]["force"]["param"] = json!("...");
+        assert!(
+            validate(&dots)
+                .problems
+                .iter()
+                .any(|problem| problem.message.contains("must be false"))
+        );
+        dots["functions"]["f"]["force"]["allow_named"] = json!(false);
+        assert_eq!(validate(&dots).error_count(), 0);
+        let mut missing = valid.clone();
+        missing["functions"]["f"]["force"]
+            .as_object_mut()
+            .unwrap()
+            .remove("allow_named");
+        assert!(validate(&missing).error_count() > 0);
+    }
+
+    #[test]
     fn function_semantics_contracts_are_validated() {
         use serde_json::json;
         let valid: serde_json::Value =
@@ -1776,7 +1903,7 @@ mod tests {
     #[test]
     fn typeshed_preserves_embedded_schema_version() {
         let t = load_base().expect("loads");
-        assert_eq!(t.version, "0.0.5");
+        assert_eq!(t.version, "0.0.6");
         assert_eq!(t.schema_version.as_deref(), Some("2"));
     }
 

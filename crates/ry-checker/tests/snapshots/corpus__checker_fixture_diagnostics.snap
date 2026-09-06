@@ -197,6 +197,56 @@ expression: snapshots
         start: 270
   fixture: err_lapply_double_bracket.R
 - diagnostics:
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 24
+        end: 76
+        line: 1
+        start: 75
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 26
+        end: 121
+        line: 2
+        start: 120
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 24
+        end: 164
+        line: 3
+        start: 163
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 28
+        end: 212
+        line: 4
+        start: 211
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 29
+        end: 265
+        line: 5
+        start: 264
+    - code: RY098
+      message: "parameter `x` may force its default before body-local `local` is assigned"
+      severity: warning
+      span:
+        column: 44
+        end: 335
+        line: 6
+        start: 334
+  fixture: err_metadata_forces_recursive_default.R
+- diagnostics:
     - code: RY091
       message: "missing required argument `x` in call to `length`"
       severity: warning
@@ -656,6 +706,8 @@ expression: snapshots
   fixture: ok_fn_explicit_return.R
 - diagnostics: []
   fixture: ok_fnbody_sequential.R
+- diagnostics: []
+  fixture: ok_force_contract_lazy_controls.R
 - diagnostics: []
   fixture: ok_fractional_numeric_index_length.R
 - diagnostics: []

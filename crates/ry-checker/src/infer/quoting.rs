@@ -73,8 +73,10 @@ impl Checker {
             // forces that promise; defusing helpers such as enexpr()/enquo()
             // may deliberately capture `function(x = x)` without evaluating
             // the default.
-            let forced_in_body = guaranteed_force_before_replacement(body, &param.name);
-            if forced_in_body && let Some(span) = first_executed_identifier(default, &param.name) {
+            let forced_in_body = guaranteed_force_before_replacement(self, body, &param.name);
+            if forced_in_body
+                && let Some(span) = first_executed_identifier(self, default, &param.name)
+            {
                 self.emit(
                     Severity::Warning,
                     span,
@@ -103,7 +105,7 @@ impl Checker {
                 };
 
                 let forced = body[..assign_index].iter().find_map(|statement| {
-                    definitely_forced_identifier_in_stmt(statement, &param.name)
+                    definitely_forced_identifier_in_stmt(self, statement, &param.name)
                 });
                 if let Some(span) = forced {
                     self.emit(
@@ -126,14 +128,14 @@ impl Checker {
 // `definitely_forced_identifier{,_in_stmt}`, `first_executed_identifier{,_in_stmt}`)
 // is deliberately NOT expressed through the shared walker in
 // `ry_core::walk`: its rules select individual children of a node —
-// call arguments are skipped unless the callee is a known strict
-// builtin, an `if` with a literal condition visits only the taken
+// call arguments are skipped unless the callee has a reviewed forcing
+// contract, an `if` with a literal condition visits only the taken
 // branch, a `$` subscript's synthesized ident is skipped while the base
 // is kept — and the walk must stop at the first identifier forced in
 // evaluation order. That is an evaluation-order analysis with
 // per-child laziness rules, not a subtree-skip policy, so it keeps its
 // hand-rolled recursion.
-fn guaranteed_force_before_replacement(body: &[Stmt], wanted: &str) -> bool {
+fn guaranteed_force_before_replacement(checker: &Checker, body: &[Stmt], wanted: &str) -> bool {
     for statement in body {
         match statement {
             Stmt::Assign {
@@ -141,11 +143,11 @@ fn guaranteed_force_before_replacement(body: &[Stmt], wanted: &str) -> bool {
                 value,
                 ..
             } if name == wanted => {
-                return definitely_forced_identifier(value, wanted).is_some();
+                return definitely_forced_identifier(checker, value, wanted).is_some();
             }
             _ => {}
         }
-        if definitely_forced_identifier_in_stmt(statement, wanted).is_some() {
+        if definitely_forced_identifier_in_stmt(checker, statement, wanted).is_some() {
             return true;
         }
         if matches!(statement, Stmt::If { .. }) {
@@ -169,89 +171,98 @@ fn guaranteed_force_before_replacement(body: &[Stmt], wanted: &str) -> bool {
 /// Find a force that is guaranteed when this statement executes. Conditional
 /// branch bodies and loop bodies are not guaranteed to run; their conditions
 /// (and a for-loop's iterator) are.
-fn definitely_forced_identifier_in_stmt(statement: &Stmt, wanted: &str) -> Option<Span> {
+fn definitely_forced_identifier_in_stmt(
+    checker: &Checker,
+    statement: &Stmt,
+    wanted: &str,
+) -> Option<Span> {
     match statement {
         Stmt::Assign { value, .. } | Stmt::Expr(value) => {
-            definitely_forced_identifier(value, wanted)
+            definitely_forced_identifier(checker, value, wanted)
         }
         Stmt::If {
             cond, then, else_, ..
         } => match cond {
             Expr::Logical(true, span) => {
-                guaranteed_force_before_replacement(then, wanted).then_some(*span)
+                guaranteed_force_before_replacement(checker, then, wanted).then_some(*span)
             }
             Expr::Logical(false, span) => else_.as_ref().and_then(|statements| {
-                guaranteed_force_before_replacement(statements, wanted).then_some(*span)
+                guaranteed_force_before_replacement(checker, statements, wanted).then_some(*span)
             }),
-            _ => definitely_forced_identifier(cond, wanted),
+            _ => definitely_forced_identifier(checker, cond, wanted),
         },
-        Stmt::While { cond, .. } => definitely_forced_identifier(cond, wanted),
-        Stmt::For { iter, .. } => definitely_forced_identifier(iter, wanted),
+        Stmt::While { cond, .. } => definitely_forced_identifier(checker, cond, wanted),
+        Stmt::For { iter, .. } => definitely_forced_identifier(checker, iter, wanted),
         Stmt::Return { value, .. } => value
             .as_ref()
-            .and_then(|value| definitely_forced_identifier(value, wanted)),
+            .and_then(|value| definitely_forced_identifier(checker, value, wanted)),
         Stmt::FunctionDef { .. } => None,
     }
 }
 
-fn definitely_forced_identifier(expr: &Expr, wanted: &str) -> Option<Span> {
+fn definitely_forced_identifier(checker: &Checker, expr: &Expr, wanted: &str) -> Option<Span> {
     match expr {
         Expr::If {
             cond, then, else_, ..
         } => match cond.as_ref() {
-            Expr::Logical(true, _) => definitely_forced_identifier(then, wanted),
+            Expr::Logical(true, _) => definitely_forced_identifier(checker, then, wanted),
             Expr::Logical(false, _) => else_
                 .as_ref()
-                .and_then(|else_| definitely_forced_identifier(else_, wanted)),
-            _ => definitely_forced_identifier(cond, wanted),
+                .and_then(|else_| definitely_forced_identifier(checker, else_, wanted)),
+            _ => definitely_forced_identifier(checker, cond, wanted),
         },
         Expr::BinOp {
             lhs,
             rhs,
             op: op @ (BinOpKind::AndAnd | BinOpKind::OrOr),
             ..
-        } => definitely_forced_identifier(lhs, wanted).or_else(|| {
+        } => definitely_forced_identifier(checker, lhs, wanted).or_else(|| {
             // Only these literal operands guarantee evaluation of the RHS.
             matches!(
                 (op, lhs.as_ref()),
                 (BinOpKind::AndAnd, Expr::Logical(true, _))
                     | (BinOpKind::OrOr, Expr::Logical(false, _))
             )
-            .then(|| definitely_forced_identifier(rhs, wanted))
+            .then(|| definitely_forced_identifier(checker, rhs, wanted))
             .flatten()
         }),
         // Keep guaranteed traversal through wrappers; falling back to the
         // possible-dependency walker here would inspect untaken inner branches.
-        Expr::UnaryOp { expr, .. } => definitely_forced_identifier(expr, wanted),
+        Expr::UnaryOp { expr, .. } => definitely_forced_identifier(checker, expr, wanted),
         Expr::BinOp { lhs, rhs, op, .. } => {
             if matches!(op, BinOpKind::Assign | BinOpKind::SuperAssign) {
-                definitely_forced_identifier(rhs, wanted)
+                definitely_forced_identifier(checker, rhs, wanted)
             } else {
-                definitely_forced_identifier(lhs, wanted)
-                    .or_else(|| definitely_forced_identifier(rhs, wanted))
+                definitely_forced_identifier(checker, lhs, wanted)
+                    .or_else(|| definitely_forced_identifier(checker, rhs, wanted))
             }
         }
         Expr::Index {
             base, kind, args, ..
-        } => definitely_forced_identifier(base, wanted).or_else(|| {
+        } => definitely_forced_identifier(checker, base, wanted).or_else(|| {
             if matches!(kind, IndexKind::Dollar) {
                 None
             } else {
-                args.iter()
-                    .find_map(|argument| definitely_forced_identifier(&argument.value, wanted))
+                args.iter().find_map(|argument| {
+                    definitely_forced_identifier(checker, &argument.value, wanted)
+                })
             }
         }),
         Expr::Block { body, span } => {
-            guaranteed_force_before_replacement(body, wanted).then_some(*span)
+            guaranteed_force_before_replacement(checker, body, wanted).then_some(*span)
         }
-        _ => first_executed_identifier(expr, wanted),
+        _ => first_executed_identifier(checker, expr, wanted),
     }
 }
 
-fn first_executed_identifier_in_stmt(statement: &Stmt, wanted: &str) -> Option<Span> {
+fn first_executed_identifier_in_stmt(
+    checker: &Checker,
+    statement: &Stmt,
+    wanted: &str,
+) -> Option<Span> {
     match statement {
-        Stmt::Assign { value, .. } => first_executed_identifier(value, wanted),
-        Stmt::Expr(expr) => first_executed_identifier(expr, wanted),
+        Stmt::Assign { value, .. } => first_executed_identifier(checker, value, wanted),
+        Stmt::Expr(expr) => first_executed_identifier(checker, expr, wanted),
         Stmt::If {
             cond: Expr::Logical(taken, _),
             then,
@@ -260,87 +271,82 @@ fn first_executed_identifier_in_stmt(statement: &Stmt, wanted: &str) -> Option<S
         } => {
             let branch = if *taken { Some(then) } else { else_.as_ref() };
             branch.and_then(|statements| {
-                statements
-                    .iter()
-                    .find_map(|statement| first_executed_identifier_in_stmt(statement, wanted))
+                statements.iter().find_map(|statement| {
+                    first_executed_identifier_in_stmt(checker, statement, wanted)
+                })
             })
         }
         Stmt::If {
             cond, then, else_, ..
-        } => first_executed_identifier(cond, wanted)
+        } => first_executed_identifier(checker, cond, wanted)
             .or_else(|| {
-                then.iter()
-                    .find_map(|statement| first_executed_identifier_in_stmt(statement, wanted))
+                then.iter().find_map(|statement| {
+                    first_executed_identifier_in_stmt(checker, statement, wanted)
+                })
             })
             .or_else(|| {
                 else_.as_ref().and_then(|statements| {
-                    statements
-                        .iter()
-                        .find_map(|statement| first_executed_identifier_in_stmt(statement, wanted))
+                    statements.iter().find_map(|statement| {
+                        first_executed_identifier_in_stmt(checker, statement, wanted)
+                    })
                 })
             }),
-        Stmt::For { iter, body, .. } => first_executed_identifier(iter, wanted).or_else(|| {
-            body.iter()
-                .find_map(|statement| first_executed_identifier_in_stmt(statement, wanted))
-        }),
-        Stmt::While { cond, body, .. } => first_executed_identifier(cond, wanted).or_else(|| {
-            body.iter()
-                .find_map(|statement| first_executed_identifier_in_stmt(statement, wanted))
-        }),
+        Stmt::For { iter, body, .. } => {
+            first_executed_identifier(checker, iter, wanted).or_else(|| {
+                body.iter().find_map(|statement| {
+                    first_executed_identifier_in_stmt(checker, statement, wanted)
+                })
+            })
+        }
+        Stmt::While { cond, body, .. } => {
+            first_executed_identifier(checker, cond, wanted).or_else(|| {
+                body.iter().find_map(|statement| {
+                    first_executed_identifier_in_stmt(checker, statement, wanted)
+                })
+            })
+        }
         Stmt::Return { value, .. } => value
             .as_ref()
-            .and_then(|value| first_executed_identifier(value, wanted)),
+            .and_then(|value| first_executed_identifier(checker, value, wanted)),
         // Defining a closure does not evaluate its body or force captures.
         Stmt::FunctionDef { .. } => None,
     }
 }
 
-fn first_executed_identifier(expr: &Expr, wanted: &str) -> Option<Span> {
+fn first_executed_identifier(checker: &Checker, expr: &Expr, wanted: &str) -> Option<Span> {
     match expr {
         Expr::Ident { name, span } => (name == wanted).then_some(*span),
         Expr::Call { func, args, .. } => {
-            // identity and force evaluate their sole argument after matching. Bare
-            // names can be masked; malformed calls fail before forcing x.
-            if matches!(
-                ident_name(func),
-                Some("base::identity" | "base:::identity" | "base::force" | "base:::force")
-            ) {
-                return match args.as_slice() {
-                    [argument] if argument.name.as_deref().is_none_or(|name| name == "x") => {
-                        definitely_forced_identifier(&argument.value, wanted)
-                    }
-                    _ => None,
-                };
-            }
-            // Reviewed signaling helpers force a sole unnamed message argument.
-            // Control arguments may be ignored for condition objects. Multiple
-            // arguments also need a separate matching and forcing-order contract.
-            let strict_message = matches!(
-                ident_name(func),
-                Some(
-                    "base::stop"
-                        | "base:::stop"
-                        | "base::warning"
-                        | "base:::warning"
-                        | "base::message"
-                        | "base:::message"
-                        | "rlang::abort"
-                        | "rlang:::abort"
-                )
-            );
-            first_executed_identifier(func, wanted).or_else(|| {
-                if strict_message {
-                    match args.as_slice() {
-                        [argument] if argument.name.is_none() => {
-                            definitely_forced_identifier(&argument.value, wanted)
-                        }
-                        _ => None,
-                    }
+            first_executed_identifier(checker, func, wanted).or_else(|| {
+                let name = ident_name(func)?;
+                let (package, function) = name.rsplit_once("::")?;
+                let package = package.trim_end_matches(':');
+                // Bare names may be masked. Do not borrow base metadata for
+                // another namespace merely because it shares the base database.
+                let typeshed = if package == "base" {
+                    &checker.typeshed
                 } else {
-                    None
+                    checker.package_typeshed(package)?
+                };
+                let signature = typeshed.functions.get(function)?;
+                let ry_typeshed::ForceSpec::SoleArgument { param, allow_named } =
+                    signature.force.as_ref()?;
+                let [argument] = args.as_slice() else {
+                    return None;
+                };
+                if argument
+                    .name
+                    .as_ref()
+                    .is_some_and(|name| !allow_named || name != param)
+                    || matches!(&argument.value, Expr::Unknown(_))
+                    || matches!(&argument.value, Expr::Ident { name, .. } if name == "...")
+                {
+                    return None;
                 }
+                definitely_forced_identifier(checker, &argument.value, wanted)
             })
         }
+
         Expr::BinOp { lhs, rhs, op, .. } => {
             // A literal short-circuit operand can make the recursive name
             // in the RHS unreachable even though the default is forced.
@@ -350,48 +356,49 @@ fn first_executed_identifier(expr: &Expr, wanted: &str) -> Option<Span> {
                     | (BinOpKind::OrOr, Expr::Logical(true, _))
             );
             if skips_rhs {
-                first_executed_identifier(lhs, wanted)
+                first_executed_identifier(checker, lhs, wanted)
             } else if matches!(op, BinOpKind::Assign | BinOpKind::SuperAssign) {
-                first_executed_identifier(rhs, wanted)
+                first_executed_identifier(checker, rhs, wanted)
             } else {
-                first_executed_identifier(lhs, wanted)
-                    .or_else(|| first_executed_identifier(rhs, wanted))
+                first_executed_identifier(checker, lhs, wanted)
+                    .or_else(|| first_executed_identifier(checker, rhs, wanted))
             }
         }
-        Expr::UnaryOp { expr, .. } => first_executed_identifier(expr, wanted),
+        Expr::UnaryOp { expr, .. } => first_executed_identifier(checker, expr, wanted),
         Expr::Index {
             base, kind, args, ..
-        } => first_executed_identifier(base, wanted).or_else(|| {
+        } => first_executed_identifier(checker, base, wanted).or_else(|| {
             // `$field` stores `field` as a synthesized identifier in the AST,
             // but R does not evaluate it as an expression. Counting that name
             // would turn `vars = parent$vars` into a self-reference.
             (!matches!(kind, IndexKind::Dollar)).then(|| {
-                args.iter()
-                    .find_map(|argument| first_executed_identifier(&argument.value, wanted))
+                args.iter().find_map(|argument| {
+                    first_executed_identifier(checker, &argument.value, wanted)
+                })
             })?
         }),
         Expr::Block { body, .. } => body
             .iter()
-            .find_map(|statement| first_executed_identifier_in_stmt(statement, wanted)),
+            .find_map(|statement| first_executed_identifier_in_stmt(checker, statement, wanted)),
         Expr::If {
             cond, then, else_, ..
         } if matches!(cond.as_ref(), Expr::Logical(_, _)) => {
             if matches!(cond.as_ref(), Expr::Logical(true, _)) {
-                first_executed_identifier(then, wanted)
+                first_executed_identifier(checker, then, wanted)
             } else {
                 else_
                     .as_ref()
-                    .and_then(|else_| first_executed_identifier(else_, wanted))
+                    .and_then(|else_| first_executed_identifier(checker, else_, wanted))
             }
         }
         Expr::If {
             cond, then, else_, ..
-        } => first_executed_identifier(cond, wanted)
-            .or_else(|| first_executed_identifier(then, wanted))
+        } => first_executed_identifier(checker, cond, wanted)
+            .or_else(|| first_executed_identifier(checker, then, wanted))
             .or_else(|| {
                 else_
                     .as_ref()
-                    .and_then(|else_| first_executed_identifier(else_, wanted))
+                    .and_then(|else_| first_executed_identifier(checker, else_, wanted))
             }),
         Expr::Function { .. }
         | Expr::Logical(_, _)

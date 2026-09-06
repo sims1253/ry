@@ -43,6 +43,10 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Added
 
+- Use reviewed typeshed forcing contracts for RY098. Qualified calls to
+  `typeof()`, `length()`, `is.null()`, `is.function()`, and `invisible()` can
+  expose recursive defaults or force defaults before local assignments.
+
 - `ry dump-facts` exports versioned structured types, scope-exit snapshots,
   UTF-8 source spans, and analysis context hashes for downstream tools.
   Add `--references` for conservative same-file reference facts, explicit

@@ -6,6 +6,9 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Stamp suppression edits with the analyzed document version when the editor
+  supports versioned edits, so it can reject actions after the source changes.
+
 - Stop offering suppression actions for disabled or excluded files. Skip
   computing them when the editor requests other action kinds.
 

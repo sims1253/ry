@@ -138,11 +138,11 @@ fn tail_snippet(s: &str) -> String {
 /// Packages named by loading calls or namespace references in a fixture.
 /// Parse the source so comments and string contents do not add dependencies.
 /// This is a syntax inventory; references in quoted or untaken code are included.
-fn fixture_packages(src: &str) -> Vec<String> {
+fn fixture_packages(name: &str, src: &str) -> Vec<String> {
     let mut parser = RParser::new().expect("parser init");
     let file = parser
-        .parse("oracle-packages.R", src)
-        .expect("parse fixture");
+        .parse(name, src)
+        .unwrap_or_else(|error| panic!("parse {name}: {error}"));
     let mut pkgs = Vec::new();
     let mut add = |name: &str| {
         if !name.is_empty() && !pkgs.iter().any(|pkg| pkg == name) {
@@ -285,7 +285,7 @@ fn oracle_check_each_fixture() {
         // machine does not have: R erroring for an environmental reason
         // is not a semantic ry-vs-R disagreement. CI installs everything
         // the fixtures use, so skips cannot hide a regression there.
-        let missing: Vec<String> = fixture_packages(&src)
+        let missing: Vec<String> = fixture_packages(&name, &src)
             .into_iter()
             .filter(|p| !r_package_available(p, &mut pkg_cache))
             .collect();
@@ -586,7 +586,7 @@ fn claim_fixtures_demonstrate_their_r_premise() {
             continue;
         }
 
-        let missing: Vec<String> = fixture_packages(&src)
+        let missing: Vec<String> = fixture_packages(&name, &src)
             .into_iter()
             .filter(|pkg| !r_package_available(pkg, &mut pkg_cache))
             .collect();
@@ -630,12 +630,15 @@ fn fixture_packages_scans_library_require_and_namespace_calls() {
                if (requireNamespace(\"dplyr\", quietly = TRUE)) print(1)\n\
                library(purrr)  # duplicate, deduplicated\n\
                x <- 1\n";
-    assert_eq!(fixture_packages(src), vec!["purrr", "mirai", "dplyr"]);
+    assert_eq!(
+        fixture_packages("fixture.R", src),
+        vec!["purrr", "mirai", "dplyr"]
+    );
 }
 
 #[test]
 fn fixture_packages_empty_for_plain_fixtures() {
-    assert!(fixture_packages("# oracle: must-flag\nx <- \"a\" + 1\n").is_empty());
+    assert!(fixture_packages("plain.R", "# oracle: must-flag\nx <- \"a\" + 1\n").is_empty());
 }
 
 // ── R-oracle setup falsification ────────────────────────────────
@@ -733,7 +736,7 @@ fn fixture_packages_finds_qualified_references_and_multiline_loads() {
         purrr::map(2, identity)
     "#;
     assert_eq!(
-        fixture_packages(src),
+        fixture_packages("fixture.R", src),
         vec!["purrr", "rlang", "dplyr", "tidyr", "withr"]
     );
 }
@@ -749,17 +752,23 @@ fn fixture_packages_ignores_comments_strings_and_literal_names() {
         x$`fake::fun`
         library("purrr") # fake::fun()
     "##;
-    assert_eq!(fixture_packages(src), vec!["purrr"]);
+    assert_eq!(fixture_packages("fixture.R", src), vec!["purrr"]);
 }
 
 #[test]
 fn fixture_packages_covers_namespace_only_oracles() {
-    assert!(
-        fixture_packages(include_str!("../testdata/oracle/conditional_maps.R"))
-            .contains(&"purrr".to_owned())
+    assert_eq!(
+        fixture_packages(
+            "conditional_maps.R",
+            include_str!("../testdata/oracle/conditional_maps.R")
+        ),
+        vec!["purrr"]
     );
     assert_eq!(
-        fixture_packages(include_str!("../testdata/oracle/tidy_injection.R")),
+        fixture_packages(
+            "tidy_injection.R",
+            include_str!("../testdata/oracle/tidy_injection.R")
+        ),
         vec!["rlang", "dplyr", "purrr"]
     );
 }
@@ -767,5 +776,5 @@ fn fixture_packages_covers_namespace_only_oracles() {
 #[test]
 fn fixture_packages_accepts_quoted_namespace_packages() {
     let src = r#"`stats`::median(1); "stats"::median(2); 'stats':::median.default(3)"#;
-    assert_eq!(fixture_packages(src), vec!["stats"]);
+    assert_eq!(fixture_packages("fixture.R", src), vec!["stats"]);
 }

@@ -6,8 +6,9 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
-- Stop S3 operator lookup at the winning base group method, avoiding false
+- Stop S3 operator lookup at the winning group method, avoiding false
   column-access errors when later classes define another operator method.
+  Keep custom opaque method results unknown.
 
 ### Cleanup
 

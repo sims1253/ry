@@ -222,10 +222,19 @@ impl Checker {
                         if generic == symbol || !matches!(result.mode, Mode::Opaque) {
                             return Some(result);
                         }
-                        // An opaque group stub still wins dispatch. Stop
-                        // before later classes: the storage-mode rules model
-                        // this base method (including its diagnostics).
-                        return None;
+                        // Only embedded base group methods have storage-mode
+                        // models below. An opaque custom stub still wins over
+                        // later classes, but its result is unknown.
+                        let modeled_base = !self.user_stubs.contains_key("base")
+                            && self
+                                .typeshed
+                                .s3_methods
+                                .contains_key(&(generic.to_owned(), class.to_string()));
+                        return if modeled_base {
+                            None
+                        } else {
+                            Some(RType::unknown())
+                        };
                     }
                     None => {}
                 }

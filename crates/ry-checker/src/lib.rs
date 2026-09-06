@@ -14,6 +14,7 @@
 
 mod collect;
 pub mod diagnostics;
+mod fixpoint;
 pub mod format;
 mod higher_order;
 mod infer;
@@ -557,6 +558,15 @@ impl FnTable {
         let slot_offset = return_slots.0.len();
         return_slots.0.extend_from_slice(&collected_slots.0);
 
+        let replaced: HashSet<_> = collected
+            .fns
+            .keys()
+            .filter(|name| self.fns.contains_key(*name))
+            .collect();
+        if !replaced.is_empty() {
+            self.forwarded_calls
+                .retain(|call| !replaced.contains(&call.caller));
+        }
         self.fns.extend(collected.fns.iter().map(|(name, f)| {
             let mut f = f.clone();
             f.return_slot += slot_offset;
@@ -600,30 +610,11 @@ struct ForwardedCall {
     arguments: Vec<(Option<String>, Option<String>)>,
 }
 
-/// Maximum fixpoint depth before we give up and freeze as Opaque.
-/// Conservative cap; well-typed programs converge in 2-3 iterations.
+/// Maximum refinement rounds before retaining the current inferred types.
 pub(crate) const MAX_FIXPOINT_DEPTH: usize = 8;
 
-/// Maximum nesting depth for closure inference. A function factory
-/// whose body returns another function factory (and so on) eventually
-/// bottoms out at this depth; deeper nests get an opaque `Function`
-/// value with no `fn_sig`. Three levels covers the overwhelming
-/// majority of real-world R closure patterns (factories, currying,
-/// method chaining) while bounding the worst-case recursion.
-///
-/// Scope limits for closure support (documented here so all the
-/// approximations live in one place):
-///   * Captured bindings are snapshotted at the point where the inner
-///     function is inferred. Closures that close over mutable state
-///     (reassigned in the body) get opaque for the captured binding
-///     (we don't track per-binding mutation in v1).
-///   * Recursive closures (a closure that calls itself by name) are
-///     detected via the existing fixpoint cycle detection in
-///     `refine_fn_return`.
-///   * Anonymous functions passed to higher-order built-ins like
-///     `lapply` / `sapply` / `Map` are NOT inferred in v1; doing so
-///     would require per-builtin modeling of how they invoke the
-///     callback. They resolve to opaque (matching the typeshed entry).
+/// Maximum nesting depth for closure inference. Deeper closures retain
+/// function mode without an inferred signature.
 pub(crate) const MAX_CLOSURE_DEPTH: usize = 3;
 
 #[derive(Clone)]
@@ -662,6 +653,10 @@ pub struct Checker {
     // Inferred return types, refined by the fixpoint loop. Same Arc-shared
     // story as `fn_table`.
     pub(crate) return_slots: Arc<ReturnSlots>,
+    // Slot reads during one refinement, including signature-only dependencies.
+    refinement_reads: std::cell::RefCell<Option<Vec<usize>>>,
+    #[cfg(test)]
+    refinement_counts: HashMap<String, usize>,
     // Stack of function names currently being inferred (cycle detection).
     pub(crate) inferring: Vec<String>,
     // Packages attached via `library(pkg)` / `require(pkg)`, plus any
@@ -814,6 +809,9 @@ impl Checker {
             fn_table,
             known_vars: Arc::new(HashSet::new()),
             return_slots,
+            refinement_reads: std::cell::RefCell::new(None),
+            #[cfg(test)]
+            refinement_counts: HashMap::new(),
             inferring: Vec::new(),
             loaded: Arc::new(HashSet::new()),
             bare_loaded: Arc::new(HashSet::new()),
@@ -925,301 +923,6 @@ impl Checker {
                 function.seed_caller_visible_signature(signature);
             }
         }
-    }
-
-    // Pass 2: refine all function return types until convergence.
-    // Safe to call once, after all files have been collected.
-    //
-    // S3 methods (`print.foo`, etc.) sit in `fns` under their full
-    // name, with `s3_methods` pointing at the same return slot, so
-    // iterating `fns` refines their bodies alongside regular
-    // functions; dispatch reads the refined slot via `s3_methods`.
-    pub(crate) fn run_fixpoint(&mut self) {
-        self.run_fixpoint_inner(None);
-    }
-
-    /// Run the fixpoint, but only refine functions in `scope`. Functions
-    /// outside the scope keep their current (seeded) return type. Used by
-    /// `Project` for incremental checks where only a subset of functions
-    /// can have changed.
-    ///
-    /// The set must include every function whose definition or callees
-    /// changed; functions outside the set are assumed stable. The fixpoint
-    /// still iterates until convergence *within the scope* — a scoped
-    /// function whose return type changes can still affect other scoped
-    /// functions that call it.
-    pub(crate) fn run_fixpoint_scoped(&mut self, scope: &HashSet<String>) {
-        self.run_fixpoint_inner(Some(scope));
-    }
-
-    /// Shared fixpoint loop. When `scope` is `None`, refines all functions;
-    /// when `Some`, only functions in the scope set.
-    fn run_fixpoint_inner(&mut self, scope: Option<&HashSet<String>>) {
-        if scope.is_some_and(|s| s.is_empty()) {
-            return;
-        }
-        let prev_discarding = self.discarding;
-        self.discarding = true;
-        for _ in 0..MAX_FIXPOINT_DEPTH {
-            let before = (*self.return_slots).clone();
-            let names: Vec<String> = match scope {
-                Some(s) => self
-                    .fn_table
-                    .fns
-                    .keys()
-                    .filter(|name| s.contains(*name))
-                    .cloned()
-                    .collect(),
-                None => self.fn_table.fns.keys().cloned().collect(),
-            };
-            for name in names {
-                self.refine_fn_return(&name);
-            }
-            let generic_metadata_changed = self.propagate_s3_generic_evaluation();
-            let quoting_changed = self.propagate_forwarded_evaluation();
-            if self.return_slots.0 == before.0 && !generic_metadata_changed && !quoting_changed {
-                break;
-            }
-        }
-        self.discarding = prev_discarding;
-    }
-
-    /// A generic must allow the quoting and injection behavior of its known
-    /// methods. Union their parameter metadata because any selected method
-    /// may capture the supplied arguments.
-    fn propagate_s3_generic_evaluation(&mut self) -> bool {
-        let mut inherited = Vec::new();
-
-        for (name, generic) in &self.fn_table.fns {
-            let Some(dispatch_name) = usemethod_generic_name(&generic.body) else {
-                continue;
-            };
-            if semantic_argument_name(name) != dispatch_name {
-                continue;
-            }
-
-            let mut method_slots = std::collections::HashSet::new();
-            let prefix = format!("{dispatch_name}.");
-            for (method_name, method) in &self.fn_table.fns {
-                if semantic_argument_name(method_name)
-                    .strip_prefix(&prefix)
-                    .is_some_and(|class| !class.is_empty())
-                {
-                    method_slots.insert(method.return_slot);
-                }
-            }
-            // Registered methods can have an internal name (for example a
-            // dynamically collected definition), so include their shared
-            // return slots as well as conventionally named methods.
-            for ((registered_generic, _), slot) in &self.fn_table.s3_methods {
-                if registered_generic == &dispatch_name {
-                    method_slots.insert(*slot);
-                }
-            }
-
-            let dots = generic
-                .params
-                .iter()
-                .position(|parameter| parameter.name == "...");
-            for slot in method_slots {
-                let Some(method) = self
-                    .fn_table
-                    .fns
-                    .values()
-                    .find(|function| function.return_slot == slot)
-                else {
-                    continue;
-                };
-                for parameter in &method.params {
-                    if !parameter.quoting && parameter.injection.is_none() {
-                        continue;
-                    }
-                    let target = match generic
-                        .params
-                        .iter()
-                        .position(|generic_parameter| generic_parameter.name == parameter.name)
-                    {
-                        // A method formal with the same name is matched by
-                        // that generic formal, regardless of its position.
-                        Some(position) => Some(position),
-                        // A named method formal absent from the generic is
-                        // supplied through the generic's dots just like a
-                        // method dots formal.  This is the common S3 shape
-                        // `generic(x, ...)` / `generic.class(x, column, ...)`.
-                        None => dots,
-                    };
-                    if let Some(target) = target {
-                        inherited.push((
-                            name.clone(),
-                            target,
-                            parameter.quoting,
-                            parameter.injection,
-                        ));
-                    }
-                }
-            }
-        }
-
-        let table = Arc::make_mut(&mut self.fn_table);
-        let mut changed = false;
-        for (generic, position, quoting, injection) in inherited {
-            if let Some(parameter) = table
-                .fns
-                .get_mut(&generic)
-                .and_then(|function| function.params.get_mut(position))
-            {
-                if quoting && !parameter.quoting {
-                    parameter.quoting = true;
-                    changed = true;
-                }
-                if injection > parameter.injection {
-                    parameter.injection = injection;
-                    changed = true;
-                }
-            }
-        }
-        changed
-    }
-
-    /// Propagate user-NSE metadata across direct formal forwarding.
-    ///
-    /// `ForwardedCall` is collected syntactically, so an argument is present
-    /// here only when its value was an identifier.  This deliberately excludes
-    /// expressions such as `callee(p + 1)` and nested calls such as
-    /// `callee(f(p))`, which evaluate `p` before the callee can capture it.
-    fn propagate_forwarded_evaluation(&mut self) -> bool {
-        let mut inherited = Vec::new();
-
-        for call in &self.fn_table.forwarded_calls {
-            let Some(caller) = self.fn_table.fns.get(&call.caller) else {
-                continue;
-            };
-
-            // An explicit namespace call bypasses any same-named user
-            // binding, just as normal call resolution does.
-            let user_callee = (!call.stub_callee.contains("::"))
-                .then(|| self.fn_table.fns.get(&call.callee))
-                .flatten();
-            let stub_callee = self.resolve_typeshed_sig(&call.stub_callee);
-            if user_callee.is_none() && stub_callee.is_none() {
-                for (_, source) in &call.arguments {
-                    if let Some(source) = source
-                        && caller.params.iter().any(|param| param.name == *source)
-                    {
-                        inherited.push((
-                            call.caller.clone(),
-                            source.clone(),
-                            false,
-                            false,
-                            Some(InjectionMode::Full),
-                        ));
-                    }
-                }
-                continue;
-            }
-
-            let names: Vec<&str> = if let Some(callee) = user_callee {
-                callee
-                    .params
-                    .iter()
-                    .map(|param| param.name.as_str())
-                    .collect()
-            } else {
-                stub_callee
-                    .as_ref()
-                    .unwrap()
-                    .params
-                    .iter()
-                    .map(|param| param.name.as_str())
-                    .collect()
-            };
-            let bindings = infer::match_argument_names(
-                &names,
-                call.arguments.iter().map(|(name, _)| name.as_deref()),
-            );
-            for (index, (_, source)) in call.arguments.iter().enumerate() {
-                let Some(source) = source else {
-                    continue;
-                };
-                let target = if source == "..." {
-                    bindings.dots
-                } else {
-                    bindings.param_for_arg[index].or(bindings.dots)
-                };
-                let Some(target) = target else {
-                    continue;
-                };
-                // Capturing a promise does not imply quoting every caller expression:
-                // mixed-use wrappers still need diagnostics inside their arguments.
-                let inherits_quoting = if let Some(callee) = user_callee {
-                    callee.params[target].quoting
-                } else {
-                    stub_callee.as_ref().is_some_and(|sig| {
-                        matches!(
-                            sig.eval.get(names[target]),
-                            Some(EvalMode::QuotedExpression | EvalMode::QuotedSymbol)
-                        )
-                    })
-                };
-                // Dots capture is already modeled as defusing (rather than
-                // quoting) so its direct arguments remain opaque.  Preserve
-                // that stronger behavior while forwarding `...` to another
-                // dots-capturing user function.
-                let inherits_defusing = source == "..."
-                    && if let Some(callee) = user_callee {
-                        callee.params[target].defused
-                    } else {
-                        stub_callee.as_ref().is_some_and(|sig| {
-                            matches!(
-                                sig.eval.get(names[target]),
-                                Some(EvalMode::DataMask | EvalMode::TidySelect)
-                            )
-                        })
-                    };
-                let inherits_injection = if let Some(callee) = user_callee {
-                    callee.params[target].injection
-                } else {
-                    stub_callee
-                        .as_ref()
-                        .and_then(|sig| sig.injection.get(names[target]).copied())
-                };
-                if (inherits_quoting || inherits_defusing || inherits_injection.is_some())
-                    && caller.params.iter().any(|param| param.name == *source)
-                {
-                    inherited.push((
-                        call.caller.clone(),
-                        source.clone(),
-                        inherits_quoting,
-                        inherits_defusing,
-                        inherits_injection,
-                    ));
-                }
-            }
-        }
-
-        let table = Arc::make_mut(&mut self.fn_table);
-        let mut changed = false;
-        for (caller, parameter, quoting, defused, injection) in inherited {
-            if let Some(parameter) = table
-                .fns
-                .get_mut(&caller)
-                .and_then(|function| function.params.iter_mut().find(|p| p.name == parameter))
-            {
-                if quoting && !parameter.quoting {
-                    parameter.quoting = true;
-                    changed = true;
-                }
-                if defused && !parameter.defused {
-                    parameter.defused = true;
-                    changed = true;
-                }
-                if injection > parameter.injection {
-                    parameter.injection = injection;
-                    changed = true;
-                }
-            }
-        }
-        changed
     }
 
     // Pass 3: emit diagnostics for this file using the refined tables.

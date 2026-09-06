@@ -240,7 +240,7 @@ impl Checker {
         // the fixpoint loop in `check()`; refining on demand would risk
         // exponential blowup).
         if let Some(function) = call.user_function.as_ref() {
-            return self.return_slots.get(function.return_slot);
+            return self.read_return_slot(function.return_slot);
         }
 
         // The literal-length constructor stage: `vector`, `rep`, `seq`.
@@ -877,6 +877,9 @@ impl Checker {
                     .map(|(_, function)| function.clone())
             })
         };
+        if let Some(function) = &user_function {
+            self.record_signature_read(function.return_slot);
+        }
         let user_argument_matches = user_function.as_ref().map(|function| {
             let names: Vec<&str> = function
                 .params
@@ -1354,7 +1357,7 @@ impl Checker {
             .fn_table
             .s4_methods
             .get(&(generic.to_string(), class.to_string()))?;
-        Some(self.return_slots.get(*slot))
+        Some(self.read_return_slot(*slot))
     }
 
     /// The names declared in the `public` / `private` / `active` lists of an

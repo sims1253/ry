@@ -395,12 +395,12 @@ impl Checker {
                 .fn_table
                 .fns
                 .get(&format!("{generic}.{class}"))
-                .map(|function| self.return_slots.get(function.return_slot))
+                .map(|function| self.read_return_slot(function.return_slot))
                 .or_else(|| {
                     self.fn_table
                         .s3_methods
                         .get(&(generic.to_string(), class.to_string()))
-                        .map(|slot| self.return_slots.get(*slot))
+                        .map(|slot| self.read_return_slot(*slot))
                 })
             {
                 return Some(result);
@@ -420,7 +420,7 @@ impl Checker {
         if candidates.any(|candidate| candidate != slot) {
             return None;
         }
-        Some(self.return_slots.get(slot))
+        Some(self.read_return_slot(slot))
     }
 
     pub(crate) fn emit(

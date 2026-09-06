@@ -308,6 +308,9 @@ impl Checker {
             },
         );
         if let Some(prev) = prev {
+            Arc::make_mut(&mut self.fn_table)
+                .forwarded_calls
+                .retain(|call| call.caller != name);
             tracing::debug!(fn_name = %name, prev_slot = prev.return_slot, "shadowed earlier def");
         }
         slot
@@ -316,19 +319,23 @@ impl Checker {
     // Pass 2: refine one function's inferred return type by walking its
     // body once. Returns are collected from `return(...)` calls and from
     // the trailing expression of the body, then joined.
-    pub(crate) fn refine_fn_return(&mut self, name: &str) {
+    pub(crate) fn refine_fn_return(&mut self, name: &str) -> bool {
         // Pull the body out by reference so we can re-borrow self during
         // the walk. We can't simply clone the body since that's expensive
         // for large functions; instead we snapshot the slot index.
         let (body_clone, params, slot) = match self.fn_table.fns.get(name) {
             Some(f) => (f.body.clone(), f.params.clone(), f.return_slot),
-            None => return,
+            None => return false,
         };
         // Cycle detection: if this function is already on the inference
         // stack, leave its return as UNKNOWN and bail out. The fixpoint
         // will converge on subsequent iterations.
         if self.inferring.iter().any(|n| n == name) {
-            return;
+            return false;
+        }
+        #[cfg(test)]
+        {
+            *self.refinement_counts.entry(name.to_string()).or_default() += 1;
         }
         self.inferring.push(name.to_string());
 
@@ -376,9 +383,13 @@ impl Checker {
             let first = iter.next().unwrap_or(RType::unknown());
             iter.fold(first, |acc, t| acc.join(t))
         };
-        Arc::make_mut(&mut self.return_slots).set(slot, joined);
+        let changed = self.return_slots.0.get(slot) != Some(&joined);
+        if changed {
+            Arc::make_mut(&mut self.return_slots).set(slot, joined);
+        }
         self.deferred_captures.pop();
         self.inferring.pop();
+        changed
     }
 }
 

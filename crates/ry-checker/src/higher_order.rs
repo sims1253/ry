@@ -447,7 +447,7 @@ impl Checker {
                 }
                 // User-defined function in the FnTable?
                 if let Some(f) = self.fn_table.fns.get(lookup_name) {
-                    let rt = self.return_slots.get(f.return_slot);
+                    let rt = self.read_return_slot(f.return_slot);
                     if !matches!(rt.mode, Mode::Opaque) {
                         return Some(rt);
                     }
@@ -623,7 +623,7 @@ impl Checker {
     /// only promises that the operation is supported, not its shape.
     pub(crate) fn s3_specific_or_group_return(&self, specific: bool, slot: usize) -> RType {
         if specific {
-            self.return_slots.get(slot)
+            self.read_return_slot(slot)
         } else {
             RType::unknown()
         }

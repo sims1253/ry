@@ -23,6 +23,10 @@ pub(crate) fn collect_forwarded_calls_in_stmts(
         |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
             if let AstNode::Expr(Expr::Call { func, args, .. }) = node
                 && let Expr::Ident { name, .. } = func.as_ref()
+                && args.iter().any(|argument| {
+                    matches!(&argument.value, Expr::Ident { name, .. }
+                        if params.iter().any(|parameter| parameter.name == *name))
+                })
             {
                 let callee = crate::semantic_lists::bare_name(name);
                 calls.push(ForwardedCall {

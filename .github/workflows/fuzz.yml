@@ -5,6 +5,13 @@ on:
     - cron: "17 4 * * *"
   workflow_dispatch:
 
+# Fuzz has no PR or push trigger, so the group only matters when a manual
+# dispatch overlaps the nightly run on main: the superseded run is
+# cancelled instead of burning runner minutes in parallel.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -12,7 +19,7 @@ jobs:
   fuzz:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@7c8d7d138f5c09cef361f8214cf96882cd029cdb # nightly

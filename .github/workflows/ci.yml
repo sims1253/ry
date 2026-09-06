@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
@@ -14,28 +21,35 @@ jobs:
     name: MSRV
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.88
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - run: cargo check --workspace --all-targets
 
   build-test:
     name: Build & test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Build
         run: cargo build --workspace --all-targets
       - name: Test
         run: cargo test --workspace
       - name: Performance regression tests
-        run: cargo test -p ry-checker --test perf --release -- --ignored
+        run: cargo test -p ry-checker --test perf --release -- --ignored --test-threads=1
       - name: Clippy (deny warnings)
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        # RUSTFLAGS in the env block denies warnings workflow-wide; cargo
+        # forwards it to the clippy driver, so a step-level flag is
+        # redundant.
+        run: cargo clippy --workspace --all-targets
       - name: rustfmt
         run: cargo fmt --all -- --check
 
@@ -47,11 +61,15 @@ jobs:
     name: dist generate --check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install pinned cargo-dist
         run: |
           version=$(sed -n 's/^cargo-dist-version = "\(.*\)"/\1/p' dist-workspace.toml)
           curl --proto '=https' --tlsv1.2 -LsSf "https://github.com/axodotdev/cargo-dist/releases/download/v${version}/cargo-dist-installer.sh" | sh
+      - name: Test executable checksum generation
+        run: python3 -m unittest discover -s scripts/release -p 'test_*.py'
       - name: Check release.yml matches generated output
         run: dist generate --check
 
@@ -63,11 +81,13 @@ jobs:
     name: Oracle (R)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Install R
-        uses: r-lib/actions/setup-r@v2
+        uses: r-lib/actions/setup-r@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2.12.1
         with:
           # Binary packages from Posit Package Manager: fast and no
           # compile-from-source failures for purrr/mirai on ubuntu.
@@ -77,19 +97,13 @@ jobs:
         # would let the job pass with zero coverage. Guard against that.
         run: |
           Rscript --version
-      - name: Install R packages (oracle fixtures + parallel driver + audit)
-        # setup-r-dependencies FAILS the job when a package cannot be
-        # installed (a bare `Rscript -e 'install.packages(...)'` only
-        # warns and exits 0 -- that silent failure previously left the
-        # oracle without purrr, breaking the purrr fixtures and dropping
-        # the parallel driver). It also installs system requirements and
-        # caches the package library between runs. dplyr is used by
-        # oracle fixtures.
-        uses: r-lib/actions/setup-r-dependencies@v2
+      - name: Install R packages (oracle fixtures)
+        # Fail if fixture dependencies cannot be installed.
+        uses: r-lib/actions/setup-r-dependencies@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2.12.1
         with:
           # carrier is purrr's SUGGESTED (not imported) dependency that
           # in_parallel() hard-requires at call time (carrier::crate);
-          # without it every in_parallel fixture and the parallel driver
+          # without it in_parallel fixtures
           # error even though requireNamespace("purrr") succeeds.
           packages: |
             any::purrr
@@ -97,24 +111,26 @@ jobs:
             any::carrier
             any::dplyr
       - name: Verify oracle R packages are importable
-        # Same philosophy as the Rscript guard above: the oracle fixtures
-        # must not silently degrade to the serial path. requireNamespace
-        # is what both the parallel driver and the fixtures rely on.
+        # Missing fixture packages must not silently reduce CI coverage.
         run: |
           Rscript -e 'stopifnot(requireNamespace("purrr"), requireNamespace("mirai"), requireNamespace("carrier"), requireNamespace("dplyr"))'
       # Typeshed auditing and stub generation moved to the r-typeshed
       # repository together with the stubs; its CI covers them.
       - name: Oracle suite
-        run: cargo test -p ry-checker --test oracle -- --ignored --nocapture
+        run: cargo test -p ry-checker --test oracle -- --include-ignored --nocapture
 
-  # E6: Zed extension has its own lockfile and must NOT be built with
-  # --workspace (R1 constraint). Separate job, separate lockfile.
+  # The Zed extension is excluded from the root workspace because
+  # zed_extension_api does not follow ry's MSRV (CONTRIBUTING.md), so
+  # --workspace cannot build it. It keeps its own Cargo.lock; this job
+  # builds and tests it through its own manifest.
   zed-extension:
     name: Zed extension
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
       - name: Install Zed extension target
         run: rustup target add wasm32-wasip2
       - name: Build Zed extension (WASM)

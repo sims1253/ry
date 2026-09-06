@@ -5,6 +5,7 @@ pub mod ast;
 pub mod parser;
 pub mod span;
 pub mod types;
+pub mod walk;
 
 pub use ast::*;
 pub use parser::{ParseError, RParser};

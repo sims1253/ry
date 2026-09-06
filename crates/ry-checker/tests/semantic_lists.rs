@@ -1,4 +1,4 @@
-//! Semantic coherence tests for Plan 35 W7.
+//! Semantic coherence tests.
 //!
 //! Two deliverables are exercised here:
 //!
@@ -38,16 +38,34 @@ fn r_eval(expr: &str) -> String {
     String::from_utf8_lossy(&output.stdout).to_string()
 }
 
-/// Load the embedded base typeshed functions as a name set.
+/// Load every name the embedded base typeshed declares: function
+/// signatures, ambient functions, and S3-generic globals. A list member
+/// is "in the typeshed" if it appears in any of them (the S3 Math group,
+/// for example, keeps `acosh`/`asinh`/`atanh` as ambient functions, and
+/// the group names themselves live in the S3-generic globals).
 fn base_typeshed_names() -> HashSet<String> {
     let typeshed = ry_typeshed::load_base().expect("base typeshed loads");
-    typeshed.functions.keys().cloned().collect()
+    typeshed
+        .functions
+        .keys()
+        .chain(typeshed.globals.ambient_functions.iter())
+        .chain(typeshed.globals.s3_generics.iter())
+        .cloned()
+        .collect()
 }
 
-/// Load the embedded rlang vendor typeshed functions.
+/// Load every name the embedded rlang vendor typeshed declares.
 fn rlang_typeshed_names() -> Option<HashSet<String>> {
     let typeshed = ry_typeshed::load_package("rlang")?;
-    Some(typeshed.functions.keys().cloned().collect())
+    Some(
+        typeshed
+            .functions
+            .keys()
+            .chain(typeshed.globals.ambient_functions.iter())
+            .chain(typeshed.globals.s3_generics.iter())
+            .cloned()
+            .collect(),
+    )
 }
 
 /// Parse and check R source, returning diagnostic codes.
@@ -74,6 +92,57 @@ fn check_source_with_messages(src: &str) -> Vec<(String, String)> {
         .into_iter()
         .map(|d| (d.code.to_string(), d.message))
         .collect()
+}
+
+// ── Operator dispatch ───────────────────────────────────────────────────
+
+#[test]
+fn conflicting_s3_operator_methods_do_not_invent_a_left_return() {
+    for right_method in ["+.right", "Ops.right"] {
+        let source = format!(
+            "`+.left` <- function(e1, e2) \"left\"\n\
+             `{right_method}` <- function(e1, e2) \"right\"\n\
+             x <- structure(1, class = \"left\")\n\
+             y <- structure(2, class = \"right\")\n\
+             (x + y) + 1\n(y + x) + 1\n"
+        );
+        assert!(
+            !check_source(&source).iter().any(|code| code == "RY040"),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn same_or_one_sided_s3_operator_method_keeps_its_return() {
+    for operands in ["x + x", "x + 1", "1 + x"] {
+        let source = format!(
+            "`+.left` <- function(e1, e2) \"left\"\n\
+             x <- structure(1, class = \"left\")\n\
+             ({operands}) + 1\n"
+        );
+        assert!(
+            check_source(&source).iter().any(|code| code == "RY040"),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn s3_operator_dispatch_preserves_uncertain_counterparts() {
+    for counterpart in ["factor(1)", "structure(2, class = classes)"] {
+        let source = format!(
+            "`+.left` <- function(e1, e2) \"left\"\n\
+             f <- function(classes) {{\n\
+             x <- structure(1, class = \"left\")\n\
+             y <- {counterpart}\n\
+             (x + y) + 1\n(y + x) + 1\n}}\n"
+        );
+        assert!(
+            !check_source(&source).iter().any(|code| code == "RY040"),
+            "{source}"
+        );
+    }
 }
 
 // ── Deliverable 1: SEMANTIC_LISTS registry coherence ─────────────────────
@@ -226,6 +295,71 @@ fn builtin_environment_bindings_match_r_oracle() {
     }
 }
 
+/// S7_OBJECT_CONSTRUCTORS: all three are exported constructor entry points
+/// of the S7 package.
+#[test]
+fn s7_object_constructors_match_r_oracle() {
+    if !rscript_available() {
+        eprintln!("Rscript not on PATH; skipping oracle check");
+        return;
+    }
+    let output = r_eval("cat(requireNamespace(\"S7\", quietly=TRUE), \"\\n\")");
+    if !output.trim().starts_with("TRUE") {
+        eprintln!("S7 not installed; skipping oracle check");
+        return;
+    }
+    for constructor in semantic_lists::S7_OBJECT_CONSTRUCTORS {
+        let Some(bare) = constructor.strip_prefix("S7::") else {
+            panic!("S7_OBJECT_CONSTRUCTORS member {constructor:?} is not S7-qualified");
+        };
+        // The production matcher keys on `S7::<name>` call syntax, which
+        // only resolves through the export list, so check the exports
+        // rather than mere namespace membership.
+        let check = r_eval(&format!(
+            "cat(\"{bare}\" %in% getNamespaceExports(\"S7\"), \"\\n\")"
+        ));
+        assert!(
+            check.trim().starts_with("TRUE"),
+            "S7 does not export constructor {constructor:?}"
+        );
+    }
+}
+
+/// QUOTING_FORMS: each member accepts a bare, undefined symbol without
+/// evaluating it -- the quoting behaviour that makes names inside these
+/// calls safe to skip during inference. `~` and `expression` are checked
+/// against vanilla R; `vars` is ggplot2's and is checked only when
+/// ggplot2 is installed.
+#[test]
+fn quoting_forms_match_r_oracle() {
+    if !rscript_available() {
+        eprintln!("Rscript not on PATH; skipping oracle check");
+        return;
+    }
+    let expression_check =
+        r_eval("e <- expression(undefined_ry_probe); cat(is.expression(e), \"\\n\")");
+    assert!(
+        expression_check.trim().starts_with("TRUE"),
+        "expression() does not quote its argument"
+    );
+    let formula_check =
+        r_eval("f <- `~`(undefined_ry_probe); cat(inherits(f, \"formula\"), \"\\n\")");
+    assert!(
+        formula_check.trim().starts_with("TRUE"),
+        "~ does not quote its argument"
+    );
+    let output = r_eval("cat(requireNamespace(\"ggplot2\", quietly=TRUE), \"\\n\")");
+    if !output.trim().starts_with("TRUE") {
+        eprintln!("ggplot2 not installed; skipping vars() oracle check");
+        return;
+    }
+    let vars_check = r_eval("v <- ggplot2::vars(undefined_ry_probe); cat(is.list(v), \"\\n\")");
+    assert!(
+        vars_check.trim().starts_with("TRUE"),
+        "vars() does not quote its argument"
+    );
+}
+
 /// No hardcoded semantic list escapes the registry.
 ///
 /// This test scans the checker source for `const ... : &[&str]` and
@@ -236,7 +370,13 @@ fn no_unregistered_hardcoded_lists() {
 
     // Lists that are intentionally not semantic and do not belong in the
     // registry.
-    let known_non_semantic: &[&str] = &[];
+    //
+    // * `BASE_DATABASE_PACKAGES`: which R packages share ry's embedded
+    //   base stub database is a checker-internal storage mapping, not an
+    //   R semantic fact; the constant exists so the two qualified-lookup
+    //   paths (`resolve_typeshed_sig` and `resolve_typeshed_value`) name
+    //   the same standard packages.
+    let known_non_semantic: &[&str] = &["BASE_DATABASE_PACKAGES"];
 
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut found_lists = Vec::new();

@@ -3,15 +3,8 @@ use crate::diagnostics::{
     diag_code_from_lsp, diagnostic_to_lsp, diagnostic_to_lsp_with_source, make_ignore_action,
     make_ignore_file_action,
 };
-use crate::hints::{
-    active_parameter, collect_completions, collect_inlay_hints, common_r_completions,
-    extract_last_identifier, find_enclosing_call, get_signature,
-};
-use crate::navigation::{
-    collect_document_highlights, find_definition_locations, find_references_in_file,
-};
-use crate::symbols::{collect_symbols, flatten_symbols_to_symbol_info};
-use crate::util::*;
+use crate::hints::collect_inlay_hints;
+use crate::positions::*;
 use ry_checker::{Diagnostic, Severity};
 use ry_core::{RParser, SourceFile, Span};
 use tower_lsp::lsp_types::Diagnostic as LspDiagnostic;
@@ -175,217 +168,6 @@ fn uri_to_path_falls_back_for_non_file_scheme() {
     assert_eq!(path, "untitled:Untitled-1");
 }
 
-#[test]
-fn hover_returns_type_for_known_variable() {
-    // Integration test: parse a simple R snippet, check it, and
-    // verify that hover on a variable returns its type.
-    let text = "x <- 1L + 2L\n";
-    let mut parser = RParser::new().unwrap();
-    let file = parser.parse("test.R", text).unwrap();
-    let mut checker = ry_checker::Checker::new("test.R");
-    let (_, scope) = checker.check_with_scope(&file);
-    let t = scope.get("x").expect("x should be in scope");
-    assert_eq!(t.mode, ry_core::types::Mode::Integer);
-}
-
-#[test]
-fn goto_def_finds_variable_assignment() {
-    // `x <- 1L + 2L` defines `x` at line 0, col 0 (1-char name).
-    let text = "x <- 1L + 2L\n";
-    let mut parser = RParser::new().unwrap();
-    let file = parser.parse("test.R", text).unwrap();
-    let uri = Url::parse("file:///tmp/test.R").unwrap();
-    let locs = find_definition_locations(&file, "x", &uri, text);
-    assert_eq!(locs.len(), 1, "expected exactly one definition of x");
-    let loc = &locs[0];
-    assert_eq!(loc.uri, uri);
-    assert_eq!(loc.range.start.line, 0);
-    assert_eq!(loc.range.start.character, 0);
-    // Name "x" is one character wide.
-    assert_eq!(loc.range.end.line, 0);
-    assert_eq!(loc.range.end.character, 1);
-}
-
-#[test]
-fn goto_def_finds_function_definition() {
-    // `add <- function(a, b) a + b` defines `add` (3 chars) at
-    // line 0, col 0. The parser models this as an Assign whose
-    // value is an Expr::Function, so the Assign-target branch of
-    // the walk must find it.
-    let text = "add <- function(a, b) a + b\n";
-    let mut parser = RParser::new().unwrap();
-    let file = parser.parse("test.R", text).unwrap();
-    let uri = Url::parse("file:///tmp/test.R").unwrap();
-    let locs = find_definition_locations(&file, "add", &uri, text);
-    assert_eq!(locs.len(), 1, "expected exactly one definition of add");
-    let loc = &locs[0];
-    assert_eq!(loc.range.start.line, 0);
-    assert_eq!(loc.range.start.character, 0);
-    assert_eq!(loc.range.end.character, 3, "add is 3 chars wide");
-}
-
-#[test]
-fn goto_def_finds_local_definition_inside_function_body() {
-    // A local assignment nested inside a function literal must be
-    // found by recursing through Expr::Function -> body. `local`
-    // sits on line 1, indented 2 spaces.
-    let text = "f <- function() {\n  local <- 1L\n  local\n}\n";
-    let mut parser = RParser::new().unwrap();
-    let file = parser.parse("test.R", text).unwrap();
-    let uri = Url::parse("file:///tmp/test.R").unwrap();
-    let locs = find_definition_locations(&file, "local", &uri, text);
-    assert_eq!(locs.len(), 1, "expected exactly one definition of local");
-    let loc = &locs[0];
-    assert_eq!(loc.range.start.line, 1);
-    assert_eq!(loc.range.start.character, 2);
-    assert_eq!(loc.range.end.character, 2 + "local".len() as u32);
-}
-
-#[test]
-fn goto_def_finds_reassignment_as_multiple_locations() {
-    // Two assignments to the same name yield two Locations; the
-    // editor can present them as alternatives.
-    let text = "x <- 1L\nx <- 2L\n";
-    let mut parser = RParser::new().unwrap();
-    let file = parser.parse("test.R", text).unwrap();
-    let uri = Url::parse("file:///tmp/test.R").unwrap();
-    let locs = find_definition_locations(&file, "x", &uri, text);
-    assert_eq!(locs.len(), 2);
-    assert_eq!(locs[0].range.start.line, 0);
-    assert_eq!(locs[1].range.start.line, 1);
-}
-
-#[test]
-fn goto_def_returns_empty_for_undefined_name() {
-    let text = "x <- 1L\n";
-    let mut parser = RParser::new().unwrap();
-    let file = parser.parse("test.R", text).unwrap();
-    let uri = Url::parse("file:///tmp/test.R").unwrap();
-    let locs = find_definition_locations(&file, "does_not_exist", &uri, text);
-    assert!(locs.is_empty(), "expected no definitions");
-}
-
-// ---- documentSymbol helpers ----
-
-/// Helper: parse + check a snippet and return its top-level
-/// `DocumentSymbol`s. Mirrors what the `document_symbol` LSP method
-/// does, minus the async state lookup.
-fn doc_symbols(src: &str) -> Vec<DocumentSymbol> {
-    let mut parser = RParser::new().unwrap();
-    let file = parser.parse("test.R", src).unwrap();
-    let mut checker = ry_checker::Checker::new("test.R");
-    let (_, scope) = checker.check_with_scope(&file);
-    collect_symbols(&file.stmts, src, Some(&scope))
-}
-
-#[test]
-fn document_symbols_for_mixed_top_level_bindings() {
-    // The canonical example from the task: a function, a call
-    // result, and a string. We expect 3 top-level symbols with the
-    // right names and kinds.
-    let src = "add <- function(x = 0, y = 0) { x + y }\nresult <- add(1, 2)\nname <- \"hello\"\n";
-    let symbols = doc_symbols(src);
-    assert_eq!(symbols.len(), 3, "got {:?}", symbols);
-
-    assert_eq!(symbols[0].name, "add");
-    assert_eq!(symbols[0].kind, SymbolKind::FUNCTION);
-    // The checker infers a function type for `add`, so the detail
-    // surfaces that (which starts with "function"). We don't pin
-    // the exact signature since return-type inference may refine
-    // it over time; we just check it identifies a function.
-    let detail = symbols[0]
-        .detail
-        .as_deref()
-        .expect("add should have detail");
-    assert!(
-        detail.starts_with("function"),
-        "expected detail to start with 'function', got: {}",
-        detail
-    );
-
-    assert_eq!(symbols[1].name, "result");
-    assert_eq!(symbols[1].kind, SymbolKind::VARIABLE);
-
-    assert_eq!(symbols[2].name, "name");
-    assert_eq!(symbols[2].kind, SymbolKind::VARIABLE);
-}
-
-#[test]
-fn document_symbols_detail_uses_inferred_type() {
-    // The checker infers `x` as a scalar integer, so the detail
-    // string must mention "integer".
-    let src = "x <- 1L + 2L\n";
-    let symbols = doc_symbols(src);
-    assert_eq!(symbols.len(), 1);
-    let detail = symbols[0].detail.as_deref().expect("detail should be set");
-    assert!(
-        detail.contains("integer"),
-        "expected integer in detail, got: {}",
-        detail
-    );
-}
-
-#[test]
-fn document_symbols_function_has_nested_children() {
-    // A function literal assigned to `f` contains a nested local
-    // function `g`. `g` must appear as a child of `f` (not at the
-    // top level), and `g` itself must be classified as a function.
-    let src = "f <- function() {\n  g <- function() { 1L }\n  g\n}\n";
-    let symbols = doc_symbols(src);
-    assert_eq!(symbols.len(), 1);
-    let f = &symbols[0];
-    assert_eq!(f.name, "f");
-    assert_eq!(f.kind, SymbolKind::FUNCTION);
-    let children = f
-        .children
-        .as_ref()
-        .expect("f should have nested children from its body");
-    let g = children
-        .iter()
-        .find(|c| c.name == "g")
-        .expect("should find nested g");
-    assert_eq!(g.kind, SymbolKind::FUNCTION);
-}
-
-#[test]
-fn document_symbols_selection_range_covers_identifier() {
-    // For `my_var <- 42`, the selection range must cover exactly
-    // the 6-character identifier at the start of line 0, and it
-    // must be contained within the enclosing range.
-    let src = "my_var <- 42\n";
-    let symbols = doc_symbols(src);
-    assert_eq!(symbols.len(), 1);
-    let sym = &symbols[0];
-    assert_eq!(sym.name, "my_var");
-    assert_eq!(sym.selection_range.start.line, 0);
-    assert_eq!(sym.selection_range.start.character, 0);
-    assert_eq!(sym.selection_range.end.line, 0);
-    assert_eq!(sym.selection_range.end.character, "my_var".len() as u32);
-    // selection_range must be inside range per the LSP spec.
-    assert!(sym.range.start <= sym.selection_range.start);
-    assert!(sym.range.end >= sym.selection_range.end);
-}
-
-#[test]
-fn document_symbols_empty_for_no_bindings() {
-    // A bare expression with no assignments yields no symbols.
-    let src = "1L + 2L\n";
-    let symbols = doc_symbols(src);
-    assert!(symbols.is_empty(), "expected no symbols, got {:?}", symbols);
-}
-
-#[test]
-fn document_symbols_flatten_control_flow_bodies() {
-    // Bindings inside `if` / `for` blocks are visible in R's
-    // enclosing scope, so they should surface at the current
-    // outline level rather than disappearing.
-    let src = "if (TRUE) {\n  a <- 1L\n}\nfor (i in 1:3) {\n  b <- 2L\n}\n";
-    let symbols = doc_symbols(src);
-    let names: Vec<&str> = symbols.iter().map(|s| s.name.as_str()).collect();
-    assert!(names.contains(&"a"), "a should be in outline: {:?}", names);
-    assert!(names.contains(&"b"), "b should be in outline: {:?}", names);
-}
-
 // ---- inlay hint helpers ----
 
 /// Helper: parse + check a snippet and return its inlay hints.
@@ -451,7 +233,6 @@ fn inlay_hints_skip_opaque_types() {
     // the non-opaque binding.
     let src = "result <- some_unknown_function()\nx <- 1L + 2L\n";
     let hints = inlay_hints(src);
-    // Only `x` should produce a hint; `result` is opaque and skipped.
     // Each hint's position is right after its identifier:
     //   `result` is at col 0..6 -> hint at col 6 (line 0)
     //   `x`      is at col 0..1 -> hint at col 1 (line 1)
@@ -529,808 +310,6 @@ fn inlay_hints_for_function_definition() {
     }
 }
 
-// ---- completion helpers ----
-
-/// Helper: parse + check a snippet and return the completion
-/// items for a given cursor position and trigger context. Mirrors
-/// what the `completion` LSP method does, minus the async state
-/// lookup.
-fn completions(
-    src: &str,
-    position: Position,
-    context: Option<CompletionContext>,
-) -> Vec<CompletionItem> {
-    let mut parser = RParser::new().unwrap();
-    let file = parser.parse("test.R", src).unwrap();
-    let mut checker = ry_checker::Checker::new("test.R");
-    let (_, scope) = checker.check_with_scope(&file);
-    collect_completions(src, position, &context, &scope)
-}
-
-/// Build a `CompletionContext` for a given trigger character.
-/// Used by the `$`-triggered test to mimic what the editor sends
-/// right after the user types `$`.
-fn trigger_context(ch: &str) -> Option<CompletionContext> {
-    Some(CompletionContext {
-        trigger_kind: CompletionTriggerKind::TRIGGER_CHARACTER,
-        trigger_character: Some(ch.to_string()),
-    })
-}
-
-#[test]
-fn dollar_completions_ignore_text_after_utf16_cursor_on_later_line() {
-    let src = "prefix <- 1\ndf <- data.frame(café = 1)\ndf$ trailing\n";
-    let position = Position::new(2, "df$".encode_utf16().count() as u32);
-    let items = completions(src, position, trigger_context("$"));
-    assert!(items.iter().any(|item| item.label == "café"), "{items:?}");
-}
-
-#[test]
-fn extract_last_identifier_basic() {
-    // The variable name sits at the end of the input; the helper
-    // must scan back to its start, stopping at the first non-ident
-    // character.
-    assert_eq!(extract_last_identifier("mtcars").as_deref(), Some("mtcars"));
-    assert_eq!(extract_last_identifier("df$col").as_deref(), Some("col"));
-    assert_eq!(
-        extract_last_identifier("foo.bar_baz").as_deref(),
-        Some("foo.bar_baz")
-    );
-    // Trailing whitespace / `$` are not stripped here; the caller
-    // (`collect_completions`) handles that. So a trailing `$`
-    // produces `None` because `$` is not an identifier character.
-    assert_eq!(extract_last_identifier("mtcars$"), None);
-    assert_eq!(extract_last_identifier(""), None);
-    assert_eq!(extract_last_identifier("(1 + 2)"), None);
-}
-
-// ---- signature help helpers ----
-
-#[test]
-fn find_enclosing_call_basic_round() {
-    // `round(` with the cursor right after the `(` (col 6): the
-    // enclosing call is `round`, and no comma has been typed yet
-    // so the active parameter is 0.
-    let text = "round(\n";
-    let (name, active) = find_enclosing_call(text, 0, 6).expect("should find call");
-    assert_eq!(name, "round");
-    assert_eq!(active, 0);
-}
-
-#[test]
-fn find_enclosing_call_uses_line_local_utf16_column() {
-    let text = "first line\n😀round(x, trailing)\n";
-    let cursor = "😀round(x,".encode_utf16().count();
-    let (name, active) = find_enclosing_call(text, 1, cursor).expect("should find call");
-    assert_eq!(name, "round");
-    assert_eq!(active, 1);
-}
-
-#[test]
-fn find_enclosing_call_counts_commas() {
-    // `round(x, ` with the cursor at col 9 (after the comma + the
-    // space): one comma has been typed, so the active parameter is
-    // 1 (the second parameter, `digits`).
-    let text = "round(x, \n";
-    let (name, active) = find_enclosing_call(text, 0, 9).expect("should find call");
-    assert_eq!(name, "round");
-    assert_eq!(active, 1);
-}
-
-#[test]
-fn find_enclosing_call_skips_nested_calls() {
-    // `outer(inner(1, 2), ` with the cursor at the trailing
-    // space: the nearest enclosing call is `outer` (the inner
-    // `inner(1, 2)` is closed), and only the top-level comma
-    // (after the inner call) counts toward `outer`'s active
-    // parameter, so it should be 1.
-    let text = "outer(inner(1, 2), \n";
-    let (name, active) = find_enclosing_call(text, 0, 18).expect("should find call");
-    assert_eq!(name, "outer");
-    assert_eq!(
-        active, 1,
-        "only the top-level comma should count, not the inner call's comma"
-    );
-}
-
-#[test]
-fn find_enclosing_call_returns_none_outside_call() {
-    // No `(` before the cursor: not inside a call.
-    let text = "x <- 1\n";
-    assert_eq!(find_enclosing_call(text, 0, 4), None);
-}
-
-#[test]
-fn find_enclosing_call_returns_none_for_non_ident_func() {
-    // The text before the `(` is `(1 + 2) + (` which is not a
-    // function call (no identifier before the `(`). The helper
-    // must return `None` rather than treat the `(` as a call.
-    let text = "1 + (2 * 3)\n";
-    assert_eq!(find_enclosing_call(text, 0, 6), None);
-}
-
-#[test]
-fn get_signature_returns_known_params() {
-    // The base typeshed is the source of truth: `round` declares
-    // `x, digits` plus `...` (forwarded to the default method).
-    let params = get_signature("round").expect("round should have a signature");
-    assert_eq!(params, vec!["x", "digits", "..."]);
-
-    // `mean` declares `x` and `...` (trim/na.rm are method-level).
-    let params = get_signature("mean").expect("mean should have a signature");
-    assert_eq!(params, vec!["x", "..."]);
-
-    // Variadic functions collapse to `...`.
-    let params = get_signature("c").expect("c should have a signature");
-    assert_eq!(params, vec!["..."]);
-}
-
-#[test]
-fn get_signature_returns_none_for_unknown() {
-    // User-defined functions aren't in the curated table.
-    assert!(get_signature("my_helper").is_none());
-    assert!(get_signature("").is_none());
-}
-
-#[test]
-fn signature_help_label_and_active_param() {
-    // End-to-end test of the signature-help logic at the helper
-    // level: locate the enclosing call, look up the signature,
-    // and verify the resulting label and active-parameter
-    // highlight. We exercise the same helpers the LSP handler
-    // uses so the test stays accurate even though the handler is
-    // async and stateful.
-    //
-    // To avoid fragile byte-counting, we find the comma's position
-    // dynamically and place the cursor right after it. `round(x, `
-    // has one top-level comma => active param 1 (`digits`).
-    let text = "round(x, ";
-    let comma = text.find(',').expect("snippet should have a comma");
-    let (name, active) = find_enclosing_call(text, 0, comma + 1).expect("should find call");
-    assert_eq!(name, "round");
-    assert_eq!(active, 1);
-
-    let params = get_signature(&name).expect("round should have a signature");
-    let label = format!("{}({})", name, params.join(", "));
-    assert_eq!(label, "round(x, digits, ...)");
-    // The active parameter must be clamped to the parameter list
-    // length: with 3 params and active=1, the highlight should
-    // land on `digits`.
-    assert_eq!(active_parameter(&params, active), Some(1));
-}
-
-#[test]
-fn signature_help_keeps_variadic_parameter_active() {
-    let text = "round(1, 2, 3, \n";
-    let (_, active) = find_enclosing_call(text, 0, 14).expect("should find call");
-    assert_eq!(active, 3);
-    let params = get_signature("round").expect("round should have a signature");
-    assert_eq!(active_parameter(&params, active), Some(2));
-
-    let non_variadic = vec!["x".to_string(), "digits".to_string()];
-    assert_eq!(active_parameter(&non_variadic, active), None);
-}
-
-#[test]
-fn common_r_completions_includes_keywords_and_functions() {
-    // The curated list must surface a handful of keywords (so the
-    // popup helps users start a function definition / loop) and
-    // common base-R functions (so `c`, `list`, `mean` show up even
-    // when the user has no bindings yet). Every entry must carry a
-    // non-empty detail string and a kind.
-    let items = common_r_completions();
-    // Sanity: the list is non-empty but focused.
-    assert!(!items.is_empty(), "curated list should not be empty");
-    assert!(
-        items.len() <= 50,
-        "curated list should stay focused, got {} entries",
-        items.len()
-    );
-    let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
-    // A representative keyword and a representative function.
-    assert!(
-        labels.contains(&"function"),
-        "missing 'function': {:?}",
-        labels
-    );
-    assert!(labels.contains(&"if"), "missing 'if': {:?}", labels);
-    assert!(labels.contains(&"c"), "missing 'c': {:?}", labels);
-    assert!(labels.contains(&"list"), "missing 'list': {:?}", labels);
-    assert!(labels.contains(&"mean"), "missing 'mean': {:?}", labels);
-    // Every entry must have a kind and a detail.
-    for it in &items {
-        assert!(it.kind.is_some(), "entry {:?} missing kind", it.label);
-        assert!(
-            it.detail.as_deref().is_some_and(|d| !d.is_empty()),
-            "entry {:?} missing/empty detail",
-            it.label
-        );
-    }
-    // The 'function' entry must be classified as a KEYWORD (R
-    // treats it as a keyword, not a function call), and 'c' as a
-    // FUNCTION.
-    let function_item = items.iter().find(|i| i.label == "function").unwrap();
-    assert_eq!(function_item.kind, Some(CompletionItemKind::KEYWORD));
-    let c_item = items.iter().find(|i| i.label == "c").unwrap();
-    assert_eq!(c_item.kind, Some(CompletionItemKind::FUNCTION));
-}
-
-#[test]
-fn completions_for_scope_variables_and_keywords() {
-    // Generic (non-triggered) completion must include the user's
-    // in-scope bindings AND the curated keyword/function list.
-    // Bindings get a VARIABLE or FUNCTION kind; the curated
-    // keywords keep their KEYWORD / FUNCTION kind. Duplicate
-    // labels (e.g. a user `c <- ...` vs the curated `c`) must be
-    // collapsed by `dedup_by`.
-    let src = "x <- 1L + 2L\nname <- \"hi\"\n";
-    // Cursor on line 2, col 0 (a fresh line). No trigger.
-    let pos = Position {
-        line: 2,
-        character: 0,
-    };
-    let items = completions(src, pos, None);
-    let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
-    // In-scope bindings.
-    assert!(labels.contains(&"x"), "missing x: {:?}", labels);
-    assert!(labels.contains(&"name"), "missing name: {:?}", labels);
-    // Curated keywords / functions.
-    assert!(labels.contains(&"if"), "missing if: {:?}", labels);
-    assert!(
-        labels.contains(&"function"),
-        "missing function: {:?}",
-        labels
-    );
-    assert!(labels.contains(&"mean"), "missing mean: {:?}", labels);
-    // Dedup: 'c' should appear at most once even though both the
-    // scope (no user `c` here) and the curated list could
-    // contribute. This guards the dedup path against future
-    // changes that add a 'c' to the scope.
-    let c_count = labels.iter().filter(|&&l| l == "c").count();
-    assert_eq!(c_count, 1, "'c' should appear exactly once: {:?}", labels);
-    // 'x' must be a VARIABLE; the curated 'function' must be a
-    // KEYWORD.
-    let x_item = items.iter().find(|i| i.label == "x").unwrap();
-    assert_eq!(x_item.kind, Some(CompletionItemKind::VARIABLE));
-    let function_item = items.iter().find(|i| i.label == "function").unwrap();
-    assert_eq!(function_item.kind, Some(CompletionItemKind::KEYWORD));
-    // The list must be sorted alphabetically by label.
-    let mut sorted = labels.clone();
-    sorted.sort();
-    assert_eq!(labels, sorted, "completions should be sorted by label");
-}
-
-#[test]
-fn completions_for_dollar_trigger_returns_columns() {
-    // When `$` is the trigger, the popup must show ONLY the
-    // column names of the variable before the `$`. We use a
-    // `list(a = <int>, b = <chr>)` literal so the checker infers
-    // a `ColumnSchema` with columns `a` and `b`. Each column item
-    // must be a FIELD whose detail surfaces its inferred type.
-    let src = "df <- list(a = 1L, b = \"x\")\ndf$\n";
-    // Cursor right after the `$` on line 1 (col 3: 'd','f','$').
-    let pos = Position {
-        line: 1,
-        character: 3,
-    };
-    let items = completions(src, pos, trigger_context("$"));
-    let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
-    assert!(labels.contains(&"a"), "missing column a: {:?}", labels);
-    assert!(labels.contains(&"b"), "missing column b: {:?}", labels);
-    // No scope variables / keywords should leak into the column
-    // popup.
-    assert!(
-        !labels.contains(&"df"),
-        "df should not appear in column completions: {:?}",
-        labels
-    );
-    assert!(
-        !labels.contains(&"if"),
-        "keywords should not appear in column completions: {:?}",
-        labels
-    );
-    // Every item must be a FIELD (column) with a non-empty detail.
-    for it in &items {
-        assert_eq!(
-            it.kind,
-            Some(CompletionItemKind::FIELD),
-            "column {:?} should be FIELD",
-            it.label
-        );
-        assert!(
-            it.detail.as_deref().is_some_and(|d| !d.is_empty()),
-            "column {:?} missing detail",
-            it.label
-        );
-    }
-    // Column 'a' is integer and 'b' is character; the detail
-    // strings should reflect that so the popup shows the type
-    // next to the name.
-    let a_item = items.iter().find(|i| i.label == "a").unwrap();
-    let a_detail = a_item.detail.as_deref().unwrap();
-    assert!(
-        a_detail.contains("integer"),
-        "column a should be integer, got: {}",
-        a_detail
-    );
-    let b_item = items.iter().find(|i| i.label == "b").unwrap();
-    let b_detail = b_item.detail.as_deref().unwrap();
-    assert!(
-        b_detail.contains("character"),
-        "column b should be character, got: {}",
-        b_detail
-    );
-}
-
-#[test]
-fn completions_for_dollar_trigger_without_schema_returns_empty() {
-    // If the variable before the `$` has no `ColumnSchema` (e.g.
-    // a plain integer vector), the `$`-triggered popup must
-    // return an empty list rather than fall through to the
-    // generic in-scope list. Falling through would dump every
-    // binding where the user expects column names.
-    let src = "x <- 1L + 2L\nx$\n";
-    let pos = Position {
-        line: 1,
-        character: 2,
-    };
-    let items = completions(src, pos, trigger_context("$"));
-    assert!(
-        items.is_empty(),
-        "expected no completions for non-data-frame $, got: {:?}",
-        items
-    );
-}
-
-// ---- references (find all references) helpers ----
-
-/// Helper: parse a snippet and return the references to `name`
-/// within it. Mirrors what the `references` LSP method does for a
-/// single document, minus the async state lookup. Uses
-/// `include_declaration` to control whether definition sites are
-/// included.
-fn references_in(src: &str, name: &str, include_declaration: bool) -> Vec<Location> {
-    let mut parser = RParser::new().unwrap();
-    let file = parser.parse("test.R", src).unwrap();
-    let uri = Url::parse("file:///tmp/test.R").unwrap();
-    find_references_in_file(&file, name, &uri, src, include_declaration)
-}
-
-#[test]
-fn references_finds_variable_usages_in_same_file() {
-    // `x` is defined once and read twice (in the RHS of `y` and in
-    // `z`). With include_declaration = false, only the two reads
-    // should be returned.
-    let src = "x <- 1L\ny <- x + 1\nz <- x * 2\n";
-    let locs = references_in(src, "x", false);
-    assert_eq!(locs.len(), 2, "expected 2 references to x, got {:?}", locs);
-    // The two references live on lines 1 and 2 (0-indexed).
-    let lines: Vec<u32> = locs.iter().map(|l| l.range.start.line).collect();
-    assert!(
-        lines.contains(&1),
-        "expected a reference on line 1: {:?}",
-        lines
-    );
-    assert!(
-        lines.contains(&2),
-        "expected a reference on line 2: {:?}",
-        lines
-    );
-    // Each reference must cover exactly the identifier "x" (1 char
-    // wide), not a zero-width or multi-char range.
-    for loc in &locs {
-        assert_eq!(
-            loc.range.end.character - loc.range.start.character,
-            1,
-            "expected 1-char wide range for 'x'"
-        );
-    }
-}
-
-#[test]
-fn references_finds_function_call_sites() {
-    // `add` is defined as a function and called twice. With
-    // include_declaration = false, only the two call sites on
-    // lines 1 and 2 should be returned.
-    let src = "add <- function(a, b) a + b\nadd(1, 2)\nadd(3, 4)\n";
-    let locs = references_in(src, "add", false);
-    assert_eq!(locs.len(), 2, "expected 2 call sites, got {:?}", locs);
-    let lines: Vec<u32> = locs.iter().map(|l| l.range.start.line).collect();
-    assert!(lines.contains(&1), "expected a call on line 1: {:?}", lines);
-    assert!(lines.contains(&2), "expected a call on line 2: {:?}", lines);
-    // Each call-site range covers exactly the 3-char name "add".
-    for loc in &locs {
-        assert_eq!(
-            loc.range.end.character - loc.range.start.character,
-            3,
-            "expected 3-char wide range for 'add'"
-        );
-        assert_eq!(loc.range.start.character, 0, "calls start at col 0");
-    }
-}
-
-#[test]
-fn references_include_declaration_flag() {
-    // `x` is defined once (line 0) and read once (line 1).
-    let src = "x <- 1L\nx + 1\n";
-    // With include_declaration = true: the definition (line 0) AND
-    // the read (line 1) => 2 locations.
-    let locs_with = references_in(src, "x", true);
-    assert_eq!(
-        locs_with.len(),
-        2,
-        "expected 2 locations with declaration, got {:?}",
-        locs_with
-    );
-    // With include_declaration = false: only the read (line 1) =>
-    // 1 location, and it must NOT be the definition on line 0.
-    let locs_without = references_in(src, "x", false);
-    assert_eq!(
-        locs_without.len(),
-        1,
-        "expected 1 location without declaration, got {:?}",
-        locs_without
-    );
-    assert_eq!(
-        locs_without[0].range.start.line, 1,
-        "the lone reference must be the read on line 1"
-    );
-}
-
-#[test]
-fn references_across_multiple_files() {
-    // Simulate two open documents: a.R defines `helper`, b.R calls
-    // it. This mirrors how `references` walks `self.state.docs`
-    // across all open documents (we drive `find_references_in_file`
-    // directly for each parsed file since the async state is not
-    // reachable from a unit test).
-    let src_a = "helper <- function() 1L\n";
-    let src_b = "helper()\n";
-    let mut parser = RParser::new().unwrap();
-    let file_a = parser.parse("a.R", src_a).unwrap();
-    let file_b = parser.parse("b.R", src_b).unwrap();
-    let uri_a = Url::parse("file:///tmp/a.R").unwrap();
-    let uri_b = Url::parse("file:///tmp/b.R").unwrap();
-
-    // include_declaration = true so the definition in a.R counts.
-    let mut all = Vec::new();
-    all.extend(find_references_in_file(
-        &file_a, "helper", &uri_a, src_a, true,
-    ));
-    all.extend(find_references_in_file(
-        &file_b, "helper", &uri_b, src_b, true,
-    ));
-
-    // One definition in a.R + one call in b.R => 2 locations.
-    assert_eq!(
-        all.len(),
-        2,
-        "expected 2 locations across files, got {:?}",
-        all
-    );
-    // The locations must come from different URIs (one per file).
-    let uris: Vec<&Url> = all.iter().map(|l| &l.uri).collect();
-    assert!(
-        uris.contains(&&uri_a),
-        "missing location in a.R: {:?}",
-        uris
-    );
-    assert!(
-        uris.contains(&&uri_b),
-        "missing location in b.R: {:?}",
-        uris
-    );
-}
-
-#[test]
-fn references_finds_usages_inside_nested_scopes() {
-    // `data` is read inside an anonymous function body (via index
-    // `data[1]`) and inside a for-loop body (via `print(data)`).
-    // The walker must recurse into both nested scopes.
-    let src =
-        "data <- c(1, 2, 3)\nf <- function() {\n  data[1]\n}\nfor (i in 1:3) {\n  print(data)\n}\n";
-    let locs = references_in(src, "data", false);
-    // Two reads: inside the function body (line 2) and inside the
-    // for-loop body (line 5). The definition on line 0 is excluded
-    // because include_declaration is false.
-    assert_eq!(
-        locs.len(),
-        2,
-        "expected 2 nested references, got {:?}",
-        locs
-    );
-    let lines: Vec<u32> = locs.iter().map(|l| l.range.start.line).collect();
-    assert!(
-        lines.contains(&2),
-        "expected a reference on line 2: {:?}",
-        lines
-    );
-    assert!(
-        lines.contains(&5),
-        "expected a reference on line 5: {:?}",
-        lines
-    );
-}
-
-#[test]
-fn references_returns_empty_for_undefined_name() {
-    // No occurrences of `does_not_exist` anywhere.
-    let src = "x <- 1L\ny <- x + 1\n";
-    let locs = references_in(src, "does_not_exist", true);
-    assert!(locs.is_empty(), "expected no references, got {:?}", locs);
-}
-
-#[test]
-fn references_self_referencing_assignment() {
-    // `x <- x + 1` references `x` on the RHS even though the LHS is
-    // a definition. With include_declaration = true the LHS counts
-    // too, giving 2 locations; with false only the RHS read counts.
-    let src = "x <- x + 1\n";
-    let locs_with = references_in(src, "x", true);
-    assert_eq!(locs_with.len(), 2, "got {:?}", locs_with);
-    let locs_without = references_in(src, "x", false);
-    assert_eq!(locs_without.len(), 1, "got {:?}", locs_without);
-    // The lone reference (RHS) is at col 5 ("x <- x...").
-    assert_eq!(locs_without[0].range.start.character, 5);
-}
-
-// ---- workspace symbols helpers ----
-
-/// Helper: parse + check a snippet and return its top-level
-/// `DocumentSymbol`s, then flatten them into `SymbolInformation`s
-/// attached to the given URI. Mirrors what the `symbol` LSP method
-/// does for a single document, minus the async state lookup and
-/// the cross-document iteration / query filter.
-fn workspace_symbols(src: &str, uri: &Url) -> Vec<SymbolInformation> {
-    let mut parser = RParser::new().unwrap();
-    let file = parser.parse("test.R", src).unwrap();
-    let mut checker = ry_checker::Checker::new("test.R");
-    let (_, scope) = checker.check_with_scope(&file);
-    let doc_symbols = collect_symbols(&file.stmts, src, Some(&scope));
-    flatten_symbols_to_symbol_info(doc_symbols, uri)
-}
-
-#[test]
-fn workspace_symbols_flatten_tree_with_container_names() {
-    // The canonical example: a function `add` (with parameters
-    // `a` and `b` that become nested children), a variable
-    // `result`, and a variable `name`. Flattening must produce
-    // one `SymbolInformation` per node (function + each param +
-    // each top-level variable) and propagate the parent's name
-    // into each child's `container_name`.
-    let src = "add <- function(a, b) a + b\nresult <- add(1, 2)\nname <- \"hello\"\n";
-    let uri = Url::parse("file:///tmp/test.R").unwrap();
-    let symbols = workspace_symbols(src, &uri);
-
-    // 1 function (add) + 2 params (a, b) + 2 variables (result,
-    // name) => 5 flattened symbols.
-    assert_eq!(symbols.len(), 5, "got {:?}", symbols);
-
-    // Every symbol must point at the file we passed in.
-    for s in &symbols {
-        assert_eq!(s.location.uri, uri, "wrong uri for {:?}", s.name);
-    }
-
-    // Top-level symbols have `container_name = None`; the
-    // function's parameters inherit `container_name = "add"`.
-    // Build a name -> container_name lookup to assert each.
-    let container_of = |name: &str| -> Option<String> {
-        symbols
-            .iter()
-            .find(|s| s.name == name)
-            .and_then(|s| s.container_name.clone())
-    };
-    assert_eq!(container_of("add"), None, "add is top-level");
-    assert_eq!(container_of("result"), None, "result is top-level");
-    assert_eq!(container_of("name"), None, "name is top-level");
-    assert_eq!(
-        container_of("a"),
-        Some("add".to_string()),
-        "a is a parameter of add"
-    );
-    assert_eq!(
-        container_of("b"),
-        Some("add".to_string()),
-        "b is a parameter of add"
-    );
-
-    // The function symbol must be classified as FUNCTION, the
-    // parameters and variables as VARIABLE.
-    let kind_of =
-        |name: &str| -> SymbolKind { symbols.iter().find(|s| s.name == name).unwrap().kind };
-    assert_eq!(kind_of("add"), SymbolKind::FUNCTION);
-    assert_eq!(kind_of("a"), SymbolKind::VARIABLE);
-    assert_eq!(kind_of("b"), SymbolKind::VARIABLE);
-    assert_eq!(kind_of("result"), SymbolKind::VARIABLE);
-    assert_eq!(kind_of("name"), SymbolKind::VARIABLE);
-
-    // The function symbol's location range must cover exactly the
-    // 3-character identifier `add` at line 0, col 0 (this is the
-    // `selection_range` propagated from the `DocumentSymbol`).
-    let add = symbols.iter().find(|s| s.name == "add").unwrap();
-    assert_eq!(add.location.range.start.line, 0);
-    assert_eq!(add.location.range.start.character, 0);
-    assert_eq!(add.location.range.end.line, 0);
-    assert_eq!(add.location.range.end.character, 3);
-}
-
-#[test]
-fn workspace_symbols_filter_case_insensitive_substring() {
-    // The `symbol` handler retains a symbol when its name contains
-    // the query as a case-insensitive substring. We exercise the
-    // filter inline (the handler does `name.to_lowercase().contains
-    // (&query.to_lowercase())`) so the test pins the exact
-    // matching rule: 'RES' must match 'result' but not 'add'.
-    let src = "add <- function(a, b) a + b\nresult <- add(1, 2)\n";
-    let uri = Url::parse("file:///tmp/test.R").unwrap();
-    let mut symbols = workspace_symbols(src, &uri);
-
-    // Sanity: without filtering we get add, a, b, result.
-    assert_eq!(symbols.len(), 4, "got {:?}", symbols);
-
-    // Apply the same filter the handler uses.
-    let query = "RES".to_string();
-    let query_lower = query.to_lowercase();
-    symbols.retain(|s| s.name.to_lowercase().contains(&query_lower));
-
-    // Only `result` contains "res" case-insensitively.
-    assert_eq!(symbols.len(), 1, "got {:?}", symbols);
-    assert_eq!(symbols[0].name, "result");
-
-    // An empty query must NOT filter anything (the handler
-    // special-cases this), so re-fetch and check.
-    let symbols_all = workspace_symbols(src, &uri);
-    assert_eq!(
-        symbols_all.len(),
-        4,
-        "empty query should return all symbols"
-    );
-}
-
-#[test]
-fn workspace_symbols_empty_when_no_bindings() {
-    // A bare expression with no assignments produces no
-    // `DocumentSymbol`s and therefore no `SymbolInformation`s.
-    let src = "1L + 2L\n";
-    let uri = Url::parse("file:///tmp/test.R").unwrap();
-    let symbols = workspace_symbols(src, &uri);
-    assert!(symbols.is_empty(), "expected no symbols, got {:?}", symbols);
-}
-
-// ---- document highlight helpers ----
-
-/// Helper: parse a snippet and return the `DocumentHighlight`s for
-/// `name`. Mirrors what the `document_highlight` LSP method does,
-/// minus the async state lookup. Order of the returned highlights
-/// follows source order (top-to-bottom).
-fn doc_highlights(src: &str, name: &str) -> Vec<DocumentHighlight> {
-    let mut parser = RParser::new().unwrap();
-    let file = parser.parse("test.R", src).unwrap();
-    collect_document_highlights(&file, name, src)
-}
-
-#[test]
-fn document_highlight_classifies_write_and_read() {
-    // `x` is written at line 0 (assignment target) and read on
-    // lines 1 and 2 (RHS of `y` and `z`). The WRITE must land on
-    // line 0 and the two READs on lines 1 and 2.
-    let src = "x <- 1L\ny <- x + 1\nz <- x * 2\n";
-    let hl = doc_highlights(src, "x");
-    assert_eq!(hl.len(), 3, "got {:?}", hl);
-
-    // Exactly one WRITE at line 0, covering exactly the 1-char
-    // identifier `x` at col 0.
-    let writes: Vec<&DocumentHighlight> = hl
-        .iter()
-        .filter(|h| h.kind == Some(DocumentHighlightKind::WRITE))
-        .collect();
-    assert_eq!(writes.len(), 1, "expected one WRITE: {:?}", hl);
-    assert_eq!(writes[0].range.start.line, 0);
-    assert_eq!(writes[0].range.start.character, 0);
-    assert_eq!(writes[0].range.end.character, 1);
-
-    // Two READs on lines 1 and 2.
-    let reads: Vec<&DocumentHighlight> = hl
-        .iter()
-        .filter(|h| h.kind == Some(DocumentHighlightKind::READ))
-        .collect();
-    assert_eq!(reads.len(), 2, "expected two READs: {:?}", hl);
-    let read_lines: Vec<u32> = reads.iter().map(|h| h.range.start.line).collect();
-    assert!(
-        read_lines.contains(&1),
-        "expected READ on line 1: {:?}",
-        read_lines
-    );
-    assert!(
-        read_lines.contains(&2),
-        "expected READ on line 2: {:?}",
-        read_lines
-    );
-}
-
-#[test]
-fn document_highlight_self_referencing_assignment_has_write_and_read() {
-    // `x <- x + 1` writes `x` on the LHS (col 0) and reads `x` on
-    // the RHS (col 5). Both must be highlighted with the right
-    // kinds on the same line.
-    let src = "x <- x + 1\n";
-    let hl = doc_highlights(src, "x");
-    assert_eq!(hl.len(), 2, "got {:?}", hl);
-    // Find the WRITE (LHS at col 0) and the READ (RHS at col 5).
-    let write = hl
-        .iter()
-        .find(|h| h.kind == Some(DocumentHighlightKind::WRITE))
-        .expect("expected a WRITE");
-    assert_eq!(write.range.start.line, 0);
-    assert_eq!(write.range.start.character, 0);
-    let read = hl
-        .iter()
-        .find(|h| h.kind == Some(DocumentHighlightKind::READ))
-        .expect("expected a READ");
-    assert_eq!(read.range.start.line, 0);
-    assert_eq!(read.range.start.character, 5);
-}
-
-#[test]
-fn document_highlight_finds_occurrences_inside_nested_scopes() {
-    // `data` is written at line 0 and read inside a function body
-    // (line 2) and inside a for-loop body (line 5). The walker
-    // must recurse into both nested scopes.
-    let src =
-        "data <- c(1, 2, 3)\nf <- function() {\n  data[1]\n}\nfor (i in 1:3) {\n  print(data)\n}\n";
-    let hl = doc_highlights(src, "data");
-    // 1 WRITE (line 0) + 2 READs (lines 2 and 5) = 3 highlights.
-    assert_eq!(hl.len(), 3, "got {:?}", hl);
-    let read_lines: Vec<u32> = hl
-        .iter()
-        .filter(|h| h.kind == Some(DocumentHighlightKind::READ))
-        .map(|h| h.range.start.line)
-        .collect();
-    assert!(
-        read_lines.contains(&2),
-        "expected READ on line 2: {:?}",
-        read_lines
-    );
-    assert!(
-        read_lines.contains(&5),
-        "expected READ on line 5: {:?}",
-        read_lines
-    );
-}
-
-#[test]
-fn document_highlight_returns_empty_for_unknown_name() {
-    let src = "x <- 1L\ny <- x + 1\n";
-    let hl = doc_highlights(src, "does_not_exist");
-    assert!(hl.is_empty(), "expected no highlights, got {:?}", hl);
-}
-
-#[test]
-fn document_highlight_classifies_loop_variable_as_write() {
-    // The loop variable `i` is re-bound each iteration, so it
-    // should be classified as a WRITE. The single READ lives in
-    // the loop body on line 1.
-    let src = "for (i in 1:3) {\n  print(i)\n}\n";
-    let hl = doc_highlights(src, "i");
-    assert_eq!(hl.len(), 2, "got {:?}", hl);
-    let writes: Vec<&DocumentHighlight> = hl
-        .iter()
-        .filter(|h| h.kind == Some(DocumentHighlightKind::WRITE))
-        .collect();
-    assert_eq!(
-        writes.len(),
-        1,
-        "expected one WRITE for the loop var: {:?}",
-        hl
-    );
-    let reads: Vec<&DocumentHighlight> = hl
-        .iter()
-        .filter(|h| h.kind == Some(DocumentHighlightKind::READ))
-        .collect();
-    assert_eq!(reads.len(), 1, "expected one READ in the body: {:?}", hl);
-    assert_eq!(reads[0].range.start.line, 1);
-}
-
 // ---- code action helpers ----
 
 /// Helper: build an LSP `Diagnostic` covering a given line range
@@ -1367,7 +346,8 @@ fn code_action_ignore_line_appends_suppression_comment() {
     let text = "x <- 1L + \"s\"\n";
     let diag = lsp_diag(0, 0, 1, "RY040");
     let uri = Url::parse("file:///tmp/test.R").unwrap();
-    let action = make_ignore_action(&uri, &diag, text).expect("should produce an action");
+    let action = make_ignore_action(&uri, &diag, &parse_src("test.R", text))
+        .expect("should produce an action");
 
     assert_eq!(action.title, "Ignore RY040 on this line");
     assert_eq!(action.kind, Some(CodeActionKind::QUICKFIX));
@@ -1409,8 +389,133 @@ fn code_action_ignore_line_skips_already_suppressed() {
     let diag = lsp_diag(0, 0, 1, "RY040");
     let uri = Url::parse("file:///tmp/test.R").unwrap();
     assert!(
-        make_ignore_action(&uri, &diag, text).is_none(),
+        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none(),
         "should not offer an action for an already-suppressed line"
+    );
+}
+
+#[test]
+fn code_action_ignore_line_rule_list_must_cover_diagnostic_code() {
+    // A different rule must not withhold the action; the edit merges codes.
+    let text = "x <- 1L + \"s\"  # ry: ignore[RY010]\n";
+    let diag = lsp_diag(0, 0, 1, "RY040");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(
+        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_some(),
+        "a directive for another rule must not withhold the action"
+    );
+}
+
+#[test]
+fn code_action_ignore_line_rule_list_withholds_matching_code() {
+    // The same `[RY010]` directive DOES withhold the action for the
+    // rule it names: the checker would suppress that diagnostic
+    // already, so offering the quick-fix would be redundant.
+    let text = "x <- 1L + \"s\"  # ry: ignore[RY010]\n";
+    let diag = lsp_diag(0, 0, 1, "RY010");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(
+        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none(),
+        "a directive naming this rule must withhold the action"
+    );
+}
+
+#[test]
+fn code_action_ignore_line_bare_directive_withholds_any_code() {
+    // A bare `# ry: ignore` carries an empty rule list, which the
+    // checker reads as "suppress all rules" — so it withholds the
+    // action regardless of the diagnostic's code.
+    let text = "x <- 1L + \"s\"  # ry: ignore\n";
+    let diag = lsp_diag(0, 0, 1, "RY040");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(
+        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none(),
+        "a bare directive suppresses every rule"
+    );
+}
+
+#[test]
+fn code_action_ignore_line_standalone_directive_defers_to_next_line() {
+    // A standalone directive applies to the next code line, not itself.
+    let text = "# ry: ignore\n";
+    let diag = lsp_diag(0, 0, 1, "RY040");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(
+        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_some(),
+        "a standalone directive must not suppress its own line"
+    );
+}
+
+#[test]
+fn code_action_ignore_line_withheld_by_preceding_standalone_directive() {
+    // A standalone directive on the comment-only line ABOVE the
+    // diagnostic is assigned to this code line by the checker (it
+    // defers to the next non-comment, non-blank line), so the
+    // diagnostic is already suppressed and the quick-fix would append
+    // a redundant second suppression.
+    let text = "# ry: ignore[RY010]\nz <- length(xx = 1L)\n";
+    let diag = lsp_diag(1, 0, 1, "RY010");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(
+        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none(),
+        "a preceding standalone directive for this rule must withhold the action"
+    );
+}
+
+#[test]
+fn code_action_ignore_line_preceding_standalone_rule_list_must_cover_code() {
+    // The preceding standalone `[RY040]` directive suppresses only
+    // RY040; for a diagnostic with a different code the checker would
+    // still publish it, so the quick-fix must stay available.
+    let text = "# ry: ignore[RY040]\nz <- length(xx = 1L)\n";
+    let diag = lsp_diag(1, 0, 1, "RY010");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(
+        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_some(),
+        "a preceding standalone directive for another rule must not withhold the action"
+    );
+}
+
+#[test]
+fn code_action_ignore_line_withheld_by_preceding_bare_directive() {
+    // A bare preceding standalone directive carries an empty rule
+    // list ("suppress all rules"), so it withholds the action for any
+    // code, exactly like its trailing counterpart.
+    let text = "# ry: ignore\nz <- length(xx = 1L)\n";
+    let diag = lsp_diag(1, 0, 1, "RY040");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(
+        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none(),
+        "a bare preceding standalone directive suppresses every rule"
+    );
+}
+
+#[test]
+fn code_action_ignore_line_preceding_directive_skips_interleaved_comments() {
+    // The checker skips blank and comment-only lines when resolving a
+    // standalone directive, so a directive separated from the code
+    // line by prose comments or blanks still reaches it.
+    let text = "# ry: ignore[RY010]\n# why this is fine\n\nz <- length(xx = 1L)\n";
+    let diag = lsp_diag(3, 0, 1, "RY010");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(
+        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none(),
+        "a standalone directive above interleaved comments must still withhold the action"
+    );
+}
+
+#[test]
+fn code_action_ignore_line_preceding_directive_blocked_by_code_line() {
+    // A code line between the directive and the diagnostic's line
+    // absorbs the standalone directive (the checker resolves it to the
+    // NEXT code line), so the diagnostic below is not suppressed and
+    // the quick-fix stays available.
+    let text = "# ry: ignore[RY010]\ny <- 1L\nz <- length(xx = 1L)\n";
+    let diag = lsp_diag(2, 0, 1, "RY010");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(
+        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_some(),
+        "a directive absorbed by an earlier code line must not withhold the action"
     );
 }
 
@@ -1419,7 +524,7 @@ fn code_action_ignore_line_ignores_hash_inside_string() {
     let text = "x <- \"# not a comment\"\n";
     let diag = lsp_diag(0, 0, 1, "RY040");
     let uri = Url::parse("file:///tmp/test.R").unwrap();
-    assert!(make_ignore_action(&uri, &diag, text).is_some());
+    assert!(make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_some());
 }
 
 #[test]
@@ -1427,7 +532,41 @@ fn code_action_ignore_line_detects_noqa_after_string_hash() {
     let text = "x <- \"# not a comment\"  # noqa\n";
     let diag = lsp_diag(0, 0, 1, "RY040");
     let uri = Url::parse("file:///tmp/test.R").unwrap();
-    assert!(make_ignore_action(&uri, &diag, text).is_none());
+    assert!(make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none());
+}
+
+#[test]
+fn code_action_ignore_line_not_blocked_by_ignore_file_marker() {
+    // `# ry: ignore-file` is a FILE-level directive: the checker's
+    // suppression parser does not line-suppress through it, so the line
+    // quick-fix must still be offered. (The hand-rolled marker check
+    // this replaces treated it as a line suppression and blocked the
+    // action.)
+    let text = "x <- 1L + \"s\"  # ry: ignore-file\n";
+    let diag = lsp_diag(0, 0, 1, "RY040");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_some());
+}
+
+#[test]
+fn code_action_ignore_line_not_blocked_by_prose_mention() {
+    // A directive that does not START the comment body is prose, not a
+    // suppression — the checker's parser ignores it, so the quick-fix
+    // availability must too.
+    let text = "x <- 1L + \"s\"  # see docs for ry: ignore\n";
+    let diag = lsp_diag(0, 0, 1, "RY040");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_some());
+}
+
+#[test]
+fn code_action_ignore_line_marker_is_case_insensitive() {
+    // The checker's parser matches `ry:` / `noqa` markers
+    // case-insensitively; the quick-fix availability follows it.
+    let text = "x <- 1L + \"s\"  # RY: IGNORE[RY040]\n";
+    let diag = lsp_diag(0, 0, 1, "RY040");
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    assert!(make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none());
 }
 
 #[test]
@@ -1438,7 +577,8 @@ fn code_action_ignore_line_handles_missing_code() {
     let mut diag = lsp_diag(0, 0, 1, "RY099");
     diag.code = None;
     let uri = Url::parse("file:///tmp/test.R").unwrap();
-    let action = make_ignore_action(&uri, &diag, text).expect("should produce an action");
+    let action = make_ignore_action(&uri, &diag, &parse_src("test.R", text))
+        .expect("should produce an action");
     let edit = action.edit.expect("should have an edit");
     let changes = edit.changes.unwrap();
     let te = &changes.get(&uri).unwrap()[0];
@@ -1458,7 +598,8 @@ fn code_action_ignore_file_inserts_at_line_zero() {
     // very top of the document (a zero-width insert at (0, 0)).
     let text = "x <- 1L\ny <- 2L\n";
     let uri = Url::parse("file:///tmp/test.R").unwrap();
-    let action = make_ignore_file_action(&uri, text).expect("should produce a file-level action");
+    let action = make_ignore_file_action(&uri, &parse_src("test.R", text))
+        .expect("should produce a file-level action");
 
     assert_eq!(action.title, "Ignore all diagnostics in this file");
     assert_eq!(action.kind, Some(CodeActionKind::QUICKFIX));
@@ -1474,15 +615,58 @@ fn code_action_ignore_file_inserts_at_line_zero() {
 }
 
 #[test]
+fn file_suppression_preserves_the_shebang() {
+    let uri = Url::parse("file:///tmp/script.R").unwrap();
+    for source in [
+        "#!/usr/bin/env Rscript\nx <- missing\n",
+        "#!/usr/bin/env Rscript",
+    ] {
+        let action = make_ignore_file_action(&uri, &parse_src("script.R", source)).unwrap();
+        let edit = &action.edit.unwrap().changes.unwrap()[&uri][0];
+        assert_eq!(edit.range.start, edit.range.end);
+        let offset =
+            position_to_byte_offset(source, edit.range.start.line, edit.range.start.character)
+                .unwrap();
+        let mut updated = source.to_string();
+        updated.insert_str(offset, &edit.new_text);
+        assert!(updated.starts_with("#!/usr/bin/env Rscript\n# ry: ignore-file\n"));
+    }
+}
+
+#[test]
 fn code_action_ignore_file_skips_already_suppressed() {
     // A file that already has `# ry: ignore-file` must not get a
     // second file-level action.
     let text = "# ry: ignore-file\nx <- 1L\n";
     let uri = Url::parse("file:///tmp/test.R").unwrap();
     assert!(
-        make_ignore_file_action(&uri, text).is_none(),
+        make_ignore_file_action(&uri, &parse_src("test.R", text)).is_none(),
         "should not offer a file-level action when one already exists"
     );
+}
+
+#[test]
+fn line_suppression_never_inserts_inside_multiline_tokens() {
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    for source in [
+        "x <- \"first\nlast\"\n",
+        "identity(`first\nlast` = 1)\n",
+        "x <- r\"(first\nlast)\"\n",
+    ] {
+        let file = parse_src("test.R", source);
+        assert!(make_ignore_action(&uri, &lsp_diag(0, 0, 1, "RY040"), &file).is_none());
+    }
+}
+
+#[test]
+fn code_action_preserves_multiline_string_context() {
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    let file = parse_src(
+        "test.R",
+        "x <- \"first\n# ry: ignore[RY010]\nlast\"\ny <- missing\n",
+    );
+    let diag = lsp_diag(2, 0, 1, "RY010");
+    assert!(make_ignore_action(&uri, &diag, &file).is_some());
 }
 
 #[test]
@@ -1518,10 +702,8 @@ fn position_to_byte_offset_basic() {
 
 #[test]
 fn utf16_position_roundtrip_on_non_ascii() {
-    // A line with a 2-byte UTF-8 char ('é', U+00E9) before the
-    // cursor. The LSP character column is a UTF-16 code-unit count,
-    // so 'é' contributes 1 unit (BMP). Byte offset of the char
-    // after 'é' is 2 (1 for 'x'... wait, build a clearer case).
+    // The LSP character column is a UTF-16 code-unit count, so 'é'
+    // contributes 1 unit despite being 2 UTF-8 bytes.
     // Text: "café_x" -- 'c','a','f','é'(2 bytes),'_','x'.
     let text = "café_x";
     // The byte offset of '_': c(0) a(1) f(2) é(3,4) _(5).
@@ -1539,6 +721,71 @@ fn utf16_position_counts_astral_as_two_units() {
     assert_eq!(byte_offset_to_position(text, 5).character, 3);
     // 'a'=1 unit, '😀'=2 units -> 'b' is at UTF-16 col 3.
     assert_eq!(position_to_byte_offset(text, 0, 3), Some(5));
+    assert_eq!(position_to_byte_offset(text, 0, 1), Some(1));
+    // A column inside the astral char (the second unit of its surrogate
+    // pair) is rejected rather than snapped onto a wrong byte offset;
+    // didChange incremental edits route through this conversion.
+    assert_eq!(position_to_byte_offset(text, 0, 2), None);
+}
+
+#[test]
+fn utf16_columns_skip_crlf_carriage_return() {
+    // The `\r` of a CRLF terminator is not a column character: the
+    // position at the `\n` (or at end-of-line) is the column before
+    // the `\r`, and line 1 starts at column 0.
+    let text = "ab\r\ncd";
+    // Byte offsets: a=0 b=1 \r=2 \n=3 c=4 d=5.
+    assert_eq!(byte_offset_to_position(text, 2), Position::new(0, 2));
+    assert_eq!(byte_offset_to_position(text, 3), Position::new(0, 2));
+    assert_eq!(byte_offset_to_position(text, 4), Position::new(1, 0));
+    // Inverse: (0, 2) resolves to the `\r` byte, (1, 0) to `c`.
+    assert_eq!(position_to_byte_offset(text, 0, 2), Some(2));
+    assert_eq!(position_to_byte_offset(text, 1, 0), Some(4));
+    // Contrast: a LONE `\r` (no `\n` after it) neither starts a new line
+    // nor vanishes from the column count — it is one column wide.
+    let lone = "ab\rcd";
+    assert_eq!(byte_offset_to_position(lone, 3), Position::new(0, 3));
+    assert_eq!(position_to_byte_offset(lone, 0, 3), Some(3));
+}
+
+#[test]
+fn byte_offset_to_point_counts_byte_columns() {
+    // tree-sitter Point columns are BYTES from the line start, unlike
+    // LSP's UTF-16 unit — a 2-byte precomposed é advances the column
+    // by 2, and a CRLF `\r` is an ordinary column byte.
+    let text = "caf\u{e9}\r\nx";
+    // Byte offsets: c=0 a=1 f=2 \u{e9}=3,4 \r=5 \n=6 x=7.
+    let after_e_acute = byte_offset_to_point(text, 5);
+    assert_eq!(after_e_acute.row, 0);
+    assert_eq!(after_e_acute.column, 5);
+    let on_lf = byte_offset_to_point(text, 6);
+    assert_eq!(on_lf.row, 0);
+    assert_eq!(on_lf.column, 6);
+    let x = byte_offset_to_point(text, 7);
+    assert_eq!(x.row, 1);
+    assert_eq!(x.column, 0);
+    let crlf = byte_offset_to_point("a\r\nb", 3);
+    assert_eq!((crlf.row, crlf.column), (1, 0));
+    assert_eq!(byte_offset_to_point("aé", 2), byte_offset_to_point("aé", 1));
+    // Offsets past the end clamp to the text end.
+    let clamped = byte_offset_to_point(text, 999);
+    assert_eq!(clamped.row, 1);
+    assert_eq!(clamped.column, 1);
+}
+
+#[test]
+fn line_start_returns_byte_offset_of_line() {
+    // `\u{e9}` (precomposed é) is 2 bytes, so the byte layout is
+    // a=0 b=1 \n=2 c=3 d=4 \u{e9}=5,6 f=7 \n=8 g=9 h=10. Line starts:
+    // line 0 at 0, line 1 after the first \n at 3, line 2 after the
+    // second \n at 9.
+    let text = "ab\ncd\u{e9}f\ngh";
+    assert_eq!(line_start(text, 0), 0);
+    assert_eq!(line_start(text, 1), 3);
+    assert_eq!(line_start(text, 2), 9);
+    // A line index past the end clamps to the end of the text.
+    assert_eq!(line_start(text, 7), text.len());
+    assert_eq!(line_start("", 0), 0);
 }
 
 #[test]
@@ -1627,75 +874,7 @@ fn edit_one_file_in_workspace_reparses_only_that_file() {
     );
 }
 
-#[test]
-fn editing_utils_updates_cross_file_analysis_diagnostics() {
-    let mut parser = RParser::new().unwrap();
-    let utils_path = "/ws/utils.R";
-    let analysis_path = "/ws/analysis.R";
-    let analysis = parser
-        .parse(analysis_path, "result <- make_value() + 1L\n")
-        .unwrap();
-    let utils_character = parser
-        .parse(utils_path, "make_value <- function() { \"hello\" }\n")
-        .unwrap();
-    let user_stubs = std::sync::Arc::new(std::collections::BTreeMap::new());
-    let mut project = ProjectCache::default();
-
-    let before = project.check(
-        vec![
-            (
-                utils_path.to_string(),
-                1,
-                std::sync::Arc::new(utils_character),
-            ),
-            (
-                analysis_path.to_string(),
-                1,
-                std::sync::Arc::new(analysis.clone()),
-            ),
-        ],
-        std::sync::Arc::clone(&user_stubs),
-    );
-    let before_analysis = before
-        .iter()
-        .find(|(path, _)| path == analysis_path)
-        .unwrap();
-    assert!(
-        before_analysis
-            .1
-            .iter()
-            .any(|diagnostic| diagnostic.code == "RY040"),
-        "character-returning utils function should invalidate analysis.R: {before_analysis:?}"
-    );
-
-    let utils_integer = parser
-        .parse(utils_path, "make_value <- function() { 1L }\n")
-        .unwrap();
-    let after = project.check(
-        vec![
-            (
-                utils_path.to_string(),
-                2,
-                std::sync::Arc::new(utils_integer),
-            ),
-            (analysis_path.to_string(), 1, std::sync::Arc::new(analysis)),
-        ],
-        user_stubs,
-    );
-    let after_analysis = after
-        .iter()
-        .find(|(path, _)| path == analysis_path)
-        .unwrap();
-    assert!(
-        after_analysis
-            .1
-            .iter()
-            .all(|diagnostic| diagnostic.code != "RY040"),
-        "editing utils.R must republish corrected analysis.R diagnostics: {after_analysis:?}"
-    );
-}
-
-// === S2: LSP settings channel tests ===
+// === LSP settings channel tests ===
 
 #[test]
 fn effective_filter_uses_editor_ignore_setting() {
@@ -1787,7 +966,7 @@ fn effective_filter_explicit_empty_editor_select_disables_default_rules() {
 
 #[test]
 fn server_settings_deserialize_from_initialization_options() {
-    // Verify the initializationOptions shape that the plan specifies:
+    // Verify the specified initializationOptions shape:
     // { settings: [{ lint: { ignore: [...] } }], globalSettings: { ... } }
     let json = serde_json::json!({
         "settings": [
@@ -1818,14 +997,12 @@ fn folder_settings_deserialize_camel_case() {
     let json = serde_json::json!({
         "minConfidence": "high",
         "baseline": "/path/to/baseline.json",
-        "checkTestFixtures": true,
-        "logLevel": "debug"
+        "enable": false
     });
     let settings: crate::settings::FolderSettings = serde_json::from_value(json).unwrap();
     assert_eq!(settings.min_confidence.as_deref(), Some("high"));
     assert_eq!(settings.baseline.as_deref(), Some("/path/to/baseline.json"));
-    assert_eq!(settings.check_test_fixtures, Some(true));
-    assert_eq!(settings.log_level.as_deref(), Some("debug"));
+    assert_eq!(settings.enable, Some(false));
 }
 
 #[test]
@@ -1885,7 +1062,6 @@ fn file_added_after_initial_check_is_emitted() {
     ];
     let diags = cache.check(files, std::sync::Arc::clone(&stubs));
 
-    // The second file must be present in the output.
     assert_eq!(diags.len(), 2, "both files after adding b.R");
     assert!(diags.iter().any(|(p, _)| p == "b.R"), "b.R in output");
 }
@@ -1893,7 +1069,7 @@ fn file_added_after_initial_check_is_emitted() {
 /// Integration test: a function defined in an added file must be visible
 /// to calls in an already-checked file after the next incremental check.
 ///
-/// This is the W4 acceptance criterion: opening one file in a package
+/// This is the indexing acceptance criterion: opening one file in a package
 /// resolves calls into unopened files.
 #[test]
 fn added_file_resolves_cross_file_calls() {
@@ -1975,7 +1151,7 @@ fn return_type_change_propagates_to_callers() {
     let files = vec![
         (
             "utils.R".to_string(),
-            2, // version bumped
+            2,
             parse_src("utils.R", "make_value <- function() 1L\n"),
         ),
         (
@@ -2025,7 +1201,7 @@ fn changing_stubs_invalidates_cached_diagnostics() {
     // This exercises the incremental path after a content change.
     let files = vec![(
         "pkg.R".to_string(),
-        2, // version bumped → forces update
+        2,
         parse_src("pkg.R", "x <- \"str\" + 1L\n"),
     )];
     let diags = cache.check(files, std::sync::Arc::clone(&empty_stubs));
@@ -2108,7 +1284,7 @@ fn build_input_edit_multiline_replacement() {
 /// Integration test: cold-vs-incremental equivalence across a sequence
 /// of add, update, and remove operations.
 ///
-/// This is the most important invariant in Plan 33: after any sequence
+/// This is the most important invariant: after any sequence
 /// of operations, incremental diagnostics must match a fresh cold check.
 #[test]
 fn cold_vs_incremental_equivalence_sequence() {

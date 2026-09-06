@@ -51,12 +51,12 @@
   "scripts": {
     "fmt": "prettier -w .",
     "fmt-check": "prettier --check .",
-    "lint": "eslint src --ext ts --max-warnings=0",
+    "lint": "oxlint src --deny-warnings",
     "compile": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "tsc": "tsc --noEmit",
     "compile-tests": "tsc -p tsconfig.test.json --outDir out",
-    "test": "vscode-test",
+    "test": "node test/installed.cjs",
     "pretest": "npm run compile-tests && npm run compile",
     "vscode:prepublish": "npm run compile",
     "vsce-package": "vsce package -o ry.vsix --no-dependencies"
@@ -91,7 +91,7 @@
         },
         "ry.path": {
           "default": [],
-          "markdownDescription": "Ordered list of paths to a `ry` executable. The first existing entry wins, checked before `importStrategy`.",
+          "markdownDescription": "Ordered list of paths to a `ry` executable. The first executable file wins, checked before `importStrategy`.",
           "scope": "machine-overridable",
           "type": "array",
           "items": {
@@ -179,12 +179,6 @@
           "scope": "resource",
           "type": "string"
         },
-        "ry.checkTestFixtures": {
-          "default": false,
-          "markdownDescription": "Check R fixture data nested under a package's `tests/` tree.",
-          "scope": "resource",
-          "type": "boolean"
-        },
         "ry.logLevel": {
           "default": "warn",
           "enum": [
@@ -197,12 +191,6 @@
           "markdownDescription": "Server tracing filter level.",
           "scope": "window",
           "type": "string"
-        },
-        "ry.addExecutableToTerminalPath": {
-          "default": true,
-          "markdownDescription": "Add the resolved `ry` binary to the integrated terminal `PATH`.",
-          "scope": "machine-overridable",
-          "type": "boolean"
         }
       }
     },
@@ -239,17 +227,16 @@
   },
   "devDependencies": {
     "@types/chai": "^5.2.3",
-    "chai": "^5.1.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.90.0",
-    "@vscode/test-cli": "^0.0.10",
     "@vscode/test-electron": "^2.4.1",
     "@vscode/vsce": "^3.4.2",
+    "chai": "^5.1.0",
     "esbuild": "^0.25.0",
-    "eslint": "^9.0.0",
+    "mocha": "^11",
+    "oxlint": "^1.81.0",
     "prettier": "^3.4.0",
-    "typescript": "^5.6.0",
-    "typescript-eslint": "^8.0.0"
+    "typescript": "^5.6.0"
   }
 }

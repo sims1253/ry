@@ -9,13 +9,13 @@
 use std::collections::HashMap;
 
 use ry_checker::{Diagnostic as RyDiagnostic, Severity};
-use ry_core::RParser;
+use ry_core::SourceFile;
 use tower_lsp::lsp_types::{
     CodeAction, CodeActionKind, Diagnostic as LspDiagnostic, DiagnosticSeverity, NumberOrString,
     Position, Range, TextEdit, Url, WorkspaceEdit,
 };
 
-use crate::util::byte_offset_to_position;
+use crate::positions::{byte_offset_to_position, line_start};
 
 /// Convert a `ry_checker::Diagnostic` to an LSP `Diagnostic` using the
 /// span's pre-resolved `line` / `col` and a single-character range. Used
@@ -47,10 +47,9 @@ pub(super) fn diagnostic_to_lsp(d: RyDiagnostic) -> LspDiagnostic {
 
 /// Convert a `ry_checker::Diagnostic` to an LSP `Diagnostic` using a
 /// precise multi-character range derived from the span's byte offsets
-/// against the source text. The production path
-/// (`publish_diagnostics`); editors squiggle exactly the offending
-/// token. Zero-width spans are extended by one character so the squiggle
-/// is still visible.
+/// against the source text. This is the path `publish_diagnostics`
+/// uses, so editors squiggle exactly the offending token. Zero-width
+/// spans are extended by one character so the squiggle is still visible.
 pub(super) fn diagnostic_to_lsp_with_source(d: &RyDiagnostic, text: &str) -> LspDiagnostic {
     let start = byte_offset_to_position(text, d.span.start);
     let end = byte_offset_to_position(text, d.span.end);
@@ -90,41 +89,79 @@ pub(super) fn diag_code_from_lsp(d: &LspDiagnostic) -> String {
     }
 }
 
-/// Build a `CodeAction` that appends a `# ry: ignore[CODE]` suppression
-/// comment to the end of the diagnostic's line. Returns `None` when the
-/// line already carries an ignore comment (no redundant no-op).
+/// Build a line suppression, merging existing rule lists and preserving prose.
+/// Refuse edits that could insert comment text inside a multiline token. Returns `None` when the
+/// checker would already suppress the diagnostic (no redundant no-op):
+/// either a trailing directive on its line or a standalone directive on
+/// the comment-only lines directly above it.
 pub(super) fn make_ignore_action(
     uri: &Url,
     diag: &LspDiagnostic,
-    text: &str,
+    file: &SourceFile,
 ) -> Option<CodeAction> {
+    let text = &file.source;
     let line = diag.range.start.line as usize;
     let line_text = text.lines().nth(line)?;
+    let code = diag_code_from_lsp(diag);
 
-    // Avoid a redundant action when the line already carries a
-    // suppression directive. Check that the marker STARTS the comment
-    // body (after `#` and whitespace), not merely appears as a substring
-    // (so prose like "# See docs for ry: ignore" does not block the action).
-    let already_ignored = RParser::new()
-        .ok()
-        .and_then(|mut parser| parser.parse("<code-action>", line_text).ok())
-        .into_iter()
-        .flat_map(|file| file.comments)
-        .map(|comment| comment.body.trim_start().to_lowercase())
-        .any(|body| {
-            body.starts_with("ry: ignore")
-                || body.starts_with("ry:ignore")
-                || body.starts_with("noqa")
-        });
+    let suppressions = ry_checker::parse_suppressions_from_comments(&file.comments, text);
+    let already_ignored = suppressions.iter().any(|suppression| {
+        suppression.line == line
+            && (suppression.rules.is_empty() || suppression.rules.iter().any(|rule| rule == &code))
+    });
     if already_ignored {
         return None;
     }
 
-    let code = diag_code_from_lsp(diag);
-    let new_line = if code.is_empty() {
-        format!("{}  # ry: ignore", line_text)
+    if !file.parse_errors.is_empty() {
+        return None;
+    }
+    let comment = file.comments.iter().find(|comment| comment.line == line);
+    let trailing = comment.map_or_else(Vec::new, |comment| {
+        ry_checker::parse_suppressions_from_comments(std::slice::from_ref(comment), text)
+    });
+    let directive = if code.is_empty() {
+        if comment.is_some() {
+            "# ry: ignore[]"
+        } else {
+            "# ry: ignore"
+        }
+        .to_string()
     } else {
-        format!("{}  # ry: ignore[{}]", line_text, code)
+        let mut codes = trailing
+            .iter()
+            .flat_map(|s| s.rules.iter().cloned())
+            .collect::<Vec<_>>();
+        codes.push(code.clone());
+        codes.sort();
+        codes.dedup();
+        format!("# ry: ignore[{}]", codes.join(", "))
+    };
+    let new_line = match comment {
+        Some(comment)
+            if !trailing.is_empty() && {
+                let body = comment.body.trim_start().to_ascii_lowercase();
+                ["ry: ignore", "ry:ignore", "noqa"].iter().any(|marker| {
+                    body.strip_prefix(marker).is_some_and(|rest| {
+                        rest.trim_start().starts_with('[') && rest.contains(']')
+                    })
+                })
+            } =>
+        {
+            // Only bracketed directives delimit their codes from trailing prose.
+            let suffix = comment
+                .body
+                .find(']')
+                .map_or("", |end| &comment.body[end + 1..]);
+            format!("{}{}{}", &line_text[..comment.col], directive, suffix)
+        }
+        Some(comment) => format!(
+            "{}{}  {}",
+            &line_text[..comment.col],
+            directive,
+            &line_text[comment.col..]
+        ),
+        None => format!("{line_text}  {directive}"),
     };
 
     let start = Position {
@@ -135,8 +172,24 @@ pub(super) fn make_ignore_action(
     // UTF-16 code-unit column, so convert the byte offset of the line's
     // end to a proper column (a non-ASCII line would otherwise produce
     // an out-of-range character).
-    let line_start = line_start_byte_offset(text, line);
-    let end = byte_offset_to_position(text, line_start + line_text.len());
+    let line_start_byte = line_start(text, line);
+    let line_end = line_start_byte + line_text.len();
+    let end = byte_offset_to_position(text, line_end);
+
+    // Parse the proposed edit, not the cached source: the new marker must
+    // become a comment rather than text inside a multiline string or name.
+    let mut edited = text.to_string();
+    edited.replace_range(line_start_byte..line_end, &new_line);
+    let mut parser = ry_core::RParser::new().ok()?;
+    let edited_file = parser.parse(&file.path, &edited).ok()?;
+    let marker_col = comment.map_or(line_text.len() + 2, |comment| comment.col);
+    if !edited_file
+        .comments
+        .iter()
+        .any(|comment| comment.line == line && comment.col == marker_col)
+    {
+        return None;
+    }
 
     let mut changes = HashMap::new();
     changes.insert(
@@ -165,29 +218,36 @@ pub(super) fn make_ignore_action(
     })
 }
 
-/// Build a `CodeAction` that inserts `# ry: ignore-file` at the top of
-/// the document, suppressing every ry diagnostic in the file. Returns
+/// Build a file suppression at the top of the document, after any shebang. Returns
 /// `None` when the file already carries a file-level suppression.
-pub(super) fn make_ignore_file_action(uri: &Url, text: &str) -> Option<CodeAction> {
-    if text.contains("ry: ignore-file") {
+pub(super) fn make_ignore_file_action(uri: &Url, file: &SourceFile) -> Option<CodeAction> {
+    if ry_checker::has_file_suppression_from_comments(&file.comments) {
         return None;
     }
 
+    let shebang = file.source.starts_with("#!");
+    let offset = if shebang {
+        file.source
+            .find('\n')
+            .map_or(file.source.len(), |end| end + 1)
+    } else {
+        0
+    };
+    let position = byte_offset_to_position(&file.source, offset);
+    let prefix = if shebang && !file.source.contains('\n') {
+        "\n"
+    } else {
+        ""
+    };
     let mut changes = HashMap::new();
     changes.insert(
         uri.clone(),
         vec![TextEdit {
             range: Range {
-                start: Position {
-                    line: 0,
-                    character: 0,
-                },
-                end: Position {
-                    line: 0,
-                    character: 0,
-                },
+                start: position,
+                end: position,
             },
-            new_text: "# ry: ignore-file\n".to_string(),
+            new_text: format!("{prefix}# ry: ignore-file\n"),
         }],
     );
 
@@ -200,16 +260,4 @@ pub(super) fn make_ignore_file_action(uri: &Url, text: &str) -> Option<CodeActio
         }),
         ..Default::default()
     })
-}
-
-/// Byte offset of the first character of the given 0-indexed line.
-fn line_start_byte_offset(text: &str, line: usize) -> usize {
-    let mut offset = 0usize;
-    for (i, piece) in text.split_inclusive('\n').enumerate() {
-        if i == line {
-            break;
-        }
-        offset += piece.len();
-    }
-    offset
 }

@@ -1,77 +1,112 @@
-/**
- * End-to-end tests for the VS Code extension.
- */
-
+import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 import { expect } from "chai";
 
-describe("E2E: ry extension", () => {
-  it("Activates on .R file and produces expected diagnostics", async function () {
-    this.timeout(30000);
+async function waitFor(check: () => boolean, message: string): Promise<void> {
+  const deadline = Date.now() + 15000;
+  while (!check() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  expect(check(), message).to.equal(true);
+}
 
-    const fixturePath = path.join(
-      __dirname,
-      "..",
-      "..",
-      "testFixture",
-      "bad.R",
+async function debugInformation(): Promise<string> {
+  await vscode.commands.executeCommand("ry.debugInformation");
+  return vscode.window.activeTextEditor!.document.getText();
+}
+
+const shellQuote = (value: string) => "'" + value.replace(/'/g, "'\\''") + "'";
+
+describe("Installed ry extension", () => {
+  it("uses the packaged binary and safely replaces a running server", async function () {
+    this.timeout(60000);
+    const trusted = process.env.RY_TEST_TRUSTED === "true";
+    expect(vscode.workspace.isTrusted).to.equal(trusted);
+    const extension = vscode.extensions.getExtension("sims1253.ry")!;
+    expect(extension.extensionPath).to.include(
+      `${path.sep}extensions${path.sep}`,
     );
-    const uri = vscode.Uri.file(fixturePath);
+    const root = vscode.workspace.workspaceFolders![0].uri.fsPath;
+    const uri = vscode.Uri.file(path.join(root, "bad.R"));
     const doc = await vscode.workspace.openTextDocument(uri);
     await vscode.window.showTextDocument(doc);
+    const hasArithmeticError = (line: number) =>
+      vscode.languages
+        .getDiagnostics(uri)
+        .some((d) => String(d.code) === "RY040" && d.range.start.line === line);
+    await waitFor(() => hasArithmeticError(0), "packaged server diagnostics");
+    const binary = path.join(extension.extensionPath, "bundled", "bin", "ry");
+    expect(await debugInformation()).to.include(binary);
+    expect(fs.existsSync(path.join(root, "decoy.ran"))).to.equal(false);
+    if (!trusted) return;
 
-    // Bounded polling: wait for diagnostics with a timeout rather
-    // than a fixed sleep.
-    const expectedCode = "RY040";
-    let diagnostics: vscode.Diagnostic[] = [];
-    const deadline = Date.now() + 15000;
-    while (Date.now() < deadline) {
-      diagnostics = vscode.languages.getDiagnostics(uri);
-      const codes = diagnostics.map((d) => String(d.code));
-      if (codes.includes(expectedCode)) {
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    }
-
-    const codes = diagnostics.map((d) => String(d.code));
-    // The fixture has RY040 (invalid arithmetic). The extension must
-    // activate and produce at least this diagnostic.
-    expect(codes).to.include(expectedCode);
-  });
-
-  // P37-W2: After the split-brain fix, startServer() receives the
-  // pre-resolved binaryPath from extension.ts (which called
-  // findRyBinaryPath with the isUntrusted flag). The server starting
-  // and producing diagnostics proves a single binary identity — no
-  // separate resolveBinary() path can launch a different binary.
-  // The unit tests in binary.test.ts verify trust-honoring resolution.
-  it("Server starts from the resolved binary path (P37-W2 no split-brain)", async function () {
-    this.timeout(30000);
-
-    const fixturePath = path.join(
-      __dirname,
-      "..",
-      "..",
-      "testFixture",
-      "bad.R",
+    const config = vscode.workspace.getConfiguration("ry", uri);
+    const replacement = path.join(root, "replacement");
+    // exec preserves this PID, so the marker identifies the observed server.
+    fs.writeFileSync(
+      replacement,
+      `#!/bin/sh\nif [ "$1" = server ]; then echo $$ > "$0.pid"; fi\nexec ${shellQuote(binary)} "$@"\n`,
+      { mode: 0o755 },
     );
-    const uri = vscode.Uri.file(fixturePath);
-    const doc = await vscode.workspace.openTextDocument(uri);
-    await vscode.window.showTextDocument(doc);
+    await config.update(
+      "path",
+      [replacement],
+      vscode.ConfigurationTarget.Workspace,
+    );
+    await vscode.commands.executeCommand("ry.restart");
+    expect(await debugInformation()).to.include(replacement);
+    const pid = Number(fs.readFileSync(`${replacement}.pid`, "utf8").trim());
+    process.kill(pid, 0);
 
-    const deadline = Date.now() + 15000;
-    let serverStarted = false;
-    while (Date.now() < deadline) {
-      const diags = vscode.languages.getDiagnostics(uri);
-      if (diags.length > 0) {
-        serverStarted = true;
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 200));
+    await config.update(
+      "lint.ignore",
+      ["RY040"],
+      vscode.ConfigurationTarget.Workspace,
+    );
+    await waitFor(() => !hasArithmeticError(0), "live rule suppression");
+    expect(await debugInformation()).to.include("RY040");
+    await config.update(
+      "lint.ignore",
+      [],
+      vscode.ConfigurationTarget.Workspace,
+    );
+    await waitFor(() => hasArithmeticError(0), "live rule restoration");
+    expect(
+      Number(fs.readFileSync(`${replacement}.pid`, "utf8").trim()),
+    ).to.equal(pid);
+    process.kill(pid, 0);
+
+    for (const failure of ["probe", "startup"]) {
+      const invalid = path.join(root, `invalid-${failure}`);
+      fs.writeFileSync(
+        invalid,
+        failure === "probe"
+          ? "#!/bin/sh\necho invalid-version\n"
+          : `#!/bin/sh\nif [ "$1" = version ]; then exec ${shellQuote(binary)} "$@"; fi\nexit 1\n`,
+        { mode: 0o755 },
+      );
+      await config.update(
+        "path",
+        [invalid],
+        vscode.ConfigurationTarget.Workspace,
+      );
+      await vscode.commands.executeCommand("ry.restart");
+      expect(await debugInformation()).to.include(replacement);
+      process.kill(pid, 0);
+      const edit = new vscode.WorkspaceEdit();
+      edit.insert(uri, new vscode.Position(0, 0), "# still served\n");
+      await vscode.workspace.applyEdit(edit);
+      await waitFor(
+        () => hasArithmeticError(failure === "probe" ? 1 : 2),
+        "old server continues checking edits",
+      );
     }
-    // Server started means startServer received a valid binaryPath.
-    expect(serverStarted).to.equal(true);
+    // Recover from a failed setting without reloading the extension host.
+    await config.update("path", [], vscode.ConfigurationTarget.Workspace);
+    await vscode.commands.executeCommand("ry.restart");
+    expect(await debugInformation()).to.include(binary);
+    expect(() => process.kill(pid, 0)).to.throw();
+    expect(doc.getText()).to.include("still served");
   });
 });

@@ -1,15 +1,4 @@
-/**
- * Settings module — mirrors ruff-vscode's `settings.ts`.
- *
- * Provides `ISettings`, `getWorkspaceSettings`, `getGlobalSettings`,
- * `getExtensionSettings` (returning the per-folder array that feeds
- * S2's `initializationOptions`), and `checkIfConfigurationChanged`.
- */
-
 import * as vscode from "vscode";
-import { getConfiguration, getWorkspaceFolders } from "./vscodeapi";
-
-export const RY_SETTINGS_NAMESPACE = "ry";
 
 export interface ISettings {
   enable?: boolean;
@@ -19,9 +8,7 @@ export interface ISettings {
   lint: ILintSettings;
   minConfidence?: "low" | "medium" | "high";
   baseline?: string;
-  checkTestFixtures?: boolean;
   logLevel?: string;
-  addExecutableToTerminalPath: boolean;
 }
 
 export interface ILintSettings {
@@ -56,35 +43,14 @@ export function getWorkspaceSettings(
   namespace: string,
   folder: vscode.WorkspaceFolder,
 ): ISettings {
-  const config = getConfiguration(namespace, folder.uri);
-  return {
-    enable: config.get<boolean>("enable"),
-    path: config.get<string[]>("path"),
-    configuration: config.get<string>("configuration"),
-    importStrategy: config.get<"fromEnvironment" | "useBundled">(
-      "importStrategy",
-      "fromEnvironment",
-    ),
-    lint: {
-      select: getExplicitValue<string[]>(config, "lint.select"),
-      extendSelect: getExplicitValue<string[]>(config, "lint.extendSelect"),
-      ignore: getExplicitValue<string[]>(config, "lint.ignore"),
-      error: getExplicitValue<string[]>(config, "lint.error"),
-      warn: getExplicitValue<string[]>(config, "lint.warn"),
-    },
-    minConfidence: config.get<"low" | "medium" | "high">("minConfidence"),
-    baseline: config.get<string>("baseline"),
-    checkTestFixtures: config.get<boolean>("checkTestFixtures"),
-    logLevel: config.get<string>("logLevel"),
-    addExecutableToTerminalPath: config.get<boolean>(
-      "addExecutableToTerminalPath",
-      true,
-    ),
-  };
+  return readSettings(vscode.workspace.getConfiguration(namespace, folder.uri));
 }
 
 export function getGlobalSettings(namespace: string): ISettings {
-  const config = getConfiguration(namespace);
+  return readSettings(vscode.workspace.getConfiguration(namespace));
+}
+
+function readSettings(config: vscode.WorkspaceConfiguration): ISettings {
   return {
     enable: config.get<boolean>("enable"),
     path: config.get<string[]>("path"),
@@ -102,23 +68,16 @@ export function getGlobalSettings(namespace: string): ISettings {
     },
     minConfidence: config.get<"low" | "medium" | "high">("minConfidence"),
     baseline: config.get<string>("baseline"),
-    checkTestFixtures: config.get<boolean>("checkTestFixtures"),
     logLevel: config.get<string>("logLevel"),
-    addExecutableToTerminalPath: config.get<boolean>(
-      "addExecutableToTerminalPath",
-      true,
-    ),
   };
 }
 
 /**
- * Build the per-folder settings array that feeds S2's
- * `initializationOptions`. This is what the server receives at
- * initialize time.
+ * Build the per-folder settings array sent as
+ * `initializationOptions` at `initialize` time.
  */
 export function getExtensionSettings(namespace: string): ISettings[] {
-  const folders = getWorkspaceFolders();
-  if (!folders) return [];
+  const folders = vscode.workspace.workspaceFolders ?? [];
   return folders.map((folder) => getWorkspaceSettings(namespace, folder));
 }
 
@@ -138,29 +97,4 @@ export function checkIfConfigurationChanged(
     oldSettings.configuration !== newSettings.configuration ||
     oldSettings.logLevel !== newSettings.logLevel
   );
-}
-
-/**
- * Resolve VS Code variables in path-shaped settings:
- * ${workspaceFolder}, ${userHome}, ${env:VAR}, etc.
- */
-export function resolveVariables(
-  value: string | undefined,
-  folder?: vscode.WorkspaceFolder,
-): string | undefined {
-  if (!value) return undefined;
-  let resolved = value;
-  if (folder) {
-    resolved = resolved.replace(/\$\{workspaceFolder\}/g, folder.uri.fsPath);
-  }
-  resolved = resolved.replace(
-    /\$\{userHome\}/g,
-    process.env.HOME ?? process.env.USERPROFILE ?? "",
-  );
-  resolved = resolved.replace(/\$\{cwd\}/g, process.cwd());
-  resolved = resolved.replace(
-    /\$\{env:(\w+)\}/g,
-    (_, name) => process.env[name] ?? "",
-  );
-  return resolved;
 }

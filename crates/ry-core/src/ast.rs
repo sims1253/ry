@@ -10,8 +10,8 @@ use crate::types::RType;
 #[derive(Debug, Clone, Default)]
 pub struct SourceFile {
     pub path: String,
-    /// Original UTF-8 text. Checker fixes slice this production parse input by
-    /// AST spans rather than attempting to print or scrape diagnostic prose.
+    /// Original UTF-8 text. The checker slices this string by AST spans
+    /// rather than scraping diagnostic prose.
     pub source: String,
     pub stmts: Vec<Stmt>,
     /// Parse errors (tree-sitter `ERROR` / `MISSING` nodes) discovered
@@ -82,7 +82,6 @@ pub enum Stmt {
     },
     /// `function(params) body`
     FunctionDef {
-        name: Option<String>,
         params: Vec<Param>,
         body: Vec<Stmt>,
         span: Span,
@@ -215,6 +214,18 @@ pub enum BinOpKind {
     /// Modeled as PipeForward for the result type; the assignment
     /// side-effect is the caller's responsibility (see checker comment).
     PipeAssign,
+}
+
+impl BinOpKind {
+    /// Whether `self` is one of R's seven arithmetic operators (the Arith
+    /// members without the group dispatch machinery): `+ - * / ^ %% %/%`.
+    /// Comparison, logic, and sequence operators are excluded.
+    pub fn is_arithmetic(self) -> bool {
+        matches!(
+            self,
+            Self::Add | Self::Sub | Self::Mul | Self::Div | Self::Pow | Self::Mod | Self::IDiv
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,30 +1,14 @@
 /**
- * Command implementations — `ry.restart`, `ry.showLogs`,
- * `ry.showServerLogs`, `ry.debugInformation`, `ry.explainRule`.
+ * Command implementations — `ry.debugInformation`, `ry.explainRule`.
  */
 
 import * as vscode from "vscode";
-import * as cp from "child_process";
-import { Logger } from "./logger";
+import { execFile } from "child_process";
+import { promisify } from "util";
+
+const execFileAsync = promisify(execFile);
 import { ResolvedBinary } from "./binary";
 import { type ISettings } from "./settings";
-
-export async function restartCommand(): Promise<void> {
-  // The actual restart is handled by the extension's restart
-  // orchestration; this command just triggers it via the
-  // requestRestart callback set up in extension.ts.
-  await vscode.commands.executeCommand("_ry.internalRestart");
-}
-
-export function showLogsCommand(logger: Logger): void {
-  logger.channel.show();
-}
-
-export function showServerLogsCommand(
-  serverChannel: vscode.OutputChannel,
-): void {
-  serverChannel.show();
-}
 
 export async function debugInformationCommand(
   binary: ResolvedBinary | undefined,
@@ -61,40 +45,43 @@ export async function debugInformationCommand(
 }
 
 export async function explainRuleCommand(binaryPath: string): Promise<void> {
-  // Show a quick-pick over all rules, then render the explanation.
-  // `ry explain rule <code> --output-format json` already exists.
   try {
-    const listOutput = cp.execSync(
-      `"${binaryPath}" explain rules --output-format json`,
+    const { stdout } = await execFileAsync(
+      binaryPath,
+      ["explain", "rule", "--output-format", "json"],
       {
         encoding: "utf-8",
         timeout: 5000,
       },
     );
-    const rules = JSON.parse(listOutput) as Array<{
-      code: string;
-      name: string;
-    }>;
-    const items = rules.map((r) => ({
-      label: r.code,
-      description: r.name,
-    }));
+    const rules: unknown = JSON.parse(stdout);
+    if (!Array.isArray(rules)) throw new Error("Expected a rule list");
+    const items = rules.map((rule: unknown) => {
+      if (
+        typeof rule !== "object" ||
+        rule === null ||
+        !("code" in rule) ||
+        typeof rule.code !== "string" ||
+        !("name" in rule) ||
+        typeof rule.name !== "string" ||
+        !("summary" in rule) ||
+        typeof rule.summary !== "string"
+      ) {
+        throw new Error("Invalid rule description");
+      }
+      return { label: rule.code, description: rule.name, detail: rule.summary };
+    });
     const picked = await vscode.window.showQuickPick(items, {
       placeHolder: "Select a rule to explain",
     });
     if (!picked) return;
 
-    const explainOutput = cp.execSync(
-      `"${binaryPath}" explain rule ${picked.label} --output-format json`,
-      { encoding: "utf-8", timeout: 5000 },
-    );
-    const explanation = JSON.parse(explainOutput);
-    const md = `# ${explanation.code}: ${explanation.name}\n\n${explanation.explanation ?? ""}`;
-    const doc = vscode.workspace.openTextDocument({
+    const md = `# ${picked.label}: ${picked.description}\n\n${picked.detail}`;
+    const doc = await vscode.workspace.openTextDocument({
       content: md,
       language: "markdown",
     });
-    doc.then((d) => vscode.window.showTextDocument(d, { preview: true }));
+    await vscode.window.showTextDocument(doc, { preview: true });
   } catch (e) {
     vscode.window.showErrorMessage(`Failed to explain rule: ${e}`);
   }

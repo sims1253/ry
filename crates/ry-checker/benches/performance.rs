@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use ry_checker::{Checker, Project};
 use ry_core::{RParser, SourceFile};
 
@@ -123,17 +123,45 @@ fn check_single_synthetic(c: &mut Criterion) {
     });
 }
 
+fn check_branch_scopes(c: &mut Criterion) {
+    let mut group = c.benchmark_group("check_branch_scopes");
+    for bindings in [128, 1024] {
+        let mut source = String::from("f <- function(flag) {\n");
+        for i in 0..bindings {
+            source.push_str(&format!("x{i} <- {i}L\n"));
+        }
+        // Most bindings are inherited unchanged; each nested branch writes
+        // one name. This exposes copying and merge allocation by scope width.
+        for i in 0..24 {
+            source.push_str(&format!("if (flag) {{\nx{i} <- \"changed\"\n"));
+        }
+        source.push_str(&"}\n".repeat(24));
+        source.push_str("x0\n}\nf(TRUE)\n");
+        let mut parser = RParser::new().expect("initialize R parser");
+        let file = parser
+            .parse("branches.R", &source)
+            .expect("parse nested branches");
+        group.bench_with_input(BenchmarkId::from_parameter(bindings), &file, |b, file| {
+            b.iter(|| {
+                let mut checker = Checker::new("branches.R");
+                black_box(checker.check(black_box(file)));
+            });
+        });
+    }
+    group.finish();
+}
+
 // ---------------------------------------------------------------------------
-// Incremental benchmarks (Plan 33 W0)
+// Incremental benchmarks
 //
 // These measure the warm `check_incremental` path — the one the LSP
 // server exercises on every debounce tick. Each bench primes a
 // Project with a full cold `check()`, then measures only the cost of
 // one incremental edit + `check_incremental()`.
 //
-// The four scenarios from the plan:
+// The four scenarios:
 //   1. Edit a file that other files depend on.
-//   2. Edit a leaf file that nothing depends on (the number W1/W2
+//   2. Edit a leaf file that nothing depends on (the dependency-tracking counters
 //      should move).
 //   3. Add/remove a `library()` call (project-wide invalidation).
 //   4. Cold `check` baseline (already in `check_project_glue` above).
@@ -194,8 +222,8 @@ fn warm_edit_dependent(c: &mut Criterion) {
 
 /// Benchmark: warm `check_incremental` after a one-line edit to a leaf
 /// file that nothing depends on (`zzz.R` is glue's load hook — no other
-/// file references its functions). This is the number W1 and W2 exist
-/// to move.
+/// file references its functions). This is the number the leaf-edit
+/// scenario exists to move.
 fn warm_edit_leaf(c: &mut Criterion) {
     let (mut project, sources, mut parser) = primed_project();
     let (edited_path, original) = find_source(&sources, "zzz.R");
@@ -222,7 +250,7 @@ fn warm_edit_leaf(c: &mut Criterion) {
 
 /// Benchmark: warm `check_incremental` after adding/removing a
 /// `library()` call. This invalidates project-wide because `loaded`
-/// is a project-wide union (see Plan 33 K2).
+/// is a project-wide union.
 fn warm_edit_library(c: &mut Criterion) {
     let (mut project, sources, mut parser) = primed_project();
     let (edited_path, original) = find_source(&sources, "utils.R");
@@ -271,7 +299,7 @@ fn lsp_edit_sim(c: &mut Criterion) {
     let mut edit = 0usize;
     let mut project = Project::new();
     for (path, file) in &parsed {
-        project.add_file(path.clone(), file.as_ref().clone());
+        project.add_file_arc(path.clone(), Arc::clone(file));
     }
     black_box(project.check_incremental());
 
@@ -312,7 +340,7 @@ criterion_group! {
         .sample_size(20)
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(3));
-    targets = parse_large, check_project_glue, check_single_synthetic,
+    targets = parse_large, check_project_glue, check_single_synthetic, check_branch_scopes,
               warm_edit_dependent, warm_edit_leaf, warm_edit_library,
               lsp_edit_sim
 }

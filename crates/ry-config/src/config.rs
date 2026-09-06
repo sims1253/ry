@@ -21,17 +21,19 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// Default output format when neither the config file nor the CLI
-/// specifies one. Matches the CLI's pre-config default.
+/// specifies one.
 pub const DEFAULT_OUTPUT_FORMAT: &str = "full";
 
 /// The on-disk filename ry looks for.
 pub const CONFIG_FILENAME: &str = "ry.toml";
-pub const DEFAULT_MAX_SERIALIZED_BYTES: u64 = 2 * 1024 * 1024;
 
-/// Defaults for bounded directory discovery (P36-W7 / issue #48).
-pub const DEFAULT_INDEX_MAX_FILES: u64 = 20_000;
-pub const DEFAULT_INDEX_MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
-pub const DEFAULT_INDEX_MAX_DEPTH: u64 = 64;
+/// Default cap on serialized artifacts (workspace caches).
+const DEFAULT_MAX_SERIALIZED_BYTES: u64 = 2 * 1024 * 1024;
+
+/// Defaults for bounded directory discovery.
+const DEFAULT_INDEX_MAX_FILES: u64 = 20_000;
+const DEFAULT_INDEX_MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
+const DEFAULT_INDEX_MAX_DEPTH: u64 = 64;
 
 /// Bounded directory discovery limits. Applies to both CLI directory
 /// discovery and LSP background indexing so the two modes discover
@@ -43,26 +45,14 @@ pub const DEFAULT_INDEX_MAX_DEPTH: u64 = 64;
 #[serde(default, deny_unknown_fields)]
 pub struct IndexConfig {
     /// Maximum number of R source files discovered per root. Default: 20,000.
-    #[serde(alias = "max-files", default = "default_index_max_files")]
+    #[serde(alias = "max-files")]
     pub max_files: u64,
     /// Maximum size in bytes of a single R file to include. Default: 2 MiB.
-    #[serde(alias = "max-file-bytes", default = "default_index_max_file_bytes")]
+    #[serde(alias = "max-file-bytes")]
     pub max_file_bytes: u64,
     /// Maximum directory depth to descend from each root. Default: 64.
-    #[serde(alias = "max-depth", default = "default_index_max_depth")]
+    #[serde(alias = "max-depth")]
     pub max_depth: u64,
-}
-
-fn default_index_max_files() -> u64 {
-    DEFAULT_INDEX_MAX_FILES
-}
-
-fn default_index_max_file_bytes() -> u64 {
-    DEFAULT_INDEX_MAX_FILE_BYTES
-}
-
-fn default_index_max_depth() -> u64 {
-    DEFAULT_INDEX_MAX_DEPTH
 }
 
 impl Default for IndexConfig {
@@ -83,6 +73,9 @@ pub struct EnvironmentConfig {
     pub bindings: Vec<String>,
     #[serde(default)]
     pub paths: Vec<String>,
+    /// Directory containing the configuration, assigned when it is loaded.
+    #[serde(skip)]
+    pub root: Option<PathBuf>,
 }
 
 /// Parsed contents of a `ry.toml` project config file.
@@ -131,9 +124,6 @@ pub struct Config {
     pub verbose: u8,
     /// Quiet count (cumulative with -q). Default: 0.
     pub quiet: u8,
-    /// Reserved for future use; accepted but currently ignored.
-    #[serde(alias = "r-version")]
-    pub r_version: Option<String>,
     /// Packages treated as loaded for NSE gating, as if the script
     /// began with `library(<pkg>)` for each entry. Lets users declare
     /// their dependencies in `ry.toml` so dplyr-style NSE verbs resolve
@@ -151,34 +141,13 @@ pub struct Config {
     pub typeshed: Vec<PathBuf>,
     /// Baseline file. Relative paths are anchored at the config directory.
     pub baseline: Option<PathBuf>,
-    /// Bounded directory discovery limits (P36-W7 / issue #48).
+    /// Bounded directory discovery limits.
     pub index: IndexConfig,
 }
 
 impl Default for Config {
-    /// Built-in defaults. Mirrors `Config::defaults()` so callers can
-    /// use either spelling interchangeably, and so a struct-literal
-    /// `Config { ..Config::default() }` picks up the right output
-    /// format rather than the empty string.
+    /// Built-in defaults, as if no config file were present.
     fn default() -> Self {
-        Self::defaults()
-    }
-}
-
-/// serde default for `Config::output_format`. Kept as a free function
-/// because `#[serde(default = "...")]` requires a path, not a closure.
-/// Without this, the struct-level `#[serde(default)]` would fill a
-/// missing `output-format` with the `String` default (empty string)
-/// rather than `"full"`.
-fn default_output_format() -> String {
-    DEFAULT_OUTPUT_FORMAT.to_string()
-}
-
-impl Config {
-    /// Built-in defaults. Equivalent to `Config::default()` but named
-    /// for symmetry with the spec and for callers that want to be
-    /// explicit about "no config file present".
-    pub fn defaults() -> Self {
         Self {
             error_on_warning: false,
             exit_zero: false,
@@ -192,7 +161,6 @@ impl Config {
             output_format: DEFAULT_OUTPUT_FORMAT.to_string(),
             verbose: 0,
             quiet: 0,
-            r_version: None,
             packages: Vec::new(),
             globals: Vec::new(),
             max_serialized_bytes: DEFAULT_MAX_SERIALIZED_BYTES,
@@ -202,7 +170,18 @@ impl Config {
             index: IndexConfig::default(),
         }
     }
+}
 
+/// serde default for `Config::output_format`. Kept as a free function
+/// because `#[serde(default = "...")]` requires a path, not a closure.
+/// Without this, the struct-level `#[serde(default)]` would fill a
+/// missing `output-format` with the `String` default (empty string)
+/// rather than `"full"`.
+fn default_output_format() -> String {
+    DEFAULT_OUTPUT_FORMAT.to_string()
+}
+
+impl Config {
     /// Try to load a `ry.toml` from the given directory.
     ///
     /// Returns `Ok(Some(config))` if the file exists and parses
@@ -230,15 +209,32 @@ impl Config {
             source,
         })?;
         let root = path.parent().unwrap_or(Path::new("."));
+        for profile in &mut cfg.environments {
+            profile.root = Some(
+                std::path::absolute(root).map_err(|source| ConfigError::Read {
+                    path: path.to_path_buf(),
+                    source,
+                })?,
+            );
+            for pattern in &profile.paths {
+                glob::Pattern::new(&pattern.replace('\\', "/")).map_err(|source| {
+                    ConfigError::InvalidEnvironmentPattern {
+                        path: path.to_path_buf(),
+                        pattern: pattern.clone(),
+                        source,
+                    }
+                })?;
+            }
+        }
         for dir in &mut cfg.typeshed {
             if dir.is_relative() {
                 *dir = root.join(&*dir);
             }
         }
-        if let Some(baseline) = &mut cfg.baseline {
-            if baseline.is_relative() {
-                *baseline = root.join(&*baseline);
-            }
+        if let Some(baseline) = &mut cfg.baseline
+            && baseline.is_relative()
+        {
+            *baseline = root.join(&*baseline);
         }
         cfg.validate().map_err(|field| ConfigError::InvalidIndex {
             path: path.to_path_buf(),
@@ -249,7 +245,7 @@ impl Config {
 
     /// Validate that bounded discovery limits are positive integers.
     /// Zero is a configuration error rather than an undocumented
-    /// "unlimited" sentinel (P36-W7 / issue #48). Returns the offending
+    /// "unlimited" sentinel. Returns the offending
     /// field name on failure.
     pub fn validate(&self) -> Result<(), &'static str> {
         if self.index.max_files == 0 {
@@ -306,7 +302,39 @@ impl Config {
             }
         }
     }
+}
 
+/// CLI flag values that override (or extend) a loaded `ry.toml`.
+///
+/// Every field is empty/unset by default, which means "the CLI did not
+/// touch this; keep the config value". The list fields append to the
+/// config's lists; the scalar fields install only when `Some`; the
+/// verbosity counts add on top of the config's.
+#[derive(Debug, Default)]
+pub struct CliOverrides {
+    /// Rules to treat as errors (`--error`).
+    pub error: Vec<String>,
+    /// Rules to treat as warnings (`--warn`).
+    pub warn: Vec<String>,
+    /// Rules to disable (`--ignore`).
+    pub ignore: Vec<String>,
+    /// Extra typeshed directories (`--typeshed`).
+    pub typeshed: Vec<PathBuf>,
+    /// Baseline file (`--baseline`); wins over a config `baseline`.
+    pub baseline: Option<PathBuf>,
+    /// `--error-on-warning`, when the flag was passed explicitly.
+    pub error_on_warning: Option<bool>,
+    /// `--exit-zero`, when the flag was passed explicitly.
+    pub exit_zero: Option<bool>,
+    /// `--output-format`, when the flag was passed explicitly.
+    pub output_format: Option<String>,
+    /// `-v` count; added to the config's `verbose`.
+    pub verbose: u8,
+    /// `-q` count; added to the config's `quiet`.
+    pub quiet: u8,
+}
+
+impl Config {
     /// Merge CLI overrides into this config, returning a new `Config`.
     ///
     /// List fields (`error`, `warn`, `ignore`) have the CLI values
@@ -318,35 +346,22 @@ impl Config {
     /// `verbose` and `quiet` are additive: the CLI count is added on
     /// top of the config count, so `verbose = 1` in `ry.toml` plus a
     /// single `-v` flag yields a final count of 2.
-    #[allow(clippy::too_many_arguments)]
-    pub fn merge_cli(
-        self,
-        cli_errors: Vec<String>,
-        cli_warns: Vec<String>,
-        cli_ignores: Vec<String>,
-        cli_typeshed: Vec<PathBuf>,
-        cli_baseline: Option<PathBuf>,
-        cli_error_on_warning: Option<bool>,
-        cli_exit_zero: Option<bool>,
-        cli_output_format: Option<String>,
-        cli_verbose: u8,
-        cli_quiet: u8,
-    ) -> Self {
+    pub fn merge_cli(self, cli: CliOverrides) -> Self {
         let mut errors = self.error;
-        errors.extend(cli_errors);
+        errors.extend(cli.error);
         let mut warns = self.warn;
-        warns.extend(cli_warns);
+        warns.extend(cli.warn);
         let mut ignores = self.ignore;
-        ignores.extend(cli_ignores);
+        ignores.extend(cli.ignore);
         let mut typeshed = self.typeshed;
-        typeshed.extend(cli_typeshed);
+        typeshed.extend(cli.typeshed);
 
-        let output_format = cli_output_format.unwrap_or(self.output_format);
-        let baseline = cli_baseline.or(self.baseline);
+        let output_format = cli.output_format.unwrap_or(self.output_format);
+        let baseline = cli.baseline.or(self.baseline);
 
         Self {
-            error_on_warning: cli_error_on_warning.unwrap_or(self.error_on_warning),
-            exit_zero: cli_exit_zero.unwrap_or(self.exit_zero),
+            error_on_warning: cli.error_on_warning.unwrap_or(self.error_on_warning),
+            exit_zero: cli.exit_zero.unwrap_or(self.exit_zero),
             error: errors,
             warn: warns,
             ignore: ignores,
@@ -357,9 +372,8 @@ impl Config {
             output_format,
             // Saturating add so a config value of 255 plus a CLI flag
             // stays within u8 rather than panicking on overflow.
-            verbose: self.verbose.saturating_add(cli_verbose),
-            quiet: self.quiet.saturating_add(cli_quiet),
-            r_version: self.r_version,
+            verbose: self.verbose.saturating_add(cli.verbose),
+            quiet: self.quiet.saturating_add(cli.quiet),
             // Config-only (no CLI flag): passes through unchanged.
             packages: self.packages,
             globals: self.globals,
@@ -417,21 +431,6 @@ impl Excludes {
     }
 }
 
-/// Compute a hash of the effective config that affects pass-1 collection
-/// output (Plan 33 W5). Includes `exclude`, `packages`, `globals`, and the
-/// full serialized config so any relevant change invalidates the cache.
-pub fn config_hash(config: &Config) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    config.exclude.hash(&mut hasher);
-    config.packages.hash(&mut hasher);
-    config.globals.hash(&mut hasher);
-    if let Ok(json) = serde_json::to_string(config) {
-        json.hash(&mut hasher);
-    }
-    hasher.finish()
-}
-
 /// Errors that can occur while reading or parsing a `ry.toml`.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -450,11 +449,17 @@ pub enum ConfigError {
         source: toml::de::Error,
     },
     /// A bounded discovery limit was set to zero, which is a
-    /// configuration error (P36-W7 / issue #48).
+    /// configuration error.
     #[error(
-        "config file {path} has invalid value for {field}:              bounded discovery limits must be positive integers,              zero is not permitted"
+        "config file {path} has invalid value for {field}: bounded discovery limits must be positive integers, zero is not permitted"
     )]
     InvalidIndex { path: PathBuf, field: &'static str },
+    #[error("config file {path} has invalid environment path pattern `{pattern}`: {source}")]
+    InvalidEnvironmentPattern {
+        path: PathBuf,
+        pattern: String,
+        source: glob::PatternError,
+    },
 }
 
 #[cfg(test)]
@@ -464,8 +469,19 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
+    fn invalid_environment_globs_are_configuration_errors() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("ry.toml");
+        fs::write(&path, "[[environments]]\nname = 'broken'\npaths = ['[']\n").unwrap();
+        assert!(matches!(
+            Config::load_file(&path),
+            Err(ConfigError::InvalidEnvironmentPattern { .. })
+        ));
+    }
+
+    #[test]
     fn defaults_match_expectations() {
-        let d = Config::defaults();
+        let d = Config::default();
         assert!(!d.error_on_warning);
         assert!(!d.exit_zero);
         assert!(d.error.is_empty());
@@ -478,7 +494,6 @@ mod tests {
         assert_eq!(d.output_format, DEFAULT_OUTPUT_FORMAT);
         assert_eq!(d.verbose, 0);
         assert_eq!(d.quiet, 0);
-        assert!(d.r_version.is_none());
         assert!(d.packages.is_empty(), "packages defaults to empty");
         assert!(d.globals.is_empty(), "globals defaults to empty");
         assert!(d.baseline.is_none());
@@ -509,7 +524,6 @@ check-test-fixtures = true
 output-format = "json"
 verbose = 1
 quiet = 2
-r-version = "4.3"
 packages = ["dplyr", "tidyverse"]
 globals = ["runtime_data", "generated_lookup"]
 typeshed = ["stubs"]
@@ -528,7 +542,6 @@ baseline = "diagnostics.json"
         assert_eq!(cfg.output_format, "json");
         assert_eq!(cfg.verbose, 1);
         assert_eq!(cfg.quiet, 2);
-        assert_eq!(cfg.r_version.as_deref(), Some("4.3"));
         assert_eq!(cfg.packages, vec!["dplyr", "tidyverse"]);
         assert_eq!(cfg.globals, vec!["runtime_data", "generated_lookup"]);
         assert_eq!(cfg.typeshed, vec![PathBuf::from("stubs")]);
@@ -577,20 +590,13 @@ paths = ["inst/shiny/**"]
         let cfg = Config {
             typeshed: vec![PathBuf::from("config-stubs")],
             baseline: Some(PathBuf::from("config-baseline.json")),
-            ..Config::defaults()
+            ..Config::default()
         };
-        let merged = cfg.merge_cli(
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            vec![PathBuf::from("cli-stubs")],
-            Some(PathBuf::from("cli-baseline.json")),
-            None,
-            None,
-            None,
-            0,
-            0,
-        );
+        let merged = cfg.merge_cli(CliOverrides {
+            typeshed: vec![PathBuf::from("cli-stubs")],
+            baseline: Some(PathBuf::from("cli-baseline.json")),
+            ..CliOverrides::default()
+        });
         // Typeshed appends config and CLI entries.
         assert_eq!(
             merged.typeshed,
@@ -606,20 +612,13 @@ paths = ["inst/shiny/**"]
             error: vec!["RY001".to_string()],
             warn: vec!["RY002".to_string()],
             ignore: vec!["RY010".to_string()],
-            ..Config::defaults()
+            ..Config::default()
         };
-        let merged = cfg.merge_cli(
-            vec!["RY040".to_string()],
-            vec![],
-            vec!["RY050".to_string()],
-            Vec::new(),
-            None,
-            None,
-            None,
-            None,
-            0,
-            0,
-        );
+        let merged = cfg.merge_cli(CliOverrides {
+            error: vec!["RY040".to_string()],
+            ignore: vec!["RY050".to_string()],
+            ..CliOverrides::default()
+        });
         assert_eq!(merged.error, vec!["RY001", "RY040"]);
         assert_eq!(merged.warn, vec!["RY002"]);
         assert_eq!(merged.ignore, vec!["RY010", "RY050"]);
@@ -631,20 +630,14 @@ paths = ["inst/shiny/**"]
             error_on_warning: false,
             exit_zero: false,
             output_format: "concise".to_string(),
-            ..Config::defaults()
+            ..Config::default()
         };
-        let merged = cfg.merge_cli(
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            None,
-            Some(true),
-            Some(true),
-            Some("json".to_string()),
-            0,
-            0,
-        );
+        let merged = cfg.merge_cli(CliOverrides {
+            error_on_warning: Some(true),
+            exit_zero: Some(true),
+            output_format: Some("json".to_string()),
+            ..CliOverrides::default()
+        });
         assert!(merged.error_on_warning);
         assert!(merged.exit_zero);
         assert_eq!(merged.output_format, "json");
@@ -660,20 +653,9 @@ paths = ["inst/shiny/**"]
             output_format: "json".to_string(),
             verbose: 2,
             quiet: 1,
-            ..Config::defaults()
+            ..Config::default()
         };
-        let merged = cfg.merge_cli(
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            None,
-            None,
-            None,
-            None,
-            0,
-            0,
-        );
+        let merged = cfg.merge_cli(CliOverrides::default());
         assert!(merged.error_on_warning);
         assert!(merged.exit_zero);
         assert_eq!(merged.output_format, "json");
@@ -686,20 +668,13 @@ paths = ["inst/shiny/**"]
         let cfg = Config {
             verbose: 1,
             quiet: 1,
-            ..Config::defaults()
+            ..Config::default()
         };
-        let merged = cfg.merge_cli(
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            None,
-            None,
-            None,
-            None,
-            2,
-            3,
-        );
+        let merged = cfg.merge_cli(CliOverrides {
+            verbose: 2,
+            quiet: 3,
+            ..CliOverrides::default()
+        });
         assert_eq!(merged.verbose, 3);
         assert_eq!(merged.quiet, 4);
     }
@@ -708,20 +683,12 @@ paths = ["inst/shiny/**"]
     fn merge_cli_verbose_saturates() {
         let cfg = Config {
             verbose: 250,
-            ..Config::defaults()
+            ..Config::default()
         };
-        let merged = cfg.merge_cli(
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            None,
-            None,
-            None,
-            None,
-            10,
-            0,
-        );
+        let merged = cfg.merge_cli(CliOverrides {
+            verbose: 10,
+            ..CliOverrides::default()
+        });
         assert_eq!(merged.verbose, 255);
     }
 
@@ -835,7 +802,7 @@ paths = ["inst/shiny/**"]
                 "tests/fixtures/**".to_string(),
                 "**/_snapshots/**".to_string(),
             ],
-            ..Config::defaults()
+            ..Config::default()
         };
         let ex = Excludes::from_config(&cfg);
         assert!(!ex.is_empty());
@@ -852,7 +819,7 @@ paths = ["inst/shiny/**"]
         // required form. This test records that constraint.
         let ex = Excludes::from_config(&Config {
             exclude: vec!["tests/fixtures".to_string()],
-            ..Config::defaults()
+            ..Config::default()
         });
         assert!(ex.matches("tests/fixtures"));
         assert!(!ex.matches("tests/fixtures/a.R"));
@@ -864,7 +831,7 @@ paths = ["inst/shiny/**"]
         // rather than panic. The matcher ends up with zero patterns.
         let ex = Excludes::from_config(&Config {
             exclude: vec!["[unclosed".to_string()],
-            ..Config::defaults()
+            ..Config::default()
         });
         assert!(ex.is_empty());
         assert!(!ex.matches("anything"));

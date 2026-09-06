@@ -1,27 +1,14 @@
 use super::*;
 use crate::infer::*;
 
-fn higher_order_argument_match(params: &[ParamSpec], args: &[Arg]) -> ArgumentMatch {
-    let names = params
-        .iter()
-        .map(|parameter| parameter.name.as_str())
-        .collect::<Vec<_>>();
-    match_arguments(&names, args)
-}
-
-fn matched_argument_index(argument_match: &ArgumentMatch, formal_index: usize) -> Option<usize> {
-    argument_match
-        .param_for_arg
-        .iter()
-        .position(|matched| *matched == Some(formal_index))
-}
-
 fn matched_argument_type<'a>(
     arg_types: &'a [RType],
     argument_match: &ArgumentMatch,
     formal_index: usize,
 ) -> Option<&'a RType> {
-    matched_argument_index(argument_match, formal_index).and_then(|index| arg_types.get(index))
+    argument_match
+        .arg_for_param(formal_index)
+        .and_then(|index| arg_types.get(index))
 }
 
 fn argument_bound_to_formal<'a>(
@@ -29,18 +16,14 @@ fn argument_bound_to_formal<'a>(
     argument_match: &ArgumentMatch,
     formal_index: usize,
 ) -> Option<&'a Arg> {
-    matched_argument_index(argument_match, formal_index).and_then(|index| args.get(index))
+    argument_match
+        .arg_for_param(formal_index)
+        .and_then(|index| args.get(index))
 }
 
-/// `HigherOrderSpec` argument indices name formal slots, never raw call
-/// positions. Build one ordinary R argument match and use it for callback,
-/// source, length, and template lookup throughout the higher-order path.
-struct HigherOrderCall<'a> {
-    args: &'a [Arg],
-    arg_types: &'a [RType],
-    argument_match: &'a ArgumentMatch,
-}
-
+/// With a `...` formal, every unmatched actual is part of dots (one
+/// ordinary R argument match drives callback, source, length, and
+/// template lookup throughout the higher-order path).
 fn arguments_bound_to_dots<'a>(
     arg_types: &'a [RType],
     argument_match: &'a ArgumentMatch,
@@ -49,9 +32,8 @@ fn arguments_bound_to_dots<'a>(
         .iter()
         .enumerate()
         .filter_map(|(index, argument_type)| {
-            // With a `...` formal, every unmatched actual is part of dots.
-            // Preserve actual call order because Map/mapply pass that order
-            // on to the callback.
+            // Preserve actual call order because Map/mapply pass that
+            // order on to the callback.
             (argument_match.dots.is_some()
                 && argument_match
                     .param_for_arg
@@ -65,20 +47,29 @@ impl Checker {
     pub(crate) fn infer_higher_order_call(
         &mut self,
         name: &str,
+        signature: &FunctionSig,
         args: &[Arg],
         arg_types: &[RType],
-        scope: &Scope,
+        scope: &mut Scope,
         span: Span,
     ) -> Option<RType> {
-        let signature = self.resolve_typeshed_sig(name)?;
         let spec = signature.higher_order.as_ref()?;
-        let argument_match = higher_order_argument_match(&signature.params, args);
-        let call = HigherOrderCall {
+        self.walk_callback_for_diagnostics(signature, args, arg_types, scope);
+        let argument_match = match_params(&signature.params, args);
+        let declared_length = match &signature.return_ {
+            ReturnSpec::Concrete(ty) => json_length_to_length(JsonLength::parse(&ty.length)),
+            ReturnSpec::Slot(_) => Length::Unknown,
+        };
+        Some(self.infer_ho_result(
+            name,
+            spec,
+            declared_length,
             args,
             arg_types,
-            argument_match: &argument_match,
-        };
-        Some(self.infer_ho_result(name, spec, &call, scope, span))
+            &argument_match,
+            scope,
+            span,
+        ))
     }
 
     /// Per-builtin result-type computation. Used by both pass 2 (pure,
@@ -86,22 +77,45 @@ impl Checker {
     /// the pass-3 entry point: it calls `self.infer` on data
     /// arguments (which may emit RY010 etc.) before computing the
     /// element type.
+    #[allow(clippy::too_many_arguments)]
     fn infer_ho_result(
         &mut self,
         name: &str,
         spec: &HigherOrderSpec,
-        call: &HigherOrderCall<'_>,
+        declared_length: Length,
+        args: &[Arg],
+        arg_types: &[RType],
+        argument_match: &ArgumentMatch,
         scope: &Scope,
         span: Span,
     ) -> RType {
-        let args = call.args;
-        let arg_types = call.arg_types;
-        let argument_match = call.argument_match;
-        let callback_types = self.higher_order_callback_types(spec, arg_types, argument_match);
+        let inputs = self.higher_order_input_types(spec, arg_types, argument_match);
+        let callback_runs = !inputs.is_empty()
+            && !inputs.iter().any(|ty| {
+                matches!(ty.length, Length::Zero | Length::Known(0)) || ty.mode == Mode::Function
+            });
+        let callback_types = inputs.iter().map(RType::element).collect::<Vec<_>>();
         let callback = argument_bound_to_formal(args, argument_match, spec.callback_position)
             .map(|argument| &argument.value);
         let callback_return = callback
+            .filter(|_| callback_runs)
             .and_then(|callback| self.callback_return_type(callback, &callback_types, scope));
+        if let Some(target) = spec
+            .callback_return_mode
+            .as_deref()
+            .and_then(concrete_json_mode)
+            && let Some(actual) = &callback_return
+            && (!modes_compatible(&actual.mode, &target)
+                || matches!(actual.length, Length::Zero | Length::Known(0 | 2..)))
+        {
+            let bare_name = crate::semantic_lists::bare_name(name);
+            self.emit(
+                Severity::Error,
+                span,
+                "RY080",
+                format!("`{bare_name}` requires a scalar `{target}` callback result, but the callback returns `{actual}`; R rejects this result"),
+            );
+        }
         match spec.result.kind {
             HigherOrderResultKind::ListOfCallbackReturn => {
                 let length = spec
@@ -135,27 +149,12 @@ impl Checker {
                 if matches!(mode, Mode::Opaque) {
                     return RType::unknown();
                 }
-                if spec.result.length_arg.is_some()
-                    && let Some(return_type) = &callback_return
-                    && !modes_compatible(&return_type.mode, &mode)
-                {
-                    let bare_name = name.rsplit_once("::").map(|(_, bare)| bare).unwrap_or(name);
-                    self.emit(
-                        Severity::Warning,
-                        span,
-                        "RY080",
-                        format!(
-                            "`{bare_name}` expects `{mode}` returns but the callback returns `{}`; R will coerce silently",
-                            return_type.mode
-                        ),
-                    );
-                }
                 let length = spec
                     .result
                     .length_arg
                     .and_then(|i| matched_argument_type(arg_types, argument_match, i))
                     .map(|ty| ty.length)
-                    .unwrap_or(Length::One);
+                    .unwrap_or(declared_length);
                 RType::new(mode, length)
             }
             HigherOrderResultKind::SameAsArg0 => {
@@ -236,7 +235,7 @@ impl Checker {
         }
     }
 
-    fn higher_order_callback_types(
+    fn higher_order_input_types(
         &self,
         spec: &HigherOrderSpec,
         arg_types: &[RType],
@@ -247,24 +246,40 @@ impl Checker {
             match callback_arg {
                 CallbackArg::ElementOfArg0 => types.push(
                     matched_argument_type(arg_types, argument_match, 0)
-                        .map(RType::element)
+                        .cloned()
                         .unwrap_or_else(RType::unknown),
                 ),
                 CallbackArg::ElementOfArg1 => types.push(
                     matched_argument_type(arg_types, argument_match, 1)
-                        .map(RType::element)
+                        .cloned()
                         .unwrap_or_else(RType::unknown),
                 ),
+                CallbackArg::ElementsOfArg0 => {
+                    if matched_argument_type(arg_types, argument_match, 0)
+                        .is_some_and(|ty| matches!(ty.length, Length::Zero | Length::Known(0)))
+                    {
+                        continue;
+                    }
+                    if let Some(schema) = matched_argument_type(arg_types, argument_match, 0)
+                        .and_then(|ty| ty.columns.as_ref())
+                        .filter(|schema| schema.complete)
+                    {
+                        types.extend(schema.columns.iter().map(|(_, ty)| ty.clone()));
+                    } else {
+                        types.push(RType::unknown());
+                    }
+                }
                 CallbackArg::Unknown => types.push(RType::unknown()),
                 CallbackArg::AccumulatorAndElement => {
                     let data_index = if spec.callback_position == 0 { 1 } else { 0 };
                     let element = matched_argument_type(arg_types, argument_match, data_index)
-                        .map(RType::element)
+                        .cloned()
                         .unwrap_or_else(RType::unknown);
                     types.extend([element.clone(), element]);
                 }
-                CallbackArg::ElementsAfterCallback => types
-                    .extend(arguments_bound_to_dots(arg_types, argument_match).map(RType::element)),
+                CallbackArg::ElementsAfterCallback => {
+                    types.extend(arguments_bound_to_dots(arg_types, argument_match).cloned())
+                }
             }
         }
         types
@@ -371,7 +386,7 @@ impl Checker {
     /// Infer the return type of a single callback invocation, given the
     /// argument types the higher-order function will pass to it.
     ///
-    /// Covers three callback forms:
+    /// Covers four callback forms:
     ///   * `Expr::Function { params, body }` (anonymous literal): walk
     ///     the body with a scope containing the params bound to the
     ///     element types, collecting returns. Bounded by
@@ -405,11 +420,8 @@ impl Checker {
                 // Strip any `pkg::` namespace prefix so a qualified
                 // callback name (`base::sqrt` passed to `sapply`)
                 // resolves against the same entries as the bare name.
-                // `rsplit_once("::")` handles both `::` and `:::`.
-                let lookup_name = name
-                    .rsplit_once("::")
-                    .map(|(_, n)| n)
-                    .unwrap_or(name.as_str());
+                // `bare_name` handles both `::` and `:::`.
+                let lookup_name = crate::semantic_lists::bare_name(name);
                 // Bound closure value in scope?
                 if let Some(t) = scope.get(lookup_name) {
                     if matches!(t.mode, Mode::Function) {
@@ -423,20 +435,19 @@ impl Checker {
                         && !members.is_empty()
                         && members.iter().all(|member| member.mode == Mode::Function)
                     {
-                        let mut returns = members.iter().map(|member| {
+                        let returns = members.iter().map(|member| {
                             member
                                 .fn_sig
                                 .as_ref()
                                 .map(|signature| (*signature.return_type).clone())
                                 .unwrap_or_else(RType::unknown)
                         });
-                        let first = returns.next().unwrap_or_else(RType::unknown);
-                        return Some(returns.fold(first, RType::join));
+                        return Some(join_all(returns));
                     }
                 }
                 // User-defined function in the FnTable?
                 if let Some(f) = self.fn_table.fns.get(lookup_name) {
-                    let rt = self.return_slots.get(f.return_slot);
+                    let rt = self.read_return_slot(f.return_slot);
                     if !matches!(rt.mode, Mode::Opaque) {
                         return Some(rt);
                     }
@@ -444,13 +455,7 @@ impl Checker {
                 }
                 // Typeshed function?
                 if let Some(sig) = self.resolve_typeshed_sig(name) {
-                    return Some(self.apply_sig(
-                        lookup_name,
-                        &sig,
-                        call_arg_types,
-                        &[],
-                        Span::default(),
-                    ));
+                    return Some(self.apply_sig(&sig, call_arg_types, &[]));
                 }
                 None
             }
@@ -459,10 +464,10 @@ impl Checker {
     }
 
     /// Walk an anonymous function literal's body to infer its return
-    /// type, given the argument types the caller will pass. Similar to
-    /// `build_function_signature` but takes explicit argument
-    /// types rather than inferring from defaults. Used by
-    /// `callback_return_type` for the inline-literal case.
+    /// type, given the argument types the caller will pass: the shared
+    /// [`Checker::walk_literal_returns`] walk with params bound from
+    /// the call-site argument types instead of declared defaults.
+    /// Used by `callback_return_type` for the inline-literal case.
     pub(crate) fn callback_literal_return(
         &mut self,
         params: &[Param],
@@ -471,37 +476,15 @@ impl Checker {
         captured_scope: &Scope,
         depth: usize,
     ) -> Option<RType> {
-        if body.is_empty() || depth >= MAX_CLOSURE_DEPTH {
+        if depth >= MAX_CLOSURE_DEPTH {
             return None;
         }
-        // Pure return-type computation: force discarding so this does not
-        // double-emit diagnostics (the callback body's diagnostics come
-        // from walk_callback_for_diagnostics in pass 3).
-        let prev_discarding = self.discarding;
-        self.discarding = true;
-        let mut scope = captured_scope.clone();
-        for (i, p) in params.iter().enumerate() {
-            let t = call_arg_types.get(i).cloned().unwrap_or(RType::unknown());
-            scope.insert(p.name.clone(), t);
-        }
-        let mut returns: Vec<RType> = Vec::new();
-        for s in body {
-            self.walk_stmt(s, &mut scope, Some(&mut returns));
-        }
-        if let Some(t) = self.trailing_return_type(body, &mut scope, depth + 1) {
-            returns.push(t);
-        }
-        self.discarding = prev_discarding;
-        if returns.is_empty() {
-            return None;
-        }
-        let mut iter = returns.into_iter();
-        let first = iter.next().unwrap_or(RType::unknown());
-        let joined = iter.fold(first, |acc, t| acc.join(t));
-        if matches!(joined.mode, Mode::Opaque) {
-            return None;
-        }
-        Some(joined)
+        self.walk_literal_returns(body, captured_scope, depth, |scope| {
+            for (i, p) in params.iter().enumerate() {
+                let t = call_arg_types.get(i).cloned().unwrap_or(RType::unknown());
+                scope.insert(p.name.clone(), t);
+            }
+        })
     }
 
     /// Walk the callback body of a higher-order function call for
@@ -517,17 +500,13 @@ impl Checker {
     /// statements via `check_stmt` (which emits diagnostics). Named
     /// callbacks (user-fn, typeshed) don't need this: their bodies are
     /// walked during the user-fn fixpoint or are built-in.
-    pub(crate) fn walk_callback_for_diagnostics(
+    fn walk_callback_for_diagnostics(
         &mut self,
-        name: &str,
+        signature: &FunctionSig,
         args: &[Arg],
         arg_types: &[RType],
         scope: &mut Scope,
     ) {
-        let signature = match self.resolve_typeshed_sig(name) {
-            Some(signature) => signature,
-            None => return,
-        };
         let spec = match signature.higher_order.as_ref() {
             Some(spec) => spec,
             None => return,
@@ -535,8 +514,16 @@ impl Checker {
         if matches!(spec.result.kind, HigherOrderResultKind::CallbackIdentity) {
             return;
         }
-        let argument_match = higher_order_argument_match(&signature.params, args);
-        let elem_types = self.higher_order_callback_types(spec, arg_types, &argument_match);
+        let argument_match = match_params(&signature.params, args);
+        let inputs = self.higher_order_input_types(spec, arg_types, &argument_match);
+        if inputs.is_empty()
+            || inputs.iter().any(|ty| {
+                matches!(ty.length, Length::Zero | Length::Known(0)) || ty.mode == Mode::Function
+            })
+        {
+            return;
+        }
+        let elem_types = inputs.iter().map(RType::element).collect::<Vec<_>>();
         let cb = match argument_bound_to_formal(args, &argument_match, spec.callback_position) {
             Some(argument) => &argument.value,
             None => return,
@@ -559,16 +546,9 @@ impl Checker {
     /// Try S3 dispatch for a known generic. Returns `Some(rt)` if a
     /// method was found or a diagnostic was emitted (the caller should
     /// use the returned type directly). Returns `None` only when the
-    /// caller should fall through to other resolution paths.
-    ///
-    /// RY050 emission policy: a `<generic>.default` method is a real S3
-    /// dispatch target, not merely evidence that `generic` uses S3. When
-    /// it exists in any method source, a miss for a class-specific method
-    /// falls through to it and must remain silent. Without a default, we
-    /// report only for a generic that has at least one project-defined S3
-    /// method. This is the conservative cross-package gate: an un-stubbed
-    /// dependency may own a foreign class, while a local method proves that
-    /// this project owns the generic's dispatch surface.
+    /// caller should fall through to other resolution paths. The
+    /// method-source ladder is shared with operator dispatch
+    /// (`infer/binop.rs`); the miss tail is not.
     ///
     /// Design note: we deliberately return `Option<RType>` rather than
     /// `RType` because the caller (`infer_call`) may still want to
@@ -598,34 +578,72 @@ impl Checker {
                 continue;
             }
             for candidate in &generics {
-                let key = ((*candidate).to_string(), class.to_string());
-                if self.external_s3_methods.contains(&key) {
-                    return Some(RType::unknown());
-                }
-                if let Some(slot) = self.fn_table.s3_methods.get(&key).cloned() {
-                    return Some(if *candidate == generic {
-                        self.return_slots.get(slot)
-                    } else {
-                        RType::unknown()
-                    });
-                }
-                if let Some(sig) = self.typeshed.s3_methods.get(&key).cloned() {
-                    return Some(self.apply_sig(candidate, &sig, arg_types, &[], span));
-                }
-                let sig = self.available_package_names().find_map(|pkg| {
-                    self.package_typeshed(pkg)
-                        .and_then(|t| t.s3_methods.get(&key))
-                        .cloned()
-                });
-                if let Some(sig) = sig {
-                    return Some(self.apply_sig(candidate, &sig, arg_types, &[], span));
+                match self.s3_lookup_method(candidate, class) {
+                    Some(S3MethodSource::Registered) => return Some(RType::unknown()),
+                    Some(S3MethodSource::Project(slot)) => {
+                        return Some(self.s3_specific_or_group_return(*candidate == generic, slot));
+                    }
+                    Some(S3MethodSource::Stub(sig)) => {
+                        return Some(self.apply_sig(&sig, arg_types, &[]));
+                    }
+                    None => {}
                 }
             }
         }
-        // 3. A default method is the final S3 dispatch fallback. Consult
-        // every source used for specific methods above (plus external
-        // registrations), and do not report a missing class method when
-        // dispatch can reach one.
+        self.s3_dispatch_miss(generic, &generics, &cv, span)
+    }
+
+    /// One `(generic, class)` rung of the method-source ladder:
+    /// external registrations, the project fn table, the base typeshed,
+    /// then package typesheds. Shared with the operator dispatch in
+    /// `infer/binop.rs` so the two paths cannot disagree about which
+    /// methods exist.
+    pub(crate) fn s3_lookup_method(&self, generic: &str, class: &str) -> Option<S3MethodSource> {
+        let key = (generic.to_string(), class.to_string());
+        if self.external_s3_methods.contains(&key) {
+            return Some(S3MethodSource::Registered);
+        }
+        if let Some(slot) = self.fn_table.s3_methods.get(&key) {
+            return Some(S3MethodSource::Project(*slot));
+        }
+        if let Some(sig) = self.typeshed.s3_methods.get(&key) {
+            return Some(S3MethodSource::Stub(Box::new(sig.clone())));
+        }
+        self.available_package_names()
+            .find_map(|pkg| {
+                self.package_typeshed(pkg)
+                    .and_then(|typeshed| typeshed.s3_methods.get(&key))
+                    .cloned()
+            })
+            .map(|sig| S3MethodSource::Stub(Box::new(sig)))
+    }
+
+    /// A project method's return: a specific method (`abs.foo` called
+    /// as `abs`) has an inferable return; a group method (`Math.foo`)
+    /// only promises that the operation is supported, not its shape.
+    pub(crate) fn s3_specific_or_group_return(&self, specific: bool, slot: usize) -> RType {
+        if specific {
+            self.read_return_slot(slot)
+        } else {
+            RType::unknown()
+        }
+    }
+
+    /// The call path's post-walk miss tail; operators never reach it,
+    /// because a primitive operator is its own fallback in R (issue
+    /// #165): a miss there is silent and modeled by the caller's
+    /// storage-mode rules. Here, a `<generic>.default` method is a real
+    /// dispatch target, so a miss with one stays silent. Otherwise we
+    /// report RY050 only for generics with a project-defined method:
+    /// an un-stubbed dependency may own a foreign class, while a local
+    /// method proves this project owns the dispatch surface.
+    fn s3_dispatch_miss(
+        &mut self,
+        generic: &str,
+        generics: &[&str],
+        cv: &ClassVector,
+        span: Span,
+    ) -> Option<RType> {
         let has_default = generics.iter().any(|candidate| {
             let default_key = ((*candidate).to_string(), "default".to_string());
             self.fn_table.s3_methods.contains_key(&default_key)
@@ -639,10 +657,6 @@ impl Checker {
         if has_default {
             return Some(RType::unknown());
         }
-
-        // 4. Without a default, use the project-owned-method fallback gate.
-        // External/typeshed methods alone cannot prove that this project owns
-        // the class, so suppress RY050 for potentially un-stubbed packages.
         let has_known_s3_method =
             self.fn_table.s3_methods.keys().any(|(known_generic, _)| {
                 generics.iter().any(|candidate| known_generic == candidate)
@@ -653,32 +667,56 @@ impl Checker {
         // The generic has no dispatch target for this class. Emit RY050
         // and return opaque so callers don't trip further diagnostics on
         // the result.
+        let classes = cv
+            .names
+            .iter()
+            .take(cv.len as usize)
+            .flatten()
+            .map(|class| class.as_ref())
+            .collect::<Vec<_>>()
+            .join(", ");
         self.emit(
             Severity::Warning,
             span,
             "RY050",
             format!(
                 "S3 generic `{}` called on value with classes [{}] but no matching method is defined",
-                generic,
-                cv.names.iter().take(cv.len as usize).flatten().map(|class| class.as_ref()).collect::<Vec<_>>().join(", "),
+                generic, classes,
             ),
         );
         Some(RType::unknown())
     }
 }
 
+/// One method-source hit in the S3 dispatch ladder shared by call and
+/// operator dispatch.
+pub(crate) enum S3MethodSource {
+    /// Registered through package metadata: not analyzable, so dispatch
+    /// can only conclude opaque.
+    Registered,
+    /// A project-defined method (`generic.class <- function(...)`) and
+    /// its refined return slot.
+    Project(usize),
+    /// A stub signature from the base typeshed or a package typeshed.
+    /// Boxed: `FunctionSig` is large, and the ladder usually misses.
+    Stub(Box<FunctionSig>),
+}
+
 /// S3 group generics used by ordinary function calls. Operator expressions
 /// are handled in `infer/binop.rs`; these names cover calls such as
 /// `abs(x)` and `sum(x)` dispatching to `Math.foo` / `Summary.foo`.
+///
+/// The member sets live in the semantic registry
+/// ([`crate::semantic_lists::S3_MATH_GENERICS`] and
+/// [`crate::semantic_lists::S3_SUMMARY_GENERICS`]), where the coherence
+/// tests pin each member to the embedded base typeshed.
 pub(crate) fn s3_group_generic(generic: &str) -> Option<&'static str> {
-    match generic {
-        "abs" | "acos" | "acosh" | "asin" | "asinh" | "atan" | "atanh" | "ceiling" | "cos"
-        | "cosh" | "exp" | "expm1" | "floor" | "gamma" | "lgamma" | "log" | "log10" | "log1p"
-        | "log2" | "round" | "sign" | "sin" | "sinh" | "sqrt" | "tan" | "tanh" | "trunc" => {
-            Some("Math")
-        }
-        "all" | "any" | "max" | "min" | "prod" | "range" | "sum" => Some("Summary"),
-        _ => None,
+    if crate::semantic_lists::S3_MATH_GENERICS.contains(&generic) {
+        Some("Math")
+    } else if crate::semantic_lists::S3_SUMMARY_GENERICS.contains(&generic) {
+        Some("Summary")
+    } else {
+        None
     }
 }
 

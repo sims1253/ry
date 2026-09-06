@@ -1,21 +1,21 @@
 /**
- * P37-W2: Unit tests for binary resolution trust behavior.
+ * Unit tests for binary resolution trust behavior.
  *
- * After the split-brain fix, the server uses the path resolved by
- * `findRyBinaryPath()` from `binary.ts`, which honors workspace trust.
- * An untrusted workspace must NOT use a `ry.path` setting, even if the
- * file exists — that would allow a checked-in `.vscode/settings.json`
- * to execute an arbitrary binary.
+ * `findRyBinaryPath()` honors workspace trust: an untrusted workspace
+ * must NOT use a `ry.path` setting, even if the file exists — that
+ * would allow a checked-in `.vscode/settings.json` to execute an
+ * arbitrary binary.
  */
 
+import type { ISettings } from "../common/settings";
 import { describe, it, expect } from "bun:test";
-import { findRyBinaryPath } from "../common/binary";
+import { findRyBinaryPath, getRyVersion } from "../common/binary";
 import { BUNDLED_RY_EXECUTABLE } from "../common/constants";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
-describe("findRyBinaryPath trust behavior (P37-W2)", () => {
+describe("findRyBinaryPath trust behavior", () => {
   it("ignores ry.path in an untrusted workspace and returns the bundled binary", () => {
     // Create a decoy binary that exists on disk.
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ry-test-"));
@@ -26,7 +26,8 @@ describe("findRyBinaryPath trust behavior (P37-W2)", () => {
     const settings = {
       path: [decoyPath],
       importStrategy: "useBundled" as const,
-    } as unknown as import("../common/settings").ISettings;
+      lint: {},
+    } satisfies ISettings;
 
     // Untrusted: must return the bundled binary, NOT the decoy.
     const resolved = findRyBinaryPath(settings, true);
@@ -47,7 +48,8 @@ describe("findRyBinaryPath trust behavior (P37-W2)", () => {
     const settings = {
       path: [decoyPath],
       importStrategy: "useBundled" as const,
-    } as unknown as import("../common/settings").ISettings;
+      lint: {},
+    } satisfies ISettings;
 
     // Trusted: should use the decoy from ry.path.
     const resolved = findRyBinaryPath(settings, false);
@@ -62,9 +64,78 @@ describe("findRyBinaryPath trust behavior (P37-W2)", () => {
     const settings = {
       path: ["/nonexistent/decoy-ry"],
       importStrategy: "useBundled" as const,
-    } as unknown as import("../common/settings").ISettings;
+      lint: {},
+    } satisfies ISettings;
 
     const resolved = findRyBinaryPath(settings, false);
     expect(resolved).toBe(BUNDLED_RY_EXECUTABLE);
   });
 });
+
+it("skips directories and non-executable files before a runnable candidate", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ry-candidates-"));
+  try {
+    const plain = path.join(dir, "plain");
+    const executable = path.join(dir, "executable");
+    fs.writeFileSync(plain, "not executable", { mode: 0o644 });
+    fs.writeFileSync(executable, "#!/bin/sh\n", { mode: 0o755 });
+    const settings = {
+      path: [dir, ...(process.platform === "win32" ? [] : [plain]), executable],
+      importStrategy: "useBundled",
+      lint: {},
+    } satisfies ISettings;
+    expect(findRyBinaryPath(settings, false)).toBe(executable);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+it.skipIf(process.platform === "win32")(
+  "version probing leaves the event loop responsive",
+  async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ry-version-"));
+    try {
+      const binary = path.join(dir, "ry");
+      fs.writeFileSync(
+        binary,
+        `#!/bin/sh\nsleep 0.1\necho '{"version":"0.9.0"}'\n`,
+        { mode: 0o755 },
+      );
+      let resolved = false;
+      const probe = getRyVersion(binary).then((version) => {
+        resolved = true;
+        return version;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(resolved).toBe(false);
+      expect(await probe).toEqual({ major: 0, minor: 9, patch: 0 });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "version probing rejects malformed and non-string responses",
+  async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ry-version-json-"));
+    try {
+      const binary = path.join(dir, "ry");
+      for (const output of [
+        "not JSON",
+        "null",
+        "[]",
+        "{}",
+        '{"version": 9}',
+        '{"version": ["0.9.0"]}',
+      ]) {
+        fs.writeFileSync(binary, `#!/bin/sh\nprintf '%s\\n' '${output}'\n`, {
+          mode: 0o755,
+        });
+        expect(await getRyVersion(binary)).toBeUndefined();
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);

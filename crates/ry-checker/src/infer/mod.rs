@@ -1,14 +1,31 @@
 use super::*;
+pub(crate) use args::*;
 pub(crate) use index::*;
-pub(crate) use misc::*;
+pub(crate) use narrow::*;
 pub(crate) use pipe::PipeForm;
+pub(crate) use quoting::*;
+pub(crate) use types::*;
+mod args;
 pub(crate) mod binop;
 pub(crate) mod call;
 pub(crate) mod construct;
 pub(crate) mod index;
-pub(crate) mod misc;
+mod narrow;
 pub(crate) mod pipe;
+mod quoting;
 pub(crate) mod recall;
+mod types;
+
+/// Join an entire collection of types into one: the lattice join of every
+/// element, with `unknown` for an empty collection (no branch contributes
+/// a type). The fold seeds from the first element because `RType::join`
+/// is absorbing for opaque: seeding with `unknown()` would collapse every
+/// collection. Shared by the return-collection sites that used to
+/// hand-roll `iter.next().unwrap_or(...) + fold`.
+pub(crate) fn join_all(mut types: impl Iterator<Item = RType>) -> RType {
+    let first = types.next().unwrap_or(RType::unknown());
+    types.fold(first, RType::join)
+}
 
 /// The diagnostic family appropriate for a known condition type. Opaque
 /// conditions deliberately remain silent: the runtime value may be logical.
@@ -16,6 +33,28 @@ pub(crate) mod recall;
 pub(crate) enum ConditionDiagnostic {
     Invalid,
     Numeric,
+}
+
+/// The statement form a condition appears in. It fixes the noun used in
+/// RY001/RY003 messages and whether RY002 applies.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConditionContext {
+    If,
+    Loop,
+}
+
+impl ConditionContext {
+    fn noun(self) -> &'static str {
+        match self {
+            ConditionContext::If => "`if`",
+            ConditionContext::Loop => "loop",
+        }
+    }
+
+    /// RY002 is an `if`-only rule; see `emit_condition_diagnostics`.
+    fn allows_length_rule(self) -> bool {
+        matches!(self, ConditionContext::If)
+    }
 }
 
 /// Classify a condition without losing the member-level information carried
@@ -58,18 +97,27 @@ pub(crate) fn condition_diagnostic(t: &RType) -> Option<ConditionDiagnostic> {
     }
 }
 
-pub(crate) fn list_binding_origin(name: &str, scope: &Scope) -> bool {
-    scope.has_list_origin(name)
+/// Whether every possible mode of the value is a list — a plain list or a
+/// union whose members are all lists (the join of two differently-shaped
+/// list branches).
+fn every_mode_is_list(ty: &RType) -> bool {
+    match ty.mode {
+        Mode::List => true,
+        Mode::Union => ty
+            .members
+            .as_ref()
+            .is_some_and(|members| members.iter().all(every_mode_is_list)),
+        _ => false,
+    }
 }
 
+/// Whether the expression reads a binding already marked with list
+/// origin. Call values are not covered here: the caller checks the
+/// value's inferred `Mode::List` — broader than the stubs' `mode: list`
+/// declarations, since a user-defined list-returning function marks
+/// its binding too.
 fn expression_has_list_origin(expression: &Expr, scope: &Scope) -> bool {
     match expression {
-        Expr::Call { func, .. } => ident_name(func).is_some_and(|name| {
-            matches!(
-                name.rsplit_once("::").map(|(_, bare)| bare).unwrap_or(name),
-                "list" | "lapply" | "Map"
-            )
-        }),
         Expr::Index {
             base,
             kind: IndexKind::Single,
@@ -80,118 +128,11 @@ fn expression_has_list_origin(expression: &Expr, scope: &Scope) -> bool {
     }
 }
 
-fn vector_intent_parameters(params: &[Param], body: &[Stmt]) -> HashSet<String> {
-    fn visit_expr(expr: &Expr, formals: &HashSet<&str>, intent: &mut HashSet<String>) {
-        match expr {
-            Expr::Call { func, args, .. } => {
-                if ident_name(func).is_some_and(|name| {
-                    matches!(
-                        name.rsplit_once("::").map(|(_, bare)| bare).unwrap_or(name),
-                        "paste" | "paste0"
-                    )
-                }) && args
-                    .iter()
-                    .any(|argument| matches!(argument.name.as_deref(), Some("collapse")))
-                {
-                    for argument in args {
-                        if argument.name.as_deref() != Some("collapse")
-                            && let Expr::Ident { name, .. } = &argument.value
-                            && formals.contains(name.as_str())
-                        {
-                            intent.insert(name.clone());
-                        }
-                    }
-                }
-                visit_expr(func, formals, intent);
-                for argument in args {
-                    visit_expr(&argument.value, formals, intent);
-                }
-            }
-            Expr::BinOp { lhs, rhs, .. } => {
-                visit_expr(lhs, formals, intent);
-                visit_expr(rhs, formals, intent);
-            }
-            Expr::UnaryOp { expr, .. } => visit_expr(expr, formals, intent),
-            Expr::Index { base, args, .. } => {
-                visit_expr(base, formals, intent);
-                for argument in args {
-                    visit_expr(&argument.value, formals, intent);
-                }
-            }
-            Expr::Block { body, .. } | Expr::Function { body, .. } => {
-                visit_stmts(body, formals, intent)
-            }
-            Expr::If {
-                cond, then, else_, ..
-            } => {
-                visit_expr(cond, formals, intent);
-                visit_expr(then, formals, intent);
-                if let Some(else_) = else_ {
-                    visit_expr(else_, formals, intent);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn visit_stmts(stmts: &[Stmt], formals: &HashSet<&str>, intent: &mut HashSet<String>) {
-        for statement in stmts {
-            match statement {
-                Stmt::Assign { target, value, .. } => {
-                    visit_expr(target, formals, intent);
-                    visit_expr(value, formals, intent);
-                }
-                Stmt::Expr(expr) => visit_expr(expr, formals, intent),
-                Stmt::If {
-                    cond, then, else_, ..
-                } => {
-                    visit_expr(cond, formals, intent);
-                    visit_stmts(then, formals, intent);
-                    if let Some(else_) = else_ {
-                        visit_stmts(else_, formals, intent);
-                    }
-                }
-                Stmt::For { iter, body, .. } => {
-                    visit_expr(iter, formals, intent);
-                    visit_stmts(body, formals, intent);
-                }
-                Stmt::While { cond, body, .. } => {
-                    visit_expr(cond, formals, intent);
-                    visit_stmts(body, formals, intent);
-                }
-                Stmt::Return { value, .. } => {
-                    if let Some(value) = value {
-                        visit_expr(value, formals, intent);
-                    }
-                }
-                Stmt::FunctionDef { .. } => {}
-            }
-        }
-    }
-
-    let formals: HashSet<&str> = params
-        .iter()
-        .map(|parameter| parameter.name.as_str())
-        .collect();
-    let mut intent = HashSet::new();
-    visit_stmts(body, &formals, &mut intent);
-    intent
-}
-
 fn discarded_value_expression(expression: &Expr) -> bool {
     match expression {
-        Expr::BinOp { op, .. } => matches!(
-            op,
-            BinOpKind::Add
-                | BinOpKind::Sub
-                | BinOpKind::Mul
-                | BinOpKind::Div
-                | BinOpKind::Pow
-                | BinOpKind::Mod
-                | BinOpKind::IDiv
-        ),
+        Expr::BinOp { op, .. } => op.is_arithmetic(),
         Expr::Call { func, .. } => ident_name(func).is_some_and(|name| {
-            let bare = name.rsplit_once("::").map(|(_, bare)| bare).unwrap_or(name);
+            let bare = crate::semantic_lists::bare_name(name);
             matches!(bare, "paste" | "paste0" | "sprintf")
                 || bare.starts_with("read_")
                 || bare.starts_with("read.")
@@ -200,13 +141,23 @@ fn discarded_value_expression(expression: &Expr) -> bool {
     }
 }
 
-// The T7b "mutually-exclusive branch" loop refinement was removed after two
-// rounds of corpus regressions (it ended up flagging loop iterators inside
-// their own bodies). Loop bodies simply pre-bind every name assigned anywhere
-// in the body before walking; a use-before-first-assignment inside a loop is
-// statically indistinguishable from a legitimate loop-carried binding.
-
 impl Checker {
+    /// The unified statement walker. Handles both diagnostic emission
+    /// (gated by `self.discarding`) and return-type collection (when
+    /// `returns` is `Some`).
+    ///
+    /// Callers:
+    ///   * `check_stmt` (pass 3): discarding=false, returns=None.
+    ///   * `refine_fn_return` (pass 2 fixpoint): discarding=true (set by
+    ///     caller), returns=Some.
+    ///   * `build_function_signature` (closure literals, both passes):
+    ///     discarding=true (set by caller), returns=Some.
+    ///
+    /// Approximations:
+    ///   * `if` branches use `apply_narrowing` + separate child scopes
+    ///     (then/else); bindings leak into subsequent statements.
+    ///   * Loop bodies are walked once (not to fixpoint).
+    ///   * Indexed assignment (`x[i] <- v`) does not update the scope.
     pub(crate) fn walk_stmt(
         &mut self,
         s: &Stmt,
@@ -234,25 +185,26 @@ impl Checker {
         }
         match s {
             Stmt::Assign { target, value, .. } => {
-                let value_has_list_origin = expression_has_list_origin(value, scope);
+                let scope_marked_origin = expression_has_list_origin(value, scope);
                 let vt = self.infer(value, scope);
+                // The value keeps list origin whenever its inferred mode
+                // is `List` — broader than the stubs' `mode: list`
+                // declarations, since a user-defined list-returning
+                // function marks its binding too.
+                let value_has_list_origin = scope_marked_origin || every_mode_is_list(&vt);
                 let function_alias = self.function_alias_target(value, scope);
-                if !self.assign_class_attribute(target, value, scope)
-                    && !self.assign_replacement_target(target, scope)
+                if self.try_assign_value(target, value, vt, scope)
+                    && let Some(name) = binding_name(target)
                 {
-                    self.assign_target(target, vt, scope);
-                    if let Some(name) = binding_name(target) {
-                        if value_has_list_origin {
-                            scope.mark_list_origin(name.to_string());
-                        }
-                        if matches!(value, Expr::Function { .. })
-                            && !self.enclosing_formals.is_empty()
-                        {
-                            scope.mark_lexical_function(name.to_string());
-                        }
-                        if let Some(alias) = function_alias {
-                            scope.set_function_alias(name.to_string(), alias);
-                        }
+                    if value_has_list_origin {
+                        scope.mark_list_origin(name.to_string());
+                    }
+                    if matches!(value, Expr::Function { .. }) && !self.enclosing_formals.is_empty()
+                    {
+                        scope.mark_lexical_function(name.to_string());
+                    }
+                    if let Some(alias) = function_alias {
+                        scope.set_function_alias(name.to_string(), alias);
                     }
                 }
                 // Named function bodies (`f <- function(...) body`) must
@@ -261,56 +213,15 @@ impl Checker {
                 // runs in discarding mode and emits nothing on its own, so
                 // without this walk almost all real R code would go
                 // unchecked.
-                if let Expr::Function { params, body, .. } = value {
-                    let mut fn_scope = scope.clone();
-                    if let Some(captures) = self.deferred_captures.last() {
-                        for capture in captures {
-                            if fn_scope.get(capture).is_none() {
-                                fn_scope.insert(capture.clone(), RType::unknown());
-                            }
-                        }
-                    }
-                    if let Some(name) = binding_name(target) {
-                        insert_s3_dispatch_context(name, &mut fn_scope, &self.typeshed.globals);
-                    }
-                    for parameter in params {
-                        fn_scope.insert_parameter(parameter.name.clone(), RType::unknown());
-                    }
-                    let assigned = assigned_names_in_body(body);
-                    self.check_lazy_default_reachability(params, body, &assigned);
-                    let mut default_scope = fn_scope.clone();
-                    for name in &assigned {
-                        default_scope.insert(name.clone(), RType::unknown());
-                    }
-                    for p in params {
-                        let t = match &p.default {
-                            Some(e) => {
-                                let _ = self.infer(e, &mut default_scope);
-                                binding_name(target)
-                                    .map(|function| {
-                                        self.diagnostic_parameter_type(function, p, params, e)
-                                    })
-                                    .unwrap_or_else(RType::unknown)
-                            }
-                            None => RType::unknown(),
-                        };
-                        if p.default.is_some() {
-                            fn_scope.insert_parameter_default(p.name.clone(), t);
-                        } else {
-                            fn_scope.insert_parameter(p.name.clone(), t);
-                        }
-                    }
-                    self.deferred_captures.push(assigned);
-                    self.push_enclosing_formals(params);
-                    self.vector_intent_parameters
-                        .push(vector_intent_parameters(params, body));
-                    self.check_discarded_branch_results(body);
-                    for s in body {
-                        self.walk_stmt(s, &mut fn_scope, None);
-                    }
-                    self.vector_intent_parameters.pop();
-                    self.enclosing_formals.pop();
-                    self.deferred_captures.pop();
+                if let Expr::Function { params, body, span } = value {
+                    self.enter_function_body(
+                        binding_name(target),
+                        true,
+                        params,
+                        body,
+                        *span,
+                        scope,
+                    );
                 }
             }
             Stmt::Expr(e) => {
@@ -355,56 +266,10 @@ impl Checker {
                 cond, then, else_, ..
             } => {
                 // RY103: an `if` condition is a length-1 logical context.
-                self.check_class_equality_operand(cond, scope);
-                let diagnostic_start = self.diagnostics.len();
-                let ct = self.infer(cond, scope);
-                let has_ry100 = self.diagnostics[diagnostic_start..]
-                    .iter()
-                    .any(|diagnostic| diagnostic.code == "RY100");
-                if matches!(
-                    condition_diagnostic(&ct),
-                    Some(ConditionDiagnostic::Invalid)
-                ) && !has_ry100
-                {
-                    self.emit(
-                        Severity::Error,
-                        span_of(cond),
-                        "RY001",
-                        format!("`if` condition is `{}`, expected length-1 logical", ct),
-                    );
-                } else if matches!(
-                    condition_diagnostic(&ct),
-                    Some(ConditionDiagnostic::Numeric)
-                ) && !has_ry100
-                    && !is_numeric_truthiness_idiom(cond, scope)
-                {
-                    self.emit(
-                        Severity::Info,
-                        span_of(cond),
-                        "RY003",
-                        format!("`if` condition is `{}`; R coerces nonzero to TRUE", ct.mode),
-                    );
-                } else if matches!(ct.mode, Mode::Logical) {
-                    if let Length::Known(n) = ct.length {
-                        if n > 1 {
-                            self.emit(
-                                Severity::Warning,
-                                span_of(cond),
-                                "RY002",
-                                format!(
-                                    "`if` condition has length {}; R requires a length-1 condition",
-                                    n
-                                ),
-                            );
-                        }
-                    }
-                }
+                self.infer_condition(cond, scope, ConditionContext::If);
                 let narrowing = self.extract_type_narrowing(cond, scope);
                 let has_else = else_.is_some();
-                let (then_scope, else_scope, narrowed) =
-                    apply_narrowing(scope, &narrowing, has_else);
-                let mut then_scope = then_scope;
-                let mut else_scope = else_scope;
+                let (mut then_scope, mut else_scope, narrowed) = apply_narrowing(scope, &narrowing);
                 for s in then {
                     self.walk_stmt(s, &mut then_scope, returns.as_deref_mut());
                 }
@@ -417,13 +282,7 @@ impl Checker {
                 // assignments inside an `if` branch leak to the enclosing
                 // scope, so a name bound conditionally must still be visible
                 // after the `if` (otherwise uses fire RY010 false positives).
-                self.merge_branch_bindings(
-                    scope,
-                    then_scope.clone(),
-                    else_scope.clone(),
-                    has_else,
-                    &narrowed,
-                );
+                self.merge_branch_bindings(scope, &then_scope, &else_scope, has_else, &narrowed);
                 // Refinements normally remain branch-local (see
                 // `apply_narrowing`). A diverging arm is the exception: the
                 // continuation is reachable only through its sibling, so its
@@ -462,52 +321,39 @@ impl Checker {
                 // occurs. Static analysis cannot prove the zero-iteration
                 // case, so opaque downstream behavior is preferable to
                 // claiming a field definitely does not exist.
+                //
+                // List-origin provenance copies the continuation's marker
+                // verbatim (same discipline as `merge_branch_bindings`): the
+                // inner scope inherited the parent's marker, an in-loop list
+                // rebinding re-marks it, and an in-loop non-list rebinding
+                // cleared it — the last write is the post-loop truth.
                 for (binding, ty) in inner.bindings {
-                    scope.insert(binding, ty);
+                    let had_list_origin = inner.list_origin_bindings.contains(&binding);
+                    scope.insert(binding.clone(), ty);
+                    if had_list_origin {
+                        scope.mark_list_origin(binding);
+                    }
                 }
             }
             Stmt::While { cond, body, .. } => {
                 // RY103: a loop condition is a length-1 logical context.
-                self.check_class_equality_operand(cond, scope);
-                let diagnostic_start = self.diagnostics.len();
-                let ct = self.infer(cond, scope);
-                let has_ry100 = self.diagnostics[diagnostic_start..]
-                    .iter()
-                    .any(|diagnostic| diagnostic.code == "RY100");
-                if matches!(
-                    condition_diagnostic(&ct),
-                    Some(ConditionDiagnostic::Invalid)
-                ) && !has_ry100
-                {
-                    self.emit(
-                        Severity::Error,
-                        span_of(cond),
-                        "RY001",
-                        format!("loop condition is `{}`, expected length-1 logical", ct),
-                    );
-                } else if matches!(
-                    condition_diagnostic(&ct),
-                    Some(ConditionDiagnostic::Numeric)
-                ) && !has_ry100
-                    && !is_numeric_truthiness_idiom(cond, scope)
-                {
-                    self.emit(
-                        Severity::Info,
-                        span_of(cond),
-                        "RY003",
-                        format!("loop condition is `{}`; R coerces nonzero to TRUE", ct.mode),
-                    );
-                }
+                self.infer_condition(cond, scope, ConditionContext::Loop);
                 let mut inner = scope.clone();
                 self.insert_loop_carried_bindings(body, &mut inner);
                 for s in body {
                     self.walk_stmt(s, &mut inner, returns.as_deref_mut());
                 }
                 // As with `for`, assignments made by `while` and `repeat`
-                // bodies remain visible in R's enclosing environment.
+                // bodies remain visible in R's enclosing environment; the
+                // continuation's list-origin markers carry over the same
+                // way.
                 let body_unreachable = inner.unreachable;
                 for (binding, ty) in inner.bindings {
-                    scope.insert(binding, ty);
+                    let had_list_origin = inner.list_origin_bindings.contains(&binding);
+                    scope.insert(binding.clone(), ty);
+                    if had_list_origin {
+                        scope.mark_list_origin(binding);
+                    }
                 }
                 // The parser represents `repeat` as `while (TRUE)`. If its
                 // body cannot continue, neither can the enclosing block.
@@ -515,59 +361,8 @@ impl Checker {
                     scope.unreachable = true;
                 }
             }
-            Stmt::FunctionDef {
-                name, params, body, ..
-            } => {
-                let vt = self.function_value_from_literal(params, body, scope, 0);
-                if let Some(n) = name {
-                    scope.insert(n.clone(), vt);
-                }
-                let mut fn_scope = scope.clone();
-                if let Some(captures) = self.deferred_captures.last() {
-                    for capture in captures {
-                        if fn_scope.get(capture).is_none() {
-                            fn_scope.insert(capture.clone(), RType::unknown());
-                        }
-                    }
-                }
-                for parameter in params {
-                    fn_scope.insert_parameter(parameter.name.clone(), RType::unknown());
-                }
-                let assigned = assigned_names_in_body(body);
-                self.check_lazy_default_reachability(params, body, &assigned);
-                let mut default_scope = fn_scope.clone();
-                for name in &assigned {
-                    default_scope.insert(name.clone(), RType::unknown());
-                }
-                for p in params {
-                    let t = match &p.default {
-                        Some(e) => {
-                            let _ = self.infer(e, &mut default_scope);
-                            name.as_deref()
-                                .map(|function| {
-                                    self.diagnostic_parameter_type(function, p, params, e)
-                                })
-                                .unwrap_or_else(RType::unknown)
-                        }
-                        None => RType::unknown(),
-                    };
-                    if p.default.is_some() {
-                        fn_scope.insert_parameter_default(p.name.clone(), t);
-                    } else {
-                        fn_scope.insert_parameter(p.name.clone(), t);
-                    }
-                }
-                self.deferred_captures.push(assigned);
-                self.push_enclosing_formals(params);
-                self.vector_intent_parameters
-                    .push(vector_intent_parameters(params, body));
-                self.check_discarded_branch_results(body);
-                for s in body {
-                    self.walk_stmt(s, &mut fn_scope, None);
-                }
-                self.vector_intent_parameters.pop();
-                self.enclosing_formals.pop();
-                self.deferred_captures.pop();
+            Stmt::FunctionDef { params, body, span } => {
+                self.enter_function_body(None, false, params, body, *span, scope);
             }
             Stmt::Return { value, .. } => {
                 if let Some(v) = value {
@@ -580,6 +375,212 @@ impl Checker {
                 }
                 scope.unreachable = true;
             }
+        }
+    }
+
+    /// Enter a function literal's body and walk it for diagnostics.
+    ///
+    /// Both statement forms reach this: `f <- function(...) ...` and a bare
+    /// `function(...) ...` statement. `named_binding` marks the first form,
+    /// which is the only one that installs an S3 dispatch context. A
+    /// statement-position literal is anonymous, so its walk passes no
+    /// function name.
+    fn enter_function_body(
+        &mut self,
+        function_name: Option<&str>,
+        named_binding: bool,
+        params: &[Param],
+        body: &[Stmt],
+        span: Span,
+        scope: &Scope,
+    ) {
+        let mut fn_scope = scope.clone();
+        if let Some(captures) = self.deferred_captures.last() {
+            for capture in captures {
+                if fn_scope.get(capture).is_none() {
+                    fn_scope.insert(capture.clone(), RType::unknown());
+                }
+            }
+        }
+        if named_binding && let Some(name) = function_name {
+            insert_s3_dispatch_context(name, &mut fn_scope, &self.typeshed.globals);
+        }
+        for parameter in params {
+            fn_scope.insert_parameter(parameter.name.clone(), RType::unknown());
+        }
+        let assigned = assigned_names_in_body(body);
+        self.check_lazy_default_reachability(params, body, &assigned);
+        let mut default_scope = fn_scope.clone();
+        for name in &assigned {
+            default_scope.insert(name.clone(), RType::unknown());
+        }
+        for p in params {
+            let t = match &p.default {
+                Some(e) => {
+                    let _ = self.infer(e, &mut default_scope);
+                    function_name
+                        .map(|function| self.diagnostic_parameter_type(function, p, params, e))
+                        .unwrap_or_else(RType::unknown)
+                }
+                None => RType::unknown(),
+            };
+            if p.default.is_some() {
+                fn_scope.insert_parameter_default(p.name.clone(), t);
+            } else {
+                fn_scope.insert_parameter(p.name.clone(), t);
+            }
+        }
+        self.deferred_captures.push(assigned);
+        self.push_enclosing_formals(params);
+        self.check_discarded_branch_results(body);
+        for s in body {
+            self.walk_stmt(s, &mut fn_scope, None);
+        }
+        self.record_scope(function_name, span, params, &fn_scope);
+        self.enclosing_formals.pop();
+        self.deferred_captures.pop();
+    }
+
+    /// Infer a condition in place and emit its condition-diagnostic
+    /// family, in the one order that keeps the rules honest: the RY103
+    /// class-equality operand check runs first, then the condition's own
+    /// inference, and `diagnostic_start` bounds exactly the diagnostics
+    /// that inference produced — which is what lets an RY100 reported
+    /// inside the condition suppress the RY001/RY003/RY002 family. All
+    /// three condition contexts (`if` statements, loop conditions, `if`
+    /// expressions) route through here so they cannot drift apart.
+    fn infer_condition(&mut self, cond: &Expr, scope: &mut Scope, ctx: ConditionContext) {
+        self.check_class_equality_operand(cond, scope);
+        let diagnostic_start = self.diagnostics.len();
+        let ct = self.infer(cond, scope);
+        self.emit_condition_diagnostics(cond, ct, scope, diagnostic_start, ctx);
+    }
+
+    /// Whether a local binding replaces the named callee, so the stub's
+    /// declaration is not evidence about this call. A function alias is
+    /// provenance (`p <- is.na` keeps the base callee), not a replacement.
+    fn locally_shadows_stub(name: &str, scope: &Scope) -> bool {
+        !name.contains("::") && scope.get(name).is_some() && scope.function_alias(name).is_none()
+    }
+
+    /// Whether a condition expression is the idiomatic numeric-truthiness
+    /// non-empty check: a call whose resolved stub declares a scalar
+    /// integer count return that is never `NA` (`mode: integer,
+    /// length: 1, na: false` — `length`, `nrow`, `ncol`, `NROW`, `NCOL`,
+    /// and everything else the stubs record the same way, such as
+    /// `nobs`). R silently coerces the nonzero count to logical, but
+    /// these checks are so idiomatic that the RY003 coercion info is
+    /// pure noise there; a genuinely wrong condition (e.g. `if (1L)`)
+    /// still emits it.
+    ///
+    /// The explicit `na: false` matters: `Position` also returns a
+    /// scalar integer, but its no-match value is `nomatch`
+    /// (`NA_integer_`), so `if (Position(...))` is TRUE-or-error — R
+    /// raises "argument is not interpretable as logical" on the NA —
+    /// and can never be the non-empty idiom. A stub that omits `na` has
+    /// not claimed the value is NA-free, so it does not qualify either.
+    ///
+    /// `sum` declares a `double_or_int` return, so its count idiom
+    /// (`if (sum(x > 0))`) is recognized by argument shape instead: a
+    /// logical-typed name, a comparison, or an `is.*` predicate.
+    /// Negation (`if (!length(x))`) is out of scope: it is typed through
+    /// the unary `!` operator, not this call shape.
+    fn is_numeric_truthiness_idiom(&self, cond: &Expr, scope: &Scope) -> bool {
+        let Expr::Call { func, args, .. } = cond else {
+            return false;
+        };
+        let Expr::Ident { name, .. } = func.as_ref() else {
+            return false;
+        };
+        // A local binding of the same name replaces the callee, so the
+        // stub's declared return is not evidence about this call — and
+        // neither is `sum`'s argument-shape idiom for a local `sum`.
+        if Self::locally_shadows_stub(name, scope) {
+            return false;
+        }
+        if name == "sum" {
+            return args.first().is_some_and(|argument| match &argument.value {
+                Expr::Ident { name, .. } => scope
+                    .get(name)
+                    .is_some_and(|ty| matches!(ty.mode, Mode::Logical)),
+                Expr::BinOp { op, .. } => is_comparison(*op) || matches!(op, BinOpKind::In),
+                // A locally defined `is.*` callee is a different function;
+                // an aliased one still resolves to the base predicate.
+                Expr::Call { func, .. } => ident_name(func).is_some_and(|callee| {
+                    let resolved = scope.function_alias(callee).unwrap_or(callee);
+                    resolved.starts_with("is.") && !Self::locally_shadows_stub(resolved, scope)
+                }),
+                _ => false,
+            });
+        }
+        self.resolve_typeshed_sig(name).is_some_and(|signature| {
+            matches!(
+                &signature.return_,
+                ReturnSpec::Concrete(rt)
+                    if rt.mode == "integer" && rt.length == "1" && rt.na == Some(false)
+            )
+        })
+    }
+
+    /// Emit RY001/RY003/RY002 for a condition already inferred as `ct`.
+    ///
+    /// `diagnostic_start` is the `diagnostics` length captured before that
+    /// inference. An RY100 reported inside the condition already covers the
+    /// same span, so it suppresses this family.
+    ///
+    /// RY002 fires for `ConditionContext::If` only. The rule table scopes that
+    /// code to `if` conditions, and the `while` arm has never carried it.
+    fn emit_condition_diagnostics(
+        &mut self,
+        cond: &Expr,
+        ct: RType,
+        scope: &Scope,
+        diagnostic_start: usize,
+        ctx: ConditionContext,
+    ) {
+        let has_ry100 = self.diagnostics[diagnostic_start..]
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY100");
+        let condition = condition_diagnostic(&ct);
+        if matches!(condition, Some(ConditionDiagnostic::Invalid)) && !has_ry100 {
+            self.emit(
+                Severity::Error,
+                span_of(cond),
+                "RY001",
+                format!(
+                    "{} condition is `{}`, expected length-1 logical",
+                    ctx.noun(),
+                    ct
+                ),
+            );
+        } else if matches!(condition, Some(ConditionDiagnostic::Numeric))
+            && !has_ry100
+            && !self.is_numeric_truthiness_idiom(cond, scope)
+        {
+            self.emit(
+                Severity::Info,
+                span_of(cond),
+                "RY003",
+                format!(
+                    "{} condition is `{}`; R coerces nonzero to TRUE",
+                    ctx.noun(),
+                    ct.mode
+                ),
+            );
+        } else if ctx.allows_length_rule()
+            && matches!(ct.mode, Mode::Logical)
+            && let Length::Known(n) = ct.length
+            && n > 1
+        {
+            self.emit(
+                Severity::Warning,
+                span_of(cond),
+                "RY002",
+                format!(
+                    "`if` condition has length {}; R requires a length-1 condition",
+                    n
+                ),
+            );
         }
     }
 
@@ -621,15 +622,11 @@ impl Checker {
     /// Bind names assigned by a loop body before walking it. A binding may
     /// have been established by a previous iteration, even when its first
     /// assignment is textually later than its use in the body.
-    fn insert_loop_carried_bindings(&self, body: &[Stmt], scope: &mut Scope) -> HashSet<String> {
-        let mut prebound = HashSet::new();
+    fn insert_loop_carried_bindings(&self, body: &[Stmt], scope: &mut Scope) {
         for name in assigned_names_in_body(body) {
-            if scope.get(&name).is_none() {
-                scope.insert(name.clone(), RType::unknown());
-                prebound.insert(name);
-            }
+            // The pre-loop value need not survive a later iteration.
+            scope.insert(name, RType::unknown());
         }
-        prebound
     }
 
     /// Merge bindings introduced inside the two `if` branches back into the
@@ -646,11 +643,20 @@ impl Checker {
     /// "Newly bound" means present in the branch scope but absent from the
     /// parent (or bound to a different type): names that already existed in
     /// the parent with the same type are left untouched.
+    ///
+    /// List-origin provenance merges with the same path discipline as the
+    /// type. `insert` clears the marker, so every merged rebinding must
+    /// re-establish it explicitly: a branch that rebinds the name contributes
+    /// its own marker, a branch (or an implicit no-`else`) that leaves the
+    /// name unbound cannot supply a non-list value at any later use, and a
+    /// branch that keeps the parent binding requires the parent's marker. A
+    /// single non-list rebinding therefore clears the merged marker, exactly
+    /// as a single non-list type widens the merged type.
     pub(crate) fn merge_branch_bindings(
         &self,
         scope: &mut Scope,
-        then_scope: Scope,
-        else_scope: Scope,
+        then_scope: &Scope,
+        else_scope: &Scope,
         has_else: bool,
         narrowed: &HashSet<String>,
     ) {
@@ -660,17 +666,20 @@ impl Checker {
         let then_reaches = !then_scope.unreachable;
         let else_reaches = has_else && !else_scope.unreachable;
         if has_else && then_reaches != else_reaches {
-            let continuation = if then_reaches {
-                &then_scope
-            } else {
-                &else_scope
-            };
+            let continuation = if then_reaches { then_scope } else { else_scope };
             for (name, ty) in &continuation.bindings {
                 if narrowed.contains(name) && continuation.narrowed_bindings.contains(name) {
                     continue;
                 }
                 if scope.get(name) != Some(ty) {
+                    // The continuation is the only route forward, so its
+                    // provenance is a fact in the parent (same capture-
+                    // insert-remark shape as `assign_replacement_target`).
+                    let had_list_origin = continuation.has_list_origin(name);
                     scope.insert(name.clone(), ty.clone());
+                    if had_list_origin {
+                        scope.mark_list_origin(name.clone());
+                    }
                 }
             }
             return;
@@ -678,8 +687,7 @@ impl Checker {
 
         // Collect the candidate names (only those that differ from the
         // parent) without holding a borrow of `scope` while we mutate it.
-        let mut branch_types: HashMap<String, (Option<RType>, Option<RType>)> =
-            HashMap::with_capacity(then_scope.bindings.len());
+        let mut branch_types: HashMap<&str, (Option<&RType>, Option<&RType>)> = HashMap::new();
         for (name, t) in &then_scope.bindings {
             // Only the marker installed by `apply_narrowing` is
             // branch-local. An ordinary `Scope::insert` clears that marker,
@@ -691,7 +699,7 @@ impl Checker {
             match scope.get(name) {
                 Some(existing) if existing == t => {}
                 _ => {
-                    branch_types.entry(name.clone()).or_insert((None, None)).0 = Some(t.clone());
+                    branch_types.entry(name).or_insert((None, None)).0 = Some(t);
                 }
             }
         }
@@ -705,15 +713,14 @@ impl Checker {
                 match scope.get(name) {
                     Some(existing) if existing == t => {}
                     _ => {
-                        branch_types.entry(name.clone()).or_insert((None, None)).1 =
-                            Some(t.clone());
+                        branch_types.entry(name).or_insert((None, None)).1 = Some(t);
                     }
                 }
             }
         }
         for (name, (then_t, else_t)) in branch_types {
             let merged = match (then_t, else_t) {
-                (Some(a), Some(b)) => a.join(b),
+                (Some(a), Some(b)) => a.clone().join(b.clone()),
                 (Some(a), None) | (None, Some(a)) => {
                     // The name is assigned in only one branch (no
                     // `else`). When the name is already bound in the
@@ -727,10 +734,10 @@ impl Checker {
                     // sound type, so it degrades to opaque. Joining with
                     // `RType::unknown()` here would be absorbing and make
                     // the parent fold below dead code.
-                    if scope.get(&name).is_some() {
-                        a
+                    if scope.get(name).is_some() {
+                        a.clone()
                     } else {
-                        a.join(RType::unknown())
+                        a.clone().join(RType::unknown())
                     }
                 }
                 (None, None) => continue,
@@ -740,11 +747,25 @@ impl Checker {
             // reassignment doesn't silently degrade a precise parent type
             // to unknown (e.g. `s <- 1L; if (c) { s <- "x" }` keeps `s` as
             // union[integer, character] rather than collapsing to unknown).
-            let merged = match scope.get(&name) {
+            let merged = match scope.get(name) {
                 Some(p) => p.clone().join(merged),
                 None => merged,
             };
+            // A branch scope that does not bind the name (an implicit
+            // no-`else`, or an arm that never assigns it) cannot supply a
+            // non-list value at any later use — reading the name on that
+            // path errors first — so absence is vacuous agreement. A branch
+            // that keeps the parent binding (inherited into the clone)
+            // demands the parent's marker instead.
+            let then_origin =
+                !then_scope.bindings.contains_key(name) || then_scope.has_list_origin(name);
+            let else_origin =
+                !else_scope.bindings.contains_key(name) || else_scope.has_list_origin(name);
+            let keeps_list_origin = then_origin && else_origin;
             scope.insert(name, merged);
+            if keeps_list_origin {
+                scope.mark_list_origin(name);
+            }
         }
     }
 
@@ -802,11 +823,7 @@ impl Checker {
                 let Some(name) = ident_name(func) else {
                     return false;
                 };
-                if name == "UseMethod"
-                    || name
-                        .rsplit_once("::")
-                        .is_some_and(|(_, bare)| bare == "UseMethod")
-                {
+                if name == "UseMethod" || crate::semantic_lists::bare_name(name) == "UseMethod" {
                     return true;
                 }
                 if self
@@ -835,10 +852,8 @@ impl Checker {
         }
     }
 
-    /// runs the single diagnostic `infer` with `discarding` enabled, so
-    /// the type computation (including the full `Expr::Ident` resolution
-    /// ladder, all `Expr::Call` cases, narrowing, etc.) is shared between
-    /// the pure and the diagnostic walks.
+    /// Run `infer` with emission suppressed so callers needing only the
+    /// type share the full resolution ladder with the diagnostic walk.
     pub(crate) fn infer_discarding(&mut self, e: &Expr, scope: &mut Scope) -> RType {
         let prev = self.discarding;
         self.discarding = true;
@@ -892,85 +907,71 @@ impl Checker {
         captured_scope: &Scope,
         depth: usize,
     ) -> Option<Arc<FunctionSignature>> {
-        if body.is_empty() {
-            return None;
-        }
-        // Signature building is a PURE return-type computation: it must
-        // never emit diagnostics (the diagnostic walk of a function body
-        // happens via check_stmt's function-body arm in pass 3). Force
-        // discarding mode for this walk regardless of the caller's mode.
-        let prev_discarding = self.discarding;
-        self.discarding = true;
-        let result = self.build_function_signature_inner(params, body, captured_scope, depth);
-        self.discarding = prev_discarding;
-        result
+        // Each param's type comes from its default literal (`x = 1L` ->
+        // integer) or is unknown; a defaulted param keeps its
+        // default-marker binding so narrowing treats it as
+        // caller-replaceable.
+        let mut param_types: Vec<RType> = Vec::with_capacity(params.len());
+        let return_type = self.walk_literal_returns(body, captured_scope, depth, |scope| {
+            for p in params {
+                let t = match &p.default {
+                    Some(e) => infer_literal_default(e),
+                    None => RType::unknown(),
+                };
+                if p.default.is_some() {
+                    scope.insert_parameter_default(p.name.clone(), t.clone());
+                } else {
+                    scope.insert(p.name.clone(), t.clone());
+                }
+                param_types.push(t);
+            }
+        })?;
+        Some(Arc::new(FunctionSignature {
+            params: param_types,
+            return_type: Box::new(return_type),
+        }))
     }
 
-    pub(crate) fn build_function_signature_inner(
+    /// The closure-return walk shared by signature building
+    /// ([`build_function_signature`]) and higher-order callback
+    /// inference ([`Checker::callback_literal_return`]): clone the
+    /// captured scope, let `bind_params` layer the literal's parameters
+    /// on top, then collect each explicit `return(...)`/`invisible(...)`
+    /// type plus the trailing statement's implicit value and join them.
+    /// Returns `None` when nothing contributes a type or the join
+    /// collapses to opaque. PURE computation: forces discarding mode so
+    /// it never emits diagnostics (those come from the pass-3 walks).
+    pub(crate) fn walk_literal_returns(
         &mut self,
-        params: &[Param],
         body: &[Stmt],
         captured_scope: &Scope,
         depth: usize,
-    ) -> Option<Arc<FunctionSignature>> {
-        // Layer the inner function's params on top of the captured
-        // scope. We start from a clone of the captured scope so the
-        // body can reference enclosing bindings (`make_adder`'s `x`).
+        bind_params: impl FnOnce(&mut Scope),
+    ) -> Option<RType> {
+        let prev_discarding = self.discarding;
+        self.discarding = true;
         let mut scope = captured_scope.clone();
-        let mut param_types: Vec<RType> = Vec::with_capacity(params.len());
-        for p in params {
-            let t = match &p.default {
-                Some(e) => infer_literal_default(e),
-                None => RType::unknown(),
-            };
-            if p.default.is_some() {
-                scope.insert_parameter_default(p.name.clone(), t.clone());
-            } else {
-                scope.insert(p.name.clone(), t.clone());
-            }
-            param_types.push(t);
-        }
-        // Walk the body in source order, simulating each statement's
-        // effect on the scope so later statements (notably the trailing
-        // return expression) can reference bindings established earlier
-        // in the body. This is what lets us resolve the named-return
-        // closure pattern:
-        //     f <- function() { g <- function() { 1L }; g }
-        // Here the trailing `g` must see the `g <- function() { 1L }`
-        // binding to pick up its inferred `fn_sig`.
-        //
-        // We collect explicit `return(...)` types as we go; the trailing
-        // statement's value is added separately below. Branches in `if`
+        bind_params(&mut scope);
+        // Simulate each statement's scope effect in source order so the
+        // trailing return can reference bindings established earlier in
+        // the body (the named-return closure pattern). `if` branches
         // are walked without splitting the scope (v1 approximation).
         let mut returns: Vec<RType> = Vec::new();
-        // Walk the body via the unified walker (discarding mode, return
-        // collection enabled).
         for s in body {
             self.walk_stmt(s, &mut scope, Some(&mut returns));
         }
-        // Trailing expression of a braced body is the implicit return.
-        // A trailing `Stmt::FunctionDef` (a bare function literal in
-        // statement position) is also the implicit return value - this
-        // is the closure-factory pattern: `function() { function() { 1L } }`
-        // has a `Stmt::FunctionDef` as its body's last statement.
+        // The trailing expression -- or a bare trailing function
+        // literal, the closure-factory pattern -- is the implicit
+        // return.
         if let Some(t) = self.trailing_return_type(body, &mut scope, depth + 1) {
             returns.push(t);
         }
+        self.discarding = prev_discarding;
         if returns.is_empty() {
             return None;
         }
-        let mut iter = returns.into_iter();
-        let first = iter.next().unwrap_or(RType::unknown());
-        let joined = iter.fold(first, |acc, t| acc.join(t));
-        // If we couldn't infer anything useful (joined is UNKNOWN),
-        // there's no point attaching an empty signature.
-        if matches!(joined.mode, Mode::Opaque) {
-            return None;
-        }
-        Some(Arc::new(FunctionSignature {
-            params: param_types,
-            return_type: Box::new(joined),
-        }))
+        let joined = join_all(returns.into_iter());
+        (!matches!(joined.mode, Mode::Opaque)).then_some(joined)
     }
 
     /// Extract the implicit return type of a function body's trailing
@@ -981,7 +982,7 @@ impl Checker {
     ///
     /// Returns `None` when the body is empty, the last statement is not
     /// an expression-like form, or the trailing expression is a
-    /// `return(...)` call (which `collect_returns_stmt_at_depth`
+    /// `return(...)` call (which [`Checker::walk_literal_returns`]
     /// already counted).
     pub(crate) fn trailing_return_type(
         &mut self,
@@ -1116,6 +1117,29 @@ impl Checker {
         })
     }
 
+    /// Run the plain-assignment path: bind `target` (whose value was
+    /// already inferred as `vt`) unless the statement is one of the two
+    /// special assignment forms the checker models separately — a
+    /// class-attribute write (`class(x) <- ...`) or a
+    /// replacement-function mutation (`names(x) <- ...`). Returns
+    /// whether the plain binding ran; the statement walker layers its
+    /// list-origin and function-alias provenance marks on that outcome.
+    fn try_assign_value(
+        &mut self,
+        target: &Expr,
+        value: &Expr,
+        vt: RType,
+        scope: &mut Scope,
+    ) -> bool {
+        if self.assign_class_attribute(target, value, scope)
+            || self.assign_replacement_target(target, scope)
+        {
+            return false;
+        }
+        self.assign_target(target, vt, scope);
+        true
+    }
+
     pub(crate) fn assign_target(&mut self, target: &Expr, vt: RType, scope: &mut Scope) {
         match target {
             Expr::Ident { name, .. } | Expr::String(name, _) => {
@@ -1139,7 +1163,6 @@ impl Checker {
                 self.infer(target, scope);
             }
             _ => {
-                // Indexed assignment `x[i] <- v` etc. is too dynamic for v1.
                 self.infer(target, scope);
             }
         }
@@ -1401,11 +1424,7 @@ impl Checker {
         match stmt {
             Stmt::Assign { target, value, .. } => {
                 let vt = self.infer(value, scope);
-                if !self.assign_class_attribute(target, value, scope)
-                    && !self.assign_replacement_target(target, scope)
-                {
-                    self.assign_target(target, vt.clone(), scope);
-                }
+                self.try_assign_value(target, value, vt.clone(), scope);
                 vt
             }
             Stmt::Expr(e) => self.infer(e, scope),
@@ -1429,7 +1448,7 @@ impl Checker {
                         span: *span,
                     })
                 });
-                self.infer_if_expr(cond, &then_expr, &else_expr, *span, scope)
+                self.infer_if_expr(cond, &then_expr, &else_expr, scope)
             }
             Stmt::For { .. } | Stmt::While { .. } | Stmt::FunctionDef { .. } => {
                 self.walk_stmt(stmt, scope, None);
@@ -1470,6 +1489,18 @@ impl Checker {
                     }
                 }
                 None => {
+                    // A defused/data-mask scope resolves its names against
+                    // an environment ry cannot enumerate (a data mask, or
+                    // the closure a quoting helper splices the block
+                    // into — withr's `wrap()` even re-derives its formals
+                    // via `formals(fun) <- formals(f)`). The lexical arm
+                    // above already treats that as shadowing; the same
+                    // reasoning demotes the search-path function-value
+                    // rungs below, so a bare `append` inside a defused
+                    // block types as unknown instead of borrowing
+                    // `base::append`'s function type.
+                    let under_unknown_data_mask = scope.data_mask_unknown
+                        && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some();
                     // Typed package values take precedence over existence-only
                     // import bindings so constants retain their declared type.
                     if let Some(value_type) = self.resolve_typeshed_value(name) {
@@ -1480,7 +1511,7 @@ impl Checker {
                     }
                     if self.external_bindings.iter().any(|binding| {
                         binding
-                            .strip_prefix(crate::packages::NATIVE_ROUTINE_PREFIX_SENTINEL)
+                            .strip_prefix(ry_workspace::packages::NATIVE_ROUTINE_PREFIX_SENTINEL)
                             .is_some_and(|prefix| {
                                 name.strip_prefix(prefix)
                                     .is_some_and(|rest| !rest.is_empty())
@@ -1494,23 +1525,30 @@ impl Checker {
                     // rather than flagging it as unbound. The higher-
                     // order call handlers resolve the signature when
                     // the callback is invoked.
-                    if self.typeshed.functions.contains_key(name) {
+                    //
+                    // Skipped under an unknown data mask: the mask may
+                    // shadow the search path, so the name is unknown
+                    // there rather than a base function value.
+                    if !under_unknown_data_mask && self.typeshed.functions.contains_key(name) {
                         return RType::scalar(Mode::Function);
                     }
                     // A function from a loaded package (e.g. purrr's
                     // `map` used as a value) resolves to a function too.
-                    if self.bare_loaded.iter().any(|pkg| {
-                        self.package_is_known(pkg)
-                            && self
-                                .package_typeshed(pkg)
-                                .map(|t| t.functions.contains_key(name))
-                                .unwrap_or(false)
-                    }) {
+                    // Equally shadowable by an unknown mask.
+                    if !under_unknown_data_mask
+                        && self.bare_loaded.iter().any(|pkg| {
+                            self.package_is_known(pkg)
+                                && self
+                                    .package_typeshed(pkg)
+                                    .map(|t| t.functions.contains_key(name))
+                                    .unwrap_or(false)
+                        })
+                    {
                         return RType::scalar(Mode::Function);
                     }
                     // User-defined function in the FnTable used as a
                     // value? Same treatment.
-                    if self.fn_table.fns.contains_key(name) {
+                    if !under_unknown_data_mask && self.fn_table.fns.contains_key(name) {
                         return RType::scalar(Mode::Function);
                     }
                     // Cross-file variable defined in another file of
@@ -1525,12 +1563,13 @@ impl Checker {
                     if self.known_vars.contains(name) {
                         return RType::unknown();
                     }
-                    if self
-                        .typeshed
-                        .globals
-                        .ambient_functions
-                        .iter()
-                        .any(|function| function == name)
+                    if !under_unknown_data_mask
+                        && self
+                            .typeshed
+                            .globals
+                            .ambient_functions
+                            .iter()
+                            .any(|function| function == name)
                     {
                         // Value-position uses of ambient functions are
                         // overwhelmingly legitimate higher-order idioms
@@ -1617,11 +1656,7 @@ impl Checker {
                 // value (invisibly).
                 if matches!(*op, BinOpKind::Assign | BinOpKind::SuperAssign) {
                     let rt = self.infer(rhs, scope);
-                    if !self.assign_class_attribute(lhs, rhs, scope)
-                        && !self.assign_replacement_target(lhs, scope)
-                    {
-                        self.assign_target(lhs, rt.clone(), scope);
-                    }
+                    self.try_assign_value(lhs, rhs, rt.clone(), scope);
                     return rt;
                 }
                 // `:` sequence operator: when both operands are
@@ -1636,10 +1671,10 @@ impl Checker {
                     if let (Some(a), Some(b)) = (extract_literal_int(lhs), extract_literal_int(rhs))
                     {
                         let len = (b - a).unsigned_abs() as usize;
+                        // `saturating_add` keeps `len` a positive usize, so
+                        // the result length is always at least 1.
                         let len = len.saturating_add(1);
-                        if len > 0 {
-                            return RType::new(Mode::Integer, Length::Known(len));
-                        }
+                        return RType::new(Mode::Integer, Length::Known(len));
                     }
                 }
                 if matches!(op, BinOpKind::AndAnd | BinOpKind::OrOr) {
@@ -1652,7 +1687,7 @@ impl Checker {
                         "comparison with `NA` always produces `NA`; use `is.na()` instead";
                     self.emit(Severity::Warning, *span, "RY034", message);
                 }
-                // Plan 31 W18 shape rules. Both read the operand syntax, so
+                // Syntax-shape rules. Both read the operand syntax, so
                 // they run before `infer` collapses the operands to types.
                 self.check_constant_length_comparison(*op, lhs, rhs, *span, scope);
                 let lt = self.infer(lhs, scope);
@@ -1667,34 +1702,23 @@ impl Checker {
                 )
             }
             Expr::UnaryOp { op, expr, span } => {
-                // Detect tidyeval `!!` (unquote) and `!!!` (splice)
-                // operators BEFORE inferring the inner expression.
-                // tree-sitter parses these as nested unary `!`:
-                // `!!x` -> `!(!x)`, `!!!x` -> `!(!(!x))`.
-                // These are NSE operators, not actual negation. We must
-                // strip ALL nested `!` operators and only infer the
-                // innermost operand, so RY021 doesn't fire on the
-                // intermediate `!` applied to a list/function.
-                if matches!(op, UnaryOpKind::Not) {
-                    if let Expr::UnaryOp {
-                        op: UnaryOpKind::Not,
-                        ..
-                    } = expr.as_ref()
-                    {
-                        // Strip all consecutive `!` operators to find
-                        // the innermost real expression.
-                        let mut innermost = expr.as_ref();
-                        while let Expr::UnaryOp {
+                // Injection is syntax only in arguments whose signatures opt in.
+                if scope.tidy_injection.is_some()
+                    && matches!(op, UnaryOpKind::Not)
+                    && matches!(
+                        expr.as_ref(),
+                        Expr::UnaryOp {
                             op: UnaryOpKind::Not,
-                            expr: next,
+                            expr: inner,
                             ..
-                        } = innermost
-                        {
-                            innermost = next.as_ref();
-                        }
-                        let _ = self.infer(innermost, scope);
-                        return RType::unknown();
-                    }
+                        } if scope.tidy_injection == Some(InjectionMode::Full)
+                            || matches!(inner.as_ref(), Expr::UnaryOp { op: UnaryOpKind::Not, .. })
+                    )
+                {
+                    // Strip all consecutive `!` operators to find
+                    // the innermost real expression.
+                    let _ = self.infer(recall::strip_negation(expr), scope);
+                    return RType::unknown();
                 }
                 let t = self.infer(expr, scope);
                 // Base R's `Math.data.frame`/`Ops.data.frame` apply unary
@@ -1705,6 +1729,9 @@ impl Checker {
                 }
                 if let Some(dispatched) = self.try_s3_unary_dispatch(*op, &t) {
                     return dispatched;
+                }
+                if matches!(op, UnaryOpKind::Neg) && t.class.contains("factor") {
+                    return self.infer_factor_arithmetic(&t, None, *span);
                 }
                 match op {
                     UnaryOpKind::Neg => {
@@ -1819,11 +1846,8 @@ impl Checker {
                 }
             }
             Expr::If {
-                cond,
-                then,
-                else_,
-                span,
-            } => self.infer_if_expr(cond, then, else_, *span, scope),
+                cond, then, else_, ..
+            } => self.infer_if_expr(cond, then, else_, scope),
             Expr::Unknown(_) => RType::unknown(),
         }
     }
@@ -1861,7 +1885,7 @@ impl Checker {
     }
 
     fn is_aliasable_function(&self, name: &str) -> bool {
-        matches!(name, "~" | "expression" | "vars")
+        crate::semantic_lists::is_quoting_form(name)
             || is_nse_symbol_fn(name)
             || self.resolve_typeshed_sig(name).is_some()
             || self

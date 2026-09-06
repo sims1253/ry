@@ -1,10 +1,14 @@
-//! Server settings models for the LSP settings channel (S2).
+//! Server settings models for the LSP settings channel.
 //!
 //! These types mirror ruff-vscode's settings shape: an array of
 //! per-folder settings plus a global fallback, all sent up-front in
 //! `initializationOptions`. The array shape lets Zed (which does not
 //! support `workspace/configuration` pull) receive full per-folder
 //! settings, while VS Code can additionally use the pull mechanism.
+//!
+//! Only settings the server acts on are modeled. The VS Code extension
+//! handles `path`, `importStrategy`, and `logLevel`; the server ignores
+//! unknown keys.
 
 use serde::{Deserialize, Serialize};
 
@@ -27,7 +31,7 @@ pub struct ServerSettings {
 ///
 /// Every field is `Option<T>` so that "unset" (fall back to `ry.toml`
 /// or built-in default) is distinguishable from "set to the default
-/// value". This is the precedence rule from the plan:
+/// value". This is the precedence rule:
 /// editor setting > `ry.toml` > built-in default.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -40,26 +44,18 @@ pub struct FolderSettings {
     pub min_confidence: Option<String>,
     /// Mirrors `--baseline`.
     pub baseline: Option<String>,
-    /// Mirrors the `ry.toml` key `check-test-fixtures`.
-    pub check_test_fixtures: Option<bool>,
-    /// Server tracing filter (S5).
-    pub log_level: Option<String>,
-    /// Whether ry is enabled (E3).
+    /// Whether ry is enabled for this folder. When `false`, the server
+    /// analyzes the folder neither in the background nor on demand: it
+    /// publishes no diagnostics and returns no inlay hints for it.
     pub enable: Option<bool>,
-    /// Ordered list of candidate binary paths (E2).
-    pub path: Option<Vec<String>>,
-    /// Binary import strategy: "fromEnvironment" or "useBundled" (E2).
-    pub import_strategy: Option<String>,
-    /// Add the resolved binary to the terminal PATH (E2).
-    pub add_executable_to_terminal_path: Option<bool>,
 }
 
 /// Lint-specific settings, matching ruff-vscode's `Lint` type.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct LintSettings {
-    /// Rules to select (replaces the default set). Not yet wired into
-    /// the checker's default-enable logic; reserved for future use.
+    /// Rules to select (replaces the default set). An explicitly empty
+    /// list selects nothing, disabling default-enabled rules.
     pub select: Option<Vec<String>>,
     /// Additional rules to enable on top of the defaults.
     pub extend_select: Option<Vec<String>>,

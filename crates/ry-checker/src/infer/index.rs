@@ -1,10 +1,27 @@
 use super::*;
+use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
+use std::ops::ControlFlow;
 
 fn atomic_mode(member: &RType) -> bool {
     matches!(
         member.mode,
         Mode::Integer | Mode::Double | Mode::Character | Mode::Logical | Mode::Complex | Mode::Raw
     ) && member.columns.is_none()
+}
+
+/// The conservative `$`/`[[` fallback when no schema resolves the access:
+/// for list-like bases return opaque since the element type is unknowable;
+/// for other types return a length-1 value of the base mode. A union base
+/// would build a malformed union, so it degrades to opaque.
+fn conservative_element_type(bt: &RType) -> RType {
+    if matches!(
+        bt.mode,
+        Mode::List | Mode::Opaque | Mode::Function | Mode::Union
+    ) {
+        RType::unknown()
+    } else {
+        RType::new(bt.mode, Length::One)
+    }
 }
 
 fn dollar_receiver_is_definitely_atomic(receiver: &RType) -> bool {
@@ -31,6 +48,20 @@ fn dollar_receiver_mode_description(receiver: &RType) -> String {
 }
 
 impl Checker {
+    /// Resolve the type of a subset/extract expression given the base
+    /// type, the kind of index (`[`, `[[`, `$`), and the (already
+    /// lowered) argument list.
+    ///
+    /// * `df$col` (`Dollar`): the column name lives on `args[0].name`.
+    ///   With a column schema, return that column's type (RY060 on a
+    ///   miss); without one, degrade conservatively: opaque for
+    ///   list-like bases, else a length-1 value of `bt`'s mode.
+    /// * `df[["col"]]` (`Double`): same idea, but the name comes from a
+    ///   string-literal positional argument. Non-string-literal args
+    ///   fall through to the conservative default.
+    /// * `df[i]` or `df[i, j]` (`Single`): two-index selection on a
+    ///   schema'd frame resolves the column's type (`drop = FALSE`
+    ///   yields a one-column frame); otherwise returns `bt`.
     pub(crate) fn infer_index(
         &mut self,
         bt: RType,
@@ -110,19 +141,9 @@ impl Checker {
                         }
                     }
                 }
-                // No schema (or column not found after RY060): for
-                // list-like types, return opaque since we don't know
-                // the element type. For other types, return a length-1
-                // value of the base mode. A union base would build a
-                // malformed union here, so degrade to opaque.
-                if matches!(
-                    bt.mode,
-                    Mode::List | Mode::Opaque | Mode::Function | Mode::Union
-                ) {
-                    RType::unknown()
-                } else {
-                    RType::new(bt.mode, Length::One)
-                }
+                // No schema (or column not found after RY060): the
+                // conservative default.
+                conservative_element_type(&bt)
             }
             IndexKind::Double => {
                 // `df[["col"]]` or `x[[i]]`: the index can be a string
@@ -143,13 +164,7 @@ impl Checker {
                             self.emit_undefined_column(name, schema, span);
                         }
                     }
-                    if matches!(
-                        bt.mode,
-                        Mode::List | Mode::Opaque | Mode::Function | Mode::Union
-                    ) {
-                        return RType::unknown();
-                    }
-                    return RType::new(bt.mode, Length::One);
+                    return conservative_element_type(&bt);
                 }
                 // Integer or double literal index: look up `[[N]]` in
                 // the schema. In R, `1` is a double, `1L` is an integer;
@@ -189,14 +204,7 @@ impl Checker {
                         }
                     }
                 }
-                if matches!(
-                    bt.mode,
-                    Mode::List | Mode::Opaque | Mode::Function | Mode::Union
-                ) {
-                    RType::unknown()
-                } else {
-                    RType::new(bt.mode, Length::One)
-                }
+                conservative_element_type(&bt)
             }
             IndexKind::Single => {
                 // `df[i, j]` selects a column when `j` is scalar and the
@@ -228,9 +236,7 @@ impl Checker {
                             .map(|(_, ty)| ty.clone()),
                         _ => None,
                     };
-                    for argument in args {
-                        self.infer(&argument.value, scope);
-                    }
+                    self.infer_args_for_diagnostics(args, scope);
                     if let Some(column) = column {
                         if !drop_false {
                             return column;
@@ -249,7 +255,7 @@ impl Checker {
                     }
                     // A scalar but dynamic column index still drops to a
                     // vector. Its mode and row count are not knowable.
-                    if !drop_false && is_non_negative_scalar_index(&column_arg.value, scope) {
+                    if !drop_false && is_non_negative_scalar_index(&column_arg.value) {
                         return RType::unknown();
                     }
                     return bt;
@@ -259,9 +265,7 @@ impl Checker {
                         Expr::String(column, _) => Some(column),
                         _ => None,
                     }) {
-                        for argument in args {
-                            self.infer(&argument.value, scope);
-                        }
+                        self.infer_args_for_diagnostics(args, scope);
                         if let Some(schema) = &bt.columns {
                             if let Some(column_type) = schema.get(column) {
                                 return column_type;
@@ -347,7 +351,7 @@ impl Checker {
 /// negative exclusion selector. Zero selects no elements under `[`, so only a
 /// syntactically positive numeric literal proves scalar result length. A
 /// scalar identifier has unknown sign and is therefore not sufficient.
-pub(crate) fn is_non_negative_scalar_index(expr: &Expr, _scope: &Scope) -> bool {
+pub(crate) fn is_non_negative_scalar_index(expr: &Expr) -> bool {
     match expr {
         Expr::Integer(index, _) => *index > 0,
         Expr::Double(index, _) => *index > 0.0,
@@ -407,15 +411,6 @@ fn literal_negative_exclusion_length(base: Length, expr: &Expr) -> Option<Length
     })
 }
 
-/// Apply a `SeverityFilter` to a vec of diagnostics in place. Each
-/// diagnostic's severity is replaced by the filter's effective
-/// severity for its code; diagnostics for codes the filter suppresses
-/// are dropped entirely.
-///
-/// Both `Checker::apply_filter`, `Project::apply_filter`, and the CLI
-/// (for per-file diagnostic vecs produced by `Project::check`) call
-/// this. Keeping the logic here avoids duplicating the resolution
-/// rules.
 /// Quick literal-only inference for function parameter defaults. We
 /// don't have a scope yet at the point of `record_fn`, but for typed
 /// defaults (`x = 1L`, `trim = 0`, `verbose = TRUE`) the literal
@@ -445,6 +440,15 @@ pub(crate) fn is_return_call(e: &Expr) -> bool {
 /// These are commonly user-defined or package-imported operators that
 /// the checker cannot resolve against any scope, typeshed, or FnTable.
 /// Used to suppress spurious RY010 (unbound variable) on such names.
+///
+/// This list deliberately covers a different set than
+/// [`crate::semantic_lists::OPERATORS`]: RY010 suppression wants every
+/// plain operator token (Logic, assignment, sequence, and access
+/// operators included), while operator S3 dispatch is modeled only for
+/// the Arith + Compare members (see [`is_operator_generic`]). The
+/// `%`-wrapped operators (`%%`, `%/%`, user-defined `%foo%`) are absent
+/// because the call site tests `contains('%')` before consulting this
+/// predicate, so the two lists must not be unified.
 pub(crate) fn is_operator_symbol(s: &str) -> bool {
     matches!(
         s,
@@ -492,49 +496,6 @@ pub(crate) fn span_of(e: &Expr) -> Span {
         Expr::If { span, .. } => *span,
         Expr::Unknown(s) => *s,
     }
-}
-
-/// Whether a condition expression is the idiomatic numeric-truthiness
-/// non-empty check: a direct call to `length`, `nrow`, or `ncol` via a bare
-/// identifier callee (any args). These return an integer length-1, which R
-/// silently coerces to logical in `if`/`while` -- but `if (length(x))` /
-/// `if (nrow(df))` are so idiomatic in real R code that the RY003 coercion
-/// info is pure noise there. We suppress ONLY that numeric-truthiness arm
-/// for this shape; a genuinely wrong condition (e.g. `if (1L)`) still emits
-/// the informational diagnostic.
-///
-/// Negation (`if (!length(x))`) is deliberately out of scope: it is typed
-/// through the unary `!` operator, not this call shape.
-pub(crate) fn is_numeric_truthiness_idiom(cond: &Expr, scope: &Scope) -> bool {
-    if let Expr::Call { func, args, .. } = cond {
-        if let Expr::Ident { name, .. } = func.as_ref() {
-            if matches!(name.as_str(), "length" | "nrow" | "ncol" | "NROW" | "NCOL") {
-                return true;
-            }
-            if name == "sum" {
-                return args.first().is_some_and(|argument| match &argument.value {
-                    Expr::Ident { name, .. } => scope
-                        .get(name)
-                        .is_some_and(|ty| matches!(ty.mode, Mode::Logical)),
-                    Expr::BinOp { op, .. } => matches!(
-                        op,
-                        BinOpKind::Lt
-                            | BinOpKind::Le
-                            | BinOpKind::Gt
-                            | BinOpKind::Ge
-                            | BinOpKind::Eq
-                            | BinOpKind::Ne
-                            | BinOpKind::In
-                    ),
-                    Expr::Call { func, .. } => {
-                        ident_name(func).is_some_and(|predicate| predicate.starts_with("is."))
-                    }
-                    _ => false,
-                });
-            }
-        }
-    }
-    false
 }
 
 /// RY040's missing-list-field case is intentionally limited to a complete
@@ -589,28 +550,57 @@ pub(crate) fn extract_literal_int(e: &Expr) -> Option<i64> {
 /// When these are called, the checker does NOT evaluate the arguments
 /// as variable references, preventing spurious RY010 warnings.
 ///
-/// Includes popular package functions commonly used in NSE contexts:
-///   * ggplot2: from_theme, aes, aes_, aes_string, aes_q
-///   * rlang: sym, expr, quo, and other helpers with symbol arguments
-///   * base: quote, substitute, bquote, alist (already in typeshed but also
-///     used as NSE)
+/// This is the FALLBACK half of the NSE knowledge. The stub-driven half
+/// is the per-signature `eval` metadata in the typeshed: a function
+/// whose stub declares `quoted_expression`, `captures_promise`,
+/// `quoted_symbol`, `data_mask`, or `tidy_select` parameters reaches
+/// that metadata only without an entry here — `is_nse_symbol_fn`
+/// intercepts before signature resolution and shadows the stub. Add a
+/// name here only when no stub declares its evaluation mode. The guard
+/// test `nse_symbol_fallback_does_not_overlap_stub_eval_modes` fails
+/// both when a member gains a stub `eval` entry AND when a member ships
+/// a stub without `eval` fields — an absent `eval` block is the stub's
+/// declaration of ordinary eager evaluation, not a blank to fill from
+/// this list.
+///
+/// A member must actually be NSE. rlang's `sym`, `abort`, `inform`,
+/// `new_formula`, and `new_quosure` were removed for evaluating their
+/// arguments eagerly (verified in R: `rlang::sym(undefined_name)` errors
+/// with "object not found"), so suppressing RY010 inside them hid real
+/// undefined-name bugs.
+///
+/// Stub coverage is genuinely absent for every member (issue #41):
+///   * base: `makeActiveBinding` has no stub.
+///   * rlang: `defuse` and `tidyeval_data` are unexported and ship no
+///     stub.
+///   * ggplot2 and data.table ship no stubs.
+///   * tidyselect's stub does not declare `peek_vars`. `all_vars` is
+///     not here: dplyr — the package it is called through — declares
+///     `expr: data_mask` for it.
+pub(crate) const NSE_SYMBOL_FNS: &[&str] = &[
+    // ggplot2 NSE
+    "from_theme",
+    "aes",
+    "aes_",
+    "aes_string",
+    "aes_q",
+    // rlang NSE
+    "defuse",
+    "tidyeval_data",
+    // tidyselect package functions
+    "peek_vars",
+    // base NSE helpers
+    "makeActiveBinding",
+    // data.table NSE
+    "setkey",
+    "setkeyv",
+    "setindex",
+    "setindexv",
+];
+
 pub(crate) fn is_nse_symbol_fn(name: &str) -> bool {
-    let name = name.rsplit_once("::").map(|(_, n)| n).unwrap_or(name);
-    matches!(
-        name,
-        // ggplot2 NSE
-        "from_theme" | "aes" | "aes_" | "aes_string" | "aes_q"
-        // rlang NSE
-        | "sym" | "expr" | "enexpr" | "ensym"
-        | "exprs" | "quo" | "quos" | "enquo" | "enquos" | "ensyms" | "abort" | "inform"
-        | "defuse" | "tidyeval_data" | "new_formula" | "new_quosure"
-        // dplyr/tidyselect NSE
-        | "tidyselect" | "all_vars" | "peek_vars"
-        // Common NSE helpers
-        | "quote" | "substitute" | "bquote" | "alist" | "delayedAssign" | "makeActiveBinding"
-        // data.table NSE
-        | "setkey" | "setkeyv" | "setindex" | "setindexv"
-    )
+    let name = crate::semantic_lists::bare_name(name);
+    NSE_SYMBOL_FNS.contains(&name)
 }
 
 pub(crate) fn is_dplyr_control_arg(name: &str) -> bool {
@@ -620,18 +610,24 @@ pub(crate) fn is_dplyr_control_arg(name: &str) -> bool {
     )
 }
 
+/// Whether `name` is an operator that ry models as an S3 generic, e.g. the
+/// `+` in `` `+.widget` ``. This is exactly the Arith + Compare operator
+/// set registered as [`crate::semantic_lists::OPERATORS`] and already used
+/// by the S3 method-name splitter, so the predicate reads that constant
+/// rather than restating the symbols; the two users cannot drift apart.
+///
+/// Membership is pinned to R's own Arith and Compare group definitions by
+/// the oracle test in `tests/semantic_lists.rs`. Logic and other operator
+/// tokens are deliberately outside the set: they are RY010-suppression
+/// operator symbols (see [`is_operator_symbol`]), not modeled generics.
 pub(crate) fn is_operator_generic(name: &str) -> bool {
-    matches!(
-        name,
-        "+" | "-" | "*" | "/" | "^" | "%%" | "%/%" | "==" | "!=" | "<" | "<=" | ">" | ">="
-    )
+    crate::semantic_lists::OPERATORS.contains(&name)
 }
 
 pub(crate) fn insert_s3_dispatch_context(method_name: &str, scope: &mut Scope, globals: &Globals) {
     let method_name = semantic_argument_name(method_name);
-    let group_method = split_s3_method_name(&method_name, globals).is_some_and(|(generic, _)| {
-        matches!(generic.as_str(), "Ops" | "Math" | "Summary" | "matrixOps")
-    });
+    let group_method = split_s3_method_name(method_name, globals)
+        .is_some_and(|(generic, _)| crate::semantic_lists::is_group_generic(&generic));
     if group_method {
         scope.insert(".Generic", RType::scalar(Mode::Character));
         scope.insert(".Method", RType::new(Mode::Character, Length::Unknown));
@@ -640,84 +636,150 @@ pub(crate) fn insert_s3_dispatch_context(method_name: &str, scope: &mut Scope, g
     }
 }
 
+/// Names assigned anywhere in a body, for closure-capture candidates.
+/// Enters assignment values, `if`/`for`/`while` statement bodies,
+/// braced-block values, and `if`-expression branches; records the names
+/// bound by plain assignments, `for` iterators, function definitions,
+/// and expression-position `<-`/`<<-`. Skips function bodies, control
+/// tests (`if`/`while` conditions, `for` iterators), the assignment
+/// target and `<-`/`<<-` left-operand subtrees (only the bound name is
+/// recorded -- R does not evaluate them), and every expression form
+/// except blocks, `if`, and assignment operators.
 pub(crate) fn assigned_names_in_body(body: &[Stmt]) -> HashSet<String> {
-    fn visit(statement: &Stmt, names: &mut HashSet<String>) {
-        match statement {
-            Stmt::Assign { target, value, .. } => {
-                if let Expr::Ident { name, .. } = target {
-                    names.insert(name.clone());
-                }
-                // A nested closure has its own locals; do not leak them into
-                // the enclosing closure's capture candidates.
-                if !matches!(value, Expr::Function { .. }) {
-                    visit_expr(value, names);
-                }
-            }
-            Stmt::If { then, else_, .. } => {
-                for statement in then {
-                    visit(statement, names);
-                }
-                if let Some(else_) = else_ {
-                    for statement in else_ {
-                        visit(statement, names);
+    let mut names = HashSet::new();
+    let _ = walk_stmts(
+        body,
+        Walk {
+            assign_targets: false,
+            assign_operands: false,
+            fn_bodies: false,
+            control_tests: false,
+            ..Walk::ALL
+        },
+        |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+            match node {
+                AstNode::Stmt(Stmt::Assign { target, .. }) => {
+                    if let Expr::Ident { name, .. } = target {
+                        names.insert(name.clone());
                     }
                 }
-            }
-            Stmt::For { name, body, .. } => {
-                names.insert(name.clone());
-                for statement in body {
-                    visit(statement, names);
-                }
-            }
-            Stmt::While { body, .. } => {
-                for statement in body {
-                    visit(statement, names);
-                }
-            }
-            Stmt::FunctionDef { name, .. } => {
-                if let Some(name) = name {
+                AstNode::Stmt(Stmt::For { name, .. }) => {
                     names.insert(name.clone());
                 }
-            }
-            Stmt::Expr(expr) => visit_expr(expr, names),
-            Stmt::Return { value, .. } => {
-                if let Some(value) = value {
-                    visit_expr(value, names);
+                AstNode::Expr(Expr::BinOp {
+                    op: BinOpKind::Assign | BinOpKind::SuperAssign,
+                    lhs,
+                    ..
+                }) => {
+                    if let Expr::Ident { name, .. } = lhs.as_ref() {
+                        names.insert(name.clone());
+                    }
                 }
+                // Blocks and `if` expressions carry further statements;
+                // the control_tests=false knob already prunes their
+                // conditions. Every other expression form cannot
+                // introduce names: calls, indexing, and literals only
+                // read, and only assignment operators bind from
+                // expression position.
+                AstNode::Expr(Expr::Block { .. } | Expr::If { .. }) => {}
+                AstNode::Expr(_) => return ControlFlow::Continue(Descend::Skip),
+                AstNode::Stmt(_) => {}
             }
-        }
-    }
-    fn visit_expr(expr: &Expr, names: &mut HashSet<String>) {
-        match expr {
-            Expr::BinOp {
-                op: BinOpKind::Assign | BinOpKind::SuperAssign,
-                lhs,
-                rhs,
+            ControlFlow::Continue(Descend::Into)
+        },
+    );
+    names
+}
+
+/// Pins the traversal shape of [`assigned_names_in_body`] to the
+/// hand-rolled walker it replaced: names bound inside braced-block
+/// values and `if`-expression branches are locals of the enclosing
+/// body (closure-capture and loop-carried-binding candidates), while
+/// control tests and unevaluated assignment targets stay pruned.
+#[cfg(test)]
+mod assigned_names_in_body_tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    /// The collection runs on a function body (its callers extract the
+    /// body from the literal first), so wrap the test source in one.
+    fn assigned(body_src: &str) -> HashSet<String> {
+        let src = format!("f <- function() {{\n{body_src}\n}}\n");
+        let file = crate::tests::parse_file("assigned_names_test.R", &src);
+        let [
+            Stmt::Assign {
+                value: Expr::Function { body, .. },
                 ..
-            } => {
-                if let Expr::Ident { name, .. } = lhs.as_ref() {
-                    names.insert(name.clone());
-                }
-                visit_expr(rhs, names);
-            }
-            Expr::Block { body, .. } => {
-                for statement in body {
-                    visit(statement, names);
-                }
-            }
-            Expr::If { then, else_, .. } => {
-                visit_expr(then, names);
-                if let Some(else_) = else_ {
-                    visit_expr(else_, names);
-                }
-            }
-            _ => {}
-        }
+            },
+        ] = file.stmts.as_slice()
+        else {
+            panic!("test source must be a single `f <- function()` assignment");
+        };
+        assigned_names_in_body(body)
     }
 
-    let mut names = HashSet::new();
-    for statement in body {
-        visit(statement, &mut names);
+    fn assert_exact(body_src: &str, expected: &[&str]) {
+        let found = assigned(body_src);
+        let expected: HashSet<String> = expected.iter().map(|name| name.to_string()).collect();
+        assert_eq!(found, expected, "names from body `{body_src}`");
     }
-    names
+
+    /// A braced-block value carries statements, so `x` is assigned in
+    /// the enclosing body. A wildcard `Expr(_) => Skip` callback arm
+    /// pruned it -- the review blocker this pins.
+    #[test]
+    fn records_names_assigned_inside_braced_block_values() {
+        assert_exact("out <- { x <- 1; out }", &["out", "x"]);
+    }
+
+    /// `if` in expression position evaluates both branches in the
+    /// current environment, so bindings in either branch are locals.
+    #[test]
+    fn records_names_assigned_inside_if_expression_branches() {
+        assert_exact("res <- if (c) a else { b <- 1 }", &["res", "b"]);
+    }
+
+    /// Negative controls: the `for` iterator is a control test and the
+    /// `if`-expression condition is not walked, so assignments nested
+    /// there are not recorded even though R evaluates the test.
+    #[test]
+    fn does_not_record_control_test_assignments() {
+        assert_exact("for (i in g(a <- 1)) print(i)", &["i"]);
+        assert_exact("res <- if (mk(w <- 1)) a else b", &["res"]);
+    }
+
+    /// Names bound through `<-`/`<<-` in expression position are
+    /// recorded, but the left operand subtree is not walked (only the
+    /// bound identifier is recorded, matching R's unevaluated target).
+    #[test]
+    fn records_expression_position_assignment_names_without_walking_lhs() {
+        assert_exact("z <- (y <- f(x <- 1))", &["z", "y"]);
+    }
+}
+
+#[cfg(test)]
+mod operator_generic_tests {
+    use super::is_operator_generic;
+
+    /// The negative samples pin `is_operator_generic` to the Arith +
+    /// Compare members of `semantic_lists::OPERATORS` (which the
+    /// predicate reads directly, so the positive direction is a
+    /// containment check against itself): Logic, assignment,
+    /// sequence, and access operators are operator symbols for RY010
+    /// suppression but never operator generics, `%in%` is a
+    /// function-backed infix operator outside both dispatch groups,
+    /// and a full method name like `+.foo` is split before this
+    /// predicate runs. Reinstating a separate hardcoded symbol set
+    /// here fails this test.
+    #[test]
+    fn non_dispatch_operators_are_not_operator_generics() {
+        for non_generic in [
+            "&", "|", "&&", "||", "!", ":", "<-", "<<-", "=", "~", "$", "@", "?", "%in%", "+.foo",
+        ] {
+            assert!(
+                !is_operator_generic(non_generic),
+                "{non_generic:?} is not an Arith/Compare operator and must not be recognized"
+            );
+        }
+    }
 }

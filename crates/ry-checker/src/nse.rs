@@ -14,7 +14,6 @@ impl Checker {
         name: &str,
         args: &[Arg],
         scope: &mut Scope,
-        span: Span,
     ) -> Option<RType> {
         let sig = self.resolve_schema_sig(name)?;
         let effect = sig.schema_effect?;
@@ -30,7 +29,7 @@ impl Checker {
                     .skip(1)
                     .map(|argument| self.infer(&argument.value, scope)),
             );
-            return Some(self.infer_dplyr_join(&arg_types));
+            return Some(infer_dplyr_join(&arg_types));
         }
 
         let mut local = self.dplyr_data_mask_scope(scope, &data_type);
@@ -41,29 +40,30 @@ impl Checker {
         let mut tidy_args = Vec::new();
         for (index, argument) in args.iter().enumerate().skip(1) {
             let mode = argument_eval_mode(&sig, args, index).unwrap_or(EvalMode::Normal);
+            let injection = argument_supports_injection(&sig, args, index);
             let inferred = match mode {
                 EvalMode::Normal => self.infer(&argument.value, scope),
                 EvalMode::DataMask => {
                     local.insert(".", RType::unknown());
-                    self.infer(&argument.value, &mut local)
+                    self.infer_with_injection(&argument.value, &mut local, injection)
                 }
                 EvalMode::TidySelect => {
                     tidy_args.push(&argument.value);
-                    self.infer_tidyselect_expr(&argument.value, &mut local)
+                    self.infer_tidyselect_expr(&argument.value, &mut local, injection)
                 }
                 EvalMode::QuotedSymbol => {
                     if matches!(argument.value, Expr::Ident { .. }) {
                         RType::unknown()
                     } else {
-                        self.infer(&argument.value, &mut local)
+                        self.infer_with_injection(&argument.value, &mut local, injection)
                     }
                 }
                 EvalMode::QuotedExpression | EvalMode::CapturesPromise => RType::unknown(),
             };
             if let Some(raw_name) = argument.name.as_deref() {
                 let column = semantic_argument_name(raw_name);
-                if !is_dplyr_control_arg(&column) {
-                    local.insert(column.clone(), inferred.clone());
+                if !is_dplyr_control_arg(column) {
+                    local.insert(column, inferred.clone());
                     local.insert(
                         format!("{DATA_MASK_COLUMN_PREFIX}{column}"),
                         RType::unknown(),
@@ -79,14 +79,14 @@ impl Checker {
             SchemaEffect::AddNamedArgs => named_results
                 .into_iter()
                 .fold(data_type, |result, (name, ty)| {
-                    type_with_assigned_column(result, &name, ty)
+                    type_with_assigned_column(result, name, ty)
                 }),
-            SchemaEffect::Select => self.schema_selected_type(data_type, &tidy_args),
+            SchemaEffect::Select => schema_selected_type(data_type, &tidy_args),
             SchemaEffect::Aggregate => {
                 let mut result = RType::new(Mode::List, Length::One)
                     .with_class(ClassVector::single("data.frame"));
                 for (name, ty) in named_results {
-                    result = type_with_assigned_column(result, &name, ty);
+                    result = type_with_assigned_column(result, name, ty);
                 }
                 result
             }
@@ -97,89 +97,18 @@ impl Checker {
             SchemaEffect::Pivot => RType::new(Mode::List, Length::Unknown)
                 .with_class(ClassVector::single("data.frame")),
         };
-        let _ = span;
         Some(result)
     }
 
-    fn schema_selected_type(&self, mut data_type: RType, args: &[&Expr]) -> RType {
-        if args.is_empty() {
-            return data_type;
-        }
-        let Some(schema) = data_type.columns.as_ref() else {
-            return data_type;
-        };
-        let mut includes = Vec::new();
-        let mut excludes = Vec::new();
-        for expr in args {
-            if !collect_tidy_selection(expr, false, &mut includes, &mut excludes) {
-                return data_type;
-            }
-        }
-        let columns = if includes.is_empty() {
-            schema
-                .columns
-                .iter()
-                .filter(|(name, _)| !excludes.contains(name))
-                .cloned()
-                .collect()
-        } else {
-            includes
-                .iter()
-                .filter(|name| !excludes.contains(name))
-                .filter_map(|name| {
-                    schema
-                        .columns
-                        .iter()
-                        .find(|(existing, _)| existing == name)
-                        .cloned()
-                })
-                .collect()
-        };
-        data_type.columns = Some(Arc::new(ColumnSchema {
-            columns,
-            complete: schema.complete,
-            locally_constructed: false,
-        }));
-        data_type
-    }
-
-    pub(crate) fn infer_dplyr_join(&self, arg_types: &[RType]) -> RType {
-        let x_type = arg_types.first().cloned().unwrap_or_else(RType::unknown);
-        let y_type = arg_types.get(1).cloned().unwrap_or_else(RType::unknown);
-        let mut result =
-            RType::new(Mode::List, Length::Unknown).with_class(ClassVector::single("data.frame"));
-
-        let mut columns = Vec::new();
-        let mut complete = true;
-        if let Some(schema) = &x_type.columns {
-            columns.extend(schema.columns.iter().cloned());
-            complete &= schema.complete;
-        } else {
-            complete = false;
-        }
-        if let Some(schema) = &y_type.columns {
-            for (name, ty) in &schema.columns {
-                if !columns.iter().any(|(existing, _)| existing == name) {
-                    columns.push((name.clone(), ty.clone()));
-                }
-            }
-            complete &= schema.complete;
-        } else {
-            complete = false;
-        }
-
-        if !columns.is_empty() {
-            result = result.with_columns(Arc::new(ColumnSchema {
-                columns,
-                complete,
-                locally_constructed: false,
-            }));
-        }
-        result
-    }
-
-    pub(crate) fn infer_tidyselect_expr(&mut self, expr: &Expr, scope: &mut Scope) -> RType {
-        match expr {
+    pub(crate) fn infer_tidyselect_expr(
+        &mut self,
+        expr: &Expr,
+        scope: &mut Scope,
+        injection: Option<InjectionMode>,
+    ) -> RType {
+        let previous = scope.tidy_injection;
+        scope.tidy_injection = injection.max(previous);
+        let result = match expr {
             Expr::String(_, _) => RType::scalar(Mode::Character),
             Expr::Ident { name, .. } => scope.get(name).cloned().unwrap_or_else(RType::unknown),
             Expr::UnaryOp {
@@ -187,34 +116,22 @@ impl Checker {
                 expr,
                 ..
             } => {
-                let _ = self.infer_tidyselect_expr(expr, scope);
+                let _ = self.infer_tidyselect_expr(expr, scope, None);
                 RType::unknown()
             }
             Expr::Call { func, args, .. }
-                if ident_name(func).is_some_and(|name| {
-                    name.rsplit_once("::").map(|(_, n)| n).unwrap_or(name) == "c"
-                }) =>
+                if ident_name(func)
+                    .is_some_and(|name| crate::semantic_lists::bare_name(name) == "c") =>
             {
                 for a in args {
-                    let _ = self.infer_tidyselect_expr(&a.value, scope);
+                    let _ = self.infer_tidyselect_expr(&a.value, scope, None);
                 }
                 RType::unknown()
             }
             _ => self.infer(expr, scope),
-        }
-    }
-
-    pub(crate) fn scope_with_columns(
-        &self,
-        base_scope: &Scope,
-        schema: &Arc<ColumnSchema>,
-    ) -> Scope {
-        let mut scope = base_scope.clone();
-        for (name, ty) in &schema.columns {
-            scope.insert(name.clone(), ty.clone());
-            scope.insert(format!("{DATA_MASK_COLUMN_PREFIX}{name}"), RType::unknown());
-        }
-        scope
+        };
+        scope.tidy_injection = previous;
+        result
     }
 
     pub(crate) fn dplyr_data_mask_scope(&self, base_scope: &Scope, df_type: &RType) -> Scope {
@@ -227,7 +144,7 @@ impl Checker {
             .map(|(name, ty)| (name.clone(), ty.clone()))
             .collect();
         let mut scope = match &df_type.columns {
-            Some(schema) => self.scope_with_columns(base_scope, schema),
+            Some(schema) => scope_with_columns(base_scope, schema),
             None => base_scope.clone(),
         };
         scope.insert(DATA_MASK_ACTIVE, RType::unknown());
@@ -251,6 +168,92 @@ impl Checker {
     }
 }
 
+fn schema_selected_type(mut data_type: RType, args: &[&Expr]) -> RType {
+    if args.is_empty() {
+        return data_type;
+    }
+    let Some(schema) = data_type.columns.as_ref() else {
+        return data_type;
+    };
+    let mut includes = Vec::new();
+    let mut excludes = Vec::new();
+    for expr in args {
+        if !collect_tidy_selection(expr, false, &mut includes, &mut excludes) {
+            return data_type;
+        }
+    }
+    let columns = if includes.is_empty() {
+        schema
+            .columns
+            .iter()
+            .filter(|(name, _)| !excludes.contains(name))
+            .cloned()
+            .collect()
+    } else {
+        includes
+            .iter()
+            .filter(|name| !excludes.contains(name))
+            .filter_map(|name| {
+                schema
+                    .columns
+                    .iter()
+                    .find(|(existing, _)| existing == name)
+                    .cloned()
+            })
+            .collect()
+    };
+    data_type.columns = Some(Arc::new(ColumnSchema {
+        columns,
+        complete: schema.complete,
+        locally_constructed: false,
+    }));
+    data_type
+}
+
+fn infer_dplyr_join(arg_types: &[RType]) -> RType {
+    let x_type = arg_types.first().cloned().unwrap_or_else(RType::unknown);
+    let y_type = arg_types.get(1).cloned().unwrap_or_else(RType::unknown);
+    let mut result =
+        RType::new(Mode::List, Length::Unknown).with_class(ClassVector::single("data.frame"));
+
+    let mut columns = Vec::new();
+    let mut complete = true;
+    if let Some(schema) = &x_type.columns {
+        columns.extend(schema.columns.iter().cloned());
+        complete &= schema.complete;
+    } else {
+        complete = false;
+    }
+    if let Some(schema) = &y_type.columns {
+        for (name, ty) in &schema.columns {
+            if !columns.iter().any(|(existing, _)| existing == name) {
+                columns.push((name.clone(), ty.clone()));
+            }
+        }
+        complete &= schema.complete;
+    } else {
+        complete = false;
+    }
+
+    if !columns.is_empty() {
+        result = result.with_columns(Arc::new(ColumnSchema {
+            columns,
+            complete,
+            locally_constructed: false,
+        }));
+    }
+    result
+}
+
+fn scope_with_columns(base_scope: &Scope, schema: &Arc<ColumnSchema>) -> Scope {
+    let mut scope = base_scope.clone();
+    for (name, ty) in &schema.columns {
+        scope.insert(name.clone(), ty.clone());
+        scope.insert(format!("{DATA_MASK_COLUMN_PREFIX}{name}"), RType::unknown());
+    }
+    scope
+}
+
 fn collect_tidy_selection(
     expr: &Expr,
     excluded: bool,
@@ -272,9 +275,8 @@ fn collect_tidy_selection(
             ..
         } => collect_tidy_selection(expr, true, includes, excludes),
         Expr::Call { func, args, .. }
-            if ident_name(func).is_some_and(|name| {
-                name.rsplit_once("::").map(|(_, bare)| bare).unwrap_or(name) == "c"
-            }) =>
+            if ident_name(func)
+                .is_some_and(|name| crate::semantic_lists::bare_name(name) == "c") =>
         {
             args.iter()
                 .all(|arg| collect_tidy_selection(&arg.value, excluded, includes, excludes))

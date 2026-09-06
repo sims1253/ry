@@ -5,11 +5,11 @@ src/**
 out/**
 node_modules/**
 test/**
-testFixture/**
 
 # Build tooling and configs are not needed at runtime.
 esbuild.js
-tsconfig.json
+.oxlintrc.json
+tsconfig*.json
 justfile
 .gitignore
 bun.lock

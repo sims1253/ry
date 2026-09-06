@@ -3,28 +3,45 @@
 Each ledger pins the *identities* (package, rule code, path, line, column) of
 every diagnostic `ry` emitted on an audited package corpus, together with the
 independent classification (`true_positive` / `false_positive` / `uncertain`)
-and a `workstream` label. Pinning identities — not aggregate counts — means
+and an `audit_group` label. Pinning identities — not aggregate counts — means
 removing one finding can never be silently mistaken for removing another.
+
+The `audit_group` field groups reviewed findings by how the audit explained
+each label. `posit-0.9.0.json` has 12 groups; most name a cause
+(`type-narrowing`, `test-fixture`), one an owner (`upstream-package`), and
+the largest, `manual-audit` (378 of 709 findings), is the manually
+classified batch. `tidyverse-0.7.1.json` has 17 groups: 16 are batch ids
+(`P2`, `P3a`, `plan-32-33`, `pr195-nse-stubs`), kept verbatim because the
+planning records that defined them were local-only and no longer exist;
+the other, `upstream-ggplot2`, names the upstream package.
 
 | Ledger | `ry` | Packages | Diagnostics | TP / FP / Unc | Reconciliation |
 | :-- | :-- | :-- | ---: | :-- | :-- |
-| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.7.1 | 24 | 100 | 4 / 96 / 0 | hermetic (strict CI gate) |
-| [`posit-0.8.0.json`](posit-0.8.0.json) | 0.8.0 | 62 | 1142 | 34 / 1108 / 0 | audit-transcript (historical) |
-| [`posit-plan34-baseline.json`](posit-plan34-baseline.json) | pre-0.9 | 62 | 729 | 37 / 692 / 0 | hermetic (measured starting tree) |
-| [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 728 | 37 / 691 / 0 | hermetic (strict CI gate) |
+| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.7.1 | 24 | 157 | 10 / 91 / 0 (+56 unowned) | hermetic (strict CI gate) |
+| [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 709 | 43 / 666 / 0 | hermetic (strict CI gate) |
 
+Two historical ledgers were removed as generated artifacts: the 0.8.0
+audit transcript (1,142 identities, reconciliation `audit-transcript`) and
+the pre-change baseline (729 identities, hermetic, measured on the
+audited starting tree). Neither gated CI; both are re-derivable from the
+audit records summarized in [`pre-governance-measurement.md`](pre-governance-measurement.md).
+
+## Instruction counts
+
+The [instruction baseline](instructions-baseline.json) records the fixed performance
+sample. See the [measurement guide](instructions.md) for local runs and CI deltas.
 
 ## Parser invariant evidence
 
 [`parser-option-audit-0.9.md`](parser-option-audit-0.9.md) records the complete
-P35-W4 audit of parser `?`, `.ok()?`, and `None` propagation. Its executable R1
+parser-option audit of `?`, `.ok()?`, and `None` propagation. Its executable R1
 and R6 gates live in `crates/ry-checker/tests/invariants.rs` and cover all
 checker fixtures plus a deterministic sample of the vendored ecosystem sources.
 
 ## Readable message ledger
 
 [`posit-messages-0.9.json`](posit-messages-0.9.json) records the message and
-severity for all 728 reviewed Posit diagnostics. It previously also carried an
+severity for all 709 reviewed Posit diagnostics. It previously also carried an
 optional structured fix; the autofix machinery was removed before 0.9.0 (see
 issue #89), so those payloads are gone.
 Each entry is keyed by the same stable `(package, code, path, line, column)`
@@ -34,7 +51,7 @@ digest or an ignored `.full.txt` report.
 `ecosystem/run.sh` regenerates this companion from the production
 `ry check --output-format json` results. Posit `--check` runs compare the
 processed tier against the committed entries and print a unified diff for any
-message or replacement drift. A full non-check run updates all entries.
+message or severity drift. A full non-check run updates all entries.
 
 ## Reconciliation modes
 
@@ -42,54 +59,34 @@ message or replacement drift. A full non-check run updates all entries.
 (`RY_NO_INSTALLED_LIBRARIES=1`) against a ledger. The ledger's `reconciliation`
 field selects how a delta is treated:
 
-- **`hermetic`** (default when absent; the tidyverse ledger). The ledger *is*
+> Reproducing reports outside `run.sh` requires the same variable: without
+> `RY_NO_INSTALLED_LIBRARIES=1` the checker consults the machine's installed R
+> packages and produces different findings, so a hand-run diff against the
+> committed reports will show phantom rows.
+
+- **`hermetic`** (default when absent; every committed ledger). The ledger *is*
   the hermetic CI baseline: any missing or unowned identity fails the build.
-- **`audit-transcript`** (the posit ledger). The ledger was transcribed from an
-  *installed-library* audit run, so a hermetic rerun legitimately differs. The
-  missing/unowned delta is printed for visibility but does **not** gate the
-  build; re-audit and regenerate the ledger to update it.
+- **`audit-transcript`** (no committed ledger uses it today; previously the
+  removed 0.8.0 posit ledger). A ledger transcribed from an *installed-library*
+  audit run legitimately differs under a hermetic rerun, so the missing/unowned
+  delta is printed for visibility but does not gate the build. The mode is kept
+  and exercised by `ecosystem/test-reconciliation.R` in case a future corpus is
+  transcribed from an audit rather than measured hermetically.
 
-In both modes, findings labelled `true_positive` are checked explicitly so a
+In both modes, findings labeled `true_positive` are checked explicitly so a
 real bug disappearing is always surfaced.
-
-## Regenerating the posit ledger
-
-The posit ledger is generated — never hand-written — from the audit working
-directory, so the 1,142 identities and the 34/1108 classification are re-derived
-from the audited artefacts every time. The generator lives with the audit data
-(`ry-audits/posit-corpus/transcribe-corpus.R`) and is deliberately not vendored
-here: it reads a private audit checkout, and this repo carries only the
-resulting ledger.
-
-```sh
-# from the audit checkout
-Rscript transcribe-corpus.R --ry-repo /path/to/ry           # write docs/corpus/posit-0.8.0.json
-Rscript transcribe-corpus.R --ry-repo /path/to/ry --check   # assert the committed file matches
-```
-
-`--ry-repo` defaults to `$RY_REPO`, else the `ry` directory next to the audits
-root, so a sibling checkout needs no arguments.
-
-The script reads `packages.json`, `aggregate.json` and, per package,
-`audit-results/<slug>/{ry-stdout.json,summary.json,git_commit}`. It joins every
-`ry` diagnostic to its classification on (code, path, line, message) and
-**asserts the invariants** before writing: the 62 pinned package slugs, 1,142
-diagnostics, and exactly 34 true positives / 1,108 false positives / 0
-uncertain, with no orphan diagnostics and no conflicting labels (so no package
-is ever silently skipped). `--check` compares the complete regenerated corpus
-against the committed file byte for byte.
-
-The tidyverse ledger has no generator in this repo either.
 
 ## The moving 0.9 ledger
 
-Plan 34 rebuilt `ry` from the audited starting commit and generated hermetic
-message-free root reports for all 62 pinned packages. The complete pre-change
-measurement is retained in `posit-plan34-baseline.json`; after the RY032 cleanup
-produced a zero identity delta, that exact full run seeded `posit-0.9.0.json`.
-Unlike the historical 0.8 audit transcript, the 0.9 ledger is a strict gate.
+The audit response rebuilt `ry` from the audited starting commit, generated hermetic
+message-free root reports for all 62 pinned packages, and measured the
+pre-change baseline (see [`pre-governance-measurement.md`](pre-governance-measurement.md);
+the intermediate snapshot itself was removed as a generated artifact). After
+the RY032 cleanup produced a zero identity delta, that exact full run seeded
+`posit-0.9.0.json`, which — unlike those removed historical snapshots — is a
+strict gate.
 
-Plans 35 and 36 may change diagnostics intentionally. Any such change must
+Checker and LSP changes may alter diagnostics intentionally. Any such change must
 regenerate the reports, update `posit-0.9.0.json` in the same change, preserve
 or manually review every new identity's label, and explain all missing/unowned
 identities. Never weaken `reconciliation: hermetic` to accept a delta.

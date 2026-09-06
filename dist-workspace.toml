@@ -20,6 +20,8 @@ precise-builds = true
 auto-includes = false
 pr-run-mode = "skip"
 dispatch-releases = true
+# Sidecars join the same release upload after every local archive is built.
+global-artifacts-jobs = ["./binary-checksums"]
 install-path = ["$XDG_BIN_HOME/", "$XDG_DATA_HOME/../bin", "~/.local/bin"]
 install-updater = false
 
@@ -38,4 +40,15 @@ runner = "windows-2022"
 [dist.github-custom-runners.aarch64-pc-windows-msvc]
 runner = "ubuntu-latest"
 host = "x86_64-unknown-linux-gnu"
-container = { image = "messense/cargo-xwin", host = "x86_64-unknown-linux-musl", package_manager = "apt" }
+# Digest-pinned so a retag of cargo-xwin can't reach the release build
+# (zizmor: unpinned-images; release.yml only sees the runtime plan matrix).
+# To update: resolve the new digest and re-run `dist generate`.
+container = { image = "messense/cargo-xwin@sha256:9856b895265d4966f212228ba64802cf89337e2a2a537aa2533c1b8784cbc81b", host = "x86_64-unknown-linux-musl", package_manager = "apt" }
+
+# Pin the GitHub Actions dist references in the generated release.yml to
+# immutable commit SHAs (zizmor: unpinned-uses). Update by changing the SHA
+# and re-running `dist generate` (the dist-check CI job enforces byte-match).
+[dist.github-action-commits]
+"actions/checkout" = "3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
+"actions/upload-artifact" = "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
+"actions/download-artifact" = "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" # v8.0.1

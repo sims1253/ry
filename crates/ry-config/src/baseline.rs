@@ -1,8 +1,5 @@
 //! Baseline and severity-filter helpers shared between the CLI and the
 //! LSP server.
-//!
-//! These types were previously embedded in `ry-cli`'s `main.rs` where
-//! they were unreachable from the language server.
 
 use miette::{IntoDiagnostic, Result};
 use ry_core::BaselineDiagnostic;
@@ -10,15 +7,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
-// `build_filter` and `filter_from_config` moved to `ry-checker` (P38-W3).
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Baseline {
     pub version: u32,
     pub entries: Vec<BaselineEntry>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BaselineEntry {
     pub path: String,
     pub code: String,
@@ -43,11 +38,9 @@ pub fn load_baseline(path: &Path) -> Result<Baseline> {
 
 pub fn diagnostic_path(path: &str, repo_root: Option<&Path>) -> String {
     let path = Path::new(path);
-    let root = repo_root
-        .map(std::path::Path::to_path_buf)
-        .or_else(|| std::env::current_dir().ok());
-    root.as_deref()
-        .and_then(|root| path.strip_prefix(root).ok())
+    let current_dir = std::env::current_dir().ok();
+    let root = repo_root.or(current_dir.as_deref());
+    root.and_then(|root| path.strip_prefix(root).ok())
         .unwrap_or(path)
         .to_string_lossy()
         .replace(std::path::MAIN_SEPARATOR, "/")
@@ -126,28 +119,36 @@ pub fn subtract_baseline<D: BaselineDiagnostic>(
 mod tests {
     use super::*;
 
+    /// Minimal `BaselineDiagnostic` carrier; baseline logic keys on
+    /// (path, code, message) only, so spans are unnecessary here.
+    struct TestDiag {
+        path: String,
+        code: String,
+        message: String,
+    }
+
+    impl BaselineDiagnostic for TestDiag {
+        fn path(&self) -> &str {
+            &self.path
+        }
+        fn code(&self) -> &str {
+            &self.code
+        }
+        fn message(&self) -> &str {
+            &self.message
+        }
+    }
+
+    fn diag(path: &str, code: &str) -> TestDiag {
+        TestDiag {
+            path: path.to_string(),
+            code: code.to_string(),
+            message: "same message".to_string(),
+        }
+    }
+
     #[test]
     fn baseline_subtract_removes_matching_entries() {
-        use ry_core::BaselineDiagnostic;
-
-        struct TestDiag {
-            path: String,
-            code: String,
-            message: String,
-        }
-
-        impl BaselineDiagnostic for TestDiag {
-            fn path(&self) -> &str {
-                &self.path
-            }
-            fn code(&self) -> &str {
-                &self.code
-            }
-            fn message(&self) -> &str {
-                &self.message
-            }
-        }
-
         let baseline = Baseline {
             version: 1,
             entries: vec![BaselineEntry {
@@ -166,5 +167,38 @@ mod tests {
 
         subtract_baseline(&mut diags, &baseline, None);
         assert!(diags.is_empty(), "baseline should remove the diagnostic");
+    }
+
+    #[test]
+    fn baseline_round_trip_suppresses_existing_but_not_new_diagnostics() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("baseline.json");
+        let existing = diag("a.R", "RY010");
+        write_baseline_file(&path, std::slice::from_ref(&existing), Some(temp.path())).unwrap();
+        let baseline = load_baseline(&path).unwrap();
+        let mut diagnostics = vec![existing, diag("a.R", "RY030")];
+        subtract_baseline(&mut diagnostics, &baseline, Some(temp.path()));
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, "RY030");
+    }
+
+    #[test]
+    fn baseline_counts_absorb_only_the_recorded_occurrences() {
+        let baseline = Baseline {
+            version: 1,
+            entries: vec![BaselineEntry {
+                path: "a.R".to_string(),
+                code: "RY010".to_string(),
+                message: "same message".to_string(),
+                count: 2,
+            }],
+        };
+        let mut diagnostics = vec![
+            diag("a.R", "RY010"),
+            diag("a.R", "RY010"),
+            diag("a.R", "RY010"),
+        ];
+        subtract_baseline(&mut diagnostics, &baseline, None);
+        assert_eq!(diagnostics.len(), 1);
     }
 }

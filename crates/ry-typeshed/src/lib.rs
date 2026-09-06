@@ -94,8 +94,13 @@ pub enum DefaultCurrentScope {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ReturnLengthSpec {
+    /// A vector size supplied as a numeric value, rather than a vector length.
+    ParamValue {
+        param: String,
+        default_length: usize,
+    },
     /// An exact zero fact only: all nonzero outcomes remain unknown.
     ZeroIfAnyParamZero {
         params: Vec<String>,
@@ -109,25 +114,31 @@ pub struct RecycledValuesLengthSpec {
     pub value_params: Vec<String>,
     pub control_params: Vec<String>,
     pub all_values_zero: String,
-    pub collapse: RecycledLengthControl,
-    pub recycle0: RecycledLengthControl,
+    pub collapse: CollapseLengthControl,
+    pub recycle0: RecycleZeroLengthControl,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct RecycledLengthControl {
+pub struct CollapseLengthControl {
     pub param: String,
     pub when: String,
-    #[serde(default)]
-    pub length: Option<String>,
-    #[serde(default)]
-    pub any_value_zero: Option<String>,
+    pub length: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecycleZeroLengthControl {
+    pub param: String,
+    pub when: String,
+    pub any_value_zero: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CallbackArg {
     ElementOfArg0,
+    ElementsOfArg0,
     ElementOfArg1,
     Unknown,
     AccumulatorAndElement,
@@ -225,16 +236,10 @@ impl JsonLength {
             "test" => Self::Test,
             "unknown" => Self::Unknown,
             value => {
-                const KNOWN: &[usize] = &[
-                    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 15, 19, 20, 21, 24, 26, 30, 31, 32, 35,
-                    39, 43, 47, 48, 49, 50, 54, 60, 64, 66, 70, 71, 72, 84, 88, 98, 100, 132, 141,
-                    150, 153, 176, 240, 248, 272, 289, 468, 578, 1000, 2820,
-                ];
-                let parsed = value.parse().ok()?;
-                if !KNOWN.contains(&parsed) {
+                if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
                     return None;
                 }
-                Self::Known(parsed)
+                Self::Known(value.parse().ok()?)
             }
         })
     }
@@ -261,6 +266,8 @@ pub struct HigherOrderResult {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct HigherOrderSpec {
+    #[serde(default)]
+    pub callback_return_mode: Option<String>,
     pub callback_param: String,
     pub callback_position: usize,
     pub callback_args: Vec<CallbackArg>,
@@ -268,192 +275,83 @@ pub struct HigherOrderSpec {
 }
 
 pub const SOURCE: &str = include_str!("../vendor/SOURCE");
-pub const BASE_JSON: &str = include_str!("../vendor/base/base.json");
-pub const DPLYR_JSON: &str = include_str!("../vendor/dplyr/dplyr.json");
-pub const DBPLYR_JSON: &str = include_str!("../vendor/dbplyr/dbplyr.json");
-pub const TIDYR_JSON: &str = include_str!("../vendor/tidyr/tidyr.json");
-pub const TIDYSELECT_JSON: &str = include_str!("../vendor/tidyselect/tidyselect.json");
-pub const TESTTHAT_JSON: &str = include_str!("../vendor/testthat/testthat.json");
-pub const TINYTEST_JSON: &str = include_str!("../vendor/tinytest/tinytest.json");
-pub const RCPP_JSON: &str = include_str!("../vendor/rcpp/Rcpp.json");
-pub const PURRR_JSON: &str = include_str!("../vendor/purrr/purrr.json");
-pub const IGRAPH_JSON: &str = include_str!("../vendor/igraph/igraph.json");
-pub const RECIPES_JSON: &str = include_str!("../vendor/recipes/recipes.json");
-pub const BENCH_JSON: &str = include_str!("../vendor/bench/bench.json");
-pub const BOX_JSON: &str = include_str!("../vendor/box/box.json");
-pub const PATRICK_JSON: &str = include_str!("../vendor/patrick/patrick.json");
-pub const REX_JSON: &str = include_str!("../vendor/rex/rex.json");
-pub const RLIST_JSON: &str = include_str!("../vendor/rlist/rlist.json");
-pub const MIRAI_JSON: &str = include_str!("../vendor/mirai/mirai.json");
-pub const SURVIVAL_JSON: &str = include_str!("../vendor/survival/survival.json");
-pub const BRMS_JSON: &str = include_str!("../vendor/brms/brms.json");
-pub const POSTERIOR_JSON: &str = include_str!("../vendor/posterior/posterior.json");
-pub const LOO_JSON: &str = include_str!("../vendor/loo/loo.json");
-pub const BAYESPLOT_JSON: &str = include_str!("../vendor/bayesplot/bayesplot.json");
-pub const CMDSTANR_JSON: &str = include_str!("../vendor/cmdstanr/cmdstanr.json");
-pub const ZEALLOT_JSON: &str = include_str!("../vendor/zeallot/zeallot.json");
-pub const FUTURE_JSON: &str = include_str!("../vendor/future/future.json");
-pub const FOREACH_JSON: &str = include_str!("../vendor/foreach/foreach.json");
-pub const SHINY_JSON: &str = include_str!("../vendor/shiny/shiny.json");
-pub const WITHR_JSON: &str = include_str!("../vendor/withr/withr.json");
-pub const R6_JSON: &str = include_str!("../vendor/R6/R6.json");
-pub const S7_JSON: &str = include_str!("../vendor/s7/S7.json");
-pub const RLANG_JSON: &str = include_str!("../vendor/rlang/rlang.json");
-pub const CLI_JSON: &str = include_str!("../vendor/cli/cli.json");
-pub const VCTRS_JSON: &str = include_str!("../vendor/vctrs/vctrs.json");
-/// Legacy Bayesian stub document. New code should load a named package via
-/// [`load_package`]; the standalone typeshed no longer publishes a combined
-/// multi-package document.
-#[deprecated(note = "use load_package with a Bayesian package name")]
-pub const BAYES_JSON: &str = BRMS_JSON;
-
-#[derive(Clone, Copy)]
-struct PackageSpec {
-    name: &'static str,
-    json: &'static str,
-}
+const BASE_JSON: &str = include_str!("../vendor/base/base.json");
+const DPLYR_JSON: &str = include_str!("../vendor/dplyr/dplyr.json");
+const DBPLYR_JSON: &str = include_str!("../vendor/dbplyr/dbplyr.json");
+const TIDYR_JSON: &str = include_str!("../vendor/tidyr/tidyr.json");
+const TIDYSELECT_JSON: &str = include_str!("../vendor/tidyselect/tidyselect.json");
+const TESTTHAT_JSON: &str = include_str!("../vendor/testthat/testthat.json");
+const TINYTEST_JSON: &str = include_str!("../vendor/tinytest/tinytest.json");
+const RCPP_JSON: &str = include_str!("../vendor/rcpp/Rcpp.json");
+const PURRR_JSON: &str = include_str!("../vendor/purrr/purrr.json");
+const IGRAPH_JSON: &str = include_str!("../vendor/igraph/igraph.json");
+const RECIPES_JSON: &str = include_str!("../vendor/recipes/recipes.json");
+const BENCH_JSON: &str = include_str!("../vendor/bench/bench.json");
+const BOX_JSON: &str = include_str!("../vendor/box/box.json");
+const PATRICK_JSON: &str = include_str!("../vendor/patrick/patrick.json");
+const REX_JSON: &str = include_str!("../vendor/rex/rex.json");
+const RLIST_JSON: &str = include_str!("../vendor/rlist/rlist.json");
+const MIRAI_JSON: &str = include_str!("../vendor/mirai/mirai.json");
+const SURVIVAL_JSON: &str = include_str!("../vendor/survival/survival.json");
+const BRMS_JSON: &str = include_str!("../vendor/brms/brms.json");
+const POSTERIOR_JSON: &str = include_str!("../vendor/posterior/posterior.json");
+const LOO_JSON: &str = include_str!("../vendor/loo/loo.json");
+const BAYESPLOT_JSON: &str = include_str!("../vendor/bayesplot/bayesplot.json");
+const CMDSTANR_JSON: &str = include_str!("../vendor/cmdstanr/cmdstanr.json");
+const ZEALLOT_JSON: &str = include_str!("../vendor/zeallot/zeallot.json");
+const FUTURE_JSON: &str = include_str!("../vendor/future/future.json");
+const FOREACH_JSON: &str = include_str!("../vendor/foreach/foreach.json");
+const SHINY_JSON: &str = include_str!("../vendor/shiny/shiny.json");
+const WITHR_JSON: &str = include_str!("../vendor/withr/withr.json");
+const R6_JSON: &str = include_str!("../vendor/R6/R6.json");
+const S7_JSON: &str = include_str!("../vendor/s7/S7.json");
+const RLANG_JSON: &str = include_str!("../vendor/rlang/rlang.json");
+const CLI_JSON: &str = include_str!("../vendor/cli/cli.json");
+const VCTRS_JSON: &str = include_str!("../vendor/vctrs/vctrs.json");
 
 /// Single source of truth for embedded non-base packages, in signature
 /// resolution order. Every package maps one-to-one to its vendored file.
-const PACKAGE_SPECS: &[PackageSpec] = &[
-    PackageSpec {
-        name: "dplyr",
-        json: DPLYR_JSON,
-    },
-    PackageSpec {
-        name: "dbplyr",
-        json: DBPLYR_JSON,
-    },
-    PackageSpec {
-        name: "tidyr",
-        json: TIDYR_JSON,
-    },
-    PackageSpec {
-        name: "tidyselect",
-        json: TIDYSELECT_JSON,
-    },
-    PackageSpec {
-        name: "purrr",
-        json: PURRR_JSON,
-    },
-    PackageSpec {
-        name: "igraph",
-        json: IGRAPH_JSON,
-    },
-    PackageSpec {
-        name: "recipes",
-        json: RECIPES_JSON,
-    },
-    PackageSpec {
-        name: "bench",
-        json: BENCH_JSON,
-    },
-    PackageSpec {
-        name: "box",
-        json: BOX_JSON,
-    },
-    PackageSpec {
-        name: "patrick",
-        json: PATRICK_JSON,
-    },
-    PackageSpec {
-        name: "rex",
-        json: REX_JSON,
-    },
-    PackageSpec {
-        name: "rlist",
-        json: RLIST_JSON,
-    },
-    PackageSpec {
-        name: "mirai",
-        json: MIRAI_JSON,
-    },
-    PackageSpec {
-        name: "survival",
-        json: SURVIVAL_JSON,
-    },
-    PackageSpec {
-        name: "testthat",
-        json: TESTTHAT_JSON,
-    },
-    PackageSpec {
-        name: "tinytest",
-        json: TINYTEST_JSON,
-    },
-    PackageSpec {
-        name: "Rcpp",
-        json: RCPP_JSON,
-    },
-    PackageSpec {
-        name: "brms",
-        json: BRMS_JSON,
-    },
-    PackageSpec {
-        name: "posterior",
-        json: POSTERIOR_JSON,
-    },
-    PackageSpec {
-        name: "loo",
-        json: LOO_JSON,
-    },
-    PackageSpec {
-        name: "bayesplot",
-        json: BAYESPLOT_JSON,
-    },
-    PackageSpec {
-        name: "cmdstanr",
-        json: CMDSTANR_JSON,
-    },
-    PackageSpec {
-        name: "zeallot",
-        json: ZEALLOT_JSON,
-    },
-    PackageSpec {
-        name: "future",
-        json: FUTURE_JSON,
-    },
-    PackageSpec {
-        name: "foreach",
-        json: FOREACH_JSON,
-    },
-    PackageSpec {
-        name: "shiny",
-        json: SHINY_JSON,
-    },
-    PackageSpec {
-        name: "withr",
-        json: WITHR_JSON,
-    },
-    PackageSpec {
-        name: "R6",
-        json: R6_JSON,
-    },
-    PackageSpec {
-        name: "S7",
-        json: S7_JSON,
-    },
-    PackageSpec {
-        name: "rlang",
-        json: RLANG_JSON,
-    },
-    PackageSpec {
-        name: "cli",
-        json: CLI_JSON,
-    },
-    PackageSpec {
-        name: "vctrs",
-        json: VCTRS_JSON,
-    },
+const PACKAGE_SPECS: &[(&str, &str)] = &[
+    ("dplyr", DPLYR_JSON),
+    ("dbplyr", DBPLYR_JSON),
+    ("tidyr", TIDYR_JSON),
+    ("tidyselect", TIDYSELECT_JSON),
+    ("purrr", PURRR_JSON),
+    ("igraph", IGRAPH_JSON),
+    ("recipes", RECIPES_JSON),
+    ("bench", BENCH_JSON),
+    ("box", BOX_JSON),
+    ("patrick", PATRICK_JSON),
+    ("rex", REX_JSON),
+    ("rlist", RLIST_JSON),
+    ("mirai", MIRAI_JSON),
+    ("survival", SURVIVAL_JSON),
+    ("testthat", TESTTHAT_JSON),
+    ("tinytest", TINYTEST_JSON),
+    ("Rcpp", RCPP_JSON),
+    ("brms", BRMS_JSON),
+    ("posterior", POSTERIOR_JSON),
+    ("loo", LOO_JSON),
+    ("bayesplot", BAYESPLOT_JSON),
+    ("cmdstanr", CMDSTANR_JSON),
+    ("zeallot", ZEALLOT_JSON),
+    ("future", FUTURE_JSON),
+    ("foreach", FOREACH_JSON),
+    ("shiny", SHINY_JSON),
+    ("withr", WITHR_JSON),
+    ("R6", R6_JSON),
+    ("S7", S7_JSON),
+    ("rlang", RLANG_JSON),
+    ("cli", CLI_JSON),
+    ("vctrs", VCTRS_JSON),
 ];
 
 pub fn known_packages() -> impl Iterator<Item = &'static str> {
-    PACKAGE_SPECS.iter().map(|spec| spec.name)
+    PACKAGE_SPECS.iter().map(|&(name, _)| name)
 }
 
 #[derive(Debug, Error)]
 pub enum TypeshedError {
-    #[error("typeshed parse error: {0}")]
-    Json(#[from] serde_json::Error),
     #[error("failed to read typeshed `{path}`: {source}", path = path.display())]
     Io {
         path: PathBuf,
@@ -471,6 +369,12 @@ pub enum TypeshedError {
         path: PathBuf,
         schema_version: String,
     },
+    #[error("duplicate S3 method `{generic}.{class}` in `{path}", path = path.display())]
+    DuplicateMethod {
+        path: PathBuf,
+        generic: String,
+        class: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -478,8 +382,13 @@ pub enum TypeshedError {
 pub struct JsonRType {
     pub mode: String,
     pub length: String,
-    #[serde(default)]
-    pub na: bool,
+    /// Whether the value can be `NA`. `None` (field absent) means the stub
+    /// does not declare it either way — which is not a non-NA guarantee.
+    /// `Some(false)` is the explicit "never NA" claim (e.g. `length`,
+    /// `nrow`); `Some(true)` marks NA-capable values (e.g. `Position`,
+    /// whose `nomatch` default is `NA_integer_`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub na: Option<bool>,
     /// S3 class vector, e.g. `["data.frame"]` for `mtcars`. Default
     /// empty for backward compatibility with existing JSON.
     #[serde(default)]
@@ -567,14 +476,28 @@ pub enum ReturnSpec {
     Concrete(JsonRType),
 }
 
+/// Dynamic dots splice lists; quoting contexts also unquote expressions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InjectionMode {
+    Splice,
+    Full,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FunctionSig {
     pub params: Vec<ParamSpec>,
+    /// Serialized as `return`: the JSON field name is a Rust keyword.
+    #[serde(rename = "return")]
     pub return_: ReturnSpec,
     #[serde(default)]
     pub aliases: Vec<String>,
     #[serde(default)]
     pub eval: std::collections::BTreeMap<String, EvalMode>,
+    /// Formals whose expressions support tidy-evaluation injection.
+    #[serde(default)]
+    pub injection: std::collections::BTreeMap<String, InjectionMode>,
     /// Whether calls to this function do not return to their caller.
     #[serde(default)]
     pub no_return: bool,
@@ -615,13 +538,6 @@ pub struct InjectSpec {
     pub names: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct FunctionSigWithKey {
-    pub name: String,
-    #[serde(flatten)]
-    pub sig: FunctionSig,
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Globals {
@@ -636,16 +552,8 @@ pub struct Globals {
 }
 
 impl FunctionSig {
-    pub fn params(&self) -> &[ParamSpec] {
-        &self.params
-    }
-
     pub fn param_names(&self) -> impl Iterator<Item = &str> {
         self.params.iter().map(|param| param.name.as_str())
-    }
-
-    pub fn return_(&self) -> &ReturnSpec {
-        &self.return_
     }
 }
 
@@ -675,88 +583,27 @@ pub struct Typeshed {
     pub s3_methods: std::collections::BTreeMap<(String, String), FunctionSig>,
 }
 
-/// Wrapper to handle the JSON shape where the key "return" is reserved
-/// (it's a Rust keyword). We deserialize via a serde alias.
-mod _fwd {
-    use serde::{Deserialize, Serialize};
-    #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-    #[serde(deny_unknown_fields)]
-    pub struct _FunctionSig {
-        pub params: Vec<super::ParamSpec>,
-        #[serde(rename = "return")]
-        pub return_: super::ReturnSpec,
-        #[serde(default)]
-        pub aliases: Vec<String>,
-        #[serde(default)]
-        pub eval: std::collections::BTreeMap<String, super::EvalMode>,
-        #[serde(default)]
-        pub no_return: bool,
-        #[serde(default)]
-        pub data_mask_source: Option<String>,
-        #[serde(default)]
-        pub schema_effect: Option<super::SchemaEffect>,
-        #[serde(default)]
-        pub scope_effect: Option<super::ScopeEffect>,
-        #[serde(default)]
-        pub conditional_scope_effect: Option<super::ConditionalScopeEffect>,
-        #[serde(default)]
-        pub predicate: Option<super::PredicateSpec>,
-        #[serde(default)]
-        pub assertion: Option<super::AssertionSpec>,
-        #[serde(default)]
-        pub return_length: Option<super::ReturnLengthSpec>,
-        #[serde(default)]
-        pub higher_order: Option<super::HigherOrderSpec>,
-        #[serde(default)]
-        pub injects: Vec<super::InjectSpec>,
-        #[serde(default)]
-        pub source_relative_path_arg: Option<usize>,
-    }
-}
-
-/// JSON shape for a single S3 method entry in `base_r.json`. The
-/// `(generic, class)` pair becomes the BTreeMap key after deserialization.
+/// One `s3_methods` entry: the `(generic, class)` key that becomes the
+/// BTreeMap key, plus the shared signature shape.
+///
+/// `deny_unknown_fields` here is load-bearing. Under `flatten` serde
+/// ignores that attribute on the flattened struct, so only this one
+/// rejects an unknown field.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawS3Method {
     generic: String,
     class: String,
-    params: Vec<ParamSpec>,
-    #[serde(rename = "return")]
-    return_: ReturnSpec,
-    #[serde(default)]
-    aliases: Vec<String>,
-    #[serde(default)]
-    eval: BTreeMap<String, EvalMode>,
-    #[serde(default)]
-    no_return: bool,
-    #[serde(default)]
-    data_mask_source: Option<String>,
-    #[serde(default)]
-    schema_effect: Option<SchemaEffect>,
-    #[serde(default)]
-    scope_effect: Option<ScopeEffect>,
-    #[serde(default)]
-    conditional_scope_effect: Option<ConditionalScopeEffect>,
-    #[serde(default)]
-    predicate: Option<PredicateSpec>,
-    #[serde(default)]
-    assertion: Option<AssertionSpec>,
-    #[serde(default)]
-    return_length: Option<ReturnLengthSpec>,
-    #[serde(default)]
-    higher_order: Option<HigherOrderSpec>,
-    #[serde(default)]
-    injects: Vec<InjectSpec>,
-    #[serde(default)]
-    source_relative_path_arg: Option<usize>,
+    #[serde(flatten)]
+    signature: FunctionSig,
 }
 
 pub fn load_base() -> Result<Typeshed, TypeshedError> {
     parse_typeshed(BASE_JSON, Path::new("<embedded base>"))
 }
 
-struct RawFunctions(Vec<(String, _fwd::_FunctionSig)>);
+/// Reject duplicate JSON keys before they can overwrite a signature.
+struct RawFunctions(BTreeMap<String, FunctionSig>);
 
 impl<'de> Deserialize<'de> for RawFunctions {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -776,9 +623,13 @@ impl<'de> Deserialize<'de> for RawFunctions {
             where
                 A: MapAccess<'de>,
             {
-                let mut entries = Vec::with_capacity(map.size_hint().unwrap_or(0));
-                while let Some(entry) = map.next_entry()? {
-                    entries.push(entry);
+                let mut entries = BTreeMap::new();
+                while let Some((name, signature)) = map.next_entry::<String, FunctionSig>()? {
+                    if entries.insert(name.clone(), signature).is_some() {
+                        return Err(serde::de::Error::custom(format!(
+                            "duplicate function `{name}`"
+                        )));
+                    }
                 }
                 Ok(RawFunctions(entries))
             }
@@ -805,10 +656,7 @@ struct RawFile {
     s3_methods: Vec<RawS3Method>,
 }
 
-fn parse_typeshed_with_order(
-    json: &str,
-    path: &Path,
-) -> Result<(Typeshed, Vec<String>), TypeshedError> {
+fn parse_typeshed(json: &str, path: &Path) -> Result<Typeshed, TypeshedError> {
     let raw: RawFile = serde_json::from_str(json).map_err(|source| TypeshedError::JsonAtPath {
         path: path.to_path_buf(),
         source,
@@ -821,137 +669,74 @@ fn parse_typeshed_with_order(
             schema_version: schema_version.to_string(),
         });
     }
-    let mut functions = std::collections::BTreeMap::new();
-    let function_order = raw
-        .functions
-        .0
-        .iter()
-        .map(|(name, _)| name.clone())
-        .collect();
-    for (k, v) in raw.functions.0 {
-        functions.insert(
-            k,
-            FunctionSig {
-                params: v.params,
-                return_: v.return_,
-                aliases: v.aliases,
-                eval: v.eval,
-                no_return: v.no_return,
-                data_mask_source: v.data_mask_source,
-                schema_effect: v.schema_effect,
-                scope_effect: v.scope_effect,
-                conditional_scope_effect: v.conditional_scope_effect,
-                predicate: v.predicate,
-                assertion: v.assertion,
-                return_length: v.return_length,
-                higher_order: v.higher_order,
-                injects: v.injects,
-                source_relative_path_arg: v.source_relative_path_arg,
-            },
-        );
-    }
-    let mut s3_methods = std::collections::BTreeMap::new();
+    let mut s3_methods = BTreeMap::new();
     for m in raw.s3_methods {
         let key = (m.generic, m.class);
-        s3_methods.insert(
-            key,
-            FunctionSig {
-                params: m.params,
-                return_: m.return_,
-                aliases: m.aliases,
-                eval: m.eval,
-                no_return: m.no_return,
-                data_mask_source: m.data_mask_source,
-                schema_effect: m.schema_effect,
-                scope_effect: m.scope_effect,
-                conditional_scope_effect: m.conditional_scope_effect,
-                predicate: m.predicate,
-                assertion: m.assertion,
-                return_length: m.return_length,
-                higher_order: m.higher_order,
-                injects: m.injects,
-                source_relative_path_arg: m.source_relative_path_arg,
-            },
-        );
+        if s3_methods.insert(key.clone(), m.signature).is_some() {
+            return Err(TypeshedError::DuplicateMethod {
+                path: path.to_path_buf(),
+                generic: key.0,
+                class: key.1,
+            });
+        }
     }
-    Ok((
-        Typeshed {
-            schema_version: raw.schema_version,
-            package: raw.package,
-            version: raw.version,
-            functions,
-            globals: raw.globals,
-            datasets: raw.datasets,
-            s3_methods,
-        },
-        function_order,
-    ))
+    Ok(Typeshed {
+        schema_version: raw.schema_version,
+        package: raw.package,
+        version: raw.version,
+        functions: raw.functions.0,
+        globals: raw.globals,
+        datasets: raw.datasets,
+        s3_methods,
+    })
 }
 
-fn parse_typeshed(json: &str, path: &Path) -> Result<Typeshed, TypeshedError> {
-    parse_typeshed_with_order(json, path).map(|(typeshed, _)| typeshed)
-}
-
-/// Load the base typeshed once and cache it for the life of the process.
+/// Load the base typeshed and cache it for the life of the process.
 ///
-/// The base typeshed is a compile-time-embedded 61KB JSON document that
-/// never changes after startup. Parsing it on every `Checker::new` (which
-/// happens once per file in a `Project`, and once per keystroke in the
-/// LSP) is pure waste. This caches the parsed value in a `OnceLock` so the
-/// JSON is deserialized exactly once; subsequent callers receive a
-/// reference to the cached `Typeshed`.
+/// The base typeshed is compile-time-embedded and never changes, so
+/// parsing it on every `Checker::new` (once per file in a `Project`, and
+/// once per keystroke in the LSP) is wasted work. This caches the parsed
+/// value in a `OnceLock`; concurrent first callers may each parse, but
+/// all receive the same cached `Typeshed`.
 ///
 /// Callers that mutate the typeshed (none do today, but the API allows it)
 /// should `.clone()` the returned reference rather than mutating the cache.
 pub fn load_base_cached() -> Result<&'static Typeshed, TypeshedError> {
     static CACHE: std::sync::OnceLock<Typeshed> = std::sync::OnceLock::new();
     // `get_or_try_init` is still unstable, so initialize eagerly via
-    // `get_or_init`. The base typeshed is a compile-time-embedded JSON
-    // document that always parses; a failure here is a build-time data
-    // bug, not a runtime condition, so panicking during first access is
-    // acceptable (and matches the existing `load_base().expect()` callers).
+    // `set`. The embedded JSON always parses; a failure here is a
+    // build-time data bug, not a runtime condition, so panicking during
+    // first access is acceptable.
     if let Some(cached) = CACHE.get() {
         return Ok(cached);
     }
-    let typeshed = load_base()?;
-    // Another thread may have raced us; `set` returns the winner's value.
-    let cached = match CACHE.set(typeshed) {
-        Ok(()) => CACHE.get().expect("cache just set"),
-        Err(loser) => {
-            // We lost the race; the winner's value is already in the cache.
-            let _ = loser;
-            CACHE.get().expect("cache set by racing thread")
-        }
-    };
-    Ok(cached)
+    // A racing thread's identical parse is simply dropped; whichever
+    // thread wins the `set`, the cache holds a value afterwards.
+    let _ = CACHE.set(load_base()?);
+    Ok(CACHE.get().expect("cache set by this or a racing thread"))
 }
 
 /// Load a non-base package's typeshed. Returns `None` for an unknown
 /// package name (the checker treats that as "no signatures available",
-/// i.e. opaque). Known packages and their JSON sources:
-///
-/// - `dplyr` -> `data/dplyr.json` (bare function names).
-/// - `purrr` -> `data/purrr.json` (bare function names).
-/// - `mirai` -> `data/mirai.json` (bare function names).
-/// - `survival` -> `data/survival.json` (bare function names).
-/// - `testthat` -> `data/testthat.json` (bare function names).
-/// - `brms`, `posterior`, `loo`, `bayesplot`, `cmdstanr` each map to a
-///   separate vendored package file with bare function names.
+/// i.e. opaque). The known packages are those in `PACKAGE_SPECS`; each
+/// maps one-to-one to a vendored JSON file.
 ///
 /// Results are cached for the life of the process (the JSON documents
 /// are compile-time-embedded and never change), so repeated lookups are
 /// cheap.
 pub fn load_package(name: &str) -> Option<&'static Typeshed> {
-    let _ = PACKAGE_SPECS.iter().find(|spec| spec.name == name)?;
+    if !is_known_package(name) {
+        return None;
+    }
     static PACKAGES: std::sync::OnceLock<std::collections::BTreeMap<&'static str, Typeshed>> =
         std::sync::OnceLock::new();
     let packages = PACKAGES.get_or_init(|| {
         PACKAGE_SPECS
             .iter()
-            .map(|spec| {
-                let typeshed = parse_typeshed(spec.json, Path::new(spec.name))
+            .map(|&(name, json)| {
+                let typeshed = parse_typeshed(json, Path::new(name))
                     .expect("embedded package typeshed must parse");
-                (spec.name, typeshed)
+                (name, typeshed)
             })
             .collect()
     });
@@ -963,11 +748,11 @@ pub fn load_package(name: &str) -> Option<&'static Typeshed> {
 /// signatures (unknown packages are still recorded as loaded for NSE
 /// gating, e.g. `tidyverse`, but contribute no function signatures).
 pub fn is_known_package(name: &str) -> bool {
-    PACKAGE_SPECS.iter().any(|spec| spec.name == name)
+    PACKAGE_SPECS.iter().any(|&(known, _)| known == name)
 }
 
 /// Load stub files from a user-supplied directory. Both flat
-/// (`<dir>/<pkg>.json`) and nested (`<dir>/<pkg>/<pkg>.json`) layouts are
+/// (`<dir>/<pkg>.json`) and nested (`<dir>/<folder>/<pkg>.json`) layouts are
 /// accepted. The `package` header names the package; legacy files fall back
 /// to their file stem. A user package replaces an embedded package wholesale.
 pub fn load_stub_dir(dir: &Path) -> Result<BTreeMap<String, Typeshed>, TypeshedError> {
@@ -1005,31 +790,24 @@ pub fn load_stub_dir_with_warnings(
     Ok((stubs, errors))
 }
 
-/// Discover the files accepted by [`load_stub_dir`]. This is public so tools
-/// such as `ry typeshed validate` use exactly the runtime loader's layouts.
-pub fn discover_stub_files(dir: &Path) -> Result<Vec<PathBuf>, TypeshedError> {
-    let entries = std::fs::read_dir(dir).map_err(|source| TypeshedError::Io {
-        path: dir.to_path_buf(),
-        source,
-    })?;
+/// Discover the files accepted by [`load_stub_dir`], in both flat and
+/// nested layouts.
+fn discover_stub_files(dir: &Path) -> Result<Vec<PathBuf>, TypeshedError> {
+    let mut directories = vec![dir.to_path_buf()];
     let mut paths = Vec::new();
-    for entry in entries {
-        let entry = entry.map_err(|source| TypeshedError::Io {
-            path: dir.to_path_buf(),
+    while let Some(directory) = directories.pop() {
+        let io_error = |source| TypeshedError::Io {
+            path: directory.clone(),
             source,
-        })?;
-        let path = entry.path();
-        if path.extension().and_then(|value| value.to_str()) == Some("json") {
-            paths.push(path);
-            continue;
-        }
-        if path.is_dir() {
-            let Some(name) = path.file_name() else {
-                continue;
-            };
-            let nested = path.join(name).with_extension("json");
-            if nested.is_file() {
-                paths.push(nested);
+        };
+        for entry in std::fs::read_dir(&directory).map_err(io_error)? {
+            let path = entry.map_err(io_error)?.path();
+            if path.is_dir() {
+                if directory == dir {
+                    directories.push(path);
+                }
+            } else if path.extension().is_some_and(|ext| ext == "json") {
+                paths.push(path);
             }
         }
     }
@@ -1038,28 +816,17 @@ pub fn discover_stub_files(dir: &Path) -> Result<Vec<PathBuf>, TypeshedError> {
 }
 
 /// Load one stub through the normative parser used by the runtime loader.
-pub fn load_stub_file(path: &Path) -> Result<Typeshed, TypeshedError> {
-    load_stub_file_with_order(path).map(|(typeshed, _)| typeshed)
-}
-
-fn load_stub_file_with_order(path: &Path) -> Result<(Typeshed, Vec<String>), TypeshedError> {
+fn load_stub_file(path: &Path) -> Result<Typeshed, TypeshedError> {
     let json = std::fs::read_to_string(path).map_err(|source| TypeshedError::Io {
         path: path.to_path_buf(),
         source,
     })?;
-    parse_typeshed_with_order(&json, path)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ValidationLevel {
-    Error,
-    Warning,
+    parse_typeshed(&json, path)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationProblem {
     pub path: PathBuf,
-    pub level: ValidationLevel,
     pub message: String,
 }
 
@@ -1071,17 +838,7 @@ pub struct ValidationReport {
 
 impl ValidationReport {
     pub fn error_count(&self) -> usize {
-        self.problems
-            .iter()
-            .filter(|problem| problem.level == ValidationLevel::Error)
-            .count()
-    }
-
-    pub fn warning_count(&self) -> usize {
-        self.problems
-            .iter()
-            .filter(|problem| problem.level == ValidationLevel::Warning)
-            .count()
+        self.problems.len()
     }
 }
 
@@ -1094,7 +851,6 @@ pub fn validate_stub_dirs(dirs: &[PathBuf]) -> ValidationReport {
             Err(error) => {
                 report.problems.push(ValidationProblem {
                     path: dir.clone(),
-                    level: ValidationLevel::Error,
                     message: validation_error_message(&error),
                 });
                 continue;
@@ -1103,7 +859,6 @@ pub fn validate_stub_dirs(dirs: &[PathBuf]) -> ValidationReport {
         if paths.is_empty() {
             report.problems.push(ValidationProblem {
                 path: dir.clone(),
-                level: ValidationLevel::Error,
                 message: "no stub files found".to_string(),
             });
             continue;
@@ -1118,7 +873,9 @@ pub fn validate_stub_dirs(dirs: &[PathBuf]) -> ValidationReport {
 
 fn validation_error_message(error: &TypeshedError) -> String {
     match error {
-        TypeshedError::Json(source) => format!("typeshed parse error: {source}"),
+        TypeshedError::DuplicateMethod { generic, class, .. } => {
+            format!("duplicate S3 method `{generic}.{class}`")
+        }
         TypeshedError::Io { source, .. } => format!("failed to read typeshed: {source}"),
         TypeshedError::JsonAtPath { source, .. } => format!("typeshed parse error: {source}"),
         TypeshedError::UnsupportedSchema { schema_version, .. } => {
@@ -1128,12 +885,11 @@ fn validation_error_message(error: &TypeshedError) -> String {
 }
 
 fn validate_stub_file(path: &Path, report: &mut ValidationReport) {
-    let (typeshed, function_order) = match load_stub_file_with_order(path) {
+    let typeshed = match load_stub_file(path) {
         Ok(parsed) => parsed,
         Err(error) => {
             report.problems.push(ValidationProblem {
                 path: path.to_path_buf(),
-                level: ValidationLevel::Error,
                 message: validation_error_message(&error),
             });
             return;
@@ -1152,14 +908,6 @@ fn validate_stub_file(path: &Path, report: &mut ValidationReport) {
             format!("package `{actual}` does not match file name `{expected}.json`"),
         ),
         _ => {}
-    }
-
-    if !function_order.windows(2).all(|pair| pair[0] <= pair[1]) {
-        report.problems.push(ValidationProblem {
-            path: path.to_path_buf(),
-            level: ValidationLevel::Warning,
-            message: "function keys are not sorted".to_string(),
-        });
     }
 
     let mut owners: HashMap<&str, &str> = typeshed
@@ -1197,7 +945,6 @@ fn validate_stub_file(path: &Path, report: &mut ValidationReport) {
 fn validation_error(report: &mut ValidationReport, path: &Path, message: impl Into<String>) {
     report.problems.push(ValidationProblem {
         path: path.to_path_buf(),
-        level: ValidationLevel::Error,
         message: message.into(),
     });
 }
@@ -1215,6 +962,19 @@ fn validate_signature(
                 report,
                 path,
                 format!("{param_location}.name: must not be empty"),
+            );
+        }
+        if signature.params[..index]
+            .iter()
+            .any(|previous| previous.name == param.name)
+        {
+            validation_error(
+                report,
+                path,
+                format!(
+                    "{param_location}.name: duplicate parameter `{}`",
+                    param.name
+                ),
             );
         }
         if param.name == "..." && (param.required || param.type_.is_some()) {
@@ -1248,6 +1008,46 @@ fn validate_signature(
             format!("{location}.higher_order.result.mode: invalid mode `{mode}`"),
         );
     }
+    if let Some(higher_order) = &signature.higher_order {
+        if higher_order
+            .callback_return_mode
+            .as_deref()
+            .is_some_and(|mode| {
+                !matches!(
+                    JsonMode::parse(mode),
+                    Some(
+                        JsonMode::Logical
+                            | JsonMode::Integer
+                            | JsonMode::Double
+                            | JsonMode::Character
+                    )
+                )
+            })
+        {
+            validation_error(
+                report,
+                path,
+                format!(
+                    "{location}.higher_order.callback_return_mode: expected a typed atomic mode"
+                ),
+            );
+        }
+        for (field, index) in [
+            ("length_arg", higher_order.result.length_arg),
+            ("source_arg", higher_order.result.source_arg),
+            ("template_position", higher_order.result.template_position),
+        ] {
+            if index.is_some_and(|index| index >= signature.params.len()) {
+                validation_error(
+                    report,
+                    path,
+                    format!(
+                        "{location}.higher_order.result.{field}: must identify a formal parameter"
+                    ),
+                );
+            }
+        }
+    }
     validate_function_semantics(report, path, location, signature);
 }
 
@@ -1267,6 +1067,25 @@ fn validate_function_semantics(
             );
         }
     };
+    for param in signature.injection.keys() {
+        validate_param(report, "injection", param);
+    }
+    if let Some(higher_order) = &signature.higher_order
+        && signature
+            .params
+            .get(higher_order.callback_position)
+            .map(|param| &param.name)
+            != Some(&higher_order.callback_param)
+    {
+        validation_error(
+            report,
+            path,
+            format!(
+                "{location}.higher_order.callback_position: must identify callback_param `{}`",
+                higher_order.callback_param
+            ),
+        );
+    }
     if let Some(predicate) = &signature.predicate {
         validate_param(report, "predicate.subject_param", &predicate.subject_param);
         validate_rtype(
@@ -1314,6 +1133,17 @@ fn validate_function_semantics(
         }
     }
     if let Some(effect) = &signature.conditional_scope_effect {
+        // Schema 2 restricts this rule to a true trigger, even though the checker
+        // can compare either boolean. Keep producers within the documented contract.
+        if !effect.current_scope_when.equals {
+            validation_error(
+                report,
+                path,
+                format!(
+                    "{location}.conditional_scope_effect.current_scope_when.equals: only `equals: true` is supported"
+                ),
+            );
+        }
         validate_param(
             report,
             "conditional_scope_effect.current_scope_when.param",
@@ -1321,18 +1151,24 @@ fn validate_function_semantics(
         );
     }
     if let Some(length) = &signature.return_length {
+        let has_duplicates = |params: &[String]| {
+            params
+                .iter()
+                .enumerate()
+                .any(|(index, param)| params[..index].contains(param))
+        };
         match length {
+            ReturnLengthSpec::ParamValue { param, .. } => {
+                validate_param(report, "return_length.param", param);
+            }
             ReturnLengthSpec::ZeroIfAnyParamZero { params } => {
-                if params.len() < 2
-                    || params
-                        .iter()
-                        .enumerate()
-                        .any(|(index, param)| params[..index].contains(param))
-                {
+                if params.len() < 2 || has_duplicates(params) {
                     validation_error(
                         report,
                         path,
-                        format!("{location}.return_length.params: require distinct parameters"),
+                        format!(
+                            "{location}.return_length.params: require at least two distinct parameters"
+                        ),
                     );
                 }
                 for param in params {
@@ -1340,17 +1176,18 @@ fn validate_function_semantics(
                 }
             }
             ReturnLengthSpec::RecycledValues(spec) => {
-                for param in spec.value_params.iter().chain(&spec.control_params) {
-                    validate_param(report, "return_length parameter", param);
+                if spec.value_params.is_empty() {
+                    validation_error(
+                        report,
+                        path,
+                        format!("{location}.return_length.value_params: must not be empty"),
+                    );
                 }
-                let repeated = |params: &[String]| {
-                    params
-                        .iter()
-                        .enumerate()
-                        .any(|(index, param)| params[..index].contains(param))
-                };
-                if repeated(&spec.value_params)
-                    || repeated(&spec.control_params)
+                for param in spec.value_params.iter().chain(&spec.control_params) {
+                    validate_param(report, "return_length.params", param);
+                }
+                if has_duplicates(&spec.value_params)
+                    || has_duplicates(&spec.control_params)
                     || spec
                         .value_params
                         .iter()
@@ -1379,9 +1216,9 @@ fn validate_function_semantics(
                 }
                 if spec.all_values_zero != "zero"
                     || spec.collapse.when != "non_null"
-                    || spec.collapse.length.as_deref() != Some("1")
+                    || spec.collapse.length != "1"
                     || spec.recycle0.when != "true"
-                    || spec.recycle0.any_value_zero.as_deref() != Some("zero")
+                    || spec.recycle0.any_value_zero != "zero"
                 {
                     validation_error(
                         report,
@@ -1565,17 +1402,35 @@ mod tests {
     #[test]
     fn load_stub_dir_accepts_flat_and_nested_layouts() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("flat.json"), fixture(Some("flat"), "one")).unwrap();
-        std::fs::create_dir(dir.path().join("nested")).unwrap();
-        std::fs::write(
-            dir.path().join("nested/nested.json"),
-            fixture(Some("nested"), "two"),
-        )
-        .unwrap();
+        let paths = [
+            "flat.json",
+            "nested/nested.json",
+            "rcpp/Rcpp.json",
+            "s7/S7.json",
+        ];
+        for path in paths {
+            let path = dir.path().join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let package = path.file_stem().unwrap().to_str().unwrap();
+            std::fs::write(&path, fixture(Some(package), "one")).unwrap();
+        }
+        // Discovery stops after one directory level and ignores non-JSON files.
+        std::fs::create_dir_all(dir.path().join("nested/deeper")).unwrap();
+        std::fs::write(dir.path().join("nested/deeper/ignored.json"), "invalid").unwrap();
+        std::fs::write(dir.path().join("nested/README.md"), "not a stub").unwrap();
 
         let stubs = load_stub_dir(dir.path()).unwrap();
-        assert!(stubs["flat"].functions.contains_key("one"));
-        assert!(stubs["nested"].functions.contains_key("two"));
+        assert_eq!(stubs.len(), paths.len());
+        for package in ["flat", "nested", "Rcpp", "S7"] {
+            assert!(stubs[package].functions.contains_key("one"));
+        }
+        assert_eq!(
+            discover_stub_files(dir.path()).unwrap(),
+            paths.map(|p| dir.path().join(p))
+        );
+        let report = validate_stub_dirs(&[dir.path().to_path_buf()]);
+        assert_eq!(report.files, paths.len());
+        assert_eq!(report.error_count(), 0, "{report:?}");
     }
 
     #[test]
@@ -1636,47 +1491,274 @@ mod tests {
     }
 
     #[test]
-    fn recycled_values_controls_and_exact_zero_parameters_are_validated() {
+    fn function_semantics_contracts_are_validated() {
+        use serde_json::json;
+        let valid: serde_json::Value =
+            serde_json::from_str(include_str!("../testdata/function-semantics.json")).unwrap();
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            dir.path().join("fixture.json"),
-            r#"{"schema_version":"2","package":"fixture","version":"test","functions":{"zero":{"params":["a","b"],"return":{"mode":"logical","length":"unknown"},"return_length":{"kind":"zero_if_any_param_zero","params":["a","b","a"]}},"recycled":{"params":["x","collapse"],"return":{"mode":"character","length":"unknown"},"return_length":{"kind":"recycled_values","value_params":["x"],"control_params":[],"all_values_zero":"zero","collapse":{"param":"collapse","when":"non_null","length":"1"},"recycle0":{"param":"collapse","when":"true","any_value_zero":"zero"}}}}}"#,
-        )
-        .unwrap();
-        let report = validate_stub_dirs(&[dir.path().to_path_buf()]);
-        assert_eq!(report.error_count(), 3, "{report:?}");
-        assert!(
-            report
-                .problems
-                .iter()
-                .any(|problem| problem.message.contains("distinct parameters"))
-        );
-        assert_eq!(
-            report
-                .problems
-                .iter()
-                .filter(|problem| problem.message.contains("must declare a control parameter"))
-                .count(),
-            2
-        );
+        let path = dir.path().join("fixture.json");
+        let validate = |value: &serde_json::Value| {
+            std::fs::write(&path, serde_json::to_string(value).unwrap()).unwrap();
+            validate_stub_dirs(&[dir.path().to_path_buf()])
+        };
+        for (field, value, message) in [
+            (
+                "injection",
+                json!({"missing": "full"}),
+                "unknown parameter `missing`",
+            ),
+            ("injection", json!({"f": "invalid"}), "unknown variant"),
+            (
+                "return_length",
+                json!({"kind": "param_value", "param": "missing", "default_length": 0}),
+                "unknown parameter `missing`",
+            ),
+        ] {
+            let mut invalid = valid.clone();
+            invalid["functions"]["apply"][field] = value;
+            let report = validate(&invalid);
+            assert!(
+                report.problems.iter().any(|p| p.message.contains(message)),
+                "{report:?}"
+            );
+        }
+        let mut invalid = valid.clone();
+        invalid["functions"]["apply"]["higher_order"]["callback_return_mode"] = json!("list");
+        assert!(validate(&invalid).error_count() > 0);
+        let report = validate(&valid);
+        assert_eq!(report.error_count(), 0, "{report:?}");
+        assert_eq!(report.files, 1);
+
+        for (pointer, value, message) in [
+            (
+                "/functions/apply/params",
+                json!(["f", "f"]),
+                "duplicate parameter `f`",
+            ),
+            (
+                "/functions/recycle/params",
+                json!(["...", "collapse", "recycle0", "..."]),
+                "duplicate parameter `...`",
+            ),
+            (
+                "/functions/recycle/return_length/all_values_zero",
+                json!("unsupported"),
+                "unsupported recycled-values rule",
+            ),
+            (
+                "/functions/recycle/return_length/collapse/when",
+                json!("unsupported"),
+                "unsupported recycled-values rule",
+            ),
+            (
+                "/functions/recycle/return_length/collapse/length",
+                json!("unsupported"),
+                "unsupported recycled-values rule",
+            ),
+            (
+                "/functions/recycle/return_length/recycle0/when",
+                json!("unsupported"),
+                "unsupported recycled-values rule",
+            ),
+            (
+                "/functions/recycle/return_length/recycle0/any_value_zero",
+                json!("unsupported"),
+                "unsupported recycled-values rule",
+            ),
+            (
+                "/functions/intersect_like/return_length/params",
+                json!(["x"]),
+                "require at least two distinct parameters",
+            ),
+            (
+                "/functions/check_string/assertion/provenance/fingerprint_params",
+                json!(["call", "arg"]),
+                "unsupported provenance",
+            ),
+            (
+                "/functions/check_string/assertion/provenance/kind",
+                json!("unsupported"),
+                "unknown variant",
+            ),
+            (
+                "/functions/apply/higher_order/result",
+                json!({"kind":"list_of_callback_return", "length_arg":99}),
+                "result.length_arg: must identify a formal parameter",
+            ),
+            (
+                "/functions/apply/higher_order/result",
+                json!({"kind":"list_of_callback_return", "source_arg":99}),
+                "result.source_arg: must identify a formal parameter",
+            ),
+            (
+                "/functions/apply/higher_order/result",
+                json!({"kind":"list_of_callback_return", "template_position":99}),
+                "result.template_position: must identify a formal parameter",
+            ),
+            (
+                "/functions/check_string/params",
+                json!(["x", "allow_null", "allow_na", "arg"]),
+                "unknown parameter `call`",
+            ),
+            (
+                "/functions/recycle/return_length/control_params",
+                json!(["recycle0"]),
+                "collapse.param: must declare a control parameter",
+            ),
+            (
+                "/functions/recycle/return_length/control_params",
+                json!(["collapse"]),
+                "recycle0.param: must declare a control parameter",
+            ),
+            (
+                "/functions/intersect_like/return_length/params",
+                json!(["x", "y", "x"]),
+                "require at least two distinct parameters",
+            ),
+            (
+                "/functions/recycle/return_length/value_params",
+                json!([]),
+                "must not be empty",
+            ),
+            (
+                "/functions/recycle/return_length/value_params",
+                json!(["...", "..."]),
+                "disjoint and unique",
+            ),
+            (
+                "/functions/recycle/return_length/control_params",
+                json!(["collapse", "recycle0", "collapse"]),
+                "disjoint and unique",
+            ),
+            (
+                "/functions/recycle/return_length/value_params",
+                json!(["collapse"]),
+                "disjoint and unique",
+            ),
+            (
+                "/functions/source_like/conditional_scope_effect/current_scope_when/equals",
+                json!(false),
+                "only `equals: true` is supported",
+            ),
+            (
+                "/functions/apply/higher_order/callback_position",
+                json!(2),
+                "callback_position",
+            ),
+            (
+                "/functions/apply/higher_order/callback_position",
+                json!(0),
+                "callback_position",
+            ),
+            (
+                "/functions/apply/higher_order/callback_param",
+                json!("missing"),
+                "callback_position",
+            ),
+            (
+                "/functions/intersect_like/return_length",
+                json!({"kind":"zero_if_any_param_zero", "params":["x","y"], "extra":true}),
+                "unknown field",
+            ),
+            (
+                "/functions/recycle/return_length/collapse",
+                json!({"param":"collapse", "when":"non_null", "length":"1", "any_value_zero":null}),
+                "unknown field",
+            ),
+            (
+                "/functions/recycle/return_length/recycle0",
+                json!({"param":"recycle0", "when":"true", "any_value_zero":"zero", "length":null}),
+                "unknown field",
+            ),
+        ] {
+            let mut invalid = valid.clone();
+            *invalid.pointer_mut(pointer).unwrap() = value;
+            let report = validate(&invalid);
+            assert!(
+                report
+                    .problems
+                    .iter()
+                    .any(|problem| problem.message.contains(message)),
+                "{pointer}: expected {message}: {report:?}"
+            );
+        }
     }
 
     #[test]
-    fn invalid_assertion_provenance_is_reported_without_discarding_schema_two() {
+    fn s3_method_parameter_names_must_be_unique() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("fixture.json");
-        std::fs::write(
-            &path,
-            r#"{"schema_version":"2","package":"fixture","version":"test","functions":{"check":{"params":["x","arg"],"return":{"mode":"null","length":"0"},"assertion":{"subject_param":"x","target":{"mode":"character","length":"1"},"provenance":{"kind":"standalone_types_check","fingerprint_params":["arg","call"]}}}}}"#,
-        )
-        .unwrap();
-        let report = validate_stub_dirs(&[dir.path().to_path_buf()]);
-        assert_eq!(report.error_count(), 1);
-        assert!(
-            report.problems[0]
-                .message
-                .contains("unknown parameter `call`")
+        for (params, errors) in [
+            (serde_json::json!(["x", "..."]), 0),
+            (serde_json::json!(["x", {"name": "x"}]), 1),
+            (serde_json::json!(["...", "..."]), 1),
+        ] {
+            let stub = serde_json::json!({
+                "schema_version": "2", "package": "fixture", "version": "test", "functions": {},
+                "s3_methods": [{
+                    "generic": "print", "class": "example",
+                    "params": params, "return": {"mode": "opaque", "length": "unknown", "na": false}
+                }]
+            });
+            std::fs::write(&path, stub.to_string()).unwrap();
+            let report = validate_stub_dirs(&[dir.path().to_path_buf()]);
+            assert_eq!(report.error_count(), errors, "{report:?}");
+            if errors > 0 {
+                assert!(
+                    report.problems[0].message.starts_with(
+                        "s3_methods[print.example].params[1].name: duplicate parameter"
+                    )
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn duplicate_definitions_are_rejected_before_loading() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fixture.json");
+        let signature = r#"{"params": [], "return": "arg0"}"#;
+        let duplicate_functions = format!(
+            r#"{{"schema_version":"2","package":"fixture","version":"test","functions":{{"f":{signature},"f":{signature}}}}}"#
         );
+        std::fs::write(&path, duplicate_functions).unwrap();
+        assert!(
+            load_stub_file(&path)
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate function `f`")
+        );
+        assert_eq!(
+            validate_stub_dirs(&[dir.path().to_path_buf()]).error_count(),
+            1
+        );
+        for (generic, class, errors) in [
+            ("print", "example", 1),
+            ("print", "other", 0),
+            ("summary", "example", 0),
+        ] {
+            let stub = serde_json::json!({
+                "schema_version": "2", "package": "fixture", "version": "test", "functions": {},
+                "s3_methods": [
+                    {"generic": "print", "class": "example", "params": [], "return": "arg0"},
+                    {"generic": generic, "class": class, "params": [], "return": "arg0"}
+                ]
+            });
+            std::fs::write(&path, stub.to_string()).unwrap();
+            assert_eq!(
+                validate_stub_dirs(&[dir.path().to_path_buf()]).error_count(),
+                errors
+            );
+            if errors == 0 {
+                assert_eq!(load_stub_file(&path).unwrap().s3_methods.len(), 2);
+            } else {
+                let error = load_stub_file(&path).unwrap_err().to_string();
+                assert!(
+                    error.contains("print.example") && error.contains("fixture.json"),
+                    "{error}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -1694,27 +1776,43 @@ mod tests {
     #[test]
     fn typeshed_preserves_embedded_schema_version() {
         let t = load_base().expect("loads");
-        assert_eq!(t.version, "0.0.4");
+        assert_eq!(t.version, "0.0.5");
         assert_eq!(t.schema_version.as_deref(), Some("2"));
     }
 
     #[test]
     fn every_known_package_loads() {
+        let report = validate_stub_dirs(&[Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor")]);
+        assert_eq!(report.error_count(), 0, "{report:?}");
+        assert!(report.files > 0, "vendored stubs must be discovered");
         for name in known_packages() {
             assert!(load_package(name).is_some(), "{name} must load");
         }
     }
 
     #[test]
+    fn literal_lengths_are_not_limited_to_the_vendored_inventory() {
+        for length in [0, 1, 10, 999_999, usize::MAX] {
+            assert_eq!(
+                JsonLength::parse(&length.to_string()),
+                Some(JsonLength::Known(length))
+            );
+        }
+        for invalid in ["", "-1", "+1", "1.5", " 1", "184467440737095516160"] {
+            assert_eq!(JsonLength::parse(invalid), None);
+        }
+    }
+
+    #[test]
     fn unknown_return_slot_is_rejected() {
         let json = r#"{"params":[],"return":"arg_0"}"#;
-        assert!(serde_json::from_str::<_fwd::_FunctionSig>(json).is_err());
+        assert!(serde_json::from_str::<FunctionSig>(json).is_err());
     }
 
     #[test]
     fn params_accept_legacy_names_and_typed_objects() {
         let json = r#"{"params":["x",{"name":"trim","type":{"mode":"logical","length":"1"},"required":true,"default":false}],"return":"arg0"}"#;
-        let signature: _fwd::_FunctionSig = serde_json::from_str(json).unwrap();
+        let signature: FunctionSig = serde_json::from_str(json).unwrap();
         assert_eq!(signature.params[0].name, "x");
         assert!(!signature.params[0].required);
         assert_eq!(signature.params[1].name, "trim");
@@ -1726,7 +1824,7 @@ mod tests {
     #[test]
     fn function_injects_are_parsed() {
         let json = r#"{"params":["new","code"],"injects":[{"into":["code"],"strings_from":["new"],"names":["self"]}],"return":{"mode":"opaque","length":"unknown"}}"#;
-        let signature: _fwd::_FunctionSig = serde_json::from_str(json).unwrap();
+        let signature: FunctionSig = serde_json::from_str(json).unwrap();
         assert_eq!(signature.injects.len(), 1);
         assert_eq!(signature.injects[0].into, ["code"]);
         assert_eq!(signature.injects[0].strings_from, ["new"]);
@@ -1736,7 +1834,49 @@ mod tests {
     #[test]
     fn param_objects_reject_unknown_fields() {
         let json = r#"{"params":[{"name":"x","optional":true}],"return":"arg0"}"#;
-        assert!(serde_json::from_str::<_fwd::_FunctionSig>(json).is_err());
+        assert!(serde_json::from_str::<FunctionSig>(json).is_err());
+    }
+
+    #[test]
+    fn signatures_reject_unknown_fields() {
+        let json = r#"{"params":[],"return":"arg0","returns":null}"#;
+        assert!(serde_json::from_str::<FunctionSig>(json).is_err());
+    }
+
+    #[test]
+    fn s3_entries_reject_unknown_fields() {
+        let json = r#"{"schema_version":"1","package":"p","version":"test","functions":{},"s3_methods":[{"generic":"print","class":"foo","params":["x"],"return":"arg0","typo":true}]}"#;
+        let error = parse_typeshed(json, Path::new("p.json")).unwrap_err();
+        assert!(
+            error.to_string().contains("unknown field `typo`"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn s3_entries_split_the_dispatch_key_from_the_signature() {
+        let json = r#"{"schema_version":"1","package":"p","version":"test","functions":{},"s3_methods":[{"generic":"print","class":"foo","params":["x"],"no_return":true,"return":{"mode":"null","length":"0"}}]}"#;
+        let typeshed = parse_typeshed(json, Path::new("p.json")).unwrap();
+        let signature = &typeshed.s3_methods[&("print".to_string(), "foo".to_string())];
+        assert_eq!(signature.param_names().collect::<Vec<_>>(), ["x"]);
+        assert!(signature.no_return);
+    }
+
+    #[test]
+    fn signatures_round_trip_through_json() {
+        let base = load_base().expect("loads");
+        for signature in base.functions.values().chain(base.s3_methods.values()) {
+            let json = serde_json::to_string(signature).unwrap();
+            assert!(
+                json.contains("\"return\":"),
+                "field must stay `return`: {json}"
+            );
+            assert!(!json.contains("\"return_\":"), "{json}");
+            assert_eq!(
+                &serde_json::from_str::<FunctionSig>(&json).unwrap(),
+                signature
+            );
+        }
     }
 
     #[test]

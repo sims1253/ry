@@ -5,6 +5,10 @@ use ry_testkit::{
 use serde_json::{Value, json};
 use std::path::Path;
 
+mod harness;
+
+use harness::file_uri;
+
 struct RunWithDriver;
 
 impl Driver for RunWithDriver {
@@ -144,10 +148,6 @@ fn lsp_position(value: &Value) -> Result<ObservedPosition, DriverError> {
             .ok_or("position has no character")? as u32,
         encoding: PositionEncoding::Utf16,
     })
-}
-
-fn file_uri(path: &Path) -> String {
-    format!("file://{}", path.display())
 }
 
 #[test]

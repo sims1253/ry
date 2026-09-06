@@ -1,4 +1,4 @@
-//! P35-W11: Clean-checkout baselines.
+//! Clean-checkout baselines.
 //!
 //! Prove that committed ecosystem reports match what the checker actually
 //! produces on the committed vendored source. This protects the
@@ -101,7 +101,7 @@ fn committed_identities() -> BTreeSet<String> {
         .collect()
 }
 
-/// P35-W11: committed local glue report matches live checker output.
+/// Committed local glue report matches live checker output.
 ///
 /// This is the clean-checkout baseline assertion. If the checker changes
 /// behavior on the committed glue source without regenerating the report,
@@ -113,7 +113,7 @@ fn clean_checkout_local_report_matches_committed_baselines() {
     assert_eq!(
         committed,
         live,
-        "P35-W11: committed ecosystem/reports/glue.txt does not match live \
+        "committed ecosystem/reports/glue.txt does not match live \
          checker output on the committed vendored glue source.\n\
          Committed:\n{}\nLive:\n{}",
         committed.iter().cloned().collect::<Vec<_>>().join("\n"),
@@ -121,7 +121,7 @@ fn clean_checkout_local_report_matches_committed_baselines() {
     );
 }
 
-/// P35-W11: falsification — a deliberately corrupted committed report
+/// falsification — a deliberately corrupted committed report
 /// is detected by the same comparison.
 ///
 /// This proves the comparison is not vacuous (e.g. always returning empty).
@@ -136,7 +136,7 @@ fn clean_checkout_comparison_catches_a_spurious_committed_entry() {
     corrupted.insert("R/__fake__.R:1:1 RY999".to_string());
     assert_ne!(
         corrupted, live,
-        "P35-W11: a spurious committed entry was not detected by the \
+        "a spurious committed entry was not detected by the \
          identity comparison",
     );
 }

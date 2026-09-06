@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-09-06T18:41:56.071281+00:00",
+  "source_revision": "24b4cbfbfa4a7d65473640fa6eaeb7611a223d81",
+  "source_dirty": false,
+  "binary_sha256": "c251aeb91903bfa136990430e3a0f97eb21ef25387d5fa98949c4115a63d336f",
+  "cargo_lock_sha256": "12df440f0e59e191dec34c015f6b64f781fd134fa3d167f0b4ccd816a9df529c",
+  "metadata": {
+    "backend": "callgrind",
+    "backend_version": "valgrind-3.25.1",
+    "architecture": "x86_64",
+    "system": "Linux",
+    "cpu": "AMD Ryzen 5 PRO 5650U with Radeon Graphics",
+    "libc": [
+      "glibc",
+      "2.44"
+    ],
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+    "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+    "cc": "cc (GCC) 16.2.1 20260810",
+    "build_profile": "release",
+    "build_flags": {},
+    "command": [
+      "check",
+      "--exit-zero",
+      "--output-format",
+      "json",
+      "<package>/R"
+    ],
+    "environment": {
+      "RY_NO_INSTALLED_LIBRARIES": "1",
+      "RAYON_NUM_THREADS": "1",
+      "LC_ALL": "C",
+      "TZ": "UTC"
+    },
+    "config": "empty R/ry.toml",
+    "counter_environment": "fixed variables plus tool PATH and empty temporary HOME",
+    "manifest_sha256": "9828c69304bb77c0402297e8b15d18611cae6de6c00f84c77836b5d2c0abf1bc",
+    "harness_sha256": "13c5d3482f9a4280f8718fc13034da7567ab038279c96ddee32636ba32539dc3",
+    "repetitions": 3
+  },
+  "fallback_notes": [],
+  "packages": [
+    {
+      "package": "glue",
+      "url": "https://github.com/tidyverse/glue.git",
+      "revision": "da9c73f7a3de6a27f3103cb5bb2355820a4c3a6a",
+      "status": "measured",
+      "tree": "b6d7f2771e0824206123c0cb140d92ec0c963b0d",
+      "counts": [
+        299454159,
+        299393861,
+        299251257
+      ],
+      "instructions": 299393861
+    },
+    {
+      "package": "stringr",
+      "url": "https://github.com/tidyverse/stringr.git",
+      "revision": "ae054b1d28f630fee22ddb3cb7525396e62af4fe",
+      "status": "measured",
+      "tree": "daa0d49a54b5bfec88035b9377b9fa522e551ccc",
+      "counts": [
+        894529652,
+        894101245,
+        893771548
+      ],
+      "instructions": 894101245
+    },
+    {
+      "package": "withr",
+      "url": "https://github.com/r-lib/withr.git",
+      "revision": "c8539fe735a5b6cdb496c68bca8248f8b6b4d419",
+      "status": "measured",
+      "tree": "c51c9c9f4c5c2e83c02762c6fb31273e81a5de77",
+      "counts": [
+        467563344,
+        467603912,
+        467813669
+      ],
+      "instructions": 467603912
+    }
+  ]
+}

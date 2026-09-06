@@ -21,12 +21,16 @@ Run the complete checker-vs-R matrix as well when R is installed (CI always
 does):
 
 ```sh
-cargo test -p ry-checker --test oracle -- --ignored
+cargo test -p ry-checker --test oracle -- --include-ignored
 ```
 
-The complete oracle uses a parallel R driver (`scripts/oracle_driver.R`, purrr
-+ mirai) when those packages are available and falls back to one `Rscript`
-process per fixture otherwise.
+Each oracle fixture runs in a fresh `Rscript --vanilla` process. Its exit
+status determines whether R errored; fixtures cannot leak bindings, attached
+packages, or daemon state into later fixtures.
+
+The [instruction-count corpus guide](docs/corpus/instructions.md) explains
+the fixed performance sample, local measurements, and warn-only CI deltas.
+Run `python3 ecosystem/test-instructions.py` after changing that harness.
 
 ## Fixture conventions
 
@@ -66,11 +70,11 @@ When inference is uncertain, return `unknown` and say nothing.
 ## Typeshed changes
 
 Never add a function name you have not verified against R.
-`scripts/audit_typeshed.R` checks every declared name with `exists()`
-(base) or against the package namespace (package files) and runs in CI.
-`scripts/gen_typeshed.R <pkg>` drafts a stub file from a package's
-exports for hand-refinement.
-
+Stubs live in the standalone
+[r-typeshed](https://github.com/sims1253/r-typeshed) repository. Its CI
+runs the auditing and stub generation.
+`scripts/sync_typeshed.sh <checkout>` vendors a snapshot into
+`crates/ry-typeshed/vendor` and validates it with `ry typeshed validate`.
 
 ## Editor extensions
 
@@ -89,6 +93,11 @@ Press `F5` in VS Code to launch an Extension Development Host with ry
 loaded. The `ry` binary must be on your `PATH`, or placed in
 `editors/code/bundled/bin/`.
 
+The Linux extension tests install a VSIX into a temporary extensions directory
+and open fresh trusted and untrusted profiles. Build `ry`, copy it into
+`editors/code/bundled/bin/ry`, then run `bun run vsce-package` and `bun run test`
+from `editors/code` (use `xvfb-run -a` on a headless machine).
+
 ### The `--no-dependencies` rule
 
 Package VSIXs with `--no-dependencies`:
@@ -99,13 +108,13 @@ bunx @vscode/vsce package --no-dependencies
 
 This is required because `vsce`'s dependency walker cannot read
 `bun.lock`, so a non-bundled extension mis-resolves `node_modules`.
-Bundling with esbuild sidesteps this.
+Bundling with esbuild avoids this.
 
 ### Zed extension
 
 The Zed extension lives in `editors/zed/`. It has its own `Cargo.lock`
-and is excluded from the root workspace (see R1 in the plan) because
-`zed_extension_api` is not held to ry's MSRV.
+and is excluded from the root workspace because `zed_extension_api` is
+not held to ry's MSRV.
 
 ```bash
 cargo build --manifest-path editors/zed/Cargo.toml
@@ -119,5 +128,7 @@ cargo test --manifest-path editors/zed/Cargo.toml
 - Conventional-commit subjects, as in the log
   (`fix(scope): ...`, `feat(area): ...`, `test: ...`).
 - No emojis anywhere in code, comments, docs, or commit messages.
-- Edit `README.md` directly. Keep examples self-contained or backed by
-  fixtures/tests so they do not depend on a separate examples tree.
+- Keep `README.md` focused on installation and getting started. Put detailed
+  usage, configuration, and rule reference material in `docs/`. Update
+  `docs/rules.md` when the rule registry changes. Keep examples
+  self-contained or backed by fixtures/tests.

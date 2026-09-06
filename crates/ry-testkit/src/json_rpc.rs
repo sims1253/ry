@@ -93,10 +93,6 @@ impl JsonRpcProcess {
             format!("no matching JSON-RPC message in {message_limit} messages"),
         ))
     }
-
-    pub fn child_id(&self) -> u32 {
-        self.child.id()
-    }
 }
 
 impl Drop for JsonRpcProcess {
@@ -236,14 +232,22 @@ where
     R: AsyncRead + Unpin,
 {
     let mut content_length = None;
+    let mut header_bytes = 0;
     loop {
         let mut header = String::new();
-        if reader.read_line(&mut header).await? == 0 {
+        let remaining = MAX_MESSAGE_BYTES - header_bytes;
+        let mut limited = reader.take((remaining + 1) as u64);
+        let bytes_read = limited.read_line(&mut header).await?;
+        if bytes_read > remaining {
+            return Err(headers_too_large());
+        }
+        if bytes_read == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
                 "server output closed",
             ));
         }
+        header_bytes += bytes_read;
         if header == "\r\n" || header == "\n" {
             break;
         }
@@ -370,30 +374,34 @@ mod tests {
         );
     }
 
-    // ── P35-W11: cross-mode subprocess framing ──────────────────────────
+    #[tokio::test]
+    async fn async_decoder_rejects_oversized_headers() {
+        let bytes = vec![b'x'; MAX_MESSAGE_BYTES + 1];
+        let mut reader = tokio::io::BufReader::new(std::io::Cursor::new(bytes));
 
-    /// P35-W11: encode/decode round-trip preserves the message exactly.
-    ///
-    /// Protects the framing seam: if `encode` wrote a wrong Content-Length
-    /// or a malformed header terminator, the decoder would produce a
-    /// different message or fail. This catches a framing mismatch between
-    /// what the testkit client sends and what it expects to receive.
-    #[test]
-    fn encode_decode_round_trip_preserves_message() {
-        let messages = [
-            json!({"jsonrpc": "2.0", "id": 1, "result": {"capabilities": {}}}),
-            json!({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {"uri": "file:///x.R", "diagnostics": []}}),
-            json!({"jsonrpc": "2.0", "id": 2, "method": "shutdown", "params": null}),
-        ];
-        for message in &messages {
-            let frame = encode(message).expect("encode");
-            let mut reader = BufReader::new(frame.as_slice());
-            let decoded = decode_blocking(&mut reader).expect("decode");
-            assert_eq!(&decoded, message);
-        }
+        let error = decode_async(&mut reader).await.unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            error.to_string(),
+            format!("JSON-RPC headers exceed {MAX_MESSAGE_BYTES} bytes")
+        );
     }
 
-    /// P35-W11: the Content-Length header matches the body byte length
+    #[tokio::test]
+    async fn async_decoder_accepts_framed_message() {
+        let message = json!({"jsonrpc": "2.0", "id": 1, "result": "ok"});
+        let frame = encode(&message).expect("encode");
+        let mut reader = tokio::io::BufReader::new(std::io::Cursor::new(frame));
+
+        let decoded = decode_async(&mut reader).await.expect("decode");
+
+        assert_eq!(decoded, message);
+    }
+
+    // ── cross-mode subprocess framing ──────────────────────────
+
+    /// the Content-Length header matches the body byte length
     /// exactly, and the header/body separator is the correct CRLFCRLF.
     /// A wrong separator or miscounted length silently truncates or
     /// merges messages across the subprocess boundary.
@@ -431,7 +439,7 @@ mod tests {
         assert_eq!(decoded, message);
     }
 
-    /// P35-W11: multiple framed messages in one buffer decode in sequence.
+    /// multiple framed messages in one buffer decode in sequence.
     ///
     /// The subprocess can write several JSON-RPC messages back-to-back on
     /// stdout (e.g., a log-message notification followed by a response).

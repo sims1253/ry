@@ -12,8 +12,6 @@ import {
 } from "vscode-languageclient/node";
 import { LOG_CHANNEL_NAME, RY_SERVER_SUBCOMMAND } from "./constants";
 import { logger } from "./logger";
-import { getDocumentSelector } from "./utilities";
-import { getConfiguration } from "./vscodeapi";
 import {
   type ISettings,
   getExtensionSettings,
@@ -30,11 +28,8 @@ export type InitializationOptions = {
 };
 
 /**
- * Build the `initializationOptions` to send at `initialize`.
- *
- * Returns the global settings as both the single folder entry and the
- * global fallback. E3's `getExtensionSettings` will replace this with a
- * proper per-workspace-folder array (consumed by S4 multi-root support).
+ * Build the `initializationOptions` to send at `initialize`: the
+ * per-folder array from `getExtensionSettings`, plus the global fallback.
  */
 export function getInitializationOptions(
   namespace: string,
@@ -47,34 +42,29 @@ export function getInitializationOptions(
   };
 }
 
-let _disposables: Disposable[] = [];
-
-export type ServerState = {
-  client: LanguageClient;
-};
+const disposables = new WeakMap<LanguageClient, Disposable[]>();
 
 /**
  * Construct and start the language server client.
  *
- * P37-W2: `binaryPath` is the already-resolved binary path from
- * `extension.ts`, which called `findRyBinaryPath()` with the correct
- * `isUntrusted` flag. The server no longer resolves its own binary —
- * eliminating the split-brain where a different binary could be
- * version-gated/displayed vs. launched.
+ * `binaryPath` must be pre-resolved by the caller via
+ * `findRyBinaryPath()` (which honors workspace trust) so the launched
+ * binary is the same one that was version-gated and displayed.
  */
 export async function startServer(
   namespace: string,
   binaryPath: string,
   outputChannel: OutputChannel,
   traceOutputChannel: OutputChannel,
-): Promise<ServerState | null> {
+): Promise<LanguageClient | null> {
   const initializationOptions = getInitializationOptions(namespace);
   logger.info(
     `Initialization options: ${JSON.stringify(initializationOptions, null, 4)}`,
   );
 
-  // M10: Pass --log-level to the server if configured.
-  const logLevel = getConfiguration(namespace).get<string>("logLevel");
+  const logLevel = vscode.workspace
+    .getConfiguration(namespace)
+    .get<string>("logLevel");
   const serverArgs: string[] = logLevel
     ? [RY_SERVER_SUBCOMMAND, "--log-level", logLevel]
     : [RY_SERVER_SUBCOMMAND];
@@ -90,11 +80,18 @@ export async function startServer(
 
   const clientOptions: LanguageClientOptions = {
     // Register the server for R documents (and ry.toml).
-    documentSelector: getDocumentSelector(),
+    documentSelector: [
+      { scheme: "file", language: "r" },
+      { scheme: "untitled", language: "r" },
+      { scheme: "vscode-notebook", language: "r" },
+      { scheme: "vscode-notebook-cell", language: "r" },
+      { scheme: "file", pattern: "**/{ry.toml}" },
+    ],
     outputChannel,
     traceOutputChannel,
     revealOutputChannelOn: RevealOutputChannelOn.Never,
     initializationOptions,
+    synchronize: { configurationSection: namespace },
     middleware: {
       workspace: {
         configuration: async (params, token, next) => {
@@ -123,7 +120,7 @@ export async function startServer(
     clientOptions,
   );
 
-  _disposables.push(
+  disposables.set(newLSClient, [
     newLSClient.onDidChangeState((e) => {
       switch (e.newState) {
         case State.Stopped:
@@ -153,18 +150,20 @@ export async function startServer(
         }
       });
     }),
-  );
+  ]);
 
   logger.info("Server: Start requested.");
   try {
     await newLSClient.start();
   } catch (ex) {
     logger.error(`Server: Start failed: ${ex}`);
-    dispose(newLSClient);
+    await dispose(newLSClient).catch((error) =>
+      logger.error(`Server cleanup failed: ${error}`),
+    );
     return null;
   }
 
-  return { client: newLSClient };
+  return newLSClient;
 }
 
 /**
@@ -172,14 +171,11 @@ export async function startServer(
  */
 export async function stopServer(lsClient: LanguageClient): Promise<void> {
   logger.info("Server: Stop requested");
-  await lsClient.stop();
-  dispose(lsClient);
+  await dispose(lsClient);
 }
 
-function dispose(client?: LanguageClient): void {
-  for (const disposable of _disposables) {
-    disposable.dispose();
-  }
-  _disposables = [];
-  client?.dispose();
+async function dispose(client: LanguageClient): Promise<void> {
+  for (const disposable of disposables.get(client) ?? []) disposable.dispose();
+  disposables.delete(client);
+  await client.dispose();
 }

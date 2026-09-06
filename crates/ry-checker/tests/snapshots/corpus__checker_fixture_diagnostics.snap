@@ -211,18 +211,18 @@ expression: snapshots
       message: "syntax error: unparseable region (recovered tree may be unreliable)"
       severity: error
       span:
-        column: 15
-        end: 170
+        column: 2
+        end: 189
         line: 3
-        start: 169
+        start: 156
     - code: RY000
       message: "syntax error: unparseable region (recovered tree may be unreliable)"
       severity: error
       span:
-        column: 8
-        end: 179
-        line: 4
-        start: 179
+        column: 15
+        end: 170
+        line: 3
+        start: 169
     - code: RY000
       message: "syntax error: unparseable region (recovered tree may be unreliable)"
       severity: error
@@ -232,13 +232,13 @@ expression: snapshots
         line: 4
         start: 187
     - code: RY010
-      message: "variable `syntax` is not bound in this scope"
+      message: "variable `f` is not bound in this scope"
       severity: warning
       span:
-        column: 9
-        end: 186
-        line: 4
-        start: 180
+        column: 0
+        end: 155
+        line: 3
+        start: 154
   fixture: err_parse_error.R
 - diagnostics:
     - code: RY060
@@ -251,41 +251,107 @@ expression: snapshots
         start: 54
   fixture: err_partial_column_indexed_assignment.R
 - diagnostics:
-    - code: RY102
-      message: "`<-` inside `list()` assigns `github-ref` and leaves the element unnamed; write `\"github-ref\" = ...` to name it"
-      severity: warning
-      span:
-        column: 21
-        end: 377
-        line: 6
-        start: 358
-    - code: RY103
-      message: "`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `!inherits(df[[1]], t)`"
-      severity: warning
-      span:
-        column: 21
-        end: 605
-        line: 10
-        start: 586
-    - code: RY105
-      message: "`u_dl` is a length-1 double, so `length(...)` is 1 here and this zero-length guard is always TRUE"
-      severity: warning
-      span:
-        column: 13
-        end: 1430
-        line: 30
-        start: 1414
-  fixture: err_plan31_recall_repro.R
-- diagnostics:
     - code: RY080
-      message: "`map_dbl` expects `double` returns but the callback returns `character`; R will coerce silently"
-      severity: warning
+      message: "`map_dbl` requires a scalar `double` callback result, but the callback returns `character<len=1>`; R rejects this result"
+      severity: error
       span:
         column: 6
         end: 275
         line: 5
         start: 236
   fixture: err_purrr_map_dbl_type_mismatch.R
+- diagnostics:
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 26
+        end: 92
+        line: 1
+        start: 91
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 22
+        end: 135
+        line: 2
+        start: 134
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 39
+        end: 200
+        line: 3
+        start: 199
+    - code: RY098
+      message: "parameter `x` may force its default before body-local `value` is assigned"
+      severity: warning
+      span:
+        column: 17
+        end: 253
+        line: 5
+        start: 252
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 32
+        end: 304
+        line: 8
+        start: 303
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 28
+        end: 350
+        line: 9
+        start: 349
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 42
+        end: 415
+        line: 10
+        start: 414
+    - code: RY098
+      message: "parameter `x` may force its default before body-local `value` is assigned"
+      severity: warning
+      span:
+        column: 14
+        end: 471
+        line: 12
+        start: 470
+  fixture: err_qualified_identity_forces_default.R
+- diagnostics:
+    - code: RY102
+      message: "`<-` inside `list()` assigns `github-ref` and leaves the element unnamed; write `\"github-ref\" = ...` to name it"
+      severity: warning
+      span:
+        column: 21
+        end: 290
+        line: 6
+        start: 271
+    - code: RY103
+      message: "`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `!inherits(df[[1]], t)`"
+      severity: warning
+      span:
+        column: 21
+        end: 518
+        line: 10
+        start: 499
+    - code: RY105
+      message: "`u_dl` is a length-1 double, so `length(...)` is 1 here and this zero-length guard is always TRUE"
+      severity: warning
+      span:
+        column: 13
+        end: 1347
+        line: 30
+        start: 1331
+  fixture: err_recall_rules_repro.R
 - diagnostics:
     - code: RY098
       message: "parameter `x` has a self-referential default that recurses when forced"
@@ -316,6 +382,56 @@ expression: snapshots
         line: 3
         start: 133
   fixture: err_recursive_default_literal_false_block.R
+- diagnostics:
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 36
+        end: 149
+        line: 2
+        start: 148
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 46
+        end: 208
+        line: 3
+        start: 207
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 30
+        end: 243
+        line: 4
+        start: 242
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 30
+        end: 278
+        line: 5
+        start: 277
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 36
+        end: 319
+        line: 6
+        start: 318
+    - code: RY098
+      message: "parameter `x` has a self-referential default that recurses when forced"
+      severity: warning
+      span:
+        column: 32
+        end: 362
+        line: 7
+        start: 361
+  fixture: err_recursive_default_taken_operands.R
 - diagnostics:
     - code: RY098
       message: "parameter `copy` has a self-referential default that recurses when forced"
@@ -356,13 +472,13 @@ expression: snapshots
   fixture: err_s7_callable_reassigned.R
 - diagnostics:
     - code: RY032
-      message: "`&&` applied to a length-3 operand; only the first element is used"
+      message: "`&&` applied to a length-3 operand; R requires a single logical value and raises an error"
       severity: warning
       span:
         column: 7
-        end: 118
+        end: 113
         line: 3
-        start: 109
+        start: 104
   fixture: err_scalar_logical.R
 - diagnostics:
     - code: RY040
@@ -637,13 +753,15 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_pipe_placeholder.R
 - diagnostics: []
-  fixture: ok_plan31_recall_negative_controls.R
-- diagnostics: []
   fixture: ok_purrr_in_parallel.R
 - diagnostics: []
   fixture: ok_purrr_map_dbl.R
 - diagnostics: []
   fixture: ok_qualified_call_not_shadowed.R
+- diagnostics: []
+  fixture: ok_qualified_identity_skips_lazy_arguments.R
+- diagnostics: []
+  fixture: ok_qualified_identity_unmatched_arguments.R
 - diagnostics: []
   fixture: ok_qualified_nse_aes.R
 - diagnostics: []
@@ -652,6 +770,8 @@ expression: snapshots
   fixture: ok_r6_class_body_bindings.R
 - diagnostics: []
   fixture: ok_raw_operations.R
+- diagnostics: []
+  fixture: ok_recall_rules_negative_controls.R
 - diagnostics: []
   fixture: ok_recursion.R
 - diagnostics: []
@@ -673,6 +793,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_recursive_default_short_circuit.R
 - diagnostics: []
+  fixture: ok_recursive_default_skipped_operands.R
+- diagnostics: []
   fixture: ok_recursive_default_unforced_branch.R
 - diagnostics: []
   fixture: ok_recursive_default_unreachable_block.R
@@ -682,6 +804,8 @@ expression: snapshots
   fixture: ok_s3_data_frame.R
 - diagnostics: []
   fixture: ok_s3_dispatch.R
+- diagnostics: []
+  fixture: ok_s3_operator_absence_arithmetic.R
 - diagnostics: []
   fixture: ok_s4_terra_named_vector.R
 - diagnostics: []
@@ -986,6 +1110,16 @@ expression: snapshots
         line: 1
         start: 20
   fixture: warn_numeric_min_condition.R
+- diagnostics:
+    - code: RY003
+      message: "`if` condition is `integer`; R coerces nonzero to TRUE"
+      severity: info
+      span:
+        column: 4
+        end: 524
+        line: 8
+        start: 497
+  fixture: warn_position_condition.R
 - diagnostics:
     - code: RY002
       message: "`if` condition has length 2; R requires a length-1 condition"

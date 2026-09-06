@@ -1,4 +1,4 @@
-//! Parser/checker invariants from Plan 35 W4.
+//! Parser/checker invariants.
 //!
 //! These tests deliberately exercise the public parser and checker seams. They do not
 //! reconstruct tree-sitter's grammar or the checker's diagnostic selection.
@@ -278,7 +278,7 @@ fn r6_parseable_statements_from_checker_and_ecosystem_corpora_survive_insertion(
     }
 }
 
-// ── P35-W11: fuzz-found parser regressions ──────────────────────────────
+// ── fuzz-found parser regressions ──────────────────────────────
 
 /// Regression fixture promoted from the `parse` cargo-fuzz target.
 ///

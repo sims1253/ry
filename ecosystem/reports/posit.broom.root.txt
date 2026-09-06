@@ -5,4 +5,3 @@ R/utilities.R:459:9 RY032
 R/utilities.R:485:9 RY032
 R/utilities.R:501:9 RY032
 tests/testthat/test-metafor.R:129:15 RY030
-tests/testthat/test-survival-survfit.R:18:13 RY030

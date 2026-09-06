@@ -205,7 +205,6 @@ impl Checker {
                 self.infer_pipe_call(rhs, &new_args, lhs, lhs_t.clone(), scope, span)
             }
             _ => {
-                // Unknown rhs form: infer rhs for diagnostics, give up on type.
                 let _ = self.infer(rhs, scope);
                 RType::unknown()
             }
@@ -237,7 +236,6 @@ impl Checker {
     /// the value flows through as the LHS.
     pub(crate) fn infer_pipe_tee(&mut self, lhs: &Expr, rhs: &Expr, scope: &mut Scope) -> RType {
         let lhs_t = self.infer(lhs, scope);
-        // Still walk the RHS so any diagnostics on its body fire.
         let _ = self.infer_pipe_with_lhs_type(
             lhs,
             rhs,
@@ -259,55 +257,11 @@ impl Checker {
         cond: &Expr,
         then: &Expr,
         else_: &Option<Box<Expr>>,
-        span: Span,
         scope: &mut Scope,
     ) -> RType {
         // RY103: an `if` used in expression position still requires a
         // length-1 logical condition.
-        self.check_class_equality_operand(cond, scope);
-        let diagnostic_start = self.diagnostics.len();
-        let ct = self.infer(cond, scope);
-        let has_ry100 = self.diagnostics[diagnostic_start..]
-            .iter()
-            .any(|diagnostic| diagnostic.code == "RY100");
-        if matches!(
-            condition_diagnostic(&ct),
-            Some(ConditionDiagnostic::Invalid)
-        ) && !has_ry100
-        {
-            self.emit(
-                Severity::Error,
-                span_of(cond),
-                "RY001",
-                format!("`if` condition is `{}`, expected length-1 logical", ct),
-            );
-        } else if matches!(
-            condition_diagnostic(&ct),
-            Some(ConditionDiagnostic::Numeric)
-        ) && !has_ry100
-            && !is_numeric_truthiness_idiom(cond, scope)
-        {
-            self.emit(
-                Severity::Info,
-                span_of(cond),
-                "RY003",
-                format!("`if` condition is `{}`; R coerces nonzero to TRUE", ct.mode),
-            );
-        } else if matches!(ct.mode, Mode::Logical) {
-            if let Length::Known(n) = ct.length {
-                if n > 1 {
-                    self.emit(
-                        Severity::Warning,
-                        span_of(cond),
-                        "RY002",
-                        format!(
-                            "`if` condition has length {}; R requires a length-1 condition",
-                            n
-                        ),
-                    );
-                }
-            }
-        }
+        self.infer_condition(cond, scope, ConditionContext::If);
         // Flow-sensitive type narrowing for the expression form too.
         //
         // Limitation: the branch scopes here are clones, and
@@ -320,14 +274,12 @@ impl Checker {
         // expression-position assignment is rare and merging here would
         // require plumbing owned branch scopes back to the caller.
         let narrowing = self.extract_type_narrowing(cond, scope);
-        let (then_scope, else_scope, _narrowed) =
-            apply_narrowing(scope, &narrowing, else_.is_some());
-        let then_t = self.infer(then, &mut then_scope.clone());
+        let (mut then_scope, mut else_scope, _narrowed) = apply_narrowing(scope, &narrowing);
+        let then_t = self.infer(then, &mut then_scope);
         let else_t = match else_ {
-            Some(e) => self.infer(e, &mut else_scope.clone()),
+            Some(e) => self.infer(e, &mut else_scope),
             None => RType::new(Mode::Null, Length::Zero),
         };
-        let _ = span;
         then_t.join(else_t)
     }
 
@@ -341,28 +293,18 @@ impl Checker {
     /// The result type is the join of all alternative types (since we
     /// can't know which branch will execute at runtime). Each
     /// alternative is also walked for diagnostics.
-    pub(crate) fn infer_switch_call(
-        &mut self,
-        args: &[Arg],
-        scope: &mut Scope,
-        span: Span,
-    ) -> RType {
-        // The first argument is the selector; infer it for diagnostics.
+    pub(crate) fn infer_switch_call(&mut self, args: &[Arg], scope: &mut Scope) -> RType {
         if let Some(first) = args.first() {
             let _ = self.infer(&first.value, scope);
         }
-        // Join the types of all remaining arguments (the alternatives).
         let mut alt_types: Vec<RType> = Vec::new();
         for a in args.iter().skip(1) {
             alt_types.push(self.infer(&a.value, scope));
         }
-        let _ = span;
         if alt_types.is_empty() {
             return RType::unknown();
         }
-        let mut iter = alt_types.into_iter();
-        let first = iter.next().unwrap_or(RType::unknown());
-        iter.fold(first, |acc, t| acc.join(t))
+        join_all(alt_types.into_iter())
     }
 
     /// Infer the result type of `tryCatch(expr, ...)`. The first
@@ -376,38 +318,24 @@ impl Checker {
     /// `callback_return_type` with the condition object as the
     /// callback's argument (opaque, since we don't model the
     /// condition object).
-    pub(crate) fn infer_trycatch_call(
-        &mut self,
-        args: &[Arg],
-        scope: &mut Scope,
-        span: Span,
-    ) -> RType {
+    pub(crate) fn infer_trycatch_call(&mut self, args: &[Arg], scope: &mut Scope) -> RType {
         let mut types: Vec<RType> = Vec::new();
         for (i, a) in args.iter().enumerate() {
             if i == 0 {
-                // Main expression.
                 types.push(self.infer(&a.value, scope));
             } else if a.name.is_some() {
-                // Named handler: `error = function(e) ...`. Infer the
-                // handler function's return type.
                 if let Some(rt) = self.callback_return_type(&a.value, &[RType::unknown()], scope) {
                     types.push(rt);
                 } else {
-                    // Couldn't infer handler return: infer for
-                    // diagnostics and use opaque.
                     let _ = self.infer(&a.value, scope);
                 }
             } else {
-                // Extra positional arg (rare): infer for diagnostics.
                 let _ = self.infer(&a.value, scope);
             }
         }
-        let _ = span;
         if types.is_empty() {
             return RType::unknown();
         }
-        let mut iter = types.into_iter();
-        let first = iter.next().unwrap_or(RType::unknown());
-        iter.fold(first, |acc, t| acc.join(t))
+        join_all(types.into_iter())
     }
 }

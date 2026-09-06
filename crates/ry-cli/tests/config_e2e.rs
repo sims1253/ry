@@ -3,8 +3,8 @@
 //! These tests invoke the `ry` binary against temporary project trees
 //! to exercise the full pipeline: discovery, parsing, merging with CLI
 //! flags, and applying the merged settings to diagnostics. They
-//! complement the unit tests in `src/config.rs`, which cover the
-//! individual pieces in isolation.
+//! complement the unit tests in `ry-config`'s `src/config.rs`, which
+//! cover the individual pieces in isolation.
 
 use std::fs;
 use std::process::Command;
@@ -343,11 +343,7 @@ fn ry_toml_output_format_json() {
 
     let output = ry_check(tmp.path());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        output.status.success() || !output.status.success(),
-        "exit code is not the point of this test"
-    );
-    // JSON output lands on stdout (per main.rs's routing) and must
+    // JSON output lands on stdout (per check.rs's routing) and must
     // parse as a JSON array containing the RY040 diagnostic.
     assert!(
         stdout.trim_start().starts_with('['),
@@ -423,10 +419,8 @@ fn ry_toml_cli_flag_overrides_config_output_format() {
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
     // concise format goes to stdout and is NOT a
     // JSON array.
-    let _ = stderr;
     assert!(
         stdout.contains("RY040"),
         "expected RY040 on stdout in concise format: {}",
@@ -715,7 +709,7 @@ fn package_namespace_bindings_do_not_leak_across_checked_roots() {
 }
 
 #[test]
-fn package_test_context_promotes_suggests_but_not_imports() {
+fn package_test_context_supplies_suggests_and_namespace_imports() {
     let tmp = tempfile::tempdir().unwrap();
     fs::create_dir_all(tmp.path().join("R")).unwrap();
     fs::create_dir_all(tmp.path().join("tests/testthat")).unwrap();
@@ -731,6 +725,10 @@ fn package_test_context_promotes_suggests_but_not_imports() {
         "daemons\nenquo\n",
     )
     .unwrap();
+    // R CMD check executes `tests/` root scripts in the global environment
+    // after `library(package)`: the namespace's wholesale imports stay
+    // internal there, so the same bare name is genuinely unbound.
+    fs::write(tmp.path().join("tests/spellcheck.R"), "enquo\n").unwrap();
 
     let output = ry_check(tmp.path());
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -739,8 +737,12 @@ fn package_test_context_promotes_suggests_but_not_imports() {
         "stubbed Suggests must supply their names in tests: {stdout}"
     );
     assert!(
-        stdout.matches("variable `enquo` is not bound").count() == 1,
-        "NAMESPACE import() must supply bare names only to R/: {stdout}"
+        !stdout.contains("test-context.R:1") && !stdout.contains("test-context.R:2"),
+        "testthat runs tests/ in a clone of the package namespace, so import(rlang) must supply bare names there too: {stdout}"
+    );
+    assert!(
+        stdout.contains("variable `enquo` is not bound") && stdout.contains("spellcheck.R"),
+        "a tests/ root script runs outside the namespace: enquo must stay unbound there: {stdout}"
     );
 }
 
@@ -1026,7 +1028,7 @@ fn full_output_reports_argument_type_mismatch_with_types() {
 
 #[test]
 fn oversized_sysdata_surfaces_degraded_scope_without_global_ry010_disable() {
-    // W20/W21d end-to-end: an over-cap serialized data file must (1) fall
+    // Over-cap end-to-end: an over-cap serialized data file must (1) fall
     // back to its file-stem binding instead of disabling RY010 project-wide,
     // (2) keep RY010 live for genuinely unbound names, and (3) surface the
     // degraded scope on stderr (never stdout) so the JSON diagnostic stream
@@ -1141,7 +1143,7 @@ fn degraded_scope_is_reported_once_per_file_not_per_reader() {
     );
 }
 
-/// Plan 31 W6. `useDynLib(pkg, .registration = TRUE)` binds every routine in
+/// `useDynLib(pkg, .registration = TRUE)` binds every routine in
 /// the package's `R_registerRoutines` table into the namespace. ry does not
 /// read `src/`, so a name the package itself passes as an FFI entry point is
 /// the evidence that it is one of them — which is what lets rlang's

@@ -1288,20 +1288,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ry-analysis"
-version = "0.9.0"
-dependencies = [
- "proptest",
- "ry-checker",
- "ry-config",
- "ry-core",
- "ry-typeshed",
- "ry-workspace",
- "tempfile",
- "tracing",
-]
-
-[[package]]
 name = "ry-checker"
 version = "0.9.0"
 dependencies = [
@@ -1317,7 +1303,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror",
  "tracing",
 ]
 
@@ -1327,10 +1312,8 @@ version = "0.9.0"
 dependencies = [
  "clap",
  "clap_complete",
- "glob",
  "miette",
  "rayon",
- "ry-analysis",
  "ry-checker",
  "ry-config",
  "ry-core",
@@ -1341,9 +1324,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror",
  "tokio",
- "toml",
  "tracing",
  "tracing-subscriber",
 ]
@@ -1379,17 +1360,16 @@ name = "ry-lsp"
 version = "0.9.0"
 dependencies = [
  "proptest",
- "ry-analysis",
  "ry-checker",
  "ry-config",
  "ry-core",
+ "ry-lsp",
  "ry-testkit",
  "ry-typeshed",
  "ry-workspace",
  "serde",
  "serde_json",
  "tokio",
- "toml",
  "tower-lsp",
  "tracing",
 ]
@@ -1711,6 +1691,18 @@ checksum = "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed"
 dependencies = [
  "bytes",
  "pin-project-lite",
+ "tokio-macros",
+]
+
+[[package]]
+name = "tokio-macros"
+version = "2.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "385a6cb71ab9ab790c5fe8d67f1645e6c450a7ce006a33de03daa956cf70a496"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -1888,9 +1880,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.26.12"
+version = "0.26.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83c567a8e18ae93f20982c90370b16fd24023aeaf52f6052b96957ab253a0fec"
+checksum = "17ebdd3a5a7e28a1890b876fdbd0c3c0fe0a6336cffaa104f11b9f720c9daa29"
 dependencies = [
  "cc",
  "regex",

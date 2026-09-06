@@ -18,8 +18,7 @@
 
 use crate::infer::semantic_argument_name;
 use crate::{
-    CallerVisibleSignature, Checker, Diagnostic, FnTable, ReturnSlots, SeverityFilter,
-    apply_filter_to_diagnostics, usemethod_generic_name,
+    CallerVisibleSignature, Checker, Diagnostic, FnTable, ReturnSlots, usemethod_generic_name,
 };
 use rayon::prelude::*;
 use ry_core::SourceFile;
@@ -36,6 +35,7 @@ use std::sync::Arc;
 /// a top-level function with the same name, the later `add_file` wins
 /// (matching R's own `source()` ordering, where the most recently
 /// sourced file's bindings override earlier ones).
+#[derive(Default)]
 pub struct Project {
     /// Shared function table. Populated by pass 1 from all files, then
     /// refined by pass 2. Kept on `Project` rather than recreated each
@@ -47,7 +47,8 @@ pub struct Project {
     /// (diagnostic emission) has each file's AST in hand.
     files: Vec<(String, Arc<SourceFile>)>,
     /// Cached per-file diagnostics from the most recent `check()` call.
-    /// Kept so `apply_filter` can run after `check()` without re-parsing.
+    /// Serves `check_incremental`, which reuses them for files outside
+    /// the dirty set instead of re-checking those files.
     diagnostics: Vec<(String, Vec<Diagnostic>)>,
     /// Packages declared in `ry.toml`'s `packages` key, unioned at
     /// `check()` time with packages attached via `library`/`require` in
@@ -88,9 +89,11 @@ pub struct Project {
     /// The `loaded` set from the previous emit, used to detect project-wide
     /// invalidation (a new `library()` call changes diagnostics everywhere).
     prev_loaded: Option<HashSet<String>>,
-    /// Return-type slots from the previous emit, used to detect which
-    /// functions' inferred return types changed during pass 2 refinement.
-    prev_return_slots: Option<Vec<ry_core::RType>>,
+    /// Whether `refine_and_emit` has completed at least once. Separates
+    /// the first check (refine and emit everything) from incremental
+    /// ones. The compared values live in `prev_fn_returns` and
+    /// `prev_fn_signatures`.
+    has_prev_emit: bool,
     /// Per-file set of function names called (from `call_sites`), cached
     /// so the dirty-set computation in `refine_and_emit` can check whether
     /// a file references any function whose return slot changed.
@@ -98,7 +101,7 @@ pub struct Project {
     /// Previous pass-2 refined return types, keyed by function name.
     /// Used to seed the next fixpoint iteration so already-converged
     /// entries start from their refined value rather than re-converging
-    /// from scratch (Plan 33 W2).
+    /// from scratch.
     prev_fn_returns: HashMap<String, ry_core::RType>,
     /// Previous caller-visible parameter signatures, keyed by function name.
     /// Return slots alone are insufficient: argument names, order, required
@@ -107,6 +110,14 @@ pub struct Project {
     /// Previous pooled known_vars set, used to detect when non-function
     /// bindings changed across files (affects RY010 diagnostics).
     prev_known_vars: HashSet<String>,
+    /// When true, pass-3 emitters snapshot each file's lexical scopes.
+    /// Off by default; see [`Checker::enable_scope_capture`].
+    capture_scopes: bool,
+    /// Scope records from the most recent emission, one entry per
+    /// re-emitted file. Files served from the incremental cache keep no
+    /// records, so a cold `check()` (which emits every file) is the
+    /// complete view.
+    scope_records: Vec<(String, Vec<crate::ScopeRecord>)>,
     /// Test-visible counter: how many files were actually emitted (not
     /// served from cache) in the most recent `refine_and_emit` call.
     /// Asserted on in unit tests the same way `parse_count` is in backend.rs.
@@ -121,40 +132,22 @@ pub(crate) struct CollectedFile {
     pub(crate) loaded: HashSet<String>,
 }
 
-impl Default for Project {
-    fn default() -> Self {
-        Self::new()
+/// Replace `current` with `new` when they differ, returning whether the
+/// replacement happened. The equality-aware setters below use this to
+/// skip the all-dirty invalidation an unchanged value would cause.
+fn set_if_changed<T: PartialEq>(current: &mut T, new: T) -> bool {
+    if *current == new {
+        false
+    } else {
+        *current = new;
+        true
     }
 }
 
 impl Project {
     /// Construct an empty project with no files and empty tables.
     pub fn new() -> Self {
-        Self {
-            fn_table: FnTable::default(),
-            return_slots: ReturnSlots::default(),
-            files: Vec::new(),
-            diagnostics: Vec::new(),
-            loaded: std::collections::HashSet::new(),
-            declared_loaded: HashSet::new(),
-            bare_loaded: HashMap::new(),
-            external_bindings: HashMap::new(),
-            imported_from: HashMap::new(),
-            external_s3_methods: HashMap::new(),
-            load_bindings: HashMap::new(),
-            user_stubs: Arc::new(BTreeMap::new()),
-            collected_files: HashMap::new(),
-            file_known_vars: HashMap::new(),
-            dirty_paths: HashSet::new(),
-            invalidated_fns: HashSet::new(),
-            prev_loaded: None,
-            prev_return_slots: None,
-            file_called_fns: HashMap::new(),
-            prev_fn_returns: HashMap::new(),
-            prev_fn_signatures: HashMap::new(),
-            prev_known_vars: HashSet::new(),
-            emit_count: 0,
-        }
+        Self::default()
     }
 
     /// Add a parsed file to the project. Call this for every file
@@ -166,13 +159,12 @@ impl Project {
     /// the most recently sourced file's top-level bindings override
     /// earlier ones.
     pub fn add_file(&mut self, path: String, file: SourceFile) {
-        self.dirty_paths.insert(path.clone());
-        self.files.push((path, Arc::new(file)));
+        self.add_file_arc(path, Arc::new(file));
     }
 
     /// Add a pre-parsed file without wrapping. Use when the caller
-    /// already holds an `Arc<SourceFile>` (e.g. the LSP server, which
-    /// shares parse results across features).
+    /// already holds an `Arc<SourceFile>` and would otherwise deep-clone
+    /// the file just to hand it to [`add_file`](Self::add_file).
     pub fn add_file_arc(&mut self, path: String, file: Arc<SourceFile>) {
         self.dirty_paths.insert(path.clone());
         self.files.push((path, file));
@@ -218,16 +210,23 @@ impl Project {
     /// packages attached via `library`/`require` in
     /// any file, and the union is seeded into every pass-3 emitter so
     /// the dplyr NSE gating sees a project-wide view.
+    ///
+    /// Equality-aware: reinstalling the declared set already in place is a
+    /// no-op. The comparison is against `declared_loaded` (the input), not
+    /// `loaded`, which is recomputed from it on every check pass.
     pub fn set_loaded(&mut self, loaded: std::collections::HashSet<String>) {
+        if self.declared_loaded == loaded {
+            return;
+        }
         self.declared_loaded = loaded.clone();
         self.loaded = loaded;
         self.mark_all_dirty();
     }
 
     pub fn set_bare_loaded(&mut self, loaded: HashMap<String, HashSet<String>>) {
-        self.bare_loaded = loaded;
-
-        self.mark_all_dirty();
+        if set_if_changed(&mut self.bare_loaded, loaded) {
+            self.mark_all_dirty();
+        }
     }
 
     /// Mark every file dirty so the next incremental check re-emits all.
@@ -238,13 +237,31 @@ impl Project {
         }
     }
 
+    /// Opt this project into snapshotting every file's lexical scopes
+    /// during the next check. The records replace those of the previous
+    /// emission and are read back with
+    /// [`take_scope_records`](Self::take_scope_records).
+    pub fn enable_scope_capture(&mut self) {
+        self.capture_scopes = true;
+        self.scope_records.clear();
+    }
+
+    /// Take the scope records captured by the most recent check. Empty
+    /// unless [`enable_scope_capture`](Self::enable_scope_capture) was
+    /// called before it.
+    pub fn take_scope_records(&mut self) -> Vec<(String, Vec<crate::ScopeRecord>)> {
+        std::mem::take(&mut self.scope_records)
+    }
+
     /// Install runtime package stubs. User packages, including `base`,
     /// replace same-named embedded packages wholesale for this project.
-    /// Mark every file as dirty so the next incremental check re-emits all.
+    /// Equality-aware: installing the same `Arc` again is a no-op; a
+    /// different stub set clears all cached collection and re-emits.
     pub fn set_user_stubs(&mut self, stubs: Arc<BTreeMap<String, Typeshed>>) {
-        if !Arc::ptr_eq(&self.user_stubs, &stubs) {
-            self.collected_files.clear();
+        if Arc::ptr_eq(&self.user_stubs, &stubs) {
+            return;
         }
+        self.collected_files.clear();
         self.user_stubs = stubs;
         self.mark_all_dirty();
     }
@@ -253,76 +270,63 @@ impl Project {
     /// `NAMESPACE`'s `importFrom()` directives. Per-file scoping prevents an
     /// import in one checked package from leaking into an unrelated package.
     pub fn set_external_bindings(&mut self, bindings: HashMap<String, HashSet<String>>) {
-        self.external_bindings = bindings;
-
-        self.mark_all_dirty();
+        if set_if_changed(&mut self.external_bindings, bindings) {
+            self.mark_all_dirty();
+        }
     }
 
     pub fn set_imported_from(&mut self, imports: HashMap<String, HashMap<String, String>>) {
-        self.imported_from = imports;
-
-        self.mark_all_dirty();
+        if set_if_changed(&mut self.imported_from, imports) {
+            self.mark_all_dirty();
+        }
     }
 
     pub fn set_external_s3_methods(&mut self, methods: HashMap<String, HashSet<(String, String)>>) {
-        self.external_s3_methods = methods;
-
-        self.mark_all_dirty();
+        if set_if_changed(&mut self.external_s3_methods, methods) {
+            self.mark_all_dirty();
+        }
     }
 
     pub fn set_load_bindings(
         &mut self,
         bindings: HashMap<String, HashMap<usize, HashSet<String>>>,
     ) {
-        self.load_bindings = bindings;
-
-        self.mark_all_dirty();
+        if set_if_changed(&mut self.load_bindings, bindings) {
+            self.mark_all_dirty();
+        }
     }
 
     /// Run the three-pass check across all added files. Returns a map
     /// (as a `Vec<(path, Vec<Diagnostic>)>` preserving input order)
     /// from each file's path to the diagnostics emitted for that file.
     ///
-    /// The returned vec is also cached on the `Project` so a follow-up
-    /// call to [`apply_filter`](Self::apply_filter) can adjust
-    /// severities without re-checking.
-    ///
     /// Calling `check` twice on the same `Project` is safe but
     /// wasteful: each call re-collects and re-refines from scratch.
     /// For incremental updates, use [`update_file`](Self::update_file)
     /// followed by [`check_incremental`](Self::check_incremental).
     pub fn check(&mut self) -> Vec<(String, Vec<Diagnostic>)> {
-        // Pre-scan: collect packages attached via `library`/`require`
-        // from every file and union them with the
+        // Pass 1: one collection walk per file. Each file's functions
+        // AND its `library`/`require` attachments are harvested in the
+        // same pass (issue #178); the attachments are unioned with the
         // project-declared `loaded` set (from `ry.toml`'s `packages`
         // key). The union is seeded into every pass-3 emitter so a
         // `library(dplyr)` in any file makes dplyr NSE verbs resolve
         // everywhere (matching R's source()-based cross-file semantics).
-        // A throwaway Checker in discarding mode drives the walk; no
-        // diagnostics are emitted.
         let mut union_loaded = self.declared_loaded.clone();
-        let mut loaded_scanner = Checker::new("__project_loaded__");
-        loaded_scanner.set_user_stubs(Arc::clone(&self.user_stubs));
-        for (_path, file) in &self.files {
-            union_loaded.extend(loaded_scanner.collect_file_loaded(file));
-        }
-        self.loaded = union_loaded.clone();
-
-        // Pass 1: collect each file separately before merging. Their binding
-        // sets are pooled for diagnostic emission, matching source()-based
-        // project semantics (including testthat helpers and examples).
         let mut fn_table = FnTable::default();
         let mut return_slots = ReturnSlots::default();
         self.file_known_vars.clear();
         for (path, file) in &self.files {
             let mut collector = Checker::new(path);
             collector.set_user_stubs(Arc::clone(&self.user_stubs));
-            collector.collect_file_fns(file);
+            let loaded = collector.collect_file_fns(file);
             let (collected, slots) = collector.into_tables();
             self.file_known_vars
                 .insert(path.clone(), collected.known_vars.clone());
+            union_loaded.extend(loaded);
             fn_table.append_collected(&collected, &mut return_slots, &slots);
         }
+        self.loaded = union_loaded.clone();
         fn_table.known_vars = self.pooled_known_vars();
         self.fn_table = fn_table;
         self.return_slots = return_slots;
@@ -330,7 +334,7 @@ impl Project {
         // state (if any) is discarded.
         self.dirty_paths = self.files.iter().map(|(p, _)| p.clone()).collect();
         self.prev_loaded = None;
-        self.prev_return_slots = None;
+        self.has_prev_emit = false;
         self.prev_fn_returns.clear();
         self.prev_fn_signatures.clear();
         self.prev_known_vars.clear();
@@ -347,13 +351,11 @@ impl Project {
             if self.collected_files.contains_key(path) {
                 continue;
             }
-            let mut loaded_scanner = Checker::new(path);
-            loaded_scanner.set_user_stubs(Arc::clone(&self.user_stubs));
-            let loaded = loaded_scanner.collect_file_loaded(file);
-
+            // Same combined collection walk as the cold `check`: the
+            // file's functions and attachments in one pass (#178).
             let mut collector = Checker::new(path);
             collector.set_user_stubs(Arc::clone(&self.user_stubs));
-            collector.collect_file_fns(file);
+            let loaded = collector.collect_file_fns(file);
             let (fn_table, return_slots) = collector.into_tables();
             self.file_known_vars
                 .insert(path.clone(), fn_table.known_vars.clone());
@@ -403,7 +405,9 @@ impl Project {
     /// transitive callers via the reverse call graph.
     fn compute_fixpoint_scope(&self) -> Option<HashSet<String>> {
         // First call → refine everything.
-        self.prev_return_slots.as_ref()?;
+        if !self.has_prev_emit {
+            return None;
+        }
         // If loaded changed (library() calls appeared/disappeared), the stub
         // environment changed — full refinement is needed because package
         // signatures affect return types.
@@ -454,24 +458,8 @@ impl Project {
         affected.extend(affected_generics);
 
         // Transitive closure: if function G's defining file calls function F,
-        // and F is affected, then G is also affected. Iterate until fixpoint.
-        let mut changed = true;
-        while changed {
-            changed = false;
-            for (path, collected) in &self.collected_files {
-                let Some(calls) = self.file_called_fns.get(path) else {
-                    continue;
-                };
-                // Does this file call any affected function?
-                if !calls.iter().any(|name| affected.contains(name)) {
-                    continue;
-                }
-                // All functions defined in this file are potential callers.
-                for fn_name in collected.fn_table.fns.keys() {
-                    changed |= affected.insert(fn_name.clone());
-                }
-            }
-        }
+        // and F is affected, then G is also affected.
+        let affected = self.with_transitive_callers(affected);
 
         Some(affected)
     }
@@ -504,7 +492,7 @@ impl Project {
         // the shared table stabilizes. A single Checker drives the
         // fixpoint loop; its table is then handed back to the Project.
         //
-        // W2 optimization: seed the fixpoint with the previous run's
+        // Optimization: seed the fixpoint with the previous run's
         // refined return types (keyed by function name). Already-converged
         // entries keep their refined value, so the loop needs fewer
         // iterations to re-stabilize after a small edit.
@@ -516,10 +504,11 @@ impl Project {
             std::mem::take(&mut self.fn_table),
             std::mem::take(&mut self.return_slots),
         );
+        refiner.set_loaded(self.loaded.clone());
         refiner.set_user_stubs(Arc::clone(&self.user_stubs));
         refiner.seed_return_types(&self.prev_fn_returns);
 
-        // W2 scoping: refine only functions whose return type can have
+        // Scoping: refine only functions whose return type can have
         // changed, rather than the entire project. On the first call or
         // when `loaded` changed, fall back to refining everything.
         refiner.seed_caller_visible_signatures(&self.prev_fn_signatures, fixpoint_scope.as_ref());
@@ -532,7 +521,7 @@ impl Project {
         self.fn_table = fn_table;
         self.return_slots = return_slots;
 
-        // --- Dirty-set computation (Plan 33 W1) ---
+        // --- Dirty-set computation ---
         //
         // Determine which files' diagnostics can actually have changed,
         // and re-emit only those. A file must be re-emitted when:
@@ -592,10 +581,10 @@ impl Project {
         // Combine: a file is dirty if it was content-changed, if loaded
         // changed at all, or if it calls any function whose return slot
         // changed. When loaded changes, every file is dirty.
-        // On the first call (prev_return_slots is None), every file must be
-        // emitted. Otherwise, use the incremental dirty set.
+        // On the first call, every file must be emitted. Otherwise, use
+        // the incremental dirty set.
         let known_vars_changed = self.prev_known_vars != self.fn_table.known_vars;
-        let first_call = self.prev_return_slots.is_none();
+        let first_call = !self.has_prev_emit;
         let must_emit: HashSet<&str> = if first_call || loaded_changed || known_vars_changed {
             self.files.iter().map(|(p, _)| p.as_str()).collect()
         } else {
@@ -605,13 +594,12 @@ impl Project {
                     continue;
                 }
                 // Does this file call any function whose return type changed?
-                if let Some(called) = self.file_called_fns.get(path) {
-                    if called
+                if let Some(called) = self.file_called_fns.get(path)
+                    && called
                         .iter()
                         .any(|name| changed_fns.contains(name.as_str()))
-                    {
-                        dirty.insert(path.as_str());
-                    }
+                {
+                    dirty.insert(path.as_str());
                 }
                 // Conservatively: if any S3/S4 method slot changed, emit
                 // this file. S3 dispatch is dynamic; we cannot cheaply
@@ -629,7 +617,7 @@ impl Project {
         // passes 1/2), so only the refcount is bumped per file, not the
         // tables themselves.
         //
-        // W1 optimization: only emit files in the dirty set. Files not in
+        // Optimization: only emit files in the dirty set. Files not in
         // the set keep their previously-emitted diagnostics unchanged.
         let fn_table = Arc::new(std::mem::take(&mut self.fn_table));
         let package_known_vars = Arc::new(fn_table.known_vars.clone());
@@ -652,8 +640,9 @@ impl Project {
             .map(|(i, _)| i)
             .collect();
         self.emit_count = emit_indices.len();
+        let capture_scopes = self.capture_scopes;
 
-        let per_file: Vec<(usize, String, Vec<Diagnostic>)> = emit_indices
+        let per_file: Vec<(usize, String, Vec<Diagnostic>, Vec<crate::ScopeRecord>)> = emit_indices
             .par_iter()
             .map(|&i| {
                 let (path, file) = &self.files[i];
@@ -682,8 +671,12 @@ impl Project {
                     external_s3_methods.get(path).cloned().unwrap_or_default(),
                 );
                 emitter.set_load_bindings(load_bindings.get(path).cloned().unwrap_or_default());
+                if capture_scopes {
+                    emitter.enable_scope_capture();
+                }
                 emitter.emit_diagnostics(file);
-                (i, path.clone(), emitter.take_diagnostics())
+                let records = emitter.take_scope_records();
+                (i, path.clone(), emitter.take_diagnostics(), records)
             })
             .collect();
 
@@ -703,9 +696,20 @@ impl Project {
         // files that were not in the dirty set.
         let mut result: Vec<(String, Vec<Diagnostic>)> = Vec::with_capacity(self.files.len());
 
-        // Build a lookup from emitted results.
-        let mut emitted_map: HashMap<usize, (String, Vec<Diagnostic>)> =
-            per_file.into_iter().map(|(i, p, d)| (i, (p, d))).collect();
+        // Scope records replace the previous emission's; files served
+        // from cache contribute none (see `scope_records` on the struct).
+        let mut per_file = per_file;
+        if capture_scopes {
+            self.scope_records = per_file
+                .iter_mut()
+                .map(|(_, path, _, records)| (path.clone(), std::mem::take(records)))
+                .collect();
+        }
+
+        let mut emitted_map: HashMap<usize, (String, Vec<Diagnostic>)> = per_file
+            .into_iter()
+            .map(|(i, p, d, _)| (i, (p, d)))
+            .collect();
 
         for (i, (path, _)) in self.files.iter().enumerate() {
             if let Some((p, d)) = emitted_map.remove(&i) {
@@ -722,10 +726,10 @@ impl Project {
 
         // Record state for the next incremental check.
         self.prev_loaded = Some(self.loaded.clone());
-        self.prev_return_slots = Some(self.return_slots.0.clone());
-        // Save refined return types keyed by function name for the next
-        // fixpoint seeding (W2).
+        self.has_prev_emit = true;
         self.prev_known_vars = self.fn_table.known_vars.clone();
+        // Save refined return types keyed by function name for the next
+        // fixpoint seeding.
         self.prev_fn_returns = self
             .fn_table
             .fns
@@ -751,40 +755,12 @@ impl Project {
             .flat_map(|known_vars| known_vars.iter().cloned())
             .collect()
     }
-
-    /// Apply a severity filter to the diagnostics cached from the most
-    /// recent `check()` call. If `check()` has not been called yet,
-    /// this is a no-op.
-    ///
-    /// This mirrors `Checker::apply_filter` but operates across every
-    /// file's diagnostic vec. Callers that hold their own per-file vec
-    /// (e.g. the CLI, after collecting `check()`'s return value) can
-    /// instead use [`apply_filter_to_diagnostics`] directly.
-    pub fn apply_filter(&mut self, filter: &SeverityFilter) {
-        for (_path, diags) in &mut self.diagnostics {
-            apply_filter_to_diagnostics(diags, filter);
-        }
-    }
-}
-
-/// File classification — re-exported from ry-workspace (P38-W3).
-pub use ry_workspace::{PackageFileKind, package_file_kind};
-
-/// Whether a file is directly under a package's `R/` directory.
-#[cfg(test)]
-pub(crate) fn is_package_library_file(path: &str) -> bool {
-    package_file_kind(std::path::Path::new(path)) == PackageFileKind::Library
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ry_core::RParser;
-
-    fn parse(path: &str, src: &str) -> SourceFile {
-        let mut p = RParser::new().unwrap();
-        p.parse(path, src).unwrap()
-    }
+    use crate::tests::parse_file;
 
     #[test]
     fn empty_project_has_no_diagnostics() {
@@ -798,7 +774,7 @@ mod tests {
         // Sanity: a single-file Project should behave like a single-file
         // Checker (no surprises from the extra plumbing).
         let src = "f <- function() { \"hello\" }\ny <- f() + 1L\n";
-        let file = parse("a.R", src);
+        let file = parse_file("a.R", src);
 
         let mut project = Project::new();
         project.add_file("a.R".to_string(), file);
@@ -816,7 +792,7 @@ mod tests {
         let mut project = Project::new();
         project.add_file(
             "inst/shiny/src/server/fragment.R".to_string(),
-            parse(
+            parse_file(
                 "inst/shiny/src/server/fragment.R",
                 "output$value <- input$value\nsession$sendCustomMessage('x', list())\n",
             ),
@@ -839,11 +815,11 @@ mod tests {
         let mut project = Project::new();
         project.add_file(
             "function.R".to_string(),
-            parse("function.R", "list.map <- function(.data, expr) expr\n"),
+            parse_file("function.R", "list.map <- function(.data, expr) expr\n"),
         );
         project.add_file(
             "call.R".to_string(),
-            parse("call.R", "r <- list.map(some_list(), . + score)\n"),
+            parse_file("call.R", "r <- list.map(some_list(), . + score)\n"),
         );
         project.set_loaded(std::collections::HashSet::from(["rlist".to_string()]));
         let diagnostics: Vec<_> = project
@@ -857,5 +833,63 @@ mod tests {
                 .all(|diagnostic| diagnostic.code != "RY010"),
             "project calls should honor loaded stub eval metadata: {diagnostics:?}"
         );
+    }
+
+    #[test]
+    fn scope_capture_records_top_and_function_scopes_once() {
+        use crate::ScopeRecordKind;
+
+        // A nested closure: the inner body references `base`, which only
+        // the outer scope binds, so the inner snapshot must still contain
+        // it (R's lexical capture) while the outer records it as a local.
+        // The trailing `outer()` omits both formals, which is the call
+        // evidence that lets ry commit to `x`'s default type; without a
+        // call site a defaulted formal stays opaque by design.
+        let src = "base <- 2L\nouter <- function(x = 1L, y) {\n  local <- x + base\n  inner <- function(z) z + base\n  inner(y)\n}\nouter()\n";
+        let mut project = Project::new();
+        project.add_file("a.R".to_string(), parse_file("a.R", src));
+        project.enable_scope_capture();
+        project.check();
+        let records = project.take_scope_records();
+        assert_eq!(records.len(), 1, "one file: {records:?}");
+        let (path, records) = &records[0];
+        assert_eq!(path, "a.R");
+
+        let mut sorted = records.clone();
+        sorted.sort_by_key(|record| record.span.start);
+        // top, outer, inner -- exactly one record each (the fixpoint and
+        // signature walks must not double-capture).
+        assert_eq!(sorted.len(), 3, "{sorted:?}");
+        assert_eq!(sorted[0].kind, ScopeRecordKind::Top);
+        assert!(sorted[0].name.is_none());
+        assert_eq!(sorted[1].kind, ScopeRecordKind::Function);
+        assert_eq!(sorted[1].name.as_deref(), Some("outer"));
+        assert_eq!(
+            sorted[1]
+                .params
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["x", "y"]
+        );
+        assert_eq!(sorted[2].name.as_deref(), Some("inner"));
+
+        let outer = &sorted[1];
+        // The default-valued parameter carries its literal type; the
+        // default-less one stays opaque.
+        assert_eq!(
+            outer.scope.get("x").map(|t| t.to_string()),
+            Some("integer<len=1>".to_string())
+        );
+        assert!(outer.scope.parameter_bindings.contains("x"));
+        // Captured from the outer scope's cloned table.
+        assert!(sorted[2].scope.get("base").is_some());
+        // Local assignment present in the final snapshot.
+        assert!(outer.scope.get("local").is_some());
+        // No capture without opting in.
+        let mut plain = Project::new();
+        plain.add_file("a.R".to_string(), parse_file("a.R", src));
+        plain.check();
+        assert!(plain.take_scope_records().is_empty());
     }
 }

@@ -89,122 +89,48 @@ fn glue_vendor_snapshot() {
 /// list of `file:line:col CODE message` strings (using the file stem
 /// for path stability).
 fn check_vendor(vendor_subdir: &str) -> Vec<String> {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let vendor_root = std::path::Path::new(manifest_dir).join(vendor_subdir);
-
-    let mut entries: Vec<_> = match std::fs::read_dir(&vendor_root) {
-        Ok(e) => e.flatten().collect(),
-        Err(e) => {
-            eprintln!(
-                "vendor_snapshot: could not read {}; skipping. ({})",
-                vendor_root.display(),
-                e
-            );
-            return Vec::new();
-        }
-    };
-    entries.sort_by_key(|e| e.path());
-    if entries.is_empty() {
-        panic!(
-            "vendor_snapshot: no files in {}; the vendored package is missing",
-            vendor_root.display()
-        );
-    }
-
-    let mut parser = RParser::new().expect("parser init");
-    let mut project = Project::new();
-    let mut srcs: HashMap<String, String> = HashMap::new();
-    let mut paths: Vec<String> = Vec::new();
-    for entry in &entries {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("R") {
-            continue;
-        }
-        let rel = path
-            .strip_prefix(manifest_dir)
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| path.to_string_lossy().to_string());
-        let src = std::fs::read_to_string(&path).expect("read vendored .R");
-        let file = match parser.parse(&rel, &src) {
-            Ok(f) => f,
-            Err(e) => {
-                eprintln!("vendor_snapshot: parse {}: {}", rel, e);
-                continue;
-            }
-        };
-        project.add_file(rel.clone(), file);
-        srcs.insert(rel.clone(), src);
-        paths.push(rel);
-    }
-
-    // Apply the package's own NAMESPACE the way the CLI does, so the net
-    // measures what a user running `ry check` on the package sees rather
-    // than what checking a bare directory of `.R` files sees. Vendored
-    // packages without a NAMESPACE keep the plain behaviour.
-    if let Some(metadata) = vendor_namespace(&mut parser, &vendor_root) {
-        let bindings = namespace_bindings(&metadata);
-        let imported_from: HashMap<String, String> = metadata.imported_from.clone();
-        project.set_external_bindings(
-            paths
-                .iter()
-                .map(|p| (p.clone(), bindings.clone()))
-                .collect(),
-        );
-        project.set_imported_from(
-            paths
-                .iter()
-                .map(|p| (p.clone(), imported_from.clone()))
-                .collect(),
-        );
-        project.set_external_s3_methods(
-            paths
-                .iter()
-                .map(|p| (p.clone(), metadata.s3_methods.clone()))
-                .collect(),
-        );
-    }
-
-    let per_file = project.check();
-    render_diags(&per_file, &srcs)
-}
-
-/// Parse `<vendor_root>/../NAMESPACE`, if the vendored package ships one.
-fn vendor_namespace(
-    parser: &mut RParser,
-    vendor_root: &std::path::Path,
-) -> Option<ry_workspace::packages::NamespaceMetadata> {
-    let namespace = vendor_root.parent()?.join("NAMESPACE");
-    let src = std::fs::read_to_string(&namespace).ok()?;
-    let file = parser
-        .parse(&namespace.to_string_lossy(), &src)
-        .expect("parse vendored NAMESPACE");
-    Some(ry_workspace::packages::namespace_metadata(&file))
-}
-
-/// The opaque binding set a NAMESPACE contributes, mirroring
-/// `ry-cli`'s `package_metadata`.
-fn namespace_bindings(
-    metadata: &ry_workspace::packages::NamespaceMetadata,
-) -> std::collections::HashSet<String> {
-    use ry_workspace::packages::{NATIVE_REGISTRATION_SENTINEL, NATIVE_ROUTINE_PREFIX_SENTINEL};
-
-    let mut bindings: std::collections::HashSet<String> = metadata
-        .imported_bindings
-        .iter()
-        .chain(metadata.s3_generics.iter())
-        .chain(metadata.native_routines.iter())
-        .cloned()
+    let vendor_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(vendor_subdir);
+    let mut paths: Vec<_> = std::fs::read_dir(&vendor_root)
+        .expect("vendored package must exist")
+        .map(|entry| entry.expect("read vendor entry").path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "R"))
         .collect();
-    bindings.extend(
-        metadata
-            .native_routine_prefixes
-            .iter()
-            .map(|prefix| format!("{NATIVE_ROUTINE_PREFIX_SENTINEL}{prefix}")),
-    );
-    if metadata.native_registration {
-        bindings.insert(NATIVE_REGISTRATION_SENTINEL.to_string());
+    paths.sort();
+    assert!(!paths.is_empty(), "vendored package has no R sources");
+    let mut parser = RParser::new().expect("parser init");
+    let files: Vec<_> = paths
+        .iter()
+        .map(|path| {
+            let source = ry_workspace::read_r_source(path).expect("read vendored R source");
+            parser
+                .parse(&path.to_string_lossy(), &source)
+                .expect("parse vendored R source")
+        })
+        .collect();
+    let workspace = ry_workspace::resolve_workspace_context(
+        vendor_root.parent().unwrap(),
+        &ry_config::Config::default(),
+        ry_workspace::ResolutionEnvironment {
+            files: files.iter().collect(),
+            user_stubs: &Default::default(),
+        },
+    )
+    .expect("resolve vendored package");
+    let mut project = Project::new();
+    project.set_loaded(workspace.attached_packages);
+    project.set_bare_loaded(workspace.bare_bindings);
+    project.set_external_bindings(workspace.external_bindings);
+    project.set_imported_from(workspace.imported_bindings);
+    project.set_external_s3_methods(workspace.s3_methods);
+    project.set_load_bindings(workspace.load_bindings);
+    let srcs = files
+        .iter()
+        .map(|file| (file.path.clone(), file.source.clone()))
+        .collect();
+    for file in files {
+        project.add_file(file.path.clone(), file);
     }
-    bindings
+    render_diags(&project.check(), &srcs)
 }
 
 #[test]
@@ -218,25 +144,14 @@ fn purrr_vendor_snapshot() {
     // CLI applies: `importFrom` bindings, S3 registrations, and
     // `useDynLib(purrr, .registration = TRUE)`.
     //
-    // Snapshot entries are RY010 function and constant names that are not yet
-    // modeled, all of them cross-package symbols purrr reaches without an
-    // `importFrom`. The `caller_env = caller_env()` default is deliberately
-    // not reported because its force is conditional on the progress-bar path.
-    //
-    //   * rlang functions used via `::`-free internal calls: quo_get_expr,
-    //     eval_tidy, is_bare_formula, as_quosure, is_quosure, obj_is_list,
-    //     is_zap.
-    //   * rlang-compat constants na_chr / na_dbl / na_int, referenced in
-    //     compat-types-check.R -- these are defined in a non-vendored rlang
-    //     compat file, so they read as unbound here.
-    //   * vctrs functions: vec_set_union.
-    //
-    // These resolve once the package typeshed covers rlang and vctrs.
+    // Whole-package imports resolve rlang/vctrs functions and constants.
+    // The remaining RY032 reports a scalar requirement for `before` in
+    // prepend(); its earlier stopifnot check rejects invalid lengths at runtime.
     //
     // purrr's own C-backed entry points (map_impl, map2_impl, pmap_impl)
     // are NOT in the snapshot and must stay out: they are passed as bare
     // symbols to `call_with_cleanup`, which the `.registration = TRUE`
-    // declaration licenses (plan 31 W6). Dropping the NAMESPACE, or the
+    // declaration licenses. Dropping the NAMESPACE, or the
     // registration gate, makes all three reappear.
     // -----------------------------------------------------------------
 

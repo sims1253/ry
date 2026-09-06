@@ -6,6 +6,10 @@ on:
   schedule:
     - cron: "17 3 * * 1"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -17,18 +21,18 @@ jobs:
     if: ${{ github.event_name != 'schedule' && (github.event_name != 'pull_request' || !contains(github.event.pull_request.labels.*.name, 'ecosystem-deferred')) }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
       # run.sh writes reports and validates the reviewed identity ledger with
       # Rscript/jsonlite. Both R/-only and package-root snapshots are hermetic
       # via RY_NO_INSTALLED_LIBRARIES, so no package sources are executed.
-      - uses: r-lib/actions/setup-r@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
+      - uses: r-lib/actions/setup-r@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2.12.1
         with:
           use-public-rspm: true
       - name: Install R packages (report writer)
-        uses: r-lib/actions/setup-r-dependencies@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
+        uses: r-lib/actions/setup-r-dependencies@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2.12.1
         with:
           packages: any::jsonlite
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -41,6 +45,13 @@ jobs:
             ecosystem-${{ runner.os }}-
       - name: Build release binary
         run: cargo build --release --locked -p ry-cli --bin ry
+      # A developer's working tree can carry gitignored *.full.txt reports
+      # from earlier update runs, and drift-check logic must never be able to
+      # compare against them. Removing them first makes the --check run below
+      # validate against the same state as a fresh checkout, proving the
+      # committed .txt snapshots are the sole baseline (#50).
+      - name: Remove gitignored full reports
+        run: rm -f ecosystem/reports/*.full.txt
       - name: Check ecosystem snapshots
         run: ecosystem/run.sh --check
         env:
@@ -60,15 +71,15 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || !contains(github.event.pull_request.labels.*.name, 'ecosystem-deferred') }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
-      - uses: r-lib/actions/setup-r@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
+      - uses: r-lib/actions/setup-r@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2.12.1
         with:
           use-public-rspm: true
       - name: Install R packages (report writer)
-        uses: r-lib/actions/setup-r-dependencies@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
+        uses: r-lib/actions/setup-r-dependencies@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2.12.1
         with:
           packages: any::jsonlite
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -82,8 +93,8 @@ jobs:
             ecosystem-${{ runner.os }}-
       - name: Build release binary
         run: cargo build --release --locked -p ry-cli --bin ry
-      - name: "P37-W5: Validate ledger summary consistency"
-        run: python3 ecosystem/check-ledger.py docs/corpus/posit-0.9.0.json
+      - name: "Validate ledger summary consistency"
+        run: python3 ecosystem/check-ledger.py docs/corpus/posit-0.9.0.json docs/corpus/tidyverse-0.7.1.json
       - name: Check Posit corpus
         run: >-
           ecosystem/run.sh --check
@@ -91,47 +102,19 @@ jobs:
           --ledger docs/corpus/posit-0.9.0.json
           --tier ${{ github.event_name == 'pull_request' && 'fast' || 'full' }}
       - name: Readable Posit message drift integration test
-        run: python3 ecosystem/test_posit_messages.py
+        run: python3 ecosystem/test-posit-messages.py
       - name: Posit ledger drift detection integration test
         run: ecosystem/test-posit-drift-detection.sh
       - name: Posit label falsification integration test
         run: ecosystem/test-posit-label-falsification.sh
-  # P37-W7b: Clean-checkout validation gate (#50)
-  # Validates that the repo is releasable from a fresh clone with no
-  # gitignored artifacts.
-  clean-checkout:
-    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
-      - name: Remove all gitignored files
-        run: git clean -fdX
-      - name: Build release binary from source
-        run: cargo build --release --locked -p ry-cli --bin ry
-      - name: Validate ledger consistency
-        run: python3 ecosystem/check-ledger.py docs/corpus/posit-0.9.0.json
-      - name: Verify no ignored artifact is required
-        run: |
-          set -euo pipefail
-          # Verify that after clean -fdX, the repo still builds and the
-          # ledger is valid. If this fails, an ignored file is required
-          # for a gate, which means a release-time clean checkout breaks.
-          test -f docs/corpus/posit-0.9.0.json
-          test -f ecosystem/check-ledger.py
-          test -f ecosystem/run.sh
-          echo "Clean-checkout validation passed"
 
-  # P38-W3: Dependency direction CI gate
+  # Dependency direction CI gate
   # Asserts that forbidden internal Cargo edges (ry-config -> ry-checker,
   # ry-workspace -> ry-checker) do not exist.
   cargo-edges:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable

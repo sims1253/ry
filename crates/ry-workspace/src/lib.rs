@@ -4,10 +4,18 @@
 //! NAMESPACE files as R syntax, then turn proven imports/exports into opaque
 //! checker bindings.
 
-pub mod file_kind;
-pub mod packages;
+mod discovery;
+pub use discovery::{
+    DiscoveryLimits, DiscoveryResult, TruncationReport, discover_r_files, is_file_eligible,
+    rbuildignore_pattern,
+};
+use discovery::{is_r_source_name, is_testthat_code_name};
 
-pub use file_kind::{PackageFileKind, package_file_kind};
+pub mod packages;
+mod serialized;
+
+use serialized::serialized_inventory;
+
 pub use packages::{
     NATIVE_REGISTRATION_SENTINEL, NATIVE_ROUTINE_PREFIX_SENTINEL, NamespaceMetadata,
     attached_packages, namespace_metadata,
@@ -17,8 +25,9 @@ pub use ry_core::FFI_PRIMITIVES;
 use ry_core::SERIALIZED_BINDINGS_UNENUMERABLE;
 use ry_core::SourceFile;
 use ry_core::ast::{Expr, Stmt};
+use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::io::Read;
+use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
 /// Inputs which describe the analysis environment without evaluating R code.
@@ -34,8 +43,6 @@ pub struct WorkspaceContext {
     pub bare_bindings: HashMap<String, HashSet<String>>,
     pub external_bindings: HashMap<String, HashSet<String>>,
     pub imported_bindings: HashMap<String, HashMap<String, String>>,
-    /// Per-file native routine names proven by `useDynLib` metadata.
-    pub native_registrations: HashMap<String, HashSet<String>>,
     pub s3_methods: HashMap<String, HashSet<(String, String)>>,
     pub load_bindings: HashMap<String, HashMap<usize, HashSet<String>>>,
     pub degraded_scopes: Vec<(PathBuf, &'static str)>,
@@ -45,17 +52,8 @@ pub struct WorkspaceContext {
 pub enum ResolveError {
     #[error("workspace root is not a directory: {0}")]
     InvalidRoot(PathBuf),
-}
-
-/// Inventory of a serialized R data file (`.rda`/`.rdata`). `bindings`
-/// are the enumerated object names, or a single file-stem fallback when
-/// the decoded payload exceeds the byte cap. `degraded` is true when
-/// enumeration was skipped, which means the binding set is an
-/// approximation rather than the real object names.
-#[derive(Clone)]
-struct SerializedInventory {
-    bindings: HashSet<String>,
-    degraded: bool,
+    #[error("invalid environment path pattern: {0}")]
+    InvalidEnvironmentPattern(#[from] glob::PatternError),
 }
 
 /// Inventory of a directory of data files (`data/`, `R/sysdata.rda`).
@@ -68,16 +66,23 @@ struct DataInventory {
 }
 
 /// A single file-stem binding, used as the conservative fallback when a
-/// serialized workspace cannot be enumerated. A package's `sysdata.rda`
-/// over the byte cap used to disable RY010 for every file in the package
-/// (via [`SERIALIZED_BINDINGS_UNENUMERABLE`]); reducing it to its stem
-/// (`sysdata`) keeps unbound-variable analysis live and only masks the
-/// single colliding name.
+/// serialized workspace cannot be enumerated within the byte cap. The
+/// bare file stem (`sysdata`) keeps unbound-variable analysis live and
+/// only masks the single colliding name.
 fn file_stem_binding(path: &Path) -> HashSet<String> {
     path.file_stem()
         .and_then(|stem| stem.to_str())
         .map(|stem| HashSet::from([stem.to_string()]))
         .unwrap_or_default()
+}
+
+/// Read R source as UTF-8, falling back to Latin-1 for invalid UTF-8.
+/// Both frontends use this policy for on-disk source; open editor buffers
+/// already arrive as Unicode through LSP.
+pub fn read_r_source(path: &Path) -> std::io::Result<String> {
+    let bytes = std::fs::read(path)?;
+    Ok(String::from_utf8(bytes)
+        .unwrap_or_else(|error| error.into_bytes().into_iter().map(char::from).collect()))
 }
 
 struct LibraryRoot {
@@ -109,6 +114,22 @@ pub fn resolve_workspace_context<'a>(
     if !root.is_dir() {
         return Err(ResolveError::InvalidRoot(root.to_path_buf()));
     }
+    let profiles = config
+        .environments
+        .iter()
+        .map(|profile| {
+            let patterns = profile
+                .paths
+                .iter()
+                .map(|pattern| glob::Pattern::new(&pattern.replace('\\', "/")))
+                .collect::<Result<Vec<_>, _>>()?;
+            let anchor = profile.root.as_deref().unwrap_or(root);
+            let anchor = anchor
+                .canonicalize()
+                .unwrap_or_else(|_| anchor.to_path_buf());
+            Ok((profile, patterns, anchor))
+        })
+        .collect::<Result<Vec<_>, glob::PatternError>>()?;
     let files = environment.files;
     let user_stubs = environment.user_stubs;
     let all_paths: Vec<PathBuf> = files.iter().map(|file| PathBuf::from(&file.path)).collect();
@@ -120,13 +141,14 @@ pub fn resolve_workspace_context<'a>(
     let mut namespace_cache: HashMap<PathBuf, NamespaceMetadata> = HashMap::new();
     let mut export_cache: HashMap<String, HashSet<String>> = HashMap::new();
     let mut dataset_cache: HashMap<PathBuf, DataInventory> = HashMap::new();
-    let mut serialized_cache: HashMap<PathBuf, SerializedInventory> = HashMap::new();
     let mut source_binding_cache: HashMap<PathBuf, SourceBindings> = HashMap::new();
+    // A package root is visited once per file in it, so cache the
+    // DESCRIPTION read like the sibling namespace/dataset caches.
+    let mut description_cache: HashMap<PathBuf, DescriptionPackages> = HashMap::new();
     let mut attached = HashSet::new();
     let mut bare_attached = HashMap::new();
     let mut bindings = HashMap::new();
     let mut imported_from = HashMap::new();
-    let mut native_registrations = HashMap::new();
     let mut s3_methods = HashMap::new();
     let mut load_bindings = HashMap::new();
     // A package root is visited once per file in it, so a single oversized
@@ -147,17 +169,30 @@ pub fn resolve_workspace_context<'a>(
         let mut file_attached: HashSet<String> = configured_packages.iter().cloned().collect();
         let mut file_bindings = HashSet::new();
         let mut file_s3_methods = HashSet::new();
-        let mut file_native_registrations = HashSet::new();
         let mut file_imported_from = HashMap::new();
         let mut source_package = None;
         file_bindings.extend(configured_globals.iter().cloned());
-        for profile in &config.environments {
-            if profile.paths.iter().any(|pattern| {
-                file.path
-                    .replace('\\', "/")
-                    .contains(pattern.trim_end_matches("/**"))
-            }) {
-                file_bindings.extend(profile.bindings.iter().cloned());
+        if !profiles.is_empty()
+            && let Ok(path) = Path::new(&file.path)
+                .canonicalize()
+                .or_else(|_| std::path::absolute(&file.path))
+        {
+            for (profile, patterns, anchor) in &profiles {
+                let Ok(relative) = path.strip_prefix(anchor) else {
+                    continue;
+                };
+                let relative = relative.to_string_lossy().replace('\\', "/");
+                if patterns.iter().any(|pattern| {
+                    pattern.matches_with(
+                        &relative,
+                        glob::MatchOptions {
+                            require_literal_separator: true,
+                            ..Default::default()
+                        },
+                    )
+                }) {
+                    file_bindings.extend(profile.bindings.iter().cloned());
+                }
             }
         }
         if let Some(root) = r_package_root(Path::new(&file.path)) {
@@ -180,9 +215,8 @@ pub fn resolve_workspace_context<'a>(
             // the evidence that a name is one of them. Without the
             // declaration the same names are ordinary unbound reads.
             if metadata.native_registration {
-                file_native_registrations.extend(source_bindings.native_symbols.iter().cloned());
-                file_native_registrations.extend(metadata.native_routines.iter().cloned());
-                file_bindings.extend(file_native_registrations.iter().cloned());
+                file_bindings.extend(source_bindings.native_symbols.iter().cloned());
+                file_bindings.extend(metadata.native_routines.iter().cloned());
             }
             file_bindings.extend(metadata.imported_bindings.iter().cloned());
             file_imported_from.extend(metadata.imported_from.clone());
@@ -198,18 +232,30 @@ pub fn resolve_workspace_context<'a>(
                 file_bindings.insert(packages::NATIVE_REGISTRATION_SENTINEL.to_string());
             }
             file_s3_methods.extend(metadata.s3_methods.iter().cloned());
-            // `import(pkg)` puts pkg's exports in the package namespace,
-            // not on the search path used to run its tests and examples.
-            // Keep wholesale imports confined to package implementation
-            // files; `importFrom()` bindings above remain available wherever
-            // the package context makes them meaningful.
+            // `import(pkg)` puts pkg's exports in the package namespace, not
+            // on the search path. Two execution contexts still resolve those
+            // names: the package's own `R/` sources, and the testthat runner
+            // files testthat sources into `env_clone(asNamespace(package))` —
+            // that clone's parent chain includes the namespace's imports
+            // environment (verified in R: names reachable through
+            // `parent.env(asNamespace(pkg))` resolve from the clone).
+            // `importFrom()` bindings above remain available wherever the
+            // package context makes them meaningful.
             let relative = Path::new(&file.path).strip_prefix(&root).ok();
-            if relative.is_some_and(is_package_r_file) {
+            if relative.is_some_and(is_package_r_file)
+                || relative.is_some_and(is_testthat_runner_file)
+            {
                 file_attached.extend(metadata.imported_packages.iter().cloned());
                 // Packages that rely on DESCRIPTION Depends may omit a
                 // NAMESPACE (Quarto/Shiny projects commonly do). Depends are
                 // attached before package code runs, unlike Imports.
-                file_attached.extend(read_description_packages(&root).depends);
+                file_attached.extend(
+                    description_cache
+                        .entry(root.clone())
+                        .or_insert_with(|| read_description_packages(&root))
+                        .depends
+                        .clone(),
+                );
             }
             if source_package_lazy_data(&root) {
                 let datasets = dataset_cache
@@ -222,10 +268,7 @@ pub fn resolve_workspace_context<'a>(
                 }
             }
             let sysdata = root.join("R/sysdata.rda");
-            let sysdata_inventory = serialized_cache
-                .entry(sysdata.clone())
-                .or_insert_with(|| serialized_inventory(&sysdata, max_serialized_bytes))
-                .clone();
+            let sysdata_inventory = serialized_inventory(&sysdata, max_serialized_bytes);
             file_bindings.extend(sysdata_inventory.bindings.iter().cloned());
             if sysdata_inventory.degraded {
                 degraded.insert((sysdata, "oversized R/sysdata.rda"));
@@ -236,7 +279,6 @@ pub fn resolve_workspace_context<'a>(
                 &project_attached,
                 user_stubs,
                 max_serialized_bytes,
-                &mut serialized_cache,
             );
             for path in &loaded.degraded {
                 degraded.insert((path.clone(), "oversized load() target"));
@@ -249,7 +291,10 @@ pub fn resolve_workspace_context<'a>(
                 // DESCRIPTION Suggests as their working set. Imports remain
                 // excluded: they only provide bare names through explicit
                 // NAMESPACE directives.
-                let dependencies = read_description_packages(&root);
+                let dependencies = description_cache
+                    .entry(root.clone())
+                    .or_insert_with(|| read_description_packages(&root))
+                    .clone();
                 let test_dependencies = dependencies
                     .depends
                     .into_iter()
@@ -301,7 +346,6 @@ pub fn resolve_workspace_context<'a>(
         bare_attached.insert(file.path.clone(), file_attached);
         bindings.insert(file.path.clone(), file_bindings);
         imported_from.insert(file.path.clone(), file_imported_from);
-        native_registrations.insert(file.path.clone(), file_native_registrations);
         s3_methods.insert(file.path.clone(), file_s3_methods);
     }
     Ok(WorkspaceContext {
@@ -309,7 +353,6 @@ pub fn resolve_workspace_context<'a>(
         bare_bindings: bare_attached,
         external_bindings: bindings,
         imported_bindings: imported_from,
-        native_registrations,
         s3_methods,
         load_bindings,
         degraded_scopes: degraded.into_iter().collect(),
@@ -323,6 +366,26 @@ fn is_package_r_file(path: &Path) -> bool {
         .is_some_and(|component| component.as_os_str() == "R")
 }
 
+/// Whether a path relative to a package root is testthat runner code: the
+/// `tests/testthat/` files testthat itself sources. testthat executes them in
+/// the environment returned by its `test_env(package)`, a clone of the
+/// package namespace whose parent chain includes the namespace's imports
+/// environment — so names supplied by NAMESPACE `import(pkg)` resolve there
+/// exactly as they do in `R/` sources. The classification mirrors
+/// [`discovery::is_test_fixture`]'s documented-contract prefixes: the same file set
+/// discovery treats as executable test code rather than data. Files at the
+/// `tests/` root are excluded: `R CMD check` runs those in the global
+/// environment after `library(package)`, where wholesale imports stay
+/// namespace-internal and invisible.
+fn is_testthat_runner_file(path: &Path) -> bool {
+    let components: Vec<&str> = path
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .collect();
+    matches!(components.as_slice(), ["tests", "testthat", file]
+        if is_r_source_name(file) && is_testthat_code_name(file))
+}
+
 /// Whether a path relative to a package root has the execution context used
 /// for tests, installed scripts, demos, or vignettes.
 fn is_test_or_script_file(path: &Path) -> bool {
@@ -334,11 +397,6 @@ fn is_test_or_script_file(path: &Path) -> bool {
     )
 }
 
-/// Bindings introduced by R's literal-name namespace helpers. These calls are
-/// deliberately collected from every source file below `R/`, rather than only
-/// the files being checked: package load hooks commonly call a helper defined
-/// in a different file. We never evaluate source, and only retain literal
-/// names, so an unknown dynamic name cannot mask an unresolved variable.
 /// What a scan of a package's own `R/` sources establishes.
 #[derive(Default, Clone)]
 struct SourceBindings {
@@ -348,7 +406,7 @@ struct SourceBindings {
     /// Names used as the entry-point argument of an FFI primitive somewhere
     /// in the package, which proves they are native routines rather than
     /// ordinary variables. Only meaningful when the NAMESPACE declares
-    /// `useDynLib(..., .registration = TRUE)`; see [`resolve`].
+    /// `useDynLib(..., .registration = TRUE)`; see [`resolve_workspace_context`].
     native_symbols: HashSet<String>,
 }
 
@@ -360,6 +418,12 @@ fn source_package_namespace_bindings(root: &Path) -> SourceBindings {
     found
 }
 
+/// Collect the bindings introduced by R's literal-name namespace helpers.
+/// These calls are deliberately collected from every source file below `R/`,
+/// rather than only the files being checked: package load hooks commonly call
+/// a helper defined in a different file. We never evaluate source, and only
+/// retain literal names, so an unknown dynamic name cannot mask an unresolved
+/// variable.
 fn source_package_dynamic_bindings(root: &Path) -> SourceBindings {
     let mut found = SourceBindings::default();
     let mut paths = Vec::new();
@@ -368,15 +432,13 @@ fn source_package_dynamic_bindings(root: &Path) -> SourceBindings {
         return found;
     };
     for path in paths {
-        let Ok(source) = std::fs::read_to_string(&path) else {
+        let Ok(source) = read_r_source(&path) else {
             continue;
         };
         let Ok(file) = parser.parse(&path.to_string_lossy(), &source) else {
             continue;
         };
-        for statement in &file.stmts {
-            collect_dynamic_bindings_stmt(statement, 0, &mut found);
-        }
+        collect_dynamic_bindings_stmts(&file.stmts, &mut found);
     }
     found
 }
@@ -402,145 +464,62 @@ fn collect_r_source_files(directory: &Path, paths: &mut Vec<PathBuf>) {
     }
 }
 
-fn collect_dynamic_bindings_stmt(
-    statement: &Stmt,
-    function_depth: usize,
-    found: &mut SourceBindings,
-) {
-    match statement {
-        Stmt::Assign { target, value, .. } => {
-            collect_dynamic_bindings_expr(target, function_depth, found);
-            collect_dynamic_bindings_expr(value, function_depth, found);
+/// Collect the dynamic-binding calls from one file's statements.
+/// Walks every subtree including function bodies; the walker's
+/// `fn_depth` (number of enclosing function bodies) decides whether a
+/// bare two-argument `assign("x", v)` still targets the namespace:
+/// only the file's top level does.
+fn collect_dynamic_bindings_stmts(stmts: &[Stmt], found: &mut SourceBindings) {
+    let _ = walk_stmts(stmts, Walk::ALL, |node: AstNode<'_>, fn_depth: usize| {
+        let AstNode::Expr(Expr::Call { func, args, .. }) = node else {
+            return ControlFlow::<(), Descend>::Continue(Descend::Into);
+        };
+        let Expr::Ident { name, .. } = func.as_ref() else {
+            return ControlFlow::<(), Descend>::Continue(Descend::Into);
+        };
+        // `.Call(ffi_enquo, ...)` proves `ffi_enquo` names a native
+        // routine, not a variable. rlang then passes the same symbol
+        // as an ordinary value (`capture_arg = ffi_enquo`), which the
+        // call-position rule alone cannot see. Record the witness so
+        // every later use of the name resolves.
+        if FFI_PRIMITIVES.contains(&name.as_str())
+            && let Some(Expr::Ident { name: symbol, .. }) = args
+                .first()
+                .filter(|arg| arg.name.is_none())
+                .map(|arg| &arg.value)
+        {
+            found.native_symbols.insert(symbol.clone());
         }
-        Stmt::Expr(expr) => collect_dynamic_bindings_expr(expr, function_depth, found),
-        Stmt::If {
-            cond, then, else_, ..
-        } => {
-            collect_dynamic_bindings_expr(cond, function_depth, found);
-            for statement in then {
-                collect_dynamic_bindings_stmt(statement, function_depth, found);
-            }
-            if let Some(else_) = else_ {
-                for statement in else_ {
-                    collect_dynamic_bindings_stmt(statement, function_depth, found);
-                }
-            }
+        let has_named_environment = args.iter().any(|argument| {
+            matches!(
+                argument.name.as_deref(),
+                Some("envir" | "env" | "assign.env")
+            )
+        });
+        // The environment parameter is commonly passed positionally
+        // from .onLoad helpers (for example `assign("x", value,
+        // env)`). Treat only its documented position as explicit;
+        // a two-argument assign inside a function remains local.
+        let has_positional_environment = match name.as_str() {
+            "assign" | "makeActiveBinding" => args.get(2).is_some_and(|arg| arg.name.is_none()),
+            "delayedAssign" => args.get(3).is_some_and(|arg| arg.name.is_none()),
+            _ => false,
+        };
+        if matches!(
+            name.as_str(),
+            "assign" | "makeActiveBinding" | "delayedAssign"
+        ) && (has_named_environment
+            || has_positional_environment
+            || (name == "assign" && fn_depth == 0))
+            && let Some(Expr::String(binding, _)) = args.first().map(|argument| &argument.value)
+        {
+            found.bindings.insert(binding.clone());
         }
-        Stmt::For { iter, body, .. } => {
-            collect_dynamic_bindings_expr(iter, function_depth, found);
-            for statement in body {
-                collect_dynamic_bindings_stmt(statement, function_depth, found);
-            }
-        }
-        Stmt::While { cond, body, .. } => {
-            collect_dynamic_bindings_expr(cond, function_depth, found);
-            for statement in body {
-                collect_dynamic_bindings_stmt(statement, function_depth, found);
-            }
-        }
-        Stmt::FunctionDef { body, .. } => {
-            for statement in body {
-                collect_dynamic_bindings_stmt(statement, function_depth + 1, found);
-            }
-        }
-        Stmt::Return { value, .. } => {
-            if let Some(value) = value {
-                collect_dynamic_bindings_expr(value, function_depth, found);
-            }
-        }
-    }
+        ControlFlow::<(), Descend>::Continue(Descend::Into)
+    });
 }
 
-fn collect_dynamic_bindings_expr(expr: &Expr, function_depth: usize, found: &mut SourceBindings) {
-    match expr {
-        Expr::Call { func, args, .. } => {
-            if let Expr::Ident { name, .. } = func.as_ref() {
-                // `.Call(ffi_enquo, ...)` proves `ffi_enquo` names a native
-                // routine, not a variable. rlang then passes the same symbol
-                // as an ordinary value (`capture_arg = ffi_enquo`), which the
-                // call-position rule alone cannot see. Record the witness so
-                // every later use of the name resolves.
-                if FFI_PRIMITIVES.contains(&name.as_str())
-                    && let Some(Expr::Ident { name: symbol, .. }) = args
-                        .first()
-                        .filter(|arg| arg.name.is_none())
-                        .map(|arg| &arg.value)
-                {
-                    found.native_symbols.insert(symbol.clone());
-                }
-                let has_named_environment = args.iter().any(|argument| {
-                    matches!(
-                        argument.name.as_deref(),
-                        Some("envir" | "env" | "assign.env")
-                    )
-                });
-                // The environment parameter is commonly passed positionally
-                // from .onLoad helpers (for example `assign("x", value,
-                // env)`). Treat only its documented position as explicit;
-                // a two-argument assign inside a function remains local.
-                let has_positional_environment = match name.as_str() {
-                    "assign" | "makeActiveBinding" => {
-                        args.get(2).is_some_and(|arg| arg.name.is_none())
-                    }
-                    "delayedAssign" => args.get(3).is_some_and(|arg| arg.name.is_none()),
-                    _ => false,
-                };
-                if matches!(
-                    name.as_str(),
-                    "assign" | "makeActiveBinding" | "delayedAssign"
-                ) && (has_named_environment
-                    || has_positional_environment
-                    || (name == "assign" && function_depth == 0))
-                    && let Some(Expr::String(binding, _)) =
-                        args.first().map(|argument| &argument.value)
-                {
-                    found.bindings.insert(binding.clone());
-                }
-            }
-            collect_dynamic_bindings_expr(func, function_depth, found);
-            for argument in args {
-                collect_dynamic_bindings_expr(&argument.value, function_depth, found);
-            }
-        }
-        Expr::BinOp { lhs, rhs, .. } => {
-            collect_dynamic_bindings_expr(lhs, function_depth, found);
-            collect_dynamic_bindings_expr(rhs, function_depth, found);
-        }
-        Expr::UnaryOp { expr, .. } => collect_dynamic_bindings_expr(expr, function_depth, found),
-        Expr::Index { base, args, .. } => {
-            collect_dynamic_bindings_expr(base, function_depth, found);
-            for argument in args {
-                collect_dynamic_bindings_expr(&argument.value, function_depth, found);
-            }
-        }
-        Expr::Function { body, .. } | Expr::Block { body, .. } => {
-            let function_depth =
-                function_depth + usize::from(matches!(expr, Expr::Function { .. }));
-            for statement in body {
-                collect_dynamic_bindings_stmt(statement, function_depth, found);
-            }
-        }
-        Expr::If {
-            cond, then, else_, ..
-        } => {
-            collect_dynamic_bindings_expr(cond, function_depth, found);
-            collect_dynamic_bindings_expr(then, function_depth, found);
-            if let Some(else_) = else_ {
-                collect_dynamic_bindings_expr(else_, function_depth, found);
-            }
-        }
-        Expr::Logical(_, _)
-        | Expr::Integer(_, _)
-        | Expr::Double(_, _)
-        | Expr::String(_, _)
-        | Expr::Null(_)
-        | Expr::Na(_, _)
-        | Expr::Ident { .. }
-        | Expr::Unknown(_) => {}
-    }
-}
-
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct DescriptionPackages {
     depends: HashSet<String>,
     suggests: HashSet<String>,
@@ -608,7 +587,7 @@ fn testthat_helper_context(root: &Path) -> TestthatHelperContext {
         {
             continue;
         }
-        let Ok(source) = std::fs::read_to_string(&path) else {
+        let Ok(source) = read_r_source(&path) else {
             continue;
         };
         let Ok(file) = parser.parse(&path.to_string_lossy(), &source) else {
@@ -621,9 +600,6 @@ fn testthat_helper_context(root: &Path) -> TestthatHelperContext {
                 Stmt::Assign {
                     target: Expr::Ident { name, .. },
                     ..
-                } => Some(name.clone()),
-                Stmt::FunctionDef {
-                    name: Some(name), ..
                 } => Some(name.clone()),
                 _ => None,
             }));
@@ -692,7 +668,7 @@ fn source_package_datasets(root: &Path, max_serialized_bytes: u64) -> DataInvent
                 }
             }
             "r" => {
-                let Ok(source) = std::fs::read_to_string(&path) else {
+                let Ok(source) = read_r_source(&path) else {
                     continue;
                 };
                 let Ok(mut parser) = ry_core::RParser::new() else {
@@ -716,139 +692,6 @@ fn source_package_datasets(root: &Path, max_serialized_bytes: u64) -> DataInvent
     out
 }
 
-/// Read only the top-level tags from an R serialization stream. `.rda`
-/// workspaces are serialized pairlists whose tags are the binding names. The
-/// parser's lazy mode skips vector payload allocation, and bzip2 streams are
-/// decompressed in-process; no R runtime or project code is executed.
-///
-/// Returns the enumerated object names plus a `degraded` flag. When the
-/// decoded payload exceeds the byte cap, enumeration is skipped and the
-/// binding set is reduced to a single file-stem fallback ([`file_stem_binding`])
-/// so unbound-variable analysis (RY010) stays live instead of being disabled
-/// package-wide (the previous behavior via [`SERIALIZED_BINDINGS_UNENUMERABLE`]).
-fn serialized_inventory(path: &Path, cap: u64) -> SerializedInventory {
-    /// What the cached inventory was derived from. A mismatch on any field
-    /// means the entry is stale. `cap` is part of it because raising
-    /// `max-serialized-bytes` must re-enumerate a file that was previously
-    /// reduced to its stem.
-    type Stamp = (u64, u128, u64);
-    static CACHE: std::sync::OnceLock<
-        std::sync::Mutex<HashMap<PathBuf, (Stamp, SerializedInventory)>>,
-    > = std::sync::OnceLock::new();
-    let Ok(metadata) = std::fs::metadata(path) else {
-        return SerializedInventory {
-            bindings: HashSet::new(),
-            degraded: false,
-        };
-    };
-    let modified = metadata
-        .modified()
-        .ok()
-        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-    let stamp: Stamp = (metadata.len(), modified, cap);
-    let cache = CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
-    if let Some(inventory) = cache
-        .lock()
-        .expect("serialized cache poisoned")
-        .get(path)
-        .filter(|(cached, _)| *cached == stamp)
-        .map(|(_, inventory)| inventory.clone())
-    {
-        return inventory;
-    }
-    let inventory = serialized_inventory_uncached(path, cap);
-    // Keyed on the path, not on (path, stamp): a long-lived LSP session
-    // re-checks the same data files after every edit, and keying on the
-    // stamp would retain one binding set per historical version forever.
-    // Replacing the entry bounds the cache by the number of distinct files.
-    cache
-        .lock()
-        .expect("serialized cache poisoned")
-        .insert(path.to_path_buf(), (stamp, inventory.clone()));
-    inventory
-}
-
-fn serialized_inventory_uncached(path: &Path, cap: u64) -> SerializedInventory {
-    // Decoded payload exceeded the byte cap: rather than disabling
-    // unbound-variable analysis package-wide (the former
-    // `SERIALIZED_BINDINGS_UNENUMERABLE` path), fall back to the file
-    // stem as a single conservative binding. Callers flag the scope as
-    // degraded so the user knows RY010 precision dropped for that file.
-    let degraded = |path: &Path| SerializedInventory {
-        bindings: file_stem_binding(path),
-        degraded: true,
-    };
-    let empty = || SerializedInventory {
-        bindings: HashSet::new(),
-        degraded: false,
-    };
-
-    let read_cap = cap.saturating_add(1);
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(_) => return empty(),
-    };
-    let bytes = if bytes.starts_with(b"BZh") {
-        let mut decoded = Vec::new();
-        let decoder = bzip2::read::BzDecoder::new(bytes.as_slice());
-        if decoder.take(read_cap).read_to_end(&mut decoded).is_err() {
-            return empty();
-        }
-        if decoded.len() as u64 > cap {
-            return degraded(path);
-        }
-        decoded
-    } else if bytes.starts_with(&[0x1f, 0x8b]) {
-        let mut decoded = Vec::new();
-        let decoder = flate2::read::GzDecoder::new(bytes.as_slice());
-        if decoder.take(read_cap).read_to_end(&mut decoded).is_err() {
-            return empty();
-        }
-        if decoded.len() as u64 > cap {
-            return degraded(path);
-        }
-        decoded
-    } else if bytes.starts_with(&[0xfd, b'7', b'z', b'X', b'Z', 0x00]) {
-        let mut decoded = Vec::new();
-        let decoder = xz2::read::XzDecoder::new(bytes.as_slice());
-        if decoder.take(read_cap).read_to_end(&mut decoded).is_err() {
-            return empty();
-        }
-        if decoded.len() as u64 > cap {
-            return degraded(path);
-        }
-        decoded
-    } else {
-        // An uncompressed file already has a known size from `metadata.len()`
-        // checked in the cached wrapper. Short-circuit before parsing if it
-        // exceeds the cap — no need to read the whole payload.
-        if bytes.len() as u64 > cap {
-            return degraded(path);
-        }
-        bytes
-    };
-    let payload = bytes
-        .strip_prefix(b"RDX2\n")
-        .or_else(|| bytes.strip_prefix(b"RDX3\n"))
-        .unwrap_or(&bytes);
-    let Ok(parsed) = rds2rust::read_rds_lazy(payload) else {
-        return empty();
-    };
-    let bindings = match parsed.object.into_concrete() {
-        rds2rust::RObject::Pairlist(elements) => elements
-            .into_iter()
-            .filter_map(|element| element.tag.map(|tag| tag.to_string()))
-            .collect(),
-        _ => HashSet::new(),
-    };
-    SerializedInventory {
-        bindings,
-        degraded: false,
-    }
-}
-
 /// Per-file `load()` resolution result. `per_span` maps each `load()`
 /// call's start span to the bindings it introduces; `degraded` lists any
 /// target workspaces that exceeded the byte cap.
@@ -863,7 +706,6 @@ fn loaded_serialized_bindings(
     attached_packages: &HashSet<String>,
     user_stubs: &std::collections::BTreeMap<String, ry_typeshed::Typeshed>,
     max_serialized_bytes: u64,
-    cache: &mut HashMap<PathBuf, SerializedInventory>,
 ) -> LoadedInventory {
     fn resolve_path(
         expr: &Expr,
@@ -938,10 +780,7 @@ fn loaded_serialized_bindings(
                 user_stubs,
             )
         }) {
-            let inventory = cache
-                .entry(path.clone())
-                .or_insert_with(|| serialized_inventory(&path, max_serialized_bytes))
-                .clone();
+            let inventory = serialized_inventory(&path, max_serialized_bytes);
             if inventory.degraded {
                 out.degraded.push(path);
             }
@@ -954,7 +793,7 @@ fn loaded_serialized_bindings(
 /// Parse an R NAMESPACE file with the regular R parser. This handles quoted
 /// names, comments, and multiline directives without a second parser.
 fn read_namespace(path: &Path) -> NamespaceMetadata {
-    let Ok(src) = std::fs::read_to_string(path) else {
+    let Ok(src) = read_r_source(path) else {
         return NamespaceMetadata::default();
     };
     let Ok(mut parser) = ry_core::RParser::new() else {
@@ -1172,559 +1011,148 @@ fn current_r_minor_version(roots: &[LibraryRoot]) -> Option<String> {
     Some(format!("{}.{}", parts.next()?, parts.next()?))
 }
 
-/// Return whether `path` is eligible to participate in analysis under `config`.
-///
-/// Matching is always rooted at the configuration/workspace root and uses
-/// forward slashes, so callers cannot accidentally give indexing and
-/// publication different exclude semantics.
-pub fn is_file_eligible(path: &Path, root: &Path, config: &ry_config::Config) -> bool {
-    let excludes = ry_config::Excludes::from_config(config);
-    is_file_eligible_with_excludes(path, root, &excludes)
-}
+#[cfg(test)]
+mod dynamic_binding_tests {
+    use super::*;
 
-/// Check file eligibility with an already-compiled exclude matcher.
-/// Directory walkers should build this once per owning configuration.
-pub fn is_file_eligible_with_excludes(
-    path: &Path,
-    root: &Path,
-    excludes: &ry_config::Excludes,
-) -> bool {
-    if excludes.is_empty() {
-        return true;
-    }
-    // Match the workspace entry name, not a canonicalized symlink target: an
-    // explicit exclude for `linked.R` must exclude that entry regardless of
-    // where it points.
-    let relative = path.strip_prefix(root).unwrap_or(path);
-    !excludes.matches(&relative.to_string_lossy().replace('\\', "/"))
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// P36-W7 — Shared, bounded directory discovery (#48)
-// ─────────────────────────────────────────────────────────────────────────
-
-/// Bounded directory discovery limits derived from `[index]` in `ry.toml`.
-/// Applied identically to CLI directory discovery and LSP background
-/// indexing so the two modes discover exactly the same file set.
-#[derive(Clone, Copy, Debug)]
-pub struct DiscoveryLimits {
-    /// Maximum number of R source files discovered per root.
-    pub max_files: usize,
-    /// Maximum size in bytes of a single R file to include.
-    pub max_file_bytes: u64,
-    /// Maximum directory depth to descend from each root.
-    pub max_depth: usize,
-}
-
-impl DiscoveryLimits {
-    pub fn from_config(config: &ry_config::Config) -> Self {
-        Self {
-            max_files: config.index.max_files as usize,
-            max_file_bytes: config.index.max_file_bytes,
-            max_depth: config.index.max_depth as usize,
-        }
-    }
-}
-
-impl Default for DiscoveryLimits {
-    fn default() -> Self {
-        Self::from_config(&ry_config::Config::default())
-    }
-}
-
-/// Structured report when a discovery cap is hit (P36-W7).
-/// A cap hit is never silent: the caller emits a tracing event,
-/// LSP warning, or CLI warning based on this report.
-#[derive(Clone, Debug, Default)]
-pub struct TruncationReport {
-    /// The root at which the cap was hit.
-    pub root: PathBuf,
-    /// `true` when `max-files` stopped discovery before exhausting the tree.
-    pub max_files_hit: bool,
-    /// Files omitted because they exceeded `max-file-bytes` (path, size).
-    pub oversized_files: Vec<(PathBuf, u64)>,
-    /// Directories whose contents were pruned by `max-depth`.
-    pub depth_pruned_dirs: Vec<PathBuf>,
-}
-
-impl TruncationReport {
-    /// Returns `true` when any cap was hit.
-    pub fn any_hit(&self) -> bool {
-        self.max_files_hit || !self.oversized_files.is_empty() || !self.depth_pruned_dirs.is_empty()
+    fn collect_from(src: &str) -> SourceBindings {
+        let mut parser = ry_core::RParser::new().unwrap();
+        let file = parser.parse("dynamic_binding_test.R", src).unwrap();
+        let mut found = SourceBindings::default();
+        collect_dynamic_bindings_stmts(&file.stmts, &mut found);
+        found
     }
 
-    /// Total number of files omitted across all caps.
-    pub fn omitted_count(&self) -> usize {
-        // `max_files_hit` means we stopped, so the omitted count is
-        // unbounded from the walker's perspective; the caller reports
-        // the count it can determine. Here we count the known omissions.
-        self.oversized_files.len()
+    fn assert_exact(src: &str, expected: &[&str]) {
+        let found = collect_from(src).bindings;
+        let expected: HashSet<String> = expected.iter().map(|name| name.to_string()).collect();
+        assert_eq!(found, expected, "bindings from `{src}`");
     }
-}
 
-/// Result of a bounded directory discovery.
-#[derive(Clone, Debug, Default)]
-pub struct DiscoveryResult {
-    /// Discovered R source file paths (sorted and deduplicated).
-    pub files: Vec<PathBuf>,
-    /// Structured cap report. Empty when no limit was reached.
-    pub truncated: TruncationReport,
-}
+    /// A bare two-argument `assign("x", v)` targets the package namespace
+    /// only at the file top level (`fn_depth == 0`; braced blocks do not
+    /// count). Inside a function body the same call binds in that call's
+    /// execution environment and records nothing.
+    #[test]
+    fn bare_assign_records_only_at_top_level() {
+        assert_exact("assign(\"top\", value)", &["top"]);
+        assert_exact("{ assign(\"in_block\", value) }", &["in_block"]);
+        assert_exact(
+            "on_load <- function() assign(\"nested\", value)
+assign(\"top\", value)",
+            &["top"],
+        );
+    }
 
-/// Discover all eligible R source files under `walk_root`, applying the
-/// same eligibility, extension, hidden-directory, symlink, exclude, and
-/// test-fixture rules to both CLI and LSP (P36-W7 / issue #48).
-///
-/// `exclude_root` anchors the compiled `exclude` patterns from `config`.
-/// It should be the directory containing the originating `ry.toml`. When
-/// `None`, exclude patterns are not applied (matching a missing config).
-///
-/// Caps (`index.max-files`, `index.max-file-bytes`, `index.max-depth`)
-/// bound discovery. A cap hit populates [`TruncationReport`] so the
-/// caller can surface a visible warning.
-pub fn discover_r_files(
-    walk_root: &Path,
-    exclude_root: Option<&Path>,
-    config: &ry_config::Config,
-    check_test_fixtures: bool,
-) -> DiscoveryResult {
-    // A single file passed directly is always included regardless of
-    // package rules: it is the explicit subject of the analysis.
-    if walk_root.is_file() {
-        return DiscoveryResult {
-            files: vec![walk_root.to_path_buf()],
-            truncated: TruncationReport {
-                root: walk_root.parent().unwrap_or(walk_root).to_path_buf(),
-                ..Default::default()
-            },
-        };
+    /// Only `assign` has the top-level bare arm: bare
+    /// `makeActiveBinding`/`delayedAssign` record nothing even at the
+    /// file top level.
+    #[test]
+    fn bare_make_active_binding_and_delayed_assign_never_record() {
+        assert_exact(
+            "makeActiveBinding(\"active\", getter)
+delayedAssign(\"later\", value)",
+            &[],
+        );
     }
-    let limits = DiscoveryLimits::from_config(config);
-    let excludes = ry_config::Excludes::from_config(config);
-    let has_excludes = !excludes.is_empty();
-    let mut files = Vec::new();
-    let mut truncated = TruncationReport {
-        root: walk_root.to_path_buf(),
-        ..Default::default()
-    };
-    let package_root = walk_root
-        .ancestors()
-        .find(|ancestor| ancestor.join("DESCRIPTION").is_file())
-        .map(Path::to_path_buf);
-    let buildignore = package_root
-        .as_deref()
-        .map(read_rbuildignore)
-        .unwrap_or_default();
-    discover_recursive(
-        walk_root,
-        &mut files,
-        &mut truncated,
-        package_root.as_deref(),
-        &buildignore,
-        check_test_fixtures,
-        0,
-        &limits,
-        &excludes,
-        has_excludes,
-        exclude_root,
-    );
-    files.sort();
-    files.dedup();
-    DiscoveryResult { files, truncated }
-}
 
-#[allow(clippy::too_many_arguments)]
-fn discover_recursive(
-    dir: &Path,
-    out: &mut Vec<PathBuf>,
-    truncated: &mut TruncationReport,
-    package_root: Option<&Path>,
-    buildignore: &[glob::Pattern],
-    check_test_fixtures: bool,
-    depth: usize,
-    limits: &DiscoveryLimits,
-    excludes: &ry_config::Excludes,
-    has_excludes: bool,
-    exclude_root: Option<&Path>,
-) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        // Skip symlinks and entries whose type cannot be classified;
-        // following either could make recursive discovery escape the
-        // requested tree.
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        if file_type.is_symlink() {
-            continue;
-        }
-        let path = entry.path();
-        // Apply ry.toml exclude patterns (relative to the config root).
-        if has_excludes
-            && let Some(anchor) = exclude_root
-            && !is_file_eligible_with_excludes(&path, anchor, excludes)
-        {
-            continue;
-        }
-        // Apply .Rbuildignore patterns (relative to the package root).
-        if package_root.is_some_and(|root| is_rbuildignored(root, &path, buildignore)) {
-            continue;
-        }
-        if path.is_dir() {
-            if let Some(name) = path.file_name().and_then(|n| n.to_str())
-                && (name.starts_with('.')
-                    || name == "target"
-                    || name == "node_modules"
-                    || (name == "renv" && package_root.is_some())
-                    || name.ends_with(".Rcheck"))
-            {
-                continue;
-            }
-            if package_root.is_some_and(|root| is_excluded_package_directory(root, &path)) {
-                continue;
-            }
-            // P36-W7: depth cap prunes further descent.
-            if depth >= limits.max_depth {
-                truncated.depth_pruned_dirs.push(path);
-                continue;
-            }
-            let (nested_package_root, nested_buildignore) = if path.join("DESCRIPTION").is_file() {
-                (Some(path.clone()), read_rbuildignore(&path))
-            } else {
-                (package_root.map(Path::to_path_buf), buildignore.to_vec())
-            };
-            discover_recursive(
-                &path,
-                out,
-                truncated,
-                nested_package_root.as_deref(),
-                &nested_buildignore,
-                check_test_fixtures,
-                depth + 1,
-                limits,
-                excludes,
-                has_excludes,
-                exclude_root,
-            );
-        } else if matches!(
-            path.extension().and_then(|e| e.to_str()),
-            Some("R") | Some("r") | Some("S") | Some("s") | Some("q")
-        ) && (check_test_fixtures
-            || file_kind::package_file_kind(&path) != file_kind::PackageFileKind::TestFixture)
-        {
-            // P36-W7: max-files cap.
-            if out.len() >= limits.max_files {
-                truncated.max_files_hit = true;
-                break;
-            }
-            // P36-W7: max-file-bytes cap.
-            if let Ok(metadata) = std::fs::metadata(&path) {
-                let size = metadata.len();
-                if size > limits.max_file_bytes {
-                    truncated.oversized_files.push((path, size));
-                    continue;
-                }
-            }
-            out.push(path);
-        }
-    }
+    /// A named `envir`/`env`/`assign.env` argument records at any depth,
+    /// whatever the environment expression is -- `asNamespace(...)`,
+    /// `globalenv()`, or a namespace variable threaded through an
+    /// `.onLoad` helper.
+    #[test]
+    fn named_environment_argument_records_inside_function_bodies() {
+        assert_exact(
+            "on_load <- function(libname, pkgname) {
+  assign(\"ns_var\", 1, envir = asNamespace(\"pkg\"))
+  assign(\"global_var\", 1, envir = globalenv())
+  assign(\"env_alias\", 1, env = ns)
+  makeActiveBinding(\"active\", getter, assign.env = ns)
 }
+",
+            &["ns_var", "global_var", "env_alias", "active"],
+        );
+    }
 
-/// Read an R `.Rbuildignore` file and translate its conservative regex
-/// subset to glob patterns.
-fn read_rbuildignore(root: &Path) -> Vec<glob::Pattern> {
-    let Ok(contents) = std::fs::read_to_string(root.join(".Rbuildignore")) else {
-        return Vec::new();
-    };
-    contents
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .filter_map(rbuildignore_pattern)
-        .collect()
+    /// The environment passed positionally -- third argument of
+    /// `assign`/`makeActiveBinding`, fourth of `delayedAssign` -- also
+    /// records inside function bodies, matching `.onLoad` helpers that
+    /// thread the namespace through positionally.
+    #[test]
+    fn positional_environment_argument_records_inside_function_bodies() {
+        assert_exact(
+            "on_load <- function(libname, pkgname) {
+  assign(\"positional\", 1, ns)
+  makeActiveBinding(\"lazy_active\", getter, ns)
+  delayedAssign(\"lazy_later\", value, NULL, ns)
 }
+",
+            &["positional", "lazy_active", "lazy_later"],
+        );
+    }
 
-/// Translate the conservative regex subset used by conventional
-/// `.Rbuildignore` files to the already-depended-on glob matcher.
-/// Unsupported PCRE constructs are ignored, as required for patterns
-/// our engine cannot compile.
-pub fn rbuildignore_pattern(regex: &str) -> Option<glob::Pattern> {
-    if regex.contains(['(', ')', '|', '{', '}', '+']) {
-        return None;
+    /// A named third argument that is not an environment alias
+    /// (`inherits = TRUE`) leaves the call bare for depth purposes:
+    /// ignored inside a function body, recorded at the file top level by
+    /// the `assign`-only arm.
+    #[test]
+    fn named_non_environment_argument_stays_depth_gated() {
+        assert_exact("f <- function() assign(\"flag\", 1, inherits = TRUE)", &[]);
+        assert_exact("assign(\"flag\", 1, inherits = TRUE)", &["flag"]);
     }
-    let anchored_start = regex.starts_with('^');
-    let trailing_backslashes = regex
-        .strip_suffix('$')
-        .map(|prefix| prefix.chars().rev().take_while(|&ch| ch == '\\').count())
-        .unwrap_or(0);
-    let anchored_end = regex.ends_with('$') && trailing_backslashes.is_multiple_of(2);
-    let body = regex.strip_prefix('^').unwrap_or(regex);
-    let body = if anchored_end {
-        body.strip_suffix('$').unwrap_or(body)
-    } else {
-        body
-    };
-    let mut glob_str = String::new();
-    if !anchored_start {
-        glob_str.push('*');
-    }
-    let mut chars = body.chars().peekable();
-    while let Some(ch) = chars.next() {
-        match ch {
-            '\\' => glob_str.push(chars.next()?),
-            '.' if chars.peek() == Some(&'*') => {
-                chars.next();
-                glob_str.push('*');
-            }
-            '.' => glob_str.push('?'),
-            '*' | '?' | '[' | ']' => glob_str.push(ch),
-            ch => glob_str.push(ch),
-        }
-    }
-    if !anchored_end {
-        glob_str.push('*');
-    }
-    glob::Pattern::new(&glob_str).ok()
-}
 
-/// Whether `path` relative to `package_root` is excluded by
-/// `.Rbuildignore`. Files under `R/` or `tests/` are never excluded
-/// because they are always part of the package source.
-fn is_rbuildignored(root: &Path, path: &Path, patterns: &[glob::Pattern]) -> bool {
-    let Ok(relative) = path.strip_prefix(root) else {
-        return false;
-    };
-    if relative.starts_with("R") || relative.starts_with("tests") {
-        return false;
+    /// Only a literal string target is statically knowable. An
+    /// identifier target computes the binding name at runtime and
+    /// records nothing -- even at the top level with an explicit
+    /// environment, so an unknown dynamic name cannot mask an unresolved
+    /// variable.
+    #[test]
+    fn non_literal_target_names_record_nothing() {
+        assert_exact("assign(name_var, value)", &[]);
+        assert_exact("assign(name_var, value, envir = ns)", &[]);
+        assert_exact("f <- function() assign(name_var, value, envir = ns)", &[]);
     }
-    let relative = relative.to_string_lossy().replace('\\', "/");
-    patterns.iter().any(|pattern| pattern.matches(&relative))
-}
 
-/// Whether a directory relative to a package root should be skipped
-/// entirely (reverse-dependency check dirs, compiled source, snapshots).
-fn is_excluded_package_directory(package_root: &Path, path: &Path) -> bool {
-    let Ok(relative) = path.strip_prefix(package_root) else {
-        return false;
-    };
-    let components: Vec<_> = relative
-        .components()
-        .filter_map(|component| component.as_os_str().to_str())
-        .collect();
-    matches!(components.as_slice(), ["revdep"] | ["src"])
-        || matches!(components.as_slice(), ["tests", "testthat", "_snaps"])
+    /// `.Call(ffi_enquo, ...)` proves `ffi_enquo` names a native routine
+    /// rather than a variable (rlang later passes the same symbol as an
+    /// ordinary value). Every FFI primitive records its first argument
+    /// when it is an unnamed symbol; a string entry point or a named
+    /// first argument is not a symbol witness.
+    #[test]
+    fn ffi_primitives_record_unnamed_symbol_first_arguments() {
+        assert_eq!(
+            collect_from(".Call(ffi_enquo, quote(arg))").native_symbols,
+            HashSet::from(["ffi_enquo".to_string()])
+        );
+        assert_eq!(
+            collect_from(".External2(entry, x)").native_symbols,
+            HashSet::from(["entry".to_string()])
+        );
+        assert!(
+            collect_from(".Call(\"as_string\", x)")
+                .native_symbols
+                .is_empty()
+        );
+        assert!(
+            collect_from(".Call(name = ffi_enquo, x)")
+                .native_symbols
+                .is_empty()
+        );
+    }
 }
 
 #[cfg(test)]
-mod shared_tests {
+mod input_tests {
     use super::*;
 
     #[test]
-    fn eligibility_is_rooted_and_separator_independent() {
+    fn source_decoding_is_shared_and_read_errors_remain_errors() {
         let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("vendor").join("influence.R");
-        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-        std::fs::write(&file, "x <- 1\n").unwrap();
-        let config = ry_config::Config {
-            exclude: vec!["vendor/**".into()],
-            ..Default::default()
-        };
-        assert!(!is_file_eligible(&file, dir.path(), &config));
-        assert!(is_file_eligible(
-            &dir.path().join("keep.R"),
-            dir.path(),
-            &config
-        ));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn eligibility_matches_a_symlink_entry_name_not_its_target() {
-        use std::os::unix::fs::symlink;
-
-        let dir = tempfile::tempdir().unwrap();
-        let target = dir.path().join("real.R");
-        let link = dir.path().join("linked.R");
-        std::fs::write(&target, "x <- 1\n").unwrap();
-        symlink(&target, &link).unwrap();
-        let config = ry_config::Config {
-            exclude: vec!["linked.R".into()],
-            ..Default::default()
-        };
-
-        assert!(!is_file_eligible(&link, dir.path(), &config));
-        assert!(is_file_eligible(&target, dir.path(), &config));
-    }
-
-    #[test]
-    fn discovery_skips_target_and_hidden_directories() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            dir.path().join("keep.R"),
-            "x <- 1
-",
-        )
-        .unwrap();
-        std::fs::create_dir_all(dir.path().join("target")).unwrap();
-        std::fs::write(
-            dir.path().join("target/skip.R"),
-            "y <- 2
-",
-        )
-        .unwrap();
-        std::fs::create_dir_all(dir.path().join(".hidden")).unwrap();
-        std::fs::write(
-            dir.path().join(".hidden/secret.R"),
-            "z <- 3
-",
-        )
-        .unwrap();
-
-        let result = discover_r_files(dir.path(), None, &ry_config::Config::default(), false);
-        let names: Vec<String> = result
-            .files
-            .iter()
-            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
-            .collect();
-        assert!(names.contains(&"keep.R".to_string()));
-        assert!(!names.contains(&"skip.R".to_string()), "target/ skipped");
-        assert!(!names.contains(&"secret.R".to_string()), "hidden/ skipped");
-    }
-
-    #[test]
-    fn discovery_max_files_cap_is_configurable_and_visible() {
-        let dir = tempfile::tempdir().unwrap();
-        for i in 0..5 {
-            std::fs::write(
-                dir.path().join(format!("file_{i}.R")),
-                "x <- 1
-",
-            )
-            .unwrap();
+        let path = dir.path().join("source.R");
+        for bytes in ["café <- 1\n".as_bytes(), b"caf\xe9 <- 1\n"] {
+            std::fs::write(&path, bytes).unwrap();
+            assert_eq!(read_r_source(&path).unwrap(), "café <- 1\n");
         }
-        let config = ry_config::Config {
-            index: ry_config::IndexConfig {
-                max_files: 2,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let result = discover_r_files(dir.path(), None, &config, false);
-        assert_eq!(result.files.len(), 2, "only 2 files under cap");
-        assert!(result.truncated.max_files_hit, "max-files cap reported");
-    }
-
-    #[test]
-    fn discovery_max_file_bytes_cap_omits_oversized_files() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            dir.path().join("small.R"),
-            "x <- 1
-",
-        )
-        .unwrap();
-        std::fs::write(
-            dir.path().join("big.R"),
-            "y <- 2
-",
-        )
-        .unwrap();
-        // Set the big file's size via metadata — write a larger payload.
-        std::fs::write(dir.path().join("big.R"), "y ".repeat(100)).unwrap();
-        let config = ry_config::Config {
-            index: ry_config::IndexConfig {
-                max_file_bytes: 10,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let result = discover_r_files(dir.path(), None, &config, false);
-        let names: Vec<String> = result
-            .files
-            .iter()
-            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
-            .collect();
-        assert!(names.contains(&"small.R".to_string()));
-        assert!(
-            !names.contains(&"big.R".to_string()),
-            "oversized file omitted"
-        );
-        assert!(
-            result
-                .truncated
-                .oversized_files
-                .iter()
-                .any(|(p, _)| { p.file_name().unwrap() == "big.R" }),
-            "oversized file reported in truncation"
-        );
-    }
-
-    #[test]
-    fn discovery_max_depth_cap_prunes_deep_directories() {
-        let dir = tempfile::tempdir().unwrap();
-        // Create a chain: a/b/c/deep.R
-        let deep = dir.path().join("a/b/c/deep.R");
-        std::fs::create_dir_all(deep.parent().unwrap()).unwrap();
-        std::fs::write(
-            &deep, "x <- 1
-",
-        )
-        .unwrap();
-        std::fs::write(
-            dir.path().join("shallow.R"),
-            "y <- 2
-",
-        )
-        .unwrap();
-
-        let config = ry_config::Config {
-            index: ry_config::IndexConfig {
-                max_depth: 1,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let result = discover_r_files(dir.path(), None, &config, false);
-        let names: Vec<String> = result
-            .files
-            .iter()
-            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
-            .collect();
-        assert!(
-            names.contains(&"shallow.R".to_string()),
-            "shallow file found"
-        );
-        assert!(!names.contains(&"deep.R".to_string()), "deep file pruned");
-        assert!(
-            !result.truncated.depth_pruned_dirs.is_empty(),
-            "depth cap reported"
-        );
-    }
-
-    #[test]
-    fn discovery_includes_all_r_source_extensions() {
-        let dir = tempfile::tempdir().unwrap();
-        for ext in &["R", "r", "S", "s", "q"] {
-            std::fs::write(
-                dir.path().join(format!("source.{ext}")),
-                "value <- 1
-",
-            )
-            .unwrap();
-        }
-        std::fs::write(
-            dir.path().join("source.txt"),
-            "not R
-",
-        )
-        .unwrap();
-        let result = discover_r_files(dir.path(), None, &ry_config::Config::default(), false);
-        assert_eq!(
-            result.files.len(),
-            5,
-            "R, r, S, s, q discovered; .txt excluded"
-        );
+        assert!(read_r_source(&dir.path().join("missing.R")).is_err());
     }
 }

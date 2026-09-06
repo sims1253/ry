@@ -1,7 +1,7 @@
 //! Performance regression tests.
 //!
 //! `#[ignore]`'d so CI is opt-in. Run with `cargo test -p ry-checker --test
-//! perf -- --ignored --nocapture`. Generates a 20k-line file, parses +
+//! perf --release -- --ignored --nocapture --test-threads=1`. Generates a 20k-line file, parses +
 //! checks it, and asserts wall time under 2 seconds (release-mode budget).
 //! The budget guards the linear-time parsing contract (the parser was
 //! once O(n^2): `char_col` rescanned from byte 0 per node).
@@ -13,7 +13,6 @@
 //! multi-file/multi-core runs, not a license to regress single-file
 //! latency.
 
-use std::io::Write;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -29,13 +28,6 @@ fn large_file_checks_under_two_seconds() {
         .collect();
     let src = lines.join("\n");
 
-    let mut tmp_path = std::env::temp_dir();
-    tmp_path.push(format!("ry_perf_{}.R", std::process::id()));
-    {
-        let mut f = std::fs::File::create(&tmp_path).expect("create temp file");
-        f.write_all(src.as_bytes()).expect("write temp file");
-    }
-
     let start = Instant::now();
     let mut parser = RParser::new().expect("parser init");
     let file = parser
@@ -45,8 +37,6 @@ fn large_file_checks_under_two_seconds() {
     c.check(&file);
     let _ = c.take_diagnostics();
     let elapsed = start.elapsed();
-
-    let _ = std::fs::remove_file(&tmp_path);
 
     assert!(
         elapsed.as_secs_f64() < 2.0,
@@ -93,7 +83,7 @@ fn hundred_file_project_checks_quickly() {
 /// file and call `check_incremental()`. The budget catches regressions
 /// in the incremental path that the cold-check tests cannot see.
 ///
-/// See Plan 33 W0: the incremental path (`update_file` +
+/// The incremental path (`update_file` +
 /// `check_incremental`) is the hot path the LSP exercises on every
 /// keystroke. This test guards its wall-clock cost.
 #[test]
@@ -135,7 +125,7 @@ fn warm_edit_checks_quickly() {
 }
 
 // ===========================================================================
-// P35-W8 — Complexity scaling rather than only wall-clock budgets
+// Complexity scaling rather than only wall-clock budgets
 //
 // The three budget tests above guard absolute latency. They are
 // timing-sensitive: a single `< 4` ratio on a 2× size step sits exactly
@@ -164,7 +154,8 @@ fn warm_edit_checks_quickly() {
 //      `scaling_branch_depth` report slope ≫ 2.
 //
 // All tests are `#[ignore]`'d like the budget tests; CI runs them via
-// `cargo test -p ry-checker --test perf --release -- --ignored`.
+// `cargo test -p ry-checker --test perf --release -- --ignored --test-threads=1`.
+// Run timing tests serially so their workloads do not compete for CPU time.
 // ===========================================================================
 
 /// Fitted log-log slope above this value is treated as a complexity
@@ -232,7 +223,7 @@ fn timed_median(mut body: impl FnMut()) -> Duration {
 ///
 /// Computed from `(size, time_seconds)` pairs. Uses **all** geometric
 /// points (multi-ratio evidence), unlike a single consecutive ratio
-/// which the plan calls out as unreliable on the quadratic boundary.
+/// known to be unreliable on the quadratic boundary.
 fn log_log_slope(points: &[(f64, f64)]) -> f64 {
     let n = points.len() as f64;
     let (sx, sy, sxx, sxy) =

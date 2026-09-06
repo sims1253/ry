@@ -1,42 +1,11 @@
-use ry_testkit::{
-    AsyncJsonRpcClient, CliProcess, FixtureProject, JsonRpcProcess, ObservedPosition,
-    PositionEncoding, normalize_path, normalize_position,
-};
+use ry_testkit::{AsyncJsonRpcClient, CliProcess, FixtureProject, JsonRpcProcess};
 use serde_json::{Value, json};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct Published {
-    path: String,
-    code: String,
-    severity: String,
-    message: String,
-    line: u32,
-    byte_column: u32,
-}
+mod harness;
 
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap()
-}
-
-fn ry_binary() -> PathBuf {
-    static BINARY: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-    BINARY
-        .get_or_init(|| {
-            let status = Command::new(env!("CARGO"))
-                .current_dir(workspace_root())
-                .args(["build", "--quiet", "-p", "ry-cli"])
-                .status()
-                .expect("build the production ry binary for the protocol gate");
-            assert!(status.success());
-            workspace_root().join("target/debug/ry")
-        })
-        .clone()
-}
+use harness::{Published, file_uri, published_from_cli_value, published_from_lsp, ry_binary};
 
 fn cli_diagnostics(fixture: &FixtureProject, extra: &[&str]) -> Vec<Published> {
     let output = CliProcess::new(ry_binary())
@@ -56,33 +25,10 @@ fn cli_diagnostics(fixture: &FixtureProject, extra: &[&str]) -> Vec<Published> {
     let values: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
     let mut diagnostics: Vec<_> = values
         .into_iter()
-        .map(|value| {
-            let path = value["path"].as_str().unwrap();
-            let relative = normalize_path(Path::new(path), fixture.root());
-            let relative = relative.strip_prefix("./").unwrap_or(&relative).to_string();
-            let source = std::fs::read_to_string(fixture.path(&relative)).unwrap();
-            let scalar = ObservedPosition {
-                line: value["line"].as_u64().unwrap() as u32 - 1,
-                character: value["column"].as_u64().unwrap() as u32 - 1,
-                encoding: PositionEncoding::UnicodeScalar,
-            };
-            let position = normalize_position(&source, &scalar).unwrap();
-            Published {
-                path: relative,
-                code: value["code"].as_str().unwrap().to_string(),
-                severity: value["severity"].as_str().unwrap().to_string(),
-                message: value["message"].as_str().unwrap().to_string(),
-                line: position.line,
-                byte_column: position.character,
-            }
-        })
+        .map(|value| published_from_cli_value(&value, fixture.root()))
         .collect();
     diagnostics.sort();
     diagnostics
-}
-
-fn file_uri(path: &Path) -> String {
-    format!("file://{}", path.display())
 }
 
 async fn run_with_diagnostics(
@@ -140,7 +86,7 @@ async fn run_with_diagnostics(
         )
         .await
         .unwrap();
-    let mut diagnostics = published_from_lsp(&publish, &path, fixture.root());
+    let diagnostics = published_from_lsp(&publish, &path, fixture.root());
 
     let shutdown_id = client.request("shutdown", Value::Null).await.unwrap();
     client
@@ -154,47 +100,7 @@ async fn run_with_diagnostics(
         .unwrap()
         .unwrap()
         .unwrap();
-    diagnostics.sort();
     diagnostics
-}
-
-fn published_from_lsp(message: &Value, path: &Path, root: &Path) -> Vec<Published> {
-    let relative = normalize_path(path, root);
-    let source = std::fs::read_to_string(path).unwrap();
-    message
-        .pointer("/params/diagnostics")
-        .unwrap()
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|value| {
-            let start = &value["range"]["start"];
-            let position = normalize_position(
-                &source,
-                &ObservedPosition {
-                    line: start["line"].as_u64().unwrap() as u32,
-                    character: start["character"].as_u64().unwrap() as u32,
-                    encoding: PositionEncoding::Utf16,
-                },
-            )
-            .unwrap();
-            Published {
-                path: relative.clone(),
-                code: value["code"].as_str().unwrap().to_string(),
-                severity: match value["severity"].as_u64() {
-                    Some(1) => "error",
-                    Some(2) => "warning",
-                    Some(3) => "info",
-                    Some(4) => "hint",
-                    _ => "unknown",
-                }
-                .to_string(),
-                message: value["message"].as_str().unwrap().to_string(),
-                line: position.line,
-                byte_column: position.character,
-            }
-        })
-        .collect()
 }
 
 fn settings(fixture: &FixtureProject, relative: &str) -> Value {
@@ -204,31 +110,6 @@ fn settings(fixture: &FixtureProject, relative: &str) -> Value {
     } else {
         json!({})
     }
-}
-
-#[test]
-fn actual_ry_server_stdio_is_clean_json_rpc() {
-    let fixture = FixtureProject::from_fixture("shared").unwrap();
-    let mut command = Command::new(ry_binary());
-    command.arg("server").current_dir(fixture.root());
-    let mut client = JsonRpcProcess::spawn(&mut command).unwrap();
-    let root_uri = file_uri(fixture.root());
-    let id = client
-        .request(
-            "initialize",
-            json!({
-                "processId": null, "rootUri": root_uri, "capabilities": {}
-            }),
-        )
-        .unwrap();
-    let response = client
-        .receive_until(|m| m.get("id") == Some(&json!(id)), 8)
-        .unwrap();
-    assert_eq!(
-        response.pointer("/result/serverInfo/name"),
-        Some(&json!("ry"))
-    );
-    client.notify("exit", Value::Null).unwrap();
 }
 
 #[test]
@@ -267,7 +148,7 @@ fn cli_and_run_with_publish_the_same_single_root_matrix() {
     }
 }
 
-/// P37-W6 (#46): diagnostics for indexed files that were never opened use
+/// (#46): diagnostics for indexed files that were never opened use
 /// the checked source for their UTF-16 ranges, not the (absent) in-memory
 /// document text.
 #[test]
@@ -431,16 +312,14 @@ fn package_import_from_value_position_is_clean_in_both_modes() {
     );
 }
 
-/// P35-W11: cross-mode subprocess framing is correct over a multi-message
+/// cross-mode subprocess framing is correct over a multi-message
 /// exchange with the real `ry server` process.
 ///
-/// The existing `actual_ry_server_stdio_is_clean_json_rpc` test proves the
-/// initialize response is framed. This test extends that to a full
-/// request/notification/response/exit cycle and verifies every message
-/// survives Content-Length framing without truncation, merging, or
-/// leftover stdout noise. A regression that interleaves a log line or
-/// uses a wrong Content-Length would fail here, not only in an editor
-/// integration.
+/// The full request/notification/response/exit cycle — initialize
+/// included — must survive Content-Length framing without truncation,
+/// merging, or leftover stdout noise. A regression that interleaves a
+/// log line or uses a wrong Content-Length would fail here, not only in
+/// an editor integration.
 #[test]
 fn cross_mode_subprocess_framing_survives_multi_round_exchange() {
     let fixture = FixtureProject::from_fixture("shared").unwrap();
@@ -509,4 +388,106 @@ fn cross_mode_subprocess_framing_survives_multi_round_exchange() {
         .unwrap();
     assert_eq!(shutdown_response["result"], Value::Null);
     client.notify("exit", Value::Null).unwrap();
+}
+
+// ---- ry_binary path resolution ----
+
+/// The Cargo-JSON path resolver must pick the `ry` bin artifact, skip
+/// null-executable dependency artifacts, and anchor a relative report
+/// at the workspace root (cargo resolves a relative `CARGO_TARGET_DIR`
+/// against the build's working directory, not the test runner's cwd).
+#[test]
+fn ry_executable_from_cargo_json_picks_the_bin_artifact() {
+    let json = concat!(
+        r#"{"reason":"compiler-artifact","target":{"kind":["lib"],"name":"ry_core"},"executable":null}"#,
+        "\n",
+        r#"{"reason":"compiler-artifact","target":{"kind":["bin"],"name":"ry"},"executable":"/abs/target/debug/ry"}"#,
+        "\n",
+        r#"{"reason":"build-finished","success":true}"#,
+        "\n",
+    );
+    assert_eq!(
+        harness::ry_executable_from_cargo_json(json.as_bytes()),
+        Some(PathBuf::from("/abs/target/debug/ry")),
+        "must report the bin artifact's executable path"
+    );
+}
+
+/// On Windows (or any setup where cargo reports a relative executable
+/// path) the result is anchored at the workspace root so the tests
+/// spawn the artifact that was built regardless of their own cwd.
+#[test]
+fn ry_executable_from_cargo_json_anchors_relative_paths() {
+    let json = concat!(
+        r#"{"reason":"compiler-artifact","target":{"kind":["bin"],"name":"ry"},"executable":"custom-target/debug/ry.exe"}"#,
+        "\n",
+    );
+    assert_eq!(
+        harness::ry_executable_from_cargo_json(json.as_bytes()),
+        Some(harness::workspace_root().join("custom-target/debug/ry.exe")),
+        "a relative report must be anchored at the workspace root"
+    );
+}
+
+#[test]
+fn file_suppression_actions_follow_the_current_document_comments() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture.write_file("actions.R", "").unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let (mut session, server) =
+            harness::spawn_session(&[fixture.root()], json!({}), None).await;
+        let uri = file_uri(&fixture.path("actions.R"));
+        for (index, (text, offered)) in [
+            (
+                "x <- \"# ry: ignore-file\"\ny <- never_defined_name\n",
+                true,
+            ),
+            ("# RY:IGNORE-FILE\ny <- never_defined_name\n", false),
+            (
+                "# See ry: ignore-file in the docs\ny <- never_defined_name\n",
+                true,
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mark = session.publication_mark();
+            if index == 0 {
+                session.open(&uri, 1, text).await.unwrap();
+            } else {
+                session
+                    .change(&uri, index as i32 + 1, json!([{"text": text}]))
+                    .await
+                    .unwrap();
+            }
+            let published = session
+                .published_diagnostics_after(&uri, mark)
+                .await
+                .unwrap();
+            let diagnostics = published["params"]["diagnostics"].as_array().unwrap();
+            assert_eq!(!diagnostics.is_empty(), offered);
+            let actions = session.request("textDocument/codeAction", json!({
+                "textDocument": {"uri": uri},
+                "range": {"start": {"line": 1, "character": 0}, "end": {"line": 1, "character": 1}},
+                "context": {"diagnostics": diagnostics}
+            })).await.unwrap();
+            let file_action = actions.as_array().and_then(|actions| {
+                actions
+                    .iter()
+                    .find(|action| action["title"] == "Ignore all diagnostics in this file")
+            });
+            assert_eq!(file_action.is_some(), offered, "{text}");
+            if let Some(action) = file_action {
+                assert_eq!(
+                    action["edit"]["changes"][&uri][0]["newText"],
+                    "# ry: ignore-file\n"
+                );
+            }
+        }
+        harness::join_session(session, server).await;
+    });
 }

@@ -1,7 +1,183 @@
 use super::*;
 
 impl Checker {
-    pub(crate) fn infer_c(&mut self, args: &[Arg], arg_types: &[RType], _span: Span) -> RType {
+    /// The class-constructor stage of `infer_call`: `structure(x, class =
+    /// ...)`, `factor(x)`, and S4 `new("Class", ...)` attach a class to a
+    /// payload value.
+    pub(crate) fn infer_class_constructor_call(
+        &mut self,
+        semantic_name: &str,
+        lookup_name: &str,
+        args: &[Arg],
+        scope: &mut Scope,
+    ) -> Option<RType> {
+        // `structure(x, class = "...")` is R's class constructor. We
+        // model only the common literal forms:
+        //   * `class = "foo"` attaches a single class.
+        //   * `class = c("a", "b", ...)` attaches a class vector.
+        // Non-literal or unparseable forms fall through to opaque
+        // inference with `ClassVector::unknown()` so RY050 stays quiet.
+        if semantic_name == "structure" {
+            return Some(self.infer_structure_call(args, scope));
+        }
+        // `factor(x)` returns an integer vector with class "factor".
+        // (And often also "ordered" if `ordered = TRUE`, but we keep v1
+        // to the base case.)
+        if semantic_name == "factor" {
+            // Infer args so unbound-variable diagnostics still fire.
+            self.infer_args_for_diagnostics(args, scope);
+            return Some(
+                RType::new(Mode::Integer, Length::Unknown)
+                    .with_class(ClassVector::single("factor")),
+            );
+        }
+        if lookup_name == "new" {
+            for argument in args.iter().skip(1) {
+                let _ = self.infer(&argument.value, scope);
+            }
+            return Some(
+                args.first()
+                    .and_then(|argument| match &argument.value {
+                        Expr::String(class, _) => {
+                            Some(RType::unknown().with_class(ClassVector::single(class)))
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(RType::unknown),
+            );
+        }
+        None
+    }
+
+    /// Infer the type of `structure(x, class = "...")`. We model only
+    /// the literal class forms; everything else returns the first
+    /// argument's type with `ClassVector::unknown()` (so we neither lie
+    /// about a class nor spuriously trigger RY050). The base value is the
+    /// first positional or `x =` argument; later candidates are inferred
+    /// for diagnostics only.
+    ///
+    /// The base value's column schema is preserved: `RType::with_class`
+    /// is `RType { class, ..self }`, so a `structure(list(a = 1L),
+    /// class = "foo")` call yields a value whose columns are still
+    /// `[("a", integer<1>)]` and whose class is `["foo"]`. This lets
+    /// `$a` resolve correctly on user-defined classes built on top of
+    /// a list-shaped payload.
+    pub(crate) fn infer_structure_call(&mut self, args: &[Arg], scope: &mut Scope) -> RType {
+        let mut base_type = RType::unknown();
+        let mut class_expr: Option<&Expr> = None;
+        for a in args {
+            if matches!(a.name.as_deref(), Some("class")) {
+                class_expr = Some(&a.value);
+                continue;
+            }
+            let is_base = matches!(a.name.as_deref(), None | Some("x"))
+                && matches!(base_type.mode, Mode::Opaque);
+            if is_base {
+                base_type = self.infer(&a.value, scope);
+            } else {
+                let _ = self.infer(&a.value, scope);
+            }
+        }
+        if let Some(ce) = class_expr {
+            match parse_class_literal(ce) {
+                ClassLiteral::Single(name) => {
+                    return base_type.with_class(ClassVector::single(&name));
+                }
+                ClassLiteral::Multi(names) => {
+                    let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+                    return base_type.with_class(ClassVector::from_slice(&refs));
+                }
+                ClassLiteral::Unknown => {
+                    // Class is dynamic; keep base type but mark class as
+                    // undetermined so RY050 stays quiet.
+                    return base_type.with_class(ClassVector::unknown());
+                }
+            }
+        }
+        base_type
+    }
+
+    /// The atomic-constructor stage of `infer_call`: `c`, `list`,
+    /// `data.frame`, `t`, and `as.data.frame`.
+    pub(crate) fn infer_atomic_constructor_call(
+        &mut self,
+        lookup_name: &str,
+        args: &[Arg],
+        arg_types: &[RType],
+    ) -> Option<RType> {
+        // Built-in: `c(...)` concatenates and produces the common mode.
+        if lookup_name == "c" {
+            let result = self.infer_c(args, arg_types);
+            if let Some(schema) = build_named_schema(arg_types, args)
+                .filter(|_| args.iter().any(|argument| argument.name.is_some()))
+            {
+                return Some(result.with_columns(Arc::new(schema)));
+            }
+            return Some(result);
+        }
+        if lookup_name == "list" {
+            return Some(self.infer_list(arg_types, args));
+        }
+        // `data.frame(...)`: a record constructor. Same column-schema
+        // logic as `list(...)`, but the result is classed
+        // "data.frame" and column lengths are coerced to a common
+        // length (R recycles; for v1 we take the max of the known
+        // lengths).
+        if lookup_name == "data.frame" {
+            if args.len() == 1
+                && args[0].name.is_none()
+                && let Some(schema) = arg_types[0].columns.clone()
+            {
+                return Some(
+                    RType::new(Mode::List, Length::Known(schema.columns.len()))
+                        .with_class(ClassVector::single("data.frame"))
+                        .with_columns(schema),
+                );
+            }
+            return Some(self.infer_data_frame(arg_types, args));
+        }
+
+        if lookup_name == "t" {
+            return Some(arg_types.first().cloned().unwrap_or_else(RType::unknown));
+        }
+
+        if lookup_name == "as.data.frame"
+            && let Some(input) = arg_types.first()
+            && let Some(schema) = input.columns.clone()
+            && !schema.is_empty()
+        {
+            return Some(
+                RType::new(Mode::List, Length::Known(schema.columns.len()))
+                    .with_class(ClassVector::single("data.frame"))
+                    .with_columns(schema),
+            );
+        }
+        None
+    }
+
+    /// The literal-length constructor stage of `infer_call`: `vector`,
+    /// `rep`, `seq`, and `seq.int` pin their result length from literal
+    /// arguments; the typeshed entries for these names conservatively
+    /// return `Length::Unknown`.
+    pub(crate) fn infer_literal_length_call(
+        &self,
+        lookup_name: &str,
+        args: &[Arg],
+        arg_types: &[RType],
+    ) -> Option<RType> {
+        if lookup_name == "vector" {
+            return Some(self.infer_vector(args));
+        }
+        if lookup_name == "rep" {
+            return Some(self.infer_rep(args, arg_types));
+        }
+        if lookup_name == "seq" || lookup_name == "seq.int" {
+            return Some(self.infer_seq(args, arg_types));
+        }
+        None
+    }
+
+    pub(crate) fn infer_c(&mut self, args: &[Arg], arg_types: &[RType]) -> RType {
         if arg_types.is_empty() {
             return RType::new(Mode::Null, Length::Zero);
         }
@@ -22,7 +198,10 @@ impl Checker {
                 Length::One => 1,
                 Length::Known(n) => n,
                 Length::Unknown => {
-                    return RType::new(collapse_c_mode(mode, saw_union), Length::Unknown);
+                    return RType::new(
+                        if saw_union { Mode::Opaque } else { mode },
+                        Length::Unknown,
+                    );
                 }
             });
         }
@@ -31,19 +210,16 @@ impl Checker {
         } else {
             Length::Known(total_len)
         };
-        RType::new(collapse_c_mode(mode, saw_union), length)
+        RType::new(if saw_union { Mode::Opaque } else { mode }, length)
     }
 
-    // Infer the type of `list(...)`. The result is always a list whose
-    // length equals the argument count; if at least one argument is
-    // named, we additionally build a column schema from the named
-    // args (positional args get R's auto-generated `[[i]]` names).
-    //
-    // We build the schema even when only some args are named: that
-    // mirrors R's `list(a = 1, "x")` which produces names `c("a", "2")`.
-    // The schema is what powers `df$col` / `df[["col"]]` resolution
-    // downstream.
-    pub(crate) fn infer_list(&mut self, arg_types: &[RType], args: &[Arg], _span: Span) -> RType {
+    /// Infer the type of `list(...)`: a list whose length equals the
+    /// argument count, plus a column schema from named args (positional
+    /// args get R's auto-generated `[[i]]` names). The schema is built
+    /// even when only some args are named, mirroring R's
+    /// `list(a = 1, "x")` producing names `c("a", "2")`; it is what
+    /// powers `df$col` / `df[["col"]]` resolution downstream.
+    pub(crate) fn infer_list(&mut self, arg_types: &[RType], args: &[Arg]) -> RType {
         let length = Length::Known(arg_types.len());
         let base = RType::new(Mode::List, length);
         let mut schema = build_named_schema(arg_types, args).unwrap_or(ColumnSchema {
@@ -65,25 +241,14 @@ impl Checker {
         base.with_columns(Arc::new(schema))
     }
 
-    // Infer the type of `data.frame(...)`. Same column-schema logic as
-    // `list(...)`, but:
-    // * The result is classed `"data.frame"`.
-    // * Column lengths are coerced to a common length (R recycles). For
-    //   v1 we take the max of the known lengths (or Unknown if any
-    //   column's length is Unknown), and propagate that length onto
-    //   each column so `df$col` returns a vector of the right length.
-    // * Special arguments like `row.names = ...`, `check.names = ...`
-    //   are NOT columns and are dropped from the schema. We recognize
-    //   the common ones by name.
-    pub(crate) fn infer_data_frame(
-        &mut self,
-        arg_types: &[RType],
-        args: &[Arg],
-        _span: Span,
-    ) -> RType {
-        // Filter out non-column named arguments first. Positional args
-        // are kept (they become columns); known metadata args are dropped
-        // so they don't pollute the schema.
+    /// Infer the type of `data.frame(...)`: the same column-schema logic
+    /// as `list(...)`, but the result is classed `"data.frame"` and
+    /// column lengths are coerced to a common length (R recycles; v1
+    /// takes the max of the known lengths and propagates it onto each
+    /// column so `df$col` returns a vector of the right length). Known
+    /// metadata arguments (`row.names`, `check.names`, ...) are not
+    /// columns and are dropped from the schema.
+    pub(crate) fn infer_data_frame(&mut self, arg_types: &[RType], args: &[Arg]) -> RType {
         use crate::semantic_lists::METADATA_ARGS;
         let mut filtered_types: Vec<RType> = Vec::with_capacity(arg_types.len());
         let mut filtered_args: Vec<Arg> = Vec::with_capacity(args.len());
@@ -97,18 +262,8 @@ impl Checker {
             filtered_args.push(a.clone());
         }
 
-        // Compute the common column length (max of known lengths).
-        let mut common_len: Length = Length::One;
-        for t in &filtered_types {
-            common_len = match (common_len, t.length) {
-                (Length::Zero, x) | (x, Length::Zero) => x,
-                (Length::One, x) | (x, Length::One) => x,
-                (Length::Known(a), Length::Known(b)) => Length::Known(a.max(b)),
-                _ => Length::Unknown,
-            };
-        }
+        let common_len = longest_arg_length(&filtered_types);
 
-        // Build per-column types with the coerced length.
         let coerced_types: Vec<RType> = filtered_types
             .iter()
             .map(|t| RType {
@@ -126,11 +281,7 @@ impl Checker {
 
         // Reuse the named-schema builder, then patch the coerced types
         // in (the builder uses the original arg_types verbatim).
-        let mut schema = build_data_frame_schema(&coerced_types, &filtered_args);
-        if let Some(s) = schema.as_mut() {
-            // Sanity: lengths should already match coerced_types.
-            debug_assert_eq!(s.columns.len(), coerced_types.len());
-        }
+        let schema = build_data_frame_schema(&coerced_types, &filtered_args);
 
         let class = ClassVector::single("data.frame");
         let base = RType::new(Mode::List, Length::Known(filtered_types.len())).with_class(class);
@@ -140,31 +291,11 @@ impl Checker {
         }
     }
 
-    // Infer the result type of `rep(x, times, each)`. R's `rep` has
-    // two relevant parameters for length:
-    //   * `times` (default 1): how many times to repeat the whole
-    //     vector. Total length = `length(x) * times`.
-    //   * `each` (default 1): how many times to repeat each element
-    //     before concatenating. Total length = `length(x) * each`.
-    //   * Combined: `length(x) * times * each`.
-    //
-    // The result mode is `x`'s mode (matching the typeshed's
-    // `"mode": "arg0"` spec). We preserve `x`'s class and column
-    // schema too, so `rep(factor(...), 3)` stays a factor.
-    //
-    // We read `times` / `each` from the raw AST (not the inferred
-    // `RType`) because the type lattice discards the runtime value.
-    // When the values aren't literal integers or `x`'s length is
-    // unknown, we fall back to `Length::Unknown`. Named args win over
-    // positional ones; if `times`/`each` is supplied but isn't a
-    // literal, the length is Unknown (we can't know the runtime
-    // value, unlike the "not supplied" case which defaults to 1).
+    // Infer the result type of `vector(mode, length)`: pin the mode and
+    // length from literal arguments when possible.
     pub(crate) fn infer_vector(&self, args: &[Arg]) -> RType {
-        let mode_expr = args
-            .iter()
-            .find(|a| a.name.as_deref() == Some("mode"))
-            .or_else(|| args.iter().find(|a| a.name.is_none()))
-            .map(|a| &a.value);
+        let bindings = match_arguments(&["mode", "length"], args);
+        let mode_expr = bindings.arg_for_param(0).map(|index| &args[index].value);
         let mode = match mode_expr {
             Some(Expr::String(mode, _)) => match mode.as_str() {
                 "logical" => Mode::Logical,
@@ -180,105 +311,49 @@ impl Checker {
             _ => Mode::Opaque,
         };
 
-        let length_expr = args
-            .iter()
-            .find(|a| a.name.as_deref() == Some("length"))
-            .or_else(|| {
-                let mut positional = args.iter().filter(|a| a.name.is_none());
-                let _ = positional.next();
-                positional.next()
-            })
-            .map(|a| &a.value);
-        let length = length_expr
-            .and_then(extract_literal_int)
-            .map(|n| {
-                if n <= 0 {
-                    Length::Zero
-                } else {
-                    Length::Known(n as usize)
-                }
-            })
-            .unwrap_or(Length::Unknown);
+        let length =
+            size_argument_length(bindings.arg_for_param(1).map(|index| &args[index].value), 0);
 
         RType::new(mode, length)
     }
 
-    pub(crate) fn infer_rep(&self, args: &[Arg], arg_types: &[RType], _span: Span) -> RType {
-        // Helper: find the index in `args` of a named or positional
-        // argument. Named args win over positional. The `pos` index
-        // counts only unnamed args, so `rep(each = 2, c(1,2,3), 1)`
-        // still matches `x` at positional index 0 and `times` at 1.
-        // Mirrors `infer_seq`'s positional-counting approach.
-        let find_idx = |name: &str, pos: usize| -> Option<usize> {
-            for (i, a) in args.iter().enumerate() {
-                if a.name.as_deref() == Some(name) {
-                    return Some(i);
-                }
-            }
-            let mut idx = 0usize;
-            for (i, a) in args.iter().enumerate() {
-                if a.name.is_some() {
-                    continue;
-                }
-                if idx == pos {
-                    return Some(i);
-                }
-                idx += 1;
-            }
-            None
-        };
-        // `x` is the first positional arg (pos 0) or a named `x = ...`.
-        // We must look it up by index rather than `arg_types.first()`
-        // because named `times`/`each` args can precede `x` in the
-        // call (e.g. `rep(each = 2, c(1,2,3), 1)`).
-        let x_type = find_idx("x", 0)
+    /// Infer `rep(x, times, each)`: length is `length(x) * times * each`
+    /// with unsupplied counts defaulting to 1, keeping `x`'s mode, class,
+    /// and schema. `length.out` takes precedence in R but is not modeled.
+    /// `times`/`each` are read from the raw AST, not the inferred
+    /// `RType`, because the type lattice discards the runtime value (a
+    /// supplied non-literal means `Length::Unknown`). `x` is matched by
+    /// name or first unnamed position, because named `times`/`each` can
+    /// precede it in the call.
+    pub(crate) fn infer_rep(&self, args: &[Arg], arg_types: &[RType]) -> RType {
+        let x_type = find_arg(args, "x", 0)
             .and_then(|i| arg_types.get(i).cloned())
             .unwrap_or(RType::unknown());
         // Track `times` / `each` as `Option<Option<i64>>`:
         //   * outer None      -> not supplied (use default 1)
         //   * outer Some(None) -> supplied but non-literal (Unknown)
         //   * outer Some(Some(n)) -> supplied literal value n
-        let times = find_idx("times", 1)
+        let times = find_arg(args, "times", 1)
             .and_then(|i| args.get(i))
             .map(|a| extract_literal_int(&a.value));
-        let each = find_idx("each", 2)
+        let each = find_arg(args, "each", 2)
             .and_then(|i| args.get(i))
             .map(|a| extract_literal_int(&a.value));
-        // Resolve `times`. Non-supplied -> 1; non-literal -> Unknown;
-        // negative literal -> Unknown (R errors or recycles in ways we
-        // can't model, so we stay conservative rather than pin a wrong
-        // length).
-        let times_n: usize = match times {
-            None => 1usize,
-            Some(Some(n)) if n < 0 => {
-                return RType {
-                    length: Length::Unknown,
-                    ..x_type
-                };
-            }
-            Some(Some(n)) => n as usize,
-            Some(None) => {
-                return RType {
-                    length: Length::Unknown,
-                    ..x_type
-                };
-            }
+        // Resolve `times` and `each` through the shared count resolver.
+        // Unsupplied -> 1; a non-literal or negative literal -> the length is
+        // unknown (R errors or recycles in ways we can't model, so we stay
+        // conservative rather than pin a wrong length).
+        let Some(times_n) = rep_count(times) else {
+            return RType {
+                length: Length::Unknown,
+                ..x_type
+            };
         };
-        let each_n: usize = match each {
-            None => 1usize,
-            Some(Some(n)) if n < 0 => {
-                return RType {
-                    length: Length::Unknown,
-                    ..x_type
-                };
-            }
-            Some(Some(n)) => n as usize,
-            Some(None) => {
-                return RType {
-                    length: Length::Unknown,
-                    ..x_type
-                };
-            }
+        let Some(each_n) = rep_count(each) else {
+            return RType {
+                length: Length::Unknown,
+                ..x_type
+            };
         };
         // Compute the total length, normalizing so we never emit
         // `Length::Known(0)` (which violates the `Known(n > 1)`
@@ -307,40 +382,24 @@ impl Checker {
         RType { length, ..x_type }
     }
 
-    // Infer the result type of `seq(from, to, by)` / `seq.int(...)`.
-    // Two literal forms let us pin the result length exactly:
-    //   * `seq(from, to, by)`: length = `|to - from| / |by| + 1`
-    //     (R rounds to the nearest whole step that stays in range).
-    //   * `seq(from, to, length.out = n)`: length = `n`.
-    //   * `seq(from, to)` (no `by`, no `length.out`): R defaults
-    //     `by` to +/-1, so length = `|to - from| + 1`.
-    //
-    // When `length.out` is present it wins (R documents this as
-    // taking precedence over `by`). When we can't pin the length, we
-    // still report the right mode (integer when the first arg is an
-    // integer literal, else double) with `Length::Unknown`.
-    pub(crate) fn infer_seq(&self, args: &[Arg], arg_types: &[RType], _span: Span) -> RType {
+    /// Infer the result type of `seq(from, to, by)` / `seq.int(...)`.
+    /// Literal forms pin the length exactly: `|to - from| / |by| + 1`
+    /// (R rounds to the nearest whole step in range), `length.out = n`
+    /// when supplied (it wins over `by`, as R documents), or
+    /// `|to - from| + 1` when `by` is absent (R defaults it to +/-1).
+    /// Otherwise the mode is still reported — integer when the first
+    /// argument is an integer literal, else double — with
+    /// `Length::Unknown`.
+    pub(crate) fn infer_seq(&self, args: &[Arg], arg_types: &[RType]) -> RType {
         // Helper: find (was_supplied, literal_value) for a named or
         // positional argument. Named args win over positional. The
         // `pos` index counts only unnamed args, so `seq(from=1, 10)`
         // still matches `to` at positional index 0.
         let find = |name: &str, pos: usize| -> (bool, Option<i64>) {
-            for a in args.iter() {
-                if a.name.as_deref() == Some(name) {
-                    return (true, extract_literal_int(&a.value));
-                }
+            match find_arg(args, name, pos) {
+                Some(i) => (true, extract_literal_int(&args[i].value)),
+                None => (false, None),
             }
-            let mut idx = 0;
-            for a in args.iter() {
-                if a.name.is_some() {
-                    continue;
-                }
-                if idx == pos {
-                    return (true, extract_literal_int(&a.value));
-                }
-                idx += 1;
-            }
-            (false, None)
         };
 
         let (_, from_val) = find("from", 0);
@@ -348,9 +407,8 @@ impl Checker {
         let (by_supplied, by_val) = find("by", 2);
         let (lo_supplied, lo_val) = find("length.out", 3);
 
-        // Mode: integer if `from` is an integer literal, else double
-        // (mirrors the typeshed's "double_or_int" rule). We look at
-        // the named `from = ...` first, then the first positional arg.
+        // Look at the named `from = ...` first, then the first
+        // positional arg.
         let from_expr = args
             .iter()
             .find(|a| a.name.as_deref() == Some("from"))
@@ -407,11 +465,9 @@ impl Checker {
 
     pub(crate) fn apply_sig(
         &mut self,
-        name: &str,
         sig: &FunctionSig,
         arg_types: &[RType],
         args: &[Arg],
-        span: Span,
     ) -> RType {
         // Match named arguments to parameters so that `arg0` refers to
         // the first *parameter* (by name), not the first positional arg.
@@ -435,7 +491,7 @@ impl Checker {
             ReturnSpec::Slot(slot) => {
                 let mut result = match slot {
                     ReturnSlot::Arg0 => first,
-                    ReturnSlot::ConcatOfArgs => self.infer_c(args, arg_types, span),
+                    ReturnSlot::ConcatOfArgs => self.infer_c(args, arg_types),
                 };
                 if let Some(length) =
                     semantic_return_length(sig.return_length.as_ref(), &sig.params, args, arg_types)
@@ -445,50 +501,46 @@ impl Checker {
                 result
             }
             ReturnSpec::Concrete(c) => {
-                let mode = match JsonMode::parse(&c.mode) {
-                    Some(JsonMode::Logical) => Mode::Logical,
-                    Some(JsonMode::Integer) => Mode::Integer,
-                    Some(JsonMode::Double) => Mode::Double,
-                    Some(JsonMode::Character) => Mode::Character,
-                    Some(JsonMode::Complex) => Mode::Complex,
-                    Some(JsonMode::Raw) => Mode::Raw,
-                    Some(JsonMode::List) => Mode::List,
-                    Some(JsonMode::Null) => Mode::Null,
-                    Some(JsonMode::Function) => Mode::Function,
-                    Some(JsonMode::Opaque) => Mode::Opaque,
-                    Some(JsonMode::Union) => {
-                        return json_rtype_to_rtype(c);
-                    }
-                    // Compound specs that pick by arg type. For v1 we
-                    // approximate "double_or_int" as the first arg's mode if
-                    // it's already integer, else double.
-                    Some(JsonMode::DoubleOrInt) => {
-                        if matches!(first.mode, Mode::Integer) {
-                            Mode::Integer
-                        } else {
-                            Mode::Double
+                let mode = if let Some(mode) = concrete_json_mode(&c.mode) {
+                    mode
+                } else {
+                    match JsonMode::parse(&c.mode) {
+                        Some(JsonMode::Union) => {
+                            return json_rtype_to_rtype(c);
                         }
-                    }
-                    // "arg0" as a mode spec: use the first param's mode.
-                    Some(JsonMode::Arg0) => first.mode,
-                    // "arg2" as a mode spec: use the third param's mode.
-                    Some(JsonMode::Arg2) => matched.get(2).map(|t| t.mode).unwrap_or(Mode::Opaque),
-                    // "yes_or_no": join of the second and third params'
-                    // modes (for `ifelse(test, yes, no)`). The join may be
-                    // a union; taking `.mode` drops the members and would
-                    // build a malformed union below, so collapse a union
-                    // mode to opaque.
-                    Some(JsonMode::YesOrNo) => {
-                        let yes = matched.get(1).cloned().unwrap_or(RType::unknown());
-                        let no = matched.get(2).cloned().unwrap_or(RType::unknown());
-                        let joined = yes.join(no).mode;
-                        if matches!(joined, Mode::Union) {
-                            Mode::Opaque
-                        } else {
-                            joined
+                        // Compound specs that pick by arg type. For v1 we
+                        // approximate "double_or_int" as the first arg's mode
+                        // if it's already integer, else double.
+                        Some(JsonMode::DoubleOrInt) => {
+                            if matches!(first.mode, Mode::Integer) {
+                                Mode::Integer
+                            } else {
+                                Mode::Double
+                            }
                         }
+                        // "arg0" as a mode spec: use the first param's mode.
+                        Some(JsonMode::Arg0) => first.mode,
+                        // "arg2" as a mode spec: use the third param's mode.
+                        Some(JsonMode::Arg2) => {
+                            matched.get(2).map(|t| t.mode).unwrap_or(Mode::Opaque)
+                        }
+                        // "yes_or_no": join of the second and third params'
+                        // modes (for `ifelse(test, yes, no)`). The join may be
+                        // a union; taking `.mode` drops the members and would
+                        // build a malformed union below, so collapse a union
+                        // mode to opaque.
+                        Some(JsonMode::YesOrNo) => {
+                            let yes = matched.get(1).cloned().unwrap_or(RType::unknown());
+                            let no = matched.get(2).cloned().unwrap_or(RType::unknown());
+                            let joined = yes.join(no).mode;
+                            if matches!(joined, Mode::Union) {
+                                Mode::Opaque
+                            } else {
+                                joined
+                            }
+                        }
+                        _ => Mode::Opaque,
                     }
-                    None => Mode::Opaque,
                 };
                 // The arg-N mode specs copy a param's mode verbatim; if a
                 // caller passes a union there, that mode is `Mode::Union`
@@ -499,10 +551,6 @@ impl Checker {
                     mode
                 };
                 let length = match JsonLength::parse(&c.length) {
-                    Some(JsonLength::Known(0)) => Length::Zero,
-                    Some(JsonLength::Known(1)) => Length::One,
-                    Some(JsonLength::Known(value)) => Length::Known(value),
-                    Some(JsonLength::Unknown) => Length::Unknown,
                     Some(JsonLength::Arg0) => first.length,
                     Some(JsonLength::Arg1) => {
                         matched.get(1).map(|t| t.length).unwrap_or(Length::Unknown)
@@ -515,7 +563,8 @@ impl Checker {
                     // Number of arguments (for list()).
                     Some(JsonLength::NArgs) => Length::Known(args.len()),
                     Some(JsonLength::Test) => first.length,
-                    None => Length::Unknown,
+                    // Literal lengths and a missing spec alike.
+                    literal => json_length_to_length(literal),
                 };
                 let length = semantic_return_length(
                     sig.return_length.as_ref(),
@@ -524,7 +573,6 @@ impl Checker {
                     arg_types,
                 )
                 .unwrap_or(length);
-                let _ = name;
                 let mut result = RType::new(mode, length);
                 if !c.class.is_empty() {
                     let refs: Vec<&str> = c.class.iter().map(String::as_str).collect();
@@ -534,7 +582,7 @@ impl Checker {
                     let cols: Vec<(String, RType)> = c
                         .columns
                         .iter()
-                        .map(|(name, child)| (name.clone(), json_rtype_to_rtype_shallow(child)))
+                        .map(|(name, child)| (name.clone(), json_rtype_scalar(child)))
                         .collect();
                     result = result.with_columns(Arc::new(ColumnSchema {
                         columns: cols,
@@ -546,22 +594,41 @@ impl Checker {
             }
         }
     }
+}
 
-    // Resolve the type of a subset/extract expression given the base
-    // type, the kind of index (`[`, `[[`, `$`), and the (already
-    // lowered) argument list.
-    //
-    // v1 column-access semantics:
-    // * `df$col` (`Dollar`): the column name lives on `args[0].name`.
-    //   If `bt` has a column schema, return that column's type; if the
-    //   name isn't in the schema, emit RY060. Otherwise (no schema) we
-    //   conservatively return a length-1 value of `bt`'s mode.
-    // * `df[["col"]]` (`Double`): same idea, but the name comes from a
-    //   string-literal positional argument. Non-string-literal args
-    //   fall through to the conservative length-1 default.
-    // * `df[i]` or `df[i, j]` (`Single`): keep the existing opaque
-    //   behavior (returns `bt`). Subsetting semantics are complex and
-    //   out of scope for v1.
+/// Resolve a `rep` repetition count.
+///
+/// `None` (argument not supplied) is R's default of 1. A supplied non-literal
+/// or negative literal has no count we can pin, so it yields `None` and the
+/// caller reports an unknown length.
+fn rep_count(value: Option<Option<i64>>) -> Option<usize> {
+    match value {
+        None => Some(1),
+        Some(Some(n)) if n >= 0 => Some(n as usize),
+        Some(_) => None,
+    }
+}
+
+/// Find the argument for a named parameter: an exact-name argument wins, else
+/// the `pos`-th unnamed (positional) argument. `pos` counts only unnamed
+/// args, so `rep(each = 2, c(1,2,3), 1)` matches `x` at 0 and `times` at 1.
+fn find_arg(args: &[Arg], name: &str, pos: usize) -> Option<usize> {
+    for (i, a) in args.iter().enumerate() {
+        if a.name.as_deref() == Some(name) {
+            return Some(i);
+        }
+    }
+    let mut idx = 0usize;
+    for (i, a) in args.iter().enumerate() {
+        if a.name.is_some() {
+            continue;
+        }
+        if idx == pos {
+            return Some(i);
+        }
+        idx += 1;
+    }
+    None
 }
 
 fn semantic_return_length(
@@ -577,13 +644,7 @@ fn semantic_return_length(
     if args.is_empty() && !arg_types.is_empty() {
         return None;
     }
-    let bindings = match_arguments(
-        &signature_params
-            .iter()
-            .map(|param| param.name.as_str())
-            .collect::<Vec<_>>(),
-        args,
-    );
+    let bindings = match_params(signature_params, args);
     let bound_args = |param: &str| {
         signature_params
             .iter()
@@ -598,6 +659,13 @@ fn semantic_return_length(
             })
     };
     match semantics {
+        ReturnLengthSpec::ParamValue {
+            param,
+            default_length,
+        } => Some(size_argument_length(
+            bound_args(param).next().map(|index| &args[index].value),
+            *default_length,
+        )),
         ReturnLengthSpec::ZeroIfAnyParamZero { params } => {
             if params
                 .iter()
@@ -669,4 +737,27 @@ fn semantic_return_length(
             }
         }
     }
+}
+
+/// R truncates numeric sizes towards zero; dynamic and invalid sizes stay unknown.
+fn size_argument_length(value: Option<&Expr>, default: usize) -> Length {
+    let number = match value {
+        None => return json_length_to_length(Some(JsonLength::Known(default))),
+        Some(Expr::Integer(n, _)) => *n as f64,
+        Some(Expr::Double(n, _)) => *n,
+        Some(Expr::UnaryOp {
+            op: UnaryOpKind::Neg,
+            expr,
+            ..
+        }) => match expr.as_ref() {
+            Expr::Integer(n, _) => -(*n as f64),
+            Expr::Double(n, _) => -*n,
+            _ => return Length::Unknown,
+        },
+        _ => return Length::Unknown,
+    };
+    if !number.is_finite() || number.trunc() < 0.0 || number >= usize::MAX as f64 {
+        return Length::Unknown;
+    }
+    json_length_to_length(Some(JsonLength::Known(number.trunc() as usize)))
 }

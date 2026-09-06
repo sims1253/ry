@@ -1,2 +1,0 @@
-tests/testthat/test-predict_formats.R:173:58 RY030
-tests/testthat/test-predict_formats.R:181:52 RY030

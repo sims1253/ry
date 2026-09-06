@@ -85,7 +85,7 @@ where
     /// client. This lets a test answer them with a scripted response so the
     /// server unblocks and proceeds (without it, a pull-config server stalls
     /// in the handler awaiting the reply).
-    pub async fn respond_to_request(&mut self, method: &str, result: Value) -> io::Result<()> {
+    pub async fn respond_to_request(&mut self, method: &str, result: Value) -> io::Result<Value> {
         let request = self
             .receive_matching(0, |message| {
                 message.get("method").and_then(Value::as_str) == Some(method)
@@ -99,7 +99,8 @@ where
                 "id": id,
                 "result": result,
             }))
-            .await
+            .await?;
+        Ok(request)
     }
 
     pub async fn request(&mut self, method: &str, params: Value) -> io::Result<Value> {
@@ -147,9 +148,6 @@ where
     /// Mark the currently routed transcript. Pair with
     /// `published_diagnostics_after` to require a publication caused by a
     /// later action rather than reusing an already-routed one.
-    /// Mark the currently routed transcript. Pair with
-    /// `published_diagnostics_after` to require a publication caused by a
-    /// later action rather than reusing an already-routed one.
     ///
     /// This counts read order, not server-side arrival order. A message
     /// already written by the server but not yet read receives a sequence
@@ -168,7 +166,7 @@ where
         .await
     }
 
-    /// P36-W8: wait for the target URI's `publishDiagnostics` after `mark`,
+    /// Wait for the target URI's `publishDiagnostics` after `mark`,
     /// then drain every other `publishDiagnostics` that arrives within
     /// `idle_timeout` of the previous message. Returns a `BTreeMap` of
     /// URI → diagnostic array. The initial wait is the quiescence signal

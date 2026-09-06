@@ -37,7 +37,7 @@ pub const RULES: &[Rule] = &[
         code: "RY002",
         name: "condition-length",
         default_severity: Severity::Warning,
-        summary: "`if` condition length is known to be greater than 1; only the first element is used.",
+        summary: "`if` condition length is known to be greater than 1. R requires a single value and errors on longer conditions.",
     },
     Rule {
         code: "RY003",
@@ -79,7 +79,7 @@ pub const RULES: &[Rule] = &[
         code: "RY032",
         name: "scalar-logical-length",
         default_severity: Severity::Warning,
-        summary: "`&&` and `||` only use the first element of their operands; using them with vectors of length > 1 is almost always a bug. Use `&`/`|` for vectorized operations.",
+        summary: "`&&` and `||` require single values and error on operands of length greater than 1. Use `&`/`|` for vectorized operations.",
     },
     Rule {
         code: "RY033",
@@ -138,8 +138,8 @@ pub const RULES: &[Rule] = &[
     Rule {
         code: "RY080",
         name: "map-return-type-mismatch",
-        default_severity: Severity::Warning,
-        summary: "A purrr typed-map (`map_dbl`, `map_int`, ...) callback returns a value whose mode is incompatible with the target vector type. R coerces at runtime, but the mismatch is almost always unintended.",
+        default_severity: Severity::Error,
+        summary: "A typed-map callback returns an incompatible mode or a result whose known length is not one. R rejects that callback result.",
     },
     Rule {
         code: "RY090",
@@ -233,7 +233,7 @@ pub fn find(code: &str) -> Option<&'static Rule> {
     RULES.iter().find(|r| r.code == code || r.name == code)
 }
 
-/// Severity for `all` shorthand in CLI filters.
+/// All rule codes, expanded for the `all` shorthand in CLI severity filters.
 pub fn all_codes() -> Vec<&'static str> {
     RULES.iter().map(|r| r.code).collect()
 }

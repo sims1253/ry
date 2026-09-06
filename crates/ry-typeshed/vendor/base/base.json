@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "base",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "globals": {
     "ambient": [
       "..deparseOpts",
@@ -2385,7 +2385,7 @@
     },
     ".packages": {
       "params": [
-        "all"
+        "all.available"
       ],
       "return": {
         "mode": "character",
@@ -2601,7 +2601,7 @@
         },
         {
           "name": "init",
-          "default": true
+          "required": false
         },
         {
           "name": "right",
@@ -2830,7 +2830,10 @@
     },
     "as.character": {
       "params": [
-        "x",
+        {
+          "name": "x",
+          "required": false
+        },
         "..."
       ],
       "return": {
@@ -2854,7 +2857,11 @@
     },
     "as.double": {
       "params": [
-        "x"
+        {
+          "name": "x",
+          "required": false
+        },
+        "..."
       ],
       "return": {
         "mode": "double",
@@ -2877,7 +2884,10 @@
     },
     "as.integer": {
       "params": [
-        "x",
+        {
+          "name": "x",
+          "required": false
+        },
         "..."
       ],
       "return": {
@@ -2898,7 +2908,11 @@
     },
     "as.logical": {
       "params": [
-        "x"
+        {
+          "name": "x",
+          "required": false
+        },
+        "..."
       ],
       "return": {
         "mode": "logical",
@@ -2918,7 +2932,10 @@
     },
     "as.numeric": {
       "params": [
-        "x",
+        {
+          "name": "x",
+          "required": false
+        },
         "..."
       ],
       "return": {
@@ -3024,7 +3041,7 @@
     "ave": {
       "params": [
         "x",
-        "f"
+        "FUN"
       ],
       "return": {
         "mode": "double_or_int",
@@ -3066,6 +3083,9 @@
       "params": [
         "expr"
       ],
+      "eval": {
+        "expr": "quoted_expression"
+      },
       "return": {
         "mode": "opaque",
         "length": "1",
@@ -3140,13 +3160,17 @@
     },
     "character": {
       "params": [
-        "length"
+        {
+          "name": "length",
+          "default": true
+        }
       ],
       "return": {
         "mode": "character",
-        "length": "arg0",
+        "length": "unknown",
         "na": false
-      }
+      },
+      "return_length": {"kind": "param_value", "param": "length", "default_length": 0}
     },
     "charmatch": {
       "params": [
@@ -3243,11 +3267,30 @@
     },
     "complex": {
       "params": [
-        "length"
+        {
+          "name": "length.out",
+          "default": true
+        },
+        {
+          "name": "real",
+          "default": true
+        },
+        {
+          "name": "imaginary",
+          "default": true
+        },
+        {
+          "name": "modulus",
+          "default": true
+        },
+        {
+          "name": "argument",
+          "default": true
+        }
       ],
       "return": {
         "mode": "complex",
-        "length": "arg0",
+        "length": "unknown",
         "na": false
       }
     },
@@ -3465,6 +3508,9 @@
         "x",
         "value"
       ],
+      "eval": {
+        "value": "captures_promise"
+      },
       "return": {
         "mode": "null",
         "length": "0",
@@ -3675,13 +3721,17 @@
     },
     "double": {
       "params": [
-        "length"
+        {
+          "name": "length",
+          "default": true
+        }
       ],
       "return": {
         "mode": "double",
-        "length": "arg0",
+        "length": "unknown",
         "na": false
-      }
+      },
+      "return_length": {"kind": "param_value", "param": "length", "default_length": 0}
     },
     "dpois": {
       "params": [
@@ -3801,7 +3851,7 @@
         },
         {
           "name": "frame",
-          "default": true
+          "required": false
         },
         {
           "name": "mode",
@@ -3865,6 +3915,9 @@
       "params": [
         "..."
       ],
+      "eval": {
+        "...": "quoted_expression"
+      },
       "return": {
         "mode": "opaque",
         "length": "unknown",
@@ -3894,7 +3947,7 @@
     },
     "fft": {
       "params": [
-        "x"
+        "z"
       ],
       "return": {
         "mode": "complex",
@@ -3971,7 +4024,7 @@
     },
     "formals": {
       "params": [
-        "fn"
+        "fun"
       ],
       "return": {
         "mode": "list",
@@ -4015,7 +4068,7 @@
     },
     "friedman.test": {
       "params": [
-        "x"
+        "y"
       ],
       "return": {
         "mode": "list",
@@ -4316,13 +4369,17 @@
     },
     "integer": {
       "params": [
-        "length"
+        {
+          "name": "length",
+          "default": true
+        }
       ],
       "return": {
         "mode": "integer",
-        "length": "arg0",
+        "length": "unknown",
         "na": false
-      }
+      },
+      "return_length": {"kind": "param_value", "param": "length", "default_length": 0}
     },
     "interaction": {
       "params": [
@@ -4896,13 +4953,17 @@
     },
     "logical": {
       "params": [
-        "length"
+        {
+          "name": "length",
+          "default": true
+        }
       ],
       "return": {
         "mode": "logical",
-        "length": "arg0",
+        "length": "unknown",
         "na": false
-      }
+      },
+      "return_length": {"kind": "param_value", "param": "length", "default_length": 0}
     },
     "ls": {
       "params": [],
@@ -4982,7 +5043,7 @@
     },
     "match.arg": {
       "params": [
-        "x"
+        "arg"
       ],
       "return": {
         "mode": "character",
@@ -5014,7 +5075,7 @@
     },
     "mauchly.test": {
       "params": [
-        "x"
+        "object"
       ],
       "return": {
         "mode": "list",
@@ -5160,7 +5221,7 @@
     },
     "mvfft": {
       "params": [
-        "x"
+        "z"
       ],
       "return": {
         "mode": "complex",
@@ -5170,7 +5231,7 @@
     },
     "na.omit": {
       "params": [
-        "x"
+        "object"
       ],
       "return": "arg0"
     },
@@ -5304,13 +5365,17 @@
     },
     "numeric": {
       "params": [
-        "length"
+        {
+          "name": "length",
+          "default": true
+        }
       ],
       "return": {
         "mode": "double",
-        "length": "arg0",
+        "length": "unknown",
         "na": false
-      }
+      },
+      "return_length": {"kind": "param_value", "param": "length", "default_length": 0}
     },
     "nzchar": {
       "params": [
@@ -5334,7 +5399,7 @@
     },
     "oneway.test": {
       "params": [
-        "x"
+        "formula"
       ],
       "return": {
         "mode": "list",
@@ -5902,7 +5967,7 @@
     },
     "quade.test": {
       "params": [
-        "x"
+        "y"
       ],
       "return": {
         "mode": "list",
@@ -5936,6 +6001,9 @@
       "params": [
         "expr"
       ],
+      "eval": {
+        "expr": "quoted_expression"
+      },
       "return": {
         "mode": "opaque",
         "length": "1",
@@ -6004,13 +6072,17 @@
     },
     "raw": {
       "params": [
-        "length"
+        {
+          "name": "length",
+          "default": true
+        }
       ],
       "return": {
         "mode": "raw",
-        "length": "arg0",
+        "length": "unknown",
         "na": false
-      }
+      },
+      "return_length": {"kind": "param_value", "param": "length", "default_length": 0}
     },
     "rbind": {
       "params": [
@@ -6153,7 +6225,10 @@
     },
     "rep": {
       "params": [
-        "x",
+        {
+          "name": "x",
+          "required": false
+        },
         "..."
       ],
       "return": {
@@ -6356,7 +6431,7 @@
         },
         {
           "name": "size",
-          "default": true
+          "required": false
         },
         {
           "name": "replace",
@@ -6501,7 +6576,7 @@
     },
     "set.seed": {
       "params": [
-        "n"
+        "seed"
       ],
       "return": {
         "mode": "null",
@@ -6622,7 +6697,7 @@
       "params": [
         {
           "name": "file",
-          "default": true
+          "required": false
         },
         {
           "name": "local",
@@ -6638,7 +6713,7 @@
         },
         {
           "name": "exprs",
-          "default": true
+          "required": false
         },
         {
           "name": "spaced",
@@ -6898,6 +6973,9 @@
       "params": [
         "expr"
       ],
+      "eval": {
+        "expr": "captures_promise"
+      },
       "return": {
         "mode": "opaque",
         "length": "1",
@@ -7007,7 +7085,10 @@
       "params": [
         "file",
         "envir",
-        "..."
+        "chdir",
+        "keep.source",
+        "keep.parse.data",
+        "toplevel.env"
       ],
       "scope_effect": "unknown_bindings",
       "return": {
@@ -7142,7 +7223,7 @@
     },
     "terms": {
       "params": [
-        "object"
+        "x"
       ],
       "return": {
         "mode": "opaque",
@@ -7379,7 +7460,7 @@
     "update": {
       "params": [
         "object",
-        "formula"
+        "formula."
       ],
       "return": {
         "mode": "opaque",
@@ -7459,12 +7540,18 @@
     },
     "vector": {
       "params": [
-        "mode",
-        "length"
+        {
+          "name": "mode",
+          "default": true
+        },
+        {
+          "name": "length",
+          "default": true
+        }
       ],
       "return": {
         "mode": "arg0",
-        "length": "arg1",
+        "length": "unknown",
         "na": false
       }
     },
@@ -7832,6 +7919,9 @@
       "length": "5",
       "na": false,
       "class": [
+        "nfnGroupedData",
+        "nfGroupedData",
+        "groupedData",
         "data.frame"
       ],
       "note": "data.frame",
@@ -7841,8 +7931,8 @@
           "length": "84",
           "na": false,
           "class": [
-            "factor",
-            "ordered"
+            "ordered",
+            "factor"
           ]
         },
         "Type": {
@@ -7887,8 +7977,8 @@
           "length": "88",
           "na": false,
           "class": [
-            "factor",
-            "ordered"
+            "ordered",
+            "factor"
           ]
         },
         "alcgp": {
@@ -7896,8 +7986,8 @@
           "length": "88",
           "na": false,
           "class": [
-            "factor",
-            "ordered"
+            "ordered",
+            "factor"
           ]
         },
         "tobgp": {
@@ -7905,8 +7995,8 @@
           "length": "88",
           "na": false,
           "class": [
-            "factor",
-            "ordered"
+            "ordered",
+            "factor"
           ]
         },
         "ncases": {
@@ -7993,19 +8083,28 @@
           ]
         },
         "N": {
-          "mode": "double",
+          "mode": "integer",
           "length": "24",
-          "na": false
+          "na": false,
+          "class": [
+            "factor"
+          ]
         },
         "P": {
-          "mode": "double",
+          "mode": "integer",
           "length": "24",
-          "na": false
+          "na": false,
+          "class": [
+            "factor"
+          ]
         },
         "K": {
-          "mode": "double",
+          "mode": "integer",
           "length": "24",
-          "na": false
+          "na": false,
+          "class": [
+            "factor"
+          ]
         },
         "yield": {
           "mode": "double",
@@ -8016,45 +8115,29 @@
     },
     "OrchardSprays": {
       "mode": "list",
-      "length": "8",
+      "length": "4",
       "na": false,
       "class": [
         "data.frame"
       ],
       "note": "data.frame",
       "columns": {
-        "rowpos": {
-          "mode": "integer",
-          "length": "64",
-          "na": false
-        },
-        "colpos": {
-          "mode": "integer",
-          "length": "64",
-          "na": false
-        },
-        "treatment": {
-          "mode": "integer",
-          "length": "64",
-          "na": false,
-          "class": [
-            "factor"
-          ]
-        },
         "decrease": {
           "mode": "double",
           "length": "64",
           "na": false
         },
-        "rowpos.f": {
-          "mode": "integer",
+        "rowpos": {
+          "mode": "double",
           "length": "64",
-          "na": false,
-          "class": [
-            "factor"
-          ]
+          "na": false
         },
-        "colpos.f": {
+        "colpos": {
+          "mode": "double",
+          "length": "64",
+          "na": false
+        },
+        "treatment": {
           "mode": "integer",
           "length": "64",
           "na": false,
@@ -8069,6 +8152,9 @@
       "length": "3",
       "na": false,
       "class": [
+        "nfnGroupedData",
+        "nfGroupedData",
+        "groupedData",
         "data.frame"
       ],
       "note": "data.frame",
@@ -8088,8 +8174,8 @@
           "length": "84",
           "na": false,
           "class": [
-            "factor",
-            "ordered"
+            "ordered",
+            "factor"
           ]
         }
       }
@@ -8127,7 +8213,10 @@
         "y": {
           "mode": "double",
           "length": "39",
-          "na": false
+          "na": false,
+          "class": [
+            "ts"
+          ]
         },
         "lag.quarterly.revenue": {
           "mode": "double",
@@ -8218,6 +8307,9 @@
       "length": "4",
       "na": false,
       "class": [
+        "nfnGroupedData",
+        "nfGroupedData",
+        "groupedData",
         "data.frame"
       ],
       "note": "data.frame",
@@ -8237,8 +8329,8 @@
           "length": "578",
           "na": false,
           "class": [
-            "factor",
-            "ordered"
+            "ordered",
+            "factor"
           ]
         },
         "Diet": {
@@ -8256,6 +8348,9 @@
       "length": "3",
       "na": false,
       "class": [
+        "nfnGroupedData",
+        "nfGroupedData",
+        "groupedData",
         "data.frame"
       ],
       "note": "data.frame",
@@ -8265,8 +8360,8 @@
           "length": "176",
           "na": false,
           "class": [
-            "factor",
-            "ordered"
+            "ordered",
+            "factor"
           ]
         },
         "conc": {
@@ -8286,6 +8381,9 @@
       "length": "3",
       "na": false,
       "class": [
+        "nfnGroupedData",
+        "nfGroupedData",
+        "groupedData",
         "data.frame"
       ],
       "note": "data.frame",
@@ -8295,8 +8393,8 @@
           "length": "66",
           "na": false,
           "class": [
-            "factor",
-            "ordered"
+            "ordered",
+            "factor"
           ]
         },
         "time": {
@@ -8352,6 +8450,9 @@
       "length": "3",
       "na": false,
       "class": [
+        "nfnGroupedData",
+        "nfGroupedData",
+        "groupedData",
         "data.frame"
       ],
       "note": "data.frame",
@@ -8361,8 +8462,8 @@
           "length": "35",
           "na": false,
           "class": [
-            "factor",
-            "ordered"
+            "ordered",
+            "factor"
           ]
         },
         "age": {
@@ -8379,9 +8480,12 @@
     },
     "Theoph": {
       "mode": "list",
-      "length": "3",
+      "length": "5",
       "na": false,
       "class": [
+        "nfnGroupedData",
+        "nfGroupedData",
+        "groupedData",
         "data.frame"
       ],
       "note": "data.frame",
@@ -8391,8 +8495,8 @@
           "length": "132",
           "na": false,
           "class": [
-            "factor",
-            "ordered"
+            "ordered",
+            "factor"
           ]
         },
         "Wt": {
@@ -8762,7 +8866,7 @@
       "note": "data.frame",
       "columns": {
         "area": {
-          "mode": "double",
+          "mode": "integer",
           "length": "48",
           "na": false
         },
@@ -8845,7 +8949,7 @@
     },
     "sunspot.month": {
       "mode": "double",
-      "length": "2820",
+      "length": "unknown",
       "na": false,
       "class": [
         "ts"
@@ -8873,12 +8977,12 @@
       "na": false
     },
     "rivers": {
-      "mode": "integer",
+      "mode": "double",
       "length": "141",
       "na": false
     },
     "discoveries": {
-      "mode": "integer",
+      "mode": "double",
       "length": "100",
       "na": false,
       "class": [
@@ -8886,9 +8990,25 @@
       ]
     },
     "pressure": {
-      "mode": "double",
-      "length": "19",
-      "na": false
+      "mode": "list",
+      "length": "2",
+      "na": false,
+      "class": [
+        "data.frame"
+      ],
+      "note": "data.frame",
+      "columns": {
+        "temperature": {
+          "mode": "double",
+          "length": "19",
+          "na": false
+        },
+        "pressure": {
+          "mode": "double",
+          "length": "19",
+          "na": false
+        }
+      }
     },
     "lh": {
       "mode": "double",
@@ -8907,16 +9027,12 @@
       ]
     },
     "WorldPhones": {
-      "mode": "integer",
+      "mode": "double",
       "length": "49",
-      "na": false
-    },
-    "USAccdeaths": {
-      "mode": "integer",
-      "length": "72",
       "na": false,
       "class": [
-        "ts"
+        "matrix",
+        "array"
       ]
     },
     "letters": {
@@ -8965,9 +9081,9 @@
       "na": false
     },
     ".Options": {
-      "mode": "list",
+      "mode": "opaque",
       "length": "unknown",
-      "na": false
+      "na": true
     },
     "ability.cov": {
       "mode": "list",

@@ -6,12 +6,7 @@
 
 # Local tool caches
 /.claude/
-
-# Agent working plans (local pipeline artifacts, not project docs)
-/docs/plans/
-
-# Background QA agent scratch (local run tracking, not project docs)
-/docs/dev/
+.pytest_cache/
 
 # npm lockfile: the extension is managed with bun (bun.lock is tracked)
 /editors/code/package-lock.json
@@ -27,3 +22,6 @@
 /comms.md
 /plan-forward-report.html
 /time
+
+# Python bytecode from the ecosystem harness
+__pycache__/

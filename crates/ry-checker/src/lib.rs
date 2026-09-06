@@ -5,39 +5,37 @@
 //!
 //! v2 additions: interprocedural function-return inference via a
 //! module-level FnTable and a fixpoint loop. The first pass collects
-//! function definitions; subsequent passes refine each function's
-//! inferred return type until stable (or the depth cap is hit).
+//! function definitions; subsequent passes refine each function's inferred
+//! return type until stable (or the depth cap is hit).
 
+// Not vestigial: collapsible-if sites remain in infer/,
+// higher_order.rs, and collect.rs.
 #![allow(clippy::collapsible_if)]
 
 mod collect;
 pub mod diagnostics;
+mod fixpoint;
 pub mod format;
 mod higher_order;
 mod infer;
 mod nse;
-pub mod packages;
 pub mod project;
+mod resolve;
 pub mod rules;
 pub mod semantic_lists;
-mod suppress;
 
-// Re-export `Project` at the crate root so callers (the CLI, integration
-// tests) can write `ry_checker::Project` rather than
-// `ry_checker::project::Project`. Mirrors the ergonomics of `Checker`.
 pub use project::Project;
 // Re-export the diagnostic data types and suppression helpers at the
 // crate root for back-compat (callers and tests reference
 // `ry_checker::{Severity, Diagnostic, ...}` directly).
 pub use diagnostics::{
     Confidence, Diagnostic, Severity, SeverityFilter, Suppression, apply_filter_to_diagnostics,
-    filter_default_disabled, filter_suppressed, filter_suppressed_with_comments,
-    has_file_suppression, has_file_suppression_from_comments, is_suppressed, parse_suppressions,
+    filter_suppressed_with_comments, has_file_suppression_from_comments, is_suppressed,
     parse_suppressions_from_comments,
 };
 
-// P38-W3: Configuration-driven filter builders moved here from ry-config
-// to break the ry-config → ry-checker dependency.
+// These builders live here, not in ry-config, because ry-checker depends
+// on ry-config and the reverse direction would be a cycle.
 
 /// Build a [`SeverityFilter`] from the `error`, `warn`, and `ignore`
 /// rule lists in a config.
@@ -78,9 +76,9 @@ use ry_core::types::{ClassVector, ColumnSchema, FunctionSignature, Length, Mode,
 use ry_typeshed::{
     AssertionProvenanceKind, AssertionSpec, CallbackArg, ConditionalScopeEffect,
     DefaultCurrentScope, EvalMode, FunctionSig, Globals, HigherOrderResultKind, HigherOrderSpec,
-    JsonLength, JsonMode, JsonRType, ParamSpec, ReturnLengthSpec, ReturnSlot, ReturnSpec,
-    SchemaEffect, ScopeEffect, Typeshed, is_known_package, known_packages, load_base_cached,
-    load_package,
+    InjectionMode, JsonLength, JsonMode, JsonRType, ParamSpec, ReturnLengthSpec, ReturnSlot,
+    ReturnSpec, SchemaEffect, ScopeEffect, Typeshed, is_known_package, known_packages,
+    load_base_cached, load_package,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -92,7 +90,7 @@ fn string_literals(expr: &Expr) -> Vec<String> {
             let Some(name) = ident_name(func) else {
                 return Vec::new();
             };
-            let bare = name.rsplit_once("::").map(|(_, n)| n).unwrap_or(name);
+            let bare = crate::semantic_lists::bare_name(name);
             if bare != "c" {
                 return Vec::new();
             }
@@ -120,6 +118,26 @@ fn binding_name(expr: &Expr) -> Option<&str> {
 
 fn is_na_literal(expr: &Expr) -> bool {
     matches!(expr, Expr::Na(_, _))
+}
+
+/// Whether `library()` / `require()` was passed `character.only = TRUE`.
+fn character_only(args: &[Arg]) -> bool {
+    args.iter().any(|argument| {
+        argument.name.as_deref() == Some("character.only")
+            && matches!(argument.value, Expr::Logical(true, _))
+    })
+}
+
+/// The package a `library()` / `require()` call attaches, given its
+/// argument list: the first argument names the package as a bare symbol
+/// — unless `character.only = TRUE` restricts it to a string literal.
+/// `None` when no literal name is available.
+fn attached_package_name(args: &[Arg]) -> Option<&str> {
+    match &args.first()?.value {
+        Expr::Ident { name, .. } if !character_only(args) => Some(name),
+        Expr::String(name, _) => Some(name),
+        _ => None,
+    }
 }
 
 fn non_divisible_recycling(lhs: Length, rhs: Length) -> Option<(usize, usize)> {
@@ -225,20 +243,10 @@ fn split_s3_operator_method_name(name: &str) -> Option<(&'static str, String)> {
     })
 }
 
-struct EnvironmentProfile {
-    bindings: &'static [&'static str],
-    path_trigger: fn(&str) -> bool,
-}
-
-// One built-in profile: Shiny application fragments. User-defined profiles
-// (named, path-glob-triggered) come from `ry.toml` `[[environments]]` and are
-// threaded through the CLI config instead.
-const BUILTIN_ENVIRONMENTS: &[EnvironmentProfile] = &[EnvironmentProfile {
-    bindings: crate::semantic_lists::BUILTIN_ENVIRONMENT_BINDINGS,
-    path_trigger: is_shiny_app_fragment_path,
-}];
-
 /// Whether a file is plausibly sourced into a Shiny application server.
+/// This is ry's one built-in ambient-environment extension; user-defined
+/// profiles (named, path-glob-triggered) come from `ry.toml`
+/// `[[environments]]` and are threaded through the CLI config instead.
 fn is_shiny_app_fragment_path(path: &str) -> bool {
     use std::path::Path;
 
@@ -286,6 +294,7 @@ pub struct Scope {
     /// not be resolved through the project-wide, name-only function table.
     pub(crate) lexical_functions: HashSet<String>,
     pub data_mask_unknown: bool,
+    pub(crate) tidy_injection: Option<InjectionMode>,
     pub search_path_unknown: bool,
     /// Execution cannot continue in this block because a preceding operation
     /// is known to throw. Cloned scopes keep this fact local to that path.
@@ -309,16 +318,12 @@ impl Scope {
     }
 
     pub(crate) fn insert_narrowed(&mut self, name: impl Into<String>, t: RType) {
+        // Preserve parameter, default-parameter, and list-origin markers;
+        // clear function aliases and lexical-function markers, then mark narrowed.
         let name = name.into();
-        let was_parameter = self.parameter_bindings.contains(&name);
-        let was_default_parameter = self.default_parameter_bindings.contains(&name);
-        self.insert(name.clone(), t);
-        if was_parameter {
-            self.parameter_bindings.insert(name.clone());
-        }
-        if was_default_parameter {
-            self.default_parameter_bindings.insert(name.clone());
-        }
+        self.function_aliases.remove(&name);
+        self.lexical_functions.remove(&name);
+        self.bindings.insert(name.clone(), t);
         self.narrowed_bindings.insert(name);
     }
 
@@ -329,12 +334,14 @@ impl Scope {
     }
 
     pub(crate) fn insert_parameter_default(&mut self, name: impl Into<String>, t: RType) {
+        // Preserve lexical-function and list-origin markers; clear function
+        // aliases and narrowing, then set both parameter markers.
         let name = name.into();
         self.function_aliases.remove(&name);
-        self.parameter_bindings.insert(name.clone());
-        self.default_parameter_bindings.insert(name.clone());
         self.narrowed_bindings.remove(&name);
-        self.bindings.insert(name, t);
+        self.bindings.insert(name.clone(), t);
+        self.parameter_bindings.insert(name.clone());
+        self.default_parameter_bindings.insert(name);
     }
 
     pub(crate) fn mark_list_origin(&mut self, name: impl Into<String>) {
@@ -379,6 +386,45 @@ impl Scope {
     }
 }
 
+/// Which lexical scope a [`ScopeRecord`] snapshot came from.
+///
+/// R has exactly two lexical scope kinds: the top level of a source file
+/// and function bodies. Braced blocks, `if` branches, and loop bodies all
+/// assign into the enclosing function's environment, so no other kinds
+/// exist to record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScopeRecordKind {
+    Top,
+    Function,
+}
+
+/// One lexical scope's binding table, snapshotted when the checker's
+/// diagnostic walk finishes that scope's body.
+///
+/// The snapshot is the FINAL state of the table (after the body's last
+/// statement), matching what a reader at the closing brace would observe;
+/// consumers that need "in scope at line N" semantics can use each
+/// binding's definition position, which the dump layer derives from the
+/// AST. Only the pass-3 (diagnostic-emitting) walk records scopes: the
+/// fixpoint and signature-building walks reuse the same walker but run
+/// in discarding mode, so no scope is captured twice.
+#[derive(Debug, Clone)]
+pub struct ScopeRecord {
+    pub kind: ScopeRecordKind,
+    /// The bound name for `f <- function(...)` definitions; `None` for
+    /// anonymous statement-position literals and the top level.
+    pub name: Option<String>,
+    /// Span of the function literal; the whole file for the top level.
+    pub span: Span,
+    /// `(name, span)` for every formal parameter. Parameters are also
+    /// present in `scope.bindings` (marked in `parameter_bindings`), but
+    /// the source spans live only here because `Scope` is a plain
+    /// name-to-type table.
+    pub params: Vec<(String, Span)>,
+    /// The final binding table of the scope.
+    pub scope: Scope,
+}
+
 /// A user-defined function recorded for interprocedural inference.
 /// We store the AST nodes by index into a side-table the checker owns,
 /// avoiding lifetime entanglement with the SourceFile.
@@ -397,7 +443,7 @@ pub(crate) struct UserFn {
     pub(crate) return_slot: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct UserParam {
     pub(crate) name: String,
     pub(crate) type_: RType,
@@ -406,6 +452,7 @@ pub(crate) struct UserParam {
     /// Whether the function captures this argument as an unevaluated
     /// expression (for example through `substitute(x)`).
     pub(crate) quoting: bool,
+    pub(crate) injection: Option<InjectionMode>,
 }
 
 /// The complete portion of a user-defined function signature that can affect
@@ -414,36 +461,18 @@ pub(crate) struct UserParam {
 /// function's inferred return type is unchanged.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CallerVisibleSignature {
-    parameters: Vec<CallerVisibleParameter>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct CallerVisibleParameter {
-    name: String,
-    type_: RType,
-    required: bool,
-    defused: bool,
-    quoting: bool,
+    parameters: Vec<UserParam>,
 }
 
 impl UserFn {
     pub(crate) fn caller_visible_signature(&self) -> CallerVisibleSignature {
         CallerVisibleSignature {
-            parameters: self
-                .params
-                .iter()
-                .map(|parameter| CallerVisibleParameter {
-                    name: parameter.name.clone(),
-                    type_: parameter.type_.clone(),
-                    required: parameter.required,
-                    defused: parameter.defused,
-                    quoting: parameter.quoting,
-                })
-                .collect(),
+            parameters: self.params.clone(),
         }
     }
 
-    fn seed_caller_visible_signature(&mut self, signature: &CallerVisibleSignature) {
+    /// Returns whether the seed wrote any parameter metadata.
+    fn seed_caller_visible_signature(&mut self, signature: &CallerVisibleSignature) -> bool {
         // A function outside the incremental fixpoint scope has an unchanged
         // definition. Still guard the identity shape so a bad scope can never
         // copy metadata onto different formals.
@@ -454,14 +483,12 @@ impl UserFn {
                 .zip(&signature.parameters)
                 .any(|(current, previous)| current.name != previous.name)
         {
-            return;
+            return false;
         }
         for (current, previous) in self.params.iter_mut().zip(&signature.parameters) {
-            current.type_ = previous.type_.clone();
-            current.required = previous.required;
-            current.defused = previous.defused;
-            current.quoting = previous.quoting;
+            *current = previous.clone();
         }
+        true
     }
 }
 
@@ -531,6 +558,15 @@ impl FnTable {
         let slot_offset = return_slots.0.len();
         return_slots.0.extend_from_slice(&collected_slots.0);
 
+        let replaced: HashSet<_> = collected
+            .fns
+            .keys()
+            .filter(|name| self.fns.contains_key(*name))
+            .collect();
+        if !replaced.is_empty() {
+            self.forwarded_calls
+                .retain(|call| !replaced.contains(&call.caller));
+        }
         self.fns.extend(collected.fns.iter().map(|(name, f)| {
             let mut f = f.clone();
             f.return_slot += slot_offset;
@@ -574,30 +610,11 @@ struct ForwardedCall {
     arguments: Vec<(Option<String>, Option<String>)>,
 }
 
-/// Maximum fixpoint depth before we give up and freeze as Opaque.
-/// Conservative cap; well-typed programs converge in 2-3 iterations.
+/// Maximum refinement rounds before retaining the current inferred types.
 pub(crate) const MAX_FIXPOINT_DEPTH: usize = 8;
 
-/// Maximum nesting depth for closure inference. A function factory
-/// whose body returns another function factory (and so on) eventually
-/// bottoms out at this depth; deeper nests get an opaque `Function`
-/// value with no `fn_sig`. Three levels covers the overwhelming
-/// majority of real-world R closure patterns (factories, currying,
-/// method chaining) while bounding the worst-case recursion.
-///
-/// Scope limits for closure support (documented here so all the
-/// approximations live in one place):
-///   * Captured bindings are snapshotted at the point where the inner
-///     function is inferred. Closures that close over mutable state
-///     (reassigned in the body) get opaque for the captured binding
-///     (we don't track per-binding mutation in v1).
-///   * Recursive closures (a closure that calls itself by name) are
-///     detected via the existing fixpoint cycle detection in
-///     `refine_fn_return`.
-///   * Anonymous functions passed to higher-order built-ins like
-///     `lapply` / `sapply` / `Map` are NOT inferred in v1; doing so
-///     would require per-builtin modeling of how they invoke the
-///     callback. They resolve to opaque (matching the typeshed entry).
+/// Maximum nesting depth for closure inference. Deeper closures retain
+/// function mode without an inferred signature.
 pub(crate) const MAX_CLOSURE_DEPTH: usize = 3;
 
 #[derive(Clone)]
@@ -636,6 +653,10 @@ pub struct Checker {
     // Inferred return types, refined by the fixpoint loop. Same Arc-shared
     // story as `fn_table`.
     pub(crate) return_slots: Arc<ReturnSlots>,
+    // Slot reads during one refinement, including signature-only dependencies.
+    refinement_reads: std::cell::RefCell<Option<Vec<usize>>>,
+    #[cfg(test)]
+    refinement_counts: HashMap<String, usize>,
     // Stack of function names currently being inferred (cycle detection).
     pub(crate) inferring: Vec<String>,
     // Packages attached via `library(pkg)` / `require(pkg)`, plus any
@@ -671,13 +692,18 @@ pub struct Checker {
     // A stack is required because nested functions replace, rather than
     // inherit, the set of formals relevant to `hasArg()`.
     enclosing_formals: Vec<EnclosingFormals>,
-    /// Formal names whose function-wide use proves vector intent (for
-    /// example `paste(x, collapse=...)`). Kept as a stack for nested bodies.
-    vector_intent_parameters: Vec<HashSet<String>>,
     // Values already inferred before a pipe is desugared into a call. This
     // cache is populated only for the duration of that rewritten call, so it
     // never crosses a scope-changing inference boundary.
     pipe_argument_types: HashMap<Span, RType>,
+    // When true, the pass-3 walk snapshots every completed lexical scope
+    // into `scope_records`. Off by default so ordinary checks (and the
+    // LSP) pay nothing; `dump-types` opts in. Recording is additionally
+    // suppressed while `discarding`, which keeps the fixpoint and
+    // signature-building walks (the same walker in discarding mode) from
+    // double-capturing a body.
+    capture_scopes: bool,
+    scope_records: Vec<ScopeRecord>,
 }
 
 impl Checker {
@@ -690,16 +716,39 @@ impl Checker {
     }
 
     pub fn check(&mut self, file: &SourceFile) -> &[Diagnostic] {
+        // Passes 1-2 (collect + fixpoint) reset every derived table first,
+        // so a second `check` on the same instance starts fresh rather
+        // than accumulating the previous run's functions, known-vars, and
+        // diagnostics.
+        self.run_passes(file);
+
+        // Pass 3: final walk, emitting all diagnostics. Function calls
+        // now resolve against the refined FnTable.
+        self.emit_diagnostics(file);
+        &self.diagnostics
+    }
+
+    // Check a file and return both diagnostics and the final top-level
+    // scope. Used by the LSP server's scope cache: the scope maps variable
+    // names to their inferred types, feeding inlay hint lookups.
+    pub fn check_with_scope(&mut self, file: &SourceFile) -> (Vec<Diagnostic>, Scope) {
+        self.run_passes(file);
+        // Emit parse errors after the collection/refinement passes (both
+        // run with emission suppressed), so RY000s lead the diagnostic
+        // vector rather than being wiped or buried by it.
+        let scope = self.emit_diagnostics(file);
+        (std::mem::take(&mut self.diagnostics), scope)
+    }
+
+    /// The shared prologue of [`check`](Self::check) and
+    /// [`check_with_scope`](Self::check_with_scope): set the source seams,
+    /// clear the previous run's diagnostics and derived tables, run pass 1
+    /// (collection) and pass 2 (the return-type fixpoint), and refresh
+    /// `known_vars` from the refined table. Emits nothing: collection is
+    /// silent by design and the fixpoint forces discarding mode.
+    fn run_passes(&mut self, file: &SourceFile) {
         self.path = file.path.clone();
         self.source.clone_from(&file.source);
-
-        // Clear diagnostics FIRST so a second `check` on the same
-        // instance starts fresh rather than accumulating the previous
-        // run's diagnostics. Also reset the function table and return
-        // slots: `collect_fns` appends to the table, so without a reset
-        // a reused Checker leaks functions and known-vars from the
-        // previous file into the current check (P35-W9 accumulated-
-        // diagnostics defect).
         self.diagnostics.clear();
         self.fn_table = Arc::new(FnTable::default());
         self.return_slots = Arc::new(ReturnSlots::default());
@@ -713,37 +762,6 @@ impl Checker {
         // until the table stabilizes or we hit MAX_FIXPOINT_DEPTH.
         self.run_fixpoint();
         self.known_vars = Arc::new(self.fn_table.known_vars.clone());
-
-        // Pass 3: final walk, emitting all diagnostics. Function calls
-        // now resolve against the refined FnTable.
-        self.emit_diagnostics(file);
-        &self.diagnostics
-    }
-
-    // Check a file and return both diagnostics and the final top-level
-    // scope. Used by the LSP server for hover support: the scope maps
-    // variable names to their inferred types, so hovering over a
-    // variable shows its type.
-    pub fn check_with_scope(&mut self, file: &SourceFile) -> (Vec<Diagnostic>, Scope) {
-        self.path = file.path.clone();
-        self.source.clone_from(&file.source);
-        // Clear diagnostics FIRST so we start fresh (the caller may call
-        // this multiple times on the same checker instance), THEN emit
-        // parse errors. The previous order emitted RY000s and then wiped
-        // them with `clear()`, so this API path never surfaced syntax
-        // errors.
-        self.diagnostics.clear();
-        self.fn_table = Arc::new(FnTable::default());
-        self.return_slots = Arc::new(ReturnSlots::default());
-        self.emit_parse_errors(file);
-        self.collect_fns(&file.stmts);
-        self.run_fixpoint();
-        self.known_vars = Arc::new(self.fn_table.known_vars.clone());
-        let mut scope = self.top_level_scope();
-        for s in &file.stmts {
-            self.check_stmt(s, &mut scope);
-        }
-        (std::mem::take(&mut self.diagnostics), scope)
     }
 
     // Construct a checker that uses pre-populated function tables.
@@ -791,6 +809,9 @@ impl Checker {
             fn_table,
             known_vars: Arc::new(HashSet::new()),
             return_slots,
+            refinement_reads: std::cell::RefCell::new(None),
+            #[cfg(test)]
+            refinement_counts: HashMap::new(),
             inferring: Vec::new(),
             loaded: Arc::new(HashSet::new()),
             bare_loaded: Arc::new(HashSet::new()),
@@ -801,8 +822,9 @@ impl Checker {
             load_bindings: HashMap::new(),
             deferred_captures: Vec::new(),
             enclosing_formals: Vec::new(),
-            vector_intent_parameters: Vec::new(),
             pipe_argument_types: HashMap::new(),
+            capture_scopes: false,
+            scope_records: Vec::new(),
         }
     }
 
@@ -823,50 +845,51 @@ impl Checker {
         self.validate_user_call_arguments = false;
     }
 
-    // Pass 1: collect function definitions from this file into the
-    // shared `FnTable`. Does NOT emit diagnostics. `Project::check`
-    // calls this once per file before running the fixpoint.
-    pub(crate) fn collect_file_fns(&mut self, file: &SourceFile) {
+    // Pass 1: collect this file's function definitions into the shared
+    // `FnTable` and harvest its `library()`/`require()` attachments in
+    // the same walk — one collection pass instead of a fn-collection
+    // walk plus a discarding inference walk (issue #178). Does NOT emit
+    // diagnostics; returns the attachments for `Project::check` to
+    // union across files.
+    pub(crate) fn collect_file_fns(&mut self, file: &SourceFile) -> HashSet<String> {
         self.path = file.path.clone();
         self.collect_fns(&file.stmts);
+        self.harvest_attached_packages(&file.stmts)
     }
 
-    // Collect packages attached by `library`/`require`
-    // anywhere in this file, WITHOUT emitting diagnostics. Returns the
-    // set of package names so `Project::check` can union them across
-    // files (a `library(dplyr)` in any file makes dplyr NSE verbs work
-    // in every file, matching the plan's cross-file union intent).
-    //
-    // Implementation: walk the file in discarding mode so `infer_call`'s
-    // library/require recording populates `self.loaded`
-    // via the same code path used during real checking; we then take
-    // the set. Discarding mode guarantees no diagnostics are emitted
-    // even though we run the full inference walker.
-    pub(crate) fn collect_file_loaded(&mut self, file: &SourceFile) -> HashSet<String> {
-        self.path = file.path.clone();
-        let prev = self.discarding;
-        self.discarding = true;
-        let mut scope = self.top_level_scope();
-        for s in &file.stmts {
-            self.check_stmt(s, &mut scope);
-        }
-        self.discarding = prev;
-        Arc::unwrap_or_clone(std::mem::take(&mut self.loaded))
+    /// Packages attached anywhere in `stmts` by `library(pkg)` /
+    /// `require(pkg)`, collected on the shared walker (pure syntax, no
+    /// inference; the callee must be the bare name — a string call head
+    /// is R-legal and treated the same). Not a superset of the inference
+    /// walk it replaced: direct calls after code the walker proves
+    /// unreachable (past a `stop()`) are now included — the safe
+    /// direction for a project-wide union — while the rare alias
+    /// indirection `lib <- library; lib(dplyr)` is not.
+    fn harvest_attached_packages(&self, stmts: &[Stmt]) -> HashSet<String> {
+        use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
+        use std::ops::ControlFlow;
+
+        let mut attached = HashSet::new();
+        let _ = walk_stmts(
+            stmts,
+            Walk::ALL,
+            |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+                if let AstNode::Expr(Expr::Call { func, args, .. }) = node
+                    && matches!(binding_name(func), Some("library" | "require"))
+                    && let Some(package) = attached_package_name(args)
+                {
+                    attached.insert(package.to_string());
+                }
+                ControlFlow::Continue(Descend::Into)
+            },
+        );
+        attached
     }
 
-    // Pass 2: refine all function return types until convergence.
-    // Iterates the shared `FnTable`; safe to call once after all files
-    // have been collected.
-    //
-    // S3 methods (`print.foo`, etc.) are inserted into `fns` under
-    // their full name during pass 1, with `s3_methods` pointing at
-    // the same return slot. Iterating `fns.keys()` therefore refines
-    // S3 method bodies alongside regular functions; dispatch reads
-    // the refined slot via the `s3_methods` map.
     /// Overlay previously-refined return types onto the current return slots.
     ///
     /// Called before [`run_fixpoint`](Self::run_fixpoint) to seed the fixpoint
-    /// with the previous solution (Plan 33 W2). Functions whose definition
+    /// with the previous solution. Functions whose definition
     /// has not changed and whose callees' return types are unchanged will
     /// keep their seeded value, reducing the number of fixpoint iterations
     /// needed to re-stabilise.
@@ -902,286 +925,11 @@ impl Checker {
         }
     }
 
-    pub(crate) fn run_fixpoint(&mut self) {
-        self.run_fixpoint_inner(None);
-    }
-
-    /// Run the fixpoint, but only refine functions in `scope`. Functions
-    /// outside the scope keep their current (seeded) return type. Used by
-    /// `Project` for incremental checks where only a subset of functions
-    /// can have changed (Plan 33 W2).
-    ///
-    /// The set must include every function whose definition or callees
-    /// changed; functions outside the set are assumed stable. The fixpoint
-    /// still iterates until convergence *within the scope* — a scoped
-    /// function whose return type changes can still affect other scoped
-    /// functions that call it.
-    pub(crate) fn run_fixpoint_scoped(&mut self, scope: &HashSet<String>) {
-        self.run_fixpoint_inner(Some(scope));
-    }
-
-    /// Shared fixpoint loop. When `scope` is `None`, refines all functions;
-    /// when `Some`, only functions in the scope set.
-    fn run_fixpoint_inner(&mut self, scope: Option<&HashSet<String>>) {
-        if scope.is_some_and(|s| s.is_empty()) {
-            return;
-        }
-        let prev_discarding = self.discarding;
-        self.discarding = true;
-        for _ in 0..MAX_FIXPOINT_DEPTH {
-            let before = (*self.return_slots).clone();
-            let names: Vec<String> = match scope {
-                Some(s) => self
-                    .fn_table
-                    .fns
-                    .keys()
-                    .filter(|name| s.contains(*name))
-                    .cloned()
-                    .collect(),
-                None => self.fn_table.fns.keys().cloned().collect(),
-            };
-            for name in names {
-                self.refine_fn_return(&name);
-            }
-            let generic_quoting_changed = self.propagate_s3_generic_quoting();
-            let quoting_changed = self.propagate_forwarded_quoting();
-            if self.return_slots.0 == before.0 && !generic_quoting_changed && !quoting_changed {
-                break;
-            }
-        }
-        self.discarding = prev_discarding;
-    }
-
-    /// A `UseMethod()` generic is evaluated before its selected method, but
-    /// its callers must still supply promises compatible with that method's
-    /// NSE behavior.  Derive the generic's quoting formals from every known
-    /// `generic.class` implementation.  This is intentionally a union: one
-    /// quoting method is enough to make the corresponding generic argument
-    /// opaque at a call site.
-    fn propagate_s3_generic_quoting(&mut self) -> bool {
-        let mut inherited = Vec::new();
-
-        for (name, generic) in &self.fn_table.fns {
-            let Some(dispatch_name) = usemethod_generic_name(&generic.body) else {
-                continue;
-            };
-            if semantic_argument_name(name) != dispatch_name {
-                continue;
-            }
-
-            let mut method_slots = std::collections::HashSet::new();
-            let prefix = format!("{dispatch_name}.");
-            for (method_name, method) in &self.fn_table.fns {
-                if semantic_argument_name(method_name)
-                    .strip_prefix(&prefix)
-                    .is_some_and(|class| !class.is_empty())
-                {
-                    method_slots.insert(method.return_slot);
-                }
-            }
-            // Registered methods can have an internal name (for example a
-            // dynamically collected definition), so include their shared
-            // return slots as well as conventionally named methods.
-            for ((registered_generic, _), slot) in &self.fn_table.s3_methods {
-                if registered_generic == &dispatch_name {
-                    method_slots.insert(*slot);
-                }
-            }
-
-            let dots = generic
-                .params
-                .iter()
-                .position(|parameter| parameter.name == "...");
-            for slot in method_slots {
-                let Some(method) = self
-                    .fn_table
-                    .fns
-                    .values()
-                    .find(|function| function.return_slot == slot)
-                else {
-                    continue;
-                };
-                for parameter in &method.params {
-                    if !parameter.quoting {
-                        continue;
-                    }
-                    let target = match generic
-                        .params
-                        .iter()
-                        .position(|generic_parameter| generic_parameter.name == parameter.name)
-                    {
-                        // A method formal with the same name is matched by
-                        // that generic formal, regardless of its position.
-                        Some(position) => Some(position),
-                        // A named method formal absent from the generic is
-                        // supplied through the generic's dots just like a
-                        // method dots formal.  This is the common S3 shape
-                        // `generic(x, ...)` / `generic.class(x, column, ...)`.
-                        None => dots,
-                    };
-                    if let Some(target) = target {
-                        inherited.push((name.clone(), target));
-                    }
-                }
-            }
-        }
-
-        let table = Arc::make_mut(&mut self.fn_table);
-        let mut changed = false;
-        for (generic, position) in inherited {
-            if let Some(parameter) = table
-                .fns
-                .get_mut(&generic)
-                .and_then(|function| function.params.get_mut(position))
-                && !parameter.quoting
-            {
-                parameter.quoting = true;
-                changed = true;
-            }
-        }
-        changed
-    }
-
-    /// Propagate user-NSE metadata across direct formal forwarding.
-    ///
-    /// `ForwardedCall` is collected syntactically, so an argument is present
-    /// here only when its value was an identifier.  This deliberately excludes
-    /// expressions such as `callee(p + 1)` and nested calls such as
-    /// `callee(f(p))`, which evaluate `p` before the callee can capture it.
-    fn propagate_forwarded_quoting(&mut self) -> bool {
-        let mut inherited = Vec::new();
-
-        for call in &self.fn_table.forwarded_calls {
-            let Some(caller) = self.fn_table.fns.get(&call.caller) else {
-                continue;
-            };
-
-            // An explicit namespace call bypasses any same-named user
-            // binding, just as normal call resolution does.
-            let user_callee = (!call.stub_callee.contains("::"))
-                .then(|| self.fn_table.fns.get(&call.callee))
-                .flatten();
-            let stub_callee = self.resolve_typeshed_sig(&call.stub_callee);
-            if user_callee.is_none() && stub_callee.is_none() {
-                continue;
-            }
-
-            let mut claimed = std::collections::HashSet::new();
-            let mut next_positional = 0;
-            for (argument_name, source) in &call.arguments {
-                let Some(source) = source else {
-                    continue;
-                };
-                let target = if source == "..." {
-                    // `callee(...)` forwards the caller's dots only to the
-                    // callee's dots promise, never to an arbitrary formal.
-                    user_callee
-                        .and_then(|callee| {
-                            callee.params.iter().position(|param| param.name == "...")
-                        })
-                        .or_else(|| {
-                            stub_callee.as_ref().and_then(|sig| {
-                                sig.params.iter().position(|param| param.name == "...")
-                            })
-                        })
-                } else if let Some(argument_name) = argument_name {
-                    user_callee
-                        .and_then(|callee| {
-                            callee
-                                .params
-                                .iter()
-                                .position(|param| param.name == *argument_name)
-                                .or_else(|| {
-                                    callee.params.iter().position(|param| param.name == "...")
-                                })
-                        })
-                        .or_else(|| {
-                            stub_callee.as_ref().and_then(|sig| {
-                                sig.params
-                                    .iter()
-                                    .position(|param| param.name == *argument_name)
-                                    .or_else(|| {
-                                        sig.params.iter().position(|param| param.name == "...")
-                                    })
-                            })
-                        })
-                } else {
-                    let params: Vec<&str> = if let Some(callee) = user_callee {
-                        callee
-                            .params
-                            .iter()
-                            .map(|param| param.name.as_str())
-                            .collect()
-                    } else {
-                        stub_callee
-                            .as_ref()
-                            .map(|sig| sig.params.iter().map(|param| param.name.as_str()).collect())
-                            .unwrap_or_default()
-                    };
-                    while next_positional < params.len()
-                        && (params[next_positional] == "..." || claimed.contains(&next_positional))
-                    {
-                        next_positional += 1;
-                    }
-                    let target = (next_positional < params.len()).then_some(next_positional);
-                    next_positional += usize::from(target.is_some());
-                    target
-                };
-                let Some(target) = target else {
-                    continue;
-                };
-                claimed.insert(target);
-                // `target` was computed against whichever params list was
-                // selected above; the other source's list may be shorter, so
-                // every index below must stay bounds-checked.
-                let inherits_quoting = user_callee
-                    .is_some_and(|callee| callee.params.get(target).is_some_and(|p| p.quoting))
-                    || stub_callee.as_ref().is_some_and(|sig| {
-                        sig.params.get(target).is_some_and(|param| {
-                            sig.eval.get(&param.name).is_some_and(|mode| {
-                                matches!(mode, EvalMode::QuotedExpression | EvalMode::QuotedSymbol)
-                            })
-                        })
-                    });
-                // Dots capture is already modeled as defusing (rather than
-                // quoting) so its direct arguments remain opaque.  Preserve
-                // that stronger behavior while forwarding `...` to another
-                // dots-capturing user function.
-                let inherits_defusing = source == "..."
-                    && user_callee
-                        .is_some_and(|callee| callee.params.get(target).is_some_and(|p| p.defused));
-                if (inherits_quoting || inherits_defusing)
-                    && caller.params.iter().any(|param| param.name == *source)
-                {
-                    inherited.push((call.caller.clone(), source.clone(), inherits_quoting));
-                }
-            }
-        }
-
-        let table = Arc::make_mut(&mut self.fn_table);
-        let mut changed = false;
-        for (caller, parameter, quoting) in inherited {
-            if let Some(parameter) = table
-                .fns
-                .get_mut(&caller)
-                .and_then(|function| function.params.iter_mut().find(|p| p.name == parameter))
-            {
-                if quoting && !parameter.quoting {
-                    parameter.quoting = true;
-                    changed = true;
-                } else if !quoting && !parameter.defused {
-                    parameter.defused = true;
-                    changed = true;
-                }
-            }
-        }
-        changed
-    }
-
     // Pass 3: emit diagnostics for this file using the refined tables.
     // Diagnostics are appended to `self.diagnostics`; clear that vec
-    // first if you want only this file's diagnostics.
-    pub(crate) fn emit_diagnostics(&mut self, file: &SourceFile) {
+    // first if you want only this file's diagnostics. Returns the final
+    // top-level scope (also what `check_with_scope` hands to the LSP).
+    pub(crate) fn emit_diagnostics(&mut self, file: &SourceFile) -> Scope {
         self.path = file.path.clone();
         self.source.clone_from(&file.source);
         self.emit_parse_errors(file);
@@ -1189,6 +937,53 @@ impl Checker {
         for s in &file.stmts {
             self.check_stmt(s, &mut scope);
         }
+        // The top level is itself a lexical scope in R; record it after
+        // the walk so the snapshot reflects every top-level assignment.
+        if self.capture_scopes {
+            let record = ScopeRecord {
+                kind: ScopeRecordKind::Top,
+                name: None,
+                span: whole_file_span(&self.source),
+                params: Vec::new(),
+                scope: scope.clone(),
+            };
+            self.scope_records.push(record);
+        }
+        scope
+    }
+
+    /// Opt this checker into snapshotting every completed lexical scope
+    /// during the diagnostic walk. See [`ScopeRecord`].
+    pub fn enable_scope_capture(&mut self) {
+        self.capture_scopes = true;
+    }
+
+    /// Take the scopes recorded since the last call. Empty unless
+    /// [`enable_scope_capture`](Self::enable_scope_capture) was called.
+    pub fn take_scope_records(&mut self) -> Vec<ScopeRecord> {
+        std::mem::take(&mut self.scope_records)
+    }
+
+    // Snapshot one completed function-body scope. Called at the end of
+    // `walk_stmt`'s two function-definition arms; `discarding` guards the
+    // fixpoint / signature-building re-walks of the same body.
+    pub(crate) fn record_scope(
+        &mut self,
+        name: Option<&str>,
+        span: Span,
+        params: &[Param],
+        scope: &Scope,
+    ) {
+        if !self.capture_scopes || self.discarding {
+            return;
+        }
+        self.scope_records.push(ScopeRecord {
+            kind: ScopeRecordKind::Function,
+            name: name.map(str::to_string),
+            span,
+            params: params.iter().map(|p| (p.name.clone(), p.span)).collect(),
+            scope: scope.clone(),
+        });
     }
 
     pub fn take_diagnostics(&mut self) -> Vec<Diagnostic> {
@@ -1206,11 +1001,8 @@ impl Checker {
         {
             scope.mark_search_path_unknown();
         }
-        for profile in BUILTIN_ENVIRONMENTS {
-            if !(profile.path_trigger)(&self.path) {
-                continue;
-            }
-            for name in profile.bindings {
+        if is_shiny_app_fragment_path(&self.path) {
+            for name in crate::semantic_lists::BUILTIN_ENVIRONMENT_BINDINGS {
                 scope.insert(*name, RType::unknown());
             }
         }
@@ -1294,19 +1086,6 @@ impl Checker {
     pub fn set_load_bindings(&mut self, bindings: HashMap<usize, HashSet<String>>) {
         self.load_bindings = bindings;
     }
-
-    // Resolve a function signature by name, consulting (in order):
-    //   1. a `pkg::fun` / `pkg:::fun` qualified name -- looked up in
-    //      `load_package(pkg)` directly, bypassing base and loaded
-    //      packages (a qualified call is an explicit reference);
-    //   2. the base typeshed (`self.typeshed`);
-    //   3. each loaded package that ships signatures (reverse load
-    //      order so the most-recently-loaded package wins, mirroring
-    //      R's search path).
-    //
-    // Returns the signature and the resolved call name (the bare
-    // function name, suitable for `apply_sig`'s slot resolution).
-    // Returns `None` when no package knows the name.
 }
 
 fn embedded_base() -> Arc<Typeshed> {
@@ -1314,6 +1093,17 @@ fn embedded_base() -> Arc<Typeshed> {
     Arc::clone(
         BASE.get_or_init(|| Arc::new(load_base_cached().expect("typeshed must load").clone())),
     )
+}
+
+/// Span covering the entire file, used as the top-level scope record's
+/// extent so position queries anywhere in the file resolve to it.
+fn whole_file_span(source: &str) -> Span {
+    let line = source.matches('\n').count();
+    let col = source
+        .rsplit_once('\n')
+        .map(|(_, last)| last.len())
+        .unwrap_or(source.len());
+    Span::new(0, source.len(), line, col)
 }
 
 #[cfg(test)]

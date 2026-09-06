@@ -7,8 +7,9 @@ authors = ["Maximilian Scholz"]
 repository = "https://github.com/sims1253/ry"
 
 # The extension downloads the ry server from GitHub releases over HTTPS.
-# Downloads are NOT yet integrity-checked against a published digest; see
-# issue #80.
+# Each downloaded executable is checked against its release .bin.sha256
+# sidecar before use, including cached downloads. Automatic downloads require
+# a release with sidecars (0.9.0 or newer). Settings/PATH binaries are user-managed.
 # Minimum compatible server version: 0.8.0 (the first release with
 # the `server` subcommand and LSP support).
 [language_servers.ry]

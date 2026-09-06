@@ -1,26 +1,47 @@
-# Release Runbook
+# Release runbook
 
-This document covers the release process for ry core binary, VS Code
-extension, and Zed extension. Follow these steps in order.
+This document covers the release process for the ry core binary, the
+VS Code extension, and the Zed extension. Follow these steps in order.
 
 ## Pre-release checklist
 
 Before starting any release:
 
-1. **All P37 gates green:**
+1. **All gates green:**
    - `cargo test --workspace`
    - `cargo test -p ry-core`
    - `cargo +nightly fuzz run parse -- -max_total_time=300 -max_len=4096`
-   - `cargo test -p ry-lsp --test p36_contract`
-   - `cargo test -p ry-lsp --test w8_session -- --ignored`
+   - `cargo test -p ry-lsp --test protocol_contract`
+   - `cargo test -p ry-lsp --test session_state_machine -- --ignored`
    - `ecosystem/run.sh --check --manifest ecosystem/posit-packages.txt --ledger docs/corpus/posit-0.9.0.json --tier fast`
    - `ecosystem/test-drift-detection.sh`
    - `ecosystem/test-posit-drift-detection.sh`
 
-2. **Clean-checkout validated:** the `clean-checkout` CI job passes
-   (or manually run `git clean -fdX && cargo build --release -p ry-cli`).
+2. **Tracked-only build validated:** every PR's `ecosystem` CI job builds
+   `--locked` from a fresh checkout, which contains only tracked files; for
+   the exact commit about to be tagged, validate directly with a
+   tracked-only `git archive` build:
 
-3. **Ledger reconciled:** `python3 ecosystem/check-ledger.py docs/corpus/posit-0.9.0.json`
+   ```bash
+   (
+     set -euo pipefail
+     tmp=$(mktemp -d)
+     trap 'rm -rf "$tmp"' EXIT
+     git archive HEAD | tar -x -C "$tmp"
+     cargo build --release --locked --manifest-path "$tmp/Cargo.toml" -p ry-cli --bin ry
+   )
+   ```
+
+   The subshell fails fast (`set -euo pipefail`), and the trap removes the
+   extraction on any exit, so a failed validation cannot be masked by
+   cleanup.
+
+   The extraction contains exactly the tracked files of `HEAD`. Running
+   `git clean -fdX` in the working tree is not an equivalent substitute:
+   it removes only ignored files, so untracked non-ignored files survive
+   and it can pass while a tracked-only build fails (#50).
+
+3. **Ledger reconciled:** `python3 ecosystem/check-ledger.py docs/corpus/posit-0.9.0.json docs/corpus/tidyverse-0.7.1.json`
    reports agreement.
 
 4. **CHANGELOG reviewed:** verify the Unreleased section is complete and
@@ -28,6 +49,15 @@ Before starting any release:
 
 5. **Version bumped:** core workspace `Cargo.toml` to the target version
    (e.g. `0.9.0`). Editor extension versions are independent.
+
+6. **Zed binary integrity verified:** confirm the core release includes
+   executable `ry-cli-<target>.bin.sha256` sidecars for all six targets.
+   Run `cargo test --manifest-path editors/zed/Cargo.toml` and
+   `python3 -m unittest discover -s scripts/release -p 'test_*.py'` to check
+   download verification and sidecar generation. Archive `.sha256` files
+   verify archives; executable sidecars verify extracted binaries. The
+   cargo-dist checksum hook must pass before publication. See the
+   [Zed release steps](#zed-extension-release) for generation and rollout.
 
 ## Binary release
 
@@ -83,6 +113,7 @@ v{version}  (e.g. v0.9.0)
 
 3. Post-publish smoke test:
    - Install the extension from the marketplace in a clean VS Code
+     installation
    - Open an R file
    - Verify diagnostics fire
    - Check the status bar shows the correct version
@@ -97,11 +128,26 @@ v{version}  (e.g. v0.9.0)
 
 ### Steps
 
-1. Verify `extension.toml` and `Cargo.toml` versions are consistent.
+1. Set the gallery version in `editors/zed/extension.toml`. The private Rust
+   crate in `editors/zed/Cargo.toml` has a separate version.
 2. Verify WASM build: `cargo build --manifest-path editors/zed/Cargo.toml --target wasm32-wasip2`.
 3. Verify tests: `cargo test --manifest-path editors/zed/Cargo.toml`.
-4. Submit to the Zed extension gallery.
-5. Verify: install in Zed, open an R file, verify diagnostics fire.
+4. Confirm the server release includes `ry-cli-<target>.bin.sha256` for all six
+   targets. The cargo-dist checksum hook verifies each archive before hashing
+   its executable, then uploads the sidecars with the release. A failed hook
+   blocks publication. Reproduce generation with
+   `python3 scripts/release/binary_checksums.py --artifacts <archive-directory> --output <sidecar-directory>`.
+   Before publishing, run
+   `gh workflow run release.yml --ref <release-branch> -f tag=dry-run`.
+   Confirm `custom-binary-checksums` succeeds and the `artifacts-binary-checksums`
+   artifact contains all six `.bin.sha256` sidecars. Confirm the `host` publication
+   job is skipped; `dry-run` builds artifacts without creating a release.
+5. Submit to the Zed extension gallery after the server release is available.
+   Automatic downloads require executable sidecars, published from 0.9.0 onward.
+   The extension verifies existing downloads and rehashes cached binaries on
+   restart; missing or invalid checksums cause an error and remove that download.
+   Explicit settings and PATH binaries remain user-managed.
+6. Verify: install in Zed, open an R file, verify diagnostics fire.
 
 ### Rollback
 
@@ -124,6 +170,8 @@ After all artifacts are published:
 - Core uses SemVer (e.g. `0.9.0`).
 - VS Code extension uses its own SemVer (e.g. `0.1.0`).
 - Zed extension uses its own SemVer (e.g. `0.1.0`).
-- Each extension release records the exact core tag it packages.
-- The CHANGELOG records core version changes; extension releases are
-  recorded in their respective marketplace listings.
+- Each VS Code extension release records the exact core tag it packages.
+- The Zed extension uses a configured binary, a binary on `PATH`, or a cached
+  download. When it needs a download, it selects the latest stable core release.
+- The CHANGELOG records core version changes; extension releases appear
+  in their marketplace listings.

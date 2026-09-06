@@ -2,11 +2,10 @@
  * Binary resolution — decides which `ry` executable to run and probes
  * its version before launching the server.
  *
- * Resolution order (from ruff-vscode, minus the Python-interpreter
- * machinery which has no R analogue):
+ * Resolution order (used by this extension):
  *
- * 1. `ry.path` entries (first existing wins)
- * 2. `ry.importStrategy == "fromEnvironment"`: `PATH` via `which`
+ * 1. `ry.path` entries (first executable file wins)
+ * 2. `ry.importStrategy == "fromEnvironment"`: `PATH`
  * 3. Bundled binary (`bundled/bin/ry`)
  *
  * Untrusted workspaces force the bundled binary, ignoring both `path`
@@ -14,14 +13,14 @@
  */
 
 import * as path from "path";
-import * as cp from "child_process";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import * as fs from "fs";
 import { BUNDLED_RY_EXECUTABLE, RY_BINARY_NAME } from "./constants";
 import {
   VersionInfo,
   versionFromString,
   versionGte,
-  MINIMUM_SETTINGS_CHANNEL_VERSION,
   versionToString,
 } from "./version";
 import { ISettings } from "./settings";
@@ -46,10 +45,10 @@ export function findRyBinaryPath(
     return BUNDLED_RY_EXECUTABLE;
   }
 
-  // 1. User-specified path entries (first existing wins)
+  // 1. User-specified path entries (first executable file wins)
   for (const candidate of settings.path ?? []) {
     const expanded = resolveHomeDir(candidate);
-    if (fs.existsSync(expanded)) {
+    if (isExecutableFile(expanded)) {
       return expanded;
     }
   }
@@ -64,6 +63,16 @@ export function findRyBinaryPath(
 
   // 3. Bundled binary
   return BUNDLED_RY_EXECUTABLE;
+}
+
+function isExecutableFile(candidate: string): boolean {
+  try {
+    if (!fs.statSync(candidate).isFile()) return false;
+    fs.accessSync(candidate, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function resolveHomeDir(p: string): string {
@@ -83,33 +92,42 @@ function findOnPath(binary: string): string | undefined {
     .filter((dir) => dir.length > 0);
   for (const dir of pathDirs) {
     const candidate = path.join(dir, binary);
-    if (fs.existsSync(candidate)) {
+    if (isExecutableFile(candidate)) {
       return candidate;
     }
   }
   return undefined;
 }
 
+const execFileAsync = promisify(execFile);
+
 /**
  * Probe the ry binary version by executing `ry version --output-format json`.
  * Returns undefined if the binary cannot be executed or the output
  * cannot be parsed.
  */
-export function getRyVersion(binaryPath: string): VersionInfo | undefined {
+export async function getRyVersion(
+  binaryPath: string,
+): Promise<VersionInfo | undefined> {
   try {
-    const output = cp.execFileSync(
+    const { stdout } = await execFileAsync(
       binaryPath,
       ["version", "--output-format", "json"],
       {
         encoding: "utf-8",
         timeout: 5000,
-        stdio: ["pipe", "pipe", "pipe"],
       },
     );
-    const parsed = JSON.parse(output);
-    const version = parsed.version as string | undefined;
-    if (!version) return undefined;
-    return versionFromString(version);
+    const parsed: unknown = JSON.parse(stdout);
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      !("version" in parsed) ||
+      typeof parsed.version !== "string"
+    ) {
+      return undefined;
+    }
+    return versionFromString(parsed.version);
   } catch {
     return undefined;
   }
@@ -125,12 +143,10 @@ export function checkVersionCapability(
   capabilityName: string,
 ): string | undefined {
   if (!binary.version) {
-    return `Could not determine the version of ry at ${binary.path}. ${capabilityName} requires version ${versionToString(minimum)} or later.`;
+    return `Could not determine the version of ry at ${binary.path}. The ${capabilityName} requires version ${versionToString(minimum)} or later.`;
   }
   if (!versionGte(binary.version, minimum)) {
-    return `Found ry version ${versionToString(binary.version)} at ${binary.path}. ${capabilityName} requires version ${versionToString(minimum)} or later. Please update ry.`;
+    return `Found ry version ${versionToString(binary.version)} at ${binary.path}. The ${capabilityName} requires version ${versionToString(minimum)} or later. Please update ry.`;
   }
   return undefined;
 }
-
-export const MINIMUM_VERSION = MINIMUM_SETTINGS_CHANNEL_VERSION;

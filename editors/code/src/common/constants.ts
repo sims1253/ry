@@ -2,13 +2,7 @@ import * as path from "path";
 
 const folderName = path.basename(__dirname);
 
-/**
- * Path to the root directory of this extension.
- *
- * Resolves correctly whether the compiled file lives at `dist/`
- * (bundled, where `__dirname` is the extension root) or at
- * `out/src/common/` (tsc-only, where `__dirname` ends in `common`).
- */
+// Resolve the root from dist/, src/common/, or out/common/.
 export const EXTENSION_ROOT_DIR =
   folderName === "common"
     ? path.dirname(path.dirname(__dirname))
@@ -39,7 +33,7 @@ export const RY_BINARY_NAME = process.platform === "win32" ? "ry.exe" : "ry";
  * Path to the `ry` executable that is bundled with the extension.
  *
  * CI injects the platform-specific binary here; the directory is
- * gitignored. Binary resolution (E2) picks between this path and a
+ * gitignored. Binary resolution picks between this path and a
  * user-installed `ry`.
  */
 export const BUNDLED_RY_EXECUTABLE = path.join(

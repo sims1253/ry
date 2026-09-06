@@ -1,0 +1,608 @@
+use super::*;
+
+// The two attachment gates of the typeshed-resolution ladders
+// (resolve.rs, issue #166). rlang supplies a predicate signature
+// (`is_null`) and a typed dataset (`na_chr`); dplyr a schema-effect
+// verb (`arrange`). Pinning both directions keeps `loaded` (the
+// project-wide union) and `bare_loaded` (this file's search path)
+// from silently collapsing into one lookup.
+
+#[test]
+fn bare_name_ladders_gate_on_the_file_local_search_path() {
+    // rlang attached project-wide only (`bare_loaded` empty): every
+    // bare-name ladder — signatures, values, predicates, function
+    // existence — must stay blind to it.
+    let mut checker = Checker::new("test.R");
+    checker.set_shared_loaded(Arc::new(HashSet::from(["rlang".to_string()])));
+    assert!(checker.resolve_typeshed_sig("is_null").is_none());
+    assert!(checker.resolve_typeshed_value("na_chr").is_none());
+    assert!(checker.resolve_predicate_sig("is_null").is_none());
+    assert!(!checker.has_function_anywhere("is_null"));
+
+    // The same attachment on this file's bare search path makes all
+    // four ladders resolve.
+    let mut checker = Checker::new("test.R");
+    checker.set_bare_loaded(HashSet::from(["rlang".to_string()]));
+    assert!(checker.resolve_typeshed_sig("is_null").is_some());
+    assert!(checker.resolve_typeshed_value("na_chr").is_some());
+    assert!(checker.resolve_predicate_sig("is_null").is_some());
+    assert!(checker.has_function_anywhere("is_null"));
+}
+
+#[test]
+fn schema_verb_ladder_gates_on_the_project_union_and_tidyverse_expansion() {
+    // Schema-effect verbs gate on the project-wide `loaded` union plus
+    // the tidyverse expansion (tidyverse itself ships no stubs), while
+    // ordinary signature resolution stays gated on `bare_loaded`.
+    // `arrange`/`pivot_longer` exist in no base or rlang stub, so a
+    // `None` means the gate closed, not masking by another rung.
+    let cases: &[(&[&str], &str, bool)] = &[
+        (&["dplyr"], "arrange", true),
+        (&["tidyverse"], "arrange", true),
+        (&["tidyverse"], "pivot_longer", true),
+        (&["tidyr"], "pivot_longer", true),
+        (&["rlang"], "pivot_longer", false),
+        (&["rlang"], "arrange", false),
+    ];
+    for (loaded, verb, resolves) in cases {
+        let mut checker = Checker::new("test.R");
+        checker.set_shared_loaded(Arc::new(HashSet::from_iter(
+            loaded.iter().map(|name| name.to_string()),
+        )));
+        assert_eq!(
+            checker.resolve_schema_sig(verb).is_some(),
+            *resolves,
+            "loaded={loaded:?}, verb={verb}"
+        );
+    }
+
+    // dplyr attached project-wide only (bare search path empty):
+    // ordinary signature resolution must stay blind to it.
+    let mut checker = Checker::new("test.R");
+    checker.set_shared_loaded(Arc::new(HashSet::from(["dplyr".to_string()])));
+    assert!(checker.resolve_schema_sig("arrange").is_some());
+    assert!(checker.resolve_typeshed_sig("arrange").is_none());
+
+    // The tidyverse expansion must not leak into the ordinary ladder
+    // either (tidyverse itself ships no stubs).
+    let mut checker = Checker::new("test.R");
+    checker.set_shared_loaded(Arc::new(HashSet::from(["tidyverse".to_string()])));
+    assert!(checker.resolve_typeshed_sig("arrange").is_none());
+}
+
+#[test]
+fn package_loading_calls_have_distinct_return_types() {
+    let (diags, scope) = check_with_scope(
+        "attached <- library(stats)\navailable <- require(stats)\nnamespaced <- requireNamespace(\"stats\")\n",
+    );
+    assert!(diags.is_empty(), "{diags:?}");
+
+    let attached = scope.get("attached").expect("attached should be bound");
+    assert_eq!(attached.mode, Mode::Null);
+    assert_eq!(attached.length, Length::Zero);
+
+    let available = scope.get("available").expect("available should be bound");
+    assert_eq!(available.mode, Mode::Logical);
+    assert_eq!(available.length, Length::One);
+
+    let namespaced = scope.get("namespaced").expect("namespaced should be bound");
+    assert_eq!(namespaced.mode, Mode::Logical);
+    assert_eq!(namespaced.length, Length::One);
+}
+
+#[test]
+fn user_function_argument_rules_wait_for_callable_provenance() {
+    let file = parse_file(
+        "project.R",
+        "f <- function(required) required\nf()\nc <- function(x) x\nc(unrelated = 1L)\n",
+    );
+    let mut project = Project::new();
+    project.add_file("project.R".to_string(), file);
+    let diags: Vec<_> = project
+        .check()
+        .into_iter()
+        .flat_map(|(_, diagnostics)| diagnostics)
+        .collect();
+    assert!(
+        diags
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY090" && diagnostic.code != "RY091"),
+        "project-wide function names are not sufficient to validate a call: {diags:?}"
+    );
+}
+
+#[test]
+fn typeshed_required_arguments_are_still_checked() {
+    let diags = check("Filter()\n");
+    assert!(
+        diags.iter().any(|diagnostic| diagnostic.code == "RY091"),
+        "explicit typeshed required metadata should remain authoritative: {diags:?}"
+    );
+}
+
+// Table-driven over stub formals R treats as missing()-optional: each
+// zero-arg call runs without error in R (verified in r-typeshed's
+// audit_function_semantics.R), so the stub must not mark them required —
+// unlike Filter(), whose required f genuinely errors.
+#[test]
+fn missing_optional_stub_formals_accept_zero_arg_calls() {
+    for src in [
+        "f <- function(lazy) {\n  if (missing(lazy)) return(quo())\n  lazy\n}\n",
+        "g <- function(lazy) {\n  if (missing(lazy)) return(rlang::quo())\n  lazy\n}\n",
+    ] {
+        let diags = check(src);
+        assert!(
+            diags.iter().all(|diagnostic| diagnostic.code != "RY091"),
+            "quo() defuses a missing argument into an empty quosure: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn classed_and_null_generic_arguments_do_not_report_type_mismatches() {
+    let diags =
+        check("x <- structure(list(value = 1L), class = \"custom\")\nround(x)\nlog(NULL)\n");
+    assert!(
+        diags.iter().all(|diagnostic| diagnostic.code != "RY092"),
+        "classed values may dispatch and numeric generics accept NULL: {diags:?}"
+    );
+}
+
+#[test]
+fn plain_character_numeric_generic_argument_still_reports_mismatch() {
+    let diags = check("log(\"not numeric\")\n");
+    assert!(
+        diags.iter().any(|diagnostic| diagnostic.code == "RY092"),
+        "a plain character value cannot use numeric generic dispatch: {diags:?}"
+    );
+}
+
+#[test]
+fn quoted_dsl_metadata_suppresses_only_captured_symbols() {
+    let diags = check(
+        "library(dplyr)\nspec <- join_by(left_id == right_id)\nmissing_after\nlibrary(igraph)\ng <- graph_from_literal(A - B, B - C)\n",
+    );
+    assert!(
+        diags.iter().all(|diagnostic| {
+            diagnostic.code != "RY010"
+                || (!diagnostic.message.contains("left_id")
+                    && !diagnostic.message.contains("right_id")
+                    && !diagnostic.message.contains("`A`")
+                    && !diagnostic.message.contains("`B`")
+                    && !diagnostic.message.contains("`C`"))
+        }),
+        "quoted DSL symbols must not be resolved lexically: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|diagnostic| {
+            diagnostic.code == "RY010" && diagnostic.message.contains("missing_after")
+        }),
+        "ordinary lexical reads must remain checked: {diags:?}"
+    );
+}
+
+#[test]
+fn expanded_dplyr_metadata_resolves_masks_and_selectors() {
+    let diags = check(
+        "library(dplyr)\ndf <- data.frame(a = 1L, b = 2L)\ndistinct(df, a)\npull(df, b)\nrelocate(df, b, .before = a)\nslice_min(df, order_by = b)\nmutate(df, picked = pick(a, b))\n",
+    );
+    assert!(
+        diags.iter().all(|diagnostic| diagnostic.code != "RY010"),
+        "dplyr masks and selectors should resolve known columns: {diags:?}"
+    );
+}
+
+#[test]
+fn expanded_tidyr_metadata_resolves_captured_columns() {
+    let diags = check(
+        "library(tidyr)\ndf <- data.frame(a = 1L, b = 2L)\ngather(df, key, value, a, b)\nchop(df, a)\ncomplete(df, a)\nnest(df, nested = c(a, b))\nunnest(df, nested)\nunite(df, combined, a, b)\n",
+    );
+    assert!(
+        diags.iter().all(|diagnostic| diagnostic.code != "RY010"),
+        "tidyr captured column arguments should not be resolved lexically: {diags:?}"
+    );
+}
+
+#[test]
+fn recipes_metadata_resolves_selectors_and_masked_expressions() {
+    let diags = check(
+        "library(recipes)\nr <- data.frame(a = 1L, b = 2L, outcome = 3L)\nstep_center(r, a, b)\nstep_pls(r, a, outcome = outcome)\nstep_mutate(r, total = a + b)\nimp_vars(quoted_predictor)\nmissing_after\n",
+    );
+    assert!(
+        diags.iter().all(|diagnostic| {
+            diagnostic.code != "RY010"
+                || (!diagnostic.message.contains("`a`")
+                    && !diagnostic.message.contains("`b`")
+                    && !diagnostic.message.contains("`outcome`")
+                    && !diagnostic.message.contains("quoted_predictor"))
+        }),
+        "recipes selectors and expressions are captured, not lexical reads: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|diagnostic| {
+            diagnostic.code == "RY010" && diagnostic.message.contains("missing_after")
+        }),
+        "ordinary reads outside recipes calls must remain checked: {diags:?}"
+    );
+}
+
+#[test]
+fn standard_r_inventory_resolves_default_package_symbols() {
+    let diags = check(
+        "family <- binomial\ndataset <- WWWusage\nhandler <- conditionMessage\nconverter <- as.name\nmaximum <- which.max\n",
+    );
+    assert!(
+        diags.is_empty(),
+        "standard inventory symbols (functions and datasets) resolve silently: {diags:?}"
+    );
+}
+
+#[test]
+fn standard_inventory_does_not_override_precise_types() {
+    let (diags, scope) = check_with_scope("callback <- sqrt\ndf <- mtcars\nbad <- df$missing\n");
+    let callback = scope.get("callback").expect("callback should be bound");
+    assert_eq!(callback.mode, Mode::Function);
+    assert!(
+        diags.iter().any(|diagnostic| diagnostic.code == "RY060"),
+        "typed dataset schemas must win over existence-only inventory: {diags:?}"
+    );
+}
+
+#[test]
+fn standard_inventory_does_not_hide_unknown_names() {
+    let diags = check("definitely_not_a_standard_r_symbol\n");
+    assert!(
+        diags.iter().any(|diagnostic| diagnostic.code == "RY010"),
+        "unknown neighboring names must still be diagnosed: {diags:?}"
+    );
+}
+
+#[test]
+fn call_position_skips_local_values_for_standard_functions() {
+    let diags = check(
+        "dimnames <- list(rows = \"r\")\nx <- matrix(1L, 1L, 1L)\ny <- dimnames(x)\ndimnames(x) <- dimnames\nserialize <- TRUE\nserialize(1L, NULL)\n",
+    );
+    assert!(
+        diags.iter().all(|diagnostic| diagnostic.code != "RY070"),
+        "R call lookup skips same-named non-function bindings: {diags:?}"
+    );
+}
+
+#[test]
+fn standard_non_function_values_do_not_suppress_call_errors() {
+    let diags = check("WWWusage <- 1L\nWWWusage()\n");
+    assert!(
+        diags.iter().any(|diagnostic| diagnostic.code == "RY070"),
+        "standard datasets are values, not call-position candidates: {diags:?}"
+    );
+}
+
+#[test]
+fn withr_tempfile_injects_literal_names_into_code_scope() {
+    let diags = check("withr::with_tempfile(c(\"first\", \"second\"), code = { first; second })\n");
+    assert!(
+        diags.iter().all(|diagnostic| diagnostic.code != "RY010"),
+        "with_tempfile string names should be bound inside code: {diags:?}"
+    );
+}
+
+#[test]
+fn withr_tempfile_bindings_do_not_leak() {
+    let diags = check("withr::with_tempfile(\"path\", code = path)\npath\n");
+    assert!(
+        diags.iter().any(|diagnostic| {
+            diagnostic.code == "RY010" && diagnostic.message.contains("`path`")
+        }),
+        "with_tempfile bindings are local to the code expression: {diags:?}"
+    );
+}
+
+#[test]
+fn withr_tempfile_keeps_checking_other_code_names() {
+    let diags = check("withr::with_tempfile(\"path\", code = { path; missing_inside })\n");
+    assert!(
+        diags.iter().any(|diagnostic| {
+            diagnostic.code == "RY010" && diagnostic.message.contains("missing_inside")
+        }),
+        "only explicitly injected names should be suppressed: {diags:?}"
+    );
+}
+
+#[test]
+fn dbplyr_translation_helpers_capture_sql_expressions() {
+    // `translate_sql` is the exported quoting entry point; the test-local
+    // `expect_translation` helpers were removed from the stub because they
+    // are not part of dbplyr's namespace (the audit enforces that).
+    let diags = check("library(dbplyr)\ntranslate_sql(x + y)\nmissing_after\n");
+    assert!(
+        diags.iter().all(|diagnostic| {
+            diagnostic.code != "RY010"
+                || (!diagnostic.message.contains("`x`") && !diagnostic.message.contains("`y`"))
+        }),
+        "translation expressions are captured rather than evaluated lexically: {diags:?}"
+    );
+    assert!(diags.iter().any(|diagnostic| {
+        diagnostic.code == "RY010" && diagnostic.message.contains("missing_after")
+    }));
+}
+
+#[test]
+fn lazy_defaults_can_reference_body_local_bindings() {
+    let diags = check("f <- function(value = generated) {\n  generated <- 1L\n  value\n}\nf()\n");
+    assert!(
+        diags.iter().all(|diagnostic| {
+            diagnostic.code != "RY010" || !diagnostic.message.contains("generated")
+        }),
+        "R defaults are promises evaluated in the function environment: {diags:?}"
+    );
+}
+
+#[test]
+fn conditional_lazy_default_force_stays_silent() {
+    let diags = check(include_str!(
+        "../../testdata/ry098_default_forced_before_assignment.R"
+    ));
+    assert!(
+        diags.iter().all(|diagnostic| diagnostic.code != "RY098"),
+        "a conditional force is not guaranteed: {diags:?}"
+    );
+}
+
+#[test]
+fn lazy_default_reachability_precision_cases_stay_silent() {
+    let diags = check(include_str!(
+        "../../testdata/ok_lazy_default_reachability.R"
+    ));
+    assert!(
+        diags.iter().all(|diagnostic| diagnostic.code != "RY098"),
+        "conservative negative cases must remain silent: {diags:?}"
+    );
+}
+
+#[test]
+fn nse_function_alias_quotes_cli_time_ago_expressions() {
+    let diags = check(include_str!("../../testdata/ok_nse_function_alias.R"));
+    assert!(
+        diags.is_empty(),
+        "an alias of expression() must preserve quoted-call semantics: {diags:?}"
+    );
+}
+
+#[test]
+fn quote_and_printf_semantics_follow_function_aliases() {
+    let diags = check("q <- quote\nq(undefined_sym)\ns <- sprintf\ns(\"%d %d\", 1)\n");
+    assert!(
+        diags.iter().all(|diagnostic| diagnostic.code != "RY010"),
+        "quote() through an alias must not resolve its captured symbol: {diags:?}"
+    );
+    assert_eq!(
+        diags
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "RY094")
+            .count(),
+        1,
+        "sprintf() format validation must run through an alias: {diags:?}"
+    );
+}
+
+#[test]
+fn function_alias_semantics_are_cleared_by_reassignment() {
+    let diags = check("q <- quote\nq <- function(x) x\nq(undefined_sym)\n");
+    assert!(
+        diags.iter().any(|diagnostic| diagnostic.code == "RY010"),
+        "overwriting an alias with a local function must clear quote semantics: {diags:?}"
+    );
+}
+
+#[test]
+fn nse_symbol_fallback_does_not_overlap_stub_eval_modes() {
+    // `is_nse_symbol_fn` is the hardcoded half of the NSE knowledge. The
+    // stub `eval` metadata is the source of truth. The fallback
+    // intercepts before signature resolution, so a member listed in both
+    // shadows its stub silently. Delete the member so the stubs stay
+    // authoritative (issue #41).
+    //
+    // `quoted_expression`, `captures_promise`, and `quoted_symbol` skip
+    // ordinary argument inference; `data_mask` and `tidy_select` still
+    // infer arguments under a mask. Both kinds overlap the fallback. A
+    // `data_mask`/`tidy_select` member may stay only when listed in
+    // `data_mask_exemptions` with a reason. The list is a local test
+    // fixture, not checker knowledge, so it stays out of the semantic
+    // list registry.
+    //
+    // The check is bidirectional on stub existence: a member whose stub
+    // ships WITHOUT `eval` fields is equally wrong, because per
+    // SCHEMA.md an absent `eval` block declares ordinary eager
+    // evaluation. rlang's `sym`/`abort`/`inform`/`new_formula`/
+    // `new_quosure` lived here that way — their stubs exist eval-less,
+    // R evaluates their arguments eagerly (`rlang::sym(undefined_name)`
+    // errors with "object not found"), and the fallback wrongly
+    // suppressed RY010 inside them.
+    //
+    // Residual gap, deliberately accepted: this guard proves stub
+    // coverage, not call-site reachability. A bare-name call consults a
+    // stub only when the file's environment attaches or imports the
+    // package (see ry-workspace's `import(pkg)` handling and the
+    // testthat runner-file extension), so an unattached verb still
+    // falls back to this list's judgment at call sites that cannot see
+    // the stub.
+    let data_mask_exemptions: &[&str] = &[
+        // Empty today. dplyr's stub declares all_vars' `expr` as
+        // data_mask, so all_vars left the fallback list. Add a name
+        // here only with a linked issue documenting why its data-mask
+        // mode must not own the call.
+    ];
+    use ry_typeshed::EvalMode;
+    let mut stub_eval = std::collections::HashMap::new();
+    let mut stub_declares_eager = std::collections::HashSet::new();
+    let mut add_typeshed = |typeshed: &ry_typeshed::Typeshed| {
+        for (name, signature) in &typeshed.functions {
+            for mode in signature.eval.values() {
+                if *mode != EvalMode::Normal {
+                    stub_eval.insert(name.clone(), *mode);
+                }
+            }
+            // A shipped stub with no non-Normal eval entry is an eager
+            // evaluation declaration for every parameter.
+            stub_declares_eager.insert(name.clone());
+        }
+    };
+    if let Ok(base) = ry_typeshed::load_base_cached() {
+        add_typeshed(base);
+    }
+    for package in ry_typeshed::known_packages() {
+        if let Some(typeshed) = ry_typeshed::load_package(package) {
+            add_typeshed(typeshed);
+        }
+    }
+    let overlap: Vec<String> = crate::infer::NSE_SYMBOL_FNS
+        .iter()
+        .filter_map(|name| {
+            let mode = stub_eval.get(*name)?;
+            let exempted = matches!(mode, EvalMode::DataMask | EvalMode::TidySelect)
+                && data_mask_exemptions.contains(name);
+            (!exempted).then(|| format!("{name} ({mode:?})"))
+        })
+        .collect();
+    assert!(
+        overlap.is_empty(),
+        "is_nse_symbol_fn members already covered by stub eval metadata; delete them or add a documented exemption: {overlap:?}"
+    );
+    let eager: Vec<&str> = crate::infer::NSE_SYMBOL_FNS
+        .iter()
+        .copied()
+        .filter(|name| stub_declares_eager.contains(*name) && !stub_eval.contains_key(*name))
+        .collect();
+    assert!(
+        eager.is_empty(),
+        "is_nse_symbol_fn members whose stubs declare ordinary eager evaluation (a shipped stub without NSE eval fields) must be deleted; R reads their arguments: {eager:?}"
+    );
+}
+
+#[test]
+fn rlang_eager_helpers_read_their_arguments() {
+    // rlang's sym/abort/inform/new_formula/new_quosure evaluate their
+    // arguments eagerly — verified in R, `rlang::sym(undefined_name)`
+    // and `rlang::abort(undefined_name)` both error with "object not
+    // found" — so an undefined name inside them is a real bug that
+    // RY010 must catch. They left `NSE_SYMBOL_FNS` (whose members treat
+    // every argument as a bare symbol); the same call with a literal
+    // argument stays silent because there is nothing to read.
+    for (note, src) in [
+        (
+            "attached abort",
+            "library(rlang)\nf <- function() abort(undefined_name)\n",
+        ),
+        (
+            "attached inform",
+            "library(rlang)\nf <- function() inform(undefined_name)\n",
+        ),
+        (
+            "attached sym",
+            "library(rlang)\nf <- function() sym(undefined_name)\n",
+        ),
+        (
+            "attached new_formula",
+            "library(rlang)\nf <- function() new_formula(undefined_name, 2)\n",
+        ),
+        (
+            "attached new_quosure",
+            "library(rlang)\nf <- function() new_quosure(undefined_name, env())\n",
+        ),
+        (
+            "qualified abort",
+            "f <- function() rlang::abort(undefined_name)\n",
+        ),
+        (
+            "qualified sym",
+            "f <- function() rlang::sym(undefined_name)\n",
+        ),
+    ] {
+        let diags = check(src);
+        assert!(
+            diags.iter().any(|d| d.code == "RY010"),
+            "{note}: the argument is read eagerly and must fire RY010: {diags:?}"
+        );
+    }
+    for (note, src) in [
+        (
+            "literal message",
+            "library(rlang)\nf <- function() abort(\"must be a string\")\n",
+        ),
+        ("string symbol", "library(rlang)\ns <- sym(\"name\")\n"),
+        (
+            "control paste still reads",
+            "f <- function() paste(undefined_name)\n",
+        ),
+    ] {
+        let diags = check(src);
+        let fires = src.contains("paste");
+        assert_eq!(
+            diags.iter().any(|d| d.code == "RY010"),
+            fires,
+            "{note}: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn delayed_assign_reads_only_its_evaluated_arguments() {
+    // The base stub declares only `value: captures_promise` for
+    // delayedAssign; the variable name and the environment arguments
+    // are ordinary evaluated arguments. The pre-stub fallback wrongly
+    // suppressed the whole call.
+    for (note, src, expected) in [
+        (
+            "captured value is silent",
+            "delayedAssign(\"x\", undefined_value)\n",
+            vec![],
+        ),
+        (
+            "name argument is read",
+            "delayedAssign(undefined_name, 1)\n",
+            vec!["undefined_name"],
+        ),
+        (
+            "arguments past the captured one are read",
+            "v <- 1\ndelayedAssign(\"x\", v, eval.env = undefined_env)\n",
+            vec!["undefined_env"],
+        ),
+    ] {
+        let diags = check(src);
+        let fired: Vec<&str> = diags
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "RY010")
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect();
+        assert_eq!(
+            fired.len(),
+            expected.len(),
+            "{note}: expected RY010 on {expected:?}, got {diags:?}"
+        );
+        for name in expected {
+            assert!(
+                fired.iter().any(|message| message.contains(name)),
+                "{note}: expected RY010 naming {name}, got {diags:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn qualified_deferring_calls_do_not_force_lazy_defaults() {
+    // RY098's walker treats every call except the explicitly qualified
+    // strict builtins as possibly deferring its arguments, so a
+    // self-referential default captured by one stays silent — including
+    // calls into packages beyond base/rlang whose stubs record the
+    // deferral (`join_by`). The strict builtins demonstrably force and
+    // keep firing.
+    for (note, body, expect_ry098) in [
+        ("dplyr join_by defers", "dplyr::join_by(x == y)", false),
+        ("base quote defers", "base::quote(x)", false),
+        ("strict builtin abort forces", "rlang::abort(x)", true),
+    ] {
+        let diags = check(&format!("f <- function(x = x) {body}\n"));
+        let fired = diags.iter().any(|diagnostic| diagnostic.code == "RY098");
+        assert_eq!(fired, expect_ry098, "{note}: {diags:?}");
+    }
+}

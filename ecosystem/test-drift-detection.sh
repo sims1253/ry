@@ -16,7 +16,22 @@ run_sh="$root/ecosystem/run.sh"
 # Use the local (vendored glue) path: no git cloning, fast, hermetic. This
 # intentionally tests report drift only: --local skips ledger reconciliation;
 # test-posit-drift-detection.sh covers the real non-local ledger path.
+
+# Pin the #50 invariant where it runs locally too: gitignored .full.txt
+# reports are never drift baselines. Plant a poisoned sentinel before the
+# first --check; current logic ignores it, so --check must still exit 0,
+# while a drift-check change that starts comparing .full.txt fails here on
+# any machine instead of surfacing only as a CI failure.
+sentinel="$reports_dir/glue.full.txt"
+printf 'POISONED_FULL_TXT_BASELINE\n' > "$sentinel"
+trap 'rm -f "$sentinel"' EXIT
+trap 'rm -f "$sentinel"; exit 130' INT TERM
+
 "$run_sh" --local --check 2>/dev/null
+echo "PASS: gitignored .full.txt report is not used as a baseline"
+
+rm -f "$sentinel"
+trap - EXIT INT TERM
 
 fail=0
 tested=0

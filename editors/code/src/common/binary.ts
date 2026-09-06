@@ -2,11 +2,10 @@
  * Binary resolution — decides which `ry` executable to run and probes
  * its version before launching the server.
  *
- * Resolution order (from ruff-vscode, minus the Python-interpreter
- * machinery which has no R analogue):
+ * Resolution order (used by this extension):
  *
- * 1. `ry.path` entries (first existing wins)
- * 2. `ry.importStrategy == "fromEnvironment"`: `PATH` via `which`
+ * 1. `ry.path` entries (first executable file wins)
+ * 2. `ry.importStrategy == "fromEnvironment"`: `PATH`
  * 3. Bundled binary (`bundled/bin/ry`)
  *
  * Untrusted workspaces force the bundled binary, ignoring both `path`
@@ -45,10 +44,10 @@ export function findRyBinaryPath(
     return BUNDLED_RY_EXECUTABLE;
   }
 
-  // 1. User-specified path entries (first existing wins)
+  // 1. User-specified path entries (first executable file wins)
   for (const candidate of settings.path ?? []) {
     const expanded = resolveHomeDir(candidate);
-    if (fs.existsSync(expanded)) {
+    if (isExecutableFile(expanded)) {
       return expanded;
     }
   }
@@ -63,6 +62,16 @@ export function findRyBinaryPath(
 
   // 3. Bundled binary
   return BUNDLED_RY_EXECUTABLE;
+}
+
+function isExecutableFile(candidate: string): boolean {
+  try {
+    if (!fs.statSync(candidate).isFile()) return false;
+    fs.accessSync(candidate, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function resolveHomeDir(p: string): string {
@@ -82,7 +91,7 @@ function findOnPath(binary: string): string | undefined {
     .filter((dir) => dir.length > 0);
   for (const dir of pathDirs) {
     const candidate = path.join(dir, binary);
-    if (fs.existsSync(candidate)) {
+    if (isExecutableFile(candidate)) {
       return candidate;
     }
   }

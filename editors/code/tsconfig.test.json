@@ -7,6 +7,6 @@
   // binary.test.ts is a Bun unit test (`bun test src/test/binary.test.ts`).
   // It imports `bun:test`, which resolves neither here nor in the VS Code
   // Extension Host, so it must not be compiled into the Mocha suite that
-  // .vscode-test.js runs from out/test/**/*.test.js.
+  // test/installed.cjs runs from out/test/e2e.test.js.
   "exclude": ["src/test/binary.test.ts"]
 }

@@ -42,7 +42,7 @@ export function getInitializationOptions(
   };
 }
 
-let _disposables: Disposable[] = [];
+const disposables = new WeakMap<LanguageClient, Disposable[]>();
 
 /**
  * Construct and start the language server client.
@@ -119,7 +119,7 @@ export async function startServer(
     clientOptions,
   );
 
-  _disposables.push(
+  disposables.set(newLSClient, [
     newLSClient.onDidChangeState((e) => {
       switch (e.newState) {
         case State.Stopped:
@@ -149,14 +149,16 @@ export async function startServer(
         }
       });
     }),
-  );
+  ]);
 
   logger.info("Server: Start requested.");
   try {
     await newLSClient.start();
   } catch (ex) {
     logger.error(`Server: Start failed: ${ex}`);
-    dispose(newLSClient);
+    await dispose(newLSClient).catch((error) =>
+      logger.error(`Server cleanup failed: ${error}`),
+    );
     return null;
   }
 
@@ -168,14 +170,11 @@ export async function startServer(
  */
 export async function stopServer(lsClient: LanguageClient): Promise<void> {
   logger.info("Server: Stop requested");
-  await lsClient.stop();
-  dispose(lsClient);
+  await dispose(lsClient);
 }
 
-function dispose(client?: LanguageClient): void {
-  for (const disposable of _disposables) {
-    disposable.dispose();
-  }
-  _disposables = [];
-  client?.dispose();
+async function dispose(client: LanguageClient): Promise<void> {
+  for (const disposable of disposables.get(client) ?? []) disposable.dispose();
+  disposables.delete(client);
+  await client.dispose();
 }

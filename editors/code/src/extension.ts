@@ -5,6 +5,8 @@ import { startServer, stopServer } from "./common/server";
 import type { LanguageClient } from "vscode-languageclient/node";
 import {
   getWorkspaceSettings,
+  getGlobalSettings,
+  type ISettings,
   checkIfConfigurationChanged,
 } from "./common/settings";
 import {
@@ -58,49 +60,65 @@ export async function activate(
     return;
   }
 
-  // Resolve the binary and probe its version before starting.
-  const isUntrusted = !vscode.workspace.isTrusted;
-  const settings = getWorkspaceSettings(serverId, {
-    uri: vscode.Uri.file(process.cwd()),
-    index: 0,
-    name: "root",
-  } as vscode.WorkspaceFolder);
-  const binaryPath = findRyBinaryPath(settings, isUntrusted);
-  const version = getRyVersion(binaryPath);
-  resolvedBinary = { path: binaryPath, version };
-
-  if (version) {
-    const versionError = checkVersionCapability(
-      resolvedBinary,
+  let settings: ISettings | undefined;
+  const readSettings = () => {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    return folder
+      ? getWorkspaceSettings(serverId, folder)
+      : getGlobalSettings(serverId);
+  };
+  const reportFailure = (message: string) => {
+    logger.error(message);
+    if (serverState && resolvedBinary) statusItem?.setReady(resolvedBinary);
+    else statusItem?.setError(message);
+    void vscode.window
+      .showErrorMessage(message, "Show Logs", "Configure")
+      .then((action) => {
+        if (action === "Show Logs") outputChannel.show();
+        else if (action === "Configure")
+          void vscode.commands.executeCommand(
+            "workbench.action.openSettings",
+            "ry.path",
+          );
+      });
+  };
+  const runServer = async () => {
+    const nextSettings = readSettings();
+    const path = findRyBinaryPath(nextSettings, !vscode.workspace.isTrusted);
+    const nextBinary = { path, version: getRyVersion(path) };
+    const error = checkVersionCapability(
+      nextBinary,
       MINIMUM_SETTINGS_CHANNEL_VERSION,
       "settings channel",
     );
-    if (versionError) {
-      statusItem.setError(versionError);
-      vscode.window.showErrorMessage(versionError);
+    if (error) {
+      reportFailure(error);
       return;
-    }
-  }
-
-  statusItem.setReady(resolvedBinary);
-
-  const runServer = async () => {
-    if (serverState != null) {
-      await stopServer(serverState);
-      serverState = null;
     }
 
     statusItem?.setBusy();
-    serverState = await startServer(
+    const nextClient = await startServer(
       serverId,
-      resolvedBinary!.path,
+      path,
       outputChannel,
       traceOutputChannel,
     );
-    if (serverState) {
-      if (resolvedBinary) statusItem?.setReady(resolvedBinary);
-    } else {
-      statusItem?.setError("Server failed to start");
+    if (!nextClient) {
+      reportFailure(`Server failed to start at ${path}`);
+      return;
+    }
+
+    const previous = serverState;
+    serverState = nextClient;
+    resolvedBinary = nextBinary;
+    settings = nextSettings;
+    statusItem?.setReady(nextBinary);
+    if (previous) {
+      try {
+        await stopServer(previous);
+      } catch (error) {
+        reportFailure(`Failed to stop the previous server: ${error}`);
+      }
     }
   };
 
@@ -122,7 +140,13 @@ export async function activate(
       try {
         do {
           restartQueued = false;
-          await runServer();
+          try {
+            await runServer();
+          } catch (error) {
+            reportFailure(
+              `Failed to start the ${LOG_CHANNEL_NAME} server: ${error}`,
+            );
+          }
         } while (restartQueued);
       } finally {
         restartPromise = null;
@@ -144,14 +168,8 @@ export async function activate(
           return;
         }
 
-        const oldSettings = settings;
-        const newSettings = getWorkspaceSettings(serverId, {
-          uri: vscode.Uri.file(process.cwd()),
-          index: 0,
-          name: "root",
-        } as vscode.WorkspaceFolder);
-
-        if (checkIfConfigurationChanged(oldSettings, newSettings)) {
+        const newSettings = readSettings();
+        if (!settings || checkIfConfigurationChanged(settings, newSettings)) {
           await requestRestart();
         }
       },
@@ -186,11 +204,7 @@ export async function activate(
   // Start the server shortly after activation.
   setImmediate(async () => {
     if (serverState == null && restartPromise == null) {
-      try {
-        await requestRestart();
-      } catch (ex) {
-        logger.error(`Failed to start the ${LOG_CHANNEL_NAME} server: ${ex}`);
-      }
+      await requestRestart();
     }
   });
 }

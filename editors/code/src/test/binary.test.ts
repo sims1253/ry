@@ -67,3 +67,20 @@ describe("findRyBinaryPath trust behavior", () => {
     expect(resolved).toBe(BUNDLED_RY_EXECUTABLE);
   });
 });
+
+it("skips directories and non-executable files before a runnable candidate", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ry-candidates-"));
+  try {
+    const plain = path.join(dir, "plain");
+    const executable = path.join(dir, "executable");
+    fs.writeFileSync(plain, "not executable", { mode: 0o644 });
+    fs.writeFileSync(executable, "#!/bin/sh\n", { mode: 0o755 });
+    const settings = {
+      path: [dir, ...(process.platform === "win32" ? [] : [plain]), executable],
+      importStrategy: "useBundled",
+    } as unknown as import("../common/settings").ISettings;
+    expect(findRyBinaryPath(settings, false)).toBe(executable);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

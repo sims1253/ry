@@ -243,6 +243,8 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Fixed
 
+- Re-resolve the VS Code server on restart and retain the working server if its replacement fails. Verify the installed VSIX in trusted and untrusted workspaces.
+
 - Suppression quick fixes preserve existing comments and rule lists, ignore
   diagnostics from other tools, and refuse line edits inside multiline tokens
   or malformed source. File suppression preserves a script's shebang.

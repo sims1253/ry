@@ -940,7 +940,7 @@ fn loaded_serialized_bindings(
 /// Parse an R NAMESPACE file with the regular R parser. This handles quoted
 /// names, comments, and multiline directives without a second parser.
 fn read_namespace(path: &Path) -> NamespaceMetadata {
-    let Ok(src) = std::fs::read_to_string(path) else {
+    let Ok(src) = read_r_source(path) else {
         return NamespaceMetadata::default();
     };
     let Ok(mut parser) = ry_core::RParser::new() else {

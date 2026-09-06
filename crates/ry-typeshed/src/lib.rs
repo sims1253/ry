@@ -841,7 +841,6 @@ pub fn validate_stub_dirs(dirs: &[PathBuf]) -> ValidationReport {
             Err(error) => {
                 report.problems.push(ValidationProblem {
                     path: dir.clone(),
-
                     message: validation_error_message(&error),
                 });
                 continue;
@@ -850,7 +849,6 @@ pub fn validate_stub_dirs(dirs: &[PathBuf]) -> ValidationReport {
         if paths.is_empty() {
             report.problems.push(ValidationProblem {
                 path: dir.clone(),
-
                 message: "no stub files found".to_string(),
             });
             continue;
@@ -882,7 +880,6 @@ fn validate_stub_file(path: &Path, report: &mut ValidationReport) {
         Err(error) => {
             report.problems.push(ValidationProblem {
                 path: path.to_path_buf(),
-
                 message: validation_error_message(&error),
             });
             return;
@@ -938,7 +935,6 @@ fn validate_stub_file(path: &Path, report: &mut ValidationReport) {
 fn validation_error(report: &mut ValidationReport, path: &Path, message: impl Into<String>) {
     report.problems.push(ValidationProblem {
         path: path.to_path_buf(),
-
         message: message.into(),
     });
 }

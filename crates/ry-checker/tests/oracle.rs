@@ -137,6 +137,7 @@ fn tail_snippet(s: &str) -> String {
 
 /// Packages named by loading calls or namespace references in a fixture.
 /// Parse the source so comments and string contents do not add dependencies.
+/// This is a syntax inventory; references in quoted or untaken code are included.
 fn fixture_packages(src: &str) -> Vec<String> {
     let mut parser = RParser::new().expect("parser init");
     let file = parser
@@ -158,10 +159,18 @@ fn fixture_packages(src: &str) -> Vec<String> {
             if let AstNode::Expr(Expr::Ident { name, span }) = node {
                 // A backtick-quoted identifier can contain literal colons.
                 let text = &src[span.start..span.end];
-                let quoted_identifier = text
-                    .strip_prefix('`')
-                    .and_then(|text| text.strip_suffix('`'))
-                    .is_some_and(|text| !text.contains('`'));
+                let mut chars = text.chars();
+                let quoted_identifier = chars.next() == Some('`')
+                    && loop {
+                        match chars.next() {
+                            Some('\\') => {
+                                chars.next();
+                            }
+                            Some('`') => break chars.next().is_none(),
+                            None => break false,
+                            _ => {}
+                        }
+                    };
                 if !quoted_identifier && let Some((package, _)) = name.split_once("::") {
                     add(package.trim_matches(['`', '"', '\'']));
                 }
@@ -736,6 +745,7 @@ fn fixture_packages_ignores_comments_strings_and_literal_names() {
         text <- "library(fake); fake::fun() # require(fake)"
         text <- 'fake:::internal'
         `fake::fun` <- function() NULL
+        `fake::fun\`x` <- function() NULL
         x$`fake::fun`
         library("purrr") # fake::fun()
     "##;

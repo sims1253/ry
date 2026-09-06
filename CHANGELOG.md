@@ -268,6 +268,8 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Fixed
 
+- Detect recursive defaults forced by `TRUE && x` and `FALSE || x`, including nested operands.
+
 - Detect recursive and prematurely forced defaults passed to `base::identity` or
   `base::force`, while preserving laziness in quoted, masked, and conditional calls.
 

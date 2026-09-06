@@ -27,6 +27,12 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Added
 
+- Zed verifies downloaded server executables against published SHA-256 sidecars
+  and rechecks cached binaries before starting them. Missing or invalid sidecars
+  and mismatched binaries fail installation and remove the download directory.
+  Automatic downloads require ry 0.9.0 or newer; settings and PATH overrides
+  remain available for user-managed binaries.
+
 - **`ry dump-types` command**: `ry dump-types <FILE>...` runs the same
   analysis pass as `ry check` and prints every lexical scope of the
   requested files as JSON on stdout: scope kind, name, and extent, plus

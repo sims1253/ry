@@ -243,6 +243,8 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Fixed
 
+- Watch custom editor configuration paths and reload settings when the path changes, retaining the last valid configuration after malformed edits.
+
 - Re-resolve the VS Code server on restart and retain the working server if its replacement fails. Verify the installed VSIX in trusted and untrusted workspaces.
 
 - Suppression quick fixes preserve existing comments and rule lists, ignore

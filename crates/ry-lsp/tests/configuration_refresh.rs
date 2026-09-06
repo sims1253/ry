@@ -406,3 +406,146 @@ fn config_reload_retains_valid_settings_on_failure() {
         }
     });
 }
+
+#[test]
+fn custom_configuration_is_watched_and_reloaded_after_path_changes() {
+    run(async {
+        for relative in [true, false] {
+            let fixture = FixtureProject::empty().unwrap();
+            let outside = FixtureProject::empty().unwrap();
+            let initial = fixture
+                .write_file("config/custom[1].toml", "ignore = [\"RY010\"]\n")
+                .unwrap();
+            let replacement = outside
+                .write_file("replacement.toml", "ignore = []\n")
+                .unwrap();
+            let source = "x <- never_bound_here\n";
+            let path = fixture.write_file("main.R", source).unwrap();
+            let uri = file_uri(&path).unwrap();
+            let (mut session, server) = spawn_session(&[fixture.root()], json!({"workspace": {
+                "configuration": true,
+                "didChangeWatchedFiles": {"dynamicRegistration": true, "relativePatternSupport": relative}
+            }}), None).await;
+            // The first pull can supply a path absent from initializationOptions.
+            session
+                .respond_to_request(
+                    "workspace/configuration",
+                    json!([
+                        {"configuration":"config/../config/custom[1].toml"}, {}
+                    ]),
+                )
+                .await
+                .unwrap();
+            let request = session
+                .respond_to_request("client/registerCapability", json!(null))
+                .await
+                .unwrap();
+            let patterns = &request["params"]["registrations"][0]["registerOptions"]["watchers"];
+            let pattern = &patterns[4]["globPattern"];
+            if relative {
+                assert_eq!(
+                    pattern["baseUri"],
+                    initial
+                        .parent()
+                        .and_then(|p| tower_lsp::lsp_types::Url::from_directory_path(p).ok())
+                        .unwrap()
+                        .to_string()
+                );
+                assert_eq!(pattern["pattern"], "custom[[]1[]].toml");
+            } else {
+                assert_eq!(
+                    pattern,
+                    &json!(
+                        initial
+                            .to_string_lossy()
+                            .replace('[', "[[]")
+                            .replace("1]", "1[]]")
+                    )
+                );
+            }
+            let mark = session.publication_mark();
+            session.open(&uri, 1, source).await.unwrap();
+            let initial_diagnostics = session
+                .published_diagnostics_after(&uri, mark)
+                .await
+                .unwrap();
+            assert_eq!(count_code(&initial_diagnostics, "RY010"), 0);
+
+            for (contents, expected) in [
+                ("ignore = []\n", 1),
+                ("not valid TOML [", 1),
+                ("ignore = [\"RY010\"]\n", 0),
+            ] {
+                std::fs::write(&initial, contents).unwrap();
+                let mark = session.publication_mark();
+                session
+                    .notify(
+                        "workspace/didChangeWatchedFiles",
+                        json!({"changes":[{"uri":file_uri(&initial).unwrap(),"type":2}]}),
+                    )
+                    .await
+                    .unwrap();
+                let after = session
+                    .published_diagnostics_after(&uri, mark)
+                    .await
+                    .unwrap();
+                assert_eq!(count_code(&after, "RY010"), expected);
+            }
+            let mark = session.publication_mark();
+            session
+                .notify("workspace/didChangeConfiguration", json!({"settings":{}}))
+                .await
+                .unwrap();
+            session
+                .respond_to_request(
+                    "workspace/configuration",
+                    json!([
+                        {"configuration":replacement}, {}
+                    ]),
+                )
+                .await
+                .unwrap();
+            session
+                .respond_to_request("client/unregisterCapability", json!(null))
+                .await
+                .unwrap();
+            let registration = session
+                .respond_to_request("client/registerCapability", json!(null))
+                .await
+                .unwrap();
+            let pattern = &registration["params"]["registrations"][0]["registerOptions"]["watchers"]
+                [4]["globPattern"];
+            if relative {
+                assert_eq!(
+                    pattern["baseUri"],
+                    tower_lsp::lsp_types::Url::from_directory_path(outside.root())
+                        .unwrap()
+                        .to_string()
+                );
+                assert_eq!(pattern["pattern"], "replacement.toml");
+            } else {
+                assert_eq!(pattern, &json!(replacement));
+            }
+            let after = session
+                .published_diagnostics_after(&uri, mark)
+                .await
+                .unwrap();
+            assert_eq!(count_code(&after, "RY010"), 1);
+            std::fs::write(&replacement, "ignore = [\"RY010\"]\n").unwrap();
+            let mark = session.publication_mark();
+            session
+                .notify(
+                    "workspace/didChangeWatchedFiles",
+                    json!({"changes":[{"uri":file_uri(&replacement).unwrap(),"type":2}]}),
+                )
+                .await
+                .unwrap();
+            let after = session
+                .published_diagnostics_after(&uri, mark)
+                .await
+                .unwrap();
+            assert_eq!(count_code(&after, "RY010"), 0);
+            harness::join_session(session, server).await;
+        }
+    });
+}

@@ -85,7 +85,7 @@ where
     /// client. This lets a test answer them with a scripted response so the
     /// server unblocks and proceeds (without it, a pull-config server stalls
     /// in the handler awaiting the reply).
-    pub async fn respond_to_request(&mut self, method: &str, result: Value) -> io::Result<()> {
+    pub async fn respond_to_request(&mut self, method: &str, result: Value) -> io::Result<Value> {
         let request = self
             .receive_matching(0, |message| {
                 message.get("method").and_then(Value::as_str) == Some(method)
@@ -99,7 +99,8 @@ where
                 "id": id,
                 "result": result,
             }))
-            .await
+            .await?;
+        Ok(request)
     }
 
     pub async fn request(&mut self, method: &str, params: Value) -> io::Result<Value> {

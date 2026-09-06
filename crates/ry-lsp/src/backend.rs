@@ -1041,9 +1041,15 @@ impl Backend {
                 None
             }
             .unwrap_or_else(|| {
-                serde_json::json!(escape_watch_path(
-                    &path.to_string_lossy().replace('\\', "/")
-                ))
+                // String patterns are best effort: clients may only watch
+                // workspace files. External watches need RelativePattern.
+                let path = path.to_string_lossy();
+                let path = if cfg!(windows) {
+                    path.replace('\\', "/")
+                } else {
+                    path.into_owned()
+                };
+                serde_json::json!(escape_watch_path(&path))
             });
             watchers.push(serde_json::json!({"globPattern": pattern}));
         }
@@ -1737,6 +1743,8 @@ fn custom_config_paths(state: &State) -> Vec<PathBuf> {
     paths
 }
 
+// LSP does not define literal escaping. Use VS Code/minimatch's bracket
+// convention; support for literal brackets varies across client engines.
 fn escape_watch_path(path: &str) -> String {
     path.chars()
         .map(|ch| match ch {

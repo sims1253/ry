@@ -4,6 +4,11 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Stop S3 operator lookup at the winning base group method, avoiding false
+  column-access errors when later classes define another operator method.
+
 ### Cleanup
 
 - Avoid recursive-default warnings for signaling arguments that may be ignored

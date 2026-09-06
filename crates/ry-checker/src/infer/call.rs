@@ -1203,8 +1203,7 @@ impl Checker {
                     continue;
                 }
                 let narrowing = self.extract_type_narrowing(&argument.value, scope);
-                let (positive_scope, _, _) = apply_narrowing(scope, &narrowing);
-                *scope = positive_scope;
+                apply_narrowing_branch(scope, &narrowing, NarrowingBranch::Then);
             }
         }
     }

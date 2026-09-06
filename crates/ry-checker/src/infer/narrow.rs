@@ -355,47 +355,58 @@ pub(crate) fn narrow_away_from_null(t: &RType) -> Option<RType> {
     }
 }
 
-/// Record in `scope` that `var` is non-null: narrow its binding away from
-/// NULL and mark the name branch-local. Does nothing when the binding has
-/// no NULL member to remove.
-fn narrow_away_from_null_in(scope: &mut Scope, var: &str, narrowed: &mut HashSet<String>) {
+/// Record that `var` is non-null, returning whether its type was narrowed.
+fn narrow_away_from_null_in(scope: &mut Scope, var: &str) -> bool {
     if let Some(existing) = scope.get(var).cloned()
         && let Some(n) = narrow_away_from_null(&existing)
     {
         scope.insert_narrowed(var.to_string(), n);
-        narrowed.insert(var.to_string());
+        return true;
     }
+    false
 }
 
-/// Apply a narrowing to produce separate scopes for the `then` and
-/// `else_` branches. Returns `(then_scope, else_scope)` where each is
-/// a clone of `base` with the appropriate binding updated.
-///
+#[derive(Clone, Copy)]
+pub(crate) enum NarrowingBranch {
+    Then,
+    Else,
+}
+
+/// Clone both branches when their independent outcomes must be merged.
+/// The returned names identify branch-local refinements that assignment merging
+/// must exclude from the parent scope.
 pub(crate) fn apply_narrowing(
     base: &Scope,
     narrowing: &Narrowing,
 ) -> (Scope, Scope, HashSet<String>) {
-    if matches!(narrowing, Narrowing::None) {
-        return (base.clone(), base.clone(), HashSet::new());
-    }
     let (mut then_scope, mut else_scope) = (base.clone(), base.clone());
-    // Names refined by narrowing (in either branch). These must NOT be
-    // merged back into the parent by `merge_branch_bindings`: a refinement
-    // is branch-local, and folding it into the parent would degrade a
-    // precise parent type (e.g. known-NULL -> opaque) and mask later
-    // errors. The parent's pre-`if` type is what holds after the `if`.
-    let mut narrowed: HashSet<String> = HashSet::new();
-    match narrowing {
-        Narrowing::None => {}
-        Narrowing::Positive { var, target } => {
+    let then_name = apply_narrowing_branch(&mut then_scope, narrowing, NarrowingBranch::Then);
+    let else_name = apply_narrowing_branch(&mut else_scope, narrowing, NarrowingBranch::Else);
+    let narrowed = then_name
+        .into_iter()
+        .chain(else_name)
+        .map(str::to_owned)
+        .collect();
+    (then_scope, else_scope, narrowed)
+}
+
+/// Apply only the selected path's refinement. Assertions keep this scope;
+/// conditional expressions supply a single isolated clone for their RHS.
+pub(crate) fn apply_narrowing_branch<'a>(
+    scope: &mut Scope,
+    narrowing: &'a Narrowing,
+    branch: NarrowingBranch,
+) -> Option<&'a str> {
+    match (narrowing, branch) {
+        (Narrowing::Positive { var, target }, NarrowingBranch::Then) => {
             // A mode-only predicate never rewrites a KNOWN type
             // (`is.numeric` on Integer must not become Double);
             // class targets and incompatible parameter defaults
             // do install.
-            if let Some(existing) = then_scope.get(var).cloned() {
+            if let Some(existing) = scope.get(var).cloned() {
                 let class_narrowing = target.class.has_known_class();
                 let incompatible_parameter_default =
-                    then_scope.is_default_parameter(var) && !types_intersect(&existing, target);
+                    scope.is_default_parameter(var) && !types_intersect(&existing, target);
                 let should_install = incompatible_parameter_default
                     || class_narrowing
                     || match existing.mode {
@@ -440,7 +451,7 @@ pub(crate) fn apply_narrowing(
                         || class_narrowing
                         || matches!(existing.mode, Mode::Opaque | Mode::Null | Mode::Union))
                 {
-                    then_scope.insert_narrowed(
+                    scope.insert_narrowed(
                         var.clone(),
                         RType {
                             mode: target.mode,
@@ -448,65 +459,59 @@ pub(crate) fn apply_narrowing(
                             ..target.clone()
                         },
                     );
-                    narrowed.insert(var.clone());
+                    return Some(var.as_str());
                 }
             }
-            // For is.null, the else branch knows var is NOT null. Build this
-            // scope even without an explicit `else`: a diverging guard can
-            // make it the continuation scope.
-            if target.mode == Mode::Null {
-                narrow_away_from_null_in(&mut else_scope, var, &mut narrowed);
+        }
+        (Narrowing::Positive { var, target }, NarrowingBranch::Else)
+        | (Narrowing::Negative { var, target }, NarrowingBranch::Then) => {
+            // Only NULL has a representable negative-path complement.
+            if target.mode == Mode::Null && narrow_away_from_null_in(scope, var) {
+                return Some(var.as_str());
             }
         }
-        Narrowing::Negative { var, target } => {
-            // The true branch of a negated null predicate is non-null. Other
-            // complements are not representable in the current lattice, so
-            // leave them conservative and retain the useful else fact below.
-            if target.mode == Mode::Null {
-                narrow_away_from_null_in(&mut then_scope, var, &mut narrowed);
+        (Narrowing::Negative { var, target }, NarrowingBranch::Else) => {
+            if install_positive_narrowing(scope, var, target) {
+                return Some(var.as_str());
             }
-            install_positive_narrowing(&mut else_scope, var, target, &mut narrowed);
         }
-        Narrowing::NonNullElse { var } => {
-            narrow_away_from_null_in(&mut else_scope, var, &mut narrowed);
+        (Narrowing::NonNullElse { var }, NarrowingBranch::Else) => {
+            if narrow_away_from_null_in(scope, var) {
+                return Some(var.as_str());
+            }
         }
-        Narrowing::Else { var, target } => {
+        (Narrowing::Else { var, target }, NarrowingBranch::Else) => {
             debug_assert_eq!(target.mode, Mode::Null);
-            narrow_away_from_null_in(&mut else_scope, var, &mut narrowed);
+            if narrow_away_from_null_in(scope, var) {
+                return Some(var.as_str());
+            }
         }
-        Narrowing::ScalarElse { var, target } => {
-            if let Some(existing) = else_scope.get(var).cloned() {
-                // A concrete NULL local cannot satisfy length(x) == 1, so the
-                // false path is unreachable. A NULL parameter default is not
-                // exhaustive: callers may provide a scalar value.
-                if existing.mode == Mode::Null && !else_scope.is_default_parameter(var) {
-                    else_scope.unreachable = true;
+        (Narrowing::ScalarElse { var, target }, NarrowingBranch::Else) => {
+            if let Some(existing) = scope.get(var).cloned() {
+                // A concrete NULL local cannot satisfy length(x) == 1. A
+                // parameter default is not exhaustive: callers can pass a scalar.
+                if existing.mode == Mode::Null && !scope.is_default_parameter(var) {
+                    scope.unreachable = true;
                 } else {
                     let mut scalar = match target {
                         Some(target) => target.clone(),
-                        // A NULL default says nothing about the mode callers
-                        // may supply. The length guard proves only scalarity.
                         None if existing.mode == Mode::Null => RType::unknown(),
                         None => existing,
                     };
                     scalar.length = Length::One;
-                    else_scope.insert_narrowed(var.clone(), scalar);
-                    narrowed.insert(var.clone());
+                    scope.insert_narrowed(var.clone(), scalar);
+                    return Some(var.as_str());
                 }
             }
         }
+        _ => {}
     }
-    (then_scope, else_scope, narrowed)
+    None
 }
 
-fn install_positive_narrowing(
-    scope: &mut Scope,
-    var: &str,
-    target: &RType,
-    narrowed: &mut HashSet<String>,
-) {
+fn install_positive_narrowing(scope: &mut Scope, var: &str, target: &RType) -> bool {
     let Some(existing) = scope.get(var).cloned() else {
-        return;
+        return false;
     };
     let class_narrowing = target.class.has_known_class();
     let incompatible_parameter_default =
@@ -523,8 +528,9 @@ fn install_positive_narrowing(
                 ..target.clone()
             },
         );
-        narrowed.insert(var.to_string());
+        return true;
     }
+    false
 }
 
 impl Checker {
@@ -578,6 +584,120 @@ impl Checker {
         Narrowing::Positive {
             var: var.clone(),
             target: json_rtype_to_rtype(&predicate.target),
+        }
+    }
+}
+
+#[cfg(test)]
+mod selected_branch_tests {
+    use super::*;
+
+    #[test]
+    fn positive_and_negated_union_guards_keep_their_distinct_rules() {
+        let original = RType::union(Arc::from([
+            RType::scalar(Mode::Integer),
+            RType::scalar(Mode::Character),
+        ]));
+        let mut positive = Scope::default();
+        positive.insert("x", original.clone());
+        let mut negative = positive.clone();
+        let target = RType::scalar(Mode::Double);
+        // The positive guard requires an intersecting member. The false path
+        // of the negated predicate has historically installed its target.
+        assert_eq!(
+            apply_narrowing_branch(
+                &mut positive,
+                &Narrowing::Positive {
+                    var: "x".into(),
+                    target: target.clone(),
+                },
+                NarrowingBranch::Then,
+            ),
+            None
+        );
+        assert_eq!(positive.get("x"), Some(&original));
+        assert_eq!(
+            apply_narrowing_branch(
+                &mut negative,
+                &Narrowing::Negative {
+                    var: "x".into(),
+                    target: target.clone(),
+                },
+                NarrowingBranch::Else,
+            ),
+            Some("x")
+        );
+        assert_eq!(negative.get("x").map(|ty| ty.mode), Some(Mode::Double));
+    }
+
+    #[test]
+    fn in_place_narrowing_preserves_parameter_and_scope_metadata() {
+        let mut scope = Scope::default().with_unknown_data_mask();
+        scope.mark_search_path_unknown();
+        scope.insert_parameter_default("x", RType::scalar(Mode::Null));
+        scope.mark_list_origin("x");
+        scope.set_function_alias("x", "base::identity".into());
+        scope.mark_lexical_function("x");
+        scope.insert_parameter("untouched", RType::scalar(Mode::Integer));
+        scope.set_function_alias("untouched", "other".into());
+        scope.mark_lexical_function("untouched");
+        scope.tidy_injection = Some(InjectionMode::Full);
+        apply_narrowing_branch(
+            &mut scope,
+            &Narrowing::Positive {
+                var: "x".into(),
+                target: RType::scalar(Mode::Double),
+            },
+            NarrowingBranch::Then,
+        );
+        assert_eq!(scope.get("x").map(|ty| ty.mode), Some(Mode::Double));
+        assert!(scope.is_parameter("x") && scope.is_default_parameter("x"));
+        assert!(scope.has_list_origin("x") && scope.narrowed_bindings.contains("x"));
+        assert!(scope.function_alias("x").is_none() && !scope.is_lexical_function("x"));
+        assert_eq!(
+            scope.get("untouched").map(|ty| ty.mode),
+            Some(Mode::Integer)
+        );
+        assert!(scope.is_parameter("untouched") && scope.is_lexical_function("untouched"));
+        assert_eq!(scope.function_alias("untouched"), Some("other"));
+        assert!(scope.data_mask_unknown && scope.search_path_unknown);
+        assert_eq!(scope.tidy_injection, Some(InjectionMode::Full));
+        assert!(!scope.unreachable);
+    }
+
+    #[test]
+    fn selected_scalar_guard_distinguishes_null_locals_from_defaults() {
+        for default_parameter in [false, true] {
+            let mut scope = Scope::default();
+            if default_parameter {
+                scope.insert_parameter_default("x", RType::scalar(Mode::Null));
+            } else {
+                scope.insert("x", RType::scalar(Mode::Null));
+            }
+            let narrowing = Narrowing::ScalarElse {
+                var: "x".into(),
+                target: None,
+            };
+            assert_eq!(
+                apply_narrowing_branch(&mut scope, &narrowing, NarrowingBranch::Then),
+                None
+            );
+            assert!(!scope.unreachable);
+            let changed = apply_narrowing_branch(&mut scope, &narrowing, NarrowingBranch::Else);
+            assert_eq!(changed, default_parameter.then_some("x"));
+            assert_eq!(scope.unreachable, !default_parameter);
+            assert_eq!(
+                scope.get("x").map(|ty| ty.mode),
+                Some(if default_parameter {
+                    Mode::Opaque
+                } else {
+                    Mode::Null
+                })
+            );
+            if default_parameter {
+                assert_eq!(scope.get("x").map(|ty| ty.length), Some(Length::One));
+                assert!(scope.is_parameter("x") && scope.is_default_parameter("x"));
+            }
         }
     }
 }

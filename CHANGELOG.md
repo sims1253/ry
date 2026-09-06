@@ -9,6 +9,7 @@ All notable changes to ry are documented in this file.
 - Avoid RY098 warnings for body-local names captured by qualified `base::quote`,
   `substitute`, `expression`, and `rlang::expr` calls in defaults. Keep
   checking evaluated control arguments and tidy-injection payloads.
+- Reduce scope copying for assertions and short-circuit expressions.
 - Resolve S3 operators before inferring data-frame results, so subclass methods
   can return other types and conflicting methods do not retain column schemas.
 - Validate typeshed updates before replacing the vendored snapshot. Failed

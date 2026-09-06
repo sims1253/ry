@@ -151,6 +151,40 @@ fn check_branch_scopes(c: &mut Criterion) {
     group.finish();
 }
 
+/// Guards need only one continuation, even in a scope with many unrelated names.
+fn check_selected_branch_scopes(c: &mut Criterion) {
+    let mut group = c.benchmark_group("check_selected_branch_scopes");
+    for bindings in [128, 1024] {
+        for operation in ["assert", "and", "or"] {
+            let params = (0..24)
+                .map(|i| format!("p{i}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let mut source = format!("f <- function({params}) {{\n");
+            for i in 0..bindings {
+                source.push_str(&format!("x{i} <- {i}L\n"));
+            }
+            for i in 0..24 {
+                source.push_str(&match operation {
+                    "assert" => format!("stopifnot(is.numeric(p{i}))\n"),
+                    "and" => format!("is.numeric(p{i}) && p{i} > 0\n"),
+                    "or" => format!("is.null(p{i}) || p{i} > 0\n"),
+                    _ => unreachable!(),
+                });
+            }
+            source.push_str("x0\n}\n");
+            let file = RParser::new().unwrap().parse("guards.R", &source).unwrap();
+            group.bench_with_input(BenchmarkId::new(operation, bindings), &file, |b, file| {
+                b.iter(|| {
+                    let mut checker = Checker::new("guards.R");
+                    black_box(checker.check(black_box(file)));
+                });
+            });
+        }
+    }
+    group.finish();
+}
+
 // ---------------------------------------------------------------------------
 // Incremental benchmarks
 //
@@ -340,7 +374,7 @@ criterion_group! {
         .sample_size(20)
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(3));
-    targets = parse_large, check_project_glue, check_single_synthetic, check_branch_scopes,
+    targets = parse_large, check_project_glue, check_single_synthetic, check_branch_scopes, check_selected_branch_scopes,
               warm_edit_dependent, warm_edit_leaf, warm_edit_library,
               lsp_edit_sim
 }

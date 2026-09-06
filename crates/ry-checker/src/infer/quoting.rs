@@ -60,7 +60,27 @@ impl Checker {
         params: &[Param],
         body: &[Stmt],
         assigned: &HashSet<String>,
+        scope: &Scope,
     ) {
+        // Syntax operators can be rebound to lazy closures. This narrow rule
+        // does not resolve such closures, so abandon its primitive assumptions
+        // when a visible binding or local assignment could replace one.
+        let syntax_names = [
+            "+", "-", "*", "/", "^", "%%", "%/%", ":", "<", "<=", ">", ">=", "==", "!=", "&", "&&",
+            "|", "||", "!", "[", "[[", "$", "if", "while", "for", "return", "{", "(", "<-", "<<-",
+            "=",
+        ];
+        if syntax_names.iter().any(|name| {
+            [name.to_string(), format!("`{name}`")]
+                .iter()
+                .any(|spelling| {
+                    assigned.contains(spelling)
+                        || scope.get(spelling).is_some()
+                        || !self.resolves_to_base_lenient(spelling, scope)
+                })
+        }) {
+            return;
+        }
         let formals: HashSet<&str> = params.iter().map(|param| param.name.as_str()).collect();
 
         for param in params {
@@ -185,8 +205,41 @@ fn definitely_forced_identifier_in_stmt(
     }
 }
 
+// Exhaustive classification keeps newly parsed operators from silently gaining
+// an eager evaluation contract. Pipes and `%in%` are calls with lazy arguments.
+fn opaque_binary_operator(op: &BinOpKind) -> bool {
+    match op {
+        BinOpKind::PipeNative
+        | BinOpKind::PipeForward
+        | BinOpKind::PipeTee
+        | BinOpKind::PipeAssign
+        | BinOpKind::In => true,
+        BinOpKind::Add
+        | BinOpKind::Sub
+        | BinOpKind::Mul
+        | BinOpKind::Div
+        | BinOpKind::Pow
+        | BinOpKind::Mod
+        | BinOpKind::IDiv
+        | BinOpKind::Colon
+        | BinOpKind::Lt
+        | BinOpKind::Le
+        | BinOpKind::Gt
+        | BinOpKind::Ge
+        | BinOpKind::Eq
+        | BinOpKind::Ne
+        | BinOpKind::And
+        | BinOpKind::AndAnd
+        | BinOpKind::Or
+        | BinOpKind::OrOr
+        | BinOpKind::Assign
+        | BinOpKind::SuperAssign => false,
+    }
+}
+
 fn definitely_forced_identifier(checker: &Checker, expr: &Expr, wanted: &str) -> Option<Span> {
     match expr {
+        Expr::BinOp { op, .. } if opaque_binary_operator(op) => None,
         Expr::If {
             cond, then, else_, ..
         } => match cond.as_ref() {
@@ -403,6 +456,7 @@ fn expression_preserves_binding(expression: &Expr, wanted: &str) -> bool {
 
 fn first_executed_identifier(checker: &Checker, expr: &Expr, wanted: &str) -> Option<Span> {
     match expr {
+        Expr::BinOp { op, .. } if opaque_binary_operator(op) => None,
         Expr::Ident { name, span } => (name == wanted).then_some(*span),
         Expr::Call { func, args, .. } => {
             first_executed_identifier(checker, func, wanted).or_else(|| {

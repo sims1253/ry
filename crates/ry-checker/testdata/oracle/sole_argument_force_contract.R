@@ -79,3 +79,20 @@ stopifnot(identical(quoted_replace(), "integer"))
 replace_in <- function(env) { assign("x", 1L, envir = env); NULL }
 opaque_replace <- function(x = x) { replace_in(environment()); base::typeof(x) }
 stopifnot(identical(opaque_replace(), "integer"))
+native_pipe_ignores <- function(x = x) base::typeof(x) |> (function(z) 1L)()
+native_pipe_default <- function(x = base::typeof(x) |> (function(z) 1L)()) x
+stopifnot(identical(native_pipe_ignores(), 1L), identical(native_pipe_default(), 1L))
+operator_formal <- function(`+`, x = x) base::typeof(x) + 1L
+stopifnot(identical(operator_formal(function(a, b) 1L), 1L))
+local({
+    `+` <- function(a, b) 1L
+    lazy_operator <- function(x = x) base::typeof(x) + 1L
+    stopifnot(identical(lazy_operator(), 1L))
+})
+if (requireNamespace("magrittr", quietly = TRUE)) {
+    local({
+        `%>%` <- magrittr::`%>%`
+        ignored_pipe <- function(x = x) base::typeof(x) %>% (function(z) 1L)()
+        stopifnot(identical(ignored_pipe(), 1L))
+    })
+}

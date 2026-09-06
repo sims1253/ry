@@ -202,3 +202,26 @@ fn quoted_binding_spellings_are_not_treated_as_independent() {
         );
     }
 }
+
+#[test]
+fn pipes_and_visible_syntax_rebindings_do_not_prove_forcing() {
+    for source in [
+        "f <- function(x = x) base::typeof(x) |> (function(z) 1L)()",
+        "f <- function(x = base::typeof(x) |> (function(z) 1L)()) x",
+        "f <- function(x = x) base::typeof(x) %>% (function(z) 1L)()",
+        "f <- function(x = x) base::typeof(x) %T>% (function(z) 1L)()",
+        "f <- function(x = x) x %<>% (function(z) 1L)()",
+        "f <- function(x = x) base::typeof(x) %in% 1L",
+        "`+` <- function(a, b) 1L; f <- function(x = x) base::typeof(x) + 1L",
+        "f <- function(`+`, x = x) base::typeof(x) + 1L",
+        "f <- function(x = x) { `+` <- function(a, b) 1L; base::typeof(x) + 1L }",
+        "`!` <- function(a) TRUE; f <- function(x = x) !base::typeof(x)",
+        "f <- function(`+`, x = base::typeof(x) + 1L) x",
+    ] {
+        assert_eq!(recursive_warnings(source, BTreeMap::new()), 0, "{source}");
+    }
+    assert_eq!(
+        recursive_warnings("f <- function(x = x) base::typeof(x) + 1L", BTreeMap::new()),
+        1
+    );
+}

@@ -12,6 +12,8 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Class assignments no longer infer literal classes from custom class builders or preserve payload types under an unproven replacement function.
+
 - Compute data-frame column types after scalar arithmetic instead of copying
   their input types. Keep classed column results unknown when methods may run.
 

@@ -17,6 +17,25 @@ fn stub_file(methods: &[String]) -> String {
     )
 }
 
+// Stub factories isolate operator tests from class-constructor inference.
+fn class_factories() -> String {
+    let mut functions = serde_json::Map::new();
+    for (name, mode, class) in [
+        ("widget", "list", "widget"),
+        ("gadget", "character", "gadget"),
+        ("unhandled", "list", "unhandled"),
+        ("default_value", "double", "default"),
+    ] {
+        functions.insert(
+            name.into(),
+            serde_json::json!({
+                "params": [], "return": {"mode": mode, "length": "1", "class": [class]}
+            }),
+        );
+    }
+    serde_json::json!({"version": "t", "functions": functions}).to_string()
+}
+
 /// The source lines carrying `code`, in emission order.
 fn code_lines(diags: &[Diagnostic], code: &str) -> Vec<usize> {
     diags
@@ -63,8 +82,8 @@ fn operator_dispatches_stub_typeshed_methods() {
         (
             "base.json",
             stub_file(&[op_method("+", "widget", "double")]),
-            "w1 <- list(a = 1); class(w1) <- \"widget\"\n\
-             w2 <- list(b = 2); class(w2) <- \"widget\"\n\
+            "w1 <- fixture::widget()\n\
+             w2 <- fixture::widget()\n\
              total <- w1 + w2\n",
             "total",
             Mode::Double,
@@ -81,8 +100,8 @@ fn operator_dispatches_stub_typeshed_methods() {
         (
             "base.json",
             stub_file(&[op_method("Ops", "gadget", "logical")]),
-            "g1 <- \"a\"; class(g1) <- \"gadget\"\n\
-             g2 <- \"b\"; class(g2) <- \"gadget\"\n\
+            "g1 <- fixture::gadget()\n\
+             g2 <- fixture::gadget()\n\
              merged <- g1 + g2\n",
             "merged",
             Mode::Logical,
@@ -90,7 +109,8 @@ fn operator_dispatches_stub_typeshed_methods() {
         ),
     ];
     for (file, json, src, binding, mode, dispatch_sensitive) in cases {
-        let (with, scope) = check_with_stubs(src, &[(file, &json)]);
+        let (with, scope) =
+            check_with_stubs(src, &[(file, &json), ("fixture.json", &class_factories())]);
         assert!(
             with.is_empty(),
             "the stubbed method must satisfy operator dispatch: {with:?}"
@@ -101,7 +121,7 @@ fn operator_dispatches_stub_typeshed_methods() {
             "the stub's declared shape must be applied for `{binding}`"
         );
         if dispatch_sensitive {
-            let without = check(src);
+            let (without, _) = check_with_stubs(src, &[("fixture.json", &class_factories())]);
             assert!(
                 without.iter().any(|d| d.code == "RY040"),
                 "without the stub the arithmetic rules must flag `{binding}`: {without:?}"
@@ -127,16 +147,16 @@ fn stub_default_method_does_not_hijack_operator_dispatch() {
     // accepted divergence for a pathological class name.
     let json = stub_file(&[op_method("+", "default", "opaque")]);
     let (with, _) = check_with_stubs(
-        "x <- list(); class(x) <- \"unhandled\"\ny <- x + 1\n",
-        &[("base.json", &json)],
+        "x <- fixture::unhandled()\ny <- x + 1\n",
+        &[("base.json", &json), ("fixture.json", &class_factories())],
     );
     assert!(
         with.iter().any(|d| d.code == "RY040") && with.iter().all(|d| d.code != "RY050"),
         "a stub `+.default` must neither satisfy nor report operator dispatch: {with:?}"
     );
     let (guarded, scope) = check_with_stubs(
-        "d <- 1; class(d) <- \"default\"\nout <- d + 1\n",
-        &[("base.json", &json)],
+        "d <- fixture::default_value()\nout <- d + 1\n",
+        &[("base.json", &json), ("fixture.json", &class_factories())],
     );
     assert!(
         guarded.is_empty(),

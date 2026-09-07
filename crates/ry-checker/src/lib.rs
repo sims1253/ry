@@ -290,6 +290,8 @@ pub fn builtin_environment_bindings(path: &str) -> &'static [&'static str] {
 pub struct Scope {
     undo: Vec<scope_journal::Undo>,
     snapshot_depth: usize,
+    density: Vec<HashSet<String>>,
+    detached_changes: Option<HashSet<String>>,
     pub(crate) reference_provenance: Option<Box<reference_facts::ScopeProvenance>>,
     pub bindings: HashMap<String, RType>,
     /// Names whose current binding was installed by flow narrowing rather
@@ -338,6 +340,8 @@ impl Clone for Scope {
             unreachable: self.unreachable,
             undo: Vec::new(),
             snapshot_depth: 0,
+            density: Vec::new(),
+            detached_changes: None,
         }
     }
 }

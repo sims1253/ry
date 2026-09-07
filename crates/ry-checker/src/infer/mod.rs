@@ -793,6 +793,38 @@ impl Checker {
         }
     }
 
+    fn walk_adaptive_branch(
+        &mut self,
+        scope: &mut Scope,
+        narrowing: &Narrowing,
+        branch: NarrowingBranch,
+        statements: &[Stmt],
+        narrowed: &mut HashSet<String>,
+        mut returns: Option<&mut Vec<RType>>,
+    ) -> crate::scope_journal::BranchDelta {
+        let mut mark = Some(scope.begin_snapshot());
+        if let Some(name) = apply_narrowing_branch(scope, narrowing, branch) {
+            narrowed.insert(name.to_string());
+        }
+        let mut detached = None;
+        for statement in statements {
+            if let Some(branch) = detached.as_mut() {
+                self.walk_stmt(statement, branch, returns.as_deref_mut());
+            } else {
+                self.walk_stmt(statement, scope, returns.as_deref_mut());
+                // All child marks have finished. No inference or diagnostics replay.
+                if scope.should_detach() {
+                    detached = Some(scope.detach_snapshot(mark.take().unwrap()));
+                }
+            }
+        }
+        if let Some(branch) = detached {
+            branch.finish_detached()
+        } else {
+            scope.finish_snapshot(mark.unwrap())
+        }
+    }
+
     fn walk_journal_if(
         &mut self,
         scope: &mut Scope,
@@ -802,31 +834,29 @@ impl Checker {
         mut returns: Option<&mut Vec<RType>>,
     ) {
         let mut narrowed = HashSet::new();
-        let mark = scope.begin_snapshot();
-        if let Some(name) = apply_narrowing_branch(scope, narrowing, NarrowingBranch::Then) {
-            narrowed.insert(name.to_string());
-        }
-        for statement in then {
-            self.walk_stmt(statement, scope, returns.as_deref_mut());
-        }
-        let then_delta = scope.finish_snapshot(mark);
-        let mark = scope.begin_snapshot();
-        if let Some(name) = apply_narrowing_branch(scope, narrowing, NarrowingBranch::Else) {
-            narrowed.insert(name.to_string());
-        }
-        if let Some(statements) = else_ {
-            for statement in statements {
-                self.walk_stmt(statement, scope, returns.as_deref_mut());
-            }
-        }
-        let else_delta = scope.finish_snapshot(mark);
+        let then_delta = self.walk_adaptive_branch(
+            scope,
+            narrowing,
+            NarrowingBranch::Then,
+            then,
+            &mut narrowed,
+            returns.as_deref_mut(),
+        );
+        let else_delta = self.walk_adaptive_branch(
+            scope,
+            narrowing,
+            NarrowingBranch::Else,
+            else_.unwrap_or(&[]),
+            &mut narrowed,
+            returns.as_deref_mut(),
+        );
         let has_else = else_.is_some();
         let then_reaches = !then_delta.unreachable;
         let else_reaches = has_else && !else_delta.unreachable;
         let candidates: HashSet<_> = then_delta
-            .changed
-            .keys()
-            .chain(else_delta.changed.keys())
+            .names
+            .iter()
+            .chain(else_delta.names.iter())
             .collect();
         let mut changes = Vec::new();
         for name in candidates {

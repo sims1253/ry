@@ -149,6 +149,8 @@ pub(crate) struct Mark {
 
 pub(crate) struct BranchDelta {
     pub changed: HashMap<String, BindingState>,
+    pub names: HashSet<String>,
+    owned: Option<Box<Scope>>,
     pub unreachable: bool,
 }
 
@@ -161,6 +163,14 @@ pub(crate) struct BindingView<'a> {
 
 impl BranchDelta {
     pub fn binding<'a>(&'a self, base: &'a Scope, name: &str) -> BindingView<'a> {
+        if let Some(scope) = &self.owned {
+            return BindingView {
+                ty: scope.get(name),
+                narrowed: scope.narrowed_bindings.contains(name),
+                list_origin: scope.has_list_origin(name),
+                default_parameter: scope.is_default_parameter(name),
+            };
+        }
         if let Some(state) = self.changed.get(name) {
             BindingView {
                 ty: state.ty.as_ref(),
@@ -205,6 +215,15 @@ impl Scope {
             self.bindings.insert(name, ty);
             return;
         }
+        if !(self.snapshot_depth == 1 && self.detached_changes.is_some())
+            && let Some(names) = self.density.last_mut()
+        {
+            names.insert(name.clone());
+        }
+        if self.track_detached(&name) {
+            self.bindings.insert(name, ty);
+            return;
+        }
         let previous = self.bindings.insert(name.clone(), ty);
         self.undo.push(Undo::Assignment(
             name,
@@ -218,7 +237,7 @@ impl Scope {
     }
 
     pub(crate) fn begin_binding_change(&mut self, name: &str) -> Option<usize> {
-        if self.snapshot_depth == 0 {
+        if self.track_detached(name) || self.snapshot_depth == 0 {
             return None;
         }
         let index = self.undo.len();
@@ -238,6 +257,9 @@ impl Scope {
     }
 
     pub(crate) fn journal_binding(&mut self, name: &str) {
+        if self.track_detached(name) {
+            return;
+        }
         if self.snapshot_depth > 0 {
             self.undo.push(Undo::Binding(
                 name.to_string(),
@@ -247,6 +269,9 @@ impl Scope {
     }
 
     pub(crate) fn journal_marker(&mut self, name: &str, kind: MarkerKind) {
+        if self.track_detached(name) {
+            return;
+        }
         if self.snapshot_depth > 0 {
             let present = match kind {
                 MarkerKind::ListOrigin => self.list_origin_bindings.contains(name),
@@ -259,6 +284,9 @@ impl Scope {
     }
 
     pub(crate) fn journal_alias(&mut self, name: &str) {
+        if self.track_detached(name) {
+            return;
+        }
         if self.snapshot_depth > 0 {
             self.undo.push(Undo::Alias(
                 name.to_string(),
@@ -268,6 +296,9 @@ impl Scope {
     }
 
     pub(crate) fn journal_reference_binding(&mut self, name: &str) {
+        if self.track_detached(name) {
+            return;
+        }
         if self.snapshot_depth > 0 {
             self.undo.push(Undo::Reference(
                 name.to_string(),
@@ -280,7 +311,9 @@ impl Scope {
 
     pub(crate) fn clear_reference_bindings(&mut self) {
         if let Some(provenance) = self.reference_provenance.as_mut() {
-            if self.snapshot_depth > 0 {
+            if self.snapshot_depth > 0
+                && !(self.snapshot_depth == 1 && self.detached_changes.is_some())
+            {
                 self.undo
                     .push(Undo::Provenance(std::mem::take(&mut provenance.bindings)));
             } else {
@@ -291,6 +324,7 @@ impl Scope {
 
     pub(crate) fn begin_snapshot(&mut self) -> Mark {
         self.snapshot_depth += 1;
+        self.density.push(HashSet::new());
         Mark {
             len: self.undo.len(),
             data_mask_unknown: self.data_mask_unknown,
@@ -320,6 +354,8 @@ impl Scope {
         }
         let delta = BranchDelta {
             unreachable: self.unreachable,
+            names: names.clone(),
+            owned: None,
             changed: names
                 .into_iter()
                 .map(|name| {
@@ -328,6 +364,22 @@ impl Scope {
                 })
                 .collect(),
         };
+        self.rollback_snapshot(mark);
+        delta
+    }
+
+    fn track_detached(&mut self, name: &str) -> bool {
+        if self.snapshot_depth == 1
+            && let Some(names) = self.detached_changes.as_mut()
+        {
+            names.insert(name.to_string());
+            true
+        } else {
+            false
+        }
+    }
+
+    fn rollback_snapshot(&mut self, mark: Mark) {
         while self.undo.len() > mark.len {
             match self.undo.pop().unwrap() {
                 Undo::Assignment(name, state) => state.restore(self, name),
@@ -386,7 +438,62 @@ impl Scope {
             }
         }
         self.snapshot_depth -= 1;
-        delta
+        self.density.pop();
+    }
+
+    pub(crate) fn should_detach(&self) -> bool {
+        // HashMap::clone copies spare capacity too. Charge all copied containers,
+        // not just the main bindings table, against distinct actual assignments.
+        let capacity = self.bindings.capacity()
+            + self.narrowed_bindings.capacity()
+            + self.parameter_bindings.capacity()
+            + self.list_origin_bindings.capacity()
+            + self.default_parameter_bindings.capacity()
+            + self.lexical_functions.capacity()
+            + self.function_aliases.capacity()
+            + self
+                .reference_provenance
+                .as_ref()
+                .map_or(0, |p| p.bindings.capacity());
+        self.density
+            .last()
+            .is_some_and(|names| names.len().saturating_mul(4) >= capacity.max(1))
+    }
+
+    pub(crate) fn detach_snapshot(&mut self, mark: Mark) -> Scope {
+        let mut branch = self.clone();
+        let mut names = HashSet::new();
+        for undo in &self.undo[mark.len..] {
+            match undo {
+                Undo::Assignment(name, _)
+                | Undo::Binding(name, _)
+                | Undo::Marker(_, name, _)
+                | Undo::Alias(name, _)
+                | Undo::Reference(name, _) => {
+                    names.insert(name.clone());
+                }
+                Undo::Provenance(_) => {}
+            }
+        }
+        self.rollback_snapshot(mark);
+        branch.snapshot_depth = 1;
+        branch.density.push(HashSet::new());
+        branch.detached_changes = Some(names);
+        branch
+    }
+
+    pub(crate) fn finish_detached(mut self) -> BranchDelta {
+        debug_assert_eq!(self.snapshot_depth, 1);
+        debug_assert!(self.undo.is_empty());
+        let names = self.detached_changes.take().unwrap();
+        self.snapshot_depth = 0;
+        self.density.clear();
+        BranchDelta {
+            names,
+            changed: HashMap::new(),
+            unreachable: self.unreachable,
+            owned: Some(Box::new(self)),
+        }
     }
 
     pub(crate) fn replace_binding_only(&mut self, name: &str, ty: Option<RType>) -> Option<RType> {
@@ -402,6 +509,59 @@ impl Scope {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detached_branch_restores_parent_and_preserves_nested_changes() {
+        let mut scope = Scope::default();
+        scope.insert("x", RType::scalar(Mode::Integer));
+        scope.insert("y", RType::scalar(Mode::Integer));
+        scope.mark_list_origin("x");
+        let initial = format!("{:?}", scope.clone());
+        let outer = scope.begin_snapshot();
+        scope.insert("y", RType::scalar(Mode::Logical));
+        let outer_state = format!("{:?}", scope.clone());
+        let inner = scope.begin_snapshot();
+        scope.insert("x", RType::scalar(Mode::Character));
+        let mut branch = scope.detach_snapshot(inner);
+        assert_eq!(format!("{:?}", scope.clone()), outer_state);
+        branch.insert("new", RType::scalar(Mode::Double));
+        branch.set_function_alias("new", "callee".into());
+        branch.mark_list_origin("new");
+        let child = branch.begin_snapshot();
+        branch.insert("new", RType::scalar(Mode::Logical));
+        branch.finish_snapshot(child);
+        assert_eq!(branch.get("new").unwrap().mode, Mode::Double);
+        let delta = branch.finish_detached();
+        assert!(delta.names.contains("x"));
+        assert!(delta.names.contains("new"));
+        assert!(!delta.names.contains("y"));
+        assert_eq!(delta.binding(&scope, "new").ty.unwrap().mode, Mode::Double);
+        assert!(delta.binding(&scope, "new").list_origin);
+        scope.finish_snapshot(outer);
+        assert_eq!(format!("{:?}", scope), initial);
+    }
+
+    #[test]
+    fn sparse_capacity_and_repeated_assignments_do_not_trigger_conversion() {
+        let mut scope = Scope::default();
+        scope.bindings.reserve(8192);
+        scope.insert("x", RType::scalar(Mode::Integer));
+        let mark = scope.begin_snapshot();
+        for index in 0..100 {
+            scope.insert(
+                "x",
+                RType::scalar(if index % 2 == 0 {
+                    Mode::Character
+                } else {
+                    Mode::Integer
+                }),
+            );
+        }
+        assert_eq!(scope.density.last().unwrap().len(), 1);
+        assert!(!scope.should_detach());
+        scope.finish_snapshot(mark);
+        assert_eq!(scope.get("x").unwrap().mode, Mode::Integer);
+    }
 
     #[test]
     fn assignment_undo_restores_interleaved_metadata_and_skips_only_full_noops() {

@@ -93,7 +93,7 @@ All notable changes to ry are documented in this file.
 
 ### Changed
 
-- Use the published tree-sitter-r grammar instead of a vendored patch. Valid R
+- Use the published tree-sitter-r grammar instead of a vendored patch. Valid R code
   with spaces, newlines, or comments between double-subscript closing brackets
   (such as `x[[i] ]`) is a known parser limitation again; use `x[[i]]` instead.
 

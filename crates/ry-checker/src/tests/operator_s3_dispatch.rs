@@ -63,8 +63,8 @@ fn operator_dispatches_stub_typeshed_methods() {
         (
             "base.json",
             stub_file(&[op_method("+", "widget", "double")]),
-            "w1 <- structure(list(a = 1), class = \"widget\")\n\
-             w2 <- structure(list(b = 2), class = \"widget\")\n\
+            "w1 <- list(a = 1); class(w1) <- \"widget\"\n\
+             w2 <- list(b = 2); class(w2) <- \"widget\"\n\
              total <- w1 + w2\n",
             "total",
             Mode::Double,
@@ -81,8 +81,8 @@ fn operator_dispatches_stub_typeshed_methods() {
         (
             "base.json",
             stub_file(&[op_method("Ops", "gadget", "logical")]),
-            "g1 <- structure(\"a\", class = \"gadget\")\n\
-             g2 <- structure(\"b\", class = \"gadget\")\n\
+            "g1 <- \"a\"; class(g1) <- \"gadget\"\n\
+             g2 <- \"b\"; class(g2) <- \"gadget\"\n\
              merged <- g1 + g2\n",
             "merged",
             Mode::Logical,
@@ -127,7 +127,7 @@ fn stub_default_method_does_not_hijack_operator_dispatch() {
     // accepted divergence for a pathological class name.
     let json = stub_file(&[op_method("+", "default", "opaque")]);
     let (with, _) = check_with_stubs(
-        "x <- structure(list(), class = \"unhandled\")\ny <- x + 1\n",
+        "x <- list(); class(x) <- \"unhandled\"\ny <- x + 1\n",
         &[("base.json", &json)],
     );
     assert!(
@@ -348,7 +348,7 @@ fn opaque_custom_group_winner_keeps_result_unknown() {
         let source = format!(
             "{attachment}`+.parent` <- function(e1, e2) 1L\n\
              `-.parent` <- function(e1, e2) 1L\n\
-             x <- structure(list(), class = c('custom', 'parent'))\n\
+             x <- list(); class(x) <- c('custom', 'parent')\n\
              left <- x + 1\nright <- 1 + x\nnegated <- -x\n"
         );
         let (diagnostics, scope) = check_with_stubs(&source, &[(file, &json)]);

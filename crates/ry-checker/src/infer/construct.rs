@@ -17,8 +17,16 @@ impl Checker {
         //   * `class = c("a", "b", ...)` attaches a class vector.
         // Non-literal or unparseable forms fall through to opaque
         // inference with `ClassVector::unknown()` so RY050 stays quiet.
-        if semantic_name == "structure" {
-            return Some(self.infer_structure_call(args, scope));
+        if lookup_name == "structure" && !self.user_stubs.contains_key("base") {
+            if self.resolves_to_base(semantic_name, scope) {
+                return Some(self.infer_structure_call(args, scope));
+            }
+            if self.resolves_to_base_lenient(semantic_name, scope) {
+                // The search path may provide an arbitrary callable. Do not
+                // recover payload facts from the embedded base stub, or force
+                // arguments that this unresolved callable might quote.
+                return Some(RType::unknown());
+            }
         }
         // `factor(x)` returns an integer vector with class "factor".
         // (And often also "ordered" if `ordered = TRUE`, but we keep v1
@@ -49,52 +57,119 @@ impl Checker {
         None
     }
 
-    /// Infer the type of `structure(x, class = "...")`. We model only
-    /// the literal class forms; everything else returns the first
-    /// argument's type with `ClassVector::unknown()` (so we neither lie
-    /// about a class nor spuriously trigger RY050). The base value is the
-    /// first positional or `x =` argument; later candidates are inferred
-    /// for diagnostics only.
-    ///
-    /// The base value's column schema is preserved: `RType::with_class`
-    /// is `RType { class, ..self }`, so a `structure(list(a = 1L),
-    /// class = "foo")` call yields a value whose columns are still
-    /// `[("a", integer<1>)]` and whose class is `["foo"]`. This lets
-    /// `$a` resolve correctly on user-defined classes built on top of
-    /// a list-shaped payload.
+    /// Preserve the `.Data` payload under a literal class attachment. Match
+    /// the real formal before inspecting attributes, so an opaque payload
+    /// cannot be replaced by a later positional argument.
     pub(crate) fn infer_structure_call(&mut self, args: &[Arg], scope: &mut Scope) -> RType {
-        let mut base_type = RType::unknown();
-        let mut class_expr: Option<&Expr> = None;
-        for a in args {
-            if matches!(a.name.as_deref(), Some("class")) {
-                class_expr = Some(&a.value);
+        let matched = match_argument_names(
+            &[".Data", "..."],
+            args.iter()
+                .map(|arg| arg.name.as_deref().map(semantic_argument_name)),
+        );
+        let Some(payload) = matched.arg_for_param(0) else {
+            self.infer_args_for_diagnostics(args, scope);
+            return RType::unknown();
+        };
+        let exact_payloads = args
+            .iter()
+            .filter(|arg| arg.name.as_deref().map(semantic_argument_name) == Some(".Data"))
+            .count();
+        let partial_payloads = args
+            .iter()
+            .filter(|arg| {
+                arg.name
+                    .as_deref()
+                    .map(semantic_argument_name)
+                    .is_some_and(|name| !name.is_empty() && ".Data".starts_with(name))
+            })
+            .count();
+        // The matcher tolerates duplicate names for ordinary diagnostics;
+        // constructor facts must not pick one side of an invalid binding.
+        if exact_payloads > 1
+            || (exact_payloads == 0 && partial_payloads > 1)
+            || args.iter().enumerate().any(|(index, arg)| {
+                matches!(&arg.value, Expr::Ident { name, .. } if name == "...")
+                    || matches!(&arg.value, Expr::Unknown(_))
+                    || (index != payload && arg.name.is_none())
+            })
+        {
+            self.infer_args_for_diagnostics(args, scope);
+            return RType::unknown();
+        }
+        // R forces .Data before constructing list(...), even when its named
+        // actual occurs after attributes in source order.
+        let mut base_type = self.infer(&args[payload].value, scope);
+        if base_type.mode == Mode::Null {
+            return RType::unknown();
+        }
+        let mut class_literal = None;
+        let mut clear_class = false;
+        let mut repeated_class = false;
+        for (index, arg) in args.iter().enumerate() {
+            if index == payload {
                 continue;
             }
-            let is_base = matches!(a.name.as_deref(), None | Some("x"))
-                && matches!(base_type.mode, Mode::Opaque);
-            if is_base {
-                base_type = self.infer(&a.value, scope);
-            } else {
-                let _ = self.infer(&a.value, scope);
-            }
-        }
-        if let Some(ce) = class_expr {
-            match parse_class_literal(ce) {
-                ClassLiteral::Single(name) => {
-                    return base_type.with_class(ClassVector::single(&name));
+            match arg.name.as_deref().map(semantic_argument_name) {
+                Some("names" | ".Names") => base_type.columns = None,
+                Some("class") => {
+                    repeated_class |= class_literal.is_some();
+                    // Resolve c before evaluating this argument can change
+                    // the scope, but after earlier attributes have run.
+                    class_literal = Some(self.structure_class_literal(&arg.value, scope));
+                    clear_class = matches!(&arg.value, Expr::Null(_));
                 }
+                _ => {}
+            }
+            self.infer(&arg.value, scope);
+        }
+        if repeated_class {
+            return RType::unknown();
+        }
+        if clear_class {
+            return base_type.with_class(ClassVector::empty());
+        }
+        if let Some(class_literal) = class_literal {
+            let class = match class_literal {
+                ClassLiteral::Single(name) => ClassVector::single(&name),
                 ClassLiteral::Multi(names) => {
                     let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
-                    return base_type.with_class(ClassVector::from_slice(&refs));
+                    ClassVector::from_slice(&refs)
                 }
-                ClassLiteral::Unknown => {
-                    // Class is dynamic; keep base type but mark class as
-                    // undetermined so RY050 stays quiet.
-                    return base_type.with_class(ClassVector::unknown());
-                }
+                ClassLiteral::Unknown => ClassVector::unknown(),
+            };
+            if class.contains("factor") && base_type.mode == Mode::Double {
+                base_type.mode = Mode::Integer;
             }
+            return base_type.with_class(class);
         }
         base_type
+    }
+
+    fn structure_class_literal(&self, expr: &Expr, scope: &Scope) -> ClassLiteral {
+        let Expr::Call { func, args, .. } = expr else {
+            return parse_class_literal(expr);
+        };
+        let Some(name) = ident_name(func) else {
+            return ClassLiteral::Unknown;
+        };
+        let semantic_name = scope.function_alias(name).unwrap_or(name);
+        if crate::semantic_lists::bare_name(semantic_name) != "c"
+            || !self.resolves_to_base(semantic_name, scope)
+            || args.iter().any(|arg| arg.name.is_some())
+        {
+            return ClassLiteral::Unknown;
+        }
+        let names: Option<Vec<_>> = args
+            .iter()
+            .map(|arg| match &arg.value {
+                Expr::String(name, _) => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+        match names {
+            Some(names) if !names.is_empty() => ClassLiteral::Multi(names),
+            _ => ClassLiteral::Unknown,
+        }
     }
 
     /// The atomic-constructor stage of `infer_call`: `c`, `list`,

@@ -33,6 +33,8 @@ audit records summarized in [`pre-governance-measurement.md`](pre-governance-mea
 
 The [instruction baseline](instructions-baseline.json) records the fixed performance
 sample. See the [measurement guide](instructions.md) for local runs and CI deltas.
+The [statement-branch journal](scope-journal.md) records the production design
+and its allocation measurements.
 The [scope storage experiments](scope-journal-experiment.md) record journal
 tradeoffs and persistent-map measurements for issue #130.
 

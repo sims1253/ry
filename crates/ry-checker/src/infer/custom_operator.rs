@@ -32,9 +32,7 @@ impl Checker {
             _ => return None,
         };
         let names = [symbol, quoted];
-        let escaped = self.fn_table.has_escaped_binding_names
-            || self.fn_table.has_escaped_operator_names
-            || self.escaped_operator_bindings;
+        let escaped = self.fn_table.has_escaped_operator_names || self.escaped_operator_bindings;
         let local = names.iter().find_map(|name| scope.get(name));
         let project_function = names
             .iter()
@@ -88,12 +86,12 @@ pub(crate) fn has_escaped_names(stmts: &[Stmt]) -> bool {
     walk_stmts(stmts, Walk::ALL, |node, _| {
         let escaped = match node {
             AstNode::Expr(Expr::Ident { name, .. }) | AstNode::Stmt(Stmt::For { name, .. }) => {
-                name.contains('\\')
+                escaped_name_may_mask_operator(name)
             }
             AstNode::Expr(Expr::Function { params, .. })
-            | AstNode::Stmt(Stmt::FunctionDef { params, .. }) => {
-                params.iter().any(|param| param.name.contains('\\'))
-            }
+            | AstNode::Stmt(Stmt::FunctionDef { params, .. }) => params
+                .iter()
+                .any(|param| escaped_name_may_mask_operator(&param.name)),
             _ => false,
         };
         if escaped {
@@ -103,4 +101,19 @@ pub(crate) fn has_escaped_names(stmts: &[Stmt]) -> bool {
         }
     })
     .is_break()
+}
+
+/// Escapes cannot erase a literal prefix. If no modeled operator starts with
+/// that prefix, the name cannot replace one, regardless of how escapes decode.
+/// Empty/compatible prefixes stay unknown; this is deliberately not a decoder.
+pub(crate) fn escaped_name_may_mask_operator(name: &str) -> bool {
+    let name = semantic_argument_name(name);
+    let Some((prefix, _)) = name.split_once('\\') else {
+        return false;
+    };
+    [
+        "+", "-", "*", "/", "^", "%%", "%/%", "<", "<=", ">", ">=", "==", "!=", "&", "|",
+    ]
+    .iter()
+    .any(|operator| operator.starts_with(prefix))
 }

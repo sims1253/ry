@@ -22,8 +22,8 @@ method <- function(e1, e2) "same"
 same <- x + y
 stopifnot(identical(same, "same"))
 
-# Default fallback remains unknown in ry: arithmetic and comparison have
-# different class propagation, and neither invokes the selected S3 methods.
+# Arithmetic and comparison fallback have different class propagation;
+# neither invokes the rejected S3 methods.
 `+.left` <- function(e1, e2) "left"
 `+.right` <- function(e1, e2) 1L
 `==.left` <- function(e1, e2) TRUE

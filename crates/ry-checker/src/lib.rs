@@ -828,7 +828,7 @@ impl Checker {
             .external_bindings
             .iter()
             .chain(self.imported_from.keys())
-            .any(|name| name.contains('\\'));
+            .any(|name| infer::custom_operator::escaped_name_may_mask_operator(name));
         self.diagnostics.clear();
         self.fn_table = Arc::new(FnTable::default());
         self.return_slots = Arc::new(ReturnSlots::default());
@@ -1029,7 +1029,7 @@ impl Checker {
             .external_bindings
             .iter()
             .chain(self.imported_from.keys())
-            .any(|name| name.contains('\\'));
+            .any(|name| infer::custom_operator::escaped_name_may_mask_operator(name));
         if let Some(types) = &mut self.assignment_types {
             types.clear();
         }

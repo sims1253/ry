@@ -57,6 +57,8 @@ impl Checker {
         if let Some(name) = binding_name(target) {
             let table = Arc::make_mut(&mut self.fn_table);
             table.has_escaped_binding_names |= name.contains('\\');
+            table.has_escaped_operator_names |=
+                custom_operator::escaped_name_may_mask_operator(name);
             table.known_vars.insert(name.to_string());
             if is_callable_object_constructor(value) {
                 table.callable_vars.insert(name.to_string());
@@ -129,6 +131,8 @@ impl Checker {
                             for declared in string_literals(&first.value) {
                                 let table = Arc::make_mut(&mut self.fn_table);
                                 table.has_escaped_binding_names |= declared.contains('\\');
+                                table.has_escaped_operator_names |=
+                                    custom_operator::escaped_name_may_mask_operator(&declared);
                                 table.known_vars.insert(declared);
                             }
                         }
@@ -147,6 +151,7 @@ impl Checker {
                     {
                         let table = Arc::make_mut(&mut self.fn_table);
                         table.has_escaped_binding_names |= binding.contains('\\');
+                        table.has_escaped_operator_names |= custom_operator::escaped_name_may_mask_operator(binding);
                         table.known_vars.insert(binding.to_string());
                     }
                     self.collect_s4_call(bare, args);
@@ -176,6 +181,8 @@ impl Checker {
                 if let Some(generic) = args.first().and_then(|arg| string_literal(&arg.value)) {
                     let table = Arc::make_mut(&mut self.fn_table);
                     table.has_escaped_binding_names |= generic.contains('\\');
+                    table.has_escaped_operator_names |=
+                        custom_operator::escaped_name_may_mask_operator(generic);
                     table.known_vars.insert(generic.to_string());
                 }
             }
@@ -307,6 +314,8 @@ impl Checker {
         let body: Arc<[Stmt]> = Arc::from(body);
         let fn_table = Arc::make_mut(&mut self.fn_table);
         fn_table.has_escaped_binding_names |= name.contains('\\');
+        fn_table.has_escaped_operator_names |=
+            custom_operator::escaped_name_may_mask_operator(&name);
         let prev = fn_table.fns.insert(
             name.clone(),
             UserFn {

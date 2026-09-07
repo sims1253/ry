@@ -923,6 +923,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_s3_operator_absence_arithmetic.R
 - diagnostics: []
+  fixture: ok_s3_same_ops_method.R
+- diagnostics: []
   fixture: ok_s4_terra_named_vector.R
 - diagnostics: []
   fixture: ok_s7_class_callable.R
@@ -1236,6 +1238,16 @@ expression: snapshots
         line: 8
         start: 497
   fixture: warn_position_condition.R
+- diagnostics:
+    - code: RY051
+      message: "incompatible S3 methods `+.left` and `+.right` for `+`; R uses the primitive operator"
+      severity: warning
+      span:
+        column: 7
+        end: 258
+        line: 7
+        start: 253
+  fixture: warn_s3_incompatible_ops.R
 - diagnostics:
     - code: RY002
       message: "`if` condition has length 2; R requires a length-1 condition"

@@ -401,7 +401,7 @@ fn literal_ops_choosers_follow_scoped_values_and_reverse_order() {
         ),
         (
             "chooseOpsMethod.left <- function(...) FALSE\nchooseOpsMethod.right <- function(...) FALSE",
-            Mode::Opaque,
+            Mode::Double,
         ),
         ("chooseOpsMethod.right <- function(...) TRUE", Mode::Opaque),
         (

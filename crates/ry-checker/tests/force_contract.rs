@@ -239,3 +239,13 @@ fn unknown_column_selection_does_not_guarantee_a_loop_body_force() {
     "#;
     assert_eq!(recursive_warnings(source, BTreeMap::new()), 0);
 }
+
+#[test]
+fn opaque_conditions_remain_barriers_even_when_all_branches_read_default() {
+    for source in [
+        "f <- function(flag, x = if (flag) x else x) base::force(x)",
+        "f <- function(flag, x = flag && x || x) base::force(x)",
+    ] {
+        assert_eq!(recursive_warnings(source, BTreeMap::new()), 0, "{source}");
+    }
+}

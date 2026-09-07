@@ -105,3 +105,7 @@ select_columns <- function(data = data, classes = classes) {
     classes
 }
 stopifnot(identical(select_columns(classes = c(a = "integer")), c(a = "integer")))
+# Reading the condition promise can replace x before either branch reads it.
+both_branches <- function(flag = { x <- 1L; TRUE }, x = if (flag) x else x) base::force(x)
+logical_paths <- function(flag = { x <- TRUE; FALSE }, x = flag && x || x) base::force(x)
+stopifnot(identical(both_branches(), 1L), identical(logical_paths(), TRUE))

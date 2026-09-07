@@ -483,6 +483,8 @@ fn first_executed_identifier(checker: &Checker, expr: &Expr, wanted: &str) -> Op
         Expr::UnaryOp { expr, .. } => first_executed_identifier(checker, expr, wanted),
         Expr::Index { base, .. } => first_executed_identifier(checker, base, wanted),
         Expr::Block { body, .. } => first_executed_identifier_in_stmts(checker, body, wanted),
+        // An unknown condition can replace the binding through another promise.
+        // Keep both branches opaque even when both syntactically read `wanted`.
         Expr::If {
             cond, then, else_, ..
         } => match cond.as_ref() {

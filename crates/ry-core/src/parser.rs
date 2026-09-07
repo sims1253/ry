@@ -340,16 +340,26 @@ impl RParser {
                 let raw = text(n, src)?;
                 let stripped = raw.trim_end_matches('L').trim_end_matches('l');
                 let span = self.span(n);
-                // Integer literals that don't fit `i64` (e.g. `1e5L`,
-                // `0x10L` for non-hex, very large values) must NOT vanish
-                // via `?`-propagation and take the enclosing statement
-                // with them. Fall back to a double, then to `Unknown`.
-                if let Ok(v) = stripped.parse::<i64>() {
-                    Some(Expr::Integer(v, span))
-                } else if let Ok(d) = stripped.parse::<f64>() {
-                    Some(Expr::Double(d, span))
+                // L requests R's 32-bit integer storage. Fractional and
+                // out-of-range values remain doubles, even with this suffix.
+                let value = if let Some(hex) = stripped
+                    .strip_prefix("0x")
+                    .or_else(|| stripped.strip_prefix("0X"))
+                {
+                    u64::from_str_radix(hex, 16).ok().map(|value| value as f64)
                 } else {
-                    Some(Expr::Unknown(span))
+                    stripped.parse::<f64>().ok()
+                };
+                match value {
+                    Some(value)
+                        if (0.0..=i32::MAX as f64).contains(&value) && value.fract() == 0.0 =>
+                    {
+                        Some(Expr::Integer(value as i64, span))
+                    }
+                    Some(value) => Some(Expr::Double(value, span)),
+                    // Unsupported numeric spellings must preserve the enclosing
+                    // statement rather than disappear through ? propagation.
+                    None => Some(Expr::Unknown(span)),
                 }
             }
             "float" | "nan" | "inf" => {

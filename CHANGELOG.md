@@ -42,6 +42,9 @@ All notable changes to ry are documented in this file.
   column-access errors when later classes define another operator method.
   Keep custom opaque method results unknown.
 
+- Parse exponent and hexadecimal integer literals with their values, and use
+  double storage when an `L`-suffixed value exceeds R's integer range.
+
 ### Cleanup
 
 - Refine only affected functions after edits, using observed callable reads and

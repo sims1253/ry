@@ -869,7 +869,8 @@ fn first_parameter_use_in_expr(expression: &Expr, parameter: &str) -> Option<Fir
         | Expr::String(_, _)
         | Expr::Null(_)
         | Expr::Na(_, _)
-        | Expr::Unknown(_) => None,
+        | Expr::Unknown(_)
+        | Expr::Missing(_) => None,
     }
 }
 
@@ -1035,7 +1036,8 @@ fn expression_must_force(expression: &Expr, name: &str) -> bool {
         | Expr::String(_, _)
         | Expr::Null(_)
         | Expr::Na(_, _)
-        | Expr::Unknown(_) => false,
+        | Expr::Unknown(_)
+        | Expr::Missing(_) => false,
     }
 }
 

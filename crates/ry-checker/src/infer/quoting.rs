@@ -381,7 +381,7 @@ fn forced_argument<'a>(checker: &Checker, func: &Expr, args: &'a [Arg]) -> Optio
         .name
         .as_ref()
         .is_some_and(|name| !allow_named || name != param)
-        || matches!(&argument.value, Expr::Unknown(_))
+        || matches!(&argument.value, Expr::Unknown(_) | Expr::Missing(_))
         || matches!(&argument.value, Expr::Ident { name, .. } if name == "...")
     {
         return None;
@@ -504,7 +504,8 @@ fn first_executed_identifier(checker: &Checker, expr: &Expr, wanted: &str) -> Op
         | Expr::String(_, _)
         | Expr::Null(_)
         | Expr::Na(_, _)
-        | Expr::Unknown(_) => None,
+        | Expr::Unknown(_)
+        | Expr::Missing(_) => None,
     }
 }
 

@@ -61,6 +61,11 @@ EOF
 cargo run --manifest-path "$repo_root/Cargo.toml" -p ry-cli -- \
   typeshed validate "$staged"
 
+# Validation may compile ry-typeshed against the old vendor after staging.
+# Cargo checks include_str! inputs by mtime; refresh the shared embedded
+# provenance file so the next build cannot reuse that older snapshot.
+touch "$staged/SOURCE"
+
 # Both directories stay on the same filesystem. Keep the old snapshot until
 # the staged directory is installed; EXIT restores it on a failed move or a
 # handled signal. SIGKILL and power loss can still require manual recovery.

@@ -180,6 +180,17 @@ pub(crate) fn match_args_to_params(
 }
 
 impl Checker {
+    fn is_forwarded_dots(&self, argument: &Arg) -> bool {
+        let Expr::Ident { name, span } = &argument.value else {
+            return false;
+        };
+        // Lowering removes parentheses. Only the original direct symbol is
+        // expanded by R; `f((...))` passes an ordinary expression instead.
+        semantic_argument_name(name) == "..."
+            && argument.span.end == span.end
+            && self.source.get(span.start..span.end) == Some(name.as_str())
+    }
+
     /// Non-firing policy for schema calls:
     /// - RY090 stays silent for `...`, successful exact/partial matches, and
     ///   legacy inference-only signatures without completeness metadata.
@@ -297,9 +308,22 @@ impl Checker {
         if !enabled || bindings.dots.is_some() {
             return;
         }
+        let forwards_dots = args.iter().any(|argument| self.is_forwarded_dots(argument));
         for argument_index in &bindings.unmatched_named {
             let argument = &args[*argument_index];
+            // R expands the dots actuals and ignores the tag on the dots expression.
+            if self.is_forwarded_dots(argument) {
+                continue;
+            }
             let argument_name = argument.name.as_deref().unwrap_or_default();
+            // Expanded exact names can change which partial matches are valid.
+            if forwards_dots
+                && names.iter().any(|name| {
+                    semantic_argument_name(name).starts_with(semantic_argument_name(argument_name))
+                })
+            {
+                continue;
+            }
             let suggestion = closest_parameter(argument_name, names);
             let hint = suggestion
                 .map(|name| format!("; did you mean `{name}`?"))
@@ -318,11 +342,23 @@ impl Checker {
         bindings: &ArgumentMatch,
         call_span: Span,
     ) {
+        let forwards_dots = args.iter().any(|argument| self.is_forwarded_dots(argument));
         for (parameter_index, required) in required.iter().enumerate() {
-            let missing = !bindings.bound_params[parameter_index]
-                || bindings
-                    .arg_for_param(parameter_index)
-                    .is_some_and(|index| matches!(args[index].value, Expr::Missing(_)));
+            // Forwarded actuals can fill unmatched slots or change positional and
+            // partial matches. Only an exact named hole pins a missing formal.
+            let missing = if forwards_dots {
+                args.iter().any(|argument| {
+                    argument.name.as_deref().is_some_and(|name| {
+                        semantic_argument_name(name)
+                            == semantic_argument_name(names[parameter_index])
+                    }) && matches!(argument.value, Expr::Missing(_))
+                })
+            } else {
+                !bindings.bound_params[parameter_index]
+                    || bindings
+                        .arg_for_param(parameter_index)
+                        .is_some_and(|index| matches!(args[index].value, Expr::Missing(_)))
+            };
             if *required && missing {
                 self.emit(
                     Severity::Warning,

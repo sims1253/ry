@@ -848,7 +848,7 @@ impl Checker {
             NarrowingBranch::Else,
             else_.unwrap_or(&[]),
             &mut narrowed,
-            returns.as_deref_mut(),
+            returns,
         );
         let has_else = else_.is_some();
         let then_reaches = !then_delta.unreachable;

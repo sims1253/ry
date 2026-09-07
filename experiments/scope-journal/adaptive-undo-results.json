@@ -1,0 +1,133 @@
+{
+  "commit": "fad2ff06e3d23c2f8ecb98efe0546efa3f1dfbb7",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "valgrind": "valgrind-3.25.1",
+  "settings": {
+    "rayon_threads": 1,
+    "no_installed_libraries": true
+  },
+  "inputs": {
+    "sparse": {
+      "sha256": "3f0919104342b5f19a5d144e1dd36dee98239cb2bf3b8787ee4d536cac67e564",
+      "files": 1
+    },
+    "dense": {
+      "sha256": "811323d0932294376dff2f8e80eecddc55b1770efad0b6d3e8cf54e3b302e654",
+      "files": 1
+    },
+    "alternating": {
+      "sha256": "5146b6c11182f912733bf0e1f17e01a1f87b01da3ffe9eb39d6c9b6907d006ae",
+      "files": 1
+    },
+    "corpus": {
+      "sha256": "4073671d4b5cf883da6823ae6e33523d3c16bec7546460ef9c672407e3e61ea1",
+      "files": 240
+    }
+  },
+  "measurements": [
+    {
+      "workload": "sparse",
+      "tool": "callgrind",
+      "journal": false,
+      "instructions": 199294820
+    },
+    {
+      "workload": "sparse",
+      "tool": "callgrind",
+      "journal": true,
+      "instructions": 104720366
+    },
+    {
+      "workload": "sparse",
+      "tool": "dhat",
+      "journal": false,
+      "allocated_bytes": 67539087,
+      "peak_live_bytes": 23701264
+    },
+    {
+      "workload": "sparse",
+      "tool": "dhat",
+      "journal": true,
+      "allocated_bytes": 22677750,
+      "peak_live_bytes": 10821428
+    },
+    {
+      "workload": "dense",
+      "tool": "callgrind",
+      "journal": false,
+      "instructions": 1633625278
+    },
+    {
+      "workload": "dense",
+      "tool": "callgrind",
+      "journal": true,
+      "instructions": 1575380574
+    },
+    {
+      "workload": "dense",
+      "tool": "dhat",
+      "journal": false,
+      "allocated_bytes": 185605989,
+      "peak_live_bytes": 50665797
+    },
+    {
+      "workload": "dense",
+      "tool": "dhat",
+      "journal": true,
+      "allocated_bytes": 142665925,
+      "peak_live_bytes": 45266961
+    },
+    {
+      "workload": "alternating",
+      "tool": "callgrind",
+      "journal": false,
+      "instructions": 1832845875
+    },
+    {
+      "workload": "alternating",
+      "tool": "callgrind",
+      "journal": true,
+      "instructions": 2033289540
+    },
+    {
+      "workload": "alternating",
+      "tool": "dhat",
+      "journal": false,
+      "allocated_bytes": 240455513,
+      "peak_live_bytes": 50668392
+    },
+    {
+      "workload": "alternating",
+      "tool": "dhat",
+      "journal": true,
+      "allocated_bytes": 261373739,
+      "peak_live_bytes": 47348703
+    },
+    {
+      "workload": "corpus",
+      "tool": "callgrind",
+      "journal": false,
+      "instructions": 197933518
+    },
+    {
+      "workload": "corpus",
+      "tool": "callgrind",
+      "journal": true,
+      "instructions": 197364877
+    },
+    {
+      "workload": "corpus",
+      "tool": "dhat",
+      "journal": false,
+      "allocated_bytes": 31029221,
+      "peak_live_bytes": 12217222
+    },
+    {
+      "workload": "corpus",
+      "tool": "dhat",
+      "journal": true,
+      "allocated_bytes": 30851750,
+      "peak_live_bytes": 12217222
+    }
+  ]
+}

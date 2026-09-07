@@ -151,10 +151,6 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
-- Select only the executed alternative for proved base `switch` calls with
-  literal scalar selectors, preserving missing fallthrough and caller assignments.
-  Dynamic selectors and custom-call argument laziness remain outside this model.
-
 - Decode adjacent high/low Unicode surrogate escapes as a single UTF-8 scalar,
   while retaining raw recovery text for unpaired or malformed surrogates.
 
@@ -248,6 +244,10 @@ All notable changes to ry are documented in this file.
 
 - Avoid RY098 warnings for recursive names in default expressions when literal
   `if` conditions or short-circuit operators skip their evaluation.
+
+- Select only the executed alternative for proved base `switch` calls with
+  literal scalar selectors, preserving missing fallthrough and caller assignments.
+  Dynamic selectors and custom-call argument laziness remain outside this model.
 
 - Correct typed purrr multi-input map results and remove an unsupported scalar-length fallback. Await the mirai oracle result before shutting down its daemons.
 

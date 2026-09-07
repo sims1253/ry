@@ -12,6 +12,9 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Infer double results for primitive division and powers of integers. Reject
+  complex remainder and integer division only when both operands are nonempty.
+
 - Refresh incremental diagnostics when a callback changes, including callbacks
   passed as values and their downstream callers.
 

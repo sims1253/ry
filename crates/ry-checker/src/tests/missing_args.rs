@@ -86,3 +86,38 @@ fn omitted_initializer_actual_cannot_prove_an_s4_instance() {
     assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque);
     assert!(!scope.get("out").unwrap().class.contains("Widget"));
 }
+
+#[test]
+fn printf_arity_counts_supplied_values_without_shifting_format_references() {
+    for source in [
+        "sprintf('%d %d', , 1L)",
+        "sprintf('%d %d', 1L, )",
+        "gettextf('%d %d', , 1L)",
+    ] {
+        let diagnostics = check(source);
+        let diagnostic = diagnostics
+            .iter()
+            .find(|d| d.code == "RY094")
+            .unwrap_or_else(|| panic!("{source}: {diagnostics:?}"));
+        assert!(
+            diagnostic.message.contains("but 1 provided"),
+            "{diagnostic:?}"
+        );
+    }
+    // Positional references and star widths have never been part of the
+    // count-only contract. One ordinary conversion still has one supplied
+    // value despite an extra empty slot; diagnosing that slot is separate.
+    for source in [
+        "sprintf('%2$d', , 1L)",
+        "sprintf('%1$d', , 1L)",
+        "sprintf('%*d', , 1L)",
+        "sprintf('%d', 1L, )",
+        "sprintf('%d %d', 1L, 2L)",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            !diagnostics.iter().any(|d| d.code == "RY094"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}

@@ -180,7 +180,7 @@ pub(crate) fn match_args_to_params(
 }
 
 impl Checker {
-    fn is_forwarded_dots(&self, argument: &Arg) -> bool {
+    pub(crate) fn is_forwarded_dots(&self, argument: &Arg) -> bool {
         let Expr::Ident { name, span } = &argument.value else {
             return false;
         };

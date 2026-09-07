@@ -412,7 +412,7 @@ impl Checker {
         // than recursing from the enclosing `if`) reports each site exactly
         // once no matter how the operators nest.
         self.check_class_equality_operand(lhs, scope);
-        let lt = self.infer(lhs, scope);
+        let lt = self.infer_boolean_operand(lhs, scope);
         let narrowing = self.extract_type_narrowing(lhs, scope);
         let rhs_parameter_vector = self.short_circuit_parameter_vector(op, lhs, rhs, scope);
         let rt = match op {
@@ -425,13 +425,13 @@ impl Checker {
                 let mut rhs_scope = scope.clone();
                 apply_narrowing_branch(&mut rhs_scope, &narrowing, branch);
                 self.check_class_equality_operand(rhs, &rhs_scope);
-                let rt = self.infer(rhs, &mut rhs_scope);
+                let rt = self.infer_boolean_operand(rhs, &mut rhs_scope);
                 merge_condition_assignments(scope, &rhs_scope, rhs);
                 rt
             }
             _ => {
                 self.check_class_equality_operand(rhs, scope);
-                self.infer(rhs, scope)
+                self.infer_boolean_operand(rhs, scope)
             }
         };
         // A parameter guard relies on lazy short-circuit evaluation, so it
@@ -460,6 +460,16 @@ impl Checker {
             );
             self.emit(Severity::Warning, span, "RY032", message);
         }
+        result
+    }
+
+    /// Infer one direct `&&`/`||` operand while retaining its exact syntax
+    /// span. This lets call-site checks distinguish a scalar boolean operand
+    /// from a value nested inside that operand.
+    fn infer_boolean_operand(&mut self, expr: &Expr, scope: &mut Scope) -> RType {
+        let previous_boolean_context = self.boolean_context_span.replace(span_of(expr));
+        let result = self.infer(expr, scope);
+        self.boolean_context_span = previous_boolean_context;
         result
     }
 

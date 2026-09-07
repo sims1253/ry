@@ -174,6 +174,15 @@ All notable changes to ry are documented in this file.
 - Respect S3 `length()` dispatch and uncertain class metadata before reporting
   zero-length guards as constant; classless scalar bindings retain RY105.
 
+- Avoid claiming atomic `sapply()`, `mapply()`, and `tapply()` results when
+  simplification is disabled or uncertain, controls are forwarded through
+  `...`, or inputs may be empty. Scalar simplification requires a matched,
+  enabled control and a provably nonempty input.
+
+- Suppress RY093 for proven base `grep()` position comparisons used directly
+  as boolean guards, while retaining warnings for value results and uncertain
+  or nested comparisons.
+
 - Distinguish `@` slot extraction from `$`. Valid atomic `.Data` reads no
   longer trigger dollar-access errors. Keep slot results and replaced roots
   unknown, including mixed nested replacements; respect explicit accessors.

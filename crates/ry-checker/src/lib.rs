@@ -882,6 +882,11 @@ pub struct Checker {
     // cache is populated only for the duration of that rewritten call, so it
     // never crosses a scope-changing inference boundary.
     pipe_argument_types: HashMap<Span, RType>,
+    /// Span of the expression currently being coerced to a scalar logical
+    /// value by `if`, `&&`, or `||`. Call-site idiom checks use this exact
+    /// span so a proven boolean operand is distinguished from a value nested
+    /// inside another expression.
+    boolean_context_span: Option<Span>,
     // When true, the pass-3 walk snapshots every completed lexical scope
     // into `scope_records`. Off by default so ordinary checks (and the
     // LSP) pay nothing; `dump-types` opts in. Recording is additionally
@@ -1029,6 +1034,7 @@ impl Checker {
             #[cfg(test)]
             journal_branches: true,
             pipe_argument_types: HashMap::new(),
+            boolean_context_span: None,
             capture_scopes: false,
             capture_references: false,
             reference_capture: None,

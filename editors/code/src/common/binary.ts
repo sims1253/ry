@@ -13,8 +13,8 @@
  */
 
 import * as path from "path";
-import { execFile } from "child_process";
-import { promisify } from "util";
+import { Effect, Schema } from "effect";
+import { runBinary } from "./process";
 import * as fs from "fs";
 import { BUNDLED_RY_EXECUTABLE, RY_BINARY_NAME } from "./constants";
 import {
@@ -99,39 +99,17 @@ function findOnPath(binary: string): string | undefined {
   return undefined;
 }
 
-const execFileAsync = promisify(execFile);
+const decodeVersion = Schema.decodeUnknown(
+  Schema.parseJson(Schema.Struct({ version: Schema.String })),
+);
 
-/**
- * Probe the ry binary version by executing `ry version --output-format json`.
- * Returns undefined if the binary cannot be executed or the output
- * cannot be parsed.
- */
-export async function getRyVersion(
-  binaryPath: string,
-): Promise<VersionInfo | undefined> {
-  try {
-    const { stdout } = await execFileAsync(
-      binaryPath,
-      ["version", "--output-format", "json"],
-      {
-        encoding: "utf-8",
-        timeout: 5000,
-      },
-    );
-    const parsed: unknown = JSON.parse(stdout);
-    if (
-      typeof parsed !== "object" ||
-      parsed === null ||
-      !("version" in parsed) ||
-      typeof parsed.version !== "string"
-    ) {
-      return undefined;
-    }
-    return versionFromString(parsed.version);
-  } catch {
-    return undefined;
-  }
-}
+/** An unavailable binary or invalid response produces an unknown version. */
+export const getRyVersion = (binaryPath: string) =>
+  runBinary(binaryPath, ["version", "--output-format", "json"]).pipe(
+    Effect.flatMap(({ stdout }) => decodeVersion(stdout)),
+    Effect.map(({ version }) => versionFromString(version)),
+    Effect.catchAll(() => Effect.succeed(undefined)),
+  );
 
 /**
  * Check if the resolved binary meets the minimum version for a capability.

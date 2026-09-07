@@ -145,7 +145,7 @@ and suppression actions in VS Code, Positron, or Zed.
 
 ### VS Code / Positron
 
-Install the **ry** extension from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=sims1253.ry)
+Install the **ry** extension from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=scholzmx.ry)
 or Open VSX (for Positron). The extension bundles the `ry` binary.
 
 See the [extension guide](../editors/code/README.md) for settings, commands,

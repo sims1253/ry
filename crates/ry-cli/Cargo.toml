@@ -29,12 +29,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-# Only the runtime pieces needed to drive the async LSP server from a
-# synchronous `fn main()`. We do NOT pull in the full `tokio` feature
-# set here (the ry-lsp crate does that itself).
+# Runtime features for driving the LSP server from synchronous main.
 tokio = { workspace = true, features = ["rt-multi-thread", "io-std"] }
-# Parallel file parsing. tree-sitter parsers are not
-# `Send`, so the parse loop uses a rayon thread-local parser pool.
+# Parallel file parsing with a parser reused on each rayon thread.
 rayon = { workspace = true }
 sha2 = { workspace = true }
 

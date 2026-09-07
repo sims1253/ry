@@ -441,7 +441,9 @@ impl Checker {
     fn infer_condition(&mut self, cond: &Expr, scope: &mut Scope, ctx: ConditionContext) {
         self.check_class_equality_operand(cond, scope);
         let diagnostic_start = self.diagnostics.len();
+        let previous_boolean_context = self.boolean_context_span.replace(span_of(cond));
         let ct = self.infer(cond, scope);
+        self.boolean_context_span = previous_boolean_context;
         self.emit_condition_diagnostics(cond, ct, scope, diagnostic_start, ctx);
     }
 

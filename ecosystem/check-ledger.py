@@ -10,6 +10,7 @@ Asserts:
   - every audit_group_counts entry equals the actual audit group count,
     likewise
   - each optional package diagnostic count equals its findings count
+  - findings belong to declared packages when a package summary is present
 
 Comparing per key over the union of summary and observed labels rejects
 what per-key loops over the observed labels alone miss: a negative entry
@@ -79,6 +80,10 @@ def check_ledger(path: str) -> int:
     # Historical ledgers may omit per-package summaries. When a count is
     # supplied, it describes findings, including repeated diagnostic identities.
     package_counts = Counter(f.get("package") for f in findings)
+    if "packages" in data:
+        declared_packages = {package["name"] for package in data["packages"]}
+        for name in sorted(set(package_counts) - declared_packages, key=repr):
+            errors.append(f"findings package {name!r} is absent from packages")
     for package in data.get("packages", []):
         if "diagnostics" not in package:
             continue

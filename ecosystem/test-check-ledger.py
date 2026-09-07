@@ -61,6 +61,17 @@ class LedgerPackageCountsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("packages['beta'].diagnostics (7) != actual count (1)", result.stdout)
 
+    def test_findings_must_belong_to_a_declared_package(self):
+        self.ledger["packages"].pop(1)
+        result = self.check(self.ledger)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("findings package 'beta' is absent from packages", result.stdout)
+
+    def test_omitted_package_summary_remains_optional(self):
+        self.ledger.pop("packages")
+        result = self.check(self.ledger)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

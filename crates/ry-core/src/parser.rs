@@ -951,15 +951,15 @@ fn utf8_char_len(b: u8) -> usize {
     }
 }
 
+// Keep recursive lowering within an ordinary 2 MiB Rust worker stack.
+const MAX_SYNTAX_DEPTH: usize = 128;
+
 /// Collect every `comment` node in the tree, returning `(line, body)`
 /// pairs in source order. The body is the text AFTER the leading `#`
 /// (untrimmed). These are the ONLY lexically-real comments -- a `#`
 /// that appears inside a string literal is part of the string, not a
 /// comment, so the suppression parser must consume this list rather
 /// than scanning source lines for `#`.
-// Keep recursive lowering within an ordinary 2 MiB Rust worker stack.
-const MAX_SYNTAX_DEPTH: usize = 128;
-
 fn collect_comments(
     root: tree_sitter::Node,
     src: &str,

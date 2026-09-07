@@ -1460,6 +1460,7 @@ dependencies = [
 name = "ry-typeshed"
 version = "0.9.0"
 dependencies = [
+ "flate2",
  "serde",
  "serde_json",
  "tempfile",

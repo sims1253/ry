@@ -845,3 +845,21 @@ fn fold_results_do_not_claim_scalar_length_guards() {
             .any(|d| d.code == "RY105")
     );
 }
+
+#[test]
+fn model_extract_quotes_component_names_and_checks_frame_arguments() {
+    for expression in [
+        "f <- function(mf) stats::model.extract(mf, response)",
+        "f <- function(mf) stats::model.extract(component = response, frame = mf)",
+        "f <- function(mf) stats::model.extract(mf, comp = response)",
+    ] {
+        let diagnostics = check(expression);
+        assert!(diagnostics.is_empty(), "{expression}: {diagnostics:?}");
+    }
+    assert!(
+        check("stats::model.extract(unbound_frame, response)")
+            .iter()
+            .any(|d| d.code == "RY010")
+    );
+    assert!(check("f <- function(mf) { x <- 1L; stats::model.extract({ x <- 'a'; mf }, response); x + 1L }").iter().any(|d| d.code == "RY040"));
+}

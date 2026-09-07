@@ -14,6 +14,11 @@ All notable changes to ry are documented in this file.
 
 - Wait for workspace bindings before publishing initial editor diagnostics,
   including files opened while the workspace scan is running.
+- Preserve omitted call arguments and their names without shifting later
+  arguments. Calls and indexes now share missing-position handling. The public
+  `ry-core` AST adds `Expr::Missing(Span)`; consumers with exhaustive expression
+  matches must handle it separately from unsupported `Expr::Unknown` forms.
+
 - Custom or masked `factor` and `new` calls no longer acquire builtin constructor facts. S4 constructor inference requires methods provenance, and detaching a package invalidates the default search-path assumption.
 
 - Resolve visible custom arithmetic, comparison, and vector logical operators
@@ -60,6 +65,8 @@ All notable changes to ry are documented in this file.
 
 ### Cleanup
 
+- Keep only promise-capturing functions in the collection index, reducing startup
+  allocations without changing capture lookup results.
 - Refine only affected functions after edits, using observed callable reads and
   forwarding or S3 metadata dependencies. Keep diagnostic invalidation conservative.
 - Check corpus package totals against their reviewed findings to catch stale

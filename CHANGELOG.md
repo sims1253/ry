@@ -424,7 +424,8 @@ All notable changes to ry are documented in this file.
 - Class assignments no longer infer literal classes from custom class builders or preserve payload types under an unproven replacement function.
 
 - Report RY051 when literal `chooseOpsMethod` results are `FALSE` on both
-  sides and reject provably distinct operator methods. Infer primitive
+  sides and reject provably distinct operator methods, including methods
+  with unequal literal bodies of the same storage mode. Infer primitive
   fallback and its class behavior only for proven scalar operands.
 
 - Extend explicit `FALSE`/`FALSE` Ops chooser fallback to plain vectors built

@@ -8,6 +8,7 @@ use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
@@ -275,46 +276,51 @@ pub struct HigherOrderSpec {
 }
 
 pub const SOURCE: &str = include_str!("../vendor/SOURCE");
-const BASE_JSON: &str = include_str!("../vendor/base/base.json");
-const DPLYR_JSON: &str = include_str!("../vendor/dplyr/dplyr.json");
-const DBPLYR_JSON: &str = include_str!("../vendor/dbplyr/dbplyr.json");
-const TIDYR_JSON: &str = include_str!("../vendor/tidyr/tidyr.json");
-const TIDYSELECT_JSON: &str = include_str!("../vendor/tidyselect/tidyselect.json");
-const TESTTHAT_JSON: &str = include_str!("../vendor/testthat/testthat.json");
-const TINYTEST_JSON: &str = include_str!("../vendor/tinytest/tinytest.json");
-const RCPP_JSON: &str = include_str!("../vendor/rcpp/Rcpp.json");
-const PURRR_JSON: &str = include_str!("../vendor/purrr/purrr.json");
-const IGRAPH_JSON: &str = include_str!("../vendor/igraph/igraph.json");
-const RECIPES_JSON: &str = include_str!("../vendor/recipes/recipes.json");
-const BENCH_JSON: &str = include_str!("../vendor/bench/bench.json");
-const BOX_JSON: &str = include_str!("../vendor/box/box.json");
-const PATRICK_JSON: &str = include_str!("../vendor/patrick/patrick.json");
-const REX_JSON: &str = include_str!("../vendor/rex/rex.json");
-const RLIST_JSON: &str = include_str!("../vendor/rlist/rlist.json");
-const MIRAI_JSON: &str = include_str!("../vendor/mirai/mirai.json");
-const SURVIVAL_JSON: &str = include_str!("../vendor/survival/survival.json");
-const BRMS_JSON: &str = include_str!("../vendor/brms/brms.json");
-const POSTERIOR_JSON: &str = include_str!("../vendor/posterior/posterior.json");
-const LOO_JSON: &str = include_str!("../vendor/loo/loo.json");
-const BAYESPLOT_JSON: &str = include_str!("../vendor/bayesplot/bayesplot.json");
-const CMDSTANR_JSON: &str = include_str!("../vendor/cmdstanr/cmdstanr.json");
-const ZEALLOT_JSON: &str = include_str!("../vendor/zeallot/zeallot.json");
-const FUTURE_JSON: &str = include_str!("../vendor/future/future.json");
-const FOREACH_JSON: &str = include_str!("../vendor/foreach/foreach.json");
-const HTMLTOOLS_JSON: &str = include_str!("../vendor/htmltools/htmltools.json");
-const SHINY_JSON: &str = include_str!("../vendor/shiny/shiny.json");
-const WITHR_JSON: &str = include_str!("../vendor/withr/withr.json");
-const R6_JSON: &str = include_str!("../vendor/R6/R6.json");
-const S7_JSON: &str = include_str!("../vendor/s7/S7.json");
-const RLANG_JSON: &str = include_str!("../vendor/rlang/rlang.json");
-const CLI_JSON: &str = include_str!("../vendor/cli/cli.json");
-const VCTRS_JSON: &str = include_str!("../vendor/vctrs/vctrs.json");
-const GRID_JSON: &str = include_str!("../vendor/grid/grid.json");
-const GGPLOT2_JSON: &str = include_str!("../vendor/ggplot2/ggplot2.json");
+// Vendored stub JSON, deflated at build time by `build.rs` into OUT_DIR
+// and re-inflated lazily at the load points below (see
+// `inflate_embedded`). The raw JSON costs ~1 MB of binary; the deflated
+// blobs cost ~63 KB. The vendor tree itself stays uncompressed for the
+// sync tooling and review.
+const BASE_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/base.json.deflate"));
+const DPLYR_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/dplyr.json.deflate"));
+const DBPLYR_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/dbplyr.json.deflate"));
+const TIDYR_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/tidyr.json.deflate"));
+const TIDYSELECT_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/tidyselect.json.deflate"));
+const TESTTHAT_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/testthat.json.deflate"));
+const TINYTEST_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/tinytest.json.deflate"));
+const RCPP_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/Rcpp.json.deflate"));
+const PURRR_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/purrr.json.deflate"));
+const IGRAPH_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/igraph.json.deflate"));
+const RECIPES_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/recipes.json.deflate"));
+const BENCH_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/bench.json.deflate"));
+const BOX_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/box.json.deflate"));
+const PATRICK_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/patrick.json.deflate"));
+const REX_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/rex.json.deflate"));
+const RLIST_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/rlist.json.deflate"));
+const MIRAI_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mirai.json.deflate"));
+const SURVIVAL_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/survival.json.deflate"));
+const BRMS_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/brms.json.deflate"));
+const POSTERIOR_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/posterior.json.deflate"));
+const LOO_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/loo.json.deflate"));
+const BAYESPLOT_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/bayesplot.json.deflate"));
+const CMDSTANR_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/cmdstanr.json.deflate"));
+const ZEALLOT_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/zeallot.json.deflate"));
+const FUTURE_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/future.json.deflate"));
+const FOREACH_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/foreach.json.deflate"));
+const HTMLTOOLS_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/htmltools.json.deflate"));
+const SHINY_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shiny.json.deflate"));
+const WITHR_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/withr.json.deflate"));
+const R6_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/R6.json.deflate"));
+const S7_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/S7.json.deflate"));
+const RLANG_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/rlang.json.deflate"));
+const CLI_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/cli.json.deflate"));
+const VCTRS_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/vctrs.json.deflate"));
+const GRID_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/grid.json.deflate"));
+const GGPLOT2_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/ggplot2.json.deflate"));
 
 /// Single source of truth for embedded non-base packages, in signature
 /// resolution order. Every package maps one-to-one to its vendored file.
-const PACKAGE_SPECS: &[(&str, &str)] = &[
+const PACKAGE_SPECS: &[(&str, &[u8])] = &[
     ("dplyr", DPLYR_JSON),
     ("dbplyr", DBPLYR_JSON),
     ("tidyr", TIDYR_JSON),
@@ -613,8 +619,24 @@ struct RawS3Method {
     signature: FunctionSig,
 }
 
+/// Inflate one build-time-deflated embedded stub (see `build.rs`).
+///
+/// The blobs are produced by this crate's own build script, so a
+/// decompression failure is a build bug rather than a runtime
+/// condition; panicking mirrors the existing contract that embedded
+/// stubs always parse.
+fn inflate_embedded(data: &[u8], name: &str) -> String {
+    let mut json = Vec::new();
+    flate2::read::DeflateDecoder::new(data)
+        .read_to_end(&mut json)
+        .unwrap_or_else(|error| panic!("embedded typeshed `{name}` must inflate: {error}"));
+    String::from_utf8(json)
+        .unwrap_or_else(|error| panic!("embedded typeshed `{name}` must be UTF-8: {error}"))
+}
+
 pub fn load_base() -> Result<Typeshed, TypeshedError> {
-    parse_typeshed(BASE_JSON, Path::new("<embedded base>"))
+    let json = inflate_embedded(BASE_JSON, "<embedded base>");
+    parse_typeshed(&json, Path::new("<embedded base>"))
 }
 
 /// Reject duplicate JSON keys before they can overwrite a signature.
@@ -748,8 +770,9 @@ pub fn load_package(name: &str) -> Option<&'static Typeshed> {
     let packages = PACKAGES.get_or_init(|| {
         PACKAGE_SPECS
             .iter()
-            .map(|&(name, json)| {
-                let typeshed = parse_typeshed(json, Path::new(name))
+            .map(|&(name, blob)| {
+                let json = inflate_embedded(blob, name);
+                let typeshed = parse_typeshed(&json, Path::new(name))
                     .expect("embedded package typeshed must parse");
                 (name, typeshed)
             })

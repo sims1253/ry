@@ -62,6 +62,8 @@ impl Checker {
         scope.ops_environment_unknown |=
             then_scope.ops_environment_unknown || else_scope.ops_environment_unknown;
         scope.effects_unknown |= then_scope.effects_unknown || else_scope.effects_unknown;
+        scope.has_escaped_slot_names |=
+            then_scope.has_escaped_slot_names || else_scope.has_escaped_slot_names;
         // A diverging branch contributes no state to the continuation. Treat
         // its live sibling as the only arm, while retaining the parent path
         // for a one-arm `if` whose then branch can continue.

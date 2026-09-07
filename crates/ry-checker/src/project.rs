@@ -130,6 +130,7 @@ pub struct Project {
     prev_callable_vars: HashSet<String>,
     /// Escaped operator names gate refinement and emission across the project.
     prev_escaped_operator_names: bool,
+    prev_escaped_slot_names: bool,
     /// When true, pass-3 emitters snapshot each file's lexical scopes.
     /// Off by default; see [`Checker::enable_scope_capture`].
     capture_scopes: bool,
@@ -377,6 +378,7 @@ impl Project {
         self.prev_known_vars.clear();
         self.prev_callable_vars.clear();
         self.prev_escaped_operator_names = false;
+        self.prev_escaped_slot_names = false;
         self.invalidated_fns.clear();
         self.refine_and_emit()
     }
@@ -462,6 +464,7 @@ impl Project {
         if self.callable_names_changed()
             || self.prev_callable_vars != self.fn_table.callable_vars
             || self.prev_escaped_operator_names != self.fn_table.has_escaped_operator_names
+            || self.prev_escaped_slot_names != self.fn_table.has_escaped_slot_names
         {
             return None;
         }
@@ -697,7 +700,8 @@ impl Project {
         // the incremental dirty set.
         let known_vars_changed = self.prev_known_vars != self.fn_table.known_vars
             || self.prev_callable_vars != self.fn_table.callable_vars
-            || self.prev_escaped_operator_names != self.fn_table.has_escaped_operator_names;
+            || self.prev_escaped_operator_names != self.fn_table.has_escaped_operator_names
+            || self.prev_escaped_slot_names != self.fn_table.has_escaped_slot_names;
         let first_call = !self.has_prev_emit;
         let must_emit: HashSet<&str> = if first_call
             || loaded_changed
@@ -895,6 +899,7 @@ impl Project {
         self.prev_known_vars = self.fn_table.known_vars.clone();
         self.prev_callable_vars = self.fn_table.callable_vars.clone();
         self.prev_escaped_operator_names = self.fn_table.has_escaped_operator_names;
+        self.prev_escaped_slot_names = self.fn_table.has_escaped_slot_names;
         // Save refined return types keyed by function name for the next
         // fixpoint seeding.
         self.prev_fn_returns = self

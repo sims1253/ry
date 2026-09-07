@@ -161,6 +161,7 @@ pub(crate) struct Mark {
     loop_frame: Option<usize>,
     effects_unknown: bool,
     ops_environment_unknown: bool,
+    has_escaped_slot_names: bool,
 }
 
 pub(crate) type BranchChanges =
@@ -171,6 +172,7 @@ pub(crate) struct BranchDelta {
     pub unreachable: bool,
     pub effects_unknown: bool,
     pub ops_environment_unknown: bool,
+    pub has_escaped_slot_names: bool,
 }
 
 pub(crate) struct BindingView<'a> {
@@ -382,6 +384,7 @@ impl Scope {
             loop_frame: self.loop_frame,
             effects_unknown: self.effects_unknown,
             ops_environment_unknown: self.ops_environment_unknown,
+            has_escaped_slot_names: self.has_escaped_slot_names,
             data_mask_unknown: self.data_mask_unknown,
             tidy_injection: self.tidy_injection,
             search_path_unknown: self.search_path_unknown,
@@ -439,6 +442,7 @@ impl Scope {
         let delta = BranchDelta {
             effects_unknown: self.effects_unknown,
             ops_environment_unknown: self.ops_environment_unknown,
+            has_escaped_slot_names: self.has_escaped_slot_names,
             unreachable: self.unreachable,
             changed,
         };
@@ -498,6 +502,7 @@ impl Scope {
         self.loop_frame = mark.loop_frame;
         self.effects_unknown = mark.effects_unknown;
         self.ops_environment_unknown = mark.ops_environment_unknown;
+        self.has_escaped_slot_names = mark.has_escaped_slot_names;
         self.data_mask_unknown = mark.data_mask_unknown;
         self.tidy_injection = mark.tidy_injection;
         self.search_path_unknown = mark.search_path_unknown;
@@ -691,6 +696,7 @@ mod tests {
         assert_eq!(left.unreachable, right.unreachable);
         assert_eq!(left.effects_unknown, right.effects_unknown);
         assert_eq!(left.ops_environment_unknown, right.ops_environment_unknown);
+        assert_eq!(left.has_escaped_slot_names, right.has_escaped_slot_names);
         assert_eq!(left.search_path_unknown, right.search_path_unknown);
         assert_eq!(left.data_mask_unknown, right.data_mask_unknown);
         assert_eq!(left.tidy_injection, right.tidy_injection);
@@ -768,6 +774,10 @@ mod tests {
     #[test]
     fn journal_matches_clone_diagnostics_scopes_and_reference_facts() {
         let sources = [
+            r"`\x40` <- function(object, name) 1L; if(flag) not_bound@slot else 1L",
+            r"x <- list(); if(flag) { `@\x3c-` <- function(object,name,value) 1L; x@slot <- 2L } else x <- list(); x",
+            r"while(TRUE) { if(flag) { `@\x3c-` <- function(object,name,value) 1L; break }; break }",
+            r"for(i in 1:2) { if(flag) { `@\x3c-` <- function(object,name,value) 1L; next }; x <- 1L }; x",
             "f <- NULL; if (flag) f <- function(x) x else f <- function(x) x+1; f(1)",
             "f <- NULL; if (flag) for(i in integer()) f <- function(x)x else for(i in integer()) f <- function(x)x; f()",
             "f <- NULL; if (is.function(f)) f() else if (flag) f <- function(x)x; f()",
@@ -923,5 +933,51 @@ mod tests {
             Mode::Logical
         );
         assert_eq!(scope.get("x0").unwrap().mode, Mode::Integer);
+    }
+
+    #[test]
+    fn escaped_slot_flag_nested_snapshots_restore_exact_scope_state() {
+        let name = r"`@\x3c-`";
+        let mut scope = Scope::default();
+        scope.insert("ordinary", RType::scalar(Mode::Integer));
+        let initial = scope.clone();
+        let outer = scope.begin_snapshot();
+        scope.insert("ordinary", RType::scalar(Mode::Double));
+        let before_inner = scope.clone();
+        let inner = scope.begin_snapshot();
+        scope.insert(name, RType::scalar(Mode::Integer));
+        scope.insert(name, RType::scalar(Mode::Logical));
+        scope.replace_binding_only(name, None);
+        let delta = scope.finish_snapshot(inner, BranchChanges::default());
+        assert!(delta.has_escaped_slot_names);
+        assert!(delta.changed[name].ty.is_none());
+        assert_same_scope(&scope, &before_inner);
+        assert!(!scope.has_escaped_slot_names);
+        let delta = scope.finish_snapshot(outer, BranchChanges::default());
+        assert!(!delta.has_escaped_slot_names);
+        assert_same_scope(&scope, &initial);
+
+        let outer = scope.begin_snapshot();
+        scope.insert(name, RType::unknown());
+        let before_inner = scope.clone();
+        assert!(before_inner.has_escaped_slot_names);
+        assert!(scope.independent_execution_scope().has_escaped_slot_names);
+        let inner = scope.begin_snapshot();
+        scope.invalidate_unknown_effects();
+        scope.insert_parameter_default(name, RType::scalar(Mode::Integer));
+        scope.insert_narrowed(name, RType::scalar(Mode::Logical));
+        scope.replace_binding_only(name, None);
+        assert!(
+            scope
+                .finish_snapshot(inner, BranchChanges::default())
+                .has_escaped_slot_names
+        );
+        assert_same_scope(&scope, &before_inner);
+        assert!(
+            scope
+                .finish_snapshot(outer, BranchChanges::default())
+                .has_escaped_slot_names
+        );
+        assert_same_scope(&scope, &initial);
     }
 }

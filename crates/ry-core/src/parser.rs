@@ -622,16 +622,18 @@ impl RParser {
     }
 
     fn lower_extract(&self, n: Node, src: &str) -> Option<Expr> {
-        // `x$y` parses as binary_operator with operator `$`. But
-        // tree-sitter-r exposes it as `extract_operator`; the fields mirror
-        // binary_operator.
+        // Both `$` and `@` are extract_operator nodes, but their runtime
+        // semantics differ. Preserve the operator for inference and walks.
         let base = self.lower_expr(n.child_by_field_name("lhs")?, src)?;
         let rhs = n.child_by_field_name("rhs")?;
         let name = text(rhs, src).unwrap_or_default();
         let span = self.span(n);
         Some(Expr::Index {
             base: Box::new(base),
-            kind: IndexKind::Dollar,
+            kind: match text(n.child_by_field_name("operator")?, src)?.as_str() {
+                "@" => IndexKind::Slot,
+                _ => IndexKind::Dollar,
+            },
             args: vec![Arg {
                 name: Some(name.clone()),
                 value: Expr::Ident { name, span },

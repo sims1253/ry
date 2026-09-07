@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "base",
-  "version": "0.0.16",
+  "version": "0.0.17",
   "globals": {
     "ambient": [
       "..deparseOpts",
@@ -2466,13 +2466,14 @@
           "element_of_arg1"
         ],
         "result": {
-          "kind": "callback_return",
-          "source_arg": 1
+          "kind": "vector_of",
+          "mode": "opaque"
         }
       },
       "return": {
         "mode": "opaque",
-        "length": "1"
+        "length": "unknown",
+        "na": true
       }
     },
     "IQR": {

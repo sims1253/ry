@@ -11,6 +11,23 @@ fn parse(src: &str) -> ry_core::ast::SourceFile {
 }
 
 #[test]
+fn slot_and_dollar_extraction_preserve_their_operator() {
+    use ry_core::ast::IndexKind;
+    for (source, expected) in [
+        ("x@value", IndexKind::Slot),
+        ("x@`.Data`", IndexKind::Slot),
+        ("x@\"value\"", IndexKind::Slot),
+        ("x$value", IndexKind::Dollar),
+    ] {
+        let file = parse(source);
+        assert!(file.parse_errors.is_empty());
+        assert!(
+            matches!(&file.stmts[..], [Stmt::Expr(Expr::Index { kind, .. })] if *kind == expected)
+        );
+    }
+}
+
+#[test]
 fn double_subset_closing_brackets_can_be_separated() {
     for source in [
         "x[[1]]",

@@ -83,17 +83,6 @@ impl Checker {
         default_null_receiver: bool,
         scope: &mut Scope,
     ) -> RType {
-        if matches!(kind, IndexKind::Dollar) {
-            if let Some(class) = bt.class.first()
-                && let Some(slots) = self.fn_table.s4_classes.get(class.as_ref())
-            {
-                let slot = args.first().and_then(|argument| argument.name.as_deref());
-                return slot
-                    .and_then(|slot| slots.get(slot))
-                    .map(|class| RType::unknown().with_class(ClassVector::single(class)))
-                    .unwrap_or_else(RType::unknown);
-            }
-        }
         // A parameter's NULL default describes only the omitted-argument
         // call shape. When it is the direct receiver of `$` or `[[`, callers
         // may instead provide a list-like value, so keep the access opaque.
@@ -105,6 +94,13 @@ impl Checker {
             return RType::unknown();
         }
         match kind {
+            IndexKind::Slot => {
+                // `.Data` access can be valid even for atomic receivers.
+                // Pooled S4 declarations do not prove the result. Keep the
+                // existing call-effects policy; explicit accessor overrides
+                // are handled before receiver inference. Slot names are data.
+                RType::unknown()
+            }
             IndexKind::Dollar => {
                 // `$` dispatches on classed atomic values. The pooled method
                 // table cannot prove which method applies here, its return

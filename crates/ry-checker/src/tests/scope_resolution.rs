@@ -1,6 +1,89 @@
 use super::*;
 
 #[test]
+fn slot_extraction_does_not_use_dollar_rules() {
+    for source in ["x <- 1:3; x@.Data", "x <- factor('a'); x@.Data"] {
+        let diagnostics = check(source);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+    }
+    let diagnostics = check("x <- 1:3; x$.Data");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY061")
+    );
+}
+
+#[test]
+fn slot_access_and_nested_replacement_forget_caller_facts() {
+    for operation in [
+        "x@foo",
+        "x@foo <- 2L",
+        "x@foo$bar$baz <- 2L",
+        "x$foo@bar <- 2L",
+    ] {
+        let source = format!(
+            "`@` <- function(object, name) list(bar=list(baz=1L))\n\
+             `@<-` <- function(object, name, value) 11L\n\
+             x <- list(foo=list(bar=list(baz=1L)))\n\
+             y <- list(1L)\n{operation}\nidentical(x[1L], 11L)\n"
+        );
+        let (diagnostics, scope) = check_with_scope(&source);
+        assert!(diagnostics.is_empty(), "{operation}: {diagnostics:?}");
+        for name in ["x", "y"] {
+            assert_eq!(
+                scope.get(name).unwrap().mode,
+                Mode::Opaque,
+                "{operation}: {name}"
+            );
+            assert!(!scope.has_list_origin(name), "{operation}: {name}");
+        }
+        assert!(scope.effects_unknown);
+    }
+    let diagnostics =
+        check("`@<-` <- function(object, name, value) 11L; x <- list(); (x@foo <- 4:6) + 'bad'");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY040")
+    );
+    let diagnostics = check("not_bound@slot_name");
+    assert!(
+        diagnostics.iter().any(
+            |diagnostic| diagnostic.code == "RY010" && diagnostic.message.contains("not_bound")
+        )
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("slot_name"))
+    );
+}
+
+#[test]
+fn native_slot_access_preserves_unrelated_diagnostics() {
+    let diagnostics =
+        check("x <- 1:3; x@.Data; y <- c(0L, 1L); if (length(y >= 2L)) 1L; not_bound");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY093")
+    );
+    assert!(
+        diagnostics.iter().any(
+            |diagnostic| diagnostic.code == "RY010" && diagnostic.message.contains("not_bound")
+        )
+    );
+    let (_, scope) = check_with_scope("x <- 1:3; y <- list(1L); x@.Data");
+    assert_eq!(scope.get("y").unwrap().mode, Mode::List);
+    assert!(scope.has_list_origin("y"));
+    let (_, scope) = check_with_scope("x <- list(); y <- list(1L); x@foo <- 2L");
+    assert_eq!(scope.get("x").unwrap().mode, Mode::Opaque);
+    assert!(!scope.has_list_origin("x"));
+    assert_eq!(scope.get("y").unwrap().mode, Mode::List);
+}
+
+#[test]
 fn attach_makes_later_search_path_bindings_uncertain() {
     let diagnostics = check(
         "before_attach\nattach(dataset)\nafter_attach\nf <- function() { nested_after_attach }\ng <- function() {\n  attach(local_data)\n  local_after_attach\n  inner <- function() nested_local_after_attach\n}\n",

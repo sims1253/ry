@@ -171,6 +171,13 @@ All notable changes to ry are documented in this file.
   dispatch during coercion or extraction. Account for empty-list results from
   `sapply` and `mapply`, and for callbacks that run despite empty input storage.
 
+- Distinguish `@` slot extraction from `$`. Valid atomic `.Data` reads no
+  longer trigger dollar-access errors. Keep slot results and replaced roots
+  unknown, including mixed nested replacements; respect explicit accessors.
+
+- Keep `Find` results unknown when no-match values or matching list elements
+  can have arbitrary types and lengths. Preserve predicate diagnostics.
+
 - Keep `Filter` subset results and `Position` no-match values unknown instead
   of borrowing input types or assuming scalar indices.
 

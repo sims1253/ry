@@ -560,18 +560,8 @@ fn is_promise_capture(function: &Expr, dots: bool) -> bool {
             .is_some_and(|signature| signature_captures_promises(signature, dots)),
         // Unqualified names consult the one-time global index below.
         //
-        // Known limitation: the index is built exclusively from the
-        // embedded base and the bundled package stubs, NOT from
-        // user-provided stubs installed via `Checker::set_user_stubs`.
-        // A custom stub that DECLARES a promise-capturing helper is
-        // therefore recognized only when called QUALIFIED
-        // (`mypkg::captures(...)`, which reaches the stub through
-        // `load_package`); an unqualified `captures(...)` call to such a
-        // user-stub helper is treated as an ordinary function. This is a
-        // deliberate trade-off: scoring unqualified names against the
-        // per-checker user stubs would thread an `&Arc<BTreeMap>` through
-        // the entire quoting-analysis call tree for an edge case, so we
-        // document rather than refactor. The qualified path is unaffected.
+        // Collection has no per-checker user stubs. Neither this index
+        // nor the qualified embedded-package lookup above reads them.
         None => promise_capture_index()
             .get(function)
             .is_some_and(|&(single, dots_capture)| if dots { dots_capture } else { single }),
@@ -591,7 +581,8 @@ fn signature_captures_promises(signature: &FunctionSig, dots: bool) -> bool {
 /// function name -> (named-parameter capture, `...` capture), the two
 /// flags `is_promise_capture(function, dots)` selects between — whether
 /// the stub declares `captures_promise` on a named formal, on `...`, or
-/// both. Built lazily on first use; `is_promise_capture` consults it for
+/// both. Functions with neither kind of capture have no entry.
+/// Built lazily on first use; `is_promise_capture` consults it for
 /// unqualified names instead of re-scanning every package's function
 /// table on every call-site check.
 fn promise_capture_index() -> &'static std::collections::HashMap<String, (bool, bool)> {
@@ -601,9 +592,9 @@ fn promise_capture_index() -> &'static std::collections::HashMap<String, (bool, 
         let mut index = std::collections::HashMap::new();
         let mut add_typeshed = |typeshed: &ry_typeshed::Typeshed| {
             for (name, signature) in &typeshed.functions {
-                let flags = index.entry(name.clone()).or_insert((false, false));
                 for (parameter, mode) in &signature.eval {
                     if *mode == EvalMode::CapturesPromise {
+                        let flags = index.entry(name.clone()).or_insert((false, false));
                         if parameter == "..." {
                             flags.1 = true;
                         } else {
@@ -878,7 +869,8 @@ fn first_parameter_use_in_expr(expression: &Expr, parameter: &str) -> Option<Fir
         | Expr::String(_, _)
         | Expr::Null(_)
         | Expr::Na(_, _)
-        | Expr::Unknown(_) => None,
+        | Expr::Unknown(_)
+        | Expr::Missing(_) => None,
     }
 }
 
@@ -1044,7 +1036,8 @@ fn expression_must_force(expression: &Expr, name: &str) -> bool {
         | Expr::String(_, _)
         | Expr::Null(_)
         | Expr::Na(_, _)
-        | Expr::Unknown(_) => false,
+        | Expr::Unknown(_)
+        | Expr::Missing(_) => false,
     }
 }
 

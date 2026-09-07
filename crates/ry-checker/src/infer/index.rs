@@ -494,7 +494,7 @@ pub(crate) fn span_of(e: &Expr) -> Span {
         Expr::Function { span, .. } => *span,
         Expr::Block { span, .. } => *span,
         Expr::If { span, .. } => *span,
-        Expr::Unknown(s) => *s,
+        Expr::Unknown(s) | Expr::Missing(s) => *s,
     }
 }
 

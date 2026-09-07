@@ -157,7 +157,7 @@ pub const RULES: &[Rule] = &[
         code: "RY091",
         name: "missing-required-argument",
         default_severity: Severity::Warning,
-        summary: "A required formal parameter is not bound by name or position.",
+        summary: "A required formal parameter has no supplied value, including an explicitly omitted actual.",
     },
     Rule {
         code: "RY092",

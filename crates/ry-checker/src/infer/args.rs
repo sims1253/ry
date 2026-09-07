@@ -268,8 +268,8 @@ impl Checker {
     }
 
     /// Shared arity reporting over one argument match: RY090 for named
-    /// actuals no formal matched, RY091 for required formals no actual
-    /// bound. The typeshed and user-function checks differ only in their
+    /// actuals no formal matched, RY091 for required formals without a
+    /// supplied value. The typeshed and user-function checks differ only in their
     /// formals source and unknown-argument gating.
     fn check_call_arity<P: CallFormal>(
         &mut self,

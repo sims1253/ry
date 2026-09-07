@@ -243,3 +243,77 @@ fn structure_pooled_unknown_bindings_block_base_proof() {
         assert!(!out.class.contains("widget"), "{name}: {out:?}");
     }
 }
+
+#[test]
+fn class_assignment_does_not_trust_custom_class_builders_or_setters() {
+    for source in [
+        "c <- function(...) 'actual'; out <- 1L; class(out) <- c('widget')",
+        "`class<-` <- function(x, value) 'custom'; out <- 1L; class(out) <- 'widget'",
+        "out <- 1L; class(out) <- { `class<-` <- function(x, value) 'custom'; 'widget' }",
+    ] {
+        let (_, scope) = check_with_scope(source);
+        assert!(
+            !scope.get("out").unwrap().class.contains("widget"),
+            "{source}: {:?}",
+            scope.get("out")
+        );
+    }
+}
+
+#[test]
+fn class_assignment_retains_proven_literals_and_evaluates_rhs() {
+    for source in [
+        "out <- list(a = 1L); class(out) <- 'widget'",
+        "out <- list(a = 1L); class(out) <- base::c('widget', 'other')",
+        "f <- function() { out <- list(a = 1L); class(out) <- 'widget'; out }; out <- f()",
+        "out <- list(a = 1L); assigned <- (class(out) <- 'widget')",
+    ] {
+        let (_, scope) = check_with_scope(source);
+        let out = scope.get("out").unwrap();
+        assert!(out.class.contains("widget"), "{source}: {out:?}");
+        assert_eq!(out.mode, Mode::List);
+        assert!(out.columns.is_some());
+    }
+    let (diags, scope) = check_with_scope(
+        "out <- 1L; marker <- 1L; class(out) <- { marker <- 'evaluated'; missing_class }",
+    );
+    assert_eq!(scope.get("marker").unwrap().mode, Mode::Character);
+    assert!(diags.iter().any(|d| d.code == "RY010"));
+    assert!(!scope.get("out").unwrap().class.known);
+    let (_, scope) = check_with_scope("out <- 1L; class(out) <- c('widget', recursive='TRUE')");
+    assert!(!scope.get("out").unwrap().class.known);
+}
+
+#[test]
+fn class_assignment_drops_payload_for_unknown_or_coercing_classes() {
+    for class in [
+        "'double'",
+        "'logical'",
+        "'character'",
+        "'complex'",
+        "'raw'",
+        "'list'",
+        "'numeric'",
+        "c('double')",
+    ] {
+        let (_, scope) = check_with_scope(&format!("out <- 1L; class(out) <- {class}"));
+        assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque, "{class}");
+    }
+    let (_, scope) =
+        check_with_scope("c <- function(...) 'character'; out <- 1L; class(out) <- c('widget')");
+    assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque);
+    let (_, scope) = check_with_scope("out <- 1L; class(out) <- c('double', 'widget')");
+    assert_eq!(scope.get("out").unwrap().mode, Mode::Integer);
+    assert!(scope.get("out").unwrap().class.contains("widget"));
+    let (_, scope) =
+        check_with_scope("out <- structure(list(a=1L), class='widget'); class(out) <- NULL");
+    let out = scope.get("out").unwrap();
+    assert_eq!(out.mode, Mode::List);
+    assert!(out.columns.is_some());
+    assert!(!out.class.contains("widget"));
+    let (_, scope) = check_with_stubs(
+        "out <- 1L; class(out) <- 'widget'",
+        &[("base.json", r#"{"version":"t","functions":{}}"#)],
+    );
+    assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque);
+}

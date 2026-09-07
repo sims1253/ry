@@ -12,6 +12,8 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Class assignments no longer infer literal classes from custom class builders or preserve payload types under an unproven replacement function.
+
 - Match `structure()` payloads through `.Data`, preserve class and list-column
   information for resolved base calls, and evaluate class attributes. Respect
   shadowed constructors and class-vector builders; discard stale column names

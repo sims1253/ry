@@ -134,9 +134,15 @@ jobs:
           # Extract from README marketplace link
           readme_id=$(grep -oP 'itemName=\K[^")\s]+' README.md | head -1)
 
+          # Extract the getExtension() lookup from both test suites
+          e2e_id=$(grep -oP 'getExtension\("\K[^"]+' editors/code/src/test/e2e.test.ts)
+          perf_id=$(grep -oP 'getExtension\("\K[^"]+' editors/code/test/performance.cjs)
+
           echo "package.json: ${ext_id}"
           echo "constants.ts: ${ts_id}"
           echo "README.md:    ${readme_id}"
+          echo "e2e.test.ts:  ${e2e_id}"
+          echo "performance:  ${perf_id}"
 
           if [[ "${ext_id}" != "${ts_id}" ]]; then
             echo "ERROR: package.json (${ext_id}) != constants.ts (${ts_id})"
@@ -144,6 +150,14 @@ jobs:
           fi
           if [[ "${ext_id}" != "${readme_id}" ]]; then
             echo "ERROR: package.json (${ext_id}) != README.md (${readme_id})"
+            exit 1
+          fi
+          if [[ "${ext_id}" != "${e2e_id}" ]]; then
+            echo "ERROR: package.json (${ext_id}) != e2e.test.ts (${e2e_id})"
+            exit 1
+          fi
+          if [[ "${ext_id}" != "${perf_id}" ]]; then
+            echo "ERROR: package.json (${ext_id}) != performance.cjs (${perf_id})"
             exit 1
           fi
           echo "All publisher identities agree: ${ext_id}"

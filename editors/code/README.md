@@ -9,7 +9,7 @@ functions. Unknown types and assignments the checker does not visit are omitted.
 ## Installation
 
 Install from the
-[VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=sims1253.ry)
+[VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=scholzmx.ry)
 or Positron's Open VSX gallery, then open an R file.
 
 The extension bundles ry. By default it uses an executable on `PATH` when

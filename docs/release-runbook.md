@@ -94,8 +94,9 @@ v{version}  (e.g. v0.9.0)
 
 ### Prerequisites
 
-- Publisher identity verified: `sims1253.ry` across `package.json`,
-  `constants.ts`, and `README.md`.
+- Publisher identity verified: `scholzmx.ry` across `package.json`,
+  `constants.ts`, `README.md`, and both test-suite `getExtension` lookups
+  (enforced by the `publisher-consistency` job).
 - Core binary release tag exists with verified artifacts.
 
 ### Steps
@@ -122,8 +123,8 @@ v{version}  (e.g. v0.9.0)
 
 ### Rollback
 
-- VS Code Marketplace: `vsce unpublish sims1253.ry@{version}`
-- Open VSX: `ovsx unpublish sims1253.ry@{version}`
+- VS Code Marketplace: `vsce unpublish scholzmx.ry@{version}`
+- Open VSX: `ovsx unpublish scholzmx.ry@{version}`
 
 ## Zed extension release
 

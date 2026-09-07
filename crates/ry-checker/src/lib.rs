@@ -290,9 +290,9 @@ pub struct Scope {
     // An unknown effect may install delayed bindings or change syntax itself.
     // Later literal assignments cannot prove that those effects disappeared.
     pub(crate) ops_environment_unknown: bool,
-    /// A custom operator may force promises that mutate this frame or install
+    /// An unmodeled call may force promises that mutate this frame or install
     /// active bindings. Later expression inference cannot reuse caller facts.
-    pub(crate) custom_operator_effects_unknown: bool,
+    pub(crate) effects_unknown: bool,
     pub(crate) literal_functions: HashMap<String, Arc<infer::ops_chooser::LiteralFunction>>,
     pub(crate) reference_provenance: Option<Box<reference_facts::ScopeProvenance>>,
     pub bindings: HashMap<String, RType>,
@@ -326,6 +326,27 @@ pub struct Scope {
 }
 
 impl Scope {
+    /// Unknown code may mutate values or install active bindings. Keep names,
+    /// but make value uncertainty persist across writes.
+    pub(crate) fn invalidate_unknown_effects(&mut self) {
+        for ty in self.bindings.values_mut() {
+            *ty = RType::unknown();
+        }
+        self.narrowed_bindings.clear();
+        self.parameter_bindings.clear();
+        self.list_origin_bindings.clear();
+        self.default_parameter_bindings.clear();
+        self.function_aliases.clear();
+        self.lexical_functions.clear();
+        if let Some(provenance) = self.reference_provenance.as_mut() {
+            provenance.invalidate_all();
+        }
+        self.effects_unknown = true;
+        self.data_mask_unknown = true;
+        self.search_path_unknown = true;
+        self.invalidate_ops_environment();
+    }
+
     pub(crate) fn invalidate_ops_environment(&mut self) {
         self.literal_functions.clear();
         self.ops_environment_unknown = true;

@@ -31,3 +31,17 @@ local({
   x <- methods::new("integer")
   stopifnot(is.null(attributes(x)), identical(x + 1L + 1L, integer(0)))
 })
+local({
+  f <- function(factor) { x <- "before"; factor({x <- 1L; 1L}); x + 1L }
+  stopifnot(identical(f(function(x) x), 2L))
+  f <- function(factor) { x <- "before"; factor(assign("x", 1L, envir=environment())); x }
+  stopifnot(identical(f(function(x) x) + 1L, 2L))
+  touch <- function() assign("x", 1L, envir=parent.frame())
+  f <- function(factor) { x <- "before"; factor(touch()); x }
+  stopifnot(identical(f(function(x) x) + 1L, 2L))
+  f <- function(factor) { x <- "before"; factor(); x }
+  stopifnot(identical(f(function() assign("x", 1L, envir=parent.frame())) + 1L, 2L))
+})
+x <- "before"
+value <- methods::new("ry_constructor_widget", x = {x <- 1L; 1L})
+stopifnot(identical(x + 1L, 2L))

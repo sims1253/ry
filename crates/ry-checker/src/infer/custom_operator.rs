@@ -75,26 +75,7 @@ impl Checker {
             // caller. This also avoids effects from ignored assignment operands.
             return Some(result);
         }
-        // Unknown custom code or forced operand promises can modify any caller
-        // binding, even without a syntactic assignment (assign/active bindings).
-        // Retain names but forget values and lookup facts; evaluating arguments
-        // merely to collect effects would reintroduce eager diagnostics.
-        for ty in scope.bindings.values_mut() {
-            *ty = RType::unknown();
-        }
-        scope.narrowed_bindings.clear();
-        scope.parameter_bindings.clear();
-        scope.list_origin_bindings.clear();
-        scope.default_parameter_bindings.clear();
-        scope.function_aliases.clear();
-        scope.lexical_functions.clear();
-        if let Some(provenance) = scope.reference_provenance.as_mut() {
-            provenance.invalidate_all();
-        }
-        scope.custom_operator_effects_unknown = true;
-        scope.data_mask_unknown = true;
-        scope.search_path_unknown = true;
-        scope.invalidate_ops_environment();
+        scope.invalidate_unknown_effects();
         Some(RType::unknown())
     }
 }

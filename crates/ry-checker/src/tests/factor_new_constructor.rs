@@ -156,3 +156,35 @@ fn intrinsic_new_values_do_not_acquire_explicit_dispatch_classes() {
     assert!(diags.iter().all(|d| d.code != "RY040"), "{diags:?}");
     assert!(!scope.get("x").unwrap().class.known);
 }
+
+#[test]
+fn opaque_constructor_effects_do_not_leave_stale_local_or_caller_facts() {
+    for source in [
+        "f <- function(factor) { x <- 'before'; factor({x <- 1L; 1L}); x + 1L }; out <- f(function(x) x)",
+        "f <- function(factor) { x <- 'before'; factor(assign('x', 1L, envir=environment())); x }; out <- f(function(x) x) + 1L",
+        "touch <- function() assign('x', 1L, envir=parent.frame()); f <- function(factor) { x <- 'before'; factor(touch()); x }; out <- f(function(x) x) + 1L",
+        "f <- function(factor) { x <- 'before'; factor(); x }; out <- f(function() assign('x', 1L, envir=parent.frame())) + 1L",
+    ] {
+        let (diags, _) = check_with_scope(source);
+        assert!(
+            diags.iter().all(|d| d.code != "RY040"),
+            "{source}: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn proven_constructor_traversal_retains_argument_effects_and_inert_facts() {
+    for source in [
+        "x <- 1L; out <- base::factor(1L); after <- x + 1L",
+        "x <- 1L; out <- methods::new('widget', value=1L); after <- x + 1L",
+        "x <- 'before'; out <- methods::new('widget', value={x <- 1L; 1L}); after <- x + 1L",
+    ] {
+        let (diags, scope) = check_with_scope(source);
+        assert!(
+            diags.iter().all(|d| d.code != "RY040"),
+            "{source}: {diags:?}"
+        );
+        assert_eq!(scope.get("after").unwrap().mode, Mode::Integer, "{source}");
+    }
+}

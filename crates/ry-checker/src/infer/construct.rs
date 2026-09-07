@@ -48,7 +48,7 @@ impl Checker {
             if original_name != semantic_name
                 || (matches!(original_callee, Expr::String(_, _)) && semantic_name.contains("::"))
             {
-                return Some(RType::unknown());
+                return Some(Self::infer_unknown_constructor(scope));
             }
             let package = if lookup_name == "factor" {
                 "base"
@@ -61,7 +61,7 @@ impl Checker {
                     &HashSet::new(),
                     scope,
                 ) {
-                    return Some(RType::unknown());
+                    return Some(Self::infer_unknown_constructor(scope));
                 }
                 if prefix.trim_end_matches(':') != package {
                     // Only an actual package contract can describe another
@@ -73,13 +73,13 @@ impl Checker {
                     {
                         None
                     } else {
-                        Some(RType::unknown())
+                        Some(Self::infer_unknown_constructor(scope))
                     };
                 }
             } else {
                 if scope.is_parameter(semantic_name) {
                     // An untyped callable formal must not fall back to a base stub.
-                    return Some(RType::unknown());
+                    return Some(Self::infer_unknown_constructor(scope));
                 }
                 // Known custom functions keep the ordinary call path.
                 if self.fn_table.fns.contains_key(semantic_name)
@@ -98,7 +98,7 @@ impl Checker {
                     {
                         None
                     } else {
-                        Some(RType::unknown())
+                        Some(Self::infer_unknown_constructor(scope))
                     };
                 }
                 if scope.data_mask_unknown
@@ -109,14 +109,14 @@ impl Checker {
                         package,
                     )
                 {
-                    return Some(RType::unknown());
+                    return Some(Self::infer_unknown_constructor(scope));
                 }
                 let explicit_import = self
                     .imported_from
                     .get(semantic_name)
                     .is_some_and(|pkg| pkg == package);
                 if !explicit_import && (scope.search_path_unknown || !self.bare_loaded.is_empty()) {
-                    return Some(RType::unknown());
+                    return Some(Self::infer_unknown_constructor(scope));
                 }
             }
             if self.user_stubs.contains_key(package) || self.user_stubs.contains_key("base") {
@@ -140,6 +140,11 @@ impl Checker {
         None
     }
 
+    fn infer_unknown_constructor(scope: &mut Scope) -> RType {
+        scope.invalidate_unknown_effects();
+        RType::unknown()
+    }
+
     fn infer_methods_new(&mut self, args: &[Arg], scope: &mut Scope) -> RType {
         let matched = match_argument_names(
             &["Class", "..."],
@@ -147,7 +152,7 @@ impl Checker {
                 .map(|arg| arg.name.as_deref().map(semantic_argument_name)),
         );
         let Some(class_index) = matched.arg_for_param(0) else {
-            return RType::unknown();
+            return Self::infer_unknown_constructor(scope);
         };
         let exact = args
             .iter()
@@ -169,7 +174,7 @@ impl Checker {
                     || matches!(&arg.value, Expr::Unknown(_))
             })
         {
-            return RType::unknown();
+            return Self::infer_unknown_constructor(scope);
         }
         // Class is forced before initialization. Retain the existing dots
         // traversal until initializer laziness has a complete effect model.

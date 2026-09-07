@@ -24,7 +24,10 @@ All notable changes to ry are documented in this file.
 
 - Infer conflicting S3 operator results when top-level literal methods
   and `chooseOpsMethod` values prove selection, including aliases and reverse
-  selection. Keep uncertain dispatch and primitive fallback unknown.
+  selection. Keep uncertain dispatch unknown.
+
+- Report RY051 when two literal `chooseOpsMethod` results reject provably distinct
+  operator methods. Infer scalar primitive fallback and its class behavior.
 
 - Refresh incremental diagnostics when a callback changes, including callbacks
   passed as values and their downstream callers.

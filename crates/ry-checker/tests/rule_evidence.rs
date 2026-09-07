@@ -180,8 +180,8 @@ const R7_CASES: &[R7Case] = &[
 
 /// Rules for which R7 is not applicable: purely syntactic or structural.
 const R7_NA_RULES: &[&str] = &[
-    "RY000", "RY010", "RY041", "RY042", "RY050", "RY060", "RY070", "RY080", "RY090", "RY091",
-    "RY092", "RY094", "RY096", "RY097", "RY098", "RY101", "RY102",
+    "RY000", "RY010", "RY041", "RY042", "RY050", "RY051", "RY060", "RY070", "RY080", "RY090",
+    "RY091", "RY092", "RY094", "RY096", "RY097", "RY098", "RY101", "RY102",
 ];
 
 /// Run R7 over all applicable rule families and report the classification.
@@ -574,6 +574,10 @@ const VERDICTS: &[Verdict] = &[
     },
     Verdict {
         code: "RY050",
+        verdict: "keep",
+    },
+    Verdict {
+        code: "RY051",
         verdict: "keep",
     },
     Verdict {

@@ -118,6 +118,12 @@ pub const RULES: &[Rule] = &[
         summary: "S3 generic called on a value with no defined method for its class.",
     },
     Rule {
+        code: "RY051",
+        name: "incompatible-s3-operator-methods",
+        default_severity: Severity::Warning,
+        summary: "Both proven chooseOpsMethod results reject distinct S3 operator methods, so R warns and uses the primitive operator.",
+    },
+    Rule {
         code: "RY060",
         name: "undefined-column",
         default_severity: Severity::Error,

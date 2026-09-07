@@ -232,6 +232,53 @@ fn math_summary_members_do_not_require_a_class_method() {
 }
 
 #[test]
+fn complete_math_inventory_keeps_specific_and_group_dispatch() {
+    for generic in [
+        "cummax", "cummin", "cumprod", "cumsum", "cospi", "sinpi", "tanpi", "digamma", "trigamma",
+        "signif",
+    ] {
+        let (diags, scope) = check_with_scope(&format!(
+            "{generic}.other <- function(x, ...) 99\n\
+             x <- structure(c(1, 2), class = \"widget\")\n\
+             result <- {generic}(x)\n"
+        ));
+        assert!(
+            diags.iter().all(|d| d.code != "RY050"),
+            "{generic}: {diags:?}"
+        );
+        assert_eq!(
+            scope.get("result").map(|ty| ty.mode),
+            Some(Mode::Opaque),
+            "{generic}"
+        );
+        let (diags, scope) = check_with_scope(&format!(
+            "Math.widget <- function(x, ...) list(value = 1L)\n\
+             x <- structure(list(), class = \"widget\")\n\
+             result <- {generic}(x)\n"
+        ));
+        assert!(
+            diags.iter().all(|d| !matches!(d.code, "RY050" | "RY040")),
+            "{generic}: {diags:?}"
+        );
+        assert_eq!(
+            scope.get("result").map(|ty| ty.mode),
+            Some(Mode::Opaque),
+            "{generic}"
+        );
+        let diags = check(&format!(
+            "{generic}.widget <- function(x, ...) \"text\"\n\
+             Math.widget <- function(x, ...) 1L\n\
+             x <- structure(1, class = \"widget\")\n\
+             {generic}(x) + 1\n"
+        ));
+        assert!(
+            diags.iter().any(|d| d.code == "RY040"),
+            "specific method must win for {generic}: {diags:?}"
+        );
+    }
+}
+
+#[test]
 fn s3_dispatch_walks_every_class_before_reporting_a_miss() {
     let diags = check(
         "print.b <- function(x, ...) invisible(x)\n\

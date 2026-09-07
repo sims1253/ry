@@ -153,7 +153,9 @@ All notable changes to ry are documented in this file.
 
 - Math and Summary member calls no longer emit RY050 just because an unrelated
   class has a local group method. Built-ins such as `sum()` and `abs()` can
-  use their default behavior without a class-specific method.
+  use their default behavior without a class-specific method. The Math
+  inventory includes cumulative functions, `signif`, the `*pi` functions,
+  `digamma`, and `trigamma`, with recognition of their specific methods.
 
 - `ry check` now emits an empty JSON/GitLab array or JUnit report when no R
   files are discovered, including when configuration excludes every source.

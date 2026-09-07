@@ -375,6 +375,7 @@ pub(crate) enum NarrowingBranch {
 /// Clone both branches when their independent outcomes must be merged.
 /// The returned names identify branch-local refinements that assignment merging
 /// must exclude from the parent scope.
+#[cfg(test)]
 pub(crate) fn apply_narrowing(
     base: &Scope,
     narrowing: &Narrowing,

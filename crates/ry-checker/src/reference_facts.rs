@@ -87,10 +87,10 @@ pub(crate) struct BindingProvenance {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ScopeProvenance {
-    owner: Span,
-    after_unsafe_read: bool,
-    unsafe_read_blocker: Option<ReferenceBlocker>,
-    bindings: HashMap<String, BindingProvenance>,
+    pub(crate) owner: Span,
+    pub(crate) after_unsafe_read: bool,
+    pub(crate) unsafe_read_blocker: Option<ReferenceBlocker>,
+    pub(crate) bindings: HashMap<String, BindingProvenance>,
 }
 
 impl ScopeProvenance {
@@ -653,6 +653,10 @@ impl Checker {
         if self.discarding {
             return;
         }
+        if self.reference_capture.is_none() || scope.reference_provenance.is_none() {
+            return;
+        }
+        scope.journal_reference_binding(name);
         let (Some(capture), Some(provenance)) = (
             self.reference_capture.as_mut(),
             scope.reference_provenance.as_mut(),
@@ -694,7 +698,6 @@ impl Checker {
                 .get(name)
                 .is_some_and(|binding| binding.owner == provenance.owner);
             if formal || !ordinary_local {
-                provenance.bindings.clear();
                 if !provenance.after_unsafe_read {
                     provenance.unsafe_read_blocker = Some(ReferenceBlocker {
                         kind: "prior_read",
@@ -704,6 +707,7 @@ impl Checker {
                     });
                 }
                 provenance.after_unsafe_read = true;
+                scope.clear_reference_bindings();
             }
         }
     }

@@ -301,6 +301,7 @@ const CMDSTANR_JSON: &str = include_str!("../vendor/cmdstanr/cmdstanr.json");
 const ZEALLOT_JSON: &str = include_str!("../vendor/zeallot/zeallot.json");
 const FUTURE_JSON: &str = include_str!("../vendor/future/future.json");
 const FOREACH_JSON: &str = include_str!("../vendor/foreach/foreach.json");
+const HTMLTOOLS_JSON: &str = include_str!("../vendor/htmltools/htmltools.json");
 const SHINY_JSON: &str = include_str!("../vendor/shiny/shiny.json");
 const WITHR_JSON: &str = include_str!("../vendor/withr/withr.json");
 const R6_JSON: &str = include_str!("../vendor/R6/R6.json");
@@ -339,6 +340,7 @@ const PACKAGE_SPECS: &[(&str, &str)] = &[
     ("zeallot", ZEALLOT_JSON),
     ("future", FUTURE_JSON),
     ("foreach", FOREACH_JSON),
+    ("htmltools", HTMLTOOLS_JSON),
     ("shiny", SHINY_JSON),
     ("withr", WITHR_JSON),
     ("R6", R6_JSON),
@@ -1907,7 +1909,7 @@ mod tests {
     #[test]
     fn typeshed_preserves_embedded_schema_version() {
         let t = load_base().expect("loads");
-        assert_eq!(t.version, "0.0.15");
+        assert_eq!(t.version, "0.0.16");
         assert_eq!(t.schema_version.as_deref(), Some("2"));
     }
 

@@ -6,9 +6,9 @@
 # direct call whose resolved stub declares an integer length-1 return
 # that is never NA — the original three plus everything the stubs record
 # the same way (`NROW`, `NCOL`, `nobs`, vctrs' `vec_size`, ...).
-# `Position` is NOT here: its no-match value is NA, so
-# `if (Position(...))` errors rather than testing non-empty (see
-# warn_position_condition.R).
+# `match` is NOT here: its no-match value is NA, so
+# `if (match(1L, 2L))` errors rather than testing non-empty (see
+# warn_missing_match_condition.R).
 x <- c(1, 2, 3)
 if (length(x)) print(1)
 d <- data.frame(a = 1)

@@ -22,6 +22,7 @@ mod nse;
 pub mod project;
 mod reference_facts;
 mod resolve;
+mod scope_journal;
 pub use reference_facts::{
     DefinitionId, ReferenceBlocker, ReferenceDefinition, ReferenceDefinitionKind, ReferenceFacts,
     ReferenceRecord, ReferenceResolution,
@@ -291,8 +292,10 @@ pub fn builtin_environment_bindings(path: &str) -> &'static [&'static str] {
 }
 
 /// A single scope's binding table.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct Scope {
+    undo: Vec<scope_journal::Undo>,
+    snapshot_depth: usize,
     /// Active loop in this execution frame; independent function scopes clear it.
     pub(crate) loop_frame: Option<usize>,
     // An unknown effect may install delayed bindings or change syntax itself.
@@ -335,6 +338,32 @@ pub struct Scope {
     pub(crate) unreachable: bool,
 }
 
+impl Clone for Scope {
+    fn clone(&self) -> Self {
+        Self {
+            loop_frame: self.loop_frame,
+            effects_unknown: self.effects_unknown,
+            ops_environment_unknown: self.ops_environment_unknown,
+            literal_functions: self.literal_functions.clone(),
+            plain_ops_vectors: self.plain_ops_vectors.clone(),
+            reference_provenance: self.reference_provenance.clone(),
+            bindings: self.bindings.clone(),
+            narrowed_bindings: self.narrowed_bindings.clone(),
+            parameter_bindings: self.parameter_bindings.clone(),
+            list_origin_bindings: self.list_origin_bindings.clone(),
+            default_parameter_bindings: self.default_parameter_bindings.clone(),
+            function_aliases: self.function_aliases.clone(),
+            lexical_functions: self.lexical_functions.clone(),
+            data_mask_unknown: self.data_mask_unknown,
+            tidy_injection: self.tidy_injection,
+            search_path_unknown: self.search_path_unknown,
+            unreachable: self.unreachable,
+            undo: Vec::new(),
+            snapshot_depth: 0,
+        }
+    }
+}
+
 impl Scope {
     /// Start a function, deferred expression, or speculative walk without
     /// inheriting transfers from the caller's active loop.
@@ -348,6 +377,23 @@ impl Scope {
     /// Unknown code may mutate values or install active bindings. Keep names,
     /// but make value uncertainty persist across writes.
     pub(crate) fn invalidate_unknown_effects(&mut self) {
+        if self.snapshot_depth > 0 {
+            let names: HashSet<_> = self
+                .bindings
+                .keys()
+                .chain(self.narrowed_bindings.iter())
+                .chain(self.parameter_bindings.iter())
+                .chain(self.default_parameter_bindings.iter())
+                .chain(self.list_origin_bindings.iter())
+                .chain(self.lexical_functions.iter())
+                .chain(self.function_aliases.keys())
+                .cloned()
+                .collect();
+            for name in names {
+                self.journal_binding(&name);
+            }
+        }
+        self.clear_reference_bindings();
         for ty in self.bindings.values_mut() {
             *ty = RType::unknown();
         }
@@ -367,8 +413,7 @@ impl Scope {
     }
 
     pub(crate) fn invalidate_ops_environment(&mut self) {
-        self.literal_functions.clear();
-        self.plain_ops_vectors.clear();
+        self.clear_ops_facts();
         self.ops_environment_unknown = true;
     }
 
@@ -378,17 +423,18 @@ impl Scope {
 
     pub fn insert(&mut self, name: impl Into<String>, t: RType) {
         let name = name.into();
-        if let Some(provenance) = self.reference_provenance.as_mut() {
+        if self.snapshot_depth > 0 {
+            self.insert_with_assignment_undo(name, t);
+            return;
+        }
+        // Empty tables may retain capacity; avoid hashing absent names.
+        self.clear_ops_binding(&name);
+        if let Some(provenance) = self.reference_provenance.as_mut()
+            && !provenance.bindings.is_empty()
+        {
             provenance.invalidate(&name);
         }
-        // Empty tables can retain capacity; skipping their removal avoids
-        // hashing names that cannot be present.
-        if !self.literal_functions.is_empty() {
-            self.literal_functions.remove(semantic_argument_name(&name));
-        }
-        if !self.plain_ops_vectors.is_empty() {
-            self.plain_ops_vectors.remove(semantic_argument_name(&name));
-        }
+
         if !self.function_aliases.is_empty() {
             self.function_aliases.remove(&name);
         }
@@ -414,20 +460,22 @@ impl Scope {
         // Preserve parameter, default-parameter, and list-origin markers;
         // clear function aliases and lexical-function markers, then mark narrowed.
         let name = name.into();
+        let journal = self.begin_binding_change(&name);
+        self.clear_ops_binding(&name);
         if let Some(provenance) = self.reference_provenance.as_mut() {
             provenance.invalidate(&name);
         }
-        self.literal_functions.remove(semantic_argument_name(&name));
-        self.plain_ops_vectors.remove(semantic_argument_name(&name));
         self.function_aliases.remove(&name);
         self.lexical_functions.remove(&name);
-        self.bindings.insert(name.clone(), t);
+        let previous = self.bindings.insert(name.clone(), t);
+        self.finish_binding_change(journal, previous);
         self.narrowed_bindings.insert(name);
     }
 
     pub(crate) fn insert_parameter(&mut self, name: impl Into<String>, t: RType) {
         let name = name.into();
         self.insert(name.clone(), t);
+        self.journal_marker(&name, scope_journal::MarkerKind::Parameter);
         self.parameter_bindings.insert(name);
     }
 
@@ -435,20 +483,23 @@ impl Scope {
         // Preserve lexical-function and list-origin markers; clear function
         // aliases and narrowing, then set both parameter markers.
         let name = name.into();
+        let journal = self.begin_binding_change(&name);
+        self.clear_ops_binding(&name);
         if let Some(provenance) = self.reference_provenance.as_mut() {
             provenance.invalidate(&name);
         }
-        self.literal_functions.remove(semantic_argument_name(&name));
-        self.plain_ops_vectors.remove(semantic_argument_name(&name));
         self.function_aliases.remove(&name);
         self.narrowed_bindings.remove(&name);
-        self.bindings.insert(name.clone(), t);
+        let previous = self.bindings.insert(name.clone(), t);
+        self.finish_binding_change(journal, previous);
         self.parameter_bindings.insert(name.clone());
         self.default_parameter_bindings.insert(name);
     }
 
     pub(crate) fn mark_list_origin(&mut self, name: impl Into<String>) {
-        self.list_origin_bindings.insert(name.into());
+        let name = name.into();
+        self.journal_marker(&name, scope_journal::MarkerKind::ListOrigin);
+        self.list_origin_bindings.insert(name);
     }
 
     pub(crate) fn has_list_origin(&self, name: &str) -> bool {
@@ -464,11 +515,15 @@ impl Scope {
     }
 
     pub(crate) fn set_function_alias(&mut self, name: impl Into<String>, target: String) {
-        self.function_aliases.insert(name.into(), target);
+        let name = name.into();
+        self.journal_alias(&name);
+        self.function_aliases.insert(name, target);
     }
 
     pub(crate) fn mark_lexical_function(&mut self, name: impl Into<String>) {
-        self.lexical_functions.insert(name.into());
+        let name = name.into();
+        self.journal_marker(&name, scope_journal::MarkerKind::Lexical);
+        self.lexical_functions.insert(name);
     }
 
     pub(crate) fn is_lexical_function(&self, name: &str) -> bool {
@@ -734,6 +789,9 @@ pub(crate) struct EnclosingFormals {
 }
 
 pub struct Checker {
+    journal_delta_cache: scope_journal::BranchChanges,
+    #[cfg(test)]
+    journal_branches: bool,
     pub(crate) loop_frames: Vec<infer::loops::LoopExitFrame>,
     typeshed: Arc<Typeshed>,
     user_stubs: Arc<BTreeMap<String, Typeshed>>,
@@ -947,6 +1005,9 @@ impl Checker {
             deferred_captures: Vec::new(),
             enclosing_formals: Vec::new(),
             loop_frames: Vec::new(),
+            journal_delta_cache: scope_journal::BranchChanges::default(),
+            #[cfg(test)]
+            journal_branches: true,
             pipe_argument_types: HashMap::new(),
             capture_scopes: false,
             capture_references: false,

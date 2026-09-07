@@ -171,6 +171,9 @@ All notable changes to ry are documented in this file.
   dispatch during coercion or extraction. Account for empty-list results from
   `sapply` and `mapply`, and for callbacks that run despite empty input storage.
 
+- Keep `Filter` subset results and `Position` no-match values unknown instead
+  of borrowing input types or assuming scalar indices.
+
 - Capture bare component names in `stats::model.extract` without reporting
   them as unbound variables; keep ordinary frame arguments checked.
 
@@ -281,6 +284,10 @@ All notable changes to ry are documented in this file.
 - Avoid RY098 warnings for body-local names captured by qualified `base::quote`,
   `substitute`, `expression`, and `rlang::expr` calls in defaults. Keep
   checking evaluated control arguments and tidy-injection payloads.
+
+- Resolve the exported `htmltools::tags` list and shiny re-export under
+  ordinary namespace/import lookup, avoiding unbound-name warnings for tag
+  constructors without adding an ambient global.
 
 - Keep `expand.grid` results conservative, so dropped numeric columns and
   data-frame arithmetic do not inherit the plain-list storage type. Include
@@ -552,6 +559,9 @@ All notable changes to ry are documented in this file.
   forwarding or S3 metadata dependencies. Keep diagnostic invalidation conservative.
 
 - Skip name hashing when assignments invalidate empty scope metadata tables.
+
+- Journal statement `if` mutations instead of cloning scopes for both arms,
+  preserving inference while reducing allocations on nested branches.
 
 - Reduce scope copying for assertions and short-circuit expressions.
 

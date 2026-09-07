@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "shiny",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "functions": {
     "moduleServer": {
       "params": [
@@ -120,5 +120,8 @@
       "eval": {"expr": "quoted_expression"},
       "return": {"mode": "function", "length": "1", "na": false}
     }
+  },
+  "datasets": {
+    "tags": {"mode": "list", "length": "unknown", "na": false}
   }
 }

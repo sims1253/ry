@@ -60,3 +60,5 @@ fn check_with_stubs(src: &str, stub_files: &[(&str, &str)]) -> (Vec<Diagnostic>,
     c.set_user_stubs(Arc::new(ry_typeshed::load_stub_dir(dir.path()).unwrap()));
     c.check_with_scope(&parse_file("test.R", src))
 }
+
+mod structure_constructor;

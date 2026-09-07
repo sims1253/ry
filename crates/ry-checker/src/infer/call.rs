@@ -104,9 +104,14 @@ impl Checker {
         }
 
         // The class-constructor stage: `structure`, `factor`, S4 `new`.
-        if let Some(t) =
-            self.infer_class_constructor_call(&semantic_name, &lookup_name, args, scope)
-        {
+        if let Some(t) = self.infer_class_constructor_call(
+            &name,
+            func,
+            &semantic_name,
+            &lookup_name,
+            args,
+            scope,
+        ) {
             return t;
         }
 

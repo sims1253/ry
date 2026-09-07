@@ -4,7 +4,7 @@
 //! these helpers so their file sets, resolution roots, and workspace
 //! models cannot drift apart.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -146,11 +146,18 @@ where
     I: IntoIterator<Item = &'a str>,
 {
     let mut groups: BTreeMap<Option<PathBuf>, Vec<usize>> = BTreeMap::new();
+    // The ancestor DESCRIPTION walk is identical for every file in one
+    // directory, so run it once per distinct directory instead of once
+    // per file.
+    let mut root_cache: HashMap<Option<&'a Path>, Option<PathBuf>> = HashMap::new();
     for (index, path) in paths.into_iter().enumerate() {
-        groups
-            .entry(enclosing_package_root(Path::new(path)))
-            .or_default()
-            .push(index);
+        let path = Path::new(path);
+        let key = path.parent();
+        let root = root_cache
+            .entry(key)
+            .or_insert_with(|| enclosing_package_root(path))
+            .clone();
+        groups.entry(root).or_default().push(index);
     }
     groups
 }

@@ -65,9 +65,6 @@ fn deferred_provenance_handles_packages_aliases_and_namespace_operators() {
         "out <- methods::on.exit(absent)",
         "out <- otherpkg::hasArg(absent)",
         "out <- otherpkg::on.exit(absent)",
-        "detach('package:methods'); out <- hasArg(absent)",
-        "library(unknownpkg); out <- hasArg(absent)",
-        "library(unknownpkg); out <- on.exit(absent)",
         "probe <- hasArg; out <- probe(absent)",
         "probe <- on.exit; out <- probe(absent)",
         "`::` <- function(pkg,name) function(...) list(value=1L); out <- methods::hasArg(absent)",
@@ -134,5 +131,23 @@ fn opaque_deferred_calls_discard_caller_effects() {
             diags.iter().all(|d| d.code != "RY040"),
             "{source}: {diags:?}"
         );
+    }
+}
+
+#[test]
+fn ambient_uncertainty_keeps_deferred_compatibility_without_hasarg_proof() {
+    for prefix in ["library(unknownpkg)", "detach('package:methods')"] {
+        let (diags, scope) = check_with_scope(&format!(
+            "{prefix}; out <- hasArg(absent); f <- function() hasArg(absent)"
+        ));
+        assert_eq!(scope.get("out").unwrap().mode, Mode::Logical);
+        assert!(
+            diags.iter().all(|d| !matches!(d.code, "RY010" | "RY096")),
+            "{diags:?}"
+        );
+        let diags = check(&format!(
+            "{prefix}; f <- function() {{ on.exit(later); later <- 1L }}"
+        ));
+        assert!(diags.iter().all(|d| d.code != "RY010"), "{diags:?}");
     }
 }

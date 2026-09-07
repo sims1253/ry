@@ -20,6 +20,8 @@ const BASE_DATABASE_PACKAGES: &[&str] = &[
 pub(crate) enum SpecialCallProvenance {
     Proven,
     Ordinary,
+    /// Ambient data-mask or search-path metadata cannot establish identity.
+    AmbientUncertainty,
     Unknown,
 }
 
@@ -86,22 +88,22 @@ impl Checker {
                     SpecialCallProvenance::Unknown
                 };
             }
-            if scope.data_mask_unknown
-                || self.literal_bindings_may_shadow_package(
-                    [semantic_name, format!("`{semantic_name}`").as_str()],
-                    &HashSet::new(),
-                    scope,
-                    package,
-                )
-            {
+            if self.literal_bindings_may_shadow_package(
+                [semantic_name, format!("`{semantic_name}`").as_str()],
+                &HashSet::new(),
+                scope,
+                package,
+            ) {
                 return SpecialCallProvenance::Unknown;
             }
             let explicit_import = self
                 .imported_from
                 .get(semantic_name)
                 .is_some_and(|pkg| pkg == package);
-            if !explicit_import && (scope.search_path_unknown || !self.bare_loaded.is_empty()) {
-                return SpecialCallProvenance::Unknown;
+            if scope.data_mask_unknown
+                || (!explicit_import && (scope.search_path_unknown || !self.bare_loaded.is_empty()))
+            {
+                return SpecialCallProvenance::AmbientUncertainty;
             }
         }
         if self.user_stubs.contains_key(package) || self.user_stubs.contains_key("base") {

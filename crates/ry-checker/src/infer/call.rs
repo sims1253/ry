@@ -106,7 +106,7 @@ impl Checker {
             } else {
                 "base"
             };
-            match self.special_call_provenance(
+            let proven = match self.special_call_provenance(
                 &name,
                 func,
                 &semantic_name,
@@ -114,16 +114,27 @@ impl Checker {
                 package,
                 scope,
             ) {
-                crate::resolve::SpecialCallProvenance::Proven => {
-                    if let Some(t) = self.infer_deferred_call(&lookup_name, args, scope, span) {
-                        return t;
-                    }
+                crate::resolve::SpecialCallProvenance::Proven => Some(true),
+                // Preserve the existing deferred model under ambient uncertainty.
+                // Namespace imports and whole-file attachment metadata do not yet
+                // establish call-time lookup. Do not claim RY096 proof here.
+                crate::resolve::SpecialCallProvenance::AmbientUncertainty
+                    if !self.user_stubs.contains_key(package)
+                        && !self.user_stubs.contains_key("base") =>
+                {
+                    Some(false)
                 }
-                crate::resolve::SpecialCallProvenance::Ordinary => {}
+                crate::resolve::SpecialCallProvenance::Ordinary
+                | crate::resolve::SpecialCallProvenance::AmbientUncertainty => None,
                 crate::resolve::SpecialCallProvenance::Unknown => {
                     scope.invalidate_unknown_effects();
                     return RType::unknown();
                 }
+            };
+            if let Some(proven) = proven
+                && let Some(t) = self.infer_deferred_call(&lookup_name, args, scope, span, proven)
+            {
+                return t;
             }
         }
 
@@ -660,6 +671,7 @@ impl Checker {
         args: &[Arg],
         scope: &mut Scope,
         span: Span,
+        proven: bool,
     ) -> Option<RType> {
         // Model the quoting of `hasArg` so a non-formal does not also
         // produce RY010. With `...` in the formals, `hasArg(name)`
@@ -670,7 +682,8 @@ impl Checker {
             if let Some(name) = args.first().and_then(|argument| match &argument.value {
                 Expr::Ident { name, .. } | Expr::String(name, _) => Some(name),
                 _ => None,
-            }) && let Some(formals) = self.enclosing_formals.last()
+            }) && proven
+                && let Some(formals) = self.enclosing_formals.last()
                 && !formals.has_dots
                 && !formals.names.contains(name)
             {

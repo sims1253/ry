@@ -15,9 +15,9 @@ All notable changes to ry are documented in this file.
 - Report missing format arguments only for proven base `sprintf` and
   `gettextf` calls, avoiding false RY094 warnings for custom functions.
 
-- Require methods provenance for `hasArg` and base provenance for `on.exit`
-  before applying deferred-argument semantics. Custom functions keep their
-  own return contracts; uncertain calls discard stale caller facts.
+- Stop applying `hasArg` and `on.exit` deferred semantics to explicit competing
+  bindings, formals, and aliases. Retain existing inference under ambient
+  lookup uncertainty, while requiring methods provenance for RY096.
 
 - Custom or masked `factor` and `new` calls no longer acquire builtin constructor facts. S4 constructor inference requires methods provenance, and detaching a package invalidates the default search-path assumption.
 

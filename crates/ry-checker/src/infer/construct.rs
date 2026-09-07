@@ -60,7 +60,8 @@ impl Checker {
             ) {
                 crate::resolve::SpecialCallProvenance::Proven => {}
                 crate::resolve::SpecialCallProvenance::Ordinary => return None,
-                crate::resolve::SpecialCallProvenance::Unknown => {
+                crate::resolve::SpecialCallProvenance::Unknown
+                | crate::resolve::SpecialCallProvenance::AmbientUncertainty => {
                     return Some(Self::infer_unknown_constructor(scope));
                 }
             }

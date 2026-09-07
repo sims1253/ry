@@ -96,7 +96,7 @@ fn uncertain_switch_calls_invalidate_caller_facts_without_forcing_actuals() {
 }
 
 #[test]
-fn selected_stop_marks_only_the_executed_path_unreachable() {
+fn selected_alternatives_preserve_return_and_stop_behavior() {
     let (diagnostics, stopped) = check_with_scope("out <- switch(1L, stop('selected'), 'bad'+1)");
     assert_eq!(stopped.get("out").unwrap().mode, Mode::Opaque);
     assert!(!diagnostics.iter().any(|d| d.code == "RY040"));

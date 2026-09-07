@@ -593,3 +593,42 @@ fn lexical_shadow_of_container_suppresses_ry102() {
         "lexically shadowed c() should NOT fire RY102, got {diags:?}"
     );
 }
+
+#[test]
+fn ops_proof_syntax_names_can_be_rebound() {
+    if !rscript_available() {
+        return;
+    }
+    let names: BTreeSet<_> = semantic_lists::OPS_PROOF_SYNTAX
+        .iter()
+        .map(|name| name.trim_matches('`'))
+        .collect();
+    let probes = [
+        ("{", "{ 1 }"),
+        ("(", "(1)"),
+        ("function", "function() NULL"),
+        ("<-", "x <- 1"),
+        ("=", "x = 1"),
+        ("<<-", "x <<- 1"),
+        ("::", "base::structure"),
+        (":::", "base:::structure"),
+        ("if", "if (TRUE) 1"),
+        ("for", "for (i in 1) NULL"),
+        ("while", "while (FALSE) NULL"),
+        ("repeat", "repeat break"),
+        (":", "1:2"),
+        ("%in%", "1 %in% 2"),
+        ("&&", "TRUE && FALSE"),
+        ("||", "TRUE || FALSE"),
+        ("%>%", "1 %>% identity"),
+        ("%T>%", "1 %T>% identity"),
+        ("%<>%", "x %<>% identity"),
+    ];
+    assert_eq!(names, probes.iter().map(|(name, _)| *name).collect());
+    for (name, source) in probes {
+        let output = r_eval(&format!(
+            "e <- new.env(parent=baseenv()); assign({name:?}, function(...) 42L, envir=e); cat(identical(eval(parse(text={source:?}), e), 42L))"
+        ));
+        assert_eq!(output, "TRUE", "{name}: {source}");
+    }
+}

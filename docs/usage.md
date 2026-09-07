@@ -185,9 +185,31 @@ vim.lsp.start({
 
 ## Known limits
 
-When both operator operands resolve to different S3 methods, ry keeps the result
-unknown. It does not yet model the full `chooseOpsMethod` selection or report
-the warning from primitive fallback. See [#193](https://github.com/sims1253/ry/issues/193).
+When both operator operands have different S3 methods, ry can follow a
+`chooseOpsMethod` returning literal `TRUE` or `FALSE` when the current scope
+proves both methods and the chooser values in top-level code using ordinary
+`<-` or `=` assignments. This includes aliases and methods with `...`; the selected operator method must also return
+a literal. Other calls, uncertain rebinding, function bodies checked before
+execution, attached packages, and more complex methods keep the result unknown.
+Primitive fallback and its incompatibility warning remain unmodeled. See [#193](https://github.com/sims1253/ry/issues/193).
+
+For example, this top-level sequence selects a character result:
+
+```r
+x <- structure(1L, class = "left")
+y <- structure(2L, class = "right")
+`+.left` <- function(e1, e2) "left"
+`+.right` <- function(e1, e2) 1L
+chooseOpsMethod.left <- function(...) TRUE
+selected <- x + y
+```
+
+This proof assumes ordinary initial bindings, as reference facts do; it does
+not establish the state of a pre-populated R session. An intervening unknown
+call, such as `change_environment()`, makes subsequent selection unknown even
+if the methods are assigned again: it could install a delayed binding. Putting
+this sequence inside `function() { ... }` also leaves selection unknown because
+the function can run after its environment changes.
 
 S4 modeling covers in-package `setClass` / `setGeneric` /
 `setMethod` and `@` slot access but not full method resolution order;

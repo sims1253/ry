@@ -11,12 +11,15 @@ impl Checker {
         rt: RType,
         span: Span,
         known_null_is_actionable: bool,
+        scope: &mut Scope,
     ) -> RType {
         if matches!(op, BinOpKind::Colon) {
+            scope.invalidate_ops_environment();
             return lt.seq(rt);
         }
         // Membership returns one logical per LHS element, regardless of RHS length.
         if matches!(op, BinOpKind::In) {
+            scope.invalidate_ops_environment();
             return RType::new(Mode::Logical, lt.length);
         }
         // Primitive operators dispatch through `+.foo` then the `Ops.foo`
@@ -25,7 +28,7 @@ impl Checker {
         // #165). A dynamically classed value is likewise not proof that
         // the primitive is invalid: its runtime class may provide a
         // method from another package.
-        if let Some(dispatched) = self.try_s3_binop_dispatch(op, &lt, &rt) {
+        if let Some(dispatched) = self.try_s3_binop_dispatch(op, &lt, &rt, scope) {
             return dispatched;
         }
         // The opaque base `Ops.data.frame` stub falls through to schema
@@ -248,6 +251,7 @@ impl Checker {
         op: BinOpKind,
         lhs: &RType,
         rhs: &RType,
+        scope: &mut Scope,
     ) -> Option<RType> {
         // `:`, the pipes, and `%in%` are not S3 generics, and `&&`/`||`
         // are strictly logical short-circuit primitives that no `Ops`
@@ -261,9 +265,18 @@ impl Checker {
                 | BinOpKind::AndAnd
                 | BinOpKind::OrOr
         ) {
+            scope.invalidate_ops_environment();
             return None;
         }
         let symbol = op_symbol(op);
+        if let Some(result) = ops_chooser::dispatch(self, symbol, lhs, rhs, scope) {
+            if result.mode == Mode::Opaque {
+                scope.invalidate_ops_environment();
+            }
+            return Some(result);
+        }
+        // Other operator methods may execute arbitrary code in the caller.
+        scope.invalidate_ops_environment();
         // R resolves both sides before choosing an Ops method. Different
         // methods can fall back to the primitive, or be selected by
         // chooseOpsMethod; neither outcome justifies taking the left return
@@ -365,6 +378,7 @@ impl Checker {
             rt,
             span,
             known_null_arithmetic_operand(lhs, scope) || known_null_arithmetic_operand(rhs, scope),
+            scope,
         );
         if rhs_parameter_vector
             && !self.diagnostics[before..]

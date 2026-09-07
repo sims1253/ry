@@ -287,6 +287,10 @@ pub fn builtin_environment_bindings(path: &str) -> &'static [&'static str] {
 /// A single scope's binding table.
 #[derive(Debug, Clone, Default)]
 pub struct Scope {
+    // An unknown effect may install delayed bindings or change syntax itself.
+    // Later literal assignments cannot prove that those effects disappeared.
+    pub(crate) ops_environment_unknown: bool,
+    pub(crate) literal_functions: HashMap<String, Arc<infer::ops_chooser::LiteralFunction>>,
     pub(crate) reference_provenance: Option<Box<reference_facts::ScopeProvenance>>,
     pub bindings: HashMap<String, RType>,
     /// Names whose current binding was installed by flow narrowing rather
@@ -319,6 +323,11 @@ pub struct Scope {
 }
 
 impl Scope {
+    pub(crate) fn invalidate_ops_environment(&mut self) {
+        self.literal_functions.clear();
+        self.ops_environment_unknown = true;
+    }
+
     pub fn get(&self, name: &str) -> Option<&RType> {
         self.bindings.get(name)
     }
@@ -328,6 +337,7 @@ impl Scope {
         if let Some(provenance) = self.reference_provenance.as_mut() {
             provenance.invalidate(&name);
         }
+        self.literal_functions.remove(semantic_argument_name(&name));
         self.function_aliases.remove(&name);
         self.lexical_functions.remove(&name);
         self.list_origin_bindings.remove(&name);
@@ -344,6 +354,7 @@ impl Scope {
         if let Some(provenance) = self.reference_provenance.as_mut() {
             provenance.invalidate(&name);
         }
+        self.literal_functions.remove(semantic_argument_name(&name));
         self.function_aliases.remove(&name);
         self.lexical_functions.remove(&name);
         self.bindings.insert(name.clone(), t);
@@ -363,6 +374,7 @@ impl Scope {
         if let Some(provenance) = self.reference_provenance.as_mut() {
             provenance.invalidate(&name);
         }
+        self.literal_functions.remove(semantic_argument_name(&name));
         self.function_aliases.remove(&name);
         self.narrowed_bindings.remove(&name);
         self.bindings.insert(name.clone(), t);

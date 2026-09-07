@@ -543,6 +543,16 @@ expression: snapshots
         start: 90
   fixture: err_recursive_parameter_default.R
 - diagnostics:
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 0
+        end: 230
+        line: 7
+        start: 217
+  fixture: err_s3_literal_ops_chooser.R
+- diagnostics:
     - code: RY070
       message: "`x` is `integer`, not a function; cannot call it"
       severity: error
@@ -904,6 +914,8 @@ expression: snapshots
   fixture: ok_s3_data_frame_operator_override.R
 - diagnostics: []
   fixture: ok_s3_dispatch.R
+- diagnostics: []
+  fixture: ok_s3_literal_ops_chooser.R
 - diagnostics: []
   fixture: ok_s3_opaque_group_stops_lookup.R
 - diagnostics: []

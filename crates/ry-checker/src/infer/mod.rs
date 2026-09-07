@@ -9,6 +9,8 @@ pub(crate) use types::*;
 mod args;
 pub(crate) mod binop;
 pub(crate) mod call;
+#[cfg(test)]
+mod cloned_scope_reference;
 pub(crate) mod construct;
 pub(crate) mod custom_operator;
 pub(crate) mod index;
@@ -226,14 +228,13 @@ impl Checker {
                         scope.mark_lexical_function(name.to_string());
                     }
                     if plain_vector {
-                        scope
-                            .plain_ops_vectors
-                            .insert(semantic_argument_name(name).to_string());
+                        scope.mark_plain_ops_vector(semantic_argument_name(name).to_string());
                     }
                     if let Some(function) = literal_function {
-                        scope
-                            .literal_functions
-                            .insert(semantic_argument_name(name).to_string(), function);
+                        scope.set_literal_function(
+                            semantic_argument_name(name).to_string(),
+                            function,
+                        );
                     }
                     if let Some(alias) = function_alias {
                         scope.set_function_alias(name.to_string(), alias);
@@ -300,50 +301,12 @@ impl Checker {
                 // RY103: an `if` condition is a length-1 logical context.
                 self.infer_condition(cond, scope, ConditionContext::If);
                 let narrowing = self.extract_type_narrowing(cond, scope);
-                let has_else = else_.is_some();
-                let (mut then_scope, mut else_scope, narrowed) = apply_narrowing(scope, &narrowing);
-                for s in then {
-                    self.walk_stmt(s, &mut then_scope, returns.as_deref_mut());
+                #[cfg(test)]
+                if !self.journal_branches {
+                    self.walk_cloned_if(scope, &narrowing, then, else_.as_deref(), returns);
+                    return;
                 }
-                if let Some(else_) = else_ {
-                    for s in else_ {
-                        self.walk_stmt(s, &mut else_scope, returns.as_deref_mut());
-                    }
-                }
-                // Merge branch bindings back into the parent scope. In R,
-                // assignments inside an `if` branch leak to the enclosing
-                // scope, so a name bound conditionally must still be visible
-                // after the `if` (otherwise uses fire RY010 false positives).
-                self.merge_branch_bindings(
-                    scope,
-                    &then_scope,
-                    &else_scope,
-                    (then, else_.as_deref()),
-                    &narrowed,
-                );
-                // Refinements normally remain branch-local (see
-                // `apply_narrowing`). A diverging arm is the exception: the
-                // continuation is reachable only through its sibling, so its
-                // recorded refinements are facts in the parent scope.
-                let then_diverges = (scope.loop_frame.is_some() && then_scope.unreachable)
-                    || self.block_diverges(then);
-                let else_diverges = (scope.loop_frame.is_some() && else_scope.unreachable)
-                    || else_
-                        .as_ref()
-                        .is_some_and(|statements| self.block_diverges(statements));
-                let continuation = match (then_diverges, else_.as_ref(), else_diverges) {
-                    (true, Some(_), false) | (true, None, _) => Some(&else_scope),
-                    (false, Some(_), true) => Some(&then_scope),
-                    _ => None,
-                };
-                if let Some(continuation) = continuation {
-                    self.copy_continuation_narrowing(scope, continuation, &narrowed);
-                }
-                // When both explicit arms throw, no route reaches the
-                // enclosing block's continuation.
-                if has_else && then_scope.unreachable && else_scope.unreachable {
-                    scope.unreachable = true;
-                }
+                self.walk_journal_if(scope, &narrowing, then, else_.as_deref(), returns);
             }
             Stmt::For {
                 name, iter, body, ..
@@ -655,175 +618,199 @@ impl Checker {
         }
     }
 
-    /// Merge bindings introduced inside the two `if` branches back into the
-    /// parent `scope`.
-    ///
-    /// A name assigned in both branches gets the join of their types.
-    /// If a path can retain an existing parent binding, its type contributes
-    /// too. A name introduced on only one path becomes [`RType::unknown`]:
-    /// the current model has no sound type for "possibly missing".
-    ///
-    /// "Newly bound" means present in the branch scope but absent from the
-    /// parent (or bound to a different type): names that already existed in
-    /// the parent with the same type are left untouched.
-    ///
-    /// List-origin provenance merges with the same path discipline as the
-    /// type. `insert` clears the marker, so every merged rebinding must
-    /// re-establish it explicitly: a branch that rebinds the name contributes
-    /// its own marker, a branch (or an implicit no-`else`) that leaves the
-    /// name unbound cannot supply a non-list value at any later use, and a
-    /// branch that keeps the parent binding requires the parent's marker. A
-    /// single non-list rebinding therefore clears the merged marker, exactly
-    /// as a single non-list type widens the merged type.
-    pub(crate) fn merge_branch_bindings(
-        &self,
+    fn walk_journal_if(
+        &mut self,
         scope: &mut Scope,
-        then_scope: &Scope,
-        else_scope: &Scope,
-        branches: (&[Stmt], Option<&[Stmt]>),
-        narrowed: &HashSet<String>,
+        narrowing: &Narrowing,
+        then: &[Stmt],
+        else_: Option<&[Stmt]>,
+        mut returns: Option<&mut Vec<RType>>,
     ) {
-        let has_else = branches.1.is_some();
-        // Types can compare equal after replacing a literal function. Do not
-        // carry its identity or constant result across a branch merge.
-        scope.literal_functions.clear();
-        scope.plain_ops_vectors.clear();
-        scope.ops_environment_unknown |=
-            then_scope.ops_environment_unknown || else_scope.ops_environment_unknown;
-        scope.effects_unknown |= then_scope.effects_unknown || else_scope.effects_unknown;
-        // A diverging branch contributes no state to the continuation. Treat
-        // its live sibling as the only arm, while retaining the parent path
-        // for a one-arm `if` whose then branch can continue.
-        let then_reaches = !then_scope.unreachable;
-        let else_reaches = has_else && !else_scope.unreachable;
-        if scope.loop_frame.is_some() && !then_reaches && !has_else {
-            return;
+        let mut narrowed = HashSet::new();
+        let mark = scope.begin_snapshot();
+        if let Some(name) = apply_narrowing_branch(scope, narrowing, NarrowingBranch::Then) {
+            narrowed.insert(name.to_string());
         }
-        if has_else && then_reaches != else_reaches {
-            let continuation = if then_reaches { then_scope } else { else_scope };
-            for (name, ty) in &continuation.bindings {
-                if narrowed.contains(name) && continuation.narrowed_bindings.contains(name) {
-                    continue;
-                }
-                if scope.get(name) != Some(ty) {
-                    // The continuation is the only route forward, so its
-                    // provenance is a fact in the parent (same capture-
-                    // insert-remark shape as `assign_replacement_target`).
-                    let had_list_origin = continuation.has_list_origin(name);
-                    scope.insert(name.clone(), ty.clone());
-                    if had_list_origin {
-                        scope.mark_list_origin(name.clone());
-                    }
-                }
-            }
-            return;
+        for statement in then {
+            self.walk_stmt(statement, scope, returns.as_deref_mut());
         }
-
-        // Collect the candidate names (only those that differ from the
-        // parent) without holding a borrow of `scope` while we mutate it.
-        let mut branch_types: HashMap<&str, (Option<&RType>, Option<&RType>)> = HashMap::new();
-        for (name, t) in &then_scope.bindings {
-            // Only the marker installed by `apply_narrowing` is
-            // branch-local. An ordinary `Scope::insert` clears that marker,
-            // so a rebinding of a narrowed name is always merged even when
-            // its type is opaque during an early fixpoint iteration.
-            if narrowed.contains(name) && then_scope.narrowed_bindings.contains(name) {
-                continue;
-            }
-            match scope.get(name) {
-                Some(existing) if existing == t => {}
-                _ => {
-                    branch_types.entry(name).or_insert((None, None)).0 = Some(t);
-                }
+        let mut then_delta =
+            scope.finish_snapshot(mark, std::mem::take(&mut self.journal_delta_cache));
+        let mark = scope.begin_snapshot();
+        if let Some(name) = apply_narrowing_branch(scope, narrowing, NarrowingBranch::Else) {
+            narrowed.insert(name.to_string());
+        }
+        if let Some(statements) = else_ {
+            for statement in statements {
+                self.walk_stmt(statement, scope, returns.as_deref_mut());
             }
         }
-        if has_else {
-            for (name, t) in &else_scope.bindings {
-                // See the then-branch loop: only a pure narrowing
-                // refinement is branch-local.
-                if narrowed.contains(name) && else_scope.narrowed_bindings.contains(name) {
-                    continue;
-                }
-                match scope.get(name) {
-                    Some(existing) if existing == t => {}
-                    _ => {
-                        branch_types.entry(name).or_insert((None, None)).1 = Some(t);
-                    }
-                }
-            }
-        }
-        // Scope differences alone do not prove assignment: loop inference
-        // can expose a body write even when the loop executes zero times.
-        let definitely_rebound = if branch_types
-            .values()
-            .any(|(a, b)| a.is_some() && b.is_some())
-        {
-            let mut names = definitely_assigned_names(branches.0);
-            let other = definitely_assigned_names(branches.1.unwrap_or_default());
-            names.retain(|name| other.contains(name));
-            names
-        } else {
-            HashSet::new()
+        let mut else_delta =
+            scope.finish_snapshot(mark, std::mem::take(&mut self.journal_delta_cache));
+        let has_else = else_.is_some();
+        let then_reaches = !then_delta.unreachable;
+        let else_reaches = has_else && !else_delta.unreachable;
+        let then_diverges_in_loop = scope.loop_frame.is_some() && then_delta.unreachable;
+        let else_diverges_in_loop = scope.loop_frame.is_some() && else_delta.unreachable;
+        // Continuation lookups may fall back to the original scope. Capture
+        // those values before streaming independent binding merges into it.
+        let then_diverges = then_diverges_in_loop || self.block_diverges(then);
+        let else_diverges = else_diverges_in_loop
+            || else_.is_some_and(|statements| self.block_diverges(statements));
+        let continuation = match (then_diverges, has_else, else_diverges) {
+            (true, true, false) | (true, false, _) => Some(&else_delta),
+            (false, true, true) => Some(&then_delta),
+            _ => None,
         };
-        for (name, (then_t, else_t)) in branch_types {
-            let merged = match (then_t, else_t) {
-                (Some(a), Some(b)) => {
-                    let joined = a.clone().join(b.clone());
-                    match scope.get(name) {
-                        Some(parent) if !definitely_rebound.contains(name) => {
-                            parent.clone().join(joined)
-                        }
-                        _ => joined,
-                    }
-                }
-                (Some(a), None) | (None, Some(a)) => {
-                    // One path keeps the parent binding, including an
-                    // unchanged assignment or an implicit no-else path.
-                    // If no parent binding exists, the name may be missing.
-                    match scope.get(name) {
-                        Some(parent) => parent.clone().join(a.clone()),
-                        None => RType::unknown(),
-                    }
-                }
-                (None, None) => continue,
+        let continuation_facts: Vec<_> = continuation
+            .into_iter()
+            .flat_map(|delta| {
+                narrowed.iter().map(|name| {
+                    let binding = delta.binding(scope, name, scope.get(name));
+                    (name.clone(), binding.ty.cloned(), binding.default_parameter)
+                })
+            })
+            .collect();
+        scope.clear_ops_facts();
+        scope.ops_environment_unknown |=
+            then_delta.ops_environment_unknown || else_delta.ops_environment_unknown;
+        scope.effects_unknown |= then_delta.effects_unknown || else_delta.effects_unknown;
+        // Compute definite assignments only when both arms change a type,
+        // matching the clone merge's lazy AST analysis.
+        let mut definitely_rebound = None;
+        // Canonical Ops facts were cleared above. The remaining raw-name
+        // facts are independent, so each delta type can be consumed once.
+        for from_then in [true, false] {
+            let (primary, other) = if from_then {
+                (&mut then_delta.changed, &mut else_delta.changed)
+            } else {
+                (&mut else_delta.changed, &mut then_delta.changed)
             };
-            // A branch scope that does not bind the name (an implicit
-            // no-`else`, or an arm that never assigns it) cannot supply a
-            // non-list value at any later use — reading the name on that
-            // path errors first — so absence is vacuous agreement. A branch
-            // that keeps the parent binding (inherited into the clone)
-            // demands the parent's marker instead.
-            let then_origin =
-                !then_scope.bindings.contains_key(name) || then_scope.has_list_origin(name);
-            let else_origin =
-                !else_scope.bindings.contains_key(name) || else_scope.has_list_origin(name);
-            let keeps_list_origin = then_origin && else_origin;
-            scope.insert(name, merged);
-            if keeps_list_origin {
-                scope.mark_list_origin(name);
-            }
-        }
-    }
-
-    /// Copy only the type facts produced by `apply_narrowing` from a branch
-    /// known to be the sole route to the continuation. Assignments continue
-    /// to use `merge_branch_bindings`; this avoids changing its established
-    /// branch-merge and lazy-default semantics.
-    fn copy_continuation_narrowing(
-        &self,
-        scope: &mut Scope,
-        continuation: &Scope,
-        narrowed: &HashSet<String>,
-    ) {
-        for name in narrowed {
-            if let Some(ty) = continuation.get(name) {
-                if continuation.is_default_parameter(name) {
-                    scope.insert_parameter_default(name.clone(), ty.clone());
+            for (name, state) in primary.iter_mut() {
+                if !from_then && other.contains_key(name) {
+                    continue;
+                }
+                if scope.loop_frame.is_some() && !then_reaches && !has_else {
+                    break;
+                }
+                let other_state = other.get_mut(name);
+                let (mut then_state, mut else_state) = if from_then {
+                    (Some(state), other_state)
                 } else {
-                    scope.insert(name.clone(), ty.clone());
+                    (other_state, Some(state))
+                };
+                let original = scope.get(name);
+                let base_view = || crate::scope_journal::BindingView {
+                    ty: original,
+                    narrowed: scope.narrowed_bindings.contains(name),
+                    list_origin: scope.has_list_origin(name),
+                    default_parameter: scope.is_default_parameter(name),
+                };
+                let then_binding = then_state
+                    .as_deref()
+                    .map_or_else(base_view, |state| state.view());
+                let else_binding = else_state
+                    .as_deref()
+                    .map_or_else(base_view, |state| state.view());
+                if has_else && then_reaches != else_reaches {
+                    let continuation = if then_reaches {
+                        then_binding
+                    } else {
+                        else_binding
+                    };
+                    if narrowed.contains(name) && continuation.narrowed {
+                        continue;
+                    }
+                    if let Some(ty) = continuation.ty {
+                        if original != Some(ty) {
+                            let list_origin = continuation.list_origin;
+                            let continuation_state = if then_reaches {
+                                &mut then_state
+                            } else {
+                                &mut else_state
+                            };
+                            let ty = continuation_state
+                                .as_mut()
+                                .and_then(|state| state.ty.take())
+                                .expect("changed continuation is owned by its delta");
+                            scope.insert(name.clone(), ty);
+                            if list_origin {
+                                scope.mark_list_origin(name);
+                            }
+                        }
+                    }
+                    continue;
+                }
+                let changed = |binding: &crate::scope_journal::BindingView<'_>| {
+                    !(narrowed.contains(name) && binding.narrowed)
+                        && binding.ty.is_some_and(|ty| original != Some(ty))
+                };
+                let then_changed = changed(&then_binding);
+                let else_changed = has_else && changed(&else_binding);
+                let list_origin = (then_binding.ty.is_none() || then_binding.list_origin)
+                    && (else_binding.ty.is_none() || else_binding.list_origin);
+                let then_ty = then_changed.then(|| {
+                    then_state
+                        .as_mut()
+                        .and_then(|state| state.ty.take())
+                        .expect("changed type is owned by its delta")
+                });
+                let else_ty = else_changed.then(|| {
+                    else_state
+                        .as_mut()
+                        .and_then(|state| state.ty.take())
+                        .expect("changed type is owned by its delta")
+                });
+                let merged = match (then_ty, else_ty) {
+                    (Some(a), Some(b)) => {
+                        let definitely_rebound = definitely_rebound.get_or_insert_with(|| {
+                            let mut names = definitely_assigned_names(then);
+                            let other = definitely_assigned_names(else_.unwrap_or_default());
+                            names.retain(|name| other.contains(name));
+                            names
+                        });
+                        let joined = a.join(b);
+                        match original {
+                            Some(parent) if !definitely_rebound.contains(name.as_str()) => {
+                                parent.clone().join(joined)
+                            }
+                            _ => joined,
+                        }
+                    }
+                    (Some(a), None) | (None, Some(a)) => match original {
+                        Some(parent) => parent.clone().join(a),
+                        None => RType::unknown(),
+                    },
+                    (None, None) => continue,
+                };
+
+                scope.insert(name.clone(), merged);
+                if list_origin {
+                    scope.mark_list_origin(name);
                 }
             }
         }
+        for (name, ty, default_parameter) in continuation_facts {
+            if let Some(ty) = ty {
+                if default_parameter {
+                    scope.insert_parameter_default(name, ty);
+                } else {
+                    scope.insert(name, ty);
+                }
+            }
+        }
+        if has_else && then_delta.unreachable && else_delta.unreachable {
+            scope.unreachable = true;
+        }
+        // Both deltas are dead after the merge. Retain one empty backing table
+        // for the next completed branch; no binding facts survive in the cache.
+        let mut cache = if then_delta.changed.capacity() >= else_delta.changed.capacity() {
+            then_delta.changed
+        } else {
+            else_delta.changed
+        };
+        cache.clear();
+        self.journal_delta_cache = cache;
     }
 
     /// Whether every path through a statement block stops executing the

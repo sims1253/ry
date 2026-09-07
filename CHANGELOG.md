@@ -525,6 +525,9 @@ All notable changes to ry are documented in this file.
 
 - Skip name hashing when assignments invalidate empty scope metadata tables.
 
+- Journal statement `if` mutations instead of cloning scopes for both arms,
+  preserving inference while reducing allocations on nested branches.
+
 - Reduce scope copying for assertions and short-circuit expressions.
 
 - **One pass-1 walk per file, syntax-only attachment harvest**: the

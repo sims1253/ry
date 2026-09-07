@@ -1765,7 +1765,7 @@ impl Checker {
                 found_lexical.then_some(&result),
                 unresolved,
             );
-            self.finish_reference_read(name, scope);
+            self.finish_reference_read(name, *span, scope);
         }
         result
     }

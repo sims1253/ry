@@ -89,6 +89,7 @@ Each reference contains:
 | `definition_id` | An ID in this file's `definitions`, or `null`. |
 | `type_at_reference` | A structured type, or `null` when resolution is not established. |
 | `reason` | The checker's explanation for missing evidence, or `null`. |
+| `blocker` | One primary restriction with `kind`, `cause`, `span`, and `scope_span`, or `null`. Additive in schema 2; it does not change the evidence above. |
 
 The checker supports a conservative subset of same-file code: literal
 assignments, copies of established bindings, and a function's own formals and
@@ -155,6 +156,56 @@ not establish that a rename or other edit is safe.
 
 See the [fixed coverage panel](corpus/reference-prefixes.md) for measured
 changes and unchanged real-source cases.
+
+### Blocker provenance
+
+`blocker` explains a refusal; it never supplies a definition, type, or runtime
+read order. Its spans use the same original-source byte and line/column format
+as reference spans. `scope_span` identifies the scope that owns the blocker,
+which can be an ancestor of the reference's scope. `span` is `null` when the
+operation is not located. A null blocker means no additional provenance was
+recorded, not that the reference is safe.
+
+Only **one primary blocker** is reported. It is not an exhaustive list. Static
+inventory uses this deterministic precedence:
+
+1. An inherited restriction retains the ancestor's original cause and spans.
+   Parse errors restrict the whole file; the earliest error span is reported.
+2. Whole-scope declaration restrictions take precedence over all statement
+   barriers, even for reads before the declaration. The first restriction in
+   formal order, then assignment traversal order, wins. A write that is both
+   a formal write and a spelling conflict is reported as `formal_write`.
+3. The first unsupported statement blocks itself and its suffix. It is
+   `containing_statement` for reads in that statement, then `prior_statement`
+   for later reads, even if their own statement is also unsupported.
+4. Lazy default expressions are inventoried separately with `lazy_default`;
+   their nested functions inherit that restriction.
+
+| `kind` | `cause` codes | Location |
+| --- | --- | --- |
+| `containing_statement`, `prior_statement` | `unsupported_statement` | First unsupported statement and its owning scope; expression spans may omit wrapping parentheses. |
+| `inherited_scope` | Original ancestor cause from this table. | Original ancestor blocker and owner, not the nested read. |
+| `whole_scope` | `parse_error`, `duplicate_formal`, `unsupported_formal`, `unbacked_formal`, `formal_write`, `mixed_spelling`, `unsupported_declaration` | Error region, formal, or assignment target; owning scope. |
+| `default_expression` | `lazy_default` | Default expression and function scope. |
+| `prior_read` | `unsafe_read` | First unsafe read observed by the semantic walk and its owning scope. |
+| `semantic_effect` | `unknown_effect` | Unknown operation span; owning scope is retained. |
+
+For an otherwise eligible occurrence, the semantic walk retains its existing
+reason precedence. `after_unsafe_read` gains the first unsafe-read location,
+or `unknown_effect` if unlocated invalidation happened first. A later unsafe
+read cannot replace that first blocker. Conflicting observations discard
+blocker provenance along with definition/type evidence. Newly resolved reads
+have no blocker.
+
+The existing `reason` codes remain unchanged: `unsupported_scope`,
+`not_observed`, `after_unsafe_read`, `unknown_environment`, `deferred_capture`,
+`untracked_binding`, `unbound_name`, `untracked_lookup`, and
+`conflicting_observations`. Reasons without further recorded provenance keep
+`blocker: null`. Neither the schema version nor the reference capability is
+promoted by this addition.
+
+See the [blocker regression panel](corpus/reference-blockers.md) for preserved
+legacy facts and the primary-reason breakdown on selected real sources.
 
 ## Schema version 1
 

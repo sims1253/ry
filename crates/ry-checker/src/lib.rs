@@ -23,8 +23,8 @@ pub mod project;
 mod reference_facts;
 mod resolve;
 pub use reference_facts::{
-    DefinitionId, ReferenceDefinition, ReferenceDefinitionKind, ReferenceFacts, ReferenceRecord,
-    ReferenceResolution,
+    DefinitionId, ReferenceBlocker, ReferenceDefinition, ReferenceDefinitionKind, ReferenceFacts,
+    ReferenceRecord, ReferenceResolution,
 };
 pub mod rules;
 pub mod semantic_lists;

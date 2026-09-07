@@ -158,3 +158,14 @@ fn qualified_dynamic_selectors_do_not_gain_an_all_alternative_model() {
     let (_, scope) = check_with_scope("out <- switch(x, 1L, 2L)");
     assert_eq!(scope.get("out").unwrap().mode, Mode::Integer);
 }
+
+#[test]
+fn rebound_assignment_cannot_hide_a_callee_replacement() {
+    let diagnostics = check(
+        "`<-` <- function(...) assign(paste0('swi', 'tch'), function(...) 1L, envir=.GlobalEnv); x <- 1L; switch(1L, 'bad', 1L)+1L",
+    );
+    assert!(
+        !diagnostics.iter().any(|d| d.code == "RY040"),
+        "{diagnostics:?}"
+    );
+}

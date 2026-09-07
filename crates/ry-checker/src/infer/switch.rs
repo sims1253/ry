@@ -109,7 +109,9 @@ impl Checker {
                 if matches!(expr.as_ref(), Expr::Integer(..) | Expr::Double(..)));
         // Earlier calls or deferred bodies can replace switch or namespace
         // operators. The current call's own barrier is not a prior effect.
-        if literal_selector && !environment_known_before_call {
+        if literal_selector
+            && (!environment_known_before_call || ops_chooser::syntax_rebound(self, scope))
+        {
             return unknown(scope);
         }
         let alternatives = &args[1..];

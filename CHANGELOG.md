@@ -154,6 +154,13 @@ All notable changes to ry are documented in this file.
 - Report an explicit nesting-limit error before deeply nested syntax can
   overflow the parser stack. The limit is 128 tree-sitter syntax levels.
 
+- Decode adjacent high/low Unicode surrogate escapes as a single UTF-8 scalar,
+  while retaining raw recovery text for unpaired or malformed surrogates.
+
+- Decode octal and braced Unicode string escapes, escaped spaces and backticks,
+  and UTF-8 byte sequences correctly. Preserve physical escaped newlines and
+  retain raw recovery text for malformed or unrepresentable string values.
+
 - Report missing format arguments only for proven base `sprintf` and
   `gettextf` calls, avoiding false RY094 warnings for custom functions.
 

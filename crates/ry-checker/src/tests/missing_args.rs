@@ -136,6 +136,9 @@ fn forwarded_dots_can_supply_required_arguments() {
         "target <- function(alpha, alpine) alpha + alpine; f <- function(...) target(`al` = 1L, ...)",
         "target <- function(alpha, alpine) alpha + alpine; f <- function(...) target('al' = 1L, ...)",
         "target <- function(x, y) x + y; f <- function(...) target(..., ...)",
+        "target <- function(x, y = 2L) x + y; f <- function(...) target(, ...); f(x = 1L)",
+        "target <- function(x = 1L, y) x + y; f <- function(...) target(..., ); f(y = 2L)",
+        "target <- function(x, ...) x; f <- function(...) target(..., ); f(1L)",
     ] {
         let diagnostics = check(source);
         assert!(

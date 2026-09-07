@@ -21,3 +21,14 @@ stopifnot(identical(partial(alpine = 2L), 3L))
 target <- function(xyz, y) xyz + y
 partial <- function(...) target(xyz = ..., x = 1L)
 stopifnot(identical(partial(y = 2L), 3L))
+
+# Exact names supplied by dots move positional holes onto defaulted parameters.
+target <- function(x, y = 2L) x + y
+forward <- function(...) target(, ...)
+stopifnot(identical(forward(x = 1L), 3L))
+target <- function(x = 1L, y) x + y
+forward <- function(...) target(..., )
+stopifnot(identical(forward(y = 2L), 3L))
+target <- function(x, ...) x
+forward <- function(...) target(..., )
+stopifnot(identical(forward(1L), 1L))

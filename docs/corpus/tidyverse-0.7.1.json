@@ -1094,7 +1094,7 @@
   "notes": [
     "Ecosystem reports are generated hermetically with RY_NO_INSTALLED_LIBRARIES=1; the source audit used installed R libraries.",
     "The ecosystem audit reconciles each hermetic report against finding identities in this ledger, including diagnostics that are absent from production-only reports.",
-    "The grid export inventory resolves four previously reviewed ggplot2 RY010 false positives for is.unit and is.grob callback values under import(grid); all other identities are unchanged.",
+    "The grid export inventory resolves four ggplot2 RY010 findings for is.unit and is.grob callback values under import(grid). They were unowned in this ledger and are now verified as missing-export false positives; all other identities are unchanged.",
     "The source digest now records the concatenated bytes of all 32 unprefixed root reports in filename order from the complete default-manifest regeneration. The ledger retains its existing reviewed-package coverage.",
     "Unproven factor/new calls discard downstream facts because the callee or skipped arguments may mutate caller bindings. This conservatively reduces coverage by the ten dplyr identities recorded in the Posit ledger, plus six duckplyr RY040 identities in tests/testthat/test-dplyr-count-tally.R:143/144/179/222/223/254. These retain their existing false-positive audit labels; their disappearance is reduced coverage after uncertain factor calls, not individual diagnostic fixes. Required true-positive identities remain covered."
   ],

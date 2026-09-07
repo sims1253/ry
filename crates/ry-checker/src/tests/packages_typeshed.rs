@@ -833,3 +833,15 @@ fn confint_dispatch_does_not_claim_an_atomic_result() {
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
     assert!(check("c(1, 2)$interval").iter().any(|d| d.code == "RY061"));
 }
+
+#[test]
+fn fold_results_do_not_claim_scalar_length_guards() {
+    let diagnostics =
+        check("groups <- list(c('a', 'b'), 'c'); if (length(Reduce(intersect, groups)) == 0) TRUE");
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert!(
+        check("if (length(sum(1:3)) == 0) TRUE")
+            .iter()
+            .any(|d| d.code == "RY105")
+    );
+}

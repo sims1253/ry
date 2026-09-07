@@ -477,6 +477,12 @@ impl Checker {
             self.available_package_names()
                 .into_iter()
                 .find_map(|package| {
+                    // Cheap prefilter: an embedded stub that declares no
+                    // `injects` cannot match, and skipping it avoids
+                    // parsing the package on this scan.
+                    if !self.package_may_inject(package) {
+                        return None;
+                    }
                     self.package_typeshed(package)
                         .and_then(|typeshed| typeshed.functions.get(lookup_name))
                         .filter(|signature| !signature.injects.is_empty())

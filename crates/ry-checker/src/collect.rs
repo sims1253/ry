@@ -713,6 +713,12 @@ fn promise_capture_index() -> &'static std::collections::HashMap<String, Vec<&'s
             add(base);
         }
         for package in ry_typeshed::known_packages() {
+            // Skip stubs that cannot contribute: the prefilter keeps
+            // embedded packages that declare no promise capture from
+            // being parsed at all (they load lazily per package).
+            if !ry_typeshed::package_has_captures_promise(package) {
+                continue;
+            }
             if let Some(typeshed) = ry_typeshed::load_package(package) {
                 add(typeshed);
             }

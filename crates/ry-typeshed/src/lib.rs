@@ -312,48 +312,84 @@ const VCTRS_JSON: &str = include_str!("../vendor/vctrs/vctrs.json");
 const GRID_JSON: &str = include_str!("../vendor/grid/grid.json");
 const GGPLOT2_JSON: &str = include_str!("../vendor/ggplot2/ggplot2.json");
 
+/// One embedded non-base package: its name, its vendored JSON, and a
+/// process-wide parse cache for the parsed [`Typeshed`].
+///
+/// `OnceLock::new` is `const`, so the spec table below stays a plain
+/// const-initialized static while each package parses lazily on first
+/// request instead of all-at-once.
+struct PackageSpec {
+    name: &'static str,
+    json: &'static str,
+    cache: std::sync::OnceLock<Typeshed>,
+}
+
+impl PackageSpec {
+    const fn new(name: &'static str, json: &'static str) -> Self {
+        Self {
+            name,
+            json,
+            cache: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// Parse this package on first use and cache it for the life of the
+    /// process. The embedded JSON always parses; a failure here is a
+    /// build-time data bug, not a runtime condition, so panicking during
+    /// first access is acceptable. Concurrent first callers may each
+    /// parse; all receive the same cached value.
+    fn load(&self) -> &Typeshed {
+        self.cache.get_or_init(|| {
+            parse_typeshed(self.json, Path::new(self.name))
+                .expect("embedded package typeshed must parse")
+        })
+    }
+}
+
 /// Single source of truth for embedded non-base packages, in signature
 /// resolution order. Every package maps one-to-one to its vendored file.
-const PACKAGE_SPECS: &[(&str, &str)] = &[
-    ("dplyr", DPLYR_JSON),
-    ("dbplyr", DBPLYR_JSON),
-    ("tidyr", TIDYR_JSON),
-    ("tidyselect", TIDYSELECT_JSON),
-    ("purrr", PURRR_JSON),
-    ("igraph", IGRAPH_JSON),
-    ("recipes", RECIPES_JSON),
-    ("bench", BENCH_JSON),
-    ("box", BOX_JSON),
-    ("patrick", PATRICK_JSON),
-    ("rex", REX_JSON),
-    ("rlist", RLIST_JSON),
-    ("mirai", MIRAI_JSON),
-    ("survival", SURVIVAL_JSON),
-    ("testthat", TESTTHAT_JSON),
-    ("tinytest", TINYTEST_JSON),
-    ("Rcpp", RCPP_JSON),
-    ("brms", BRMS_JSON),
-    ("posterior", POSTERIOR_JSON),
-    ("loo", LOO_JSON),
-    ("bayesplot", BAYESPLOT_JSON),
-    ("cmdstanr", CMDSTANR_JSON),
-    ("zeallot", ZEALLOT_JSON),
-    ("future", FUTURE_JSON),
-    ("foreach", FOREACH_JSON),
-    ("htmltools", HTMLTOOLS_JSON),
-    ("shiny", SHINY_JSON),
-    ("withr", WITHR_JSON),
-    ("R6", R6_JSON),
-    ("S7", S7_JSON),
-    ("rlang", RLANG_JSON),
-    ("cli", CLI_JSON),
-    ("vctrs", VCTRS_JSON),
-    ("grid", GRID_JSON),
-    ("ggplot2", GGPLOT2_JSON),
+/// A `static` array (not a `const` slice): the per-package caches are
+/// shared state that must have a single address.
+static PACKAGE_SPECS: [PackageSpec; 35] = [
+    PackageSpec::new("dplyr", DPLYR_JSON),
+    PackageSpec::new("dbplyr", DBPLYR_JSON),
+    PackageSpec::new("tidyr", TIDYR_JSON),
+    PackageSpec::new("tidyselect", TIDYSELECT_JSON),
+    PackageSpec::new("purrr", PURRR_JSON),
+    PackageSpec::new("igraph", IGRAPH_JSON),
+    PackageSpec::new("recipes", RECIPES_JSON),
+    PackageSpec::new("bench", BENCH_JSON),
+    PackageSpec::new("box", BOX_JSON),
+    PackageSpec::new("patrick", PATRICK_JSON),
+    PackageSpec::new("rex", REX_JSON),
+    PackageSpec::new("rlist", RLIST_JSON),
+    PackageSpec::new("mirai", MIRAI_JSON),
+    PackageSpec::new("survival", SURVIVAL_JSON),
+    PackageSpec::new("testthat", TESTTHAT_JSON),
+    PackageSpec::new("tinytest", TINYTEST_JSON),
+    PackageSpec::new("Rcpp", RCPP_JSON),
+    PackageSpec::new("brms", BRMS_JSON),
+    PackageSpec::new("posterior", POSTERIOR_JSON),
+    PackageSpec::new("loo", LOO_JSON),
+    PackageSpec::new("bayesplot", BAYESPLOT_JSON),
+    PackageSpec::new("cmdstanr", CMDSTANR_JSON),
+    PackageSpec::new("zeallot", ZEALLOT_JSON),
+    PackageSpec::new("future", FUTURE_JSON),
+    PackageSpec::new("foreach", FOREACH_JSON),
+    PackageSpec::new("htmltools", HTMLTOOLS_JSON),
+    PackageSpec::new("shiny", SHINY_JSON),
+    PackageSpec::new("withr", WITHR_JSON),
+    PackageSpec::new("R6", R6_JSON),
+    PackageSpec::new("S7", S7_JSON),
+    PackageSpec::new("rlang", RLANG_JSON),
+    PackageSpec::new("cli", CLI_JSON),
+    PackageSpec::new("vctrs", VCTRS_JSON),
+    PackageSpec::new("grid", GRID_JSON),
+    PackageSpec::new("ggplot2", GGPLOT2_JSON),
 ];
 
 pub fn known_packages() -> impl Iterator<Item = &'static str> {
-    PACKAGE_SPECS.iter().map(|&(name, _)| name)
+    PACKAGE_SPECS.iter().map(|spec| spec.name)
 }
 
 #[derive(Debug, Error)]
@@ -736,26 +772,18 @@ pub fn load_base_cached() -> Result<&'static Typeshed, TypeshedError> {
 /// i.e. opaque). The known packages are those in `PACKAGE_SPECS`; each
 /// maps one-to-one to a vendored JSON file.
 ///
-/// Results are cached for the life of the process (the JSON documents
-/// are compile-time-embedded and never change), so repeated lookups are
+/// Packages parse lazily and independently: requesting one package
+/// parses only that package's JSON, never the others. Each result is
+/// cached for the life of the process (the JSON documents are
+/// compile-time-embedded and never change), so repeated lookups are
 /// cheap.
 pub fn load_package(name: &str) -> Option<&'static Typeshed> {
-    if !is_known_package(name) {
-        return None;
-    }
-    static PACKAGES: std::sync::OnceLock<std::collections::BTreeMap<&'static str, Typeshed>> =
-        std::sync::OnceLock::new();
-    let packages = PACKAGES.get_or_init(|| {
-        PACKAGE_SPECS
-            .iter()
-            .map(|&(name, json)| {
-                let typeshed = parse_typeshed(json, Path::new(name))
-                    .expect("embedded package typeshed must parse");
-                (name, typeshed)
-            })
-            .collect()
-    });
-    packages.get(name)
+    PACKAGE_SPECS
+        .iter()
+        .find(|spec| spec.name == name)
+        // The specs live in a `static`, so the parsed reference is
+        // `'static` for the caller.
+        .map(PackageSpec::load)
 }
 
 /// Whether a package name is known to ry's embedded typeshed. Used by
@@ -763,7 +791,46 @@ pub fn load_package(name: &str) -> Option<&'static Typeshed> {
 /// signatures (unknown packages are still recorded as loaded for NSE
 /// gating, e.g. `tidyverse`, but contribute no function signatures).
 pub fn is_known_package(name: &str) -> bool {
-    PACKAGE_SPECS.iter().any(|&(known, _)| known == name)
+    PACKAGE_SPECS.iter().any(|spec| spec.name == name)
+}
+
+/// Whether the embedded stub for `name` contains `needle` verbatim.
+fn embedded_stub_mentions(name: &str, needle: &str) -> bool {
+    PACKAGE_SPECS
+        .iter()
+        .any(|spec| spec.name == name && spec.json.contains(needle))
+}
+
+/// Conservative prefilter for cross-package injection scans: whether
+/// the embedded stub for `name` mentions an `injects` field at all.
+///
+/// `false` guarantees that no signature in the package declares
+/// injected names, so callers can skip the package without parsing it
+/// (keeping [`load_package`] lazy). `true` may be a false alarm — the
+/// mention could be an empty list — which only costs one unnecessary
+/// parse. Unknown packages return `false`. User-supplied stubs are not
+/// consulted; callers that resolve through their own stubs must check
+/// those separately.
+pub fn package_has_injects(name: &str) -> bool {
+    embedded_stub_mentions(name, "\"injects\"")
+}
+
+/// Conservative prefilter for promise-capture scans: whether the
+/// embedded stub for `name` mentions the evaluation mode
+/// `captures_promise`. Same contract as [`package_has_injects`]:
+/// `false` guarantees no signature in the package carries that mode,
+/// `true` may be a false alarm, unknown packages return `false`.
+pub fn package_has_captures_promise(name: &str) -> bool {
+    embedded_stub_mentions(name, "\"captures_promise\"")
+}
+
+/// Conservative prefilter for S3 method scans: whether the embedded
+/// stub for `name` mentions an `s3_methods` field. Same contract as
+/// [`package_has_injects`]: `false` guarantees the package ships no
+/// S3 methods, `true` may be a false alarm, unknown packages return
+/// `false`.
+pub fn package_has_s3_methods(name: &str) -> bool {
+    embedded_stub_mentions(name, "\"s3_methods\"")
 }
 
 /// Load stub files from a user-supplied directory. Both flat
@@ -1928,6 +1995,59 @@ mod tests {
     }
 
     #[test]
+    fn stub_prefilters_never_miss_a_declaration() {
+        // The substring prefilters back lazy loading: a gated scan skips
+        // exactly the packages for which they return `false`, so a
+        // `false` next to a real declaration would silently drop data.
+        // Parse every stub and hold them to that guarantee.
+        for name in known_packages() {
+            let typeshed = load_package(name).expect("vendored stub parses");
+            let declares_injects = typeshed
+                .functions
+                .values()
+                .chain(typeshed.s3_methods.values())
+                .any(|signature| !signature.injects.is_empty());
+            assert!(
+                !declares_injects || package_has_injects(name),
+                "{name}: declares injects but the prefilter misses it"
+            );
+            let declares_capture = typeshed
+                .functions
+                .values()
+                .chain(typeshed.s3_methods.values())
+                .any(|signature| {
+                    signature
+                        .eval
+                        .values()
+                        .any(|mode| *mode == EvalMode::CapturesPromise)
+                });
+            assert!(
+                !declares_capture || package_has_captures_promise(name),
+                "{name}: declares captures_promise but the prefilter misses it"
+            );
+            assert!(
+                typeshed.s3_methods.is_empty() || package_has_s3_methods(name),
+                "{name}: declares s3_methods but the prefilter misses it"
+            );
+        }
+        // Pin the current inventory so a data change that flips a
+        // prefilter is a deliberate one.
+        for name in ["R6", "S7", "withr"] {
+            assert!(package_has_injects(name), "{name} declares injects");
+        }
+        for name in ["rlang", "ggplot2"] {
+            assert!(package_has_captures_promise(name), "{name} captures");
+        }
+        assert!(package_has_s3_methods("survival"));
+        assert!(!package_has_injects("dplyr"));
+        assert!(!package_has_captures_promise("dplyr"));
+        assert!(!package_has_s3_methods("dplyr"));
+        assert!(!package_has_injects("doesnotexist"));
+        assert!(!package_has_captures_promise("doesnotexist"));
+        assert!(!package_has_s3_methods("doesnotexist"));
+    }
+
+    #[test]
     fn literal_lengths_are_not_limited_to_the_vendored_inventory() {
         for length in [0, 1, 10, 999_999, usize::MAX] {
             assert_eq!(
@@ -2019,6 +2139,17 @@ mod tests {
     #[test]
     fn load_package_unknown_returns_none() {
         assert!(load_package("doesnotexist").is_none());
+    }
+
+    #[test]
+    fn load_package_returns_the_cached_instance_per_package() {
+        // Parsing is cached per package: repeated loads hand out the same
+        // instance, and looking up one package does not require touching
+        // any other package's JSON.
+        assert!(std::ptr::eq(
+            load_package("dplyr").expect("dplyr is known"),
+            load_package("dplyr").expect("dplyr is known"),
+        ));
     }
 
     #[test]

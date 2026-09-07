@@ -27,7 +27,7 @@ authors = ["Maximilian Scholz"]
 [workspace.dependencies]
 # parsing
 tree-sitter = "0.26"
-tree-sitter-r = "1.3"
+tree-sitter-r = { version = "1.3", path = "vendor/tree-sitter-r" }
 # error plumbing
 thiserror = "2"
 miette = { version = "7", features = ["fancy"] }
@@ -65,5 +65,3 @@ codegen-units = 1
 [profile.dist]
 inherits = "release"
 
-[patch.crates-io]
-tree-sitter-r = { path = "vendor/tree-sitter-r" }

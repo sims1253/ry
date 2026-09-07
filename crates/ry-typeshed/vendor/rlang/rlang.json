@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "rlang",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "datasets": {
     "na_chr": {
       "mode": "character",
@@ -202,6 +202,11 @@
         "mode": "opaque",
         "length": "unknown",
         "na": false
+      },
+      "force": {
+        "kind": "sole_argument",
+        "param": "message",
+        "allow_named": false
       }
     },
     "are_na": {

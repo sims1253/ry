@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "602fe749c12cfb2217d96fdb82a93634907a4f1d4f9507a27abb51d5209fb7e7",
-  "ry_commit": "ec702b587f2ab5a78f64182654d2b1865b44adb0",
+  "source_sha256": "5d9e1edc4350621fcb16e117438ff2a436879fdf9b0e6584e9e7c805ac899c55",
+  "ry_commit": "9c644d65b66727bc02c797a444795ca78f70573e",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -19,7 +19,7 @@
       "repo": "rstudio/shiny",
       "stars": 5673,
       "commit": "ca1800475ac5a1e6037fea1020260a868d8798ee",
-      "diagnostics": 53
+      "diagnostics": 52
     },
     {
       "name": "dplyr",
@@ -33,7 +33,7 @@
       "repo": "rstudio/gt",
       "stars": 2161,
       "commit": "caa074012b9825ddd71996f40e309c00f7b9e180",
-      "diagnostics": 110
+      "diagnostics": 88
     },
     {
       "name": "blogdown",
@@ -54,7 +54,7 @@
       "repo": "tidymodels/broom",
       "stars": 1524,
       "commit": "6230a9014b0d839e4e8ed5b1763de65dde8f2205",
-      "diagnostics": 8
+      "diagnostics": 7
     },
     {
       "name": "plumber",
@@ -159,7 +159,7 @@
       "repo": "tidymodels/infer",
       "stars": 795,
       "commit": "0b9c910e658a5d4ed9f6b13e4978b9c23a225cad",
-      "diagnostics": 1
+      "diagnostics": 0
     },
     {
       "name": "pkgdown",
@@ -194,7 +194,7 @@
       "repo": "tidymodels/parsnip",
       "stars": 658,
       "commit": "b992bc4f13bdb70d661dd629afee615d3711dd80",
-      "diagnostics": 2
+      "diagnostics": 0
     },
     {
       "name": "roxygen2",
@@ -250,7 +250,7 @@
       "repo": "tidyverse/dbplyr",
       "stars": 514,
       "commit": "f478e2070c9a60f4aebcc94132048312209dd097",
-      "diagnostics": 4
+      "diagnostics": 9
     },
     {
       "name": "bookdown",
@@ -3594,15 +3594,6 @@
       "audit_group": "type-narrowing"
     },
     {
-      "package": "gt",
-      "code": "RY098",
-      "path": "R/cols_align.R",
-      "line": 198,
-      "column": 17,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
       "package": "httr",
       "code": "RY032",
       "path": "R/content-parse.r",
@@ -6818,7 +6809,7 @@
   ],
   "classification": {
     "true_positive": 43,
-    "false_positive": 665,
+    "false_positive": 664,
     "uncertain": 0
   },
   "audit_group_counts": {
@@ -6832,12 +6823,13 @@
     "reassign-scope": 10,
     "s3-method-dispatch": 7,
     "test-fixture": 76,
-    "type-narrowing": 104,
+    "type-narrowing": 103,
     "upstream-package": 31
   },
   "notes": [
     "Hermetic moving 0.9 ledger, regenerated after the RY032 cleanup from the exact full 62-package run with RY_NO_INSTALLED_LIBRARIES=1.",
     "The RY032 cleanup produced a zero diagnostic identity delta from the measured starting-tree baseline. Later intentional behavior changes must update this ledger with a reviewed identity diff.",
-    "Every identity has a retained or manually audited label; this strict ledger is a CI gate, not an audit transcript."
+    "Every identity has a retained or manually audited label; this strict ledger is a CI gate, not an audit transcript.",
+    "The sole force-contract identity delta removes gt RY098 at R/cols_align.R:198:17, retaining its existing reviewed false-positive classification. This is a conservative coverage reduction for the col_classes default after opaque names()/index selection, not a runtime disproof of recursion when that default is omitted. Full hermetic regeneration preserves every other finding; stale per-package summary counts were recomputed from the same reports."
   ]
 }

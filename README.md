@@ -12,8 +12,7 @@ ry focuses on types and scope. Use it alongside `air` for formatting and
 from [ty](https://github.com/astral-sh/ty).
 
 > [!IMPORTANT]
-> ry is mostly a playground for GLM and me. Large portions of the project are
-> AI-generated. If you'd like to help, I'd love for you to join in.
+> 🤖 ry is mostly a playground for GLM and me. If you'd like to help, I'd love for you to join in.
 
 ## Install
 

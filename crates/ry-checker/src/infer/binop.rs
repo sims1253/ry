@@ -11,12 +11,15 @@ impl Checker {
         rt: RType,
         span: Span,
         known_null_is_actionable: bool,
+        scope: &mut Scope,
     ) -> RType {
         if matches!(op, BinOpKind::Colon) {
+            scope.invalidate_ops_environment();
             return lt.seq(rt);
         }
         // Membership returns one logical per LHS element, regardless of RHS length.
         if matches!(op, BinOpKind::In) {
+            scope.invalidate_ops_environment();
             return RType::new(Mode::Logical, lt.length);
         }
         // Primitive operators dispatch through `+.foo` then the `Ops.foo`
@@ -25,7 +28,7 @@ impl Checker {
         // #165). A dynamically classed value is likewise not proof that
         // the primitive is invalid: its runtime class may provide a
         // method from another package.
-        if let Some(dispatched) = self.try_s3_binop_dispatch(op, &lt, &rt) {
+        if let Some(dispatched) = self.try_s3_binop_dispatch(op, &lt, &rt, scope) {
             return dispatched;
         }
         // The opaque base `Ops.data.frame` stub falls through to schema
@@ -248,6 +251,7 @@ impl Checker {
         op: BinOpKind,
         lhs: &RType,
         rhs: &RType,
+        scope: &mut Scope,
     ) -> Option<RType> {
         // `:`, the pipes, and `%in%` are not S3 generics, and `&&`/`||`
         // are strictly logical short-circuit primitives that no `Ops`
@@ -261,9 +265,18 @@ impl Checker {
                 | BinOpKind::AndAnd
                 | BinOpKind::OrOr
         ) {
+            scope.invalidate_ops_environment();
             return None;
         }
         let symbol = op_symbol(op);
+        if let Some(result) = ops_chooser::dispatch(self, symbol, lhs, rhs, scope) {
+            if result.mode == Mode::Opaque {
+                scope.invalidate_ops_environment();
+            }
+            return Some(result);
+        }
+        // Other operator methods may execute arbitrary code in the caller.
+        scope.invalidate_ops_environment();
         // R resolves both sides before choosing an Ops method. Different
         // methods can fall back to the primitive, or be selected by
         // chooseOpsMethod; neither outcome justifies taking the left return
@@ -365,6 +378,7 @@ impl Checker {
             rt,
             span,
             known_null_arithmetic_operand(lhs, scope) || known_null_arithmetic_operand(rhs, scope),
+            scope,
         );
         if rhs_parameter_vector
             && !self.diagnostics[before..]
@@ -479,9 +493,8 @@ impl Checker {
 
 /// Model the base `Ops.data.frame` method without losing the table's schema.
 /// Comparisons produce a logical matrix-like object, for which opaque is the
-/// least misleading v1 representation. Arithmetic keeps the frame shape for
-/// a scalar counterpart; otherwise it retains column names but not column
-/// element types.
+/// least misleading v1 representation. Arithmetic computes unclassed column
+/// results for a scalar counterpart; other cases retain names but not types.
 fn data_frame_binop_result(op: BinOpKind, lhs: &RType, rhs: &RType) -> Option<RType> {
     let is_compare = is_comparison(op);
     let is_logic = matches!(
@@ -491,10 +504,10 @@ fn data_frame_binop_result(op: BinOpKind, lhs: &RType, rhs: &RType) -> Option<RT
     if !(is_compare || is_logic || op.is_arithmetic()) {
         return None;
     }
-    let (frame, other) = if lhs.class.contains("data.frame") {
-        (lhs, rhs)
+    let (frame, other, frame_on_left) = if lhs.class.contains("data.frame") {
+        (lhs, rhs, true)
     } else if rhs.class.contains("data.frame") {
-        (rhs, lhs)
+        (rhs, lhs, false)
     } else {
         return None;
     };
@@ -503,7 +516,8 @@ fn data_frame_binop_result(op: BinOpKind, lhs: &RType, rhs: &RType) -> Option<RT
     }
     let mut result = RType::new(Mode::List, frame.length).with_class(frame.class.clone());
     if let Some(schema) = &frame.columns {
-        let keep_types = !other.class.contains("data.frame") && matches!(other.length, Length::One);
+        let scalar_primitive =
+            other.class.known && other.class.len == 0 && matches!(other.length, Length::One);
         result = result.with_columns(Arc::new(ColumnSchema {
             columns: schema
                 .columns
@@ -511,8 +525,16 @@ fn data_frame_binop_result(op: BinOpKind, lhs: &RType, rhs: &RType) -> Option<RT
                 .map(|(name, ty)| {
                     (
                         name.clone(),
-                        if keep_types {
-                            ty.clone()
+                        if scalar_primitive && ty.class.known && ty.class.len == 0 {
+                            // Ops.data.frame applies the operator to each
+                            // column. Copying the input type misses coercion;
+                            // classed columns may run arbitrary S3 methods.
+                            let (left, right) = if frame_on_left {
+                                (ty.clone(), other.clone())
+                            } else {
+                                (other.clone(), ty.clone())
+                            };
+                            left.arith_for(right, op).unwrap_or_else(RType::unknown)
                         } else {
                             RType::unknown()
                         },

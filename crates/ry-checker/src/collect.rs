@@ -343,6 +343,8 @@ impl Checker {
         self.inferring.push(name.to_string());
 
         let mut scope = Scope::default();
+        // Deferred execution can observe later syntax and constructor changes.
+        scope.invalidate_ops_environment();
         for parameter in &params {
             scope.insert_parameter(parameter.name.clone(), parameter.type_.clone());
         }

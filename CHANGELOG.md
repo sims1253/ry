@@ -12,8 +12,8 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
-- Parse exponent and hexadecimal integer literals with their values, and use
-  double storage when an `L`-suffixed value exceeds R's integer range.
+- Compute data-frame column types after scalar arithmetic instead of copying
+  their input types. Keep classed column results unknown when methods may run.
 
 - Infer double results for primitive division and powers of integers. Reject
   complex remainder and integer division only when both operands are nonempty.
@@ -21,6 +21,10 @@ All notable changes to ry are documented in this file.
   information for resolved base calls, and evaluate class attributes. Respect
   shadowed constructors and class-vector builders; discard stale column names
   after name attributes change.
+
+- Infer conflicting S3 operator results when top-level literal methods
+  and `chooseOpsMethod` values prove selection, including aliases and reverse
+  selection. Keep uncertain dispatch and primitive fallback unknown.
 
 - Refresh incremental diagnostics when a callback changes, including callbacks
   passed as values and their downstream callers.
@@ -37,6 +41,9 @@ All notable changes to ry are documented in this file.
 - Stop S3 operator lookup at the winning group method, avoiding false
   column-access errors when later classes define another operator method.
   Keep custom opaque method results unknown.
+
+- Parse exponent and hexadecimal integer literals with their values, and use
+  double storage when an `L`-suffixed value exceeds R's integer range.
 
 ### Cleanup
 

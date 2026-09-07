@@ -11,6 +11,26 @@ impl Checker {
         scope: &mut Scope,
         span: Span,
     ) -> RType {
+        // Calls may install delayed bindings, not just mutate current values.
+        // Preserve environment certainty only for a closed literal constructor.
+        let pure = ops_chooser::pure_structure_call(self, func, args, scope);
+        if !pure {
+            scope.invalidate_ops_environment();
+        }
+        let result = self.infer_call_inner(func, args, scope, span);
+        if !pure {
+            scope.invalidate_ops_environment();
+        }
+        result
+    }
+
+    fn infer_call_inner(
+        &mut self,
+        func: &Expr,
+        args: &[Arg],
+        scope: &mut Scope,
+        span: Span,
+    ) -> RType {
         // A call to a function literal (IIFE) never reaches the
         // name-based stages below.
         if let Expr::Function { .. } = func {

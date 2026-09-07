@@ -239,7 +239,9 @@ All notable changes to ry are documented in this file.
   Keep unresolved callables conservative about argument capture.
 
 - Discard initial values for bindings reassigned inside loops, preventing
-  stale lengths and types from being applied to later iterations.
+  stale lengths and types from being applied to later iterations. Preserve
+  bindings at `break` and `next`, and exclude later unreachable writes from
+  loop exits. Nested loops and function bodies keep separate exit states.
 
 - **`enable` is honored per folder**: a workspace folder whose settings
   set `enable: false` is skipped: the language server publishes no

@@ -13,9 +13,14 @@ All notable changes to ry are documented in this file.
 ### Fixed
 
 - Resolve visible custom arithmetic, comparison, and vector logical operators
-  before their operands. Avoid primitive diagnostics for ignored operands and preserve
-  proven constant returns; discard caller facts after uncertain custom effects.
+  before their operands. Avoid primitive diagnostics for ignored operands and
+  preserve proven constant returns; discard caller facts after uncertain effects.
 
+- Compute data-frame column types after scalar arithmetic instead of copying
+  their input types. Keep classed column results unknown when methods may run.
+
+- Infer double results for primitive division and powers of integers. Reject
+  complex remainder and integer division only when both operands are nonempty.
 - Match `structure()` payloads through `.Data`, preserve class and list-column
   information for resolved base calls, and evaluate class attributes. Respect
   shadowed constructors and class-vector builders; discard stale column names
@@ -24,9 +29,6 @@ All notable changes to ry are documented in this file.
 - Infer conflicting S3 operator results when top-level literal methods
   and `chooseOpsMethod` values prove selection, including aliases and reverse
   selection. Keep uncertain dispatch and primitive fallback unknown.
-
-- Infer double results for primitive division and powers of integers. Reject
-  complex remainder and integer division only when both operands are nonempty.
 
 - Refresh incremental diagnostics when a callback changes, including callbacks
   passed as values and their downstream callers.

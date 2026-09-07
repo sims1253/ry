@@ -438,7 +438,7 @@ pub(crate) fn run_dump_facts(
         result["scope_snapshot_kind"] = json!("scope_exit");
         result["capabilities"] = json!({
             "scope_snapshots": true,
-            "reference_facts": "same_file_straight_line",
+            "reference_facts": "same_file_ordered_prefix",
             "reference_coverage": "partial",
         });
     }

@@ -1,0 +1,133 @@
+{
+  "baseline_commit": "26654ce",
+  "cases": [
+    {
+      "name": "literal_copy",
+      "source": "x <- 1L\ny <- x\ny\n",
+      "baseline_resolved": 2,
+      "resolved": 2,
+      "references": 2
+    },
+    {
+      "name": "ordered_writes",
+      "source": "x <- 1L\nx\nx <- \"later\"\nx\n",
+      "baseline_resolved": 0,
+      "resolved": 2,
+      "references": 2
+    },
+    {
+      "name": "copy_survives_write",
+      "source": "x <- 1L\ny <- x\nx <- \"later\"\ny\n",
+      "baseline_resolved": 0,
+      "resolved": 2,
+      "references": 2
+    },
+    {
+      "name": "self_copy",
+      "source": "x <- 1L\nx <- x\nx\n",
+      "baseline_resolved": 0,
+      "resolved": 2,
+      "references": 2
+    },
+    {
+      "name": "call_prefix",
+      "source": "x <- 1L\ny <- x\nmutate()\ny\n",
+      "baseline_resolved": 0,
+      "resolved": 1,
+      "references": 3
+    },
+    {
+      "name": "qualified_call_prefix",
+      "source": "x <- 1L\nx\nbase::identity(x)\nx\n",
+      "baseline_resolved": 0,
+      "resolved": 1,
+      "references": 4
+    },
+    {
+      "name": "branch_prefix",
+      "source": "x <- 1L\nx\nif (flag) mutate()\nx\n",
+      "baseline_resolved": 0,
+      "resolved": 1,
+      "references": 4
+    },
+    {
+      "name": "opaque_first",
+      "source": "mutate()\nx <- 1L\nx\n",
+      "baseline_resolved": 0,
+      "resolved": 0,
+      "references": 2
+    },
+    {
+      "name": "formal_barrier",
+      "source": "f <- function(p) { x <- 1L; x; p; x <- 2L; x }\n",
+      "baseline_resolved": 0,
+      "resolved": 2,
+      "references": 3
+    },
+    {
+      "name": "unknown_barrier",
+      "source": "x <- 1L\nx\nunknown_name\nx <- 2L\nx\n",
+      "baseline_resolved": 0,
+      "resolved": 1,
+      "references": 3
+    },
+    {
+      "name": "deferred_function",
+      "source": "f <- function() { x <- 1L; x }\nmutate()\n",
+      "baseline_resolved": 0,
+      "resolved": 0,
+      "references": 2
+    },
+    {
+      "name": "unicode_shadowing",
+      "source": "`空 白` <- 1L\n`空 白`\nf <- function() { `空 白` <- \"local\"; `空 白`; `空 白` <- FALSE; `空 白` }\n`空 白`\n",
+      "baseline_resolved": 2,
+      "resolved": 4,
+      "references": 4
+    },
+    {
+      "name": "equivalent_spellings",
+      "source": "x <- 1L\n`x` <- \"later\"\ny <- x\n",
+      "baseline_resolved": 0,
+      "resolved": 0,
+      "references": 1
+    },
+    {
+      "name": "formal_write",
+      "source": "f <- function(p) { p <- 1L; p }\n",
+      "baseline_resolved": 0,
+      "resolved": 0,
+      "references": 1
+    },
+    {
+      "name": "opaque_subexpression",
+      "source": "x <- 1L\nx\nz <- { x; mutate() }\nx\n",
+      "baseline_resolved": 0,
+      "resolved": 1,
+      "references": 4
+    }
+  ],
+  "files": [
+    {
+      "path": "crates/ry-checker/testdata/vendor/glue/R/quoting.R",
+      "source_hash": "sha256:2821ef735bb44a1b37af3a38b49de4252470b16168fecab0672abec65897bf3f",
+      "references": 6,
+      "baseline_resolved": 0,
+      "resolved": 0
+    },
+    {
+      "path": "crates/ry-checker/testdata/vendor/purrr/R/adverb-possibly.R",
+      "source_hash": "sha256:9a41704fb43684ed561fb02e4f9e1182894460fc858c3c2dc555007afbffda25",
+      "references": 14,
+      "baseline_resolved": 0,
+      "resolved": 0
+    },
+    {
+      "path": "crates/ry-checker/testdata/vendor/purrr/R/imap.R",
+      "source_hash": "sha256:afdd6b8fbfc9540e4adc67c862ce9526d8524a07e7560026b6e94b56924ea4e4",
+      "references": 68,
+      "baseline_resolved": 0,
+      "resolved": 0
+    }
+  ]
+}

@@ -52,13 +52,18 @@ ry dump-facts R/ --references > facts.json
 `dump-types` keeps its own output format. Reference capture runs alongside
 scope capture in the same project check, without changing diagnostic inference.
 
+The `reference_facts` capability is `"same_file_ordered_prefix"`. Consumers
+that accepted only `"same_file_straight_line"` must opt into this broader
+contract. The schema version remains 2; IDs are still local to one file and
+analysis snapshot, and coverage remains partial.
+
 Schema 2 keeps the scope and binding snapshots below. At the root it replaces
 `snapshot_kind` with `scope_snapshot_kind: "scope_exit"` and adds:
 
 ```json
 "capabilities": {
   "scope_snapshots": true,
-  "reference_facts": "same_file_straight_line",
+  "reference_facts": "same_file_ordered_prefix",
   "reference_coverage": "partial"
 }
 ```
@@ -85,11 +90,14 @@ Each reference contains:
 | `type_at_reference` | A structured type, or `null` when resolution is not established. |
 | `reason` | The checker's explanation for missing evidence, or `null`. |
 
-The checker supports a conservative subset of straight-line, same-file code:
-literal assignments, copies of established bindings, and a function's own
-formals and locals. A copy gets its own definition ID and carries the source
-binding's established type. A formal has unknown type even when it has a
-default. R callers can supply a different value. Reading a formal can force
+The checker supports a conservative subset of same-file code: literal
+assignments, copies of established bindings, and a function's own formals and
+locals. Ordinary literal/copy reassignments to non-formal locals get a distinct
+definition ID for each write. A read uses the definition installed at that
+point, after the preceding assignment's RHS has been analyzed. A copy gets its
+own definition ID and keeps the source binding's established type.
+
+A formal has unknown type even when it has a default. R callers can supply a different value. Reading a formal can force
 caller or default code that changes the frame. After that read, the checker
 discards binding identities for the rest of the scope, including nested
 functions analyzed from it. A fresh assignment cannot restore that evidence.
@@ -109,16 +117,26 @@ names, dots arguments, escaped names, syntax-primitive names, and reassignment
 through equivalent plain/backtick spellings are excluded. A differently
 spelled read cannot resolve by matching a decoded name.
 
-Eligibility applies to a whole lexical scope. Calls, operators, indexing,
-control flow, nonstandard evaluation, or reassignment anywhere in that scope
-make its references unsupported, including reads before that operation. Nested
-functions inherit this restriction. Default expressions and reads captured
-from enclosing scopes are unsupported. Unresolved, ambiguous, and
-unsupported records have no definition ID or type. A missing record is also
+Calls, operators, indexing, control flow, nonstandard evaluation, and other
+unsupported statements end the supported prefix. The entire statement and
+its suffix remain unsupported, including fresh literal assignments. Earlier
+proven reads retain their definition IDs and types. This does not establish
+evaluation order inside an unsupported expression. Top-level braces that the
+parser flattens into a statement sequence follow that sequence.
+
+Mixed equivalent spellings, writes to formals, and unsupported declaration
+names still exclude the whole lexical scope. Nested function bodies remain
+unsupported if their enclosing scope contains an opaque statement, even after
+the function's definition: those bodies can run later. Default expressions and
+reads captured from enclosing scopes are unsupported. Unresolved, ambiguous,
+and unsupported records have no definition ID or type. A missing record is also
 unavailable evidence: the export does not promise to enumerate every possible
 runtime read. Check the status of each record. A concrete scope-exit type
 cannot fill a gap in reference evidence, and a resolved reference alone does
 not establish that a rename or other edit is safe.
+
+See the [fixed coverage panel](corpus/reference-prefixes.md) for measured
+changes and unchanged real-source cases.
 
 ## Schema version 1
 

@@ -142,6 +142,26 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
+it.skipIf(process.platform === "win32")(
+  "failed version probes are retried, never cached",
+  async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ry-failprobe-"));
+    try {
+      const binary = path.join(dir, "ry");
+      // A spawn that fails (non-zero exit) must not pin an unknown
+      // version for the binary's lifetime: the next restart retries.
+      fs.writeFileSync(binary, `#!/bin/sh\necho run >> "$0.marker"\nexit 1\n`, {
+        mode: 0o755,
+      });
+      expect(await Effect.runPromise(getRyVersion(binary))).toBeUndefined();
+      expect(await Effect.runPromise(getRyVersion(binary))).toBeUndefined();
+      expect(fs.readFileSync(binary + ".marker", "utf8")).toBe("run\nrun\n");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
 it("returns an unknown version when the executable is missing", async () => {
   expect(
     await Effect.runPromise(getRyVersion("/nonexistent/ry")),

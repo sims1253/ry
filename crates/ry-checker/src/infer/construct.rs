@@ -18,25 +18,27 @@ impl Checker {
         //   * `class = c("a", "b", ...)` attaches a class vector.
         // Non-literal or unparseable forms fall through to opaque
         // inference with `ClassVector::unknown()` so RY050 stays quiet.
-        // Spelling aliases do not prove which function object was captured.
-        // Ordinary call inference can still use a captured function signature.
+        // Spelling aliases do not prove which function object was captured;
+        // neither this model nor the base stub may lend them payload facts.
         if lookup_name == "structure" && original_name != semantic_name {
-            return None;
+            return Some(RType::unknown());
         }
         if lookup_name == "structure" && self.structure_namespace_unavailable(semantic_name, scope)
         {
             return Some(RType::unknown());
         }
-        if lookup_name == "structure" && !self.user_stubs.contains_key("base") {
-            if self.resolves_to_base(semantic_name, scope) {
+        if lookup_name == "structure"
+            && !self.user_stubs.contains_key("base")
+            && self.resolves_to_base_lenient(semantic_name, scope)
+        {
+            if self.resolves_to_base(semantic_name, scope)
+                && !self.structure_bare_callee_unavailable(semantic_name, scope)
+            {
                 return Some(self.infer_structure_call(args, scope));
             }
-            if self.resolves_to_base_lenient(semantic_name, scope) {
-                // The search path may provide an arbitrary callable. Do not
-                // recover payload facts from the embedded base stub, or force
-                // arguments that this unresolved callable might quote.
-                return Some(RType::unknown());
-            }
+            // An unproven binding or search path may supply another callable.
+            // Do not borrow base-stub payload facts or force quoted arguments.
+            return Some(RType::unknown());
         }
         // `factor(x)` returns an integer vector with class "factor".
         // (And often also "ordered" if `ordered = TRUE`, but we keep v1
@@ -165,6 +167,7 @@ impl Checker {
         if crate::semantic_lists::bare_name(name) != "c"
             || !self.resolves_to_base(name, scope)
             || self.structure_namespace_unavailable(name, scope)
+            || self.structure_bare_callee_unavailable(name, scope)
             || args.iter().any(|arg| arg.name.is_some())
         {
             return ClassLiteral::Unknown;
@@ -180,6 +183,21 @@ impl Checker {
             Some(names) if !names.is_empty() => ClassLiteral::Multi(names),
             _ => ClassLiteral::Unknown,
         }
+    }
+
+    fn structure_bare_callee_unavailable(&self, name: &str, scope: &Scope) -> bool {
+        if name.contains("::") {
+            return false;
+        }
+        // Pooled names can denote callable values without a function-table
+        // entry. Require an unshadowed spelling, including backticks and any
+        // undecoded escapes, rather than assume that such values are data.
+        scope.data_mask_unknown
+            || self.literal_bindings_may_be_shadowed(
+                [name, format!("`{name}`").as_str()],
+                &HashSet::new(),
+                scope,
+            )
     }
 
     fn structure_namespace_unavailable(&self, name: &str, scope: &Scope) -> bool {

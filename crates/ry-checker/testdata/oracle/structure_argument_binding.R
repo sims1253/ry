@@ -41,3 +41,11 @@ stopifnot(identical(class(base::structure(1L, class = base::c("widget", recursiv
   structure <- NULL
   stopifnot(identical(maker(1L, class = "widget"), "actual"))
 })()
+
+(function() {
+  target <- function(...) "actual"
+  c <- get(paste("target"))
+  stopifnot(identical(class(base::structure(1L, class = c("widget"))), "actual"))
+  structure <- get(paste("target"))
+  stopifnot(identical(structure(1L, class = "widget"), "actual"))
+})()

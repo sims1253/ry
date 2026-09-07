@@ -30,6 +30,3 @@ R/pak-sitrep-data.R:33:7 RY010
 R/pak-sitrep-data.R:37:26 RY010
 R/pak-sitrep-data.R:38:27 RY010
 R/pak-sitrep-data.R:41:5 RY102
-R/sizes.R:5:19 RY010
-R/sizes.R:6:17 RY010
-R/sizes.R:7:13 RY010

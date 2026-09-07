@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "base",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "globals": {
     "ambient": [
       "..deparseOpts",
@@ -6105,13 +6105,13 @@
           "unknown"
         ],
         "result": {
-          "kind": "simplify",
-          "length_arg": 0
+          "kind": "simplify"
         }
       },
       "return": {
-        "mode": "list",
-        "length": "arg0"
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
       }
     },
     "raw": {

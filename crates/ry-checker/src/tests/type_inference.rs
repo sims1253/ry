@@ -1355,3 +1355,131 @@ fn loop_carried_values_do_not_keep_the_initial_empty_length() {
     let source = "quote <- raw()\nfor (x in as.raw(c(1, 2))) {\nif (length(quote)) { if (x == quote) print(x) }\nquote <- x\n}";
     assert!(check(source).is_empty(), "{:?}", check(source));
 }
+
+#[test]
+fn loop_break_retains_bindings_at_the_exit() {
+    for loop_header in ["while (TRUE)", "repeat", "for (i in 1:2)"] {
+        let source = format!(
+            "f <- function(flag) {{ scale <- 1L; trial <- list(); {loop_header} {{ trial$score <- 1L; if (flag) break; trial <- list(alpha=2) }}; if (flag) scale <- 1 + abs(trial$score) else scale <- abs(trial$score); if (scale > 0) TRUE }}"
+        );
+        let diagnostics = check(&source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY001"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn loop_break_does_not_borrow_later_callable_assignment() {
+    let (diagnostics, scope) =
+        check_with_scope("x <- 1L; while (TRUE) { break; x <- function() 1L }; x$field ");
+    assert_eq!(
+        scope.get("x").map(|ty| ty.mode),
+        Some(Mode::Integer),
+        "{:?}",
+        scope.get("x")
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY061"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn loop_transfers_preserve_nested_execution_frames() {
+    for source in [
+        "x <- 'old'; while (TRUE) { repeat { break }; x <- 1L; break }",
+        "x <- 'old'; while (TRUE) { unused <- function() { break }; x <- 1L; break }",
+        "x <- 'old'; while (TRUE) { lapply(integer(), function(value) { break }); x <- 1L; break }",
+        "capture <- function(value) substitute(value); x <- 'old'; while (TRUE) { capture(break); x <- 1L; break }",
+        "x <- 'old'; while (TRUE) { with(list(), if (FALSE) break); x <- 1L; break }",
+        "x <- 'old'; for (i in 1:2) { x <- 1L; next; x <- function() 1L }",
+        "x <- 'old'; for (i in 1:2) { { x <- 1L; break; x <- function() 1L } }",
+        "`break` <- function() NULL; x <- 'old'; for (i in 1:2) { break; x <- 1L }",
+        "`next` <- function() NULL; x <- 'old'; for (i in 1:2) { next; x <- 1L }",
+        "x <- 'old'; while (TRUE) { ignored <- if (flag) { x <- 1L; break } else { x <- 2L; break }; x <- function() 1L }",
+    ] {
+        let (_, scope) = check_with_scope(source);
+        assert_eq!(
+            scope.get("x").map(|ty| ty.mode),
+            Some(Mode::Integer),
+            "{source}: {:?}",
+            scope.get("x")
+        );
+    }
+}
+
+#[test]
+fn loop_break_paths_join_without_using_non_exiting_tails() {
+    let source = "x <- 'old'; while (TRUE) { if (flag) { x <- 1L; break }; x <- 2L; break; x <- function() 1L }; x$field";
+    let (diagnostics, scope) = check_with_scope(source);
+    assert_eq!(scope.get("x").map(|ty| ty.mode), Some(Mode::Integer));
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY061"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn deferred_loop_transfers_do_not_change_the_function_body_exit() {
+    let (_, scope) = check_with_scope(
+        "f <- function() { x <- 'old'; while (TRUE) { on.exit(if (FALSE) break); x <- 1L; break }; x }; out <- f()",
+    );
+    assert_eq!(
+        scope.get("out").map(|ty| ty.mode),
+        Some(Mode::Integer),
+        "{:?}",
+        scope.get("out")
+    );
+}
+
+#[test]
+fn loop_exit_preserves_uncertainty_from_unmodelled_paths() {
+    let source = r#"`+` <- function(e1, e2) { assign("x", list(field = 1L), envir = parent.frame()); NULL }
+f <- function(flag) {
+    x <- 1L
+    while (TRUE) {
+        if (flag) break
+        1 + 2
+        break
+    }
+    if (!flag) x$field
+}
+f(FALSE)
+"#;
+    let diagnostics = check(source);
+    assert!(
+        diagnostics.iter().all(|d| d.code != "RY061"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn quoted_top_level_symbols_resolve_as_values_in_functions() {
+    for source in [
+        "`n1` <- 42; f <- function() n1 + 1",
+        "`g` <- function(x) x + 1; f <- function() { z <- g; z(1) }",
+        "`g` <- function() 1; `g` <- 42; f <- function() g + 1",
+        "`n1` <- 1; n1 <- 2; f <- function() n1",
+        "n1 <- 1; `n1` <- 2; f <- function() n1",
+    ] {
+        let diagnostics = check(source);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+    }
+}
+
+#[test]
+fn quoted_symbol_existence_does_not_invent_distinct_bindings() {
+    for source in [
+        "`n1` <- 42; f <- function() n2",
+        r#""`n1`" <- 42; f <- function() n1"#,
+        r#"`n\x31` <- 42; f <- function() n2"#,
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY010"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}

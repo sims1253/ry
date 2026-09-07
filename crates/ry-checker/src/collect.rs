@@ -60,6 +60,16 @@ impl Checker {
             table.has_escaped_operator_names |=
                 custom_operator::escaped_name_may_mask_operator(name);
             table.known_vars.insert(name.to_string());
+            // Keep raw names for type/provenance lookup, but recognize an
+            // ordinary read of a backtick-bound symbol as an existing value.
+            // String assignment targets name their literal contents instead;
+            // escaped identifiers require an R decoder before aliasing.
+            if matches!(target, Expr::Ident { .. })
+                && !name.contains('\\')
+                && let Some(unquoted) = name.strip_prefix('`').and_then(|s| s.strip_suffix('`'))
+            {
+                table.known_vars.insert(unquoted.to_string());
+            }
             if is_callable_object_constructor(value) {
                 table.callable_vars.insert(name.to_string());
             } else {

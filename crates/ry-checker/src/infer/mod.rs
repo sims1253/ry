@@ -12,6 +12,7 @@ pub(crate) mod call;
 pub(crate) mod construct;
 pub(crate) mod custom_operator;
 pub(crate) mod index;
+pub(crate) mod loops;
 mod narrow;
 pub(crate) mod pipe;
 pub(crate) mod quoting;
@@ -324,10 +325,12 @@ impl Checker {
                 // `apply_narrowing`). A diverging arm is the exception: the
                 // continuation is reachable only through its sibling, so its
                 // recorded refinements are facts in the parent scope.
-                let then_diverges = self.block_diverges(then);
-                let else_diverges = else_
-                    .as_ref()
-                    .is_some_and(|statements| self.block_diverges(statements));
+                let then_diverges = (scope.loop_frame.is_some() && then_scope.unreachable)
+                    || self.block_diverges(then);
+                let else_diverges = (scope.loop_frame.is_some() && else_scope.unreachable)
+                    || else_
+                        .as_ref()
+                        .is_some_and(|statements| self.block_diverges(statements));
                 let continuation = match (then_diverges, else_.as_ref(), else_diverges) {
                     (true, Some(_), false) | (true, None, _) => Some(&else_scope),
                     (false, Some(_), true) => Some(&then_scope),
@@ -349,58 +352,29 @@ impl Checker {
                 let mut inner = scope.clone();
                 inner.insert(name.clone(), iter_t.element());
                 self.insert_loop_carried_bindings(body, &mut inner);
+                self.begin_loop(&mut inner);
                 for s in body {
                     self.walk_stmt(s, &mut inner, returns.as_deref_mut());
                 }
-                // R loop bodies execute in the enclosing environment. Carry
-                // schema mutations and assignments forward; retaining the
-                // iterator binding also matches R when at least one iteration
-                // occurs. Static analysis cannot prove the zero-iteration
-                // case, so opaque downstream behavior is preferable to
-                // claiming a field definitely does not exist.
-                //
-                // List-origin provenance copies the continuation's marker
-                // verbatim (same discipline as `merge_branch_bindings`): the
-                // inner scope inherited the parent's marker, an in-loop list
-                // rebinding re-marks it, and an in-loop non-list rebinding
-                // cleared it — the last write is the post-loop truth.
-                scope.ops_environment_unknown |= inner.ops_environment_unknown;
-                scope.effects_unknown |= inner.effects_unknown;
-                for (binding, ty) in inner.bindings {
-                    let had_list_origin = inner.list_origin_bindings.contains(&binding);
-                    scope.insert(binding.clone(), ty);
-                    if had_list_origin {
-                        scope.mark_list_origin(binding);
-                    }
-                }
+                self.finish_loop(
+                    scope,
+                    inner,
+                    false,
+                    iter_t.length == Length::One
+                        || matches!(iter_t.length, Length::Known(n) if n > 0),
+                );
             }
             Stmt::While { cond, body, .. } => {
                 // RY103: a loop condition is a length-1 logical context.
                 self.infer_condition(cond, scope, ConditionContext::Loop);
                 let mut inner = scope.clone();
                 self.insert_loop_carried_bindings(body, &mut inner);
+                self.begin_loop(&mut inner);
                 for s in body {
                     self.walk_stmt(s, &mut inner, returns.as_deref_mut());
                 }
-                // As with `for`, assignments made by `while` and `repeat`
-                // bodies remain visible in R's enclosing environment; the
-                // continuation's list-origin markers carry over the same
-                // way.
-                let body_unreachable = inner.unreachable;
-                scope.ops_environment_unknown |= inner.ops_environment_unknown;
-                scope.effects_unknown |= inner.effects_unknown;
-                for (binding, ty) in inner.bindings {
-                    let had_list_origin = inner.list_origin_bindings.contains(&binding);
-                    scope.insert(binding.clone(), ty);
-                    if had_list_origin {
-                        scope.mark_list_origin(binding);
-                    }
-                }
-                // The parser represents `repeat` as `while (TRUE)`. If its
-                // body cannot continue, neither can the enclosing block.
-                if matches!(cond, Expr::Logical(true, _)) && body_unreachable {
-                    scope.unreachable = true;
-                }
+                let always_true = matches!(cond, Expr::Logical(true, _));
+                self.finish_loop(scope, inner, always_true, always_true);
             }
             Stmt::FunctionDef { params, body, span } => {
                 self.enter_function_body(None, false, params, body, *span, scope);
@@ -435,7 +409,7 @@ impl Checker {
         span: Span,
         scope: &Scope,
     ) {
-        let mut fn_scope = scope.clone();
+        let mut fn_scope = scope.independent_execution_scope();
         fn_scope.invalidate_ops_environment();
         self.start_reference_scope(&mut fn_scope, span);
         if let Some(captures) = self.deferred_captures.last() {
@@ -675,7 +649,7 @@ impl Checker {
     /// have been established by a previous iteration, even when its first
     /// assignment is textually later than its use in the body.
     fn insert_loop_carried_bindings(&self, body: &[Stmt], scope: &mut Scope) {
-        for name in assigned_names_in_body(body) {
+        for name in self.reachable_loop_assignments(body, scope) {
             // The pre-loop value need not survive a later iteration.
             scope.insert(name, RType::unknown());
         }
@@ -722,6 +696,9 @@ impl Checker {
         // for a one-arm `if` whose then branch can continue.
         let then_reaches = !then_scope.unreachable;
         let else_reaches = has_else && !else_scope.unreachable;
+        if scope.loop_frame.is_some() && !then_reaches && !has_else {
+            return;
+        }
         if has_else && then_reaches != else_reaches {
             let continuation = if then_reaches { then_scope } else { else_scope };
             for (name, ty) in &continuation.bindings {
@@ -876,8 +853,6 @@ impl Checker {
 
     fn expr_diverges(&self, expression: &Expr, visited: &mut HashSet<String>) -> bool {
         match expression {
-            // tree-sitter lowers `break` and `next` as identifier statements.
-            Expr::Ident { name, .. } if matches!(name.as_str(), "break" | "next") => true,
             Expr::Call { func, .. } => {
                 let Some(name) = ident_name(func) else {
                     return false;
@@ -1009,7 +984,7 @@ impl Checker {
     ) -> Option<RType> {
         let prev_discarding = self.discarding;
         self.discarding = true;
-        let mut scope = captured_scope.clone();
+        let mut scope = captured_scope.independent_execution_scope();
         scope.invalidate_ops_environment();
         bind_params(&mut scope);
         // Simulate each statement's scope effect in source order so the
@@ -1772,6 +1747,14 @@ impl Checker {
 
     /// Infer the type of an expression, emitting diagnostics for misuse.
     pub(crate) fn infer(&mut self, e: &Expr, scope: &mut Scope) -> RType {
+        if scope.unreachable {
+            return RType::unknown();
+        }
+        if let Expr::Ident { name, .. } = e
+            && self.record_loop_transfer(name, scope)
+        {
+            return RType::unknown();
+        }
         // A skipped custom call may install active bindings, so even a later
         // assignment cannot make identifier reads trustworthy again. This is
         // expression uncertainty, not a model of rebound control syntax.

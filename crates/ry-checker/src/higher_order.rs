@@ -188,7 +188,7 @@ impl Checker {
             .unwrap_or_else(RType::unknown),
             HigherOrderResultKind::Simplify => {
                 if spec.callback_args == [CallbackArg::Unknown] {
-                    return self.ho_rapply(args, arg_types, argument_match, scope);
+                    return Self::ho_rapply(args, arg_types, argument_match);
                 }
                 match callback_return {
                     Some(ty)
@@ -343,44 +343,30 @@ impl Checker {
         }
     }
 
-    /// `rapply(L, f, ...)`: recursively applies `f` to each leaf of
-    /// list `L`. The result is a list of the same shape. We model only
-    /// the top-level shape: result is a list with L's length.
-    pub(crate) fn ho_rapply(
-        &mut self,
-        args: &[Arg],
-        arg_types: &[RType],
-        argument_match: &ArgumentMatch,
-        scope: &Scope,
-    ) -> RType {
-        let l_type = matched_argument_type(arg_types, argument_match, 0)
-            .cloned()
-            .unwrap_or_else(RType::unknown);
-        let callback_return = argument_bound_to_formal(args, argument_match, 1)
-            .map(|argument| &argument.value)
-            .and_then(|cb| self.callback_return_type(cb, &[RType::unknown()], scope));
-        let how = args
-            .iter()
-            .find(|arg| arg.name.as_deref() == Some("how"))
-            .map(|arg| &arg.value);
-        let unlists =
-            how.is_none() || matches!(how, Some(Expr::String(value, _)) if value == "unlist");
-        if unlists {
-            if let Some(ret) = callback_return {
-                if matches!(
-                    ret.mode,
-                    Mode::Logical
-                        | Mode::Integer
-                        | Mode::Double
-                        | Mode::Complex
-                        | Mode::Character
-                        | Mode::Raw
-                ) {
-                    return RType::new(ret.mode, Length::Unknown);
-                }
+    /// Recursive simplification can return NULL, an atomic vector, or a list.
+    /// Only literal list/replace controls establish a retained outer shape.
+    fn ho_rapply(args: &[Arg], arg_types: &[RType], argument_match: &ArgumentMatch) -> RType {
+        let Some(Expr::String(how, _)) =
+            argument_bound_to_formal(args, argument_match, 4).map(|argument| &argument.value)
+        else {
+            return RType::unknown();
+        };
+        // R's match.arg() accepts unique nonempty prefixes of these modes.
+        if how.is_empty() {
+            return RType::unknown();
+        }
+        let input = matched_argument_type(arg_types, argument_match, 0);
+        if "list".starts_with(how.as_str()) {
+            return RType::new(Mode::List, input.map_or(Length::Unknown, |ty| ty.length));
+        }
+        if "replace".starts_with(how.as_str()) {
+            if let Some(input) = input.filter(|ty| ty.mode == Mode::List) {
+                return RType::new(Mode::List, input.length).with_class(input.class.clone());
             }
         }
-        RType::new(Mode::List, l_type.length)
+        // replace also accepts expressions, whose runtime mode is not modeled.
+        // unlist depends on recursive leaves, filtering, defaults, and callbacks.
+        RType::unknown()
     }
 
     /// Infer the return type of a single callback invocation, given the
@@ -532,7 +518,7 @@ impl Checker {
         // function's body is walked (in_parallel is type-transparent).
         let cb = self.unwrap_callback_identity(cb);
         if let Expr::Function { params, body, .. } = cb {
-            let mut fn_scope = scope.clone();
+            let mut fn_scope = scope.independent_execution_scope();
             for (i, p) in params.iter().enumerate() {
                 let t = elem_types.get(i).cloned().unwrap_or(RType::unknown());
                 fn_scope.insert(p.name.clone(), t);

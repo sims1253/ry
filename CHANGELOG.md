@@ -139,6 +139,11 @@ All notable changes to ry are documented in this file.
   attachment and no import), a bare unattached `expr(undefined)` still
   reports the name like any other unknown call.
 
+- **Backtick-bound top-level values resolve from functions**: a bare
+  read of `n1` after `` `n1` <- 42 `` no longer reports RY010. This also
+  covers functions used as values. Escaped identifier spellings remain
+  conservative, and string assignment targets retain their literal names.
+
 - **Names inside quoted blocks cannot borrow unrelated function
   types**: inside an unevaluated block (a data-mask argument, or code
   quoted for later use), a bare name that matches nothing locally used
@@ -161,6 +166,12 @@ All notable changes to ry are documented in this file.
   field; where autofix should live is tracked in #89.
 
 ### Fixed
+
+- Match `rapply` result controls through the full R argument match, including
+  positional and partial `how` arguments. Keep recursive unlisting and dynamic
+  modes unknown; preserve outer list shape only for proven list/replace calls,
+  including the retained outer class for replace mode. Sync the verified opaque
+  `rapply` source contract from base revision 0.0.10.
 
 - Math and Summary member calls no longer emit RY050 just because an unrelated
   class has a local group method. Built-ins such as `sum()` and `abs()` can
@@ -267,7 +278,9 @@ All notable changes to ry are documented in this file.
   Keep unresolved callables conservative about argument capture.
 
 - Discard initial values for bindings reassigned inside loops, preventing
-  stale lengths and types from being applied to later iterations.
+  stale lengths and types from being applied to later iterations. Preserve
+  bindings at `break` and `next`, and exclude later unreachable writes from
+  loop exits. Nested loops and function bodies keep separate exit states.
 
 - **`enable` is honored per folder**: a workspace folder whose settings
   set `enable: false` is skipped: the language server publishes no

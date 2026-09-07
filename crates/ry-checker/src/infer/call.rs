@@ -406,7 +406,7 @@ impl Checker {
         }
         let bindings = foreach_iteration_bindings(&args[0].value)?;
         let _ = self.infer(&args[0].value, scope);
-        let mut local = scope.clone();
+        let mut local = scope.independent_execution_scope();
         for binding in bindings {
             local.insert(binding, RType::unknown());
         }
@@ -440,7 +440,7 @@ impl Checker {
                 .keys()
                 .any(|name| semantic_argument_name(name) == semantic_name);
         if !custom_infix_is_known {
-            let mut quoted_scope = scope.clone();
+            let mut quoted_scope = scope.independent_execution_scope();
             for argument in args {
                 self.infer_discarding(&argument.value, &mut quoted_scope);
             }
@@ -507,7 +507,7 @@ impl Checker {
                 arg_types.push(self.infer(&argument.value, scope));
                 continue;
             }
-            let mut child = scope.clone();
+            let mut child = scope.independent_execution_scope();
             let injects_fixed_names = specs.iter().any(|spec| !spec.names.is_empty());
             for spec in specs {
                 for source in &spec.strings_from {
@@ -724,7 +724,7 @@ impl Checker {
                 .or_else(|| args.iter().position(|argument| argument.name.is_none()));
             for (index, argument) in args.iter().enumerate() {
                 if Some(index) == expression_index {
-                    let mut exit_scope = scope.clone();
+                    let mut exit_scope = scope.independent_execution_scope();
                     if let Some(assigned) = self.deferred_captures.last() {
                         for name in assigned {
                             if exit_scope.get(name).is_none() {
@@ -1035,7 +1035,7 @@ impl Checker {
                 // expression unevaluated. Infer it without diagnostics so
                 // nested operations and names cannot be mistaken for runtime
                 // R code.
-                let mut quoted_scope = scope.clone();
+                let mut quoted_scope = scope.independent_execution_scope();
                 self.infer_discarding(&a.value, &mut quoted_scope);
                 arg_types.push(RType::unknown());
                 continue;
@@ -1535,7 +1535,7 @@ impl Checker {
                 // Inferred against a throwaway scope and in discarding mode:
                 // the member list is walked again for diagnostics below, and
                 // this probe must not emit them twice.
-                let mut probe = scope.clone();
+                let mut probe = scope.independent_execution_scope();
                 self.infer_discarding(other, &mut probe)
             }
         }
@@ -1544,7 +1544,7 @@ impl Checker {
     fn infer_injected_expr(&mut self, expr: &Expr, scope: &mut Scope) -> RType {
         match expr {
             Expr::Function { params, body, .. } => {
-                let mut inner = scope.clone();
+                let mut inner = scope.independent_execution_scope();
                 for parameter in params {
                     inner.insert_parameter(parameter.name.clone(), RType::unknown());
                 }

@@ -195,6 +195,9 @@ All notable changes to ry are documented in this file.
   column-access errors when later classes define another operator method.
   Keep custom opaque method results unknown.
 
+- Wait for workspace bindings before publishing initial editor diagnostics,
+  including files opened while the workspace scan is running.
+
 - Show editor type hints from each assignment, including function locals,
   rather than applying the file's final binding type to earlier assignments.
   Refresh cached hints when local stubs change.

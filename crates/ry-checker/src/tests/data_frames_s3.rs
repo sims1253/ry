@@ -1,6 +1,38 @@
 use super::*;
 
 #[test]
+fn scalar_data_frame_arithmetic_computes_column_results() {
+    for (expression, expected) in [
+        ("frame + 0.5", Mode::Double),
+        ("0.5 + frame", Mode::Double),
+        ("frame / 2L", Mode::Double),
+        ("2L / frame", Mode::Double),
+        ("frame ^ 2L", Mode::Double),
+        ("2L ^ frame", Mode::Double),
+        ("frame %/% 2L", Mode::Integer),
+        ("frame %% 2L", Mode::Integer),
+        ("frame * 2L", Mode::Integer),
+    ] {
+        let source =
+            format!("frame <- data.frame(value = 3L)\nout <- {expression}\nvalue <- out$value\n");
+        let (diagnostics, scope) = check_with_scope(&source);
+        assert!(diagnostics.is_empty(), "{expression}: {diagnostics:?}");
+        assert_eq!(scope.get("value").unwrap().mode, expected, "{expression}");
+        assert!(scope.get("out").unwrap().class.contains("data.frame"));
+    }
+}
+
+#[test]
+fn data_frame_arithmetic_does_not_copy_custom_column_types() {
+    let (diagnostics, scope) = check_with_scope(
+        "`+.widget` <- function(e1, e2) 'changed'\nvalue <- structure(1L, class = 'widget')\nframe <- structure(list(value = value), class = 'data.frame', row.names = 1L)\nout <- frame + 1L\nresult <- out$value\n",
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert_eq!(scope.get("result").unwrap().mode, Mode::Opaque);
+    assert!(scope.get("out").unwrap().columns.is_some());
+}
+
+#[test]
 fn dataset_resolves_mtcars() {
     // `mtcars` is in the typeshed's datasets table; using it must
     // not emit RY010 (unbound variable).

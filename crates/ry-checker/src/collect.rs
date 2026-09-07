@@ -6,6 +6,11 @@ use std::ops::ControlFlow;
 
 impl Checker {
     pub(crate) fn collect_fns(&mut self, stmts: &[Stmt]) {
+        // Project refinement has no single source file; carry escaped local
+        // names and formals through the collected table as well as emission.
+        if custom_operator::has_escaped_names(stmts) {
+            Arc::make_mut(&mut self.fn_table).has_escaped_operator_names = true;
+        }
         // Statement-level walk on the shared core: a binding statement can
         // appear at the top level, in `if` branches, and in `for`/`while`
         // bodies, so those are the only statements whose children this

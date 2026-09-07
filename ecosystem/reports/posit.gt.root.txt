@@ -61,7 +61,6 @@ R/opts.R:131:30 RY010
 R/render_as_i_html.R:922:7 RY032
 R/render_as_i_html.R:928:20 RY010
 R/render_as_i_html.R:928:28 RY010
-R/tab_options.R:1054:26 RY092
 R/utils.R:441:17 RY010
 R/utils.R:442:18 RY010
 R/utils.R:471:24 RY010

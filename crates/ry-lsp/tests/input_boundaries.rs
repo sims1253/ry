@@ -7,6 +7,82 @@ use ry_testkit::FixtureProject;
 use serde_json::{Value, json};
 use std::process::Command;
 
+#[test]
+fn first_diagnostics_wait_for_initial_workspace_bindings() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let fixture = FixtureProject::empty().unwrap();
+            fixture
+                .write_file(
+                    "ry.toml",
+                    "[[environments]]\nname = 'host'\nbindings = ['profile_binding']\npaths = ['main.R']\n",
+                )
+                .unwrap();
+            fixture.write_file("main.R", "profile_binding\n").unwrap();
+            let uri = file_uri(&fixture.path("main.R"));
+            ry_lsp::test_seam::arm_initial_index();
+            let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+            ry_lsp::test_seam::wait_initial_index().await;
+            let mark = session.publication_mark();
+            session.open(&uri, 1, "profile_binding\n").await.unwrap();
+            ry_lsp::test_seam::wait_initial_diagnostic_cycle().await;
+            ry_lsp::test_seam::release_initial_index();
+            let first = session.published_diagnostics_after(&uri, mark).await.unwrap();
+            assert!(
+                !normalize_diagnostics(&first).iter().any(|d| d["code"] == "RY010"),
+                "the first publication must use the configured host bindings: {first}"
+            );
+            join_session(session, server).await;
+        });
+}
+
+#[test]
+fn removing_all_folders_during_initial_index_releases_diagnostics() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let fixture = FixtureProject::empty().unwrap();
+            let outside = FixtureProject::empty().unwrap();
+            let source = "1L + 'bad'\n";
+            outside.write_file("main.R", source).unwrap();
+            let uri = file_uri(&outside.path("main.R"));
+            ry_lsp::test_seam::arm_initial_index();
+            let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+            ry_lsp::test_seam::wait_initial_index().await;
+            let mark = session.publication_mark();
+            session.open(&uri, 1, source).await.unwrap();
+            ry_lsp::test_seam::wait_initial_diagnostic_cycle().await;
+            session
+                .notify(
+                    "workspace/didChangeWorkspaceFolders",
+                    json!({"event": {"added": [], "removed": [{
+                        "uri": file_uri(fixture.root()), "name": "removed"
+                    }]}}),
+                )
+                .await
+                .unwrap();
+            // No replacement scan runs after the last folder is removed.
+            // The outside document must become checkable without releasing
+            // the superseded scan first.
+            let publish = session
+                .published_diagnostics_after(&uri, mark)
+                .await
+                .unwrap();
+            assert!(
+                normalize_diagnostics(&publish)
+                    .iter()
+                    .any(|d| d["code"] == "RY040")
+            );
+            ry_lsp::test_seam::release_initial_index();
+            join_session(session, server).await;
+        });
+}
+
 fn cli(fixture: &FixtureProject, target: &str) -> Vec<Value> {
     let output = Command::new(ry_binary())
         .current_dir(fixture.root())

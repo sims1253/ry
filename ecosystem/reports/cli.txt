@@ -9,9 +9,6 @@ R/errors.R:978:34 RY010
 R/errors.R:985:27 RY010
 R/onload.R:43:22 RY033
 R/rules.R:180:14 RY032
-R/sizes.R:10:13 RY010
-R/sizes.R:8:19 RY010
-R/sizes.R:9:17 RY010
 R/status-bar.R:239:7 RY032
 R/status-bar.R:242:7 RY032
 R/status-bar.R:245:7 RY032

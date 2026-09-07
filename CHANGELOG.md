@@ -151,6 +151,19 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Report an explicit nesting-limit error before deeply nested syntax can
+  overflow the parser stack. The limit is 128 tree-sitter syntax levels.
+
+- Decode adjacent high/low Unicode surrogate escapes as a single UTF-8 scalar,
+  while retaining raw recovery text for unpaired or malformed surrogates.
+
+- Decode octal and braced Unicode string escapes, escaped spaces and backticks,
+  and UTF-8 byte sequences correctly. Preserve physical escaped newlines and
+  retain raw recovery text for malformed or unrepresentable string values.
+
+- Report missing format arguments only for proven base `sprintf` and
+  `gettextf` calls, avoiding false RY094 warnings for custom functions.
+
 - Stop applying `hasArg` and `on.exit` deferred semantics to explicit competing
   bindings, formals, and aliases. Retain existing inference under ambient
   lookup uncertainty, while requiring methods provenance for RY096.
@@ -181,6 +194,9 @@ All notable changes to ry are documented in this file.
 - Stop S3 operator lookup at the winning group method, avoiding false
   column-access errors when later classes define another operator method.
   Keep custom opaque method results unknown.
+
+- Wait for workspace bindings before publishing initial editor diagnostics,
+  including files opened while the workspace scan is running.
 
 - Show editor type hints from each assignment, including function locals,
   rather than applying the file's final binding type to earlier assignments.
@@ -234,6 +250,10 @@ All notable changes to ry are documented in this file.
 
 - Avoid RY098 warnings for recursive names in default expressions when literal
   `if` conditions or short-circuit operators skip their evaluation.
+
+- Select only the executed alternative for proved base `switch` calls with
+  literal scalar selectors, preserving missing fallthrough and caller assignments.
+  Dynamic selectors and custom-call argument laziness remain outside this model.
 
 - Correct typed purrr multi-input map results and remove an unsupported scalar-length fallback. Await the mirai oracle result before shutting down its daemons.
 

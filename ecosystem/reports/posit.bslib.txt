@@ -4,12 +4,6 @@ R/bs-dependencies.R:288:11 RY010
 R/bs-theme-layers.R:114:13 RY010
 R/bs-theme-preview.R:107:9 RY010
 R/bs-theme-preview.R:109:11 RY010
-R/bs-theme-preview.R:134:11 RY010
-R/bs-theme-preview.R:141:11 RY010
-R/bs-theme-preview.R:152:9 RY010
-R/bs-theme-preview.R:153:9 RY010
-R/bs-theme-preview.R:163:15 RY010
-R/bs-theme-preview.R:172:13 RY010
 R/bs-theme-preview.R:185:12 RY010
 R/bs-theme-preview.R:267:11 RY010
 R/bs-theme-preview.R:276:13 RY010
@@ -18,7 +12,6 @@ R/bs-theme-preview.R:90:9 RY010
 R/bs-theme-preview.R:91:9 RY010
 R/buttons.R:146:3 RY010
 R/card.R:357:12 RY010
-R/card.R:380:7 RY010
 R/card.R:441:5 RY010
 R/card.R:454:3 RY010
 R/input-submit.R:128:7 RY010
@@ -41,11 +34,6 @@ R/navs-legacy.R:815:5 RY010
 R/navs-legacy.R:824:7 RY010
 R/navs.R:141:52 RY010
 R/navs.R:67:43 RY010
-R/offcanvas.R:229:7 RY010
-R/offcanvas.R:236:5 RY010
-R/offcanvas.R:245:5 RY010
-R/offcanvas.R:249:5 RY010
-R/offcanvas.R:280:7 RY010
 R/offcanvas.R:301:13 RY010
 R/page.R:189:15 RY010
 R/page.R:189:5 RY010

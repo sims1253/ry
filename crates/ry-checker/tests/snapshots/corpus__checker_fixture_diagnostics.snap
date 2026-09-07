@@ -584,13 +584,13 @@ expression: snapshots
   fixture: err_scalar_logical.R
 - diagnostics:
     - code: RY040
-      message: "cannot apply arithmetic op to `union` and `double`"
+      message: "cannot apply arithmetic op to `list` and `double`"
       severity: error
       span:
         column: 7
-        end: 335
-        line: 6
-        start: 330
+        end: 221
+        line: 4
+        start: 216
   fixture: err_switch_mixed.R
 - diagnostics:
     - code: RY040

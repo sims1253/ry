@@ -6,11 +6,6 @@ R/dashboardHeader.R:109:29 RY010
 R/dashboardHeader.R:126:3 RY010
 R/dashboardHeader.R:131:5 RY010
 R/dashboardHeader.R:146:9 RY010
-R/dashboardHeader.R:218:3 RY010
-R/dashboardHeader.R:227:5 RY010
-R/dashboardHeader.R:229:7 RY010
-R/dashboardHeader.R:230:7 RY010
-R/dashboardHeader.R:231:9 RY010
 R/dashboardHeader.R:264:3 RY010
 R/dashboardHeader.R:270:29 RY010
 R/dashboardHeader.R:302:3 RY010

@@ -6,9 +6,9 @@ See the [extension guide](../editors/code/README.md) for setup and settings.
 
 ## Corpus baseline
 
-The 0.9 corpus baseline is measured and gated in
+The historical 0.9 corpus audit is recorded in
 [docs/corpus/0.9-release-evidence.md](corpus/0.9-release-evidence.md):
-709 findings, 43 true positives, 666 false positives, 6.06% overall
+709 finding records, 43 true positives, 666 false positives, 6.06% overall
 precision. The corpus is dominated by RY010 (unbound-variable) false
 positives from imported, generated, and data bindings that exist at
 runtime.
@@ -29,7 +29,7 @@ list. Codes, names, severities, and defaults mirror
 | RY003 (numeric-condition) | info | Disabled | Default-off | 0 corpus findings. Valid claim, but style advice. |
 | RY010 (unbound-variable) | warning | Enabled | Keep | 4 true positives / 472 false positives. Largest source of false positives; also catches real bugs. |
 | RY020 (unary-minus-type) | error | Enabled | Keep | 0 true positives / 0 false positives in the corpus. Verified by an oracle fixture; scalar parameter defaults can trigger it. |
-| RY030 (invalid-comparison) | error | Enabled | Keep | 0 true positives / 25 false positives. False positives come from typeshed coverage gaps. |
+| RY030 (invalid-comparison) | error | Enabled | Keep | 0 true positives / 1 false positive. The false positive comes from a typeshed coverage gap. |
 | RY032 (scalar-logical-length) | warning | Enabled | Keep | 1 true positive / 47 false positives. Fires on non-literal parameter-dependent expressions. |
 | RY040 (invalid-arithmetic) | error | Enabled | Keep | 0 true positives / 23 false positives. False positives come from typeshed coverage gaps. |
 | RY090 (unknown-argument) | warning | Enabled | Keep | 0 true positives / 4 false positives. Valid syntactic claim. |

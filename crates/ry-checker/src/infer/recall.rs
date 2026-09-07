@@ -252,11 +252,14 @@ impl Checker {
     /// mode these rules guard against):
     ///
     /// 1. a direct call to a function whose typeshed stub declares a return
-    ///    length of exactly 1 (Checker::is_typeshed_scalar_reduction); or
+    ///    length of exactly 1 and whose arguments cannot trigger S3 dispatch;
+    ///    or
     /// 2. a local binding whose inferred type is a length-1 *atomic* and which
     ///    is neither a parameter, a parameter default, nor a flow-narrowed
     ///    refinement — a parameter's type comes from one default or one call
-    ///    site and is not proof of the runtime length.
+    ///    site and is not proof of the runtime length. The binding must also
+    ///    have a known empty class vector: storage length does not determine
+    ///    `length(x)` for a classed object.
     pub(crate) fn check_constant_length_comparison(
         &mut self,
         op: BinOpKind,
@@ -357,10 +360,86 @@ impl Checker {
         if !self.resolves_to_base_lenient(callee, scope) {
             return None;
         }
-        if !args.is_empty() && self.is_typeshed_scalar_reduction(callee) {
+        if !args.is_empty()
+            && self.is_typeshed_scalar_reduction(callee)
+            && self.scalar_call_is_classless(callee, args, scope)
+        {
             return Some(format!("`{bare}()` always returns a single value"));
         }
         None
+    }
+
+    /// Whether every argument to a dispatch-capable scalar call is proven to
+    /// be classless. Keep this proof at the literal/local seam: inferring a
+    /// class through arbitrary calls or operators would duplicate inference
+    /// and could miss dispatch or rebinding.
+    fn scalar_call_is_classless(&self, callee: &str, args: &[Arg], scope: &Scope) -> bool {
+        let bare = crate::semantic_lists::bare_name(callee);
+        let may_dispatch = bare == "length"
+            || bare == "mean"
+            || self
+                .typeshed
+                .globals
+                .s3_generics
+                .iter()
+                .any(|generic| generic == bare)
+            || crate::higher_order::s3_group_generic(bare).is_some();
+        !may_dispatch
+            || args
+                .iter()
+                .all(|argument| self.scalar_call_argument_is_classless(&argument.value, scope))
+    }
+
+    /// Prove the narrow set of argument expressions whose classlessness is
+    /// established without running an arbitrary call. Operators are admitted
+    /// only while their base identity is known; otherwise a rebound operator
+    /// can manufacture a classed value from scalar literals.
+    fn scalar_call_argument_is_classless(&self, expr: &Expr, scope: &Scope) -> bool {
+        match expr {
+            Expr::Ident { name, .. } => {
+                !(scope.parameter_bindings.contains(name)
+                    || scope.default_parameter_bindings.contains(name)
+                    || scope.narrowed_bindings.contains(name))
+                    && scope
+                        .get(name)
+                        .is_some_and(|ty| ty.class.known && ty.class.len == 0)
+            }
+            Expr::Logical(..)
+            | Expr::Integer(..)
+            | Expr::Double(..)
+            | Expr::String(..)
+            | Expr::Null(..)
+            | Expr::Na(..) => true,
+            Expr::BinOp { op, lhs, rhs, .. }
+                if op.is_arithmetic() || matches!(op, BinOpKind::Colon) =>
+            {
+                self.scalar_call_operator_is_base(op_symbol(*op), scope)
+                    && self.scalar_call_argument_is_classless(lhs, scope)
+                    && self.scalar_call_argument_is_classless(rhs, scope)
+            }
+            Expr::UnaryOp { op, expr, .. } => {
+                self.scalar_call_unary_operator_is_base(*op, scope)
+                    && self.scalar_call_argument_is_classless(expr, scope)
+            }
+            _ => false,
+        }
+    }
+
+    fn scalar_call_operator_is_base(&self, symbol: &str, scope: &Scope) -> bool {
+        !scope.ops_environment_unknown
+            && !scope.data_mask_unknown
+            && !scope.search_path_unknown
+            && self.bare_loaded.is_empty()
+            && !ops_chooser::syntax_rebound(self, scope)
+            && !ops_chooser::operator_rebound(self, symbol, scope)
+    }
+
+    fn scalar_call_unary_operator_is_base(&self, op: UnaryOpKind, scope: &Scope) -> bool {
+        let symbol = match op {
+            UnaryOpKind::Neg => "-",
+            UnaryOpKind::Not => "!",
+        };
+        self.scalar_call_operator_is_base(symbol, scope)
     }
 
     fn scalar_by_construction_local(&self, expr: &Expr, scope: &Scope) -> Option<String> {
@@ -383,6 +462,9 @@ impl Checker {
         ) {
             return None;
         }
+        if !bound.class.known || bound.class.len != 0 {
+            return None;
+        }
         Some(format!("`{name}` is a length-1 {}", bound.mode))
     }
 
@@ -394,7 +476,7 @@ impl Checker {
         };
         matches!(
             &sig.return_,
-            ReturnSpec::Concrete(rt) if rt.length == "1"
+            ReturnSpec::Concrete(rt) if rt.length == "1" && rt.class.is_empty()
         )
     }
 }
@@ -412,7 +494,11 @@ mod scalar_reduction_tests {
             checker.take_diagnostics().iter().any(|d| d.code == code)
         }
         for callee in ["sum", "any", "all", "length", "isTRUE", "identical"] {
-            let src = format!("f <- function(x) if (length({callee}(x)) > 0) 1\n");
+            let args = match callee {
+                "identical" => "1L, 1L",
+                _ => "1L",
+            };
+            let src = format!("if (length({callee}({args})) > 0) 1\n");
             assert!(
                 fires(&src, "RY105"),
                 "`{callee}` has return length 1 in the typeshed but RY105 did not fire"

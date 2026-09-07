@@ -262,7 +262,7 @@ static PROBES: &[Probe] = &[
     Probe {
         code: "RY105",
         note: "`length()` of a length-1-by-construction value against 0",
-        positive: "f <- function(v) if (length(sum(v)) > 0) 1 else 2\n",
+        positive: "if (length(sum(1L)) > 0) 1 else 2\n",
         negative: "f <- function(v) if (length(v) > 0) 1 else 2\n",
     },
 ];

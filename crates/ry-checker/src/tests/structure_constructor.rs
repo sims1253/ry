@@ -105,6 +105,9 @@ fn structure_class_vectors_require_base_c_and_handle_removal() {
             "{source}: {:?}",
             scope.get("out")
         );
+        if source.contains("out <- maker(") {
+            assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque);
+        }
     }
 }
 
@@ -188,6 +191,11 @@ fn structure_namespace_rebinding_never_recovers_base_stub_facts() {
 #[test]
 fn structure_spelling_aliases_do_not_prove_captured_base_functions() {
     for source in [
+        "flag <- TRUE; c <- if (flag) function(...) 'actual' else 1L; out <- base::structure(1L, class = c('widget'))",
+        "`c` <- function(...) 'actual'; out <- base::structure(1L, class = c('widget'))",
+        "`structure` <- function(...) 'actual'; out <- structure(1L, class = 'widget')",
+        "target <- function(...) 'actual'; c <- get(paste('target')); out <- base::structure(1L, class = c('widget'))",
+        "target <- function(...) 'actual'; structure <- get(paste('target')); out <- structure(1L, class = 'widget')",
         "c <- local(function(...) 'actual'); maker <- c; c <- NULL; out <- base::structure(1L, class = maker('widget'))",
         "structure <- local(function(...) 'actual'); maker <- structure; structure <- NULL; out <- maker(1L, class = 'widget')",
     ] {
@@ -197,5 +205,40 @@ fn structure_spelling_aliases_do_not_prove_captured_base_functions() {
             "{source}: {:?}",
             scope.get("out")
         );
+        if source.contains("out <- maker(") {
+            assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque);
+        }
+    }
+}
+
+#[test]
+fn structure_pooled_unknown_bindings_block_base_proof() {
+    for name in ["c", "structure"] {
+        let mut project = crate::project::Project::new();
+        project.add_file(
+            "bindings.R".into(),
+            parse_file(
+                "bindings.R",
+                &format!("target <- function(...) 'actual'\n{name} <- get(paste('target'))"),
+            ),
+        );
+        let call = if name == "c" {
+            "base::structure(1L, class = c('widget'))"
+        } else {
+            "structure(1L, class = 'widget')"
+        };
+        project.add_file(
+            "call.R".into(),
+            parse_file("call.R", &format!("out <- {call}")),
+        );
+        project.enable_scope_capture();
+        project.check();
+        let records = project.take_scope_records();
+        let (_, scopes) = records.iter().find(|(path, _)| path == "call.R").unwrap();
+        let out = scopes
+            .iter()
+            .find_map(|record| record.scope.get("out"))
+            .unwrap();
+        assert!(!out.class.contains("widget"), "{name}: {out:?}");
     }
 }

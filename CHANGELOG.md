@@ -128,6 +128,11 @@ All notable changes to ry are documented in this file.
   attachment and no import), a bare unattached `expr(undefined)` still
   reports the name like any other unknown call.
 
+- **Backtick-bound top-level values resolve from functions**: a bare
+  read of `n1` after `` `n1` <- 42 `` no longer reports RY010. This also
+  covers functions used as values. Escaped identifier spellings remain
+  conservative, and string assignment targets retain their literal names.
+
 - **Names inside quoted blocks cannot borrow unrelated function
   types**: inside an unevaluated block (a data-mask argument, or code
   quoted for later use), a bare name that matches nothing locally used

@@ -12,6 +12,10 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Decode octal and braced Unicode string escapes, escaped backticks, and UTF-8
+  byte sequences correctly. Preserve physical escaped newlines and retain raw
+  recovery text for malformed or unrepresentable string values.
+
 - Resolve visible custom arithmetic, comparison, and vector logical operators
   before their operands. Avoid primitive diagnostics for ignored operands and
   preserve proven constant returns; discard caller facts after uncertain effects.

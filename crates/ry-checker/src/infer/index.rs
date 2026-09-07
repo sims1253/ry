@@ -36,10 +36,12 @@ fn dollar_receiver_is_definitely_atomic(receiver: &RType) -> bool {
 
 fn dollar_atomic_receiver_may_dispatch(receiver: &RType) -> bool {
     if receiver.mode == Mode::Union {
-        return receiver
-            .members
-            .as_ref()
-            .is_some_and(|members| members.iter().any(dollar_atomic_receiver_may_dispatch));
+        // structure() can attach the dispatch class to the union itself.
+        return receiver.class != ClassVector::empty()
+            || receiver
+                .members
+                .as_ref()
+                .is_some_and(|members| members.iter().any(dollar_atomic_receiver_may_dispatch));
     }
     atomic_mode(receiver) && receiver.class != ClassVector::empty()
 }

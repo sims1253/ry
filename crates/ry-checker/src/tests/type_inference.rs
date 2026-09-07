@@ -1192,6 +1192,17 @@ fn dollar_on_classed_atomic_values_does_not_require_a_collected_method() {
 }
 
 #[test]
+fn dollar_on_union_with_outer_class_invalidates_caller_effects() {
+    let diags = check(
+        "`$.widget` <- function(x,name) { assign('marker',1L,envir=parent.frame()); 2L }; f <- function(flag) { marker <- 'before'; x <- structure(if(flag) 1L else 'payload',class='widget'); out <- x$field; marker+1L }; f(TRUE); f(FALSE)",
+    );
+    assert!(
+        diags.iter().all(|d| !matches!(d.code, "RY061" | "RY040")),
+        "{diags:?}"
+    );
+}
+
+#[test]
 fn dollar_on_data_frame_no_warning() {
     let diags = check("val <- mtcars$mpg\n");
     assert!(diags.iter().all(|d| d.code != "RY061"), "got {:?}", diags);

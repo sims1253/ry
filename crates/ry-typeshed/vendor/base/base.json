@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "base",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "globals": {
     "ambient": [
       "..deparseOpts",
@@ -4020,7 +4020,12 @@
       "params": [
         "x"
       ],
-      "return": "arg0"
+      "return": "arg0",
+      "force": {
+        "kind": "sole_argument",
+        "param": "x",
+        "allow_named": true
+      }
     },
     "formals": {
       "params": [
@@ -4323,7 +4328,12 @@
       "params": [
         "x"
       ],
-      "return": "arg0"
+      "return": "arg0",
+      "force": {
+        "kind": "sole_argument",
+        "param": "x",
+        "allow_named": true
+      }
     },
     "ifelse": {
       "params": [
@@ -4415,7 +4425,12 @@
       "params": [
         "x"
       ],
-      "return": "arg0"
+      "return": "arg0",
+      "force": {
+        "kind": "sole_argument",
+        "param": "x",
+        "allow_named": true
+      }
     },
     "is.array": {
       "params": [
@@ -4516,6 +4531,11 @@
         "mode": "logical",
         "length": "1",
         "na": false
+      },
+      "force": {
+        "kind": "sole_argument",
+        "param": "x",
+        "allow_named": true
       }
     },
     "is.infinite": {
@@ -4599,6 +4619,11 @@
         "mode": "logical",
         "length": "1",
         "na": false
+      },
+      "force": {
+        "kind": "sole_argument",
+        "param": "x",
+        "allow_named": true
       }
     },
     "is.numeric": {
@@ -4781,6 +4806,11 @@
         "mode": "integer",
         "length": "1",
         "na": false
+      },
+      "force": {
+        "kind": "sole_argument",
+        "param": "x",
+        "allow_named": true
       }
     },
     "lengths": {
@@ -5156,6 +5186,11 @@
         "mode": "null",
         "length": "0",
         "na": false
+      },
+      "force": {
+        "kind": "sole_argument",
+        "param": "...",
+        "allow_named": false
       }
     },
     "mget": {
@@ -6863,6 +6898,11 @@
         "mode": "opaque",
         "length": "0",
         "na": false
+      },
+      "force": {
+        "kind": "sole_argument",
+        "param": "...",
+        "allow_named": false
       }
     },
     "q": {
@@ -7395,6 +7435,11 @@
         "mode": "character",
         "length": "1",
         "na": false
+      },
+      "force": {
+        "kind": "sole_argument",
+        "param": "x",
+        "allow_named": true
       }
     },
     "unclass": {
@@ -7571,6 +7616,11 @@
         "mode": "null",
         "length": "0",
         "na": false
+      },
+      "force": {
+        "kind": "sole_argument",
+        "param": "...",
+        "allow_named": false
       }
     },
     "which": {

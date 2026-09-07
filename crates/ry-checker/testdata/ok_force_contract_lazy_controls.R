@@ -1,0 +1,36 @@
+# no-diag
+length <- function(x) 1L
+masked <- function(x = x) length(x)
+unused <- function(x) NULL
+ordinary <- function(x = x) unused(x)
+quoted <- function(x = x) base::quote(x)
+conditional <- function(flag, x = x) base::typeof(if (flag) x else 1L)
+short <- function(x = x) base::is.null(FALSE && x)
+unrelated <- function(x = x) stats::typeof(x)
+halted <- function(x = x) base::typeof({ base::stop("done"); x })
+halted_identity <- function(x = x) base::identity({ result <- base::stop("done"); x })
+nested_halt <- function(x = x) base::typeof({ base::identity(base::stop("done")); x })
+block_halt <- function(x = x) base::typeof({ base::force({ base::stop("done") }); x })
+returned <- function(x = x) base::typeof({ return(1L); x })
+early_halt <- function(x = local) { base::stop("done"); base::typeof(x); local <- 1L }
+default_halt <- function(x = { base::stop("done"); base::typeof(x) }) x
+default_return <- function(x = { return(1L); base::typeof(x) }) x
+default_replace <- function(x = { x <- 1L; base::typeof(x) }) x
+default_branch <- function(flag, x = { if (flag) { base::stop("done"); base::typeof(x) } else 1L }) x
+default_conditional_replace <- function(flag, x = { if (flag) x <- 1L else x <- 2L; base::typeof(x) }) x
+default_binary_halt <- function(x = base::stop("done") + base::typeof(x)) x
+default_index_halt <- function(x = base::stop("done")[base::typeof(x)]) x
+`[.force_fixture` <- function(x, i, ...) 1L
+`[[.force_fixture` <- function(x, i, ...) 1L
+object <- structure(1L, class = "force_fixture")
+ignored_subscript <- function(x = x) object[base::typeof(x)]
+ignored_double_subscript <- function(x = x) object[[base::typeof(x)]]
+dynamic_replace <- function(x = x) { assign("x", 1L); base::typeof(x) }
+dynamic_default <- function(x = { assign("x", 1L); base::length(x) }) x
+nested_replace <- function(x = x) { y <- (x <- 1L); base::typeof(x) }
+operand_replace <- function(x = (x <- 1L) + base::length(x)) x
+condition_replace <- function(x = { if ((x <- TRUE)) 1L; base::typeof(x) }) x
+promise_replace <- function(x = x, y = { x <- 1L; NULL }) { y; base::typeof(x) }
+quoted_replace <- function(x = x) { `x` <- 1L; base::typeof(x) }
+replace_in <- function(env) { assign("x", 1L, envir = env); NULL }
+opaque_replace <- function(x = x) { replace_in(environment()); base::typeof(x) }

@@ -23,12 +23,16 @@ fn argument_bound_to_formal<'a>(
 
 fn simplify_control(
     base_identity: Option<bool>,
+    forwarded_dots: bool,
     params: &[ParamSpec],
     args: &[Arg],
     argument_match: &ArgumentMatch,
 ) -> Option<bool> {
     match base_identity {
-        Some(true) => {}
+        Some(true) if !forwarded_dots => {}
+        // Forwarded dots can supply an omitted simplify control, so the
+        // default cannot establish the base function's enabled contract.
+        Some(true) => return None,
         Some(false) => return Some(true),
         // An unresolved bare name may be supplied by an attached package;
         // its control must not be treated as the base contract by default.
@@ -106,18 +110,21 @@ impl Checker {
     ) -> Option<RType> {
         let spec = signature.higher_order.as_ref()?;
         // The simplification controls have this meaning only for the base
-        // sapply/mapply contracts. Resolve the callee before callback
+        // apply contracts. Resolve the callee before callback
         // traversal, which can extend the lexical scope with callback data.
-        let base_simplification =
-            if !matches!(crate::semantic_lists::bare_name(name), "sapply" | "mapply") {
-                Some(false)
-            } else if !self.user_stubs.contains_key("base") && self.resolves_to_base(name, scope) {
-                Some(true)
-            } else if name.contains("::") || self.user_stubs.contains_key("base") {
-                Some(false)
-            } else {
-                None
-            };
+        let base_simplification = if !matches!(
+            crate::semantic_lists::bare_name(name),
+            "sapply" | "mapply" | "tapply"
+        ) {
+            Some(false)
+        } else if !self.user_stubs.contains_key("base") && self.resolves_to_base(name, scope) {
+            Some(true)
+        } else if name.contains("::") || self.user_stubs.contains_key("base") {
+            Some(false)
+        } else {
+            None
+        };
+        let forwarded_dots = args.iter().any(|argument| self.is_forwarded_dots(argument));
         self.walk_callback_for_diagnostics(signature, args, arg_types, scope);
         // A fold's initializer describes only the first invocation. Later
         // accumulators are callback results, and zero iterations return the
@@ -132,6 +139,7 @@ impl Checker {
         let argument_match = match_params(&signature.params, args);
         let simplify = simplify_control(
             base_simplification,
+            forwarded_dots,
             &signature.params,
             args,
             &argument_match,

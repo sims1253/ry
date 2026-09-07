@@ -7,6 +7,7 @@ fn simplify_false_keeps_sapply_and_mapply_results_as_lists() {
         "a <- sapply(simplify = FALSE, FUN = function(v) 1L, X = 1L); a$field",
         "b <- mapply(SIMPLIFY = FALSE, FUN = function(x) 1L, x = 1L); b$field",
         "b <- mapply(FUN = function(x) 1L, x = 1L, SIMPLIFY = FALSE); b$field",
+        "c <- tapply(1L, 1L, function(v) 1L, simplify = FALSE); c$field",
     ] {
         let diagnostics = check(source);
         assert!(
@@ -22,6 +23,7 @@ fn unknown_simplify_controls_do_not_prove_atomic_results() {
         "control <- identity(FALSE); a <- sapply(1L, function(v) 1L, simplify = control); a$field",
         "control <- identity(FALSE); b <- mapply(FUN = function(x) 1L, x = 1L, SIMPLIFY = control); b$field",
         "library(dplyr); c <- sapply(1L, function(v) 1L, simplify = FALSE); c$field",
+        "wrapper <- function(...) sapply(1L, function(v) 1L, ...); wrapper(simplify = FALSE)$field",
     ] {
         let diagnostics = check(source);
         assert!(
@@ -94,6 +96,7 @@ fn known_nonempty_scalar_simplification_still_reports_atomic_dollar() {
     for source in [
         "a <- sapply(1L, function(v) 1L, simplify = TRUE); a$field",
         "b <- mapply(FUN = function(x) 1L, x = 1L, SIMPLIFY = TRUE); b$field",
+        "c <- tapply(1L, 1L, function(v) 1L, simplify = TRUE); c$field",
     ] {
         let diagnostics = check(source);
         assert!(

@@ -38,7 +38,7 @@ semantic state and discard journal history. Independent execution scopes clear
 the caller's loop ownership. No public Scope fields or lookup signatures changed.
 
 The cloned implementation remains only in a test module. Tests compare complete
-scopes, diagnostics, and reference records against it, including all 500 fixture files discovered
+scopes, diagnostics, and reference records against it, including all fixture files discovered
 recursively under `testdata` (oracle and vendor fixtures included). Production has no environment switch or second branch
 implementation.
 
@@ -68,8 +68,9 @@ bindings; the alternating case changes their types at each nesting level.
 All four workloads produce identical diagnostics under both instruments. A
 separate comparison of all 500 audited packages produces byte-identical JSON.
 Workspace tests, strict all-target Clippy, formatting, and the complete R oracle
-pass. The 684 checker tests include full scope/reference/diagnostic parity against
-the test-only cloned implementation. The existing Criterion branch benchmark
+pass. After integration with main, the 690 checker tests include full
+scope/reference/diagnostic parity across 505 recursively discovered fixtures
+against the test-only cloned implementation. The existing Criterion branch benchmark
 also passes in test mode for both 128 and 1,024 bindings. Strict tidyverse and
 full-tier Posit ledger checks, including readable message identities, pass.
 

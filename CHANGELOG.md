@@ -151,12 +151,6 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
-- Extend explicit `FALSE`/`FALSE` Ops chooser fallback to plain vectors built
-  with proven base `structure()` and flat literal `base::c()` payloads.
-  Arithmetic keeps the longer operand's class (left on ties); comparison and
-  logical results drop it. Attributes, unknown lengths, and empty constructors
-  remain outside this proof.
-
 - Stop applying `hasArg` and `on.exit` deferred semantics to explicit competing
   bindings, formals, and aliases. Retain existing inference under ambient
   lookup uncertainty, while requiring methods provenance for RY096.
@@ -389,6 +383,12 @@ All notable changes to ry are documented in this file.
 - Report RY051 when literal `chooseOpsMethod` results are `FALSE` on both
   sides and reject provably distinct operator methods. Infer primitive
   fallback and its class behavior only for proven scalar operands.
+
+- Extend explicit `FALSE`/`FALSE` Ops chooser fallback to plain vectors built
+  with proven base `structure()` and flat literal `base::c()` payloads.
+  Arithmetic keeps the longer operand's class (left on ties); comparison and
+  logical results drop it. Attributes, unknown lengths, and empty constructors
+  remain outside this proof.
 
 - Parse exponent and hexadecimal integer literals with their values, and use
   double storage when an `L`-suffixed value exceeds R's integer range.

@@ -158,6 +158,12 @@ static PROBES: &[Probe] = &[
                    Summary(x)\n",
     },
     Probe {
+        code: "RY051",
+        note: "two proven FALSE choosers reject distinct literal method bodies",
+        positive: include_str!("../testdata/warn_s3_incompatible_ops.R"),
+        negative: include_str!("../testdata/ok_s3_same_ops_method.R"),
+    },
+    Probe {
         code: "RY060",
         note: "column access not in a known data-frame schema",
         positive: "df <- mtcars\nbad <- df$nonexistent\n",

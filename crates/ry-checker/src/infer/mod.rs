@@ -195,6 +195,7 @@ impl Checker {
                 let reference_type_known =
                     self.capture_references && self.reference_value_known(value, scope);
                 let scope_marked_origin = expression_has_list_origin(value, scope);
+                let class_write = self.prepare_class_attribute(target, value, scope);
                 let vt = self.infer(value, scope);
                 // The value keeps list origin whenever its inferred mode
                 // is `List` — broader than the stubs' `mode: list`
@@ -203,7 +204,7 @@ impl Checker {
                 let value_has_list_origin = scope_marked_origin || every_mode_is_list(&vt);
                 let function_alias = self.function_alias_target(value, scope);
                 let literal_function = ops_chooser::literal_function(self, value, scope);
-                if self.try_assign_value(target, value, vt, scope)
+                if self.try_assign_value(target, vt, class_write, scope)
                     && let Some(name) = binding_name(target)
                 {
                     if self.capture_references {
@@ -1173,8 +1174,8 @@ impl Checker {
     fn try_assign_value(
         &mut self,
         target: &Expr,
-        value: &Expr,
         vt: RType,
+        class_write: Option<ClassLiteral>,
         scope: &mut Scope,
     ) -> bool {
         if binding_name(target).is_none() {
@@ -1182,7 +1183,7 @@ impl Checker {
             scope.invalidate_ops_environment();
         }
 
-        if self.assign_class_attribute(target, value, scope)
+        if self.assign_class_attribute(target, class_write, scope)
             || self.assign_replacement_target(target, scope)
         {
             return false;
@@ -1229,10 +1230,30 @@ impl Checker {
         }
     }
 
+    // Resolve the class builder before evaluating its arguments/body. The
+    // replacement function itself is looked up after RHS evaluation.
+    fn prepare_class_attribute(
+        &self,
+        target: &Expr,
+        value: &Expr,
+        scope: &Scope,
+    ) -> Option<ClassLiteral> {
+        let Expr::Call { func, .. } = target else {
+            return None;
+        };
+        matches!(func.as_ref(), Expr::Ident { name, .. } if name == "class").then(|| {
+            if matches!(value, Expr::Null(_)) {
+                ClassLiteral::Multi(Vec::new())
+            } else {
+                self.structure_class_literal(value, scope)
+            }
+        })
+    }
+
     pub(crate) fn assign_class_attribute(
         &mut self,
         target: &Expr,
-        value: &Expr,
+        class_write: Option<ClassLiteral>,
         scope: &mut Scope,
     ) -> bool {
         let Expr::Call { func, args, .. } = target else {
@@ -1247,7 +1268,37 @@ impl Checker {
         let Some(base) = scope.get(name).cloned() else {
             return false;
         };
-        let class = match parse_class_literal(value) {
+        if args.len() != 1
+            || args[0].name.as_deref().is_some_and(|name| name != "x")
+            || scope.data_mask_unknown
+            || self.user_stubs.contains_key("base")
+            || !self.resolves_to_base("class<-", scope)
+            || self.literal_bindings_may_be_shadowed(
+                ["class<-", "`class<-`"],
+                &HashSet::new(),
+                scope,
+            )
+        {
+            scope.insert(name.clone(), RType::unknown());
+            return true;
+        }
+        let class_write = class_write.unwrap_or(ClassLiteral::Unknown);
+        let singleton = match &class_write {
+            ClassLiteral::Single(class) => Some(class.as_str()),
+            ClassLiteral::Multi(classes) if classes.len() == 1 => Some(classes[0].as_str()),
+            _ => None,
+        };
+        // A dynamic class may select a storage-coercing intrinsic class. R
+        // applies those coercions only to singleton class vectors.
+        if matches!(class_write, ClassLiteral::Unknown)
+            || singleton.is_some_and(|class| {
+                crate::semantic_lists::CLASS_ASSIGNMENT_COERCERS.contains(&class)
+            })
+        {
+            scope.insert(name.clone(), RType::unknown());
+            return true;
+        }
+        let class = match class_write {
             ClassLiteral::Single(class) => ClassVector::single(&class),
             ClassLiteral::Multi(classes) => {
                 let classes: Vec<&str> = classes.iter().map(String::as_str).collect();
@@ -1484,8 +1535,9 @@ impl Checker {
         }
         match stmt {
             Stmt::Assign { target, value, .. } => {
+                let class_write = self.prepare_class_attribute(target, value, scope);
                 let vt = self.infer(value, scope);
-                self.try_assign_value(target, value, vt.clone(), scope);
+                self.try_assign_value(target, vt.clone(), class_write, scope);
                 vt
             }
             Stmt::Expr(e) => self.infer(e, scope),
@@ -1782,8 +1834,9 @@ impl Checker {
                     {
                         scope.invalidate_ops_environment();
                     }
+                    let class_write = self.prepare_class_attribute(lhs, rhs, scope);
                     let rt = self.infer(rhs, scope);
-                    self.try_assign_value(lhs, rhs, rt.clone(), scope);
+                    self.try_assign_value(lhs, rt.clone(), class_write, scope);
                     return rt;
                 }
                 // `:` sequence operator: when both operands are

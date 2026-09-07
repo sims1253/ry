@@ -1,5 +1,13 @@
 use super::*;
 
+pub(crate) enum Dispatch {
+    Value(RType),
+    IncompatiblePrimitive {
+        left_method: String,
+        right_method: String,
+    },
+}
+
 /// Evidence about a function value installed by an ordinary assignment.
 /// Aliases share this allocation; equal return types alone are not identity.
 #[derive(Debug)]
@@ -64,7 +72,7 @@ pub(crate) fn dispatch(
     lhs: &RType,
     rhs: &RType,
     scope: &Scope,
-) -> Option<RType> {
+) -> Option<Dispatch> {
     if scope.data_mask_unknown || scope.search_path_unknown {
         return None;
     }
@@ -97,19 +105,19 @@ pub(crate) fn dispatch(
         return (left_class != right_class
             && lexical_method(&left_name)
             && lexical_method(&right_name))
-        .then(RType::unknown);
+        .then(|| Dispatch::Value(RType::unknown()));
     };
     if scope.ops_environment_unknown
         || syntax_rebound(checker, scope)
         || operator_rebound(checker, symbol, scope)
     {
-        return Some(RType::unknown());
+        return Some(Dispatch::Value(RType::unknown()));
     }
     if !left.accepts_two || !right.accepts_two {
-        return Some(RType::unknown());
+        return Some(Dispatch::Value(RType::unknown()));
     }
     if Arc::ptr_eq(left, right) {
-        return Some(RType::scalar(left.mode));
+        return Some(Dispatch::Value(RType::scalar(left.mode)));
     }
     let choose = |class: &str| {
         scope
@@ -118,12 +126,20 @@ pub(crate) fn dispatch(
             .filter(|function| function.accepts_six)
             .and_then(|function| function.choice)
     };
-    Some(match choose(&left_class) {
-        Some(true) => RType::scalar(left.mode),
-        Some(false) if choose(&right_class) == Some(true) => RType::scalar(right.mode),
-        // Missing, dynamic, and two-FALSE selection stay unknown. Primitive
-        // fallback has its own attribute rules and is not a method lookup miss.
-        _ => RType::unknown(),
+    Some(match (choose(&left_class), choose(&right_class)) {
+        (Some(true), _) => Dispatch::Value(RType::scalar(left.mode)),
+        (Some(false), Some(true)) => Dispatch::Value(RType::scalar(right.mode)),
+        (Some(false), Some(false))
+            if left.mode != right.mode && scalar_primitive(lhs) && scalar_primitive(rhs) =>
+        {
+            // Different literal storage modes prove that the method bodies
+            // are not identical. Equal modes alone prove nothing about identity.
+            Dispatch::IncompatiblePrimitive {
+                left_method: left_name,
+                right_method: right_name,
+            }
+        }
+        _ => Dispatch::Value(RType::unknown()),
     })
 }
 
@@ -209,4 +225,12 @@ pub(crate) fn literal_operator_return(symbol: &str, scope: &Scope) -> Option<RTy
         .get(symbol)
         .filter(|function| function.accepts_two)
         .map(|function| RType::scalar(function.mode))
+}
+
+fn scalar_primitive(ty: &RType) -> bool {
+    ty.length == Length::One
+        && matches!(
+            ty.mode,
+            Mode::Logical | Mode::Integer | Mode::Double | Mode::Character
+        )
 }

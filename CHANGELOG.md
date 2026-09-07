@@ -15,6 +15,7 @@ All notable changes to ry are documented in this file.
 - Resolve visible custom arithmetic, comparison, and vector logical operators
   before their operands. Avoid primitive diagnostics for ignored operands and
   preserve proven constant returns; discard caller facts after uncertain effects.
+- Class assignments no longer infer literal classes from custom class builders or preserve payload types under an unproven replacement function.
 
 - Compute data-frame column types after scalar arithmetic instead of copying
   their input types. Keep classed column results unknown when methods may run.
@@ -28,7 +29,10 @@ All notable changes to ry are documented in this file.
 
 - Infer conflicting S3 operator results when top-level literal methods
   and `chooseOpsMethod` values prove selection, including aliases and reverse
-  selection. Keep uncertain dispatch and primitive fallback unknown.
+  selection. Keep uncertain dispatch unknown.
+
+- Report RY051 when two literal `chooseOpsMethod` results reject provably distinct
+  operator methods. Infer scalar primitive fallback and its class behavior.
 
 - Refresh incremental diagnostics when a callback changes, including callbacks
   passed as values and their downstream callers.
@@ -45,6 +49,9 @@ All notable changes to ry are documented in this file.
 - Stop S3 operator lookup at the winning group method, avoiding false
   column-access errors when later classes define another operator method.
   Keep custom opaque method results unknown.
+
+- Parse exponent and hexadecimal integer literals with their values, and use
+  double storage when an `L`-suffixed value exceeds R's integer range.
 
 ### Cleanup
 

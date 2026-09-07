@@ -29,7 +29,35 @@ impl Checker {
         // the primitive is invalid: its runtime class may provide a
         // method from another package.
         if let Some(dispatched) = self.try_s3_binop_dispatch(op, &lt, &rt, scope) {
-            return dispatched;
+            match dispatched {
+                ops_chooser::Dispatch::Value(result) => return result,
+                ops_chooser::Dispatch::IncompatiblePrimitive {
+                    left_method,
+                    right_method,
+                } => {
+                    self.emit(
+                        Severity::Warning,
+                        span,
+                        "RY051",
+                        format!("incompatible S3 methods `{left_method}` and `{right_method}` for `{}`; R uses the primitive operator", op_symbol(op)),
+                    );
+                    let left_class = lt.class.clone();
+                    // Primitive fallback does not call Ops.factor or
+                    // Ops.data.frame. Equal scalar arithmetic keeps LHS class;
+                    // comparison and logical primitives drop it.
+                    let mut result = self.infer_primitive_binop(
+                        op,
+                        lt.with_class(ClassVector::empty()),
+                        rt.with_class(ClassVector::empty()),
+                        span,
+                        known_null_is_actionable,
+                    );
+                    if op.is_arithmetic() && result.mode != Mode::Opaque {
+                        result.class = left_class;
+                    }
+                    return result;
+                }
+            }
         }
         // The opaque base `Ops.data.frame` stub falls through to schema
         // modeling. Resolve overrides and conflicting methods first: they
@@ -37,6 +65,20 @@ impl Checker {
         if let Some(result) = data_frame_binop_result(op, &lt, &rt) {
             return result;
         }
+        if op.is_arithmetic() && (lt.class.contains("factor") || rt.class.contains("factor")) {
+            return self.infer_factor_arithmetic(&lt, Some(&rt), span);
+        }
+        self.infer_primitive_binop(op, lt, rt, span, known_null_is_actionable)
+    }
+
+    fn infer_primitive_binop(
+        &mut self,
+        op: BinOpKind,
+        lt: RType,
+        rt: RType,
+        span: Span,
+        known_null_is_actionable: bool,
+    ) -> RType {
         let is_compare = is_comparison(op);
         let is_logic = matches!(
             op,
@@ -113,9 +155,6 @@ impl Checker {
                 self.emit_scalar_logical_length(op, rt.length, span);
             }
             return RType::new(Mode::Logical, length);
-        }
-        if lt.class.contains("factor") || rt.class.contains("factor") {
-            return self.infer_factor_arithmetic(&lt, Some(&rt), span);
         }
         // Arithmetic.
         let lt_mode = lt.mode;
@@ -252,7 +291,7 @@ impl Checker {
         lhs: &RType,
         rhs: &RType,
         scope: &mut Scope,
-    ) -> Option<RType> {
+    ) -> Option<ops_chooser::Dispatch> {
         // `:`, the pipes, and `%in%` are not S3 generics, and `&&`/`||`
         // are strictly logical short-circuit primitives that no `Ops`
         // method can intercept, so their diagnostics always fire.
@@ -270,8 +309,9 @@ impl Checker {
         }
         let symbol = op_symbol(op);
         if let Some(result) = ops_chooser::dispatch(self, symbol, lhs, rhs, scope) {
-            if result.mode == Mode::Opaque {
-                scope.invalidate_ops_environment();
+            match &result {
+                ops_chooser::Dispatch::Value(value) if value.mode != Mode::Opaque => {}
+                _ => scope.invalidate_ops_environment(),
             }
             return Some(result);
         }
@@ -285,17 +325,18 @@ impl Checker {
         if [lhs, rhs].iter().any(|operand| {
             operand.class.is_unknown() && !matches!(operand.mode, Mode::Opaque | Mode::Union)
         }) {
-            return Some(RType::unknown());
+            return Some(ops_chooser::Dispatch::Value(RType::unknown()));
         }
         let left_method = self.s3_operator_method_identity(symbol, lhs);
         let right_method = self.s3_operator_method_identity(symbol, rhs);
         if matches!((&left_method, &right_method), (Some(left), Some(right)) if left != right) {
-            return Some(RType::unknown());
+            return Some(ops_chooser::Dispatch::Value(RType::unknown()));
         }
         let operands = [lhs, rhs];
         operands
             .iter()
             .find_map(|operand| self.s3_dispatch_on_operand(symbol, &operands, operand))
+            .map(ops_chooser::Dispatch::Value)
     }
 
     fn s3_operator_method_identity(

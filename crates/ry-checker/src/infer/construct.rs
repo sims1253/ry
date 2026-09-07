@@ -161,7 +161,7 @@ impl Checker {
         base_type
     }
 
-    fn structure_class_literal(&self, expr: &Expr, scope: &Scope) -> ClassLiteral {
+    pub(crate) fn structure_class_literal(&self, expr: &Expr, scope: &Scope) -> ClassLiteral {
         let Expr::Call { func, args, .. } = expr else {
             return parse_class_literal(expr);
         };

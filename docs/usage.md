@@ -188,10 +188,15 @@ vim.lsp.start({
 When both operator operands have different S3 methods, ry can follow a
 `chooseOpsMethod` returning literal `TRUE` or `FALSE` when the current scope
 proves both methods and the chooser values in top-level code using ordinary
-`<-` or `=` assignments. This includes aliases and methods with `...`; the selected operator method must also return
-a literal. Other calls, uncertain rebinding, function bodies checked before
+`<-` or `=` assignments. This includes aliases and methods with `...`; the
+selected operator method must also return a literal. Other calls, uncertain rebinding, function bodies checked before
 execution, attached packages, and more complex methods keep the result unknown.
-Primitive fallback and its incompatibility warning remain unmodeled. See [#193](https://github.com/sims1253/ry/issues/193).
+
+For scalar primitive operands, ry reports RY051 when both choosers return
+`FALSE` and different literal method result modes prove that the methods differ.
+It infers primitive fallback, retaining the left class for arithmetic and
+removing class for comparison and logical results. Other fallback cases remain
+unknown. See [#193](https://github.com/sims1253/ry/issues/193).
 
 For example, this top-level sequence selects a character result:
 

@@ -25,3 +25,20 @@ if (requireNamespace("rlang", quietly = TRUE)) {
   forces(function(p) rlang::enquos(.named = p))
   forces(function(p) rlang::enquos(.ignore_empty = p))
 }
+
+exact_forward <- function(p, ...) delayedAssign(x = "held", value = p, ...)
+stopifnot(is.null(exact_forward(unbound_capture)))
+if (requireNamespace("rlang", quietly = TRUE)) {
+  leading_forward <- function(p, ...) rlang::enquo(..., p)
+  stopifnot(rlang::is_quosure(leading_forward(unbound_capture)))
+  positional_forward <- function(p, ...) rlang::enquo(p, ...)
+  partial_forward <- function(p, ...) rlang::enquo(ar = p, ...)
+  stopifnot(rlang::is_quosure(positional_forward(unbound_capture)))
+  stopifnot(rlang::is_quosure(partial_forward(unbound_capture)))
+}
+# Unknown named dots can change positional occupancy in a mixed signature.
+# Supplying value moves the positional p from value to the normal eval.env.
+mixed_forward <- function(p, ...) delayedAssign("held", p, ...)
+error <- tryCatch(mixed_forward(stop("normal forwarded control"), value = 1L), error = identity)
+stopifnot(inherits(error, "error"))
+stopifnot(identical(conditionMessage(error), "normal forwarded control"))

@@ -1441,3 +1441,22 @@ fn wrapper_capture_modes_follow_the_matched_helper_formal() {
         );
     }
 }
+
+#[test]
+fn forwarded_dots_keep_exact_and_all_capture_actuals_quoted() {
+    for body in [
+        "rlang::enquo(p, ...)",
+        "rlang::enquo(..., p)",
+        "rlang::enquo(ar=p, ...)",
+        "rlang::enquo(arg=p, ...)",
+        "delayedAssign(x='held', value=p, ...)",
+    ] {
+        let diagnostics = check(&format!("f <- function(p, ...) {body}; f(unbound_capture)"));
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.code == "RY010" && d.message.contains("unbound_capture")),
+            "{body}: {diagnostics:?}"
+        );
+    }
+}

@@ -586,14 +586,28 @@ fn capture_signature_arguments(signature: &FunctionSig, args: &[Arg], captured: 
         .iter()
         .map(|a| a.name.as_deref().map(semantic_argument_name))
         .collect();
-    let matched = match_argument_names(&params, names.iter().copied());
+    // A forwarded dots expression expands to zero or more actuals, not one
+    // concrete positional slot. Match only explicit actuals here; the proof
+    // below separately limits which bindings survive the unknown expansion.
+    let explicit: Vec<_> = args
+        .iter()
+        .enumerate()
+        .filter(|(_, arg)| !matches!(&arg.value, Expr::Ident { name, .. } if name == "..."))
+        .map(|(index, _)| index)
+        .collect();
+    let matched = match_argument_names(&params, explicit.iter().map(|&index| names[index]));
+    let mut param_for_arg = vec![None; args.len()];
+    for (&index, formal) in explicit.iter().zip(&matched.param_for_arg) {
+        param_for_arg[index] = *formal;
+    }
     let end = matched.dots.unwrap_or(params.len());
     let exact: Vec<_> = params.iter().map(|p| names.contains(&Some(*p))).collect();
     // The general matcher tolerates malformed calls. A capture proof cannot
     // borrow its fallback for duplicate bindings or ambiguous partial names.
     let mut occupied = vec![false; params.len()];
-    for (index, name) in names.iter().enumerate() {
-        if let Some(formal) = matched.param_for_arg[index] {
+    for &index in &explicit {
+        let name = &names[index];
+        if let Some(formal) = param_for_arg[index] {
             if occupied[formal] {
                 return;
             }
@@ -615,7 +629,7 @@ fn capture_signature_arguments(signature: &FunctionSig, args: &[Arg], captured: 
                 if candidates.len() > 1
                     || candidates
                         .first()
-                        .is_some_and(|formal| matched.param_for_arg[index] != Some(*formal))
+                        .is_some_and(|formal| param_for_arg[index] != Some(*formal))
                 {
                     return;
                 }
@@ -625,6 +639,9 @@ fn capture_signature_arguments(signature: &FunctionSig, args: &[Arg], captured: 
     let forwarded = args
         .iter()
         .any(|arg| matches!(&arg.value, Expr::Ident { name, .. } if name == "..."));
+    let all_capture = params
+        .iter()
+        .all(|param| signature.eval.get(*param) == Some(&EvalMode::CapturesPromise));
     for (index, arg) in args.iter().enumerate() {
         // Preserve the existing blanket forwarding approximation: a wrapper's
         // `...` remains quoting when passed to a capturing dots formal. Runtime
@@ -637,10 +654,15 @@ fn capture_signature_arguments(signature: &FunctionSig, args: &[Arg], captured: 
             });
             continue;
         }
-        if matches!(arg.value, Expr::Missing(_)) || (forwarded && end != 0) {
+        let exact_capture = names[index].is_some_and(|name| params.contains(&name));
+        // Exact tags cannot change their formal in a successful call. An
+        // all-capture signature cannot move a value to an ordinary formal.
+        if matches!(arg.value, Expr::Missing(_))
+            || (forwarded && end != 0 && !exact_capture && !all_capture)
+        {
             continue;
         }
-        if let Some(formal) = matched.param_for_arg[index].or(matched.dots) {
+        if let Some(formal) = param_for_arg[index].or(matched.dots) {
             captured[index] |=
                 signature.eval.get(params[formal]) == Some(&EvalMode::CapturesPromise);
         }
@@ -1134,6 +1156,11 @@ mod collect_walker_tests {
             "substitute(en=list(), ex=p)",
             "rlang::enquos(p, .named=FALSE)",
             "rlang::enquos(tag=p, .named=FALSE)",
+            "rlang::enquo(p, ...)",
+            "rlang::enquo(..., p)",
+            "rlang::enquo(ar=p, ...)",
+            "rlang::enquo(arg=p, ...)",
+            "delayedAssign(x='held', value=p, ...)",
         ] {
             let checker = collect(&format!("f <- function(p) {call}"));
             let param = &checker.fn_table.fns["f"].params[0];
@@ -1154,6 +1181,8 @@ mod collect_walker_tests {
         }
         for call in [
             "delayedAssign(p, 1L)",
+            "delayedAssign('held', p, ...)",
+            "delayedAssign('held', val=p, ...)",
             "base::delayedAssign('held', 1L, eval.env=p)",
             "base::delayedAssign('held', 1L, assign.env=p)",
             "base::delayedAssign('held', 1L, p)",

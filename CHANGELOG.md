@@ -12,6 +12,11 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Preserve omitted call arguments and their names without shifting later
+  arguments. Calls and indexes now share missing-position handling. The public
+  `ry-core` AST adds `Expr::Missing(Span)`; consumers with exhaustive expression
+  matches must handle it separately from unsupported `Expr::Unknown` forms.
+
 - Custom or masked `factor` and `new` calls no longer acquire builtin constructor facts. S4 constructor inference requires methods provenance, and detaching a package invalidates the default search-path assumption.
 
 - Resolve visible custom arithmetic, comparison, and vector logical operators

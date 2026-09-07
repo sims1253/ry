@@ -244,3 +244,97 @@ fn namespace_string_rhs_four_byte_unterminated_no_panic() {
         "parser must produce at least one statement"
     );
 }
+
+#[test]
+fn omitted_actuals_preserve_every_position_and_name() {
+    for (source, expected) in [
+        ("f()", vec![]),
+        ("f(,)", vec![(None, true), (None, true)]),
+        (
+            "f(1L,,3L)",
+            vec![(None, false), (None, true), (None, false)],
+        ),
+        ("f(a=,b=2L)", vec![(Some("a"), true), (Some("b"), false)]),
+        (
+            "f(,,a,,b,,)",
+            vec![
+                (None, true),
+                (None, true),
+                (None, false),
+                (None, true),
+                (None, false),
+                (None, true),
+                (None, true),
+            ],
+        ),
+        (
+            "f(# before\n, # between\na= # named\n, # after\n)",
+            vec![(None, true), (Some("a"), true), (None, true)],
+        ),
+        (
+            "f(g(1L,2L), 'a,b',)",
+            vec![(None, false), (None, false), (None, true)],
+        ),
+        (
+            "f(`a b`=, 'quoted'=)",
+            vec![(Some("`a b`"), true), (Some("'quoted'"), true)],
+        ),
+    ] {
+        let file = parse(source);
+        assert!(
+            file.parse_errors.is_empty(),
+            "{source}: {:?}",
+            file.parse_errors
+        );
+        let [Stmt::Expr(Expr::Call { args, .. })] = file.stmts.as_slice() else {
+            panic!("{source}: {:?}", file.stmts)
+        };
+        let actual: Vec<_> = args
+            .iter()
+            .map(|arg| (arg.name.as_deref(), matches!(arg.value, Expr::Missing(_))))
+            .collect();
+        assert_eq!(actual, expected, "{source}");
+        for arg in args {
+            assert!(arg.span.start <= arg.span.end && arg.span.end <= source.len());
+            assert!(
+                source.is_char_boundary(arg.span.start) && source.is_char_boundary(arg.span.end)
+            );
+        }
+    }
+}
+
+#[test]
+fn missing_subscripts_use_the_same_slots_without_duplicate_padding() {
+    for (source, expected) in [
+        ("x[]", vec![]),
+        ("x[,j]", vec![true, false]),
+        ("x[i,]", vec![false, true]),
+        ("x[,,drop=FALSE]", vec![true, true, false]),
+        ("x[,g('a,b'),]", vec![true, false, true]),
+        ("x[[,]]", vec![true, true]),
+    ] {
+        let file = parse(source);
+        let [Stmt::Expr(Expr::Index { args, .. })] = file.stmts.as_slice() else {
+            panic!("{source}: {:?}", file.stmts)
+        };
+        assert_eq!(
+            args.iter()
+                .map(|arg| matches!(arg.value, Expr::Missing(_)))
+                .collect::<Vec<_>>(),
+            expected,
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn unsupported_actual_values_are_not_missing() {
+    let file = parse("f(a=1i,b=)");
+    let [Stmt::Expr(Expr::Call { args, .. })] = file.stmts.as_slice() else {
+        panic!("{:?}", file.stmts)
+    };
+    assert!(matches!(args[0].value, Expr::Unknown(_)));
+    assert!(matches!(args[1].value, Expr::Missing(_)));
+    assert_eq!(args[0].name.as_deref(), Some("a"));
+    assert_eq!(args[1].name.as_deref(), Some("b"));
+}

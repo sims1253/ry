@@ -241,7 +241,8 @@ fn expr_step<B>(
         | Expr::Null(_)
         | Expr::Na(_, _)
         | Expr::Ident { .. }
-        | Expr::Unknown(_) => {}
+        | Expr::Unknown(_)
+        | Expr::Missing(_) => {}
     }
     ControlFlow::Continue(())
 }

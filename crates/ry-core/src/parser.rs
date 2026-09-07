@@ -841,113 +841,121 @@ fn try_unwrap_raw_string(body: &str) -> Option<String> {
     Some(body[content_start..close_idx].to_string())
 }
 
-/// Process R string escape sequences. Handles the common cases:
-/// `\"`, `\\`, `\n`, `\r`, `\t`, `\b`, `\f`, `\v`, `\0`, `\'`, and
-/// `\uXXXX` / `\UXXXXXXXX` (1-4 or 1-8 hex digits). Unknown escapes are
-/// passed through verbatim (R warns but keeps the backslash), matching
-/// R's documented behavior.
+/// Decode ordinary R string escapes when their value is representable as UTF-8.
+/// Hex/octal escapes contribute bytes, while Unicode escapes contribute scalar
+/// values. R rejects unknown escapes, NUL, and mixed byte/Unicode escapes; this
+/// tolerant parser retains the original inner text for those cases, invalid
+/// scalars (including unpaired surrogates), and byte
+/// strings that cannot be represented by the AST's String.
 fn process_r_escapes(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
     let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
+    let mut byte_escape = false;
+    let mut unicode_escape = false;
+    let mut high_surrogate: Option<u32> = None;
     while i < bytes.len() {
-        let b = bytes[i];
-        if b != b'\\' {
-            // Copy one UTF-8 char.
-            let ch_len = utf8_char_len(b);
-            if let Ok(chunk) = std::str::from_utf8(&bytes[i..i + ch_len]) {
-                out.push_str(chunk);
-            }
-            i += ch_len;
+        // A UTF-16 pair must consist of adjacent Unicode escapes. R also
+        // accepts braced escapes and either Unicode escape width in a pair.
+        if high_surrogate.is_some()
+            && !(bytes[i] == b'\\' && matches!(bytes.get(i + 1), Some(b'u' | b'U')))
+        {
+            return s.to_owned();
+        }
+        if bytes[i] != b'\\' {
+            out.push(bytes[i]);
+            i += 1;
             continue;
         }
-        // Escape sequence.
-        if i + 1 >= bytes.len() {
-            out.push('\\');
-            break;
-        }
-        let next = bytes[i + 1];
-        let (replaced, consumed) = match next {
-            b'n' => (Some('\n'), 2),
-            b'r' => (Some('\r'), 2),
-            b't' => (Some('\t'), 2),
-            b'b' => (Some('\u{0008}'), 2),
-            b'f' => (Some('\u{000C}'), 2),
-            b'v' => (Some('\u{000B}'), 2),
-            b'0' => (Some('\0'), 2),
-            b'a' => (Some('\u{0007}'), 2),
-            b'"' => (Some('"'), 2),
-            b'\'' => (Some('\''), 2),
-            b'\\' => (Some('\\'), 2),
-            b'\n' => (None, 2), // physical line continuation: drop
-            b'u' | b'U' => {
-                // R accepts 1-4 hex digits after \u and 1-8 after \U.
-                let max_hex = if next == b'u' { 4 } else { 8 };
-                let mut end = i + 2;
-                while end < bytes.len() && end < i + 2 + max_hex && bytes[end].is_ascii_hexdigit() {
-                    end += 1;
-                }
-                let hex_bytes = &bytes[i + 2..end];
-                if hex_bytes.is_empty() {
-                    (None, 2)
-                } else {
-                    let hex = std::str::from_utf8(hex_bytes).unwrap_or("");
-                    match u32::from_str_radix(hex, 16).ok().and_then(char::from_u32) {
-                        Some(c) => (Some(c), end - i),
-                        // Consume only the prefix for an invalid scalar; the
-                        // main loop then copies the hex digits, preserving the
-                        // complete raw escape.
-                        None => (None, 2),
-                    }
-                }
-            }
-            b'x' => {
-                // \xXX (1-2 hex digits).
-                let mut j = i + 2;
-                let mut hex = String::new();
-                while j < bytes.len() && hex.len() < 2 && bytes[j].is_ascii_hexdigit() {
-                    hex.push(bytes[j] as char);
-                    j += 1;
-                }
-                if let Ok(n) = u32::from_str_radix(&hex, 16) {
-                    (Some(n as u8 as char), 2 + hex.len())
-                } else {
-                    (None, 2)
-                }
-            }
-            _ => (None, 2), // unknown escape: keep verbatim below
+        i += 1;
+        let Some(&next) = bytes.get(i) else {
+            return s.to_owned();
         };
-        match replaced {
-            Some(c) => out.push(c),
-            None => {
-                // Unknown escape or line continuation: copy the backslash
-                // and the next byte verbatim (R warns but keeps them).
-                if next != b'\n' {
-                    out.push('\\');
-                    out.push(next as char);
+        i += 1;
+        match next {
+            b'n' => out.push(b'\n'),
+            b'r' => out.push(b'\r'),
+            b't' => out.push(b'\t'),
+            b'b' => out.push(8),
+            b'f' => out.push(12),
+            b'v' => out.push(11),
+            b'a' => out.push(7),
+            b'"' | b'\'' | b'`' | b'\\' | b' ' => out.push(next),
+            // R keeps a physical escaped newline inside a string.
+            b'\n' => out.push(b'\n'),
+            b'0'..=b'7' => {
+                byte_escape = true;
+                let mut value = u32::from(next - b'0');
+                let mut digits = 1;
+                while digits < 3 && bytes.get(i).is_some_and(|b| matches!(b, b'0'..=b'7')) {
+                    value = value * 8 + u32::from(bytes[i] - b'0');
+                    i += 1;
+                    digits += 1;
+                }
+                if value == 0 || value > 255 {
+                    return s.to_owned();
+                }
+                out.push(value as u8);
+            }
+            b'x' | b'u' | b'U' => {
+                let is_byte = next == b'x';
+                byte_escape |= is_byte;
+                unicode_escape |= !is_byte;
+                let braced = !is_byte && bytes.get(i) == Some(&b'{');
+                if braced {
+                    i += 1;
+                }
+                let max_digits = match next {
+                    b'x' => 2,
+                    b'u' => 4,
+                    _ => 8,
+                };
+                let mut value = 0_u32;
+                let mut digits = 0;
+                while digits < max_digits && bytes.get(i).is_some_and(u8::is_ascii_hexdigit) {
+                    let digit = (bytes[i] as char).to_digit(16).unwrap();
+                    value = value * 16 + digit;
+                    i += 1;
+                    digits += 1;
+                }
+                if digits == 0 || value == 0 {
+                    return s.to_owned();
+                }
+                if braced {
+                    if bytes.get(i) != Some(&b'}') {
+                        return s.to_owned();
+                    }
+                    i += 1;
+                }
+                if is_byte {
+                    out.push(value as u8);
+                } else {
+                    if let Some(high) = high_surrogate.take() {
+                        if !(0xDC00..=0xDFFF).contains(&value) {
+                            return s.to_owned();
+                        }
+                        value = 0x10000 + ((high - 0xD800) << 10) + (value - 0xDC00);
+                    } else if (0xD800..=0xDBFF).contains(&value) {
+                        high_surrogate = Some(value);
+                        continue;
+                    }
+                    let Some(ch) = char::from_u32(value) else {
+                        return s.to_owned();
+                    };
+                    let mut encoded = [0; 4];
+                    out.extend_from_slice(ch.encode_utf8(&mut encoded).as_bytes());
                 }
             }
+            _ => return s.to_owned(),
         }
-        i += consumed;
+        if byte_escape && unicode_escape {
+            return s.to_owned();
+        }
     }
-    out
-}
-
-/// Length in bytes of the UTF-8 character starting with the given lead
-/// byte. Used to advance one code point at a time without pulling in a
-/// unicode crate.
-fn utf8_char_len(b: u8) -> usize {
-    if b < 0x80 {
-        1
-    } else if b >> 5 == 0b110 {
-        2
-    } else if b >> 4 == 0b1110 {
-        3
-    } else if b >> 3 == 0b11110 {
-        4
-    } else {
-        1 // invalid lead byte; advance one to make progress
+    if high_surrogate.is_some() {
+        return s.to_owned();
     }
+    String::from_utf8(out).unwrap_or_else(|_| s.to_owned())
 }
 
 /// Collect every `comment` node in the tree, returning `(line, body)`
@@ -1553,7 +1561,7 @@ mod tests {
         assert_eq!(unquote_r_string(r#""\\""#), "\\");
         assert_eq!(unquote_r_string(r#""\"""#), "\"");
         assert_eq!(unquote_r_string(r#""a\\b""#), "a\\b");
-        // Unknown escape: keep verbatim (R warns but retains the backslash).
+        // R rejects unknown escapes; preserve their text during tolerant recovery.
         assert_eq!(unquote_r_string(r#""\q""#), r#"\q"#);
     }
 
@@ -1566,6 +1574,68 @@ mod tests {
         assert_eq!(unquote_r_string(r#""\U00110000""#), r#"\U00110000"#);
         // A malformed escape without any hex digits remains verbatim.
         assert_eq!(unquote_r_string(r#""\uXY""#), r#"\uXY"#);
+    }
+
+    #[test]
+    fn valid_r_escapes_reach_string_ast_without_byte_reencoding() {
+        let cases = [
+            (r#""\141""#, "a"),
+            (r#""\012""#, "\n"),
+            (r#""\1412""#, "a2"),
+            (r#""\u{41}F""#, "AF"),
+            (r#""\U{1F600}""#, "😀"),
+            (r#""\uD83D\uDE00""#, "😀"),
+            (r#""\u{D83D}\u{DE00}""#, "😀"),
+            (r#""\U0000D83D\U0000DE00""#, "😀"),
+            (r#""\uD83D\U{DE00}""#, "😀"),
+            (r#""\U{D83D}\uDE00""#, "😀"),
+            (r#""a\uD800\uDC00z\uDBFF\uDFFF""#, "a𐀀z\u{10FFFF}"),
+            (r#""\xc3\xa9""#, "é"),
+            (r#""\303\251""#, "é"),
+            (r#""\`""#, "`"),
+            (r#""a\ b""#, "a b"),
+            ("\"a\\\nb\"", "a\nb"),
+            (r#"r"(\141\u{41})""#, r"\141\u{41}"),
+        ];
+        let mut parser = RParser::new().unwrap();
+        for (source, expected) in cases {
+            let file = parser.parse("escapes.R", source).unwrap();
+            assert!(file.parse_errors.is_empty(), "{source:?}");
+            assert!(
+                matches!(&file.stmts[0], Stmt::Expr(Expr::String(value, _)) if value == expected),
+                "{source:?}: {:?}",
+                file.stmts
+            );
+        }
+    }
+
+    #[test]
+    fn unsupported_or_malformed_escapes_preserve_the_whole_inner_text() {
+        for inner in [
+            r"\q",
+            r"\0",
+            r"\400",
+            r"\u{}",
+            r"\u{000041}",
+            r"\U{110000}",
+            r"\uD800",
+            r"\uDC00",
+            r"\uDE00\uD83D",
+            r"\uD800\u0041",
+            r"\uD800x\uDC00",
+            r"\uD800\n\uDC00",
+            r"\uD800\uD800\uDC00",
+            r"\u{D800}\u{DC00",
+            r"\x41\uD83D\uDE00",
+            r"\UFFFFFFFF",
+            r"\n\xff",
+            r"\x41\u42",
+            r"\u41\101",
+            "trailing\\",
+            "a\\\r\nb",
+        ] {
+            assert_eq!(super::process_r_escapes(inner), inner);
+        }
     }
 
     #[test]

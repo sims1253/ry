@@ -151,9 +151,12 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
-- Match promise-capture helpers by formal argument when collecting wrapper
-  evaluation modes. Recognize qualified base helpers and keep their environment
-  arguments, and explicit rlang controls, separate from captured expressions.
+- Decode adjacent high/low Unicode surrogate escapes as a single UTF-8 scalar,
+  while retaining raw recovery text for unpaired or malformed surrogates.
+
+- Decode octal and braced Unicode string escapes, escaped spaces and backticks,
+  and UTF-8 byte sequences correctly. Preserve physical escaped newlines and
+  retain raw recovery text for malformed or unrepresentable string values.
 
 - Report missing format arguments only for proven base `sprintf` and
   `gettextf` calls, avoiding false RY094 warnings for custom functions.
@@ -192,6 +195,10 @@ All notable changes to ry are documented in this file.
 - Show editor type hints from each assignment, including function locals,
   rather than applying the file's final binding type to earlier assignments.
   Refresh cached hints when local stubs change.
+
+- Match promise-capture helpers by formal argument when collecting wrapper
+  evaluation modes. Recognize qualified base helpers and keep their environment
+  arguments, and explicit rlang controls, separate from captured expressions.
 
 - Avoid recursive-default warnings for signaling arguments that may be ignored
   or evaluated conditionally.

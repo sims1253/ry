@@ -150,3 +150,11 @@ fn dynamic_negative_selectors_keep_the_legacy_join() {
         assert_eq!(scope.get("out").unwrap().mode, Mode::Integer, "{selector}");
     }
 }
+
+#[test]
+fn qualified_dynamic_selectors_do_not_gain_an_all_alternative_model() {
+    let (_, scope) = check_with_scope("out <- base::switch(x, 1L, 2L)");
+    assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque);
+    let (_, scope) = check_with_scope("out <- switch(x, 1L, 2L)");
+    assert_eq!(scope.get("out").unwrap().mode, Mode::Integer);
+}

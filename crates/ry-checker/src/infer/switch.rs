@@ -2,7 +2,7 @@ use super::*;
 
 impl Checker {
     /// `switch` is a special form: selection precedes evaluation of alternatives.
-    /// Return None only when an explicit user callable/stub owns the call.
+    /// Return None to leave explicit callables/stubs on the ordinary path.
     pub(crate) fn infer_switch_special(
         &mut self,
         original: &str,
@@ -15,6 +15,13 @@ impl Checker {
         let unknown = |scope: &mut Scope| {
             scope.invalidate_unknown_effects();
             Some(RType::unknown())
+        };
+        let dynamic = |checker: &mut Self, scope: &mut Scope| {
+            if semantic == "switch" {
+                Some(checker.infer_switch_call(args, scope))
+            } else {
+                unknown(scope)
+            }
         };
         if original != semantic || (matches!(callee, Expr::String(_, _)) && semantic.contains("::"))
         {
@@ -146,7 +153,7 @@ impl Checker {
                 let value = match expr.as_ref() {
                     Expr::Integer(value, _) => *value as f64,
                     Expr::Double(value, _) => *value,
-                    _ => return Some(self.infer_switch_call(args, scope)),
+                    _ => return dynamic(self, scope),
                 };
                 if self.literal_bindings_may_be_shadowed(["-", "`-`"], &HashSet::new(), scope) {
                     return unknown(scope);
@@ -156,9 +163,9 @@ impl Checker {
             Expr::Missing(_) | Expr::Unknown(_) | Expr::Null(_) | Expr::Na(_, _) => {
                 return unknown(scope);
             }
-            // Dynamic selectors retain the existing all-alternative inference;
+            // Bare dynamic selectors retain the existing all-alternative inference;
             // this path does not claim general constant propagation.
-            _ => return Some(self.infer_switch_call(args, scope)),
+            _ => return dynamic(self, scope),
         };
         match index {
             None => Some(RType::new(Mode::Null, Length::Zero)),

@@ -12,6 +12,9 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Parse exponent and hexadecimal integer literals with their values, and use
+  double storage when an `L`-suffixed value exceeds R's integer range.
+
 - Infer double results for primitive division and powers of integers. Reject
   complex remainder and integer division only when both operands are nonempty.
 - Match `structure()` payloads through `.Data`, preserve class and list-column

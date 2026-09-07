@@ -97,6 +97,37 @@ fn failed_integer_literal_does_not_drop_statement() {
     );
 }
 
+#[test]
+fn integer_suffix_uses_r_storage_range_and_value() {
+    for (source, expected) in [
+        ("1e5L", 100000),
+        ("0x10L", 16),
+        ("2147483647L", 2147483647),
+        ("1.0L", 1),
+    ] {
+        let file = parse(source);
+        assert!(
+            matches!(&file.stmts[..], [Stmt::Expr(Expr::Integer(value, _))] if *value == expected),
+            "{source}: {:?}",
+            file.stmts
+        );
+    }
+    for (source, expected) in [
+        ("2147483648L", 2147483648.0),
+        ("9007199254740993L", 9007199254740992.0),
+        ("1.5L", 1.5),
+        ("0x80000000L", 2147483648.0),
+        ("1e100L", 1e100),
+    ] {
+        let file = parse(source);
+        assert!(
+            matches!(&file.stmts[..], [Stmt::Expr(Expr::Double(value, _))] if *value == expected),
+            "{source}: {:?}",
+            file.stmts
+        );
+    }
+}
+
 /// Regression: `lower_braced_as_stmt` keeps
 /// only the last statement of a top-level `{ ... }` block. All statements
 /// must be preserved.

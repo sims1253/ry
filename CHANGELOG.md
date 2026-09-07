@@ -171,6 +171,11 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Avoid claiming atomic `sapply()`, `mapply()`, and `tapply()` results when
+  simplification is disabled or uncertain, controls are forwarded through
+  `...`, or inputs may be empty. Scalar simplification requires a matched,
+  enabled control and a provably nonempty input.
+
 - Suppress RY093 for proven base `grep()` position comparisons used directly
   as boolean guards, while retaining warnings for value results and uncertain
   or nested comparisons.

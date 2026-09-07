@@ -358,10 +358,7 @@ pub(crate) fn run_dump_facts(
     let mut exported = Vec::new();
     for group in groups {
         let input = group.check_input;
-        let workspace = input
-            .workspace
-            .as_ref()
-            .expect("resolved groups have workspace context");
+        let workspace = &input.workspace;
         let mut context_sources: Vec<_> = input
             .files
             .iter()

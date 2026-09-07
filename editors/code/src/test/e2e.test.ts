@@ -23,7 +23,7 @@ describe("Installed ry extension", () => {
     this.timeout(60000);
     const trusted = process.env.RY_TEST_TRUSTED === "true";
     expect(vscode.workspace.isTrusted).to.equal(trusted);
-    const extension = vscode.extensions.getExtension("sims1253.ry")!;
+    const extension = vscode.extensions.getExtension("scholzmx.ry")!;
     expect(extension.extensionPath).to.include(
       `${path.sep}extensions${path.sep}`,
     );

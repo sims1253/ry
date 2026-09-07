@@ -17,6 +17,10 @@ All notable changes to ry are documented in this file.
   retain proven reads before opaque statements. The schema-2 reference
   capability is now `same_file_ordered_prefix`; coverage remains partial.
 
+- Capture the argument read in standalone proven `base::length(x)` calls.
+  Preserve local/formal identity at that read and keep the post-call suffix
+  unsupported, including fresh assignments.
+
 - Use reviewed typeshed forcing contracts for RY098. Qualified calls to
   `typeof()`, `length()`, `is.null()`, `is.function()`, and `invisible()` can
   expose recursive defaults or force defaults before local assignments. Calls,

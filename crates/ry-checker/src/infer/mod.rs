@@ -15,7 +15,7 @@ pub(crate) mod index;
 pub(crate) mod loops;
 mod narrow;
 pub(crate) mod pipe;
-mod quoting;
+pub(crate) mod quoting;
 pub(crate) mod recall;
 mod switch;
 mod types;

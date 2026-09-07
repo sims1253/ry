@@ -119,11 +119,29 @@ through equivalent plain/backtick spellings are excluded. A differently
 spelled read cannot resolve by matching a decoded name.
 
 Calls, operators, indexing, control flow, nonstandard evaluation, and other
-unsupported statements end the supported prefix. The entire statement and
-its suffix remain unsupported, including fresh literal assignments. Earlier
+unsupported statements end the supported prefix. Except for the bounded read
+below, the entire statement and its suffix remain unsupported, including fresh
+literal assignments. Earlier
 proven reads retain their definition IDs and types. This does not establish
 evaluation order inside an unsupported expression. Top-level braces that the
 parser flattens into a statement sequence follow that sequence.
+
+A standalone `base::length(x)` statement can capture its one unnamed ordinary
+identifier argument when callable provenance and the shared `sole_argument`
+forcing contract are proven. An established local keeps its assignment ID and
+type; an own formal keeps its formal ID with unknown type. The namespace callee
+has no same-file definition. Aliases, bare/custom callees, named or multiple
+arguments, parenthesized/nested expressions, and assignment RHS calls are
+excluded. Shadowing `::`, earlier barriers, and uncertain bindings also prevent
+proof. Comments between the direct call's tokens do not change its shape.
+
+This boundary relies on R's eager primitive evaluation, not the checker's
+argument traversal order: [`length` is registered with evaluation flag 1](https://github.com/wch/r-source/blob/trunk/src/main/names.c),
+and [the builtin evaluator evaluates the argument list before calling the primitive](https://github.com/wch/r-source/blob/trunk/src/main/eval.c).
+The call still ends the prefix, even for a known local, because dispatch can
+change bindings. In `f <- function(p = { x <- "changed"; 1L }) { x <- 1L;
+base::length(p); x }`, `p` may resolve with unknown type; the final `x` remains
+unsupported. A later assignment cannot restore reference evidence.
 
 Mixed equivalent spellings, writes to formals, and unsupported declaration
 names still exclude the whole lexical scope. Nested function bodies remain

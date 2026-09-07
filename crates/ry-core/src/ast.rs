@@ -159,6 +159,9 @@ pub enum Expr {
         else_: Option<Box<Expr>>,
         span: Span,
     },
+    /// An omitted actual argument, such as `f(, x)` or `f(x = )`.
+    /// Its position and optional name remain in the enclosing `Arg`.
+    Missing(Span),
     /// Anything we don't model yet.
     Unknown(Span),
 }

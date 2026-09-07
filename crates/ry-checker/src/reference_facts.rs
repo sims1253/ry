@@ -236,7 +236,8 @@ impl ReferenceCapture {
                             | Expr::UnaryOp { .. }
                             | Expr::Index { .. }
                             | Expr::If { .. }
-                            | Expr::Unknown(_),
+                            | Expr::Unknown(_)
+                            | Expr::Missing(_),
                         ) => unsupported_statement = true,
                         _ => {}
                     }

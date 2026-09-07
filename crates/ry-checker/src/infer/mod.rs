@@ -2007,7 +2007,7 @@ impl Checker {
             Expr::If {
                 cond, then, else_, ..
             } => self.infer_if_expr(cond, then, else_, scope),
-            Expr::Unknown(_) => {
+            Expr::Unknown(_) | Expr::Missing(_) => {
                 scope.invalidate_ops_environment();
                 RType::unknown()
             }

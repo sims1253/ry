@@ -63,3 +63,5 @@ fn check_with_stubs(src: &str, stub_files: &[(&str, &str)]) -> (Vec<Diagnostic>,
 }
 
 mod structure_constructor;
+
+mod missing_args;

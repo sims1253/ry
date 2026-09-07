@@ -12,6 +12,11 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Preserve omitted call arguments and their names without shifting later
+  arguments. Calls and indexes now share missing-position handling. The public
+  `ry-core` AST adds `Expr::Missing(Span)`; consumers with exhaustive expression
+  matches must handle it separately from unsupported `Expr::Unknown` forms.
+
 - Class assignments no longer infer literal classes from custom class builders or preserve payload types under an unproven replacement function.
 
 - Compute data-frame column types after scalar arithmetic instead of copying

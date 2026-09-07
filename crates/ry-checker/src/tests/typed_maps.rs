@@ -23,8 +23,14 @@ fn ordinary_character_callback_elements_still_have_scalar_length() {
 
 #[test]
 fn indexed_sort_does_not_borrow_input_vector_shape() {
-    let diags = check("x <- sort.int(c(2,1),method='quick',index.return=TRUE); x$ix; x$x");
-    assert!(diags.iter().all(|d| d.code != "RY061"), "{diags:?}");
+    for function in ["sort.int", "sort"] {
+        let source = format!("x <- {function}(c(2,1),method='quick',index.return=TRUE); x$ix; x$x");
+        let diags = check(&source);
+        assert!(
+            diags.iter().all(|d| d.code != "RY061"),
+            "{source}: {diags:?}"
+        );
+    }
 }
 
 #[test]

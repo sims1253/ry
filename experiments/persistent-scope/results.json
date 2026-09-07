@@ -1,0 +1,90 @@
+{
+  "settings": {
+    "rayon_threads": 1,
+    "no_installed_libraries": true
+  },
+  "inputs": {
+    "dense": {
+      "sha256": "811323d0932294376dff2f8e80eecddc55b1770efad0b6d3e8cf54e3b302e654",
+      "files": 1
+    },
+    "corpus": {
+      "sha256": "4073671d4b5cf883da6823ae6e33523d3c16bec7546460ef9c672407e3e61ea1",
+      "files": 240
+    },
+    "alternating": {
+      "sha256": "5146b6c11182f912733bf0e1f17e01a1f87b01da3ffe9eb39d6c9b6907d006ae",
+      "files": 1
+    },
+    "sparse": {
+      "sha256": "3f0919104342b5f19a5d144e1dd36dee98239cb2bf3b8787ee4d536cac67e564",
+      "files": 1
+    }
+  },
+  "measurements": [
+    {
+      "workload": "dense",
+      "tool": "callgrind",
+      "mode": "std",
+      "instructions": 1622272839
+    },
+    {
+      "workload": "dense",
+      "tool": "callgrind",
+      "mode": "im",
+      "instructions": 1706583364
+    },
+    {
+      "workload": "dense",
+      "tool": "dhat",
+      "mode": "std",
+      "allocated_bytes": 185605760,
+      "peak_live_bytes": 50665773
+    },
+    {
+      "workload": "dense",
+      "tool": "dhat",
+      "mode": "im",
+      "allocated_bytes": 270489732,
+      "peak_live_bytes": 78956964
+    },
+    {
+      "workload": "corpus",
+      "tool": "callgrind",
+      "mode": "std",
+      "instructions": 197044917
+    },
+    {
+      "workload": "corpus",
+      "tool": "callgrind",
+      "mode": "im",
+      "instructions": 201874723
+    },
+    {
+      "workload": "corpus",
+      "tool": "dhat",
+      "mode": "std",
+      "allocated_bytes": 30995908,
+      "peak_live_bytes": 12214162
+    },
+    {
+      "workload": "corpus",
+      "tool": "dhat",
+      "mode": "im",
+      "allocated_bytes": 39830695,
+      "peak_live_bytes": 12272956
+    }
+  ],
+  "commit": "3ce456c14c5c7a0ba7154ccf569566b40fd0e0a5",
+  "baseline": "e67fb55",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "valgrind": "valgrind-3.25.1",
+  "scope": "Bindings and function-alias maps only; marker sets and reference provenance retain standard clone behavior.",
+  "screening": "Stopped after dense and corpus regressions; sparse and alternating inputs are pinned but unmeasured.",
+  "diagnostics": "Byte-identical between modes for both workloads and both tools.",
+  "validation": "Checker feature build, formatting, diff check and harness diagnostic equality passed. Full workspace and R oracle gates not run after screening rejected the prototype.",
+  "binaries": {
+    "std": "8747e35dec383352c4bc8578a5068cf7ca7385b6d419e6c234e748eeea9060e1",
+    "im": "a71a4c44db5a7e3d4a8aaef52f29ad7ea01ed13b955d2365bbefc6de1d836a1c"
+  }
+}

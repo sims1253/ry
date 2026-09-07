@@ -927,3 +927,26 @@ fn filter_and_position_results_do_not_borrow_input_or_index_shapes() {
     );
     assert!(check("1L$value").iter().any(|d| d.code == "RY061"));
 }
+
+#[test]
+fn find_results_preserve_no_match_and_list_element_uncertainty() {
+    for source in [
+        "f <- function() { result <- Find(function(x) FALSE, 1:3); if (length(result) == 0L) TRUE }",
+        "result <- Find(function(x) FALSE, 'a', nomatch = c(1L, 2L)); result + 1L",
+        "result <- Find(function(x) FALSE, 'a', TRUE, c(1L, 2L)); result + 1L",
+        "result <- Find(function(x) TRUE, list(c(1L, 2L))); if (length(result) == 0L) TRUE",
+    ] {
+        let diagnostics = check(source);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+    }
+    assert!(
+        check("Find(function(x) x + 1L, c('a', 'b'))")
+            .iter()
+            .any(|d| d.code == "RY040")
+    );
+    assert!(
+        check("if (length(sum(1:3)) == 0L) TRUE")
+            .iter()
+            .any(|d| d.code == "RY105")
+    );
+}

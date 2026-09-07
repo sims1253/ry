@@ -94,7 +94,8 @@ v{version}  (e.g. v0.9.0)
 ### Prerequisites
 
 - Publisher identity verified: `scholzmx.ry` across `package.json`,
-  `constants.ts`, and `README.md`.
+  `constants.ts`, `README.md`, and both test-suite `getExtension` lookups
+  (enforced by the `publisher-consistency` job).
 - Core binary release tag exists with verified artifacts.
 
 ### Steps

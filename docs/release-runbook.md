@@ -93,7 +93,7 @@ v{version}  (e.g. v0.9.0)
 
 ### Prerequisites
 
-- Publisher identity verified: `sims1253.ry` across `package.json`,
+- Publisher identity verified: `scholzmx.ry` across `package.json`,
   `constants.ts`, and `README.md`.
 - Core binary release tag exists with verified artifacts.
 
@@ -121,8 +121,8 @@ v{version}  (e.g. v0.9.0)
 
 ### Rollback
 
-- VS Code Marketplace: `vsce unpublish sims1253.ry@{version}`
-- Open VSX: `ovsx unpublish sims1253.ry@{version}`
+- VS Code Marketplace: `vsce unpublish scholzmx.ry@{version}`
+- Open VSX: `ovsx unpublish scholzmx.ry@{version}`
 
 ## Zed extension release
 

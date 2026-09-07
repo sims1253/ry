@@ -352,11 +352,22 @@ impl Project {
         let mut fn_table = FnTable::default();
         let mut return_slots = ReturnSlots::default();
         self.file_known_vars.clear();
-        for (path, file) in &self.files {
-            let mut collector = Checker::new(path);
-            collector.set_user_stubs(Arc::clone(&self.user_stubs));
-            let loaded = collector.collect_file_fns(file);
-            let (collected, slots) = collector.into_tables();
+        // Pass 1 collection is independent per file, so it fans out on
+        // rayon's pool (same pool as pass 3); the ordered serial merge
+        // below preserves shadowing semantics exactly — a later file's
+        // same-named function must still replace the earlier one's.
+        let collected_files: Vec<_> = self
+            .files
+            .par_iter()
+            .map(|(path, file)| {
+                let mut collector = Checker::new(path);
+                collector.set_user_stubs(Arc::clone(&self.user_stubs));
+                let loaded = collector.collect_file_fns(file);
+                let (collected, slots) = collector.into_tables();
+                (loaded, collected, slots)
+            })
+            .collect();
+        for ((path, _), (loaded, collected, slots)) in self.files.iter().zip(collected_files) {
             self.file_known_vars
                 .insert(path.clone(), collected.known_vars.clone());
             union_loaded.extend(loaded);

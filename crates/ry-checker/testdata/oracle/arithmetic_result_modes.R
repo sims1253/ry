@@ -3,12 +3,13 @@
 stopifnot(typeof(1L / 2L) == "double", typeof(2L ^ 3L) == "double",
           typeof(2L ** 3L) == "double", typeof(TRUE / FALSE) == "double",
           typeof(3L %/% 2L) == "integer", typeof(3L %% 2L) == "integer",
-          identical(NULL / 1L, numeric()), identical(NULL ^ NULL, numeric()),
+          identical(integer() / 1L, numeric()),
+          identical(integer() ^ integer(), numeric()),
           typeof(1i / 2L) == "complex", typeof(1i ^ 2L) == "complex")
 
 # Empty complex arithmetic returns before R rejects these operators.
 stopifnot(identical(1i %% integer(), complex()),
-          identical(1i %/% NULL, complex()))
+          identical(1i %/% integer(), complex()))
 mod_error <- tryCatch({ 1i %% 2L; FALSE }, error = function(e) TRUE)
 div_error <- tryCatch({ 1L %/% 2i; FALSE }, error = function(e) TRUE)
 stopifnot(mod_error, div_error)

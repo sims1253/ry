@@ -434,9 +434,6 @@ fn parameter_is_quoted(body: &[Stmt], params: &[Param], parameter: &str) -> bool
         .any(|statement| stmt_any(statement, &captures_all_arguments))
         || (params.iter().any(|formal| formal.name == parameter)
             && (body.iter().any(quotes)
-                // Variadic promise-capture helpers capture the promises
-                // stored in `...`; there is no single argument to match
-                // syntactically.
                 || (parameter == "..." && body.iter().any(captures_promise)))
             // Promise-capture helpers only make a promise safe to pass
             // unevaluated when that promise is not also used normally in
@@ -502,14 +499,10 @@ fn quotes_parameter(expression: &Expr, parameter: &str) -> bool {
     let Expr::Call { func, args, .. } = expression else {
         return false;
     };
-    (matches!(ident_name(func).map(bare_name), Some("substitute"))
-        && args
-            .first()
-            .is_some_and(|argument| is_parameter(&argument.value, parameter)))
-        || (is_single_promise_capture(func)
-            && args
-                .first()
-                .is_some_and(|argument| is_parameter(&argument.value, parameter)))
+    captured_arguments(func, args)
+        .iter()
+        .zip(args)
+        .any(|(capture, arg)| *capture && is_parameter(&arg.value, parameter))
         || (matches!(ident_name(func).map(bare_name), Some("bquote"))
             && args
                 .iter()
@@ -522,11 +515,10 @@ fn captures_promise_parameter(expression: &Expr, parameter: &str) -> bool {
     let Expr::Call { func, args, .. } = expression else {
         return false;
     };
-    (is_single_promise_capture(func)
-        && args
-            .first()
-            .is_some_and(|argument| is_parameter(&argument.value, parameter)))
-        || (is_dots_promise_capture(func) && parameter == "...")
+    captured_arguments(func, args)
+        .iter()
+        .zip(args)
+        .any(|(capture, arg)| *capture && is_parameter(&arg.value, parameter))
 }
 
 /// Whether any use of `parameter` in `body` reads it as an ordinary value,
@@ -539,93 +531,153 @@ fn parameter_has_normal_use(body: &[Stmt], parameter: &str) -> bool {
     uses.normal
 }
 
-/// Whether a package stub declares this callee as a promise-capture helper.
-/// Collection happens before ordinary call-site resolution, so bare names are
-/// recognized from the loaded stub inventory rather than lexical scope.
-///
-/// Unqualified names resolve against a one-time global index built from the
-/// embedded base and package stubs, so each call-site check is a single map
-/// lookup instead of a scan of the whole package inventory.
-fn is_promise_capture(function: &Expr, dots: bool) -> bool {
+/// Classify actuals using only the capturing formals of embedded signatures.
+/// Bare names retain the existing inventory union, without lexical resolution.
+/// Neither this index nor qualified lookup reads per-checker user stubs.
+fn captured_arguments(function: &Expr, args: &[Arg]) -> Vec<bool> {
     let Some(name) = ident_name(function) else {
-        return false;
+        return Vec::new();
     };
-    let (package, function) = name
-        .rsplit_once("::")
-        .map(|(package, function)| (Some(package.trim_end_matches(':')), function))
-        .unwrap_or((None, name));
-    match package {
-        Some(package) => ry_typeshed::load_package(package)
-            .and_then(|typeshed| typeshed.functions.get(function))
-            .is_some_and(|signature| signature_captures_promises(signature, dots)),
-        // Unqualified names consult the one-time global index below.
-        //
-        // Collection has no per-checker user stubs. Neither this index
-        // nor the qualified embedded-package lookup above reads them.
-        None => promise_capture_index()
-            .get(function)
-            .is_some_and(|&(single, dots_capture)| if dots { dots_capture } else { single }),
+    if let Some((package, name)) = name.rsplit_once("::") {
+        let package = package.trim_end_matches(':');
+        let typeshed = if package == "base" {
+            ry_typeshed::load_base_cached().ok()
+        } else {
+            ry_typeshed::load_package(package)
+        };
+        if let Some(signature) = typeshed.and_then(|db| db.functions.get(name))
+            && signature
+                .eval
+                .values()
+                .any(|mode| *mode == EvalMode::CapturesPromise)
+        {
+            let mut captured = vec![false; args.len()];
+            capture_signature_arguments(signature, args, &mut captured);
+            return captured;
+        }
+    } else if let Some(signatures) = promise_capture_index().get(name) {
+        let mut captured = vec![false; args.len()];
+        for signature in signatures {
+            capture_signature_arguments(signature, args, &mut captured);
+        }
+        return captured;
+    }
+    Vec::new()
+}
+
+fn capture_signature_arguments(signature: &FunctionSig, args: &[Arg], captured: &mut [bool]) {
+    if !signature
+        .eval
+        .values()
+        .any(|mode| *mode == EvalMode::CapturesPromise)
+    {
+        return;
+    }
+    // Recovery spellings do not prove R argument names. Exact and partial
+    // matching otherwise share the ordinary call matcher's occupancy map.
+    if args
+        .iter()
+        .any(|arg| arg.name.as_deref().is_some_and(|name| name.contains('\\')))
+    {
+        return;
+    }
+    let params: Vec<_> = signature.params.iter().map(|p| p.name.as_str()).collect();
+    let names: Vec<_> = args
+        .iter()
+        .map(|a| a.name.as_deref().map(semantic_argument_name))
+        .collect();
+    let matched = match_argument_names(&params, names.iter().copied());
+    let end = matched.dots.unwrap_or(params.len());
+    let exact: Vec<_> = params.iter().map(|p| names.contains(&Some(*p))).collect();
+    // The general matcher tolerates malformed calls. A capture proof cannot
+    // borrow its fallback for duplicate bindings or ambiguous partial names.
+    let mut occupied = vec![false; params.len()];
+    for (index, name) in names.iter().enumerate() {
+        if let Some(formal) = matched.param_for_arg[index] {
+            if occupied[formal] {
+                return;
+            }
+            occupied[formal] = true;
+        } else if matched.dots.is_none() {
+            return;
+        }
+        if let Some(name) = name {
+            if name.is_empty() {
+                return;
+            }
+            if !params.contains(name) {
+                let candidates: Vec<_> = params[..end]
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, p)| !exact[*i] && p.starts_with(name))
+                    .map(|(i, _)| i)
+                    .collect();
+                if candidates.len() > 1
+                    || candidates
+                        .first()
+                        .is_some_and(|formal| matched.param_for_arg[index] != Some(*formal))
+                {
+                    return;
+                }
+            }
+        }
+    }
+    let forwarded = args
+        .iter()
+        .any(|arg| matches!(&arg.value, Expr::Ident { name, .. } if name == "..."));
+    for (index, arg) in args.iter().enumerate() {
+        // Preserve the existing blanket forwarding approximation: a wrapper's
+        // `...` remains quoting when passed to a capturing dots formal. Runtime
+        // names can still bind normal controls (e.g. enquos(.named=...)); the
+        // boolean collected mode cannot represent that per-actual distinction.
+        // Explicit control actuals are matched normally below.
+        if matches!(&arg.value, Expr::Ident { name, .. } if name == "...") {
+            captured[index] |= matched.dots.is_some_and(|formal| {
+                signature.eval.get(params[formal]) == Some(&EvalMode::CapturesPromise)
+            });
+            continue;
+        }
+        if matches!(arg.value, Expr::Missing(_)) || (forwarded && end != 0) {
+            continue;
+        }
+        if let Some(formal) = matched.param_for_arg[index].or(matched.dots) {
+            captured[index] |=
+                signature.eval.get(params[formal]) == Some(&EvalMode::CapturesPromise);
+        }
     }
 }
 
-/// Whether `signature` declares a promise-capturing parameter: a `...`
-/// capture when `dots` is set, otherwise a named-parameter capture.
-fn signature_captures_promises(signature: &FunctionSig, dots: bool) -> bool {
-    signature
-        .eval
-        .iter()
-        .any(|(parameter, mode)| *mode == EvalMode::CapturesPromise && (parameter == "...") == dots)
-}
-
-/// One-time global index over the embedded base and package stubs:
-/// function name -> (named-parameter capture, `...` capture), the two
-/// flags `is_promise_capture(function, dots)` selects between — whether
-/// the stub declares `captures_promise` on a named formal, on `...`, or
-/// both. Functions with neither kind of capture have no entry.
-/// Built lazily on first use; `is_promise_capture` consults it for
-/// unqualified names instead of re-scanning every package's function
-/// table on every call-site check.
-fn promise_capture_index() -> &'static std::collections::HashMap<String, (bool, bool)> {
-    static INDEX: std::sync::OnceLock<std::collections::HashMap<String, (bool, bool)>> =
-        std::sync::OnceLock::new();
+/// Sparse one-time inventory: only signatures with capture metadata allocate
+/// an entry. Multiple packages with the same bare name retain their union.
+fn promise_capture_index() -> &'static std::collections::HashMap<String, Vec<&'static FunctionSig>>
+{
+    static INDEX: std::sync::OnceLock<
+        std::collections::HashMap<String, Vec<&'static FunctionSig>>,
+    > = std::sync::OnceLock::new();
     INDEX.get_or_init(|| {
-        let mut index = std::collections::HashMap::new();
-        let mut add_typeshed = |typeshed: &ry_typeshed::Typeshed| {
+        let mut index: std::collections::HashMap<String, Vec<&'static FunctionSig>> =
+            std::collections::HashMap::new();
+        let mut add = |typeshed: &'static ry_typeshed::Typeshed| {
             for (name, signature) in &typeshed.functions {
-                for (parameter, mode) in &signature.eval {
-                    if *mode == EvalMode::CapturesPromise {
-                        let flags = index.entry(name.clone()).or_insert((false, false));
-                        if parameter == "..." {
-                            flags.1 = true;
-                        } else {
-                            flags.0 = true;
-                        }
-                    }
+                if signature
+                    .eval
+                    .values()
+                    .any(|mode| *mode == EvalMode::CapturesPromise)
+                {
+                    index.entry(name.clone()).or_default().push(signature);
                 }
             }
         };
         if let Ok(base) = ry_typeshed::load_base_cached() {
-            add_typeshed(base);
+            add(base);
         }
         for package in ry_typeshed::known_packages() {
             if let Some(typeshed) = ry_typeshed::load_package(package) {
-                add_typeshed(typeshed);
+                add(typeshed);
             }
         }
         index
     })
-}
-
-/// Whether the callee is a stub-declared promise-capture helper for a
-/// single named formal.
-fn is_single_promise_capture(function: &Expr) -> bool {
-    is_promise_capture(function, false)
-}
-
-/// Whether the callee is a stub-declared promise-capture helper for the
-/// `...` dots argument.
-fn is_dots_promise_capture(function: &Expr) -> bool {
-    is_promise_capture(function, true)
 }
 
 /// Whether a `.(parameter)` unquote anywhere inside the expression —
@@ -728,18 +780,13 @@ fn collect_parameter_uses_in_stmt(statement: &Stmt, parameter: &str, uses: &mut 
                 AstNode::Expr(Expr::Call { func, args, .. }) => {
                     let bare = ident_name(func).map(bare_name);
                     let probes_promise = matches!(bare, Some("missing"));
-                    let defuses_direct_argument = is_single_promise_capture(func)
-                        || is_dots_promise_capture(func)
-                        || matches!(bare, Some("match.call" | "substitute"));
-                    if probes_promise || defuses_direct_argument {
-                        for argument in args {
-                            if matches!(&argument.value, Expr::Ident { name, .. } if name == parameter)
-                            {
-                                if defuses_direct_argument {
-                                    uses.defused = true;
-                                }
-                                classified.push(&argument.value);
-                            }
+                    let captured = captured_arguments(func, args);
+                    for (index, argument) in args.iter().enumerate() {
+                        let defused = captured.get(index).copied().unwrap_or(false)
+                            || matches!(bare, Some("match.call"));
+                        if (probes_promise || defused) && is_parameter(&argument.value, parameter) {
+                            uses.defused |= defused;
+                            classified.push(&argument.value);
                         }
                     }
                 }
@@ -817,22 +864,23 @@ fn first_parameter_use_in_expr(expression: &Expr, parameter: &str) -> Option<Fir
     match expression {
         Expr::Ident { name, .. } => (name == parameter).then_some(FirstParameterUse::Normal),
         Expr::Call { func, args, .. } => {
-            let defuses_direct_argument = is_single_promise_capture(func)
-                || is_dots_promise_capture(func)
-                || matches!(
-                    ident_name(func).map(bare_name),
-                    Some("substitute" | "match.call" | "bquote")
-                );
-            if defuses_direct_argument
-                && args.iter().any(|argument| {
-                    matches!(&argument.value, Expr::Ident { name, .. } if name == parameter)
-                })
-            {
-                return Some(FirstParameterUse::Defused);
-            }
+            let captured = captured_arguments(func, args);
             first_parameter_use_in_expr(func, parameter).or_else(|| {
-                args.iter()
-                    .find_map(|argument| first_parameter_use_in_expr(&argument.value, parameter))
+                // Actual order is not promise force order. A normal use in
+                // another actual must dominate a captured occurrence.
+                conservative_branch_use(args.iter().enumerate().map(|(index, argument)| {
+                    if is_parameter(&argument.value, parameter)
+                        && (captured.get(index).copied().unwrap_or(false)
+                            || matches!(
+                                ident_name(func).map(bare_name),
+                                Some("match.call" | "bquote")
+                            ))
+                    {
+                        Some(FirstParameterUse::Defused)
+                    } else {
+                        first_parameter_use_in_expr(&argument.value, parameter)
+                    }
+                }))
             })
         }
         Expr::BinOp { lhs, rhs, .. } => first_parameter_use_in_expr(lhs, parameter)
@@ -1074,6 +1122,72 @@ mod collect_walker_tests {
         let mut checker = Checker::new("collect_walker_test.R");
         checker.collect_file_fns(&file);
         checker
+    }
+
+    #[test]
+    fn capture_actuals_follow_specific_formals() {
+        for call in [
+            "delayedAssign('held', p)",
+            "base::delayedAssign(value=p, x='held')",
+            "base:::delayedAssign(val=p, x='held')",
+            "base::substitute(env=list(), expr=p)",
+            "substitute(en=list(), ex=p)",
+            "rlang::enquos(p, .named=FALSE)",
+            "rlang::enquos(tag=p, .named=FALSE)",
+        ] {
+            let checker = collect(&format!("f <- function(p) {call}"));
+            let param = &checker.fn_table.fns["f"].params[0];
+            assert!(param.quoting && param.defused, "{call}: {param:?}");
+            assert_eq!(
+                parameter_uses(call, "p"),
+                ParameterUses {
+                    defused: true,
+                    normal: false
+                },
+                "{call}"
+            );
+            assert_eq!(
+                first_use(call, "p"),
+                Some(FirstParameterUse::Defused),
+                "{call}"
+            );
+        }
+        for call in [
+            "delayedAssign(p, 1L)",
+            "base::delayedAssign('held', 1L, eval.env=p)",
+            "base::delayedAssign('held', 1L, assign.env=p)",
+            "base::delayedAssign('held', 1L, p)",
+            "substitute(expr=foo, env=p)",
+            "base::substitute(en=p, ex=foo)",
+            "substitute(e=p)",
+            "substitute(expr=p, expr=p)",
+            "rlang::enquos(.named=p)",
+            "rlang::enquos(.ignore_empty=p)",
+            "base::substitute(expr=p, env=p)",
+            "base::substitute(env=p, expr=p)",
+        ] {
+            let checker = collect(&format!("f <- function(p) {call}"));
+            let param = &checker.fn_table.fns["f"].params[0];
+            assert!(!param.quoting && !param.defused, "{call}: {param:?}");
+            assert!(parameter_uses(call, "p").normal, "{call}");
+            assert_eq!(
+                first_use(call, "p"),
+                Some(FirstParameterUse::Normal),
+                "{call}"
+            );
+        }
+    }
+
+    #[test]
+    fn capture_inventory_remains_sparse() {
+        let index = promise_capture_index();
+        assert!(index.contains_key("substitute"));
+        assert!(!index.contains_key("mean"));
+        assert!(index.values().flatten().all(|sig| {
+            sig.eval
+                .values()
+                .any(|mode| *mode == EvalMode::CapturesPromise)
+        }));
     }
 
     /// A closure has its own formals: a same-named formal shadows the

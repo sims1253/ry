@@ -12,6 +12,10 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Match promise-capture helpers by formal argument when collecting wrapper
+  evaluation modes. Recognize qualified base helpers and keep their environment
+  arguments, and explicit rlang controls, separate from captured expressions.
+
 - Preserve omitted call arguments and their names without shifting later
   arguments. Calls and indexes now share missing-position handling. The public
   `ry-core` AST adds `Expr::Missing(Span)`; consumers with exhaustive expression

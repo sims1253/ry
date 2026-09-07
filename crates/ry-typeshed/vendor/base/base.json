@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "base",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "globals": {
     "ambient": [
       "..deparseOpts",
@@ -3506,7 +3506,9 @@
     "delayedAssign": {
       "params": [
         "x",
-        "value"
+        "value",
+        "eval.env",
+        "assign.env"
       ],
       "eval": {
         "value": "captures_promise"
@@ -7011,7 +7013,8 @@
     },
     "substitute": {
       "params": [
-        "expr"
+        "expr",
+        "env"
       ],
       "eval": {
         "expr": "captures_promise"

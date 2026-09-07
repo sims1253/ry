@@ -169,3 +169,34 @@ fn rebound_assignment_cannot_hide_a_callee_replacement() {
         "{diagnostics:?}"
     );
 }
+
+#[test]
+fn uncertain_selected_effects_discard_result_and_caller_facts() {
+    for selected in ["{mutate(); x}", "{object[1L]; x}"] {
+        let source = format!(
+            "x <- 'bad'; object <- base::structure(1L, class='foo'); mutate <- function() assign('x', 1L, envir=.GlobalEnv); `[.foo` <- function(x, ...) {{assign('x', 1L, envir=.GlobalEnv); 1L}}; out <- switch(1L, {selected}, 1L); after <- out+1L; caller <- x+1L"
+        );
+        let (diagnostics, scope) = check_with_scope(&source);
+        assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque);
+        assert_eq!(scope.get("caller").unwrap().mode, Mode::Opaque);
+        assert!(
+            !diagnostics.iter().any(|d| d.code == "RY040"),
+            "{selected}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn pure_selected_list_retains_required_error_but_masks_do_not() {
+    for call in ["list(1L)", "base::list(1L)"] {
+        let diagnostics = check(&format!("out <- switch(1L, {call}, 1L); out+1L"));
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY040"),
+            "{call}: {diagnostics:?}"
+        );
+    }
+    let (diagnostics, scope) =
+        check_with_scope("list <- function(...) 1L; out <- switch(1L, list(1L), 1L); out+1L");
+    assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque);
+    assert!(!diagnostics.iter().any(|d| d.code == "RY040"));
+}

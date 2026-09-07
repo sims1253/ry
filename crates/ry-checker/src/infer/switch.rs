@@ -172,7 +172,63 @@ impl Checker {
         match index {
             None => Some(RType::new(Mode::Null, Length::Zero)),
             Some(index) if matches!(alternatives[index].value, Expr::Missing(_)) => unknown(scope),
-            Some(index) => Some(self.infer(&alternatives[index].value, scope)),
+            Some(index) => {
+                // Base switch and its literal selector have not run user code.
+                // Remove only our own call barrier so the chosen expression's
+                // uncertainty is observable independently of that barrier.
+                scope.ops_environment_unknown = false;
+                let selected = &alternatives[index].value;
+                let pure_constructor = self.pure_switch_constructor(selected, scope);
+                let result = self.infer(selected, scope);
+                if scope.ops_environment_unknown && !pure_constructor {
+                    return unknown(scope);
+                }
+                Some(result)
+            }
+        }
+    }
+    /// Whole-expression constructors with inert actuals can retain their
+    /// result despite the ordinary call barrier. This is not a general purity
+    /// model for nested calls or user functions.
+    fn pure_switch_constructor(&self, expression: &Expr, scope: &Scope) -> bool {
+        let Expr::Call { func, args, .. } = expression else {
+            return false;
+        };
+        if ops_chooser::pure_structure_call(self, func, args, scope) {
+            return true;
+        }
+        let Some(name) = ident_name(func) else {
+            return false;
+        };
+        if self.user_stubs.contains_key("base")
+            || scope.function_alias(name).is_some()
+            || !args.iter().all(|arg| {
+                matches!(
+                    arg.value,
+                    Expr::Logical(..)
+                        | Expr::Integer(..)
+                        | Expr::Double(..)
+                        | Expr::String(..)
+                        | Expr::Null(..)
+                        | Expr::Na(..)
+                )
+            })
+        {
+            return false;
+        }
+        match name {
+            "base::list" | "base:::list" => true,
+            "list" => {
+                !scope.search_path_unknown
+                    && self.bare_loaded.is_empty()
+                    && self.resolves_to_base(name, scope)
+                    && !self.literal_bindings_may_be_shadowed(
+                        ["list", "`list`"],
+                        &HashSet::new(),
+                        scope,
+                    )
+            }
+            _ => false,
         }
     }
 }

@@ -479,9 +479,8 @@ impl Checker {
 
 /// Model the base `Ops.data.frame` method without losing the table's schema.
 /// Comparisons produce a logical matrix-like object, for which opaque is the
-/// least misleading v1 representation. Arithmetic keeps the frame shape for
-/// a scalar counterpart; otherwise it retains column names but not column
-/// element types.
+/// least misleading v1 representation. Arithmetic computes unclassed column
+/// results for a scalar counterpart; other cases retain names but not types.
 fn data_frame_binop_result(op: BinOpKind, lhs: &RType, rhs: &RType) -> Option<RType> {
     let is_compare = is_comparison(op);
     let is_logic = matches!(
@@ -491,10 +490,10 @@ fn data_frame_binop_result(op: BinOpKind, lhs: &RType, rhs: &RType) -> Option<RT
     if !(is_compare || is_logic || op.is_arithmetic()) {
         return None;
     }
-    let (frame, other) = if lhs.class.contains("data.frame") {
-        (lhs, rhs)
+    let (frame, other, frame_on_left) = if lhs.class.contains("data.frame") {
+        (lhs, rhs, true)
     } else if rhs.class.contains("data.frame") {
-        (rhs, lhs)
+        (rhs, lhs, false)
     } else {
         return None;
     };
@@ -503,7 +502,8 @@ fn data_frame_binop_result(op: BinOpKind, lhs: &RType, rhs: &RType) -> Option<RT
     }
     let mut result = RType::new(Mode::List, frame.length).with_class(frame.class.clone());
     if let Some(schema) = &frame.columns {
-        let keep_types = !other.class.contains("data.frame") && matches!(other.length, Length::One);
+        let scalar_primitive =
+            other.class.known && other.class.len == 0 && matches!(other.length, Length::One);
         result = result.with_columns(Arc::new(ColumnSchema {
             columns: schema
                 .columns
@@ -511,8 +511,16 @@ fn data_frame_binop_result(op: BinOpKind, lhs: &RType, rhs: &RType) -> Option<RT
                 .map(|(name, ty)| {
                     (
                         name.clone(),
-                        if keep_types {
-                            ty.clone()
+                        if scalar_primitive && ty.class.known && ty.class.len == 0 {
+                            // Ops.data.frame applies the operator to each
+                            // column. Copying the input type misses coercion;
+                            // classed columns may run arbitrary S3 methods.
+                            let (left, right) = if frame_on_left {
+                                (ty.clone(), other.clone())
+                            } else {
+                                (other.clone(), ty.clone())
+                            };
+                            left.arith_for(right, op).unwrap_or_else(RType::unknown)
                         } else {
                             RType::unknown()
                         },

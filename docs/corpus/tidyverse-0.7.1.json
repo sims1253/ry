@@ -1238,7 +1238,7 @@
   "notes": [
     "Ecosystem reports are generated hermetically with RY_NO_INSTALLED_LIBRARIES=1; the source audit used installed R libraries.",
     "The ecosystem audit reconciles each hermetic report against finding identities in this ledger, including diagnostics that are absent from production-only reports.",
-    "The grid export inventory resolves four previously reviewed ggplot2 RY010 false positives for is.unit and is.grob callback values under import(grid); all other identities are unchanged.",
+    "The grid export inventory resolves four ggplot2 RY010 findings for is.unit and is.grob callback values under import(grid). They were unowned in this ledger and are now verified as missing-export false positives; all other identities are unchanged.",
     "The source digest now records the concatenated bytes of all 32 unprefixed root reports in filename order from the complete default-manifest regeneration. The ledger retains its existing reviewed-package coverage."
   ],
   "ry_commit": "3e94a5a1fb05b010aca074570bd68cdb27903b50",

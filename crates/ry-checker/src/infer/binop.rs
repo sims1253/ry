@@ -138,7 +138,7 @@ impl Checker {
             return RType::unknown();
         }
         let recycles = non_divisible_recycling(lt.length, rt.length);
-        if let Some(t) = lt.arith(rt) {
+        if let Some(t) = lt.arith_for(rt, op) {
             if let Some((lhs_len, rhs_len)) = recycles {
                 self.emit(
                     Severity::Warning,

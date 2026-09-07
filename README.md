@@ -69,7 +69,7 @@ missing signatures can produce false positives or missed bugs. See
 ## Editors
 
 Install **ry** from the
-[VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=scholzmx.ry)
+[VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=scholzmx.ry-checker)
 or Positron's Open VSX gallery. The extension bundles the checker and provides
 diagnostics, inferred type hints, and suppression actions.
 

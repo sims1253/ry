@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-07
+
+- Publish on VS Code Marketplace as `scholzmx.ry-checker`, displayed as
+  `ry - R Type Checker`. Open VSX retains `scholzmx.ry`.
+
 ## [0.9.0] - 2026-09-07
 
 ### Added

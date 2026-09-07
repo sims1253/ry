@@ -11,7 +11,7 @@ export const EXTENSION_ROOT_DIR =
 /**
  * Extension ID on the marketplaces (`<publisher>.<name>`).
  */
-export const RY_EXTENSION_ID = "scholzmx.ry";
+export const RY_EXTENSION_ID = "scholzmx.ry-checker";
 
 /**
  * The VS Code settings namespace (`ry.*`).

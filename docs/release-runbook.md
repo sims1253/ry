@@ -117,11 +117,15 @@ v{version}  (e.g. v0.9.0)
 
 ## VS Code extension release
 
+The `registry` dispatch input defaults to `both`; select `marketplace` or
+`openvsx` when an extension update is specific to one registry.
+
 ### Prerequisites
 
-- Publisher identity verified: `scholzmx.ry` across `package.json`,
+- Marketplace identity verified: `scholzmx.ry-checker` across `package.json`,
   `constants.ts`, `README.md`, and both test-suite `getExtension` lookups
-  (enforced by the `publisher-consistency` job).
+  (enforced by the `publisher-consistency` job). The release workflow packages
+  Open VSX separately as `scholzmx.ry`, preserving its existing listing.
 - Core binary release tag exists with verified artifacts.
 - The Marketplace publisher `scholzmx` exists and the `VSCE_PAT` repository
   secret can publish under it. The Open VSX namespace `scholzmx` exists,

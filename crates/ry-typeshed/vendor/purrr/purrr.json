@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "purrr",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "functions": {
     "accumulate": {
       "params": [
@@ -525,8 +525,8 @@
       "higher_order": {"callback_param": ".f", "callback_position": 1, "callback_args": ["accumulator_and_element"], "result": {"kind": "callback_return"}},
       "return": {
         "mode": "opaque",
-        "length": "1",
-        "na": false
+        "length": "unknown",
+        "na": true
       }
     },
     "set_names": {

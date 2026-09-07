@@ -167,6 +167,10 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Keep `grep`, `confint`, and fold results conservative across their supported
+  return shapes. Complete `grep` and `confint` formals; character grep results
+  and list-valued confidence intervals no longer cause false type errors.
+
 - Honor tidy-evaluation injection in `ggplot2::aes` aesthetics and `vars` facets,
   avoiding false negation errors for unquoting and list splicing. Ordinary
   helper arguments continue to execute R negation.

@@ -22,13 +22,17 @@ fn argument_bound_to_formal<'a>(
 }
 
 fn simplify_control(
-    base_identity: bool,
+    base_identity: Option<bool>,
     params: &[ParamSpec],
     args: &[Arg],
     argument_match: &ArgumentMatch,
 ) -> Option<bool> {
-    if !base_identity {
-        return Some(true);
+    match base_identity {
+        Some(true) => {}
+        Some(false) => return Some(true),
+        // An unresolved bare name may be supplied by an attached package;
+        // its control must not be treated as the base contract by default.
+        None => return None,
     }
     let control = params
         .iter()
@@ -104,9 +108,16 @@ impl Checker {
         // The simplification controls have this meaning only for the base
         // sapply/mapply contracts. Resolve the callee before callback
         // traversal, which can extend the lexical scope with callback data.
-        let base_simplification = !self.user_stubs.contains_key("base")
-            && matches!(crate::semantic_lists::bare_name(name), "sapply" | "mapply")
-            && self.resolves_to_base(name, scope);
+        let base_simplification =
+            if !matches!(crate::semantic_lists::bare_name(name), "sapply" | "mapply") {
+                Some(false)
+            } else if !self.user_stubs.contains_key("base") && self.resolves_to_base(name, scope) {
+                Some(true)
+            } else if name.contains("::") || self.user_stubs.contains_key("base") {
+                Some(false)
+            } else {
+                None
+            };
         self.walk_callback_for_diagnostics(signature, args, arg_types, scope);
         // A fold's initializer describes only the first invocation. Later
         // accumulators are callback results, and zero iterations return the

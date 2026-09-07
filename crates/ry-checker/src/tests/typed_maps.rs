@@ -21,6 +21,7 @@ fn unknown_simplify_controls_do_not_prove_atomic_results() {
     for source in [
         "control <- identity(FALSE); a <- sapply(1L, function(v) 1L, simplify = control); a$field",
         "control <- identity(FALSE); b <- mapply(FUN = function(x) 1L, x = 1L, SIMPLIFY = control); b$field",
+        "library(dplyr); c <- sapply(1L, function(v) 1L, simplify = FALSE); c$field",
     ] {
         let diagnostics = check(source);
         assert!(

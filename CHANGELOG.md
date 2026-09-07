@@ -12,8 +12,8 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
-- Resolve visible custom arithmetic and comparison operators before their
-  operands. Avoid primitive diagnostics for ignored operands and preserve
+- Resolve visible custom arithmetic, comparison, and vector logical operators
+  before their operands. Avoid primitive diagnostics for ignored operands and preserve
   proven constant returns; discard caller facts after uncertain custom effects.
 
 - Match `structure()` payloads through `.Data`, preserve class and list-column

@@ -11,3 +11,8 @@ stopifnot(identical(1L / 2L, 1L))
 stopifnot(identical(NA == NA, 1L))
 `+` <- 7L
 stopifnot(identical(1L + 2L, 3L))
+
+`&` <- function(...) "ok"
+stopifnot(identical(missing_name & 1L, "ok"))
+`|` <- function(...) 1L
+stopifnot(identical(missing_name | 1L, 1L))

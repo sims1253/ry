@@ -15,6 +15,14 @@ fn result_mode(source: &str) -> Mode {
 fn literal_custom_operators_ignore_operands_and_keep_their_return_mode() {
     for (source, expected) in [
         (
+            "`&` <- function(...) 'ok'; result <- missing_name & 1L",
+            Mode::Character,
+        ),
+        (
+            "`|` <- function(...) 1L; result <- missing_name | 1L",
+            Mode::Integer,
+        ),
+        (
             "'+' <- function(...) 'ok'; result <- missing_name + 1L",
             Mode::Character,
         ),

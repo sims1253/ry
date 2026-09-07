@@ -4,7 +4,12 @@ impl Checker {
     /// Function-position lookup precedes promise creation/forcing. A custom
     /// operator may ignore both operands; primitive diagnostics cannot apply.
     pub(crate) fn infer_custom_operator(&self, op: BinOpKind, scope: &mut Scope) -> Option<RType> {
-        if !op.is_arithmetic() && !is_comparison(op) {
+        // Short-circuit &&/||, colon, membership, pipes and unary syntax keep
+        // their existing paths; this lookup covers the binary Ops families.
+        if !op.is_arithmetic()
+            && !is_comparison(op)
+            && !matches!(op, BinOpKind::And | BinOpKind::Or)
+        {
             return None;
         }
         let symbol = op_symbol(op);
@@ -22,6 +27,8 @@ impl Checker {
             BinOpKind::Ge => "`>=`",
             BinOpKind::Eq => "`==`",
             BinOpKind::Ne => "`!=`",
+            BinOpKind::And => "`&`",
+            BinOpKind::Or => "`|`",
             _ => return None,
         };
         let names = [symbol, quoted];

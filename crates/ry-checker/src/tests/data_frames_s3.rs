@@ -29,6 +29,20 @@ fn registered_s3_method_return_retains_matching_receiver() {
 }
 
 #[test]
+fn registered_s3_method_miss_does_not_borrow_scalar_default() {
+    let diags = check_with(
+        "`^.widget` <- function(e1, e2) e1; mean.widget <- function(x, ...) list(value=2L); f <- function(x) mean(x^2)$value; f(structure(1L, class='widget'))",
+        |checker| {
+            checker.set_external_s3_methods(HashSet::from([
+                ("mean".into(), "widget".into()),
+                ("^".into(), "widget".into()),
+            ]));
+        },
+    );
+    assert!(diags.iter().all(|d| d.code != "RY061"), "{diags:?}");
+}
+
+#[test]
 fn scalar_data_frame_arithmetic_computes_column_results() {
     for (expression, expected) in [
         ("frame + 0.5", Mode::Double),

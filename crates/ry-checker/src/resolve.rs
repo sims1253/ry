@@ -306,6 +306,37 @@ impl Checker {
         self.user_s3_dispatch_return(generic, first).is_some()
     }
 
+    /// Check literal binding names without interpreting `::` as qualification.
+    /// Escaped spellings stay conservative until the parser decodes them.
+    pub(crate) fn literal_bindings_may_be_shadowed<'a>(
+        &self,
+        names: impl IntoIterator<Item = &'a str>,
+        assigned: &HashSet<String>,
+        scope: &Scope,
+    ) -> bool {
+        if self.fn_table.has_escaped_binding_names
+            || assigned
+                .iter()
+                .chain(scope.bindings.keys())
+                .chain(self.external_bindings.iter())
+                .chain(self.imported_from.keys())
+                .any(|name| name.contains('\\'))
+        {
+            return true;
+        }
+        names.into_iter().any(|name| {
+            assigned.contains(name)
+                || scope.get(name).is_some()
+                || self.fn_table.fns.contains_key(name)
+                || self.fn_table.known_vars.contains(name)
+                || self
+                    .imported_from
+                    .get(name)
+                    .is_some_and(|package| package != "base")
+                || (self.external_bindings.contains(name) && !self.imported_from.contains_key(name))
+        })
+    }
+
     /// Lenient variant of [`Self::resolves_to_base`]: same resolution
     /// order minus the search-path guard, because a loaded package rarely
     /// redefines `list` or `length`.

@@ -1060,7 +1060,8 @@ impl Backend {
     /// This function never publishes diagnostics itself: callers await it
     /// and then republish (e.g. `did_change_watched_files`), which is what
     /// makes cross-file calls into unopened files resolve on the next
-    /// check. Returns false when a newer scan or folder change supersedes it.
+    /// check. Returns false when a newer scan or folder change supersedes it;
+    /// the superseding caller then owns the republish.
     async fn spawn_background_index(&self) -> bool {
         let (roots_with_config, index_gen) = {
             let mut state = self.state.lock().await;

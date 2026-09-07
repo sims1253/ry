@@ -17,6 +17,12 @@ use tower_lsp::lsp_types::{
 
 use crate::positions::{byte_offset_to_position, line_start};
 
+/// Identify the document and analysis snapshot that produced a diagnostic.
+/// Clients advertising diagnostic data support preserve this in code actions.
+pub(super) fn diagnostic_origin(path: &str, version: i32, generation: u64) -> serde_json::Value {
+    serde_json::json!({"ry": {"path": path, "version": version, "generation": generation}})
+}
+
 /// Convert a `ry_checker::Diagnostic` to an LSP `Diagnostic` using the
 /// span's pre-resolved `line` / `col` and a single-character range. Used
 /// as a fallback (tests, missing source text); the production

@@ -644,6 +644,13 @@ impl Checker {
         cv: &ClassVector,
         span: Span,
     ) -> Option<RType> {
+        // Math/Summary members have built-in fallbacks. An unrelated local
+        // group method cannot make a class-specific method mandatory. Keep
+        // the result opaque: the local inventory cannot rule out registered
+        // methods, and their return types need not match the primitive.
+        if s3_group_generic(generic).is_some() {
+            return Some(RType::unknown());
+        }
         let has_default = generics.iter().any(|candidate| {
             let default_key = ((*candidate).to_string(), "default".to_string());
             self.fn_table.s3_methods.contains_key(&default_key)

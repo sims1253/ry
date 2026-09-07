@@ -151,6 +151,10 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Math and Summary member calls no longer emit RY050 just because an unrelated
+  class has a local group method. Built-ins such as `sum()` and `abs()` can
+  use their default behavior without a class-specific method.
+
 - Report an explicit nesting-limit error before deeply nested syntax can
   overflow the parser stack. The limit is 128 tree-sitter syntax levels.
 

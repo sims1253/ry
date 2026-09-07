@@ -12,6 +12,10 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Require methods provenance for `hasArg` and base provenance for `on.exit`
+  before applying deferred-argument semantics. Custom functions keep their
+  own return contracts; uncertain calls discard stale caller facts.
+
 - Custom or masked `factor` and `new` calls no longer acquire builtin constructor facts. S4 constructor inference requires methods provenance, and detaching a package invalidates the default search-path assumption.
 
 - Resolve visible custom arithmetic, comparison, and vector logical operators

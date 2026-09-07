@@ -100,8 +100,31 @@ impl Checker {
         self.check_comparison_inside_math_fn(&lookup_name, args);
         self.check_identical_list_subset(&lookup_name, args, scope);
 
-        if let Some(t) = self.infer_deferred_call(&lookup_name, args, scope, span) {
-            return t;
+        if matches!(lookup_name.as_str(), "hasArg" | "on.exit") {
+            let package = if lookup_name == "hasArg" {
+                "methods"
+            } else {
+                "base"
+            };
+            match self.special_call_provenance(
+                &name,
+                func,
+                &semantic_name,
+                &lookup_name,
+                package,
+                scope,
+            ) {
+                crate::resolve::SpecialCallProvenance::Proven => {
+                    if let Some(t) = self.infer_deferred_call(&lookup_name, args, scope, span) {
+                        return t;
+                    }
+                }
+                crate::resolve::SpecialCallProvenance::Ordinary => {}
+                crate::resolve::SpecialCallProvenance::Unknown => {
+                    scope.invalidate_unknown_effects();
+                    return RType::unknown();
+                }
+            }
         }
 
         self.check_printf_format_arity(&lookup_name, args);

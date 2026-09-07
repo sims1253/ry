@@ -16,7 +16,100 @@ const BASE_DATABASE_PACKAGES: &[&str] = &[
     "datasets",
 ];
 
+/// Whether a direct call may use package-specific inference.
+pub(crate) enum SpecialCallProvenance {
+    Proven,
+    Ordinary,
+    Unknown,
+}
+
 impl Checker {
+    /// Spelling aliases and uncertain bindings cannot prove a captured callable.
+    /// Known custom contracts keep the ordinary call path instead.
+    pub(crate) fn special_call_provenance(
+        &self,
+        original_name: &str,
+        original_callee: &Expr,
+        semantic_name: &str,
+        lookup_name: &str,
+        package: &str,
+        scope: &Scope,
+    ) -> SpecialCallProvenance {
+        if original_name != semantic_name
+            || (matches!(original_callee, Expr::String(_, _)) && semantic_name.contains("::"))
+        {
+            return SpecialCallProvenance::Unknown;
+        }
+        if let Some((prefix, _)) = semantic_name.rsplit_once("::") {
+            if self.literal_bindings_may_be_shadowed(
+                ["::", "`::`", ":::", "`:::`"],
+                &HashSet::new(),
+                scope,
+            ) {
+                return SpecialCallProvenance::Unknown;
+            }
+            if prefix.trim_end_matches(':') != package {
+                // Only an actual package contract can describe another
+                // callable with this spelling; avoid the shared standard
+                // package database lending it a base signature.
+                return if self
+                    .package_typeshed(prefix.trim_end_matches(':'))
+                    .is_some_and(|typeshed| typeshed.functions.contains_key(lookup_name))
+                {
+                    SpecialCallProvenance::Ordinary
+                } else {
+                    SpecialCallProvenance::Unknown
+                };
+            }
+        } else {
+            if scope.is_parameter(semantic_name) {
+                // An untyped callable formal must not fall back to a base stub.
+                return SpecialCallProvenance::Unknown;
+            }
+            // Known custom functions keep the ordinary call path.
+            if self.fn_table.fns.contains_key(semantic_name)
+                || scope
+                    .get(semantic_name)
+                    .is_some_and(|ty| ty.fn_sig.is_some())
+            {
+                return SpecialCallProvenance::Ordinary;
+            }
+            if let Some(imported) = self.imported_from.get(semantic_name)
+                && imported != package
+            {
+                return if self
+                    .package_typeshed(imported)
+                    .is_some_and(|typeshed| typeshed.functions.contains_key(semantic_name))
+                {
+                    SpecialCallProvenance::Ordinary
+                } else {
+                    SpecialCallProvenance::Unknown
+                };
+            }
+            if scope.data_mask_unknown
+                || self.literal_bindings_may_shadow_package(
+                    [semantic_name, format!("`{semantic_name}`").as_str()],
+                    &HashSet::new(),
+                    scope,
+                    package,
+                )
+            {
+                return SpecialCallProvenance::Unknown;
+            }
+            let explicit_import = self
+                .imported_from
+                .get(semantic_name)
+                .is_some_and(|pkg| pkg == package);
+            if !explicit_import && (scope.search_path_unknown || !self.bare_loaded.is_empty()) {
+                return SpecialCallProvenance::Unknown;
+            }
+        }
+        if self.user_stubs.contains_key(package) || self.user_stubs.contains_key("base") {
+            return SpecialCallProvenance::Ordinary;
+        }
+        SpecialCallProvenance::Proven
+    }
+
     /// The attached packages a resolution ladder may consult, in the
     /// deterministic priority order of [`Self::available_package_names`]:
     /// the one shared form of the "walk candidate packages, keep the ones

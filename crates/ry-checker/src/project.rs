@@ -1032,6 +1032,13 @@ mod tests {
             project.add_file("s7.R".into(), parse_file("s7.R", before));
             project.add_file("callers.R".into(), parse_file("callers.R", &callers));
             project.add_file(
+                "constant.R".into(),
+                parse_file(
+                    "constant.R",
+                    "stable_return <- function() { list <- 1L; list(1, 2); NULL }",
+                ),
+            );
+            project.add_file(
                 "top.R".into(),
                 parse_file("top.R", "list <- 1L; list(1, 2)"),
             );

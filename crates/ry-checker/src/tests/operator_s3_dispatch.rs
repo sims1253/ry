@@ -732,3 +732,108 @@ fn literal_c_attributes_do_not_widen_scalar_fallback() {
     let (diags, _) = check_with_scope(source);
     assert!(!diags.iter().any(|d| d.code == "RY051"));
 }
+
+#[test]
+fn custom_slot_accessors_do_not_force_the_receiver() {
+    for source in [
+        "`@` <- function(object, name) 1L; not_bound@slot",
+        r#"`\x40` <- function(object, name) 1L; not_bound@slot"#,
+        "f <- function(`@`) not_bound@slot",
+    ] {
+        let diagnostics = check(source);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+    }
+}
+
+#[test]
+fn explicit_slot_masks_skip_data_and_preserve_ops_prefix_behavior() {
+    let checker = Checker::new("slot-mask.R");
+    let mut scope = Scope::default();
+    scope.insert("`@`", RType::scalar(Mode::Integer));
+    scope.insert("`@<-`", RType::scalar(Mode::Integer));
+    assert!(
+        checker
+            .infer_custom_slot_operator(false, &mut scope)
+            .is_none()
+    );
+    assert!(
+        checker
+            .infer_custom_slot_operator(true, &mut scope)
+            .is_none()
+    );
+    assert!(!scope.effects_unknown);
+
+    // The literal @ prefix cannot denote an Ops symbol. Escaped slot names
+    // need conservative handling without widening the existing Ops policy.
+    scope.insert(r#"`@\x3c-`"#, RType::unknown());
+    assert!(!checker.has_explicit_operator_mask("+", "`+`", &scope));
+    assert!(
+        checker
+            .infer_custom_slot_operator(true, &mut scope)
+            .is_some()
+    );
+    assert!(scope.effects_unknown);
+}
+
+#[test]
+fn escaped_slot_setters_forget_caller_facts() {
+    let (diagnostics, scope) = check_with_scope(
+        r#"`@\x3c-` <- function(object, name, value) 1L
+           x <- list()
+           y <- list(1L)
+           x@slot <- 2L
+           identical(y[1L], 1L)"#,
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert!(scope.effects_unknown);
+    assert_eq!(scope.get("y").unwrap().mode, Mode::Opaque);
+    assert!(!scope.has_list_origin("y"));
+}
+
+#[test]
+fn escaped_slot_metadata_is_cached_and_reset_by_setters() {
+    let mut checker = Checker::new("slot-imports.R");
+    let name = r"`@\x3c-`".to_string();
+    checker.set_imported_from(HashMap::from([(name.clone(), "custom".to_string())]));
+    assert!(checker.has_explicit_operator_mask("@<-", "`@<-`", &Scope::default()));
+    checker.set_imported_from(HashMap::new());
+    assert!(!checker.has_explicit_operator_mask("@<-", "`@<-`", &Scope::default()));
+    checker.set_external_bindings(HashSet::from([name]));
+    assert!(checker.has_explicit_operator_mask("@<-", "`@<-`", &Scope::default()));
+    checker.set_external_bindings(HashSet::new());
+    assert!(!checker.has_explicit_operator_mask("@<-", "`@<-`", &Scope::default()));
+}
+
+#[test]
+fn escaped_slot_flag_survives_branch_merge_without_binding_changes() {
+    for (parent, then, otherwise) in [
+        (false, true, false),
+        (false, false, true),
+        (true, false, false),
+    ] {
+        let checker = Checker::new("slot-branch-state.R");
+        let mut scope = Scope {
+            has_escaped_slot_names: parent,
+            ..Scope::default()
+        };
+        let then_scope = Scope {
+            has_escaped_slot_names: then,
+            ..Scope::default()
+        };
+        let else_scope = Scope {
+            has_escaped_slot_names: otherwise,
+            ..Scope::default()
+        };
+        checker.merge_branch_bindings(
+            &mut scope,
+            &then_scope,
+            &else_scope,
+            (&[], Some(&[])),
+            &HashSet::new(),
+        );
+        assert!(scope.has_escaped_slot_names);
+        assert!(scope.bindings.is_empty());
+        assert!(!checker.fn_table.has_escaped_slot_names);
+        assert!(checker.has_explicit_operator_mask("@<-", "`@<-`", &scope));
+    }
+}

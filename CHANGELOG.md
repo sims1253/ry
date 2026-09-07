@@ -167,6 +167,10 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Distinguish `@` slot extraction from `$`. Valid atomic `.Data` reads no
+  longer trigger dollar-access errors. Keep slot results and replaced roots
+  unknown, including mixed nested replacements; respect explicit accessors.
+
 - Honor tidy-evaluation injection in `ggplot2::aes` aesthetics and `vars` facets,
   avoiding false negation errors for unquoting and list splicing. Ordinary
   helper arguments continue to execute R negation.

@@ -691,6 +691,8 @@ impl Checker {
         scope.ops_environment_unknown |=
             then_scope.ops_environment_unknown || else_scope.ops_environment_unknown;
         scope.effects_unknown |= then_scope.effects_unknown || else_scope.effects_unknown;
+        scope.has_escaped_slot_names |=
+            then_scope.has_escaped_slot_names || else_scope.has_escaped_slot_names;
         // A diverging branch contributes no state to the continuation. Treat
         // its live sibling as the only arm, while retaining the parent path
         // for a one-arm `if` whose then branch can continue.
@@ -1191,6 +1193,43 @@ impl Checker {
     }
 
     pub(crate) fn assign_target(&mut self, target: &Expr, vt: RType, scope: &mut Scope) {
+        fn has_slot_receiver(expr: &Expr) -> bool {
+            matches!(
+                expr,
+                Expr::Index {
+                    kind: IndexKind::Slot,
+                    ..
+                }
+            ) || matches!(expr, Expr::Index { base, .. } if has_slot_receiver(base))
+        }
+        if has_slot_receiver(target) {
+            // Mixed chains such as x@foo$bar and x$foo@bar can replace the
+            // root through a custom setter. Do not synthesize record columns
+            // or retain a list-origin proof for that root.
+            if let Expr::Index {
+                base, kind, args, ..
+            } = target
+            {
+                // A direct slot replacement does not invoke the getter. Inner
+                // getters in a mixed chain still evaluate through the base.
+                self.infer(base, scope);
+                if matches!(kind, IndexKind::Single | IndexKind::Double) {
+                    for argument in args {
+                        self.infer(&argument.value, scope);
+                    }
+                }
+            }
+            let _ = self.infer_custom_slot_operator(true, scope);
+            let mut root = target;
+            while let Expr::Index { base, .. } = root {
+                root = base;
+            }
+            if let Expr::Ident { name, .. } = root {
+                scope.insert(name.clone(), RType::unknown());
+            }
+            scope.invalidate_ops_environment();
+            return;
+        }
         match target {
             Expr::Ident { name, .. } | Expr::String(name, _) => {
                 scope.insert(name.clone(), vt);
@@ -1982,6 +2021,11 @@ impl Checker {
                 args,
                 span,
             } => {
+                if *kind == IndexKind::Slot
+                    && let Some(result) = self.infer_custom_slot_operator(false, scope)
+                {
+                    return result;
+                }
                 let receiver_name = ident_name(base);
                 if receiver_name == Some(".env")
                     && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some()
@@ -1992,7 +2036,7 @@ impl Checker {
                             Expr::String(name, _) => Some(name.as_str()),
                             _ => None,
                         }),
-                        IndexKind::Single => None,
+                        IndexKind::Single | IndexKind::Slot => None,
                     };
                     if let Some(name) = name {
                         let key = format!("{}{name}", crate::nse::DATA_MASK_ENV_PREFIX);

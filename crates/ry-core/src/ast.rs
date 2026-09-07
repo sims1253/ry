@@ -245,4 +245,6 @@ pub enum IndexKind {
     Double,
     /// `x$i`
     Dollar,
+    /// `x@i`
+    Slot,
 }

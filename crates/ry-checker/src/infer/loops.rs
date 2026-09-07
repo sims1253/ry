@@ -29,6 +29,7 @@ fn join_path(paths: &mut Option<Box<Scope>>, incoming: &Scope) {
         .retain(|name| incoming.has_list_origin(name));
     joined.ops_environment_unknown |= incoming.ops_environment_unknown;
     joined.effects_unknown |= incoming.effects_unknown;
+    joined.has_escaped_slot_names |= incoming.has_escaped_slot_names;
 }
 
 impl Checker {
@@ -114,6 +115,7 @@ impl Checker {
         // leaving the loop. A previously recorded safe break cannot erase it.
         scope.ops_environment_unknown |= inner.ops_environment_unknown;
         scope.effects_unknown |= inner.effects_unknown;
+        scope.has_escaped_slot_names |= inner.has_escaped_slot_names;
         let mut exits = frame.breaks;
         if has_transfer && inner.effects_unknown {
             join_path(&mut exits, &inner);
@@ -144,6 +146,7 @@ impl Checker {
         if let Some(exit) = exits {
             scope.ops_environment_unknown |= exit.ops_environment_unknown;
             scope.effects_unknown |= exit.effects_unknown;
+            scope.has_escaped_slot_names |= exit.has_escaped_slot_names;
             for (binding, ty) in exit.bindings {
                 let list_origin = exit.list_origin_bindings.contains(&binding);
                 scope.insert(binding.clone(), ty);
@@ -154,6 +157,65 @@ impl Checker {
         }
         if always_true && !reaches {
             scope.unreachable = true;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn escaped_slot_scope() -> Scope {
+        let mut scope = Scope::default();
+        scope.insert(r"`@\x3c-`", RType::unknown());
+        // Sticky evidence remains after removal, independently of a source AST.
+        scope.bindings.clear();
+        assert!(scope.has_escaped_slot_names);
+        scope
+    }
+
+    #[test]
+    fn escaped_slot_flag_survives_loop_path_joins_without_bindings() {
+        let mut paths = None;
+        join_path(&mut paths, &Scope::default());
+        join_path(&mut paths, &escaped_slot_scope());
+        join_path(&mut paths, &Scope::default());
+        let joined = paths.unwrap();
+        assert!(joined.has_escaped_slot_names);
+        assert!(joined.bindings.is_empty());
+    }
+
+    #[test]
+    fn escaped_slot_flag_survives_loop_body_break_and_next_exits() {
+        for (body_flag, break_flag, next_flag) in [
+            (true, false, false),
+            (false, true, false),
+            (false, false, true),
+        ] {
+            let mut checker = Checker::new("slot-loop-state.R");
+            let mut scope = Scope::default();
+            let inner = if body_flag {
+                escaped_slot_scope()
+            } else {
+                Scope::default()
+            };
+            checker.loop_frames.push(LoopExitFrame {
+                // In the body case, a separate unmarked break is the selected
+                // exit. The inner flag must survive even when its state is not.
+                breaks: (body_flag || break_flag).then(|| {
+                    Box::new(if break_flag {
+                        escaped_slot_scope()
+                    } else {
+                        Scope::default()
+                    })
+                }),
+                nexts: next_flag.then(|| Box::new(escaped_slot_scope())),
+            });
+            checker.finish_loop(&mut scope, inner, body_flag || break_flag, true);
+            assert!(scope.has_escaped_slot_names);
+            assert!(scope.bindings.is_empty());
+            assert!(!checker.fn_table.has_escaped_slot_names);
+            assert!(checker.has_explicit_operator_mask("@<-", "`@<-`", &scope));
         }
     }
 }

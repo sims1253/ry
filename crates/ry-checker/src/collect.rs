@@ -11,6 +11,9 @@ impl Checker {
         if custom_operator::has_escaped_names(stmts) {
             Arc::make_mut(&mut self.fn_table).has_escaped_operator_names = true;
         }
+        if custom_operator::has_escaped_slot_names(stmts) {
+            Arc::make_mut(&mut self.fn_table).has_escaped_slot_names = true;
+        }
         // Statement-level walk on the shared core: a binding statement can
         // appear at the top level, in `if` branches, and in `for`/`while`
         // bodies, so those are the only statements whose children this
@@ -59,6 +62,7 @@ impl Checker {
             table.has_escaped_binding_names |= name.contains('\\');
             table.has_escaped_operator_names |=
                 custom_operator::escaped_name_may_mask_operator(name);
+            table.has_escaped_slot_names |= custom_operator::escaped_name_may_mask_slot(name);
             table.known_vars.insert(name.to_string());
             // Keep raw names for type/provenance lookup, but recognize an
             // ordinary read of a backtick-bound symbol as an existing value.
@@ -143,6 +147,8 @@ impl Checker {
                                 table.has_escaped_binding_names |= declared.contains('\\');
                                 table.has_escaped_operator_names |=
                                     custom_operator::escaped_name_may_mask_operator(&declared);
+                                table.has_escaped_slot_names |=
+                                    custom_operator::escaped_name_may_mask_slot(&declared);
                                 table.known_vars.insert(declared);
                             }
                         }
@@ -162,6 +168,7 @@ impl Checker {
                         let table = Arc::make_mut(&mut self.fn_table);
                         table.has_escaped_binding_names |= binding.contains('\\');
                         table.has_escaped_operator_names |= custom_operator::escaped_name_may_mask_operator(binding);
+                        table.has_escaped_slot_names |= custom_operator::escaped_name_may_mask_slot(binding);
                         table.known_vars.insert(binding.to_string());
                     }
                     self.collect_s4_call(bare, args);
@@ -193,6 +200,8 @@ impl Checker {
                     table.has_escaped_binding_names |= generic.contains('\\');
                     table.has_escaped_operator_names |=
                         custom_operator::escaped_name_may_mask_operator(generic);
+                    table.has_escaped_slot_names |=
+                        custom_operator::escaped_name_may_mask_slot(generic);
                     table.known_vars.insert(generic.to_string());
                 }
             }
@@ -326,6 +335,7 @@ impl Checker {
         fn_table.has_escaped_binding_names |= name.contains('\\');
         fn_table.has_escaped_operator_names |=
             custom_operator::escaped_name_may_mask_operator(&name);
+        fn_table.has_escaped_slot_names |= custom_operator::escaped_name_may_mask_slot(&name);
         let prev = fn_table.fns.insert(
             name.clone(),
             UserFn {

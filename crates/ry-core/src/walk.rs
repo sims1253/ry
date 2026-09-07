@@ -47,7 +47,7 @@ pub struct Walk {
     /// position (`y <- x <- 1L`). Walks that only record the bound
     /// name leave this off.
     pub assign_operands: bool,
-    /// Descend into `$field` subscript arguments. The parser stores the
+    /// Descend into `$field` and `@slot` arguments. The parser stores the
     /// field as a synthesized identifier node, but R never evaluates it
     /// as an expression; identifier-execution walks leave this off.
     pub dollar_args: bool,
@@ -205,7 +205,7 @@ fn expr_step<B>(
             base, kind, args, ..
         } => {
             expr_step(base, policy, fn_depth, visit)?;
-            if *kind != IndexKind::Dollar || policy.dollar_args {
+            if !matches!(kind, IndexKind::Dollar | IndexKind::Slot) || policy.dollar_args {
                 for argument in args {
                     expr_step(&argument.value, policy, fn_depth, visit)?;
                 }
@@ -316,6 +316,21 @@ mod tests {
                 "kept {name}: {skipped:?}"
             );
         }
+    }
+
+    #[test]
+    fn slot_names_follow_the_quoted_field_policy() {
+        let source = "object@slot$field";
+        let all = visited(source, Walk::ALL);
+        assert!(all.contains(&"slot".to_string()));
+        let evaluated = visited(
+            source,
+            Walk {
+                dollar_args: false,
+                ..Walk::ALL
+            },
+        );
+        assert_eq!(evaluated, vec!["object".to_string()]);
     }
 
     /// Each assignment knob alone must prune a subtree only that knob

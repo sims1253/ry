@@ -153,7 +153,9 @@ All notable changes to ry are documented in this file.
 
 - Math and Summary member calls no longer emit RY050 just because an unrelated
   class has a local group method. Built-ins such as `sum()` and `abs()` can
-  use their default behavior without a class-specific method.
+  use their default behavior without a class-specific method. The Math
+  inventory includes cumulative functions, `signif`, the `*pi` functions,
+  `digamma`, and `trigamma`, with recognition of their specific methods.
 
 - `ry check` now emits an empty JSON/GitLab array or JUnit report when no R
   files are discovered, including when configuration excludes every source.
@@ -168,12 +170,23 @@ All notable changes to ry are documented in this file.
   and UTF-8 byte sequences correctly. Preserve physical escaped newlines and
   retain raw recovery text for malformed or unrepresentable string values.
 
+- Keep classed atomic `$` reads and writes conservative when an S3 method may
+  handle the access, including classes attached to a union of payload types.
+  Discard caller facts that the method could change.
+
 - Report missing format arguments only for proven base `sprintf` and
   `gettextf` calls, avoiding false RY094 warnings for custom functions.
+
+- Require a matching receiver class before inferring a registered S3 method's
+  return type. Keep uncertain dispatch opaque instead of borrowing a method or
+  scalar default return from an unrelated class.
 
 - Stop applying `hasArg` and `on.exit` deferred semantics to explicit competing
   bindings, formals, and aliases. Retain existing inference under ambient
   lookup uncertainty, while requiring methods provenance for RY096.
+
+- Recognize `.Generic`, `.Method`, and `.Class` inside subset and subset
+  replacement methods, avoiding false undefined-variable warnings.
 
 - Compute data-frame column types after scalar arithmetic instead of copying
   their input types. Keep classed column results unknown when methods may run.
@@ -257,6 +270,9 @@ All notable changes to ry are documented in this file.
 
 - Detect recursive and prematurely forced defaults passed to `base::identity` or
   `base::force`, while preserving laziness in quoted, masked, and conditional calls.
+
+- Avoid RY032 warnings when a parameter is only the lookup table for `%in%`,
+  or a base `length(x) == 1` guard protects a scalar predicate.
 
 - Correct RY002 and RY032 explanations: R rejects conditions and scalar
   logical operands with more than one element.
@@ -414,7 +430,8 @@ All notable changes to ry are documented in this file.
 - Class assignments no longer infer literal classes from custom class builders or preserve payload types under an unproven replacement function.
 
 - Report RY051 when literal `chooseOpsMethod` results are `FALSE` on both
-  sides and reject provably distinct operator methods. Infer primitive
+  sides and reject provably distinct operator methods, including methods
+  with unequal literal bodies of the same storage mode. Infer primitive
   fallback and its class behavior only for proven scalar operands.
 
 - Extend explicit `FALSE`/`FALSE` Ops chooser fallback to plain vectors built

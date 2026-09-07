@@ -1,6 +1,58 @@
 use super::*;
 
 #[test]
+fn registered_s3_method_return_requires_matching_receiver() {
+    for source in [
+        "hist.data.frame <- function(x, ...) 1; result <- hist(1:10, plot=FALSE); result$breaks",
+        "hist.data.frame <- function(x, ...) 1; result <- hist(structure(1:10, class='other'), plot=FALSE); result$breaks",
+        "hist.data.frame <- function(x, ...) 1; f <- function(x) hist(x, plot=FALSE)$breaks; f(1:10)",
+    ] {
+        let diags = check_with(source, |checker| {
+            checker.set_external_s3_methods(HashSet::from([("hist".into(), "data.frame".into())]));
+        });
+        assert!(
+            diags.iter().all(|d| d.code != "RY061"),
+            "{source}: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn registered_s3_method_return_retains_matching_receiver() {
+    let diags = check_with(
+        "hist.data.frame <- function(x, ...) 1; result <- hist(data.frame(x=1:10)); result$breaks",
+        |checker| {
+            checker.set_external_s3_methods(HashSet::from([("hist".into(), "data.frame".into())]));
+        },
+    );
+    assert!(diags.iter().any(|d| d.code == "RY061"), "{diags:?}");
+}
+
+#[test]
+fn registered_s3_method_miss_does_not_borrow_scalar_default() {
+    let diags = check_with(
+        "`^.widget` <- function(e1, e2) e1; mean.widget <- function(x, ...) list(value=2L); f <- function(x) mean(x^2)$value; f(structure(1L, class='widget'))",
+        |checker| {
+            checker.set_external_s3_methods(HashSet::from([
+                ("mean".into(), "widget".into()),
+                ("^".into(), "widget".into()),
+            ]));
+        },
+    );
+    assert!(diags.iter().all(|d| d.code != "RY061"), "{diags:?}");
+}
+
+#[test]
+fn registered_s3_method_without_local_body_keeps_dispatch_opaque() {
+    let diags = check_with("f <- function(x) mean(x)$value", |checker| {
+        checker.set_external_s3_methods(HashSet::from([("mean".into(), "widget".into())]));
+    });
+    assert!(diags.iter().all(|d| d.code != "RY061"), "{diags:?}");
+    let control = check("f <- function(x) mean(x)$value");
+    assert!(control.iter().any(|d| d.code == "RY061"), "{control:?}");
+}
+
+#[test]
 fn scalar_data_frame_arithmetic_computes_column_results() {
     for (expression, expected) in [
         ("frame + 0.5", Mode::Double),
@@ -175,6 +227,53 @@ fn math_summary_members_do_not_require_a_class_method() {
             scope.get("result").map(|ty| ty.mode),
             Some(Mode::Opaque),
             "a missing local method does not prove absence of registered methods: {generic}"
+        );
+    }
+}
+
+#[test]
+fn complete_math_inventory_keeps_specific_and_group_dispatch() {
+    for generic in [
+        "cummax", "cummin", "cumprod", "cumsum", "cospi", "sinpi", "tanpi", "digamma", "trigamma",
+        "signif",
+    ] {
+        let (diags, scope) = check_with_scope(&format!(
+            "{generic}.other <- function(x, ...) 99\n\
+             x <- structure(c(1, 2), class = \"widget\")\n\
+             result <- {generic}(x)\n"
+        ));
+        assert!(
+            diags.iter().all(|d| d.code != "RY050"),
+            "{generic}: {diags:?}"
+        );
+        assert_eq!(
+            scope.get("result").map(|ty| ty.mode),
+            Some(Mode::Opaque),
+            "{generic}"
+        );
+        let (diags, scope) = check_with_scope(&format!(
+            "Math.widget <- function(x, ...) list(value = 1L)\n\
+             x <- structure(list(), class = \"widget\")\n\
+             result <- {generic}(x)\n"
+        ));
+        assert!(
+            diags.iter().all(|d| !matches!(d.code, "RY050" | "RY040")),
+            "{generic}: {diags:?}"
+        );
+        assert_eq!(
+            scope.get("result").map(|ty| ty.mode),
+            Some(Mode::Opaque),
+            "{generic}"
+        );
+        let diags = check(&format!(
+            "{generic}.widget <- function(x, ...) \"text\"\n\
+             Math.widget <- function(x, ...) 1L\n\
+             x <- structure(1, class = \"widget\")\n\
+             {generic}(x) + 1\n"
+        ));
+        assert!(
+            diags.iter().any(|d| d.code == "RY040"),
+            "specific method must win for {generic}: {diags:?}"
         );
     }
 }
@@ -906,4 +1005,34 @@ fn for_over_homogeneous_list_does_not_fire_ry040() {
         "for over a homogeneous list must not fire RY040 on the body, got {:?}",
         diags
     );
+}
+
+#[test]
+fn subset_methods_receive_s3_dispatch_context() {
+    for generic in ["[", "[[", "$", "[<-", "[[<-", "$<-"] {
+        let source =
+            format!("`{generic}.widget` <- function(x, ...) list(.Generic, .Method, .Class)\n");
+        let diagnostics = check(&source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY010"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn subset_context_does_not_define_group_or_ordinary_variables() {
+    for source in [
+        "`[<-.widget` <- function(x, ...) .Group",
+        "helper.widget <- function(x) .Generic",
+        "`[<-` <- function(x) .Generic",
+        "`[<-.` <- function(x) .Generic",
+        ".Generic",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY010"),
+            "{source}: {diagnostics:?}"
+        );
+    }
 }

@@ -541,21 +541,13 @@ impl Checker {
                 return Some(result);
             }
         }
-        let mut candidates = self
-            .external_s3_methods
+        // A registration proves that a method exists, not that this receiver
+        // selects it. Even a single registered method can coexist with a
+        // default method or methods outside the analyzed package.
+        self.external_s3_methods
             .iter()
-            .filter(|(registered_generic, _)| registered_generic == generic)
-            .filter_map(|(_, class)| {
-                self.fn_table
-                    .fns
-                    .get(&format!("{generic}.{class}"))
-                    .map(|function| function.return_slot)
-            });
-        let slot = candidates.next()?;
-        if candidates.any(|candidate| candidate != slot) {
-            return None;
-        }
-        Some(self.read_return_slot(slot))
+            .any(|(registered_generic, _)| registered_generic == generic)
+            .then(RType::unknown)
     }
 
     pub(crate) fn emit(

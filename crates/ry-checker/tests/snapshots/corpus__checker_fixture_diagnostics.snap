@@ -689,6 +689,10 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_divisible_recycling.R
 - diagnostics: []
+  fixture: ok_dollar_assign_classed_atomic.R
+- diagnostics: []
+  fixture: ok_dollar_classed_atomic.R
+- diagnostics: []
   fixture: ok_dollar_missing_list.R
 - diagnostics: []
   fixture: ok_dots_absorb_unknown_argument.R
@@ -916,6 +920,8 @@ expression: snapshots
   fixture: ok_s3_data_frame_operator_override.R
 - diagnostics: []
   fixture: ok_s3_dispatch.R
+- diagnostics: []
+  fixture: ok_s3_hist_receiver.R
 - diagnostics: []
   fixture: ok_s3_literal_ops_chooser.R
 - diagnostics: []

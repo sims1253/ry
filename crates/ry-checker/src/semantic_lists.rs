@@ -42,6 +42,49 @@ pub struct SemanticList {
     pub claim: &'static str,
 }
 
+/// Syntax call spellings whose visible replacement invalidates literal Ops proof.
+/// Backticked entries reflect the parser's retained spelling of bindings.
+pub const OPS_PROOF_SYNTAX: &[&str] = &[
+    "{",
+    "`{`",
+    "(",
+    "`(`",
+    "function",
+    "`function`",
+    "<-",
+    "`<-`",
+    "=",
+    "`=`",
+    "<<-",
+    "`<<-`",
+    "::",
+    "`::`",
+    ":::",
+    "`:::`",
+    "if",
+    "`if`",
+    "for",
+    "`for`",
+    "while",
+    "`while`",
+    "repeat",
+    "`repeat`",
+    ":",
+    "`:`",
+    "%in%",
+    "`%in%`",
+    "&&",
+    "`&&`",
+    "||",
+    "`||`",
+    "%>%",
+    "`%>%`",
+    "%T>%",
+    "`%T>%`",
+    "%<>%",
+    "`%<>%`",
+];
+
 // ── Registered lists ──────────────────────────────────────────────────────
 
 /// R operators that can appear as S3 generic names (e.g. `+.widget`).
@@ -167,6 +210,12 @@ pub fn registry() -> Vec<SemanticList> {
             items: CLASS_ASSIGNMENT_COERCERS,
             check: CheckKind::ROracle,
             claim: "singleton class replacements that can change storage, unlike multi-class vectors",
+        },
+        SemanticList {
+            name: "OPS_PROOF_SYNTAX",
+            items: OPS_PROOF_SYNTAX,
+            check: CheckKind::ROracle,
+            claim: "visible replacements intercept these syntax call names",
         },
         SemanticList {
             name: "OPERATORS",

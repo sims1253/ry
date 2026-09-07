@@ -19,6 +19,10 @@ All notable changes to ry are documented in this file.
   shadowed constructors and class-vector builders; discard stale column names
   after name attributes change.
 
+- Infer conflicting S3 operator results when top-level literal methods
+  and `chooseOpsMethod` values prove selection, including aliases and reverse
+  selection. Keep uncertain dispatch and primitive fallback unknown.
+
 - Refresh incremental diagnostics when a callback changes, including callbacks
   passed as values and their downstream callers.
 

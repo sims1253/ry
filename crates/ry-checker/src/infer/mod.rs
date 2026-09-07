@@ -1,3 +1,4 @@
+pub(crate) mod ops_chooser;
 use super::*;
 pub(crate) use args::*;
 pub(crate) use index::*;
@@ -185,6 +186,11 @@ impl Checker {
         }
         match s {
             Stmt::Assign { target, value, .. } => {
+                if !scope.ops_environment_unknown
+                    && !ops_chooser::ordinary_assignment(self, target, value)
+                {
+                    scope.invalidate_ops_environment();
+                }
                 let reference_type_known =
                     self.capture_references && self.reference_value_known(value, scope);
                 let scope_marked_origin = expression_has_list_origin(value, scope);
@@ -195,6 +201,7 @@ impl Checker {
                 // function marks its binding too.
                 let value_has_list_origin = scope_marked_origin || every_mode_is_list(&vt);
                 let function_alias = self.function_alias_target(value, scope);
+                let literal_function = ops_chooser::literal_function(self, value, scope);
                 if self.try_assign_value(target, value, vt, scope)
                     && let Some(name) = binding_name(target)
                 {
@@ -212,6 +219,11 @@ impl Checker {
                     if matches!(value, Expr::Function { .. }) && !self.enclosing_formals.is_empty()
                     {
                         scope.mark_lexical_function(name.to_string());
+                    }
+                    if let Some(function) = literal_function {
+                        scope
+                            .literal_functions
+                            .insert(semantic_argument_name(name).to_string(), function);
                     }
                     if let Some(alias) = function_alias {
                         scope.set_function_alias(name.to_string(), alias);
@@ -337,6 +349,7 @@ impl Checker {
                 // inner scope inherited the parent's marker, an in-loop list
                 // rebinding re-marks it, and an in-loop non-list rebinding
                 // cleared it — the last write is the post-loop truth.
+                scope.ops_environment_unknown |= inner.ops_environment_unknown;
                 for (binding, ty) in inner.bindings {
                     let had_list_origin = inner.list_origin_bindings.contains(&binding);
                     scope.insert(binding.clone(), ty);
@@ -358,6 +371,7 @@ impl Checker {
                 // continuation's list-origin markers carry over the same
                 // way.
                 let body_unreachable = inner.unreachable;
+                scope.ops_environment_unknown |= inner.ops_environment_unknown;
                 for (binding, ty) in inner.bindings {
                     let had_list_origin = inner.list_origin_bindings.contains(&binding);
                     scope.insert(binding.clone(), ty);
@@ -405,6 +419,7 @@ impl Checker {
         scope: &Scope,
     ) {
         let mut fn_scope = scope.clone();
+        fn_scope.invalidate_ops_environment();
         self.start_reference_scope(&mut fn_scope, span);
         if let Some(captures) = self.deferred_captures.last() {
             for capture in captures {
@@ -680,6 +695,11 @@ impl Checker {
         has_else: bool,
         narrowed: &HashSet<String>,
     ) {
+        // Types can compare equal after replacing a literal function. Do not
+        // carry its identity or constant result across a branch merge.
+        scope.literal_functions.clear();
+        scope.ops_environment_unknown |=
+            then_scope.ops_environment_unknown || else_scope.ops_environment_unknown;
         // A diverging branch contributes no state to the continuation. Treat
         // its live sibling as the only arm, while retaining the parent path
         // for a one-arm `if` whose then branch can continue.
@@ -971,6 +991,7 @@ impl Checker {
         let prev_discarding = self.discarding;
         self.discarding = true;
         let mut scope = captured_scope.clone();
+        scope.invalidate_ops_environment();
         bind_params(&mut scope);
         // Simulate each statement's scope effect in source order so the
         // trailing return can reference bindings established earlier in
@@ -1151,6 +1172,11 @@ impl Checker {
         vt: RType,
         scope: &mut Scope,
     ) -> bool {
+        if binding_name(target).is_none() {
+            // Replacement functions may mutate a method or its environment.
+            scope.invalidate_ops_environment();
+        }
+
         if self.assign_class_attribute(target, value, scope)
             || self.assign_replacement_target(target, scope)
         {
@@ -1492,6 +1518,10 @@ impl Checker {
     fn infer_identifier(&mut self, name: &str, span: &Span, scope: &mut Scope) -> RType {
         let mut found_lexical = false;
         let mut unresolved = false;
+        if scope.is_parameter(name) || scope.get(name).is_none() {
+            // Forcing a promise can mutate the method environment.
+            scope.invalidate_ops_environment();
+        }
         let result = (|| match scope.get(name) {
             Some(t) => {
                 found_lexical = true;
@@ -1681,6 +1711,22 @@ impl Checker {
             Expr::Na(t, _) => t.clone(),
             Expr::Ident { name, span } => self.infer_identifier(name, span, scope),
             Expr::BinOp { op, lhs, rhs, span } => {
+                // A rebound operator can mutate the chooser before forcing
+                // either operand. Invalidate before inspecting their bodies.
+                if !scope.ops_environment_unknown
+                    && ops_chooser::operator_rebound(self, op_symbol(*op), scope)
+                {
+                    scope.invalidate_ops_environment();
+                }
+                if matches!(
+                    op,
+                    BinOpKind::PipeForward
+                        | BinOpKind::PipeNative
+                        | BinOpKind::PipeAssign
+                        | BinOpKind::PipeTee
+                ) {
+                    scope.invalidate_ops_environment();
+                }
                 // Pipes need structural access to `rhs` (to build a
                 // desugared call), so they bypass `infer_binop`'s
                 // type-only signature.
@@ -1706,6 +1752,11 @@ impl Checker {
                 // return the RHS type. R's `<-` returns the assigned
                 // value (invisibly).
                 if matches!(*op, BinOpKind::Assign | BinOpKind::SuperAssign) {
+                    if !scope.ops_environment_unknown
+                        && !ops_chooser::ordinary_assignment(self, lhs, rhs)
+                    {
+                        scope.invalidate_ops_environment();
+                    }
                     let rt = self.infer(rhs, scope);
                     self.try_assign_value(lhs, rhs, rt.clone(), scope);
                     return rt;
@@ -1719,6 +1770,7 @@ impl Checker {
                 // `infer_binop`. Non-literal operands fall through to
                 // `infer_binop`'s lattice-based `seq` (Unknown length).
                 if matches!(*op, BinOpKind::Colon) {
+                    scope.invalidate_ops_environment();
                     if let (Some(a), Some(b)) = (extract_literal_int(lhs), extract_literal_int(rhs))
                     {
                         let len = (b - a).unsigned_abs() as usize;
@@ -1750,9 +1802,11 @@ impl Checker {
                     *span,
                     known_null_arithmetic_operand(lhs, scope)
                         || known_null_arithmetic_operand(rhs, scope),
+                    scope,
                 )
             }
             Expr::UnaryOp { op, expr, span } => {
+                scope.invalidate_ops_environment();
                 // Injection is syntax only in arguments whose signatures opt in.
                 if scope.tidy_injection.is_some()
                     && matches!(op, UnaryOpKind::Not)
@@ -1864,6 +1918,7 @@ impl Checker {
                         if scope.is_default_parameter(name)
                             && matches!(scope.get(name).map(|ty| ty.mode), Some(Mode::Null))
                 );
+                scope.invalidate_ops_environment();
                 let bt = self.infer(base, scope);
                 self.infer_index(bt, *kind, args, *span, default_null_receiver, scope)
             }
@@ -1899,7 +1954,10 @@ impl Checker {
             Expr::If {
                 cond, then, else_, ..
             } => self.infer_if_expr(cond, then, else_, scope),
-            Expr::Unknown(_) => RType::unknown(),
+            Expr::Unknown(_) => {
+                scope.invalidate_ops_environment();
+                RType::unknown()
+            }
         }
     }
 

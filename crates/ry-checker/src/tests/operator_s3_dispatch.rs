@@ -358,3 +358,227 @@ fn opaque_custom_group_winner_keeps_result_unknown() {
         }
     }
 }
+
+#[test]
+fn literal_ops_choosers_follow_scoped_values_and_reverse_order() {
+    let prefix = "x <- structure(1, class = 'left')\ny <- structure(2, class = 'right')\n`+.left` <- function(e1, e2) 'left'\n`+.right` <- function(e1, e2) 1L\n";
+    for (selectors, mode) in [
+        (
+            "chooseOpsMethod.left <- function(...) TRUE",
+            Mode::Character,
+        ),
+        (
+            "chooseOpsMethod.left <- function(x,y,mx,my,cl,reverse) FALSE\nchooseOpsMethod.right <- function(...) TRUE",
+            Mode::Integer,
+        ),
+        (
+            "chooseOpsMethod.left <- function(...) TRUE\nchooseOpsMethod.right <- function(...) TRUE",
+            Mode::Character,
+        ),
+        (
+            "select <- function(...) TRUE\nchooseOpsMethod.left <- select",
+            Mode::Character,
+        ),
+        (
+            "chooseOpsMethod.left <- function(...) FALSE\nchooseOpsMethod.right <- function(...) FALSE",
+            Mode::Opaque,
+        ),
+        ("chooseOpsMethod.right <- function(...) TRUE", Mode::Opaque),
+        (
+            "chooseOpsMethod.left <- function(...) sample(c(TRUE,FALSE),1)",
+            Mode::Opaque,
+        ),
+    ] {
+        let source = format!("{prefix}{selectors}\nout <- x + y");
+        let (_, scope) = check_with_scope(&source);
+        assert_eq!(scope.get("out").unwrap().mode, mode, "{source}");
+    }
+    let source = format!(
+        "{prefix}chooseOpsMethod.left <- function(...) TRUE\nchooseOpsMethod.right <- function(...) TRUE\nf <- function() {{ chooseOpsMethod.left <- function(...) FALSE; x + y }}\nout <- f()"
+    );
+    let (_, scope) = check_with_scope(&source);
+    assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque);
+}
+
+#[test]
+fn literal_ops_method_identity_is_assignment_identity() {
+    let prefix = "x <- structure(1, class = 'left')\ny <- structure(2, class = 'right')\n";
+    for (methods, expected) in [
+        (
+            "method <- function(e1,e2) 'same'\n`+.left` <- method\n`+.right` <- method",
+            Mode::Character,
+        ),
+        (
+            "`+.left` <- function(e1,e2) 'left'\n`+.right` <- function(e1,e2) 'right'",
+            Mode::Opaque,
+        ),
+        (
+            "factory <- function() function(e1,e2) 'same'\n`+.left` <- factory()\n`+.right` <- factory()",
+            Mode::Opaque,
+        ),
+    ] {
+        let source = format!("{prefix}{methods}\nout <- x + y");
+        let (_, scope) = check_with_scope(&source);
+        assert_eq!(scope.get("out").unwrap().mode, expected, "{source}");
+    }
+}
+
+#[test]
+fn literal_ops_chooser_evidence_does_not_survive_uncertain_writes() {
+    let prefix = "x <- structure(1, class = 'left')\ny <- structure(2, class = 'right')\n`+.left` <- function(e1,e2) 'left'\n`+.right` <- function(e1,e2) 1L\nchooseOpsMethod.left <- function(...) TRUE\n";
+    for mutation in [
+        "chooseOpsMethod.left <- function(...) FALSE",
+        "if (unknown) chooseOpsMethod.left <- function(...) FALSE",
+        "for (i in 1:2) chooseOpsMethod.left <- function(...) FALSE",
+        "while (unknown) chooseOpsMethod.left <- function(...) FALSE",
+        "assign('chooseOpsMethod.left', function(...) FALSE)",
+        "rm(chooseOpsMethod.left)",
+        "change()",
+        "`{` <- function(...) FALSE",
+    ] {
+        let source = format!("{prefix}{mutation}\nout <- x + y");
+        let (_, scope) = check_with_scope(&source);
+        assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque, "{source}");
+    }
+    let (diags, _) = check_with_scope(&format!("{prefix}unknown((x + y) + 1L)"));
+    assert!(!diags.iter().any(|diagnostic| diagnostic.code == "RY040"));
+    let source = format!("{prefix}out <- x + {{ change(); y }}");
+    let (_, scope) = check_with_scope(&source);
+    assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque);
+}
+
+#[test]
+fn literal_ops_proof_respects_syntax_and_call_barriers() {
+    let prefix = "x <- structure(1, class = 'left')\ny <- structure(2, class = 'right')\n`+.left` <- function(e1,e2) 'left'\n`+.right` <- function(e1,e2) 1L\nchooseOpsMethod.left <- function(...) TRUE\n";
+    for name in ["function", "<-", "=", "::", "(", "if", r"\x3a\x3a"] {
+        let source = format!("`{name}` <- function(...) FALSE\n{prefix}out <- x + y");
+        let (_, scope) = check_with_scope(&source);
+        assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque, "{source}");
+    }
+    for call in ["base::structure(x, class = 'left')", "unknown()"] {
+        let source = format!("{prefix}x <- {call}");
+        let (_, scope) = check_with_scope(&source);
+        assert!(scope.literal_functions.is_empty(), "{source}");
+    }
+}
+
+#[test]
+fn literal_ops_proof_is_not_established_in_deferred_functions() {
+    let source = "f <- function() { x <- structure(1, class = 'left'); y <- structure(2, class = 'right'); `+.left` <- function(e1,e2) 'left'; `+.right` <- function(e1,e2) 1L; chooseOpsMethod.left <- function(...) FALSE; chooseOpsMethod.right <- function(...) TRUE; x + y }\nout <- f()";
+    let (_, scope) = check_with_scope(source);
+    assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque);
+}
+
+#[test]
+fn literal_ops_proof_does_not_trust_delayed_reads() {
+    let source = "x <- structure(1L, class = 'left')\ny <- structure(1L, class = 'right')\ntrigger <- 1L\ndelayedAssign('trigger', { chooseOpsMethod.left <- function(...) FALSE; 1L })\n`+.left` <- function(e1,e2) 'left'\n`+.right` <- function(e1,e2) FALSE\nchooseOpsMethod.left <- function(...) TRUE\nchooseOpsMethod.right <- function(...) TRUE\ntrigger\nout <- x + y";
+    let (_, scope) = check_with_scope(source);
+    assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque);
+}
+
+#[test]
+fn literal_ops_environment_uncertainty_survives_control_flow() {
+    for effect in [
+        "if (flag) delayedAssign('trigger', mutation)",
+        "for (i in 1L) delayedAssign('trigger', mutation)",
+        "while (flag) delayedAssign('trigger', mutation)",
+        "flag && { delayedAssign('trigger', mutation); TRUE }",
+        "ignored <- if (flag) delayedAssign('trigger', mutation) else NULL",
+        "unknown_identifier",
+    ] {
+        let source = format!(
+            "x <- structure(1L,class='left')\ny <- structure(2L,class='right')\nflag <- TRUE\ntrigger <- 1L\n{effect}\n`+.left` <- function(e1,e2) 'left'\n`+.right` <- function(e1,e2) 1L\nchooseOpsMethod.left <- function(...) TRUE\ntrigger\nout <- x + y"
+        );
+        let (_, scope) = check_with_scope(&source);
+        assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque, "{source}");
+    }
+}
+
+#[test]
+fn literal_ops_proof_does_not_freeze_future_function_environments() {
+    let source = "f <- function() { `+.left` <- function(e1,e2) 'left'; `+.right` <- function(e1,e2) 1L; chooseOpsMethod.left <- function(...) TRUE; x <- structure(1L,class='left'); y <- structure(1L,class='right'); x + y }\nassign('structure', function(...) 1, envir=.GlobalEnv)\nf() + 1";
+    let (diags, _) = check_with_scope(source);
+    assert!(
+        !diags.iter().any(|diagnostic| diagnostic.code == "RY040"),
+        "{diags:?}"
+    );
+}
+
+#[test]
+fn literal_ops_selected_arithmetic_diagnostic() {
+    let source = include_str!("../../testdata/err_s3_literal_ops_chooser.R");
+    for source in [
+        source.to_string(),
+        source.replace("structure(", "base::structure("),
+    ] {
+        let (diags, _) = check_with_scope(&source);
+        assert!(
+            diags.iter().any(|diagnostic| diagnostic.code == "RY040"),
+            "{source}: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn literal_ops_proof_rejects_imported_syntax_and_constructor_bindings() {
+    let source = include_str!("../../testdata/err_s3_literal_ops_chooser.R");
+    for name in ["function", "::", "+", "structure", r"\x3a\x3a"] {
+        let diagnostics = check_with(source, |checker| {
+            checker.set_external_bindings(HashSet::from([name.to_string()]));
+            checker.set_imported_from(HashMap::from([(name.to_string(), "custom".to_string())]));
+        });
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY040"),
+            "{name}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn literal_ops_proof_rejects_an_initial_attached_package() {
+    let source = include_str!("../../testdata/err_s3_literal_ops_chooser.R");
+    let diagnostics = check_with(source, |checker| {
+        checker.set_bare_loaded(HashSet::from(["custom".to_string()]));
+    });
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY040")
+    );
+}
+
+#[test]
+fn literal_ops_proof_rejects_nonordinary_assignment_operators() {
+    let prefix = "x <- structure(1L,class='left')\ny <- structure(2L,class='right')\n`+.left` <- function(e1,e2) 'left'\n`+.right` <- function(e1,e2) 1L\nchooseOpsMethod.left <- function(...) TRUE\nchooseOpsMethod.right <- function(...) TRUE\n";
+    for effect in [
+        "`:=` <- function(...) { chooseOpsMethod.left <<- function(...) FALSE }; ignored := 1L",
+        "(function(...) FALSE) ->> chooseOpsMethod.left",
+        "chooseOpsMethod.left <<- function(...) FALSE",
+        "ignored <- ((function(...) FALSE) ->> chooseOpsMethod.left)",
+    ] {
+        let source = format!("{prefix}{effect}\nout <- x + y");
+        let (_, scope) = check_with_scope(&source);
+        assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque, "{source}");
+    }
+}
+
+#[test]
+fn literal_ops_proof_is_cleared_before_unknown_operator_arguments() {
+    let prefix = "x <- structure(1L,class='left')\ny <- structure(2L,class='right')\n`*.left` <- function(e1,e2) 'left'\n`*.right` <- function(e1,e2) 1L\nchooseOpsMethod.left <- function(...) TRUE\nchooseOpsMethod.right <- function(...) TRUE\n";
+    for operation in [
+        "`!` <- function(value) { chooseOpsMethod.left <<- function(...) FALSE; value }; !((x * y) + 1L)",
+        "`[` <- function(value,index) { chooseOpsMethod.left <<- function(...) FALSE; index }; x[(x * y) + 1L]",
+        "`^` <- function(value,power) { chooseOpsMethod.left <<- function(...) FALSE; value }; ((x * y) + 1L) ^ 2L",
+    ] {
+        let source = format!("{prefix}{operation}");
+        let (diagnostics, _) = check_with_scope(&source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY040"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}

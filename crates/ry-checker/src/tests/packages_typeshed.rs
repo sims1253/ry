@@ -793,3 +793,23 @@ fn ggplot2_catalog_owns_capture_and_ordinary_argument_evaluation() {
         );
     }
 }
+
+#[test]
+fn ggplot2_aesthetic_and_facet_injection_preserves_ordinary_helpers() {
+    for expression in [
+        "ggplot2::aes(!!!stats::setNames(lapply(c('mpg', 'wt'), as.name), c('x', 'y')))",
+        "ggplot2::aes(x = !!quote(mpg), y = !!quote(wt))",
+        "ggplot2::vars(!!!list(quote(mpg), quote(wt)))",
+        "ggplot2::vars(!!quote(mpg))",
+    ] {
+        let diagnostics = check(expression);
+        assert!(diagnostics.is_empty(), "{expression}: {diagnostics:?}");
+    }
+    let diagnostics = check("ggplot2::from_theme(!list(1L))");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY021"),
+        "ordinary helper arguments still execute negation: {diagnostics:?}"
+    );
+}

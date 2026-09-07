@@ -163,6 +163,10 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Honor tidy-evaluation injection in `ggplot2::aes` aesthetics and `vars` facets,
+  avoiding false negation errors for unquoting and list splicing. Ordinary
+  helper arguments continue to execute R negation.
+
 - Match `rapply` result controls through the full R argument match, including
   positional and partial `how` arguments. Keep recursive unlisting and dynamic
   modes unknown; preserve outer list shape only for proven list/replace calls,

@@ -2,7 +2,9 @@
 
 This records the rule audit at commit
 `ec702b587f2ab5a78f64182654d2b1865b44adb0`: 709 Posit findings, including
-43 true positives and 666 false positives. The tables preserve that audit;
+43 true-positive records and 666 false-positive records. Two TP identities
+appear twice; see the [snapshot counting notes](0.9-release-evidence.md#final-precision-and-tp-retention).
+The tables preserve that audit;
 use the live corpus ledgers and oracle tests for current results.
 
 The audit combined the corpus, semantic-claim oracle, probes, literal-to-parameter
@@ -74,7 +76,7 @@ determines the verdict.
 | `RY010` unbound-variable | 4/472 | yes | `unbound_variable_claim.R` | n/a (syntactic) | - | - | keep | Core reachability check; 4 TP / 472 FP. High FP from cross-file resolution gaps addressed by workspace resolution. |
 | `RY020` unary-minus-type | 0/0 | yes | `unary_minus_type_claim.R` | lift-reachable | - | - | keep | Valid claim; 0 corpus findings. Lift-reachable through scalar defaults. |
 | `RY021` unary-not-type | 0/0 | yes | `unary_not_type_claim.R` | lift-reachable | - | - | keep | Valid claim; 0 corpus findings. Lift-reachable through scalar defaults. |
-| `RY030` invalid-comparison | 0/25 | yes | `invalid_comparison_claim.R` | param-unreachable | - | - | keep | Valid claim; 0 TP / 25 FP. Parameter-unreachable (triggering types are non-scalar). FP from typeshed coverage gaps. |
+| `RY030` invalid-comparison | 0/1 | yes | `invalid_comparison_claim.R` | param-unreachable | - | - | keep | Valid claim; 0 TP / 1 FP. Parameter-unreachable (triggering types are non-scalar). FP from typeshed coverage gaps. |
 | `RY031` invalid-logical-op | 0/2 | yes | `invalid_logical_op_claim.R` | lift-reachable | - | - | keep | Valid claim; 0 TP / 2 FP. Known gap in inconsistent_superassignment.R. Lift-reachable through scalar defaults. |
 | `RY032` scalar-logical-length | 1/47 | yes | `unknown_short_circuit_parameter.R` | param-unreachable | piloted | yes | keep | Standing-case policy: 1 TP / 47 FP. Fires on non-literal parameter-dependent expressions (47 FP in corpus) but policy determined unknown parameter length is not actionable. R7 confirms param-unreachable for c() defaults. |
 | `RY033` comparison-mode-mismatch | 6/35 | yes | `comparison_mode_mismatch_claim.R` | lift-reachable | - | - | keep | Valid claim; 6 TP / 35 FP. Lift-reachable through scalar defaults. |
@@ -88,8 +90,8 @@ determines the verdict.
 | `RY070` call-non-function | 2/6 | yes | `call_non_function.R` | n/a (syntactic) | - | - | keep | Valid claim; 2 TP / 6 FP. |
 | `RY080` map-return-type-mismatch | 0/2 | yes | `map_return_type_claim.R` | n/a (syntactic) | - | - | keep | Valid claim; 0 TP / 2 FP. Requires purrr typeshed. |
 | `RY090` unknown-argument | 0/4 | yes | `unknown_argument.R` | n/a (syntactic) | - | yes | keep | Valid syntactic claim; 0 TP / 4 FP. |
-| `RY091` missing-required-argument | 1/4 | yes | `missing_required_argument.R` | n/a (syntactic) | - | - | keep | Valid claim; 1 TP / 4 FP. |
-| `RY092` argument-type-mismatch | 0/3 | yes | `argument_type_mismatch.R` | n/a (syntactic) | - | - | keep | Valid claim; 0 TP / 3 FP. |
+| `RY091` missing-required-argument | 7/4 | yes | `missing_required_argument.R` | n/a (syntactic) | - | - | keep | Valid claim; 7 TP / 4 FP. |
+| `RY092` argument-type-mismatch | 0/2 | yes | `argument_type_mismatch.R` | n/a (syntactic) | - | - | keep | Valid claim; 0 TP / 2 FP. |
 | `RY093` comparison-inside-length | 4/0 | yes | `comparison_inside_length_claim.R` | consistent | piloted | yes | keep | Valid claim; 4 TP / 0 FP. Consistent under R7 lifting (syntactic). Mutation pilot passed. |
 | `RY094` printf-argument-count | 0/0 | yes | `printf_argument_count_claim.R` | n/a (syntactic) | - | - | keep | Valid claim; 0 corpus findings. |
 | `RY096` hasarg-non-formal | 0/0 | yes | `hasarg_non_formal_claim.R` | n/a (syntactic) | - | - | keep | Valid claim; 0 corpus findings. |
@@ -126,5 +128,5 @@ Code-level verdicts are enforced by `crates/ry-checker/tests/rule_evidence.rs`:
 - R7 coverage: every rule is classified (lift-reachable, param-unreachable,
   consistent, or n/a).
 - Mutation pilot: 4 rule families piloted (RY032, RY040, RY093, RY103).
-- Corpus values are identity counts from the hermetic ledger.
+- Corpus values count finding records in the archived hermetic ledger.
 - Verdicts: 33 keep, 1 default-off (RY003), 0 retire (RY095 retired during the audit response).

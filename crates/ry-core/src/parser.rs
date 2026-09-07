@@ -845,7 +845,7 @@ fn try_unwrap_raw_string(body: &str) -> Option<String> {
 /// Hex/octal escapes contribute bytes, while Unicode escapes contribute scalar
 /// values. R rejects unknown escapes, NUL, and mixed byte/Unicode escapes; this
 /// tolerant parser retains the original inner text for those cases, invalid
-/// scalars (including surrogate escapes that are not combined here), and byte
+/// scalars (including unpaired surrogates), and byte
 /// strings that cannot be represented by the AST's String.
 fn process_r_escapes(s: &str) -> String {
     let bytes = s.as_bytes();
@@ -853,7 +853,15 @@ fn process_r_escapes(s: &str) -> String {
     let mut i = 0;
     let mut byte_escape = false;
     let mut unicode_escape = false;
+    let mut high_surrogate: Option<u32> = None;
     while i < bytes.len() {
+        // A UTF-16 pair must consist of adjacent Unicode escapes. R also
+        // accepts braced escapes and either Unicode escape width in a pair.
+        if high_surrogate.is_some()
+            && !(bytes[i] == b'\\' && matches!(bytes.get(i + 1), Some(b'u' | b'U')))
+        {
+            return s.to_owned();
+        }
         if bytes[i] != b'\\' {
             out.push(bytes[i]);
             i += 1;
@@ -921,11 +929,21 @@ fn process_r_escapes(s: &str) -> String {
                 }
                 if is_byte {
                     out.push(value as u8);
-                } else if let Some(ch) = char::from_u32(value) {
+                } else {
+                    if let Some(high) = high_surrogate.take() {
+                        if !(0xDC00..=0xDFFF).contains(&value) {
+                            return s.to_owned();
+                        }
+                        value = 0x10000 + ((high - 0xD800) << 10) + (value - 0xDC00);
+                    } else if (0xD800..=0xDBFF).contains(&value) {
+                        high_surrogate = Some(value);
+                        continue;
+                    }
+                    let Some(ch) = char::from_u32(value) else {
+                        return s.to_owned();
+                    };
                     let mut encoded = [0; 4];
                     out.extend_from_slice(ch.encode_utf8(&mut encoded).as_bytes());
-                } else {
-                    return s.to_owned();
                 }
             }
             _ => return s.to_owned(),
@@ -933,6 +951,9 @@ fn process_r_escapes(s: &str) -> String {
         if byte_escape && unicode_escape {
             return s.to_owned();
         }
+    }
+    if high_surrogate.is_some() {
+        return s.to_owned();
     }
     String::from_utf8(out).unwrap_or_else(|_| s.to_owned())
 }
@@ -1563,6 +1584,12 @@ mod tests {
             (r#""\1412""#, "a2"),
             (r#""\u{41}F""#, "AF"),
             (r#""\U{1F600}""#, "😀"),
+            (r#""\uD83D\uDE00""#, "😀"),
+            (r#""\u{D83D}\u{DE00}""#, "😀"),
+            (r#""\U0000D83D\U0000DE00""#, "😀"),
+            (r#""\uD83D\U{DE00}""#, "😀"),
+            (r#""\U{D83D}\uDE00""#, "😀"),
+            (r#""a\uD800\uDC00z\uDBFF\uDFFF""#, "a𐀀z\u{10FFFF}"),
             (r#""\xc3\xa9""#, "é"),
             (r#""\303\251""#, "é"),
             (r#""\`""#, "`"),
@@ -1592,7 +1619,14 @@ mod tests {
             r"\u{000041}",
             r"\U{110000}",
             r"\uD800",
-            r"\uD83D\uDE00", // valid R surrogate pair; retain until pair decoding is supported
+            r"\uDC00",
+            r"\uDE00\uD83D",
+            r"\uD800\u0041",
+            r"\uD800x\uDC00",
+            r"\uD800\n\uDC00",
+            r"\uD800\uD800\uDC00",
+            r"\u{D800}\u{DC00",
+            r"\x41\uD83D\uDE00",
             r"\UFFFFFFFF",
             r"\n\xff",
             r"\x41\u42",

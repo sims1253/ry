@@ -10,7 +10,6 @@ use std::process::ExitCode;
 
 use clap::{Args, CommandFactory, FromArgMatches, Parser as ClapParser, Subcommand, ValueEnum};
 use miette::{IntoDiagnostic, Result};
-use rayon::ThreadPoolBuilder;
 
 use ry_config as config;
 
@@ -277,22 +276,9 @@ enum TypeshedCmd {
 }
 
 fn main() -> Result<ExitCode> {
-    // Size rayon's global pool before any parallel work starts. The
-    // check pipeline alternates parallel phases (parsing, diagnostic
-    // emission) with serial ones (workspace resolution, fixpoint
-    // refinement), so a worker per core spends the serial phases
-    // spinning and waking: on a 24-core machine the default pool burns
-    // ~4x the system time of a 12-worker pool for the same wall time.
-    // Capping at 12 keeps throughput flat while cutting CPU and system
-    // time on large machines; an explicit RAYON_NUM_THREADS still wins.
-    if std::env::var_os("RAYON_NUM_THREADS").is_none() {
-        let workers = std::thread::available_parallelism()
-            .map_or(8, std::num::NonZeroUsize::get)
-            .min(12);
-        if let Err(error) = ThreadPoolBuilder::new().num_threads(workers).build_global() {
-            eprintln!("ry: warning: could not size the thread pool: {error}");
-        }
-    }
+    // Rayon's global pool is sized lazily in `pipeline::parse_files` so
+    // subcommands that never run parallel work (`--version`, `--help`,
+    // completions) do not spawn worker threads at all.
 
     // `ArgMatches` is kept alongside the typed `Cli` so check's
     // `flag_set` can tell a user-passed flag from its clap default.

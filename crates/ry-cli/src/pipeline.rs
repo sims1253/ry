@@ -67,6 +67,37 @@ pub(crate) enum FailureAction {
     Abort,
 }
 
+/// Size rayon's global pool before the first parallel work starts
+/// (all CLI parallelism funnels through [`parse_files`]). The check
+/// pipeline alternates parallel phases (parsing, diagnostic emission)
+/// with serial ones (workspace resolution, fixpoint refinement), so a
+/// worker per core spends the serial phases spinning and waking: on a
+/// 24-core machine the default pool burns ~4x the system time of a
+/// 12-worker pool for the same wall time. Capping at 12 keeps
+/// throughput flat while cutting CPU and system time on large machines;
+/// an explicit `RAYON_NUM_THREADS` still wins.
+///
+/// Called lazily so subcommands that never touch rayon (`--version`,
+/// `--help`, completions) do not pay for spawning workers. Idempotent:
+/// rayon's global registry is process-wide and `build_global` fails on
+/// a second attempt, so a `Once` guards the (warning-free) first call.
+fn size_rayon_pool() {
+    use rayon::ThreadPoolBuilder;
+    use std::sync::Once;
+    static SIZED: Once = Once::new();
+    SIZED.call_once(|| {
+        if std::env::var_os("RAYON_NUM_THREADS").is_some() {
+            return;
+        }
+        let workers = std::thread::available_parallelism()
+            .map_or(8, std::num::NonZeroUsize::get)
+            .min(12);
+        if let Err(error) = ThreadPoolBuilder::new().num_threads(workers).build_global() {
+            eprintln!("ry: warning: could not size the thread pool: {error}");
+        }
+    });
+}
+
 /// Parse every path in parallel on rayon's pool, in input order.
 ///
 /// Each rayon thread reuses an `RParser` across files and runs to avoid
@@ -82,6 +113,7 @@ pub(crate) fn parse_files(
     on_failure: impl Fn(&Path, &ParseError) -> FailureAction + Sync,
 ) -> Result<Vec<Arc<ry_core::SourceFile>>, ParseFailure> {
     use rayon::prelude::*;
+    size_rayon_pool();
     let outcomes: Vec<_> = paths
         .par_iter()
         .map(|path| match parse_one(path) {

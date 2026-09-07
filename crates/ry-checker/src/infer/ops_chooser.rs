@@ -71,6 +71,7 @@ pub(crate) fn dispatch(
     symbol: &str,
     lhs: &RType,
     rhs: &RType,
+    plain_vectors: bool,
     scope: &Scope,
 ) -> Option<Dispatch> {
     if scope.data_mask_unknown || scope.search_path_unknown {
@@ -130,7 +131,9 @@ pub(crate) fn dispatch(
         (Some(true), _) => Dispatch::Value(RType::scalar(left.mode)),
         (Some(false), Some(true)) => Dispatch::Value(RType::scalar(right.mode)),
         (Some(false), Some(false))
-            if left.mode != right.mode && scalar_primitive(lhs) && scalar_primitive(rhs) =>
+            if left.mode != right.mode
+                && ((scalar_primitive(lhs) && scalar_primitive(rhs))
+                    || (plain_vectors && known_atomic(lhs) && known_atomic(rhs))) =>
         {
             // Different literal storage modes prove that the method bodies
             // are not identical. Equal modes alone prove nothing about identity.
@@ -156,12 +159,15 @@ pub(crate) fn syntax_rebound(checker: &Checker, scope: &Scope) -> bool {
 /// A closed, literal-only constructor cannot run user code or force a promise.
 /// Bare lookup is admitted only before any uncertain effect, with no visible
 /// masking or package search path. Qualified lookup still checks syntax.
-pub(crate) fn pure_structure_call(
+pub(crate) fn pure_literal_constructor(
     checker: &Checker,
     func: &Expr,
     args: &[Arg],
     scope: &Scope,
 ) -> bool {
+    if pure_literal_c(checker, func, args, scope) {
+        return true;
+    }
     if scope.ops_environment_unknown
         || scope.data_mask_unknown
         || scope.search_path_unknown
@@ -193,7 +199,7 @@ pub(crate) fn pure_structure_call(
                 | Expr::Double(..)
                 | Expr::String(..)
                 | Expr::Null(..)
-        )
+        ) || matches!(&arg.value, Expr::Call { func, args, .. } if pure_literal_c(checker, func, args, scope))
     }) && !syntax_rebound(checker, scope)
 }
 
@@ -233,4 +239,55 @@ fn scalar_primitive(ty: &RType) -> bool {
             ty.mode,
             Mode::Logical | Mode::Integer | Mode::Double | Mode::Character
         )
+}
+
+fn known_atomic(ty: &RType) -> bool {
+    ty.length != Length::Unknown
+        && matches!(
+            ty.mode,
+            Mode::Logical | Mode::Integer | Mode::Double | Mode::Character
+        )
+}
+
+pub(crate) fn plain_vector(checker: &Checker, value: &Expr, scope: &Scope) -> bool {
+    if scope.ops_environment_unknown {
+        return false;
+    }
+    if let Expr::Ident { name, .. } = value {
+        return scope
+            .plain_ops_vectors
+            .contains(semantic_argument_name(name));
+    }
+    let Expr::Call { func, args, .. } = value else {
+        return false;
+    };
+    if !pure_literal_constructor(checker, func, args, scope) {
+        return false;
+    }
+    let [payload, class] = args.as_slice() else {
+        return false;
+    };
+    payload.name.is_none()
+        && class.name.as_deref() == Some("class")
+        && matches!(class.value, Expr::String(..))
+        && (matches!(
+            payload.value,
+            Expr::Logical(..) | Expr::Integer(..) | Expr::Double(..) | Expr::String(..)
+        ) || matches!(&payload.value, Expr::Call { func, args, .. } if !args.is_empty() && pure_literal_c(checker, func, args, scope)))
+}
+
+fn pure_literal_c(checker: &Checker, func: &Expr, args: &[Arg], scope: &Scope) -> bool {
+    ident_name(func) == Some("base::c")
+        && !scope.ops_environment_unknown
+        && !scope.data_mask_unknown
+        && !scope.search_path_unknown
+        && !checker.user_stubs.contains_key("base")
+        && !syntax_rebound(checker, scope)
+        && args.iter().all(|arg| {
+            arg.name.is_none()
+                && matches!(
+                    arg.value,
+                    Expr::Logical(..) | Expr::Integer(..) | Expr::Double(..) | Expr::String(..)
+                )
+        })
 }

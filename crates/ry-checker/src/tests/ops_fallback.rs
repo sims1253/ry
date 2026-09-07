@@ -132,6 +132,7 @@ fn false_ops_fallback_does_not_extend_scalar_attribute_rules_to_other_lengths() 
             "+",
             &lhs,
             scope.get("y").unwrap(),
+            false,
             &scope,
         );
         assert!(

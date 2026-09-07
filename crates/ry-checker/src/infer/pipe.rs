@@ -281,6 +281,7 @@ impl Checker {
             None => RType::new(Mode::Null, Length::Zero),
         };
         scope.literal_functions.clear();
+        scope.plain_ops_vectors.clear();
         scope.ops_environment_unknown |=
             then_scope.ops_environment_unknown || else_scope.ops_environment_unknown;
         scope.effects_unknown |= then_scope.effects_unknown || else_scope.effects_unknown;

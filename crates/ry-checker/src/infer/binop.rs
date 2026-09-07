@@ -3,6 +3,11 @@ use crate::higher_order::S3MethodSource;
 use ry_core::walk::{AstNode, Descend, Walk, walk_expr};
 use std::ops::ControlFlow;
 
+pub(crate) struct OperandEvidence {
+    pub known_null: bool,
+    pub plain_vectors: bool,
+}
+
 impl Checker {
     pub(crate) fn infer_binop(
         &mut self,
@@ -10,9 +15,13 @@ impl Checker {
         lt: RType,
         rt: RType,
         span: Span,
-        known_null_is_actionable: bool,
+        operand_proof: OperandEvidence,
         scope: &mut Scope,
     ) -> RType {
+        let OperandEvidence {
+            known_null: known_null_is_actionable,
+            plain_vectors,
+        } = operand_proof;
         if matches!(op, BinOpKind::Colon) {
             scope.invalidate_ops_environment();
             return lt.seq(rt);
@@ -28,7 +37,7 @@ impl Checker {
         // #165). A dynamically classed value is likewise not proof that
         // the primitive is invalid: its runtime class may provide a
         // method from another package.
-        if let Some(dispatched) = self.try_s3_binop_dispatch(op, &lt, &rt, scope) {
+        if let Some(dispatched) = self.try_s3_binop_dispatch(op, &lt, &rt, plain_vectors, scope) {
             match dispatched {
                 ops_chooser::Dispatch::Value(result) => return result,
                 ops_chooser::Dispatch::IncompatiblePrimitive {
@@ -41,10 +50,16 @@ impl Checker {
                         "RY051",
                         format!("incompatible S3 methods `{left_method}` and `{right_method}` for `{}`; R uses the primitive operator", op_symbol(op)),
                     );
-                    let left_class = lt.class.clone();
+                    let result_class = match (lt.length, rt.length) {
+                        (Length::Zero, _) | (_, Length::Zero) => ClassVector::empty(),
+                        (Length::One, Length::Known(_)) => rt.class.clone(),
+                        (Length::Known(a), Length::Known(b)) if b > a => rt.class.clone(),
+                        _ => lt.class.clone(),
+                    };
                     // Primitive fallback does not call Ops.factor or
-                    // Ops.data.frame. Equal scalar arithmetic keeps LHS class;
-                    // comparison and logical primitives drop it.
+                    // Ops.data.frame. Arithmetic keeps the longer operand class;
+                    // ties choose the left, while empty results and comparison/
+                    // logical primitives drop it.
                     let mut result = self.infer_primitive_binop(
                         op,
                         lt.with_class(ClassVector::empty()),
@@ -53,7 +68,7 @@ impl Checker {
                         known_null_is_actionable,
                     );
                     if op.is_arithmetic() && result.mode != Mode::Opaque {
-                        result.class = left_class;
+                        result.class = result_class;
                     }
                     return result;
                 }
@@ -290,6 +305,7 @@ impl Checker {
         op: BinOpKind,
         lhs: &RType,
         rhs: &RType,
+        plain_vectors: bool,
         scope: &mut Scope,
     ) -> Option<ops_chooser::Dispatch> {
         // `:`, the pipes, and `%in%` are not S3 generics, and `&&`/`||`
@@ -308,7 +324,7 @@ impl Checker {
             return None;
         }
         let symbol = op_symbol(op);
-        if let Some(result) = ops_chooser::dispatch(self, symbol, lhs, rhs, scope) {
+        if let Some(result) = ops_chooser::dispatch(self, symbol, lhs, rhs, plain_vectors, scope) {
             match &result {
                 ops_chooser::Dispatch::Value(value) if value.mode != Mode::Opaque => {}
                 _ => scope.invalidate_ops_environment(),
@@ -418,7 +434,11 @@ impl Checker {
             lt,
             rt,
             span,
-            known_null_arithmetic_operand(lhs, scope) || known_null_arithmetic_operand(rhs, scope),
+            OperandEvidence {
+                known_null: known_null_arithmetic_operand(lhs, scope)
+                    || known_null_arithmetic_operand(rhs, scope),
+                plain_vectors: false,
+            },
             scope,
         );
         if rhs_parameter_vector

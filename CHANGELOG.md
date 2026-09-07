@@ -151,6 +151,12 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Extend explicit `FALSE`/`FALSE` Ops chooser fallback to plain vectors built
+  with proven base `structure()` and flat literal `base::c()` payloads.
+  Arithmetic keeps the longer operand's class (left on ties); comparison and
+  logical results drop it. Attributes, unknown lengths, and empty constructors
+  remain outside this proof.
+
 - Compute data-frame column types after scalar arithmetic instead of copying
   their input types. Keep classed column results unknown when methods may run.
 

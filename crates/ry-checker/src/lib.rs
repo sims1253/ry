@@ -293,6 +293,8 @@ pub struct Scope {
     /// An unmodeled call may force promises that mutate this frame or install
     /// active bindings. Later expression inference cannot reuse caller facts.
     pub(crate) effects_unknown: bool,
+    /// Closed class-only vector construction, lost on writes and control-flow merges.
+    pub(crate) plain_ops_vectors: HashSet<String>,
     pub(crate) literal_functions: HashMap<String, Arc<infer::ops_chooser::LiteralFunction>>,
     pub(crate) reference_provenance: Option<Box<reference_facts::ScopeProvenance>>,
     pub bindings: HashMap<String, RType>,
@@ -349,6 +351,7 @@ impl Scope {
 
     pub(crate) fn invalidate_ops_environment(&mut self) {
         self.literal_functions.clear();
+        self.plain_ops_vectors.clear();
         self.ops_environment_unknown = true;
     }
 
@@ -362,6 +365,7 @@ impl Scope {
             provenance.invalidate(&name);
         }
         self.literal_functions.remove(semantic_argument_name(&name));
+        self.plain_ops_vectors.remove(semantic_argument_name(&name));
         self.function_aliases.remove(&name);
         self.lexical_functions.remove(&name);
         self.list_origin_bindings.remove(&name);
@@ -379,6 +383,7 @@ impl Scope {
             provenance.invalidate(&name);
         }
         self.literal_functions.remove(semantic_argument_name(&name));
+        self.plain_ops_vectors.remove(semantic_argument_name(&name));
         self.function_aliases.remove(&name);
         self.lexical_functions.remove(&name);
         self.bindings.insert(name.clone(), t);
@@ -399,6 +404,7 @@ impl Scope {
             provenance.invalidate(&name);
         }
         self.literal_functions.remove(semantic_argument_name(&name));
+        self.plain_ops_vectors.remove(semantic_argument_name(&name));
         self.function_aliases.remove(&name);
         self.narrowed_bindings.remove(&name);
         self.bindings.insert(name.clone(), t);

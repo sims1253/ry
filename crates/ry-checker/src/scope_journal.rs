@@ -78,6 +78,49 @@ impl BindingState {
     }
 }
 
+// An ordinary assignment removes these facts. Keep only the values actually
+// removed; after later undo records are replayed, absent facts need no work.
+#[derive(Debug)]
+pub(crate) struct AssignmentUndo {
+    ty: Option<RType>,
+    removed_markers: u8,
+    alias: Option<String>,
+    provenance: Option<BindingProvenance>,
+}
+
+impl AssignmentUndo {
+    fn restore(self, scope: &mut Scope, name: String) {
+        let sets = [
+            &mut scope.narrowed_bindings,
+            &mut scope.parameter_bindings,
+            &mut scope.list_origin_bindings,
+            &mut scope.default_parameter_bindings,
+            &mut scope.lexical_functions,
+        ];
+        for (index, set) in sets.into_iter().enumerate() {
+            debug_assert!(!set.contains(&name));
+            if self.removed_markers & (1 << index) != 0 {
+                set.insert(name.clone());
+            }
+        }
+        debug_assert!(!scope.function_aliases.contains_key(&name));
+        if let Some(alias) = self.alias {
+            scope.function_aliases.insert(name.clone(), alias);
+        }
+        if let Some(provenance) = self.provenance
+            && let Some(table) = scope.reference_provenance.as_mut()
+        {
+            debug_assert!(!table.bindings.contains_key(&name));
+            table.bindings.insert(name.clone(), provenance);
+        }
+        if let Some(ty) = self.ty {
+            scope.bindings.insert(name, ty);
+        } else {
+            scope.bindings.remove(&name);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum MarkerKind {
     ListOrigin,
@@ -87,6 +130,7 @@ pub(crate) enum MarkerKind {
 
 #[derive(Debug)]
 pub(crate) enum Undo {
+    Assignment(String, AssignmentUndo),
     Binding(String, BindingState),
     Marker(MarkerKind, String, bool),
     Alias(String, Option<String>),
@@ -136,25 +180,41 @@ impl BranchDelta {
 }
 
 impl Scope {
-    pub(crate) fn begin_assignment_change(&mut self, name: &str, ty: &RType) -> Option<usize> {
-        if self.snapshot_depth == 0 {
-            return None;
+    pub(crate) fn insert_with_assignment_undo(&mut self, name: String, ty: RType) {
+        debug_assert!(self.snapshot_depth > 0);
+        let same_type = self.get(&name) == Some(&ty);
+        let sets = [
+            &mut self.narrowed_bindings,
+            &mut self.parameter_bindings,
+            &mut self.list_origin_bindings,
+            &mut self.default_parameter_bindings,
+            &mut self.lexical_functions,
+        ];
+        let mut removed_markers = 0;
+        for (index, set) in sets.into_iter().enumerate() {
+            if set.remove(&name) {
+                removed_markers |= 1 << index;
+            }
         }
-        if self.get(name) == Some(ty)
-            && !self.narrowed_bindings.contains(name)
-            && !self.parameter_bindings.contains(name)
-            && !self.list_origin_bindings.contains(name)
-            && !self.default_parameter_bindings.contains(name)
-            && !self.lexical_functions.contains(name)
-            && !self.function_aliases.contains_key(name)
-            && self
-                .reference_provenance
-                .as_ref()
-                .is_none_or(|p| !p.bindings.contains_key(name))
-        {
-            return None;
+        let alias = self.function_aliases.remove(&name);
+        let provenance = self
+            .reference_provenance
+            .as_mut()
+            .and_then(|table| table.bindings.remove(&name));
+        if same_type && removed_markers == 0 && alias.is_none() && provenance.is_none() {
+            self.bindings.insert(name, ty);
+            return;
         }
-        self.begin_binding_change(name)
+        let previous = self.bindings.insert(name.clone(), ty);
+        self.undo.push(Undo::Assignment(
+            name,
+            AssignmentUndo {
+                ty: previous,
+                removed_markers,
+                alias,
+                provenance,
+            },
+        ));
     }
 
     pub(crate) fn begin_binding_change(&mut self, name: &str) -> Option<usize> {
@@ -248,7 +308,8 @@ impl Scope {
         let mut names = HashSet::new();
         for undo in &self.undo[mark.len..] {
             match undo {
-                Undo::Binding(name, _)
+                Undo::Assignment(name, _)
+                | Undo::Binding(name, _)
                 | Undo::Marker(_, name, _)
                 | Undo::Alias(name, _)
                 | Undo::Reference(name, _) => {
@@ -269,6 +330,7 @@ impl Scope {
         };
         while self.undo.len() > mark.len {
             match self.undo.pop().unwrap() {
+                Undo::Assignment(name, state) => state.restore(self, name),
                 Undo::Binding(name, state) => state.restore(self, name),
                 Undo::Marker(kind, name, present) => {
                     let set = match kind {
@@ -340,6 +402,30 @@ impl Scope {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn assignment_undo_restores_interleaved_metadata_and_skips_only_full_noops() {
+        let mut scope = Scope::default();
+        let integer = RType::new(Mode::Integer, Length::One);
+        scope.insert("x", integer.clone());
+        let initial = format!("{:?}", scope.clone());
+        let mark = scope.begin_snapshot();
+        scope.insert("x", integer.clone());
+        assert!(scope.undo.is_empty());
+        scope.mark_list_origin("x");
+        let before_assignment = scope.undo.len();
+        scope.insert("x", integer);
+        assert_eq!(scope.undo.len(), before_assignment + 1);
+        scope.set_function_alias("x", "callee".into());
+        scope.insert("x", RType::new(Mode::Character, Length::One));
+        scope.mark_lexical_function("x");
+        let logical = RType::new(Mode::Logical, Length::One);
+        scope.insert_narrowed("x", logical.clone());
+        let delta = scope.finish_snapshot(mark);
+        assert_eq!(delta.changed["x"].ty, Some(logical));
+        assert!(delta.changed["x"].narrowed);
+        assert_eq!(format!("{:?}", scope), initial);
+    }
 
     #[test]
     fn nested_snapshots_restore_markers_and_clones_have_no_history() {

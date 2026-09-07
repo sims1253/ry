@@ -349,7 +349,10 @@ impl Scope {
 
     pub fn insert(&mut self, name: impl Into<String>, t: RType) {
         let name = name.into();
-        let journal = self.begin_assignment_change(&name, &t);
+        if self.snapshot_depth > 0 {
+            self.insert_with_assignment_undo(name, t);
+            return;
+        }
         if let Some(provenance) = self.reference_provenance.as_mut() {
             provenance.invalidate(&name);
         }
@@ -359,8 +362,7 @@ impl Scope {
         self.parameter_bindings.remove(&name);
         self.default_parameter_bindings.remove(&name);
         self.narrowed_bindings.remove(&name);
-        let previous = self.bindings.insert(name, t);
-        self.finish_binding_change(journal, previous);
+        self.bindings.insert(name, t);
     }
 
     pub(crate) fn insert_narrowed(&mut self, name: impl Into<String>, t: RType) {

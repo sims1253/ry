@@ -268,7 +268,8 @@ All notable changes to ry are documented in this file.
 - Validate typeshed updates before replacing the vendored snapshot. Failed
   validation leaves the existing stubs and provenance intact. Restore the old
   snapshot if installation fails or receives a handled interrupt, and retain a
-  recovery copy if restoration fails.
+  recovery copy if restoration fails. Refresh the embedded provenance timestamp
+  after validation so the next Cargo build includes the installed snapshot.
 
 - Infer vector-constructor lengths from size values, including empty defaults
   and fractional sizes. Correct factor arithmetic with NULL and unary minus.

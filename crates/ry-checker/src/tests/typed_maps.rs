@@ -1,6 +1,128 @@
 use super::*;
 
 #[test]
+fn simplify_false_keeps_sapply_and_mapply_results_as_lists() {
+    for source in [
+        "a <- sapply(1L, function(v) 1L, simplify = FALSE); a$field",
+        "a <- sapply(simplify = FALSE, FUN = function(v) 1L, X = 1L); a$field",
+        "b <- mapply(SIMPLIFY = FALSE, FUN = function(x) 1L, x = 1L); b$field",
+        "b <- mapply(FUN = function(x) 1L, x = 1L, SIMPLIFY = FALSE); b$field",
+        "c <- tapply(1L, 1L, function(v) 1L, simplify = FALSE); c$field",
+        "wrapper <- function(...) sapply(1L, function(v) 1L, simplify = FALSE, ...); wrapper(USE.NAMES = FALSE)$field",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY061"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn unknown_simplify_controls_do_not_prove_atomic_results() {
+    for source in [
+        "control <- identity(FALSE); a <- sapply(1L, function(v) 1L, simplify = control); a$field",
+        "control <- identity(FALSE); b <- mapply(FUN = function(x) 1L, x = 1L, SIMPLIFY = control); b$field",
+        "library(dplyr); c <- sapply(1L, function(v) 1L, simplify = FALSE); c$field",
+        "wrapper <- function(...) sapply(1L, function(v) 1L, ...); wrapper(simplify = FALSE)$field",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY061"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn non_base_simplify_signatures_keep_their_existing_contract() {
+    let stub = r#"{
+        "schema_version": "2",
+        "package": "custom",
+        "version": "test",
+        "functions": {
+            "sapply": {
+                "params": [
+                    {"name": "X", "required": true},
+                    {"name": "FUN", "required": true},
+                    {"name": "simplify", "default": true}
+                ],
+                "higher_order": {
+                    "callback_param": "FUN",
+                    "callback_position": 1,
+                    "callback_args": ["element_of_arg0"],
+                    "result": {"kind": "simplify", "length_arg": 0}
+                },
+                "return": {"mode": "opaque", "length": "unknown"}
+            }
+        }
+    }"#;
+    let base_stub = stub.replace("\"package\": \"custom\"", "\"package\": \"base\"");
+    for (source, file, contents) in [
+        (
+            "a <- custom::sapply(1L, function(v) 1L, simplify = FALSE); a$field",
+            "custom.json",
+            stub,
+        ),
+        (
+            "a <- sapply(1L, function(v) 1L, simplify = FALSE); a$field",
+            "base.json",
+            base_stub.as_str(),
+        ),
+    ] {
+        let diagnostics = check_with_stubs(source, &[(file, contents)]).0;
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY061"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn unknown_higher_order_input_length_does_not_prove_simplification() {
+    for source in [
+        "x <- integer(1L - 1L); a <- sapply(x, function(v) 1L, USE.NAMES = FALSE); a$field",
+        "x <- integer(1L - 1L); b <- mapply(function(v) 1L, x, USE.NAMES = FALSE); b$field",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY061"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn known_nonempty_scalar_simplification_still_reports_atomic_dollar() {
+    for source in [
+        "a <- sapply(1L, function(v) 1L, simplify = TRUE); a$field",
+        "b <- mapply(FUN = function(x) 1L, x = 1L, SIMPLIFY = TRUE); b$field",
+        "c <- tapply(1L, 1L, function(v) 1L, simplify = TRUE); c$field",
+        "wrapper <- function(...) sapply(1L, function(v) 1L, simplify = TRUE, ...); wrapper(USE.NAMES = FALSE)$field",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY061"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn simplify_false_does_not_skip_callback_diagnostics() {
+    for source in [
+        "sapply(1L, function(v) v + 'bad', simplify = FALSE)",
+        "mapply(function(x) x + 'bad', x = 1L, SIMPLIFY = FALSE)",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY040"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
 fn regmatches_callbacks_do_not_assume_scalar_elements() {
     for source in [
         "x <- c('ab','z'); matches <- regmatches(x,regexec('(a)(b)',x)); Filter(function(z) length(z)>0L,matches)",

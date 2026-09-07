@@ -880,7 +880,7 @@ fn process_r_escapes(s: &str) -> String {
             b'f' => out.push(12),
             b'v' => out.push(11),
             b'a' => out.push(7),
-            b'"' | b'\'' | b'`' | b'\\' => out.push(next),
+            b'"' | b'\'' | b'`' | b'\\' | b' ' => out.push(next),
             // R keeps a physical escaped newline inside a string.
             b'\n' => out.push(b'\n'),
             b'0'..=b'7' => {
@@ -1593,6 +1593,7 @@ mod tests {
             (r#""\xc3\xa9""#, "é"),
             (r#""\303\251""#, "é"),
             (r#""\`""#, "`"),
+            (r#""a\ b""#, "a b"),
             ("\"a\\\nb\"", "a\nb"),
             (r#"r"(\141\u{41})""#, r"\141\u{41}"),
         ];

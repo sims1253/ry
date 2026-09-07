@@ -51,6 +51,12 @@ Status meanings:
 | `namespace_op` terminal `None` | safe | The caller defaults to `"::"`; the namespace expression remains represented. |
 | `collect_comments` failed UTF-8 read | safe | It can omit only comment metadata, never an expression or statement. The nodes and source share a valid UTF-8 buffer, so the failure is defensive. |
 
+After this audit, PR #274 replaced the `process_r_escapes` sentinel arms with
+byte-buffer decoding. The historical row above no longer describes that helper:
+physical escaped newlines are now preserved, as in R, and malformed or
+unrepresentable strings retain their complete inner source text. Recovery still
+keeps the string AST node.
+
 ## Other `Option` propagation and fallback inventory
 
 The audit also followed propagation that does not spell a literal `None` at the

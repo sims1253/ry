@@ -376,14 +376,7 @@ impl Checker {
     fn scalar_call_is_classless(&self, callee: &str, args: &[Arg], scope: &Scope) -> bool {
         let bare = crate::semantic_lists::bare_name(callee);
         let may_dispatch = bare == "length"
-            || bare == "mean"
-            || self
-                .typeshed
-                .globals
-                .s3_generics
-                .iter()
-                .any(|generic| generic == bare)
-            || crate::higher_order::s3_group_generic(bare).is_some();
+            || crate::higher_order::is_dispatch_capable_generic(&self.typeshed.globals, bare);
         !may_dispatch
             || args
                 .iter()

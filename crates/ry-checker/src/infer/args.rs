@@ -417,29 +417,14 @@ fn edit_distance(left: &str, right: &str) -> usize {
     previous[right_chars.len()]
 }
 
-/// Whether `function_name` is an S3 generic whose stub parameter types
-/// method dispatch can defeat: a classed or NULL argument may route to a
-/// method that accepts it, so RY092 stays quiet. The names come from the
-/// same two sources the dispatch path in `infer_call` consults: the base
-/// stub's `globals.s3_generics` and the registered group-generic member
-/// lists ([`crate::semantic_lists::S3_MATH_GENERICS`] and
-/// [`crate::semantic_lists::S3_SUMMARY_GENERICS`], which cover
-/// `round`, `log`, `sqrt`, and `exp`). `mean` stays a documented special
-/// case: it is a plain S3 generic (a `mean.<class>` method catches it,
-/// but a `Summary.<class>` method does not), so it belongs in neither
-/// group list, and the base stub's `globals.s3_generics` omits it.
-/// r-typeshed registering it there lets this fallback shrink (issue #41).
+/// Whether RY092 should defer its argument mode check: a classed or NULL
+/// actual may dispatch to a method that accepts it.
 fn generic_argument_may_dispatch(
     globals: &ry_typeshed::Globals,
     function_name: &str,
     actual: &RType,
 ) -> bool {
-    let generic = globals
-        .s3_generics
-        .iter()
-        .any(|generic| generic == function_name)
-        || crate::higher_order::s3_group_generic(function_name).is_some()
-        || function_name == "mean";
+    let generic = crate::higher_order::is_dispatch_capable_generic(globals, function_name);
     generic && (actual.class.has_known_class() || actual.mode == Mode::Null)
 }
 

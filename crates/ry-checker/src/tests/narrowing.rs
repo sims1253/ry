@@ -1011,11 +1011,9 @@ fn if_branch_reassignment_over_existing_type_stays_visible() {
 }
 
 #[test]
-fn if_branch_both_branches_over_existing_type_folds_parent() {
+fn if_branch_both_branches_over_existing_type_replace_parent() {
     // `s <- 1L` (parent Integer) then reassigned in BOTH branches to
-    // character. The merged branch type is character; folding the
-    // parent's integer in yields union[integer, character] rather than
-    // losing the parent's prior type.
+    // character. Neither path can retain the parent's integer type.
     let (diags, top) =
         check_with_scope("s <- 1L\nif (TRUE) { s <- \"a\" } else { s <- \"b\" }\ns\n");
     assert!(
@@ -1025,8 +1023,8 @@ fn if_branch_both_branches_over_existing_type_folds_parent() {
     );
     let t = top.get("s").expect("s should be bound at top level");
     assert!(
-        matches!(t.mode, Mode::Union),
-        "both-branch reassignment over a different parent type should fold the parent in (union), got {:?}",
+        matches!(t.mode, Mode::Character),
+        "both-branch reassignment replaces the prior parent type, got {:?}",
         t
     );
 }
@@ -1042,6 +1040,84 @@ fn diverging_length_guards_narrow_null_defaults_in_the_continuation() {
                 .iter()
                 .all(|diagnostic| diagnostic.code != "RY040"),
             "a diverging {guard} guard must narrow x away from NULL: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn both_branches_replace_the_prior_binding_type() {
+    for branches in [
+        "if (flag) g <- function(x) x else g <- function(x) x + 1L",
+        "if (flag) { if (other) g <- function(x) x else g <- function(x) x + 1L } else g <- function(x) x",
+    ] {
+        let source = format!("f <- function(flag, other) {{ g <- NULL; {branches}; g(1L) }}");
+        let diagnostics = check(&source);
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "RY070"),
+            "both arms replace NULL with a function: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn branches_that_retain_or_install_nonfunctions_still_report_calls() {
+    for branches in [
+        "if (flag) g <- function(x) x",
+        "if (flag) g <- function(x) x else g <- NULL",
+        "if (flag) g <- function(x) x else g <- 1L",
+        "if (flag) { if (other) g <- function(x) x } else g <- function(x) x",
+    ] {
+        let source = format!("f <- function(flag, other) {{ g <- NULL; {branches}; g(1L) }}");
+        let diagnostics = check(&source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY070"),
+            "a reachable non-function arm must remain visible: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn branch_narrowing_without_reassignment_keeps_parent_members() {
+    let (_, scope) = check_with_scope(
+        "x <- if (TRUE) 1L else 'text'\nif (is.character(x)) { nchar(x) } else { x + 1L }\n",
+    );
+    let members = scope.get("x").unwrap().members.as_ref().unwrap();
+    assert!(members.iter().any(|ty| ty.mode == Mode::Integer));
+    assert!(members.iter().any(|ty| ty.mode == Mode::Character));
+}
+
+#[test]
+fn zero_iteration_loop_retains_the_prebranch_nonfunction_path() {
+    // Loop inference may make the binding opaque. It must never claim
+    // every path installs a function when the loop can run zero times.
+    let (_, scope) = check_with_scope(
+        "g <- NULL\nif (TRUE) { for (i in integer(0)) g <- function(x) x } else g <- function(x) x\n",
+    );
+    let ty = scope.get("g").unwrap();
+    assert!(
+        ty.mode == Mode::Opaque
+            || ty
+                .members
+                .as_ref()
+                .is_some_and(|members| members.iter().any(|ty| ty.mode == Mode::Null))
+    );
+}
+
+#[test]
+fn diverging_branch_does_not_reintroduce_prior_nonfunction_type() {
+    for branches in [
+        "if (flag) return(0L) else g <- function(x) x",
+        "if (flag) g <- function(x) x else return(0L)",
+    ] {
+        let source = format!("f <- function(flag) {{ g <- NULL; {branches}; g(1L) }}");
+        assert!(
+            check(&source)
+                .iter()
+                .all(|diagnostic| diagnostic.code != "RY070")
         );
     }
 }

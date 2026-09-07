@@ -219,6 +219,11 @@ pub(crate) fn run_check(
     let mut all_paths = rescan(&search_roots, config_root.as_deref(), &cfg, true);
 
     if all_paths.is_empty() {
+        // An empty discovery result still needs a complete machine-readable report.
+        print!(
+            "{}",
+            render_diagnostics(&[], format, &HashMap::new(), color)
+        );
         let roots = search_roots
             .iter()
             .map(|root| root.display().to_string())

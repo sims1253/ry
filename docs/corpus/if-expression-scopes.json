@@ -1,0 +1,69 @@
+{
+  "baseline_revision": "d5414ffe2be45d2f3ead7a804ea7a872c80f6346",
+  "rustc": "rustc 1.96.1 (31fca3adb 2026-06-26)",
+  "valgrind": "valgrind-3.18.1",
+  "environment": {
+    "RY_NO_INSTALLED_LIBRARIES": "1",
+    "RAYON_NUM_THREADS": "1"
+  },
+  "command": "valgrind --tool=dhat --dhat-out-file=PROFILE BINARY check INPUT",
+  "binary_sha256": {
+    "baseline": "e0726e1ba44b541d02bb0fb6de61ce5a62c041de10a1fc2a7a838b05bac42926",
+    "candidate": "d7e5810f2af1a3631049e08f63779d055489e8493f591291fc7718fa14b68df1"
+  },
+  "workloads": {
+    "one": {
+      "baseline": {
+        "allocated_bytes": 68204571,
+        "allocation_blocks": 228633,
+        "peak_live_bytes": 23879204,
+        "peak_live_blocks": 81991,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "candidate": {
+        "allocated_bytes": 45344963,
+        "allocation_blocks": 154569,
+        "peak_live_bytes": 16258540,
+        "peak_live_blocks": 57293,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "input_sha256": "b97430a87c7eb6fdcfdf1fca1d6768d7e5ff3e84efe4b0f781dad0b503e64987"
+    },
+    "two": {
+      "baseline": {
+        "allocated_bytes": 68180087,
+        "allocation_blocks": 228689,
+        "peak_live_bytes": 23886132,
+        "peak_live_blocks": 82035,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "candidate": {
+        "allocated_bytes": 68180095,
+        "allocation_blocks": 228689,
+        "peak_live_bytes": 16266252,
+        "peak_live_blocks": 57339,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "input_sha256": "6ad883b151fa19fbf26301e27679bdd9bcabc6a3a0415f352b726e184bac6239"
+    },
+    "corpus": {
+      "baseline": {
+        "allocated_bytes": 167049810,
+        "allocation_blocks": 1318335,
+        "peak_live_bytes": 30425122,
+        "peak_live_blocks": 181568,
+        "stdout_sha256": "8711b196a72870838dcee359b34c2aac654fe09410d15a43d3e6a7ba2d718f25"
+      },
+      "candidate": {
+        "allocated_bytes": 166988530,
+        "allocation_blocks": 1317980,
+        "peak_live_bytes": 30425122,
+        "peak_live_blocks": 181568,
+        "stdout_sha256": "8711b196a72870838dcee359b34c2aac654fe09410d15a43d3e6a7ba2d718f25"
+      },
+      "input": "crates/ry-checker/testdata at baseline_revision; CLI checks 461 files"
+    }
+  },
+  "candidate_change_revision": "fab49527c4e60da278163ad7e07efdfe06eada93",
+  "candidate_source": "baseline_revision plus candidate_change_revision; excludes separate walker-condition cleanup"
+}

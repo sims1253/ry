@@ -10,6 +10,7 @@ impl Checker {
         semantic: &str,
         args: &[Arg],
         scope: &mut Scope,
+        environment_known_before_call: bool,
     ) -> Option<RType> {
         let unknown = |scope: &mut Scope| {
             scope.invalidate_unknown_effects();
@@ -92,6 +93,22 @@ impl Checker {
         }
         // Parentheses are normalized out of the AST, but R can rebind `(`.
         if self.literal_bindings_may_be_shadowed(["(", "`(`"], &HashSet::new(), scope) {
+            return unknown(scope);
+        }
+        let literal_selector = matches!(
+            first.value,
+            Expr::String(..)
+                | Expr::Integer(..)
+                | Expr::Double(..)
+                | Expr::Logical(..)
+                | Expr::UnaryOp {
+                    op: UnaryOpKind::Neg,
+                    ..
+                }
+        );
+        // Earlier calls or deferred bodies can replace switch or namespace
+        // operators. The current call's own barrier is not a prior effect.
+        if literal_selector && !environment_known_before_call {
             return unknown(scope);
         }
         let alternatives = &args[1..];

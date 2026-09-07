@@ -127,3 +127,18 @@ fn decoded_ascii_selectors_follow_r_escape_values() {
         assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque, "{call}");
     }
 }
+
+#[test]
+fn prior_calls_cannot_lend_base_switch_identity() {
+    for source in [
+        "replace <- function() assign(paste0('swi', 'tch'), function(...) 1L, envir=.GlobalEnv); replace(); out <- switch(1L, 'bad', 1L); after <- out+1L",
+        "replace <- function() assign(paste0(':', ':'), function(...) function(...) 1L, envir=.GlobalEnv); replace(); out <- base::switch(1L, 'bad', 1L); after <- out+1L",
+    ] {
+        let (diagnostics, scope) = check_with_scope(source);
+        assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque);
+        assert!(
+            !diagnostics.iter().any(|d| d.code == "RY040"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}

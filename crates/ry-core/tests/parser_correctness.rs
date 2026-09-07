@@ -82,19 +82,23 @@ fn star_star_is_pow() {
     assert!(pow, "2 ** 3 must lower to Pow; got {:?}", file.stmts);
 }
 
-/// Regression: integer literals that fail `i64` parse (`1e5L`,
-/// `0x10L`) return `None`, and `?`-propagation in `lower_binary` /
-/// `try_lower_assign` silently deletes the whole enclosing statement. The
-/// statement must NOT vanish: `n <- 1e5L` and `m <- n + 1` must both survive.
+/// Unsupported numeric spellings must not drop their enclosing statement.
 #[test]
 fn failed_integer_literal_does_not_drop_statement() {
-    let file = parse("n <- 1e5L\nm <- n + 1\n");
+    let file = parse("n <- 0x1p2L\nm <- n + 1\n");
     assert_eq!(
         file.stmts.len(),
         2,
         "both statements must be preserved; got {:?}",
         file.stmts
     );
+    assert!(matches!(
+        &file.stmts[0],
+        Stmt::Assign {
+            value: Expr::Unknown(_),
+            ..
+        }
+    ));
 }
 
 #[test]

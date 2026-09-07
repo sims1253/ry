@@ -1062,33 +1062,6 @@
       "severity": "warning",
       "message": "missing required argument `stop` in call to `substr`"
     },
-    "dplyr::RY002::tests/testthat/test-mutate.R:793:16": {
-      "package": "dplyr",
-      "code": "RY002",
-      "path": "tests/testthat/test-mutate.R",
-      "line": 793,
-      "column": 16,
-      "severity": "warning",
-      "message": "`if` condition has length 2; R requires a length-1 condition"
-    },
-    "dplyr::RY002::tests/testthat/test-summarise.R:321:11": {
-      "package": "dplyr",
-      "code": "RY002",
-      "path": "tests/testthat/test-summarise.R",
-      "line": 321,
-      "column": 11,
-      "severity": "warning",
-      "message": "`if` condition has length 2; R requires a length-1 condition"
-    },
-    "dplyr::RY002::tests/testthat/test-summarise.R:331:38": {
-      "package": "dplyr",
-      "code": "RY002",
-      "path": "tests/testthat/test-summarise.R",
-      "line": 331,
-      "column": 38,
-      "severity": "warning",
-      "message": "`if` condition has length 2; R requires a length-1 condition"
-    },
     "dplyr::RY010::R/conditions.R:310:14": {
       "package": "dplyr",
       "code": "RY010",
@@ -1188,60 +1161,6 @@
       "severity": "error",
       "message": "cannot apply arithmetic op to `double` and `character`"
     },
-    "dplyr::RY040::tests/testthat/test-count-tally.R:139:38": {
-      "package": "dplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-count-tally.R",
-      "line": 139,
-      "column": 38,
-      "severity": "error",
-      "message": "cannot apply arithmetic op to `double` and `character`"
-    },
-    "dplyr::RY040::tests/testthat/test-count-tally.R:173:38": {
-      "package": "dplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-count-tally.R",
-      "line": 173,
-      "column": 38,
-      "severity": "error",
-      "message": "cannot apply arithmetic op to `double` and `character`"
-    },
-    "dplyr::RY040::tests/testthat/test-count-tally.R:214:42": {
-      "package": "dplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-count-tally.R",
-      "line": 214,
-      "column": 42,
-      "severity": "error",
-      "message": "cannot apply arithmetic op to `double` and `character`"
-    },
-    "dplyr::RY040::tests/testthat/test-count-tally.R:245:42": {
-      "package": "dplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-count-tally.R",
-      "line": 245,
-      "column": 42,
-      "severity": "error",
-      "message": "cannot apply arithmetic op to `double` and `character`"
-    },
-    "dplyr::RY040::tests/testthat/test-mutate.R:408:23": {
-      "package": "dplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-mutate.R",
-      "line": 408,
-      "column": 23,
-      "severity": "error",
-      "message": "cannot apply arithmetic op to `list` and `double`"
-    },
-    "dplyr::RY040::tests/testthat/test-mutate.R:410:36": {
-      "package": "dplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-mutate.R",
-      "line": 410,
-      "column": 36,
-      "severity": "error",
-      "message": "cannot apply arithmetic op to `list` and `double`"
-    },
     "dplyr::RY040::tests/testthat/test-select.R:167:34": {
       "package": "dplyr",
       "code": "RY040",
@@ -1286,15 +1205,6 @@
       "column": 16,
       "severity": "error",
       "message": "column `big` not found in data frame schema; available columns: x, g"
-    },
-    "dplyr::RY060::tests/testthat/test-mutate.R:794:16": {
-      "package": "dplyr",
-      "code": "RY060",
-      "path": "tests/testthat/test-mutate.R",
-      "line": 794,
-      "column": 16,
-      "severity": "error",
-      "message": "column `z` not found in data frame schema; available columns: x, g"
     },
     "dplyr::RY090::tests/testthat/test-sets.R:60:25": {
       "package": "dplyr",

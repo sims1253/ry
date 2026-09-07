@@ -352,7 +352,7 @@ impl Checker {
                 // rebinding re-marks it, and an in-loop non-list rebinding
                 // cleared it — the last write is the post-loop truth.
                 scope.ops_environment_unknown |= inner.ops_environment_unknown;
-                scope.custom_operator_effects_unknown |= inner.custom_operator_effects_unknown;
+                scope.effects_unknown |= inner.effects_unknown;
                 for (binding, ty) in inner.bindings {
                     let had_list_origin = inner.list_origin_bindings.contains(&binding);
                     scope.insert(binding.clone(), ty);
@@ -375,7 +375,7 @@ impl Checker {
                 // way.
                 let body_unreachable = inner.unreachable;
                 scope.ops_environment_unknown |= inner.ops_environment_unknown;
-                scope.custom_operator_effects_unknown |= inner.custom_operator_effects_unknown;
+                scope.effects_unknown |= inner.effects_unknown;
                 for (binding, ty) in inner.bindings {
                     let had_list_origin = inner.list_origin_bindings.contains(&binding);
                     scope.insert(binding.clone(), ty);
@@ -704,8 +704,7 @@ impl Checker {
         scope.literal_functions.clear();
         scope.ops_environment_unknown |=
             then_scope.ops_environment_unknown || else_scope.ops_environment_unknown;
-        scope.custom_operator_effects_unknown |= then_scope.custom_operator_effects_unknown
-            || else_scope.custom_operator_effects_unknown;
+        scope.effects_unknown |= then_scope.effects_unknown || else_scope.effects_unknown;
         // A diverging branch contributes no state to the continuation. Treat
         // its live sibling as the only arm, while retaining the parent path
         // for a one-arm `if` whose then branch can continue.
@@ -1756,7 +1755,7 @@ impl Checker {
         // A skipped custom call may install active bindings, so even a later
         // assignment cannot make identifier reads trustworthy again. This is
         // expression uncertainty, not a model of rebound control syntax.
-        if scope.custom_operator_effects_unknown
+        if scope.effects_unknown
             && !matches!(
                 e,
                 Expr::Logical(..)

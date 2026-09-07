@@ -283,8 +283,7 @@ impl Checker {
         scope.literal_functions.clear();
         scope.ops_environment_unknown |=
             then_scope.ops_environment_unknown || else_scope.ops_environment_unknown;
-        scope.custom_operator_effects_unknown |= then_scope.custom_operator_effects_unknown
-            || else_scope.custom_operator_effects_unknown;
+        scope.effects_unknown |= then_scope.effects_unknown || else_scope.effects_unknown;
         then_t.join(else_t)
     }
 

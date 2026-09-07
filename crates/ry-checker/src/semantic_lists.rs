@@ -202,9 +202,46 @@ pub const CLASS_ASSIGNMENT_COERCERS: &[&str] = &[
     "expression",
 ];
 
+/// Built-in methods classes whose default new() result has no object bit.
+/// Their implicit class must not be turned into an explicit S3 dispatch class.
+pub const PLAIN_NEW_CLASSES: &[&str] = &[
+    "(",
+    "{",
+    "<-",
+    "array",
+    "builtin",
+    "call",
+    "character",
+    "complex",
+    "double",
+    "environment",
+    "expression",
+    "externalptr",
+    "for",
+    "function",
+    "if",
+    "integer",
+    "list",
+    "logical",
+    "matrix",
+    "name",
+    "NULL",
+    "numeric",
+    "raw",
+    "repeat",
+    "special",
+    "while",
+];
+
 /// The complete registry. Every hardcoded semantic list must appear here.
 pub fn registry() -> Vec<SemanticList> {
     vec![
+        SemanticList {
+            name: "PLAIN_NEW_CLASSES",
+            items: PLAIN_NEW_CLASSES,
+            check: CheckKind::ROracle,
+            claim: "methods::new returns non-object values for these builtin classes",
+        },
         SemanticList {
             name: "CLASS_ASSIGNMENT_COERCERS",
             items: CLASS_ASSIGNMENT_COERCERS,

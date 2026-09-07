@@ -62,4 +62,5 @@ fn check_with_stubs(src: &str, stub_files: &[(&str, &str)]) -> (Vec<Diagnostic>,
     c.check_with_scope(&parse_file("test.R", src))
 }
 
+mod factor_new_constructor;
 mod structure_constructor;

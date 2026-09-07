@@ -156,6 +156,8 @@ it("keeps process failures in the typed error channel", async () => {
   if (Either.isLeft(result)) {
     expect(result.left._tag).toBe("ProcessError");
     expect(result.left.binaryPath).toBe("/nonexistent/ry");
+    expect(String(result.left)).toContain("ENOENT");
+    expect(String(result.left)).toContain("/nonexistent/ry");
   }
 });
 

@@ -4,6 +4,7 @@
 
 import * as vscode from "vscode";
 import { Effect, Schema } from "effect";
+import { errorMessage } from "./errors";
 import { runBinary } from "./process";
 import { ResolvedBinary } from "./binary";
 import { type ISettings } from "./settings";
@@ -98,7 +99,9 @@ export const explainRuleCommand = (binaryPath: string) =>
     Effect.catchAll((error) =>
       Effect.tryPromise(() =>
         Promise.resolve(
-          vscode.window.showErrorMessage(`Failed to explain rule: ${error}`),
+          vscode.window.showErrorMessage(
+            `Failed to explain rule: ${errorMessage(error)}`,
+          ),
         ),
       ),
     ),

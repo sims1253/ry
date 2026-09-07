@@ -96,7 +96,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Unit tests
-        run: bun test src/test/binary.test.ts
+        run: bun test src/test/binary.test.ts src/test/errors.test.ts
 
       - name: Package the built binary
         run: |

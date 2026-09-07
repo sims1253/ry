@@ -1,4 +1,5 @@
-import { Effect } from "effect";
+import { Data, Effect } from "effect";
+import { errorMessage } from "./errors";
 import * as vscode from "vscode";
 import { type Disposable, type OutputChannel } from "vscode";
 import {
@@ -42,6 +43,11 @@ export function getInitializationOptions(
     globalSettings,
   };
 }
+
+class ServerError extends Data.TaggedError("ServerError")<{
+  readonly cause: unknown;
+  readonly message: string;
+}> {}
 
 const disposables = new WeakMap<LanguageClient, Disposable[]>();
 
@@ -155,11 +161,23 @@ export const startServer = (
     ]);
 
     logger.info("Server: Start requested.");
-    yield* Effect.tryPromise(() => newLSClient.start()).pipe(
+    yield* Effect.tryPromise({
+      try: () => newLSClient.start(),
+      catch: (cause) =>
+        new ServerError({
+          cause,
+          message: `Server failed to start at ${binaryPath}: ${errorMessage(cause)}`,
+        }),
+    }).pipe(
+      Effect.tapError((error) =>
+        Effect.sync(() => logger.error(error.message)),
+      ),
       Effect.onError(() =>
         dispose(newLSClient).pipe(
           Effect.catchAll((error) =>
-            Effect.sync(() => logger.error(`Server cleanup failed: ${error}`)),
+            Effect.sync(() =>
+              logger.error(`Server cleanup failed: ${errorMessage(error)}`),
+            ),
           ),
         ),
       ),
@@ -178,5 +196,9 @@ const dispose = (client: LanguageClient) =>
     for (const disposable of disposables.get(client) ?? [])
       disposable.dispose();
     disposables.delete(client);
-    yield* Effect.tryPromise(() => client.dispose());
+    yield* Effect.tryPromise({
+      try: () => client.dispose(),
+      catch: (cause) =>
+        new ServerError({ cause, message: errorMessage(cause) }),
+    });
   });

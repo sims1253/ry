@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import { causeMessage, errorMessage } from "./common/errors";
 import * as vscode from "vscode";
 import { LOG_CHANNEL_NAME, RY_SETTINGS_NAMESPACE } from "./common/constants";
 import { LazyOutputChannel, logger } from "./common/logger";
@@ -126,7 +127,9 @@ export async function activate(
         yield* stopServer(previous).pipe(
           Effect.catchAll((error) =>
             Effect.sync(() =>
-              reportFailure(`Failed to stop the previous server: ${error}`),
+              reportFailure(
+                `Failed to stop the previous server: ${errorMessage(error)}`,
+              ),
             ),
           ),
         );
@@ -157,7 +160,7 @@ export async function activate(
             Effect.catchAllCause((cause) =>
               Effect.sync(() =>
                 reportFailure(
-                  `Failed to start the ${LOG_CHANNEL_NAME} server: ${cause}`,
+                  `Failed to start the ${LOG_CHANNEL_NAME} server: ${causeMessage(cause)}`,
                 ),
               ),
             ),

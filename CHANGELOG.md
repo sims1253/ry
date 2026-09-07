@@ -12,6 +12,9 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Report missing format arguments only for proven base `sprintf` and
+  `gettextf` calls, avoiding false RY094 warnings for custom functions.
+
 - Require methods provenance for `hasArg` and base provenance for `on.exit`
   before applying deferred-argument semantics. Custom functions keep their
   own return contracts; uncertain calls discard stale caller facts.

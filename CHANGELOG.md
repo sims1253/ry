@@ -151,6 +151,9 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Decode adjacent high/low Unicode surrogate escapes as a single UTF-8 scalar,
+  while retaining raw recovery text for unpaired or malformed surrogates.
+
 - Decode octal and braced Unicode string escapes, escaped spaces and backticks,
   and UTF-8 byte sequences correctly. Preserve physical escaped newlines and
   retain raw recovery text for malformed or unrepresentable string values.

@@ -565,6 +565,9 @@ pub(crate) struct FnTable {
     pub(crate) fns: HashMap<String, UserFn>,
     // Collected once so conservative syntax checks do not rescan all functions.
     pub(crate) has_escaped_binding_names: bool,
+    // Operator lookup also checks formals/nested names during source-less
+    // project refinement, without broadening other syntax proof guards.
+    pub(crate) has_escaped_operator_names: bool,
     // `(generic, class)` -> return slot index. Mirrors the same
     // `return_slots` storage as `fns`; lookups during dispatch consult
     // this map for an S3 method before falling back to the generic.
@@ -611,6 +614,7 @@ impl FnTable {
                 .retain(|call| !replaced.contains(&call.caller));
         }
         self.has_escaped_binding_names |= collected.has_escaped_binding_names;
+        self.has_escaped_operator_names |= collected.has_escaped_operator_names;
         self.fns.extend(collected.fns.iter().map(|(name, f)| {
             let mut f = f.clone();
             f.return_slot += slot_offset;
@@ -799,12 +803,11 @@ impl Checker {
     fn run_passes(&mut self, file: &SourceFile) {
         self.path = file.path.clone();
         self.source.clone_from(&file.source);
-        self.escaped_operator_bindings = infer::custom_operator::has_escaped_names(file)
-            || self
-                .external_bindings
-                .iter()
-                .chain(self.imported_from.keys())
-                .any(|name| name.contains('\\'));
+        self.escaped_operator_bindings = self
+            .external_bindings
+            .iter()
+            .chain(self.imported_from.keys())
+            .any(|name| name.contains('\\'));
         self.diagnostics.clear();
         self.fn_table = Arc::new(FnTable::default());
         self.return_slots = Arc::new(ReturnSlots::default());
@@ -1001,12 +1004,11 @@ impl Checker {
     pub(crate) fn emit_diagnostics(&mut self, file: &SourceFile) -> Scope {
         self.path = file.path.clone();
         self.source.clone_from(&file.source);
-        self.escaped_operator_bindings = infer::custom_operator::has_escaped_names(file)
-            || self
-                .external_bindings
-                .iter()
-                .chain(self.imported_from.keys())
-                .any(|name| name.contains('\\'));
+        self.escaped_operator_bindings = self
+            .external_bindings
+            .iter()
+            .chain(self.imported_from.keys())
+            .any(|name| name.contains('\\'));
         if let Some(types) = &mut self.assignment_types {
             types.clear();
         }

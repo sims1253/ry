@@ -122,3 +122,77 @@ fn uncertain_custom_effects_do_not_export_later_reference_identity() {
     assert!(reference.definition.is_none());
     assert!(reference.type_at_reference.is_none());
 }
+
+#[test]
+fn project_refinement_carries_escaped_operator_formals_and_resets_after_edits() {
+    let mut project = ry_checker::Project::new();
+    let mut parser = RParser::new().unwrap();
+    project.add_file(
+        "functions.R".into(),
+        parser
+            .parse("functions.R", r"f <- function(`\x2b`) 1L + 2L")
+            .unwrap(),
+    );
+    project.add_file(
+        "use.R".into(),
+        parser
+            .parse("use.R", "out <- f(function(...) 'ok') == 'ok'")
+            .unwrap(),
+    );
+    let diagnostics = project.check_incremental();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(_, diagnostics)| diagnostics.is_empty()),
+        "{diagnostics:?}"
+    );
+    project.update_file(
+        "functions.R".into(),
+        std::sync::Arc::new(
+            parser
+                .parse("functions.R", "f <- function(z) 1L + 2L")
+                .unwrap(),
+        ),
+    );
+    assert!(
+        project
+            .check_incremental()
+            .iter()
+            .flat_map(|(_, diagnostics)| diagnostics)
+            .any(|diagnostic| diagnostic.code == "RY033")
+    );
+}
+
+#[test]
+fn escaped_operator_environment_changes_refresh_unrelated_files_and_returns() {
+    let sources = [
+        ("mask.R", "f <- function(z) 0L"),
+        ("helper.R", "g <- function() 1L + 2L"),
+        ("use.R", "out <- g() == 'ok'"),
+    ];
+    let make_project = |mask: &str| {
+        let mut project = ry_checker::Project::new();
+        let mut parser = RParser::new().unwrap();
+        for (path, source) in sources {
+            let source = if path == "mask.R" { mask } else { source };
+            project.add_file(path.into(), parser.parse(path, source).unwrap());
+        }
+        project
+    };
+    let mut warm = make_project(sources[0].1);
+    assert!(
+        warm.check_incremental()
+            .iter()
+            .flat_map(|(_, diagnostics)| diagnostics)
+            .any(|diagnostic| diagnostic.code == "RY033")
+    );
+    for mask in [r"f <- function(`\x2b`) 0L", sources[0].1] {
+        warm.update_file(
+            "mask.R".into(),
+            std::sync::Arc::new(RParser::new().unwrap().parse("mask.R", mask).unwrap()),
+        );
+        let warm_diagnostics = warm.check_incremental();
+        let cold_diagnostics = make_project(mask).check();
+        assert_eq!(warm_diagnostics, cold_diagnostics, "mask source: {mask}");
+    }
+}

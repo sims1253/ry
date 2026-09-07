@@ -32,7 +32,9 @@ impl Checker {
             _ => return None,
         };
         let names = [symbol, quoted];
-        let escaped = self.fn_table.has_escaped_binding_names || self.escaped_operator_bindings;
+        let escaped = self.fn_table.has_escaped_binding_names
+            || self.fn_table.has_escaped_operator_names
+            || self.escaped_operator_bindings;
         let local = names.iter().find_map(|name| scope.get(name));
         let project_function = names
             .iter()
@@ -97,12 +99,12 @@ impl Checker {
     }
 }
 
-/// Cache this once per source seam, not once per operator in a large scope.
+/// Cache this during collection, including project refinement without source.
 /// Raw escaped names need a binding decoder before they can prove base lookup.
-pub(crate) fn has_escaped_names(file: &SourceFile) -> bool {
+pub(crate) fn has_escaped_names(stmts: &[Stmt]) -> bool {
     use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
     use std::ops::ControlFlow;
-    walk_stmts(&file.stmts, Walk::ALL, |node, _| {
+    walk_stmts(stmts, Walk::ALL, |node, _| {
         let escaped = match node {
             AstNode::Expr(Expr::Ident { name, .. }) | AstNode::Stmt(Stmt::For { name, .. }) => {
                 name.contains('\\')

@@ -834,19 +834,14 @@ fn reduce_result_does_not_borrow_input_or_first_callback_type() {
 }
 
 #[test]
-fn filter_preserves_data_type() {
-    // `Filter(f, x)` returns x's type. For integer x, result is
-    // integer. Using it with character fires RY040.
-    let diags = check(
-        "even <- function(x) x %% 2 == 0\n\
-             v <- Filter(even, c(1L, 2L, 3L, 4L))\n\
-             bad <- v + \"x\"\n",
+fn filter_result_does_not_assume_input_mode() {
+    let diagnostics = check(
+        "`[.filter_result` <- function(x, i, ...) 1:3\n\
+         x <- structure('a', class = 'filter_result')\n\
+         result <- Filter(function(x) TRUE, x)\n\
+         result + 1L\n",
     );
-    assert!(
-        diags.iter().any(|d| d.code == "RY040"),
-        "expected RY040 from Filter result + character, got {:?}",
-        diags
-    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
 }
 
 #[test]
@@ -893,7 +888,8 @@ fn typed_multi_input_maps_preserve_atomic_modes_without_claiming_a_length() {
         }
     }
     let (_, scope) = check_with_scope("position <- Position(is.na, c(1, 2, 3))\n");
-    assert_eq!(scope.get("position").unwrap().length, Length::One);
+    assert_eq!(scope.get("position").unwrap().mode, Mode::Opaque);
+    assert_eq!(scope.get("position").unwrap().length, Length::Unknown);
 }
 
 #[test]

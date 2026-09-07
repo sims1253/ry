@@ -184,20 +184,15 @@ fn shadowed_sum_keeps_the_coercion_nudge() {
     );
 }
 
-// The numeric-truthiness idiom requires the stub's explicit never-NA
-// claim. `Position` also declares an integer length-1 return, but its
-// no-match value is `nomatch` (`NA_integer_`), so `if (Position(...))`
-// is TRUE-or-error in R — verified: `if (Position(is.na, c(1,2,3)))`
-// raises "argument is not interpretable as logical". Its stub omits
-// `na: false`, which is not a non-NA guarantee, so the coercion nudge
-// fires while every stub that does declare `na: false` keeps the
-// suppression.
+// A missing match is NA_integer_, so its scalar integer must not receive the
+// never-NA numeric-truthiness suppression. Position is no longer a suitable
+// control because its arbitrary nomatch value requires an opaque result.
 #[test]
 fn na_capable_integer_count_keeps_the_coercion_nudge() {
-    let position = check("x <- c(1, 2, 3)\nif (Position(is.na, x)) 1\n");
+    let missing_match = check("if (match(1L, 2L)) 1\n");
     assert!(
-        position.iter().any(|d| d.code == "RY003"),
-        "Position's NA-capable return must not feed the non-empty idiom: {position:?}"
+        missing_match.iter().any(|d| d.code == "RY003"),
+        "A missing match must not feed the non-empty idiom: {missing_match:?}"
     );
     for suppressed in [
         "x <- c(1, 2, 3)\nif (length(x)) 1\n",

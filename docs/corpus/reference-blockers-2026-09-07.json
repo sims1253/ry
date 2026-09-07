@@ -1,0 +1,1626 @@
+{
+  "schema_version": 1,
+  "purpose": "Selected reference-blocker regression panel; not representative coverage",
+  "baseline_commit": "0e658b9eabee17b7eb32d48e6ffb4b82368450f3",
+  "candidate_commit": "6f14dcd38bf8d33196401a24808cf69b269ae5d6",
+  "baseline_binary_sha256": "2ea8b14401577472595f78a29e3166745924f7f54a16539f0aa523ae7d5b463b",
+  "candidate_binary_sha256": "bc8448290f29979c42c64cb3d31d0c55fb33b01478426bb343d16d136a6e2db3",
+  "inputs_sha256": "90934d36083775a3f6ae8b316590f86eda4fdd08b0452a45fec787131f8f7ddb",
+  "settings": {
+    "standalone_sources": true,
+    "empty_ry_toml": true,
+    "RY_NO_INSTALLED_LIBRARIES": "1",
+    "RAYON_NUM_THREADS": "1"
+  },
+  "legacy_reference_and_scope_facts_unchanged": true,
+  "diagnostics_unchanged": true,
+  "groups": {
+    "glm": {
+      "files": 27,
+      "references": 4795,
+      "blockers": {
+        "containing_statement:unsupported_statement": 216,
+        "default_expression:lazy_default": 22,
+        "inherited_scope:formal_write": 321,
+        "inherited_scope:lazy_default": 8,
+        "inherited_scope:unsupported_statement": 1014,
+        "prior_statement:unsupported_statement": 1480,
+        "whole_scope:formal_write": 1151,
+        "whole_scope:unsupported_formal": 583
+      },
+      "reasons": {
+        "unsupported_scope": 4795
+      }
+    },
+    "muse": {
+      "files": 27,
+      "references": 4795,
+      "blockers": {
+        "containing_statement:unsupported_statement": 216,
+        "default_expression:lazy_default": 22,
+        "inherited_scope:formal_write": 321,
+        "inherited_scope:lazy_default": 8,
+        "inherited_scope:unsupported_statement": 1014,
+        "prior_statement:unsupported_statement": 1480,
+        "whole_scope:formal_write": 1151,
+        "whole_scope:unsupported_formal": 583
+      },
+      "reasons": {
+        "unsupported_scope": 4795
+      }
+    },
+    "windows": {
+      "files": 8,
+      "references": 745,
+      "blockers": {
+        "containing_statement:unsupported_statement": 67,
+        "default_expression:lazy_default": 2,
+        "inherited_scope:formal_write": 53,
+        "inherited_scope:unsupported_statement": 33,
+        "prior_statement:unsupported_statement": 385,
+        "whole_scope:formal_write": 205
+      },
+      "reasons": {
+        "unsupported_scope": 745
+      }
+    },
+    "fixed": {
+      "files": 18,
+      "references": 127,
+      "blockers": {
+        "containing_statement:unsupported_statement": 20,
+        "inherited_scope:formal_write": 8,
+        "inherited_scope:unsupported_statement": 1,
+        "prior_read:unsafe_read": 2,
+        "prior_statement:unsupported_statement": 5,
+        "unrecorded:unrecorded": 20,
+        "whole_scope:formal_write": 7,
+        "whole_scope:mixed_spelling": 1,
+        "whole_scope:unsupported_formal": 63
+      },
+      "reasons": {
+        "None": 19,
+        "after_unsafe_read": 2,
+        "unbound_name": 1,
+        "unsupported_scope": 105
+      }
+    }
+  },
+  "cases": [
+    {
+      "name": "glm-00",
+      "group": "glm",
+      "source_sha256": "01029cd729322b98eb3b8933f4cbabb57cb7470210fe5bcb0c224402c30ea070",
+      "references": 77,
+      "statuses": {
+        "unsupported": 77
+      },
+      "reasons": {
+        "unsupported_scope": 77
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 3,
+        "default_expression:lazy_default": 2,
+        "inherited_scope:unsupported_statement": 24,
+        "prior_statement:unsupported_statement": 48
+      },
+      "package": "nphPower",
+      "version": "1.1.0",
+      "original_path": "nphPower/1.1.0/nphPower/R/oxy-gen.wgt.R"
+    },
+    {
+      "name": "glm-01",
+      "group": "glm",
+      "source_sha256": "8a7c492237466966e50c74a603b285dadd2b43fd059d5a7b07c53441faaf2098",
+      "references": 142,
+      "statuses": {
+        "unsupported": 142
+      },
+      "reasons": {
+        "unsupported_scope": 142
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 4,
+        "prior_statement:unsupported_statement": 138
+      },
+      "package": "nphPower",
+      "version": "1.1.0",
+      "original_path": "nphPower/1.1.0/nphPower/R/evalfup.R"
+    },
+    {
+      "name": "glm-02",
+      "group": "glm",
+      "source_sha256": "46898d7df7a4beeb225ecc45445b1b9f48fda184be99954bcbed0d0c06daa5f3",
+      "references": 225,
+      "statuses": {
+        "unsupported": 225
+      },
+      "reasons": {
+        "unsupported_scope": 225
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 2,
+        "default_expression:lazy_default": 2,
+        "inherited_scope:formal_write": 31,
+        "inherited_scope:unsupported_statement": 19,
+        "prior_statement:unsupported_statement": 12,
+        "whole_scope:formal_write": 159
+      },
+      "package": "nphPower",
+      "version": "1.1.0",
+      "original_path": "nphPower/1.1.0/nphPower/R/pwr2n.LR.R"
+    },
+    {
+      "name": "glm-03",
+      "group": "glm",
+      "source_sha256": "258a9726115ef0fc98a9d6f947222b473ad3374cc35f47101bd0f6cc6929cd4f",
+      "references": 129,
+      "statuses": {
+        "unsupported": 129
+      },
+      "reasons": {
+        "unsupported_scope": 129
+      },
+      "blockers": {
+        "inherited_scope:formal_write": 96,
+        "whole_scope:formal_write": 33
+      },
+      "package": "nphPower",
+      "version": "1.1.0",
+      "original_path": "nphPower/1.1.0/nphPower/R/oxy-cureHR.R"
+    },
+    {
+      "name": "glm-04",
+      "group": "glm",
+      "source_sha256": "60b8003d523e561905f9985cc07ecc2bc9f20882840524d926f866cd7afcfddc",
+      "references": 204,
+      "statuses": {
+        "unsupported": 204
+      },
+      "reasons": {
+        "unsupported_scope": 204
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 2,
+        "default_expression:lazy_default": 2,
+        "inherited_scope:formal_write": 31,
+        "inherited_scope:unsupported_statement": 19,
+        "prior_statement:unsupported_statement": 12,
+        "whole_scope:formal_write": 138
+      },
+      "package": "nphPower",
+      "version": "1.1.0",
+      "original_path": "nphPower/1.1.0/nphPower/R/oxy-pwr2n.LR.R"
+    },
+    {
+      "name": "glm-05",
+      "group": "glm",
+      "source_sha256": "f184148bef47a2e7b7f30d3cec49c51c53e5310cf46d1c74ed4a3f97af22244b",
+      "references": 234,
+      "statuses": {
+        "unsupported": 234
+      },
+      "reasons": {
+        "unsupported_scope": 234
+      },
+      "blockers": {
+        "default_expression:lazy_default": 4,
+        "inherited_scope:formal_write": 40,
+        "inherited_scope:lazy_default": 4,
+        "whole_scope:formal_write": 186
+      },
+      "package": "nphPower",
+      "version": "1.1.0",
+      "original_path": "nphPower/1.1.0/nphPower/R/oxy-n2pwr.NPH.R"
+    },
+    {
+      "name": "glm-06",
+      "group": "glm",
+      "source_sha256": "9c8574dfc09db77cee96470378a188b0fdfcf9d4154f8116929cb89964362ccc",
+      "references": 123,
+      "statuses": {
+        "unsupported": 123
+      },
+      "reasons": {
+        "unsupported_scope": 123
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 2,
+        "default_expression:lazy_default": 4,
+        "inherited_scope:unsupported_statement": 31,
+        "prior_statement:unsupported_statement": 86
+      },
+      "package": "nphPower",
+      "version": "1.1.0",
+      "original_path": "nphPower/1.1.0/nphPower/R/plotHazSurv.R"
+    },
+    {
+      "name": "glm-07",
+      "group": "glm",
+      "source_sha256": "e585948493327686638480efe0d3ab2b2a834e450dc79d74751ddf9d41e0421b",
+      "references": 460,
+      "statuses": {
+        "unsupported": 460
+      },
+      "reasons": {
+        "unsupported_scope": 460
+      },
+      "blockers": {
+        "default_expression:lazy_default": 5,
+        "inherited_scope:formal_write": 101,
+        "inherited_scope:lazy_default": 4,
+        "whole_scope:formal_write": 350
+      },
+      "package": "nphPower",
+      "version": "1.1.0",
+      "original_path": "nphPower/1.1.0/nphPower/R/simu.trial.R"
+    },
+    {
+      "name": "glm-08",
+      "group": "glm",
+      "source_sha256": "1ee2a97b0fcc81a75d7f094e5cd0029327f38c95f88d69f0b05ef67e918dfa34",
+      "references": 184,
+      "statuses": {
+        "unsupported": 184
+      },
+      "reasons": {
+        "unsupported_scope": 184
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 7,
+        "inherited_scope:formal_write": 22,
+        "inherited_scope:unsupported_statement": 33,
+        "prior_statement:unsupported_statement": 67,
+        "whole_scope:formal_write": 55
+      },
+      "package": "otinference",
+      "version": "0.1.0",
+      "original_path": "otinference/0.1.0/otinference/R/limDis.R"
+    },
+    {
+      "name": "glm-09",
+      "group": "glm",
+      "source_sha256": "8453d5cf595106dda3d9f471db7fb1f2a7ccaa3f493197c55d09f218b3cf6285",
+      "references": 12,
+      "statuses": {
+        "unsupported": 12
+      },
+      "reasons": {
+        "unsupported_scope": 12
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 5,
+        "prior_statement:unsupported_statement": 7
+      },
+      "package": "otinference",
+      "version": "0.1.0",
+      "original_path": "otinference/0.1.0/otinference/R/wassDist.R"
+    },
+    {
+      "name": "glm-10",
+      "group": "glm",
+      "source_sha256": "844e242ad28b59a1f4cdcace7bf97d45978745ba4be15591f856e65453660f67",
+      "references": 55,
+      "statuses": {
+        "unsupported": 55
+      },
+      "reasons": {
+        "unsupported_scope": 55
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 5,
+        "prior_statement:unsupported_statement": 50
+      },
+      "package": "otinference",
+      "version": "0.1.0",
+      "original_path": "otinference/0.1.0/otinference/R/binTest.R"
+    },
+    {
+      "name": "glm-11",
+      "group": "glm",
+      "source_sha256": "31a6f1737fb864b5ac6a24a12ec49199d2f68fff4bb48500dc022fa168d424bf",
+      "references": 140,
+      "statuses": {
+        "unsupported": 140
+      },
+      "reasons": {
+        "unsupported_scope": 140
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 3,
+        "prior_statement:unsupported_statement": 18,
+        "whole_scope:formal_write": 37,
+        "whole_scope:unsupported_formal": 82
+      },
+      "package": "sparsevar",
+      "version": "1.0.0",
+      "original_path": "sparsevar/1.0.0/sparsevar/R/plotMatrix.R"
+    },
+    {
+      "name": "glm-12",
+      "group": "glm",
+      "source_sha256": "9d6f6b4739f240070b8c6f331777043654dd5c8b5691739eac068eb79f261323",
+      "references": 402,
+      "statuses": {
+        "unsupported": 402
+      },
+      "reasons": {
+        "unsupported_scope": 402
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 18,
+        "prior_statement:unsupported_statement": 384
+      },
+      "package": "sparsevar",
+      "version": "1.0.0",
+      "original_path": "sparsevar/1.0.0/sparsevar/R/timeSlice.R"
+    },
+    {
+      "name": "glm-13",
+      "group": "glm",
+      "source_sha256": "c25fd558ca2a4b35642edbadc3e9cc913a36f8e75eceb746908b34db5a205695",
+      "references": 240,
+      "statuses": {
+        "unsupported": 240
+      },
+      "reasons": {
+        "unsupported_scope": 240
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 2,
+        "prior_statement:unsupported_statement": 12,
+        "whole_scope:formal_write": 54,
+        "whole_scope:unsupported_formal": 172
+      },
+      "package": "sparsevar",
+      "version": "1.0.0",
+      "original_path": "sparsevar/1.0.0/sparsevar/R/simulateVAR.R"
+    },
+    {
+      "name": "glm-14",
+      "group": "glm",
+      "source_sha256": "99b96e79249bab1b3b0b56caaed17bedb7ccf53366448984896ca58517460e5d",
+      "references": 83,
+      "statuses": {
+        "unsupported": 83
+      },
+      "reasons": {
+        "unsupported_scope": 83
+      },
+      "blockers": {
+        "whole_scope:unsupported_formal": 83
+      },
+      "package": "sparsevar",
+      "version": "1.0.0",
+      "original_path": "sparsevar/1.0.0/sparsevar/R/createSparseMatrix.R"
+    },
+    {
+      "name": "glm-15",
+      "group": "glm",
+      "source_sha256": "66768a24d0c25ee5837e071a33c248d6350222934024cf77e5216a75c05fe189",
+      "references": 97,
+      "statuses": {
+        "unsupported": 97
+      },
+      "reasons": {
+        "unsupported_scope": 97
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 2,
+        "prior_statement:unsupported_statement": 39,
+        "whole_scope:unsupported_formal": 56
+      },
+      "package": "sparsevar",
+      "version": "1.0.0",
+      "original_path": "sparsevar/1.0.0/sparsevar/R/fitVARX.R"
+    },
+    {
+      "name": "glm-16",
+      "group": "glm",
+      "source_sha256": "e1f97d30029e60ef9c9b12d6726ee63fd5a1928593224db3a61e14372786320c",
+      "references": 447,
+      "statuses": {
+        "unsupported": 447
+      },
+      "reasons": {
+        "unsupported_scope": 447
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 111,
+        "prior_statement:unsupported_statement": 181,
+        "whole_scope:formal_write": 139,
+        "whole_scope:unsupported_formal": 16
+      },
+      "package": "sparsevar",
+      "version": "1.0.0",
+      "original_path": "sparsevar/1.0.0/sparsevar/R/utilsVAR.R"
+    },
+    {
+      "name": "glm-17",
+      "group": "glm",
+      "source_sha256": "b1d997a888db578c92246fe35bd008a574cefee68cc5102b0a401bf8a6bd4c81",
+      "references": 190,
+      "statuses": {
+        "unsupported": 190
+      },
+      "reasons": {
+        "unsupported_scope": 190
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 5,
+        "prior_statement:unsupported_statement": 53,
+        "whole_scope:unsupported_formal": 132
+      },
+      "package": "sparsevar",
+      "version": "1.0.0",
+      "original_path": "sparsevar/1.0.0/sparsevar/R/fitVECM.R"
+    },
+    {
+      "name": "glm-18",
+      "group": "glm",
+      "source_sha256": "a3e4eaf95e6bfcf7bf1e0a185654fa7a7fbe2d9886baa38a81c391d6533b3170",
+      "references": 347,
+      "statuses": {
+        "unsupported": 347
+      },
+      "reasons": {
+        "unsupported_scope": 347
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 14,
+        "prior_statement:unsupported_statement": 291,
+        "whole_scope:unsupported_formal": 42
+      },
+      "package": "sparsevar",
+      "version": "1.0.0",
+      "original_path": "sparsevar/1.0.0/sparsevar/R/fitVAR.R"
+    },
+    {
+      "name": "glm-19",
+      "group": "glm",
+      "source_sha256": "d8128274cce37006692d44189194db665d2eaa7ab1cf300caf36bf929f86920a",
+      "references": 47,
+      "statuses": {
+        "unsupported": 47
+      },
+      "reasons": {
+        "unsupported_scope": 47
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 24,
+        "default_expression:lazy_default": 2,
+        "prior_statement:unsupported_statement": 21
+      },
+      "package": "specmine",
+      "version": "3.1.8",
+      "original_path": "specmine/3.1.8/specmine/R/feature_selection.R"
+    },
+    {
+      "name": "glm-20",
+      "group": "glm",
+      "source_sha256": "8f33dc438ef0c6fd2eee9adee8c7c3a2727bcc71fb4afe4037a588c8cb4c1a71",
+      "references": 68,
+      "statuses": {
+        "unsupported": 68
+      },
+      "reasons": {
+        "unsupported_scope": 68
+      },
+      "blockers": {
+        "inherited_scope:unsupported_statement": 68
+      },
+      "package": "specmine",
+      "version": "3.1.8",
+      "original_path": "specmine/3.1.8/specmine/R/read_dx.R"
+    },
+    {
+      "name": "glm-21",
+      "group": "glm",
+      "source_sha256": "6c070ca50a35451a103614b07c2802651403ee3163205b7d8a757ea135b0c730",
+      "references": 102,
+      "statuses": {
+        "unsupported": 102
+      },
+      "reasons": {
+        "unsupported_scope": 102
+      },
+      "blockers": {
+        "inherited_scope:unsupported_statement": 102
+      },
+      "package": "specmine",
+      "version": "3.1.8",
+      "original_path": "specmine/3.1.8/specmine/R/filters_flat.R"
+    },
+    {
+      "name": "glm-22",
+      "group": "glm",
+      "source_sha256": "31b1b0f30c5e310426b2091fd2b494650274f501df14a3bd71b7de738f0ec352",
+      "references": 0,
+      "statuses": {},
+      "reasons": {},
+      "blockers": {},
+      "package": "specmine",
+      "version": "3.1.8",
+      "original_path": "specmine/3.1.8/specmine/R/spectra_options.R"
+    },
+    {
+      "name": "glm-23",
+      "group": "glm",
+      "source_sha256": "b2ab25c0f821d6998b1cabbc89ef965b7ba0ce7074c4f477c3fefedfc92d4cc5",
+      "references": 249,
+      "statuses": {
+        "unsupported": 249
+      },
+      "reasons": {
+        "unsupported_scope": 249
+      },
+      "blockers": {
+        "inherited_scope:unsupported_statement": 249
+      },
+      "package": "specmine",
+      "version": "3.1.8",
+      "original_path": "specmine/3.1.8/specmine/R/peaklists.R"
+    },
+    {
+      "name": "glm-24",
+      "group": "glm",
+      "source_sha256": "af1f02b8c680cfa886f305214fb02292d31e21a07f79859f33d521c61deee624",
+      "references": 95,
+      "statuses": {
+        "unsupported": 95
+      },
+      "reasons": {
+        "unsupported_scope": 95
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 7,
+        "inherited_scope:unsupported_statement": 27,
+        "prior_statement:unsupported_statement": 61
+      },
+      "package": "specmine",
+      "version": "3.1.8",
+      "original_path": "specmine/3.1.8/specmine/R/compare_embeddings.R"
+    },
+    {
+      "name": "glm-25",
+      "group": "glm",
+      "source_sha256": "d3faddec4787a3780fb0224eb96ed32d0b819e50230bcd34ff44dd7a29204468",
+      "references": 235,
+      "statuses": {
+        "unsupported": 235
+      },
+      "reasons": {
+        "unsupported_scope": 235
+      },
+      "blockers": {
+        "default_expression:lazy_default": 1,
+        "inherited_scope:unsupported_statement": 234
+      },
+      "package": "specmine",
+      "version": "3.1.8",
+      "original_path": "specmine/3.1.8/specmine/R/normalization.R"
+    },
+    {
+      "name": "glm-26",
+      "group": "glm",
+      "source_sha256": "5d18c8348bc71e68635c2ca24d057c0ae8da899b860fa7b2ed4234eda8f7656b",
+      "references": 208,
+      "statuses": {
+        "unsupported": 208
+      },
+      "reasons": {
+        "unsupported_scope": 208
+      },
+      "blockers": {
+        "inherited_scope:unsupported_statement": 208
+      },
+      "package": "specmine",
+      "version": "3.1.8",
+      "original_path": "specmine/3.1.8/specmine/R/regression.R"
+    },
+    {
+      "name": "muse-00",
+      "group": "muse",
+      "source_sha256": "01029cd729322b98eb3b8933f4cbabb57cb7470210fe5bcb0c224402c30ea070",
+      "references": 77,
+      "statuses": {
+        "unsupported": 77
+      },
+      "reasons": {
+        "unsupported_scope": 77
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 3,
+        "default_expression:lazy_default": 2,
+        "inherited_scope:unsupported_statement": 24,
+        "prior_statement:unsupported_statement": 48
+      },
+      "package": "nphPower",
+      "version": "1.1.0",
+      "original_path": "nphPower/1.1.0/nphPower/R/oxy-gen.wgt.R"
+    },
+    {
+      "name": "muse-01",
+      "group": "muse",
+      "source_sha256": "8a7c492237466966e50c74a603b285dadd2b43fd059d5a7b07c53441faaf2098",
+      "references": 142,
+      "statuses": {
+        "unsupported": 142
+      },
+      "reasons": {
+        "unsupported_scope": 142
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 4,
+        "prior_statement:unsupported_statement": 138
+      },
+      "package": "nphPower",
+      "version": "1.1.0",
+      "original_path": "nphPower/1.1.0/nphPower/R/evalfup.R"
+    },
+    {
+      "name": "muse-02",
+      "group": "muse",
+      "source_sha256": "46898d7df7a4beeb225ecc45445b1b9f48fda184be99954bcbed0d0c06daa5f3",
+      "references": 225,
+      "statuses": {
+        "unsupported": 225
+      },
+      "reasons": {
+        "unsupported_scope": 225
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 2,
+        "default_expression:lazy_default": 2,
+        "inherited_scope:formal_write": 31,
+        "inherited_scope:unsupported_statement": 19,
+        "prior_statement:unsupported_statement": 12,
+        "whole_scope:formal_write": 159
+      },
+      "package": "nphPower",
+      "version": "1.1.0",
+      "original_path": "nphPower/1.1.0/nphPower/R/pwr2n.LR.R"
+    },
+    {
+      "name": "muse-03",
+      "group": "muse",
+      "source_sha256": "258a9726115ef0fc98a9d6f947222b473ad3374cc35f47101bd0f6cc6929cd4f",
+      "references": 129,
+      "statuses": {
+        "unsupported": 129
+      },
+      "reasons": {
+        "unsupported_scope": 129
+      },
+      "blockers": {
+        "inherited_scope:formal_write": 96,
+        "whole_scope:formal_write": 33
+      },
+      "package": "nphPower",
+      "version": "1.1.0",
+      "original_path": "nphPower/1.1.0/nphPower/R/oxy-cureHR.R"
+    },
+    {
+      "name": "muse-04",
+      "group": "muse",
+      "source_sha256": "60b8003d523e561905f9985cc07ecc2bc9f20882840524d926f866cd7afcfddc",
+      "references": 204,
+      "statuses": {
+        "unsupported": 204
+      },
+      "reasons": {
+        "unsupported_scope": 204
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 2,
+        "default_expression:lazy_default": 2,
+        "inherited_scope:formal_write": 31,
+        "inherited_scope:unsupported_statement": 19,
+        "prior_statement:unsupported_statement": 12,
+        "whole_scope:formal_write": 138
+      },
+      "package": "nphPower",
+      "version": "1.1.0",
+      "original_path": "nphPower/1.1.0/nphPower/R/oxy-pwr2n.LR.R"
+    },
+    {
+      "name": "muse-05",
+      "group": "muse",
+      "source_sha256": "f184148bef47a2e7b7f30d3cec49c51c53e5310cf46d1c74ed4a3f97af22244b",
+      "references": 234,
+      "statuses": {
+        "unsupported": 234
+      },
+      "reasons": {
+        "unsupported_scope": 234
+      },
+      "blockers": {
+        "default_expression:lazy_default": 4,
+        "inherited_scope:formal_write": 40,
+        "inherited_scope:lazy_default": 4,
+        "whole_scope:formal_write": 186
+      },
+      "package": "nphPower",
+      "version": "1.1.0",
+      "original_path": "nphPower/1.1.0/nphPower/R/oxy-n2pwr.NPH.R"
+    },
+    {
+      "name": "muse-06",
+      "group": "muse",
+      "source_sha256": "9c8574dfc09db77cee96470378a188b0fdfcf9d4154f8116929cb89964362ccc",
+      "references": 123,
+      "statuses": {
+        "unsupported": 123
+      },
+      "reasons": {
+        "unsupported_scope": 123
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 2,
+        "default_expression:lazy_default": 4,
+        "inherited_scope:unsupported_statement": 31,
+        "prior_statement:unsupported_statement": 86
+      },
+      "package": "nphPower",
+      "version": "1.1.0",
+      "original_path": "nphPower/1.1.0/nphPower/R/plotHazSurv.R"
+    },
+    {
+      "name": "muse-07",
+      "group": "muse",
+      "source_sha256": "e585948493327686638480efe0d3ab2b2a834e450dc79d74751ddf9d41e0421b",
+      "references": 460,
+      "statuses": {
+        "unsupported": 460
+      },
+      "reasons": {
+        "unsupported_scope": 460
+      },
+      "blockers": {
+        "default_expression:lazy_default": 5,
+        "inherited_scope:formal_write": 101,
+        "inherited_scope:lazy_default": 4,
+        "whole_scope:formal_write": 350
+      },
+      "package": "nphPower",
+      "version": "1.1.0",
+      "original_path": "nphPower/1.1.0/nphPower/R/simu.trial.R"
+    },
+    {
+      "name": "muse-08",
+      "group": "muse",
+      "source_sha256": "1ee2a97b0fcc81a75d7f094e5cd0029327f38c95f88d69f0b05ef67e918dfa34",
+      "references": 184,
+      "statuses": {
+        "unsupported": 184
+      },
+      "reasons": {
+        "unsupported_scope": 184
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 7,
+        "inherited_scope:formal_write": 22,
+        "inherited_scope:unsupported_statement": 33,
+        "prior_statement:unsupported_statement": 67,
+        "whole_scope:formal_write": 55
+      },
+      "package": "otinference",
+      "version": "0.1.0",
+      "original_path": "otinference/0.1.0/otinference/R/limDis.R"
+    },
+    {
+      "name": "muse-09",
+      "group": "muse",
+      "source_sha256": "8453d5cf595106dda3d9f471db7fb1f2a7ccaa3f493197c55d09f218b3cf6285",
+      "references": 12,
+      "statuses": {
+        "unsupported": 12
+      },
+      "reasons": {
+        "unsupported_scope": 12
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 5,
+        "prior_statement:unsupported_statement": 7
+      },
+      "package": "otinference",
+      "version": "0.1.0",
+      "original_path": "otinference/0.1.0/otinference/R/wassDist.R"
+    },
+    {
+      "name": "muse-10",
+      "group": "muse",
+      "source_sha256": "844e242ad28b59a1f4cdcace7bf97d45978745ba4be15591f856e65453660f67",
+      "references": 55,
+      "statuses": {
+        "unsupported": 55
+      },
+      "reasons": {
+        "unsupported_scope": 55
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 5,
+        "prior_statement:unsupported_statement": 50
+      },
+      "package": "otinference",
+      "version": "0.1.0",
+      "original_path": "otinference/0.1.0/otinference/R/binTest.R"
+    },
+    {
+      "name": "muse-11",
+      "group": "muse",
+      "source_sha256": "31a6f1737fb864b5ac6a24a12ec49199d2f68fff4bb48500dc022fa168d424bf",
+      "references": 140,
+      "statuses": {
+        "unsupported": 140
+      },
+      "reasons": {
+        "unsupported_scope": 140
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 3,
+        "prior_statement:unsupported_statement": 18,
+        "whole_scope:formal_write": 37,
+        "whole_scope:unsupported_formal": 82
+      },
+      "package": "sparsevar",
+      "version": "1.0.0",
+      "original_path": "sparsevar/1.0.0/sparsevar/R/plotMatrix.R"
+    },
+    {
+      "name": "muse-12",
+      "group": "muse",
+      "source_sha256": "9d6f6b4739f240070b8c6f331777043654dd5c8b5691739eac068eb79f261323",
+      "references": 402,
+      "statuses": {
+        "unsupported": 402
+      },
+      "reasons": {
+        "unsupported_scope": 402
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 18,
+        "prior_statement:unsupported_statement": 384
+      },
+      "package": "sparsevar",
+      "version": "1.0.0",
+      "original_path": "sparsevar/1.0.0/sparsevar/R/timeSlice.R"
+    },
+    {
+      "name": "muse-13",
+      "group": "muse",
+      "source_sha256": "c25fd558ca2a4b35642edbadc3e9cc913a36f8e75eceb746908b34db5a205695",
+      "references": 240,
+      "statuses": {
+        "unsupported": 240
+      },
+      "reasons": {
+        "unsupported_scope": 240
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 2,
+        "prior_statement:unsupported_statement": 12,
+        "whole_scope:formal_write": 54,
+        "whole_scope:unsupported_formal": 172
+      },
+      "package": "sparsevar",
+      "version": "1.0.0",
+      "original_path": "sparsevar/1.0.0/sparsevar/R/simulateVAR.R"
+    },
+    {
+      "name": "muse-14",
+      "group": "muse",
+      "source_sha256": "99b96e79249bab1b3b0b56caaed17bedb7ccf53366448984896ca58517460e5d",
+      "references": 83,
+      "statuses": {
+        "unsupported": 83
+      },
+      "reasons": {
+        "unsupported_scope": 83
+      },
+      "blockers": {
+        "whole_scope:unsupported_formal": 83
+      },
+      "package": "sparsevar",
+      "version": "1.0.0",
+      "original_path": "sparsevar/1.0.0/sparsevar/R/createSparseMatrix.R"
+    },
+    {
+      "name": "muse-15",
+      "group": "muse",
+      "source_sha256": "66768a24d0c25ee5837e071a33c248d6350222934024cf77e5216a75c05fe189",
+      "references": 97,
+      "statuses": {
+        "unsupported": 97
+      },
+      "reasons": {
+        "unsupported_scope": 97
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 2,
+        "prior_statement:unsupported_statement": 39,
+        "whole_scope:unsupported_formal": 56
+      },
+      "package": "sparsevar",
+      "version": "1.0.0",
+      "original_path": "sparsevar/1.0.0/sparsevar/R/fitVARX.R"
+    },
+    {
+      "name": "muse-16",
+      "group": "muse",
+      "source_sha256": "e1f97d30029e60ef9c9b12d6726ee63fd5a1928593224db3a61e14372786320c",
+      "references": 447,
+      "statuses": {
+        "unsupported": 447
+      },
+      "reasons": {
+        "unsupported_scope": 447
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 111,
+        "prior_statement:unsupported_statement": 181,
+        "whole_scope:formal_write": 139,
+        "whole_scope:unsupported_formal": 16
+      },
+      "package": "sparsevar",
+      "version": "1.0.0",
+      "original_path": "sparsevar/1.0.0/sparsevar/R/utilsVAR.R"
+    },
+    {
+      "name": "muse-17",
+      "group": "muse",
+      "source_sha256": "b1d997a888db578c92246fe35bd008a574cefee68cc5102b0a401bf8a6bd4c81",
+      "references": 190,
+      "statuses": {
+        "unsupported": 190
+      },
+      "reasons": {
+        "unsupported_scope": 190
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 5,
+        "prior_statement:unsupported_statement": 53,
+        "whole_scope:unsupported_formal": 132
+      },
+      "package": "sparsevar",
+      "version": "1.0.0",
+      "original_path": "sparsevar/1.0.0/sparsevar/R/fitVECM.R"
+    },
+    {
+      "name": "muse-18",
+      "group": "muse",
+      "source_sha256": "a3e4eaf95e6bfcf7bf1e0a185654fa7a7fbe2d9886baa38a81c391d6533b3170",
+      "references": 347,
+      "statuses": {
+        "unsupported": 347
+      },
+      "reasons": {
+        "unsupported_scope": 347
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 14,
+        "prior_statement:unsupported_statement": 291,
+        "whole_scope:unsupported_formal": 42
+      },
+      "package": "sparsevar",
+      "version": "1.0.0",
+      "original_path": "sparsevar/1.0.0/sparsevar/R/fitVAR.R"
+    },
+    {
+      "name": "muse-19",
+      "group": "muse",
+      "source_sha256": "d8128274cce37006692d44189194db665d2eaa7ab1cf300caf36bf929f86920a",
+      "references": 47,
+      "statuses": {
+        "unsupported": 47
+      },
+      "reasons": {
+        "unsupported_scope": 47
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 24,
+        "default_expression:lazy_default": 2,
+        "prior_statement:unsupported_statement": 21
+      },
+      "package": "specmine",
+      "version": "3.1.8",
+      "original_path": "specmine/3.1.8/specmine/R/feature_selection.R"
+    },
+    {
+      "name": "muse-20",
+      "group": "muse",
+      "source_sha256": "8f33dc438ef0c6fd2eee9adee8c7c3a2727bcc71fb4afe4037a588c8cb4c1a71",
+      "references": 68,
+      "statuses": {
+        "unsupported": 68
+      },
+      "reasons": {
+        "unsupported_scope": 68
+      },
+      "blockers": {
+        "inherited_scope:unsupported_statement": 68
+      },
+      "package": "specmine",
+      "version": "3.1.8",
+      "original_path": "specmine/3.1.8/specmine/R/read_dx.R"
+    },
+    {
+      "name": "muse-21",
+      "group": "muse",
+      "source_sha256": "6c070ca50a35451a103614b07c2802651403ee3163205b7d8a757ea135b0c730",
+      "references": 102,
+      "statuses": {
+        "unsupported": 102
+      },
+      "reasons": {
+        "unsupported_scope": 102
+      },
+      "blockers": {
+        "inherited_scope:unsupported_statement": 102
+      },
+      "package": "specmine",
+      "version": "3.1.8",
+      "original_path": "specmine/3.1.8/specmine/R/filters_flat.R"
+    },
+    {
+      "name": "muse-22",
+      "group": "muse",
+      "source_sha256": "31b1b0f30c5e310426b2091fd2b494650274f501df14a3bd71b7de738f0ec352",
+      "references": 0,
+      "statuses": {},
+      "reasons": {},
+      "blockers": {},
+      "package": "specmine",
+      "version": "3.1.8",
+      "original_path": "specmine/3.1.8/specmine/R/spectra_options.R"
+    },
+    {
+      "name": "muse-23",
+      "group": "muse",
+      "source_sha256": "b2ab25c0f821d6998b1cabbc89ef965b7ba0ce7074c4f477c3fefedfc92d4cc5",
+      "references": 249,
+      "statuses": {
+        "unsupported": 249
+      },
+      "reasons": {
+        "unsupported_scope": 249
+      },
+      "blockers": {
+        "inherited_scope:unsupported_statement": 249
+      },
+      "package": "specmine",
+      "version": "3.1.8",
+      "original_path": "specmine/3.1.8/specmine/R/peaklists.R"
+    },
+    {
+      "name": "muse-24",
+      "group": "muse",
+      "source_sha256": "af1f02b8c680cfa886f305214fb02292d31e21a07f79859f33d521c61deee624",
+      "references": 95,
+      "statuses": {
+        "unsupported": 95
+      },
+      "reasons": {
+        "unsupported_scope": 95
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 7,
+        "inherited_scope:unsupported_statement": 27,
+        "prior_statement:unsupported_statement": 61
+      },
+      "package": "specmine",
+      "version": "3.1.8",
+      "original_path": "specmine/3.1.8/specmine/R/compare_embeddings.R"
+    },
+    {
+      "name": "muse-25",
+      "group": "muse",
+      "source_sha256": "d3faddec4787a3780fb0224eb96ed32d0b819e50230bcd34ff44dd7a29204468",
+      "references": 235,
+      "statuses": {
+        "unsupported": 235
+      },
+      "reasons": {
+        "unsupported_scope": 235
+      },
+      "blockers": {
+        "default_expression:lazy_default": 1,
+        "inherited_scope:unsupported_statement": 234
+      },
+      "package": "specmine",
+      "version": "3.1.8",
+      "original_path": "specmine/3.1.8/specmine/R/normalization.R"
+    },
+    {
+      "name": "muse-26",
+      "group": "muse",
+      "source_sha256": "5d18c8348bc71e68635c2ca24d057c0ae8da899b860fa7b2ed4234eda8f7656b",
+      "references": 208,
+      "statuses": {
+        "unsupported": 208
+      },
+      "reasons": {
+        "unsupported_scope": 208
+      },
+      "blockers": {
+        "inherited_scope:unsupported_statement": 208
+      },
+      "package": "specmine",
+      "version": "3.1.8",
+      "original_path": "specmine/3.1.8/specmine/R/regression.R"
+    },
+    {
+      "name": "windows-00",
+      "group": "windows",
+      "source_sha256": "940eaa51672cc9d8e611d9dc1414b5a7ec741471f6c5e14100454a0f7ddab722",
+      "references": 36,
+      "statuses": {
+        "unsupported": 36
+      },
+      "reasons": {
+        "unsupported_scope": 36
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 15,
+        "prior_statement:unsupported_statement": 21
+      },
+      "package": "hablar",
+      "version": "0.3.2",
+      "original_path": "R/hablar.R"
+    },
+    {
+      "name": "windows-01",
+      "group": "windows",
+      "source_sha256": "0e73fa902707d2d8af6b6572aa335ae3092694c1fd49249531ac94ef1d5848e2",
+      "references": 44,
+      "statuses": {
+        "unsupported": 44
+      },
+      "reasons": {
+        "unsupported_scope": 44
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 23,
+        "prior_statement:unsupported_statement": 21
+      },
+      "package": "hablar",
+      "version": "0.3.2",
+      "original_path": "R/hablar.R"
+    },
+    {
+      "name": "windows-02",
+      "group": "windows",
+      "source_sha256": "d025a703a894deb3913bea3bd4daa4931dba843adaec8ce61bc1c2524abd3638",
+      "references": 28,
+      "statuses": {
+        "unsupported": 28
+      },
+      "reasons": {
+        "unsupported_scope": 28
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 7,
+        "prior_statement:unsupported_statement": 21
+      },
+      "package": "hablar",
+      "version": "0.3.2",
+      "original_path": "R/hablar.R"
+    },
+    {
+      "name": "windows-03",
+      "group": "windows",
+      "source_sha256": "17c6f7248a919096176b7a3231a514a77c2121c3a4109993d87262852a5b2692",
+      "references": 171,
+      "statuses": {
+        "unsupported": 171
+      },
+      "reasons": {
+        "unsupported_scope": 171
+      },
+      "blockers": {
+        "default_expression:lazy_default": 2,
+        "inherited_scope:formal_write": 31,
+        "whole_scope:formal_write": 138
+      },
+      "package": "nphPower",
+      "version": "1.1.0",
+      "original_path": "R/oxy-pwr2n.LR.R"
+    },
+    {
+      "name": "windows-04",
+      "group": "windows",
+      "source_sha256": "0e0e02b04213cfcda0c34d33a4c2fbb61edd4d40a1257025dace289dcda2bbb2",
+      "references": 28,
+      "statuses": {
+        "unsupported": 28
+      },
+      "reasons": {
+        "unsupported_scope": 28
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 6,
+        "prior_statement:unsupported_statement": 22
+      },
+      "package": "hablar",
+      "version": "0.3.2",
+      "original_path": "R/hablar.R"
+    },
+    {
+      "name": "windows-05",
+      "group": "windows",
+      "source_sha256": "f70f6319c8005889c297c00cbbb120b0657d54655ad11c25367ab711444ec695",
+      "references": 22,
+      "statuses": {
+        "unsupported": 22
+      },
+      "reasons": {
+        "unsupported_scope": 22
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 2,
+        "prior_statement:unsupported_statement": 8,
+        "whole_scope:formal_write": 12
+      },
+      "package": "specmine",
+      "version": "3.1.8",
+      "original_path": "R/filter_dataset.R"
+    },
+    {
+      "name": "windows-06",
+      "group": "windows",
+      "source_sha256": "1ee2a97b0fcc81a75d7f094e5cd0029327f38c95f88d69f0b05ef67e918dfa34",
+      "references": 184,
+      "statuses": {
+        "unsupported": 184
+      },
+      "reasons": {
+        "unsupported_scope": 184
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 7,
+        "inherited_scope:formal_write": 22,
+        "inherited_scope:unsupported_statement": 33,
+        "prior_statement:unsupported_statement": 67,
+        "whole_scope:formal_write": 55
+      },
+      "package": "otinference",
+      "version": "0.1.0",
+      "original_path": "R/limDis.R"
+    },
+    {
+      "name": "windows-07",
+      "group": "windows",
+      "source_sha256": "9a24ed2f5a3b46bac113ad8e7ef2e3be62288288a84a01f869b1f5e48099023f",
+      "references": 232,
+      "statuses": {
+        "unsupported": 232
+      },
+      "reasons": {
+        "unsupported_scope": 232
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 7,
+        "prior_statement:unsupported_statement": 225
+      },
+      "package": "sparsevar",
+      "version": "1.0.0",
+      "original_path": "R/plotIRF.R"
+    },
+    {
+      "name": "fixed-authored-00",
+      "group": "fixed",
+      "source_sha256": "e2c10ce03370845ec5190e59316da69c587a53f981d8fe71286c953d6521c79f",
+      "references": 2,
+      "statuses": {
+        "resolved": 2
+      },
+      "reasons": {
+        "None": 2
+      },
+      "blockers": {
+        "unrecorded:unrecorded": 2
+      },
+      "original_path": "literal_copy"
+    },
+    {
+      "name": "fixed-authored-01",
+      "group": "fixed",
+      "source_sha256": "f15524b3dc3a47b907681d035de3adebd7c43f76305d3a14f7c12f524047521f",
+      "references": 2,
+      "statuses": {
+        "resolved": 2
+      },
+      "reasons": {
+        "None": 2
+      },
+      "blockers": {
+        "unrecorded:unrecorded": 2
+      },
+      "original_path": "ordered_writes"
+    },
+    {
+      "name": "fixed-authored-02",
+      "group": "fixed",
+      "source_sha256": "801cce0d352054a73f0c1b292e2a6f67d48c84f54bd8d6d533e6ea919fd1e391",
+      "references": 2,
+      "statuses": {
+        "resolved": 2
+      },
+      "reasons": {
+        "None": 2
+      },
+      "blockers": {
+        "unrecorded:unrecorded": 2
+      },
+      "original_path": "copy_survives_write"
+    },
+    {
+      "name": "fixed-authored-03",
+      "group": "fixed",
+      "source_sha256": "ee3ea41d40c6e3c4b118242c76145127406765cb3bd97f925e31fec4b7150679",
+      "references": 2,
+      "statuses": {
+        "resolved": 2
+      },
+      "reasons": {
+        "None": 2
+      },
+      "blockers": {
+        "unrecorded:unrecorded": 2
+      },
+      "original_path": "self_copy"
+    },
+    {
+      "name": "fixed-authored-04",
+      "group": "fixed",
+      "source_sha256": "4eb9a6b63e9e1a32b6f814734095474e12e205c22cee035b54a30d8d8f522d73",
+      "references": 3,
+      "statuses": {
+        "resolved": 1,
+        "unsupported": 2
+      },
+      "reasons": {
+        "None": 1,
+        "unsupported_scope": 2
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 1,
+        "prior_statement:unsupported_statement": 1,
+        "unrecorded:unrecorded": 1
+      },
+      "original_path": "call_prefix"
+    },
+    {
+      "name": "fixed-authored-05",
+      "group": "fixed",
+      "source_sha256": "b3c24d1dfedad0369b79a26ffb0135e1b145da8df596b4ebcc635ef3a2f87843",
+      "references": 4,
+      "statuses": {
+        "resolved": 1,
+        "unsupported": 3
+      },
+      "reasons": {
+        "None": 1,
+        "unsupported_scope": 3
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 2,
+        "prior_statement:unsupported_statement": 1,
+        "unrecorded:unrecorded": 1
+      },
+      "original_path": "qualified_call_prefix"
+    },
+    {
+      "name": "fixed-authored-06",
+      "group": "fixed",
+      "source_sha256": "78c5d7c7fb80004e2f3b7e6249b0dae925992cc28b103ed0f78b348d0a390794",
+      "references": 4,
+      "statuses": {
+        "resolved": 1,
+        "unsupported": 3
+      },
+      "reasons": {
+        "None": 1,
+        "unsupported_scope": 3
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 2,
+        "prior_statement:unsupported_statement": 1,
+        "unrecorded:unrecorded": 1
+      },
+      "original_path": "branch_prefix"
+    },
+    {
+      "name": "fixed-authored-07",
+      "group": "fixed",
+      "source_sha256": "d6c94e9d047786ad4924805d5866e684504bfec73cc930713d63d54a8391a128",
+      "references": 2,
+      "statuses": {
+        "unsupported": 2
+      },
+      "reasons": {
+        "unsupported_scope": 2
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 1,
+        "prior_statement:unsupported_statement": 1
+      },
+      "original_path": "opaque_first"
+    },
+    {
+      "name": "fixed-authored-08",
+      "group": "fixed",
+      "source_sha256": "930b258bcb6faf410c490bb5762ddbaf556873e88ad8e0924d3665ae81185a37",
+      "references": 3,
+      "statuses": {
+        "resolved": 2,
+        "unsupported": 1
+      },
+      "reasons": {
+        "None": 2,
+        "after_unsafe_read": 1
+      },
+      "blockers": {
+        "prior_read:unsafe_read": 1,
+        "unrecorded:unrecorded": 2
+      },
+      "original_path": "formal_barrier"
+    },
+    {
+      "name": "fixed-authored-09",
+      "group": "fixed",
+      "source_sha256": "029155215b98f915491970304da07eb38371e72fb9a70808bee25b71f94e8f08",
+      "references": 3,
+      "statuses": {
+        "resolved": 1,
+        "unresolved": 1,
+        "unsupported": 1
+      },
+      "reasons": {
+        "None": 1,
+        "unbound_name": 1,
+        "after_unsafe_read": 1
+      },
+      "blockers": {
+        "prior_read:unsafe_read": 1,
+        "unrecorded:unrecorded": 2
+      },
+      "original_path": "unknown_barrier"
+    },
+    {
+      "name": "fixed-authored-10",
+      "group": "fixed",
+      "source_sha256": "7bddb9f0d6bac271205de6ecbf95cfff6fa0ad571509a829ead79574be74b93d",
+      "references": 2,
+      "statuses": {
+        "unsupported": 2
+      },
+      "reasons": {
+        "unsupported_scope": 2
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 1,
+        "inherited_scope:unsupported_statement": 1
+      },
+      "original_path": "deferred_function"
+    },
+    {
+      "name": "fixed-authored-11",
+      "group": "fixed",
+      "source_sha256": "3f9f0214765e1a79706ca3b01d0e1d0e5dfb059e80da3c8b45c9a766e0cd41f1",
+      "references": 4,
+      "statuses": {
+        "resolved": 4
+      },
+      "reasons": {
+        "None": 4
+      },
+      "blockers": {
+        "unrecorded:unrecorded": 4
+      },
+      "original_path": "unicode_shadowing"
+    },
+    {
+      "name": "fixed-authored-12",
+      "group": "fixed",
+      "source_sha256": "e0feada89240edf04be9a546880c31926e41bd4f548fa2081595f42b74c7eb78",
+      "references": 1,
+      "statuses": {
+        "unsupported": 1
+      },
+      "reasons": {
+        "unsupported_scope": 1
+      },
+      "blockers": {
+        "whole_scope:mixed_spelling": 1
+      },
+      "original_path": "equivalent_spellings"
+    },
+    {
+      "name": "fixed-authored-13",
+      "group": "fixed",
+      "source_sha256": "cfef0360be14478f08d264cc5bafa883a466478b9b4b4d298e3c574c43e41d68",
+      "references": 1,
+      "statuses": {
+        "unsupported": 1
+      },
+      "reasons": {
+        "unsupported_scope": 1
+      },
+      "blockers": {
+        "whole_scope:formal_write": 1
+      },
+      "original_path": "formal_write"
+    },
+    {
+      "name": "fixed-authored-14",
+      "group": "fixed",
+      "source_sha256": "3b474dfe895c1ae7b2e5d063e76e9c73d8463fe40421b732fe49cff3f53d3ecd",
+      "references": 4,
+      "statuses": {
+        "resolved": 1,
+        "unsupported": 3
+      },
+      "reasons": {
+        "None": 1,
+        "unsupported_scope": 3
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 2,
+        "prior_statement:unsupported_statement": 1,
+        "unrecorded:unrecorded": 1
+      },
+      "original_path": "opaque_subexpression"
+    },
+    {
+      "name": "fixed-vendor-00",
+      "group": "fixed",
+      "source_sha256": "2821ef735bb44a1b37af3a38b49de4252470b16168fecab0672abec65897bf3f",
+      "references": 6,
+      "statuses": {
+        "unsupported": 6
+      },
+      "reasons": {
+        "unsupported_scope": 6
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 6
+      },
+      "original_path": "crates/ry-checker/testdata/vendor/glue/R/quoting.R"
+    },
+    {
+      "name": "fixed-vendor-01",
+      "group": "fixed",
+      "source_sha256": "9a41704fb43684ed561fb02e4f9e1182894460fc858c3c2dc555007afbffda25",
+      "references": 14,
+      "statuses": {
+        "unsupported": 14
+      },
+      "reasons": {
+        "unsupported_scope": 14
+      },
+      "blockers": {
+        "inherited_scope:formal_write": 8,
+        "whole_scope:formal_write": 6
+      },
+      "original_path": "crates/ry-checker/testdata/vendor/purrr/R/adverb-possibly.R"
+    },
+    {
+      "name": "fixed-vendor-02",
+      "group": "fixed",
+      "source_sha256": "afdd6b8fbfc9540e4adc67c862ce9526d8524a07e7560026b6e94b56924ea4e4",
+      "references": 68,
+      "statuses": {
+        "unsupported": 68
+      },
+      "reasons": {
+        "unsupported_scope": 68
+      },
+      "blockers": {
+        "containing_statement:unsupported_statement": 5,
+        "whole_scope:unsupported_formal": 63
+      },
+      "original_path": "crates/ry-checker/testdata/vendor/purrr/R/imap.R"
+    }
+  ]
+}

@@ -165,7 +165,7 @@ inventory uses this deterministic precedence:
 
 | `kind` | `cause` codes | Location |
 | --- | --- | --- |
-| `containing_statement`, `prior_statement` | `unsupported_statement` | Entire first unsupported statement and its owning scope. |
+| `containing_statement`, `prior_statement` | `unsupported_statement` | First unsupported statement and its owning scope; expression spans may omit wrapping parentheses. |
 | `inherited_scope` | Original ancestor cause from this table. | Original ancestor blocker and owner, not the nested read. |
 | `whole_scope` | `parse_error`, `duplicate_formal`, `unsupported_formal`, `unbacked_formal`, `formal_write`, `mixed_spelling`, `unsupported_declaration` | Error region, formal, or assignment target; owning scope. |
 | `default_expression` | `lazy_default` | Default expression and function scope. |
@@ -185,6 +185,9 @@ The existing `reason` codes remain unchanged: `unsupported_scope`,
 `conflicting_observations`. Reasons without further recorded provenance keep
 `blocker: null`. Neither the schema version nor the reference capability is
 promoted by this addition.
+
+See the [blocker regression panel](corpus/reference-blockers.md) for preserved
+legacy facts and the primary-reason breakdown on selected real sources.
 
 ## Schema version 1
 

@@ -455,3 +455,44 @@ fn inherited_blocker_keeps_the_original_nested_owner() {
         json!([source.find("function").unwrap(), source.len()])
     );
 }
+
+#[test]
+fn inherited_semantic_blocker_keeps_the_first_read_and_outer_owner() {
+    let source = "outer <- function(p) { p; inner <- function(q) q }";
+    let output = analyze(source);
+    let reference = reference_at(&output, source, "q }", "q");
+    assert_eq!(reference["reason"], "after_unsafe_read");
+    assert_eq!(reference["blocker"]["kind"], "prior_read");
+    let first = source.find("p; inner").unwrap();
+    assert_eq!(
+        reference["blocker"]["span"]["bytes"],
+        json!([first, first + 1])
+    );
+    assert_eq!(
+        reference["blocker"]["scope_span"]["bytes"],
+        json!([source.find("function").unwrap(), source.len()])
+    );
+    assert!(reference["definition_id"].is_null());
+    assert!(reference["type_at_reference"].is_null());
+}
+
+#[test]
+fn lazy_defaults_retain_their_separate_expression_spans() {
+    let source = "f <- function(a = first, b = second) 1L";
+    let output = analyze(source);
+    for name in ["first", "second"] {
+        let reference = reference_at(&output, source, name, name);
+        assert_eq!(reference["reason"], "unsupported_scope");
+        assert_eq!(reference["blocker"]["kind"], "default_expression");
+        assert_eq!(reference["blocker"]["cause"], "lazy_default");
+        let start = source.find(name).unwrap();
+        assert_eq!(
+            reference["blocker"]["span"]["bytes"],
+            json!([start, start + name.len()])
+        );
+        assert_eq!(
+            reference["blocker"]["scope_span"]["bytes"],
+            json!([source.find("function").unwrap(), source.len()])
+        );
+    }
+}

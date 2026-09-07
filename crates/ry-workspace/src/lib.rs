@@ -220,7 +220,8 @@ pub fn resolve_workspace_context<'a>(
             }
             file_bindings.extend(metadata.imported_bindings.iter().cloned());
             file_imported_from.extend(metadata.imported_from.clone());
-            file_bindings.extend(metadata.s3_generics.iter().cloned());
+            // Registering an S3 method does not install the generic as a
+            // namespace binding. Real imports/dynamic bindings remain above.
             file_bindings.extend(metadata.native_routines.iter().cloned());
             file_bindings.extend(
                 metadata
@@ -1154,5 +1155,65 @@ mod input_tests {
             assert_eq!(read_r_source(&path).unwrap(), "café <- 1\n");
         }
         assert!(read_r_source(&dir.path().join("missing.R")).is_err());
+    }
+}
+
+#[cfg(test)]
+mod s3_binding_provenance_tests {
+    use super::*;
+
+    #[test]
+    fn registration_keeps_method_metadata_without_creating_generic_bindings() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("R")).unwrap();
+        std::fs::write(
+            dir.path().join("DESCRIPTION"),
+            "Package: fixture\nVersion: 0.0.0\n",
+        )
+        .unwrap();
+        let path = dir.path().join("R/code.R");
+        for (namespace, source, expected_binding) in [
+            (
+                "S3method(\"+\", foo)\nS3method(custom, foo)\n",
+                "x <- 1L",
+                false,
+            ),
+            (
+                "S3method(\"+\", foo)\nimportFrom(otherpkg, \"+\")\n",
+                "x <- 1L",
+                true,
+            ),
+            (
+                "S3method(\"+\", foo)\n",
+                "assign('+', function(...) 1L, envir = environment())",
+                true,
+            ),
+        ] {
+            std::fs::write(dir.path().join("NAMESPACE"), namespace).unwrap();
+            std::fs::write(&path, source).unwrap();
+            let path = path.to_str().unwrap();
+            let file = ry_core::RParser::new()
+                .unwrap()
+                .parse(path, source)
+                .unwrap();
+            let context = resolve_workspace_context(
+                dir.path(),
+                &ry_config::Config::default(),
+                ResolutionEnvironment {
+                    files: vec![&file],
+                    user_stubs: &Default::default(),
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                context.external_bindings[path].contains("+"),
+                expected_binding
+            );
+            assert!(!context.external_bindings[path].contains("custom"));
+            assert!(context.s3_methods[path].contains(&("+".into(), "foo".into())));
+            if namespace.contains("importFrom") {
+                assert_eq!(context.imported_bindings[path]["+"], "otherpkg");
+            }
+        }
     }
 }

@@ -169,6 +169,8 @@ fn escaped_operator_environment_changes_refresh_unrelated_files_and_returns() {
         ("mask.R", "f <- function(z) 0L"),
         ("helper.R", "g <- function() 1L + 2L"),
         ("use.R", "out <- g() == 'ok'"),
+        ("direct.R", "direct <- 1L == 'ok'"),
+        ("condition.R", "if (g()) 1L"),
     ];
     let make_project = |mask: &str| {
         let mut project = ry_checker::Project::new();
@@ -194,5 +196,101 @@ fn escaped_operator_environment_changes_refresh_unrelated_files_and_returns() {
         let warm_diagnostics = warm.check_incremental();
         let cold_diagnostics = make_project(mask).check();
         assert_eq!(warm_diagnostics, cold_diagnostics, "mask source: {mask}");
+    }
+}
+
+#[test]
+fn s3_registration_does_not_hide_primitive_diagnostics_or_real_custom_bindings() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("R")).unwrap();
+    std::fs::write(
+        dir.path().join("DESCRIPTION"),
+        "Package: fixture\nVersion: 0.0.0\n",
+    )
+    .unwrap();
+    let path = dir.path().join("R/code.R");
+    for (namespace, source, expect_primitive_error) in [
+        (
+            "S3method(\"+\", foo)\n",
+            "`+.foo` <- function(e1,e2) e1; out <- 'bad' + 1L",
+            true,
+        ),
+        (
+            "S3method(\"+\", foo)\nimportFrom(otherpkg, \"+\")\n",
+            "out <- missing_name + 1L",
+            false,
+        ),
+        (
+            "S3method(\"+\", foo)\n",
+            "`+` <- function(...) 'ok'; out <- missing_name + 1L",
+            false,
+        ),
+    ] {
+        std::fs::write(dir.path().join("NAMESPACE"), namespace).unwrap();
+        std::fs::write(&path, source).unwrap();
+        let path = path.to_str().unwrap();
+        let file = RParser::new().unwrap().parse(path, source).unwrap();
+        let context = ry_workspace::resolve_workspace_context(
+            dir.path(),
+            &ry_config::Config::default(),
+            ry_workspace::ResolutionEnvironment {
+                files: vec![&file],
+                user_stubs: &Default::default(),
+            },
+        )
+        .unwrap();
+        let mut project = ry_checker::Project::new();
+        project.add_file(path.into(), file);
+        project.set_external_bindings(context.external_bindings);
+        project.set_imported_from(context.imported_bindings);
+        project.set_external_s3_methods(context.s3_methods);
+        let diagnostics = project.check();
+        if expect_primitive_error {
+            assert!(
+                diagnostics
+                    .iter()
+                    .flat_map(|(_, diagnostics)| diagnostics)
+                    .any(|diagnostic| diagnostic.code == "RY040")
+            );
+        } else {
+            assert!(
+                diagnostics
+                    .iter()
+                    .all(|(_, diagnostics)| diagnostics.is_empty()),
+                "{diagnostics:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn unrelated_escaped_names_do_not_mask_operators() {
+    for prefix in [
+        r"`foo\`` <- 1L;",
+        r"f <- function(`foo\``) 1L;",
+        r"globalVariables('foo\\bar');",
+    ] {
+        let source = format!("{prefix} out <- 'bad' + 1L; comparison <- 1L == 'ok'");
+        let file = RParser::new().unwrap().parse("escaped.R", &source).unwrap();
+        let mut checker = Checker::new("escaped.R");
+        let diagnostics = checker.check(&file);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY040"),
+            "{source}: {diagnostics:?}"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY033"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    for (prefix, operator) in [
+        (r"`\053` <- function(...) 'ok';", "+"),
+        (r"`<\x3d` <- function(...) 'ok';", "<="),
+    ] {
+        result_mode(&format!("{prefix} result <- missing_name {operator} 1L"));
     }
 }

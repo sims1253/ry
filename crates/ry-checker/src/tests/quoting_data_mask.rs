@@ -1,6 +1,26 @@
 use super::*;
 
 #[test]
+fn separated_subset_brackets_do_not_suppress_r_diagnostics() {
+    for close in ["]]", "] ]", "]\n]", "] # closing comment\n]"] {
+        let source = format!("x <- list(1L); x[[1{close}; missing_name\n");
+        let diagnostics = check(&source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code == "RY010" && d.message.contains("missing_name")),
+            "{source:?}: {diagnostics:?}"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .all(|d| d.code != "RY097" && d.code != "RY000"),
+            "{source:?}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
 fn confidence_defaults_follow_rule_precision_and_info_severity() {
     assert_eq!(
         crate::diagnostics::default_confidence_for("RY096"),

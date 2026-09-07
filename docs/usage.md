@@ -185,6 +185,13 @@ vim.lsp.start({
 
 ## Known limits
 
+ry uses the published tree-sitter-r grammar, which requires adjacent closing
+brackets in double subscripts: write `x[[i]]`, not `x[[i] ]`. R also accepts
+newlines and comments between those closing brackets, but ry's parser does not.
+These spellings can cause false diagnostics or prevent useful diagnostics when
+parser recovery loses surrounding code. We accept this upstream limitation
+instead of maintaining a separate grammar patch.
+
 ry rejects source whose tree-sitter syntax tree exceeds 128 nested levels,
 with a parser error that identifies ry’s nesting limit and the source location.
 This protects recursive analysis on ordinary worker-thread stacks; it is not

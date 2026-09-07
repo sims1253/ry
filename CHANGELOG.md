@@ -93,6 +93,10 @@ All notable changes to ry are documented in this file.
 
 ### Changed
 
+- Use the published tree-sitter-r grammar instead of a vendored patch. Valid R
+  with spaces, newlines, or comments between double-subscript closing brackets
+  (such as `x[[i] ]`) is a known parser limitation again; use `x[[i]]` instead.
+
 - Move detailed configuration, usage, rule, and inferred-type references from
   the README into linked guides, including `docs/types.md`. The README now
   focuses on installation and first-use examples.
@@ -506,9 +510,6 @@ All notable changes to ry are documented in this file.
   Arithmetic keeps the longer operand's class (left on ties); comparison and
   logical results drop it. Attributes, unknown lengths, and empty constructors
   remain outside this proof.
-
-- Parse spaces, newlines, and comments between double-subscript closing
-  brackets, preserving diagnostics for valid R files that use `x[[i] ]`.
 
 - Parse exponent and hexadecimal integer literals with their values, and use
   double storage when an `L`-suffixed value exceeds R's integer range.

@@ -4,6 +4,8 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-07
+
 ### Added
 
 - Embed verified ggplot2 signatures for 498 functions, 145 exported values, and

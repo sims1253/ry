@@ -3,6 +3,11 @@
 This document covers the release process for the ry core binary, the
 VS Code extension, and the Zed extension. Follow these steps in order.
 
+The binary release and VS Code publication each require a manual workflow
+dispatch. Publish and verify the core first, then publish the VS Code extension,
+then submit the Zed gallery pull request. Each product can be released separately.
+Use Python 3.11 or newer for the release checksum tests (`tomllib` is required).
+
 ## Pre-release checklist
 
 Before starting any release:
@@ -70,14 +75,33 @@ v{version}  (e.g. v0.9.0)
 
 ### Steps
 
-1. Bump version in `Cargo.toml` and `Cargo.lock` (`cargo workspaces`).
+1. Set the workspace version in `Cargo.toml` and refresh `Cargo.lock` with
+   `cargo check --workspace`. If both already contain the target version,
+   no version change is needed.
 2. Update `CHANGELOG.md`: move `[Unreleased]` to `[version] - YYYY-MM-DD`.
-3. Commit: `Bump version to {version}`.
-4. Tag: `git tag v{version}`.
+3. Commit the release preparation and merge it to the release branch. Run the
+   pre-release gates on that commit, including a binary dry run:
+
+   ```bash
+   gh workflow run release.yml --ref <release-branch> -f tag=dry-run
+   ```
+
+   Record the run's commit SHA. Require all six platform builds and
+   `custom-binary-checksums` to succeed, with `host` skipped. Inspect the
+   `artifacts-binary-checksums` artifact for six `.bin.sha256` files.
+4. Tag that exact reviewed commit: `git tag v{version} <reviewed-commit-sha>`.
 5. Push tag: `git push origin v{version}`.
-6. **cargo-dist** dispatches automatically from the tag push. It produces:
+6. Dispatch the release explicitly against the tag:
+
+   ```bash
+   gh workflow run release.yml --ref v{version} -f tag=v{version}
+   ```
+
+   A tag push alone does not start this workflow. The dispatch builds and
+   publishes the GitHub Release. **cargo-dist** produces:
    - Six platform binaries (x86_64/aarch64 × linux/macOS/windows)
    - SHA-256 sidecar files for each archive
+   - Six executable `.bin.sha256` sidecars from the checksum hook
    - GitHub Release with all assets attached
 7. Verify: download each archive and its `.sha256` sidecar, run
    `sha256sum -c archive.sha256`, extract, and run `ry version`.
@@ -86,6 +110,7 @@ v{version}  (e.g. v0.9.0)
 
 - [ ] Six platform archives exist in the GitHub release
 - [ ] Each archive has a matching `.sha256` sidecar
+- [ ] All six `ry-cli-<target>.bin.sha256` executable sidecars exist
 - [ ] `sha256sum -c` passes for every archive
 - [ ] `ry version` reports the correct version on each platform
 - [ ] `ry check` runs successfully on a simple test file
@@ -98,19 +123,37 @@ v{version}  (e.g. v0.9.0)
   `constants.ts`, `README.md`, and both test-suite `getExtension` lookups
   (enforced by the `publisher-consistency` job).
 - Core binary release tag exists with verified artifacts.
+- The Marketplace publisher `scholzmx` exists and the `VSCE_PAT` repository
+  secret can publish under it. The Open VSX namespace `scholzmx` exists,
+  its publishing agreement is signed, and `OVSX_PAT` can publish under it.
+  Secret names alone do not prove that credentials are valid. See the
+  [Marketplace publishing guide](https://code.visualstudio.com/api/working-with-extensions/publishing-extension)
+  and [Open VSX publishing guide](https://github.com/eclipse-openvsx/openvsx/wiki/Publishing-Extensions).
+- Complete the core artifact verification checklist before dispatch. The
+  extension release workflow checks archive integrity and binary presence;
+  it does not execute the downloaded binaries. PR extension tests use a
+  locally built Linux binary, not the published core archives.
 
 ### Steps
 
-1. Dispatch `release-vscode.yml` with:
+1. Dispatch `release-vscode.yml` from the reviewed extension source ref with:
    - `version`: extension SemVer (e.g. `0.1.0`)
    - `core-tag`: the core binary tag (e.g. `v0.9.0`)
    - `pre-release`: true/false
+
+   For a stable 0.9.0 extension built from the core release commit:
+
+   ```bash
+   gh workflow run release-vscode.yml --ref v0.9.0 \
+     -f version=0.9.0 -f core-tag=v0.9.0 -F pre-release=false
+   ```
+
+   This command publishes to both registries; it is not a packaging dry run.
 
 2. The workflow:
    - Downloads the core binary for each platform from the specified tag
    - Verifies SHA-256 checksums
    - Packages platform-specific VSIXs
-   - Smoke-tests `ry version` and `ry check`
    - Publishes to VS Code Marketplace and Open VSX
 
 3. Post-publish smoke test:
@@ -121,10 +164,26 @@ v{version}  (e.g. v0.9.0)
    - Check the status bar shows the correct version
    - Verify the bundled binary version matches the release tag
 
+   Set `ry.importStrategy` to `useBundled` and clear any `ry.path` override
+   for this test. The default `fromEnvironment` strategy may select an older
+   binary on `PATH`. Repeat in Positron using its Open VSX installation.
+
 ### Rollback
 
-- VS Code Marketplace: `vsce unpublish scholzmx.ry@{version}`
-- Open VSX: `ovsx unpublish scholzmx.ry@{version}`
+Publish a higher extension patch version containing the fix or reverted code.
+An extension-only repair can package the same verified core tag. If the bundled
+core caused the problem, choose a verified compatible core release instead.
+Re-run the extension checks before dispatching publication.
+
+`vsce unpublish` removes the entire extension; it is not a version rollback.
+The Marketplace does not allow deletion of the latest version or reuse of a
+deleted version number. See the [Marketplace removal documentation](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#removing-extensions).
+Use each registry's management interface if an emergency requires withdrawing
+the listing, and check the scope of that action before confirming it.
+
+If only one registry's publication fails, rerun the failed job from that workflow
+run after correcting the cause. It reuses the packaged artifacts, and
+`--skip-duplicate` permits retrying targets already uploaded.
 
 ## Zed extension release
 
@@ -151,6 +210,31 @@ v{version}  (e.g. v0.9.0)
    Explicit settings and PATH binaries remain user-managed.
 6. Verify: install in Zed, open an R file, verify diagnostics fire.
 
+### First gallery submission
+
+Follow the [Zed publishing guide](https://zed.dev/docs/extensions/publishing/publishing-guide).
+In a fork of `zed-industries/extensions`, add `https://github.com/sims1253/ry`
+as the `extensions/ry` submodule and check out the reviewed release commit.
+The commit must also be reachable from a branch in the public ry repository.
+Add this entry to the gallery's `extensions.toml`:
+
+```toml
+[ry]
+submodule = "extensions/ry"
+path = "editors/zed"
+version = "0.9.0"
+```
+
+Use the version and extension ID from `editors/zed/extension.toml` if they
+change. Run `pnpm sort-extensions` in the gallery checkout. Manually test that
+commit as a dev extension before submitting the pull request, as required by
+the [publishing prerequisites](https://zed.dev/docs/extensions/publishing/prerequisites).
+Install the R language extension as well; ry supplies a language server, not
+an R grammar. Add `"ry"` to `languages.R.language_servers` in Zed's settings
+(see [editor setup](usage.md#zed)). Test automatic download with no configured binary and no ry on
+`PATH`, then restart Zed to exercise the cached binary check. Gallery publication
+follows review and merge of the pull request.
+
 ### Rollback
 
 Contact Zed to unpublish the extension version.
@@ -165,6 +249,24 @@ After all artifacts are published:
    - VS Code: check status bar, or run the `ry: Debug Information` command.
    - Zed: check the extension's downloaded binary version.
 4. Verify CLI/LSP parity: `ry check` and the LSP produce identical diagnostics.
+
+### Manual smoke-test recipe
+
+Use a fresh folder with default settings and no `ry.toml`. Create `smoke.R`:
+
+```r
+x <- "hello"
+x + 1L
+```
+
+Run the release binary with `ry check smoke.R --output-format json`. Expect
+RY040 at line 2, column 1 and exit code 1. Open the folder in the editor and
+confirm the same diagnostic. Replace `"hello"` with `1L`, save, and confirm the
+diagnostic disappears in both the editor and CLI (CLI exit code 0).
+Restore the error, restart the language server or editor, and confirm the
+diagnostic returns. Record the editor version, OS/architecture, binary path,
+and ry version alongside the result. A passing build does not replace this
+runtime check on platforms that were not exercised automatically.
 
 ## Version policy
 

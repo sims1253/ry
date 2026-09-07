@@ -4923,42 +4923,6 @@
       "severity": "error",
       "message": "cannot apply arithmetic op to `double` and `character`"
     },
-    "rlang::RY061::tests/testthat/test-nse-defuse.R:829:20": {
-      "package": "rlang",
-      "code": "RY061",
-      "path": "tests/testthat/test-nse-defuse.R",
-      "line": 829,
-      "column": 20,
-      "severity": "error",
-      "message": "$ operator is invalid for atomic vectors of mode `double`"
-    },
-    "rlang::RY061::tests/testthat/test-nse-defuse.R:830:20": {
-      "package": "rlang",
-      "code": "RY061",
-      "path": "tests/testthat/test-nse-defuse.R",
-      "line": 830,
-      "column": 20,
-      "severity": "error",
-      "message": "$ operator is invalid for atomic vectors of mode `double`"
-    },
-    "rlang::RY061::tests/testthat/test-nse-defuse.R:831:20": {
-      "package": "rlang",
-      "code": "RY061",
-      "path": "tests/testthat/test-nse-defuse.R",
-      "line": 831,
-      "column": 20,
-      "severity": "error",
-      "message": "$ operator is invalid for atomic vectors of mode `double`"
-    },
-    "rlang::RY061::tests/testthat/test-nse-defuse.R:832:20": {
-      "package": "rlang",
-      "code": "RY061",
-      "path": "tests/testthat/test-nse-defuse.R",
-      "line": 832,
-      "column": 20,
-      "severity": "error",
-      "message": "$ operator is invalid for atomic vectors of mode `double`"
-    },
     "rlang::RY070::tests/testthat/helper-locale.R:134:5": {
       "package": "rlang",
       "code": "RY070",

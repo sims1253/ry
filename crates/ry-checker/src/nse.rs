@@ -145,7 +145,7 @@ impl Checker {
             .collect();
         let mut scope = match &df_type.columns {
             Some(schema) => scope_with_columns(base_scope, schema),
-            None => base_scope.clone(),
+            None => base_scope.independent_execution_scope(),
         };
         scope.insert(DATA_MASK_ACTIVE, RType::unknown());
         scope.insert(".data", df_type.clone());
@@ -246,7 +246,7 @@ fn infer_dplyr_join(arg_types: &[RType]) -> RType {
 }
 
 fn scope_with_columns(base_scope: &Scope, schema: &Arc<ColumnSchema>) -> Scope {
-    let mut scope = base_scope.clone();
+    let mut scope = base_scope.independent_execution_scope();
     for (name, ty) in &schema.columns {
         scope.insert(name.clone(), ty.clone());
         scope.insert(format!("{DATA_MASK_COLUMN_PREFIX}{name}"), RType::unknown());

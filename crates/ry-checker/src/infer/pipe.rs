@@ -137,7 +137,7 @@ impl Checker {
             // A braced magrittr RHS is a unary lambda whose `.` pronoun is
             // bound to the LHS (`x %>% { .$field == value }`).
             Expr::Block { body, .. } => {
-                let mut inner = scope.clone();
+                let mut inner = scope.independent_execution_scope();
                 inner.insert(".", lhs_t);
                 let Some((last, prefix)) = body.split_last() else {
                     return RType::new(Mode::Null, Length::Zero);
@@ -281,18 +281,29 @@ impl Checker {
             let mut child = scope.clone();
             apply_narrowing_branch(&mut child, &narrowing, branch);
             let ty = self.infer(expr, &mut child);
-            (ty, child.ops_environment_unknown, child.effects_unknown)
+            (
+                ty,
+                child.ops_environment_unknown,
+                child.effects_unknown,
+                child.unreachable,
+            )
         };
-        let (then_t, then_ops, then_effects) = infer_arm(then, NarrowingBranch::Then);
-        let (else_t, else_ops, else_effects) = match else_ {
+        let (then_t, then_ops, then_effects, then_unreachable) =
+            infer_arm(then, NarrowingBranch::Then);
+        let (else_t, else_ops, else_effects, else_unreachable) = match else_ {
             Some(e) => infer_arm(e, NarrowingBranch::Else),
-            None => (RType::new(Mode::Null, Length::Zero), false, false),
+            None => (RType::new(Mode::Null, Length::Zero), false, false, false),
         };
         scope.literal_functions.clear();
         scope.plain_ops_vectors.clear();
         scope.ops_environment_unknown |= then_ops || else_ops;
         scope.effects_unknown |= then_effects || else_effects;
-        then_t.join(else_t)
+        scope.unreachable |= then_unreachable && else_unreachable;
+        match (then_unreachable, else_unreachable) {
+            (true, false) => else_t,
+            (false, true) => then_t,
+            _ => then_t.join(else_t),
+        }
     }
 
     /// Infer the result type of `switch(EXPR, ...)`. Both forms are

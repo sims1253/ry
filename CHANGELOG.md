@@ -171,6 +171,9 @@ All notable changes to ry are documented in this file.
   bindings, formals, and aliases. Retain existing inference under ambient
   lookup uncertainty, while requiring methods provenance for RY096.
 
+- Recognize `.Generic`, `.Method`, and `.Class` inside subset and subset
+  replacement methods, avoiding false undefined-variable warnings.
+
 - Compute data-frame column types after scalar arithmetic instead of copying
   their input types. Keep classed column results unknown when methods may run.
 

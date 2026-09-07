@@ -882,3 +882,33 @@ fn for_over_homogeneous_list_does_not_fire_ry040() {
         diags
     );
 }
+
+#[test]
+fn subset_methods_receive_s3_dispatch_context() {
+    for generic in ["[", "[[", "$", "[<-", "[[<-", "$<-"] {
+        let source =
+            format!("`{generic}.widget` <- function(x, ...) list(.Generic, .Method, .Class)\n");
+        let diagnostics = check(&source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY010"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn subset_context_does_not_define_group_or_ordinary_variables() {
+    for source in [
+        "`[<-.widget` <- function(x, ...) .Group",
+        "helper.widget <- function(x) .Generic",
+        "`[<-` <- function(x) .Generic",
+        "`[<-.` <- function(x) .Generic",
+        ".Generic",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY010"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}

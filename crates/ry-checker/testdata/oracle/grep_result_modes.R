@@ -1,0 +1,10 @@
+# oracle: must-pass
+x <- c('Apple', 'banana', NA_character_, 'pear')
+stopifnot(identical(grep('a', x), c(2L, 4L)))
+stopifnot(identical(grep('a', x, value = TRUE), c('banana', 'pear')))
+stopifnot(identical(grep('a', x, FALSE, FALSE, TRUE), c('banana', 'pear')))
+stopifnot(identical(grep('a', x, val = TRUE), c('banana', 'pear')))
+stopifnot(identical(grep(NA_character_, x), rep(NA_integer_, length(x))))
+stopifnot(identical(grep('a', x, value = TRUE, invert = TRUE), c('Apple', NA_character_)))
+matches <- grep('a', x, value = TRUE)
+stopifnot(identical(matches != 'pear', c(TRUE, FALSE)))

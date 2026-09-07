@@ -12,6 +12,11 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Match `structure()` payloads through `.Data`, preserve class and list-column
+  information for resolved base calls, and evaluate class attributes. Respect
+  shadowed constructors and class-vector builders; discard stale column names
+  after name attributes change.
+
 - Refresh incremental diagnostics when a callback changes, including callbacks
   passed as values and their downstream callers.
 

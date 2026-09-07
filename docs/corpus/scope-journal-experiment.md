@@ -83,8 +83,8 @@ instruction totals. DHAT totals are cumulative allocations; its peak is live
 heap, not process RSS.
 
 A future design should improve dense writes and ordinary workloads before it
-replaces the current storage. The persistent-map follow-up below measures one alternative; it does not
-change the public API or production storage.
+replaces the current storage. The persistent-map follow-up below measures one
+alternative; it does not change the public API or production storage.
 
 ## Follow-up experiments
 
@@ -115,7 +115,6 @@ historical experiment base and do not claim to cover later `Scope` fields.
 The remaining dense regression and small corpus gain do not justify the extra
 branch state. These results leave #130 open without changing production storage.
 
-
 ## Persistent-map screening
 
 A fourth prototype replaces only `Scope::bindings` and
@@ -123,8 +122,8 @@ A fourth prototype replaces only `Scope::bindings` and
 provenance keep their existing clone behavior, so this is a partial storage
 experiment. The two persistent maps apply wherever a `Scope` is cloned, unlike
 the journal prototype's statement-`if` boundary. It uses historical clone
-baseline `e67fb55`, without any journal
-plumbing or adaptive thresholds. A compile-time feature selects standard or
+baseline `e67fb55`, without any journal plumbing or adaptive thresholds.
+A compile-time feature selects standard or
 persistent maps in the same source; the ordinary build retains the public
 standard-map field types.
 

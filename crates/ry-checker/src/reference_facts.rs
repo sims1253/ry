@@ -41,6 +41,25 @@ pub enum ReferenceResolution {
     Unsupported,
 }
 
+/// One primary restriction, not an exhaustive explanation. See docs/facts.md
+/// for stable codes and deterministic precedence. Spans use original bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReferenceBlocker {
+    pub kind: &'static str,
+    pub cause: &'static str,
+    pub span: Option<Span>,
+    pub scope_span: Span,
+}
+
+impl ReferenceBlocker {
+    fn inherited(self) -> Self {
+        Self {
+            kind: "inherited_scope",
+            ..self
+        }
+    }
+}
+
 /// An original-source value occurrence, never a scope-exit snapshot.
 #[derive(Debug, Clone)]
 pub struct ReferenceRecord {
@@ -50,6 +69,7 @@ pub struct ReferenceRecord {
     pub definition: Option<DefinitionId>,
     pub type_at_reference: Option<RType>,
     pub reason: Option<&'static str>,
+    pub blocker: Option<ReferenceBlocker>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -69,12 +89,21 @@ pub(crate) struct BindingProvenance {
 pub(crate) struct ScopeProvenance {
     owner: Span,
     after_unsafe_read: bool,
+    unsafe_read_blocker: Option<ReferenceBlocker>,
     bindings: HashMap<String, BindingProvenance>,
 }
 
 impl ScopeProvenance {
     pub(crate) fn invalidate_all(&mut self) {
         self.bindings.clear();
+        if !self.after_unsafe_read {
+            self.unsafe_read_blocker = Some(ReferenceBlocker {
+                kind: "semantic_effect",
+                cause: "unknown_effect",
+                span: None,
+                scope_span: self.owner,
+            });
+        }
         self.after_unsafe_read = true;
     }
 
@@ -109,6 +138,15 @@ impl ReferenceCapture {
             &[],
             &file.stmts,
             !file.parse_errors.is_empty(),
+            file.parse_errors
+                .iter()
+                .min_by_key(|span| (span.start, span.end))
+                .map(|span| ReferenceBlocker {
+                    kind: "whole_scope",
+                    cause: "parse_error",
+                    span: Some(*span),
+                    scope_span: whole_file_span(&file.source),
+                }),
         );
         capture
     }
@@ -126,8 +164,16 @@ impl ReferenceCapture {
         params: &[Param],
         stmts: &[Stmt],
         inherited_unsupported: bool,
+        inherited_blocker: Option<ReferenceBlocker>,
     ) {
         let mut unsafe_scope = inherited_unsupported;
+        let mut scope_blocker = inherited_blocker;
+        let declaration_blocker = |cause, span| ReferenceBlocker {
+            kind: "whole_scope",
+            cause,
+            span: Some(span),
+            scope_span: owner,
+        };
         let mut spellings = HashMap::<String, String>::new();
         let mut writes = HashMap::<String, usize>::new();
         let mut formals = HashSet::new();
@@ -139,10 +185,14 @@ impl ReferenceCapture {
             if let Some(key) = ordinary_spelling(&param.name) {
                 if !formals.insert(key.to_string()) {
                     unsafe_scope = true;
+                    scope_blocker
+                        .get_or_insert_with(|| declaration_blocker("duplicate_formal", param.span));
                 }
                 spellings.insert(key.to_string(), param.name.clone());
             } else {
                 unsafe_scope = true;
+                scope_blocker
+                    .get_or_insert_with(|| declaration_blocker("unsupported_formal", param.span));
             }
             // Param.span includes its default. Its name is the raw source token.
             let span = Span {
@@ -158,12 +208,15 @@ impl ReferenceCapture {
                 ));
             } else {
                 unsafe_scope = true;
+                scope_blocker
+                    .get_or_insert_with(|| declaration_blocker("unbacked_formal", param.span));
             }
             if let Some(default) = &param.default {
                 defaults.push(Stmt::Expr(default.clone()));
             }
         }
         let mut supported_prefix = true;
+        let mut prefix_blocker: Option<ReferenceBlocker> = None;
         for statement in stmts {
             let mut unsupported_statement = false;
             let mut statement_declarations = Vec::new();
@@ -188,6 +241,16 @@ impl ReferenceCapture {
                                         || spellings.get(key).is_some_and(|raw| raw != name)
                                     {
                                         unsafe_scope = true;
+                                        scope_blocker.get_or_insert_with(|| {
+                                            declaration_blocker(
+                                                if formals.contains(key) {
+                                                    "formal_write"
+                                                } else {
+                                                    "mixed_spelling"
+                                                },
+                                                *span,
+                                            )
+                                        });
                                     }
                                     spellings.insert(key.to_string(), name.clone());
                                     let count = writes.entry(key.to_string()).or_default();
@@ -197,6 +260,9 @@ impl ReferenceCapture {
                                     }
                                 } else {
                                     unsafe_scope = true;
+                                    scope_blocker.get_or_insert_with(|| {
+                                        declaration_blocker("unsupported_declaration", *span)
+                                    });
                                 }
                                 statement_declarations.push((
                                     name.clone(),
@@ -251,6 +317,23 @@ impl ReferenceCapture {
             );
             // Reject the entire opaque statement, including earlier children.
             // This boundary makes no argument/subexpression ordering claims.
+            let statement_blocker = if let Some(blocker) = prefix_blocker {
+                Some(ReferenceBlocker {
+                    kind: "prior_statement",
+                    ..blocker
+                })
+            } else if unsupported_statement {
+                let blocker = ReferenceBlocker {
+                    kind: "containing_statement",
+                    cause: "unsupported_statement",
+                    span: Some(statement_span(statement)),
+                    scope_span: owner,
+                };
+                prefix_blocker = Some(blocker);
+                Some(blocker)
+            } else {
+                None
+            };
             supported_prefix &= !unsupported_statement;
             declarations.extend(
                 statement_declarations
@@ -260,7 +343,7 @@ impl ReferenceCapture {
             references.extend(
                 statement_references
                     .into_iter()
-                    .map(|(name, span)| (name, span, supported_prefix)),
+                    .map(|(name, span)| (name, span, supported_prefix, statement_blocker)),
             );
         }
         if !unsafe_scope {
@@ -281,7 +364,7 @@ impl ReferenceCapture {
                 self.declarations.insert(span, id);
             }
         }
-        for (name, span, eligible) in references {
+        for (name, span, eligible, statement_blocker) in references {
             let eligible = eligible && !unsafe_scope;
             self.occurrences.entry(span).or_insert(Occurrence {
                 record: ReferenceRecord {
@@ -295,6 +378,7 @@ impl ReferenceCapture {
                     } else {
                         "unsupported_scope"
                     }),
+                    blocker: scope_blocker.or(statement_blocker),
                 },
                 owner,
                 eligible,
@@ -302,8 +386,21 @@ impl ReferenceCapture {
             });
         }
         // Defaults are lazy expressions, not the function's runtime contract.
-        if !defaults.is_empty() {
-            self.inventory_scope(source, owner, &[], &defaults, true);
+        for default in defaults {
+            let blocker = ReferenceBlocker {
+                kind: "default_expression",
+                cause: "lazy_default",
+                span: Some(statement_span(&default)),
+                scope_span: owner,
+            };
+            self.inventory_scope(
+                source,
+                owner,
+                &[],
+                std::slice::from_ref(&default),
+                true,
+                Some(blocker),
+            );
         }
         for (params, body, span) in functions {
             // A body can run after the enclosing prefix has ended. Its textual
@@ -314,6 +411,9 @@ impl ReferenceCapture {
                 &params,
                 &body,
                 unsafe_scope || !supported_prefix,
+                scope_blocker
+                    .or(prefix_blocker)
+                    .map(ReferenceBlocker::inherited),
             );
         }
     }
@@ -331,6 +431,18 @@ impl ReferenceCapture {
             definitions,
             references,
         }
+    }
+}
+
+fn statement_span(statement: &Stmt) -> Span {
+    match statement {
+        Stmt::Expr(expression) => span_of(expression),
+        Stmt::Assign { span, .. }
+        | Stmt::If { span, .. }
+        | Stmt::For { span, .. }
+        | Stmt::While { span, .. }
+        | Stmt::FunctionDef { span, .. }
+        | Stmt::Return { span, .. } => *span,
     }
 }
 
@@ -394,6 +506,7 @@ impl Checker {
             scope.reference_provenance = Some(Box::new(ScopeProvenance {
                 owner,
                 after_unsafe_read: false,
+                unsafe_read_blocker: None,
                 bindings: HashMap::new(),
             }));
         }
@@ -453,7 +566,7 @@ impl Checker {
         );
     }
 
-    pub(crate) fn finish_reference_read(&self, name: &str, scope: &mut Scope) {
+    pub(crate) fn finish_reference_read(&self, name: &str, span: Span, scope: &mut Scope) {
         // A formal, inherited, or untracked read may force arbitrary code.
         // It can mutate this frame or install active bindings for future writes.
         // Only an ordinary value already installed in this scope is safe.
@@ -468,6 +581,14 @@ impl Checker {
                 .is_some_and(|binding| binding.owner == provenance.owner);
             if formal || !ordinary_local {
                 provenance.bindings.clear();
+                if !provenance.after_unsafe_read {
+                    provenance.unsafe_read_blocker = Some(ReferenceBlocker {
+                        kind: "prior_read",
+                        cause: "unsafe_read",
+                        span: Some(span),
+                        scope_span: provenance.owner,
+                    });
+                }
                 provenance.after_unsafe_read = true;
             }
         }
@@ -553,6 +674,11 @@ impl Checker {
                 Some("untracked_lookup"),
             )
         };
+        let blocker = if reason == Some("after_unsafe_read") {
+            provenance.unsafe_read_blocker
+        } else {
+            None
+        };
         if occurrence.observed
             && (occurrence.record.resolution != resolution
                 || occurrence.record.definition != definition
@@ -562,11 +688,13 @@ impl Checker {
             occurrence.record.definition = None;
             occurrence.record.type_at_reference = None;
             occurrence.record.reason = Some("conflicting_observations");
+            occurrence.record.blocker = None;
         } else if !occurrence.observed {
             occurrence.record.resolution = resolution;
             occurrence.record.definition = definition;
             occurrence.record.type_at_reference = type_at_reference;
             occurrence.record.reason = reason;
+            occurrence.record.blocker = blocker;
         }
         occurrence.observed = true;
     }

@@ -177,6 +177,10 @@ All notable changes to ry are documented in this file.
   return type. Keep uncertain dispatch opaque instead of borrowing a method or
   scalar default return from an unrelated class.
 
+- Add primary blocker provenance to reference facts, locating statement,
+  ancestor, declaration, and unsafe-read restrictions while preserving existing
+  resolution statuses, reasons, and unavailable evidence.
+
 - Stop applying `hasArg` and `on.exit` deferred semantics to explicit competing
   bindings, formals, and aliases. Retain existing inference under ambient
   lookup uncertainty, while requiring methods provenance for RY096.

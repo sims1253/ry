@@ -316,3 +316,142 @@ fn equivalent_identifier_spellings_and_syntax_rebinding_fail_closed() {
         assert_uncertain(&reference_at(&output, source, "y <- x", "x"));
     }
 }
+
+#[test]
+fn blocker_provenance_distinguishes_statement_prefix_and_ancestor() {
+    for (source, fragment, kind, barrier) in [
+        (
+            "x <- 1L; base::length(x)",
+            "length(x)",
+            "containing_statement",
+            "base::length(x)",
+        ),
+        ("x <- 1L; mutate(); x", "; x", "prior_statement", "mutate()"),
+        (
+            "f <- function(x) { x }; mutate()",
+            "x }",
+            "inherited_scope",
+            "mutate()",
+        ),
+    ] {
+        let output = analyze(source);
+        let reference = reference_at(&output, source, fragment, "x");
+        assert_eq!(reference["resolution_status"], "unsupported");
+        assert_eq!(reference["reason"], "unsupported_scope");
+        assert!(reference["definition_id"].is_null());
+        assert!(reference["type_at_reference"].is_null());
+        assert_eq!(reference["blocker"]["kind"], kind, "{output}");
+        assert_eq!(reference["blocker"]["cause"], "unsupported_statement");
+        let start = source.find(barrier).unwrap();
+        assert_eq!(
+            reference["blocker"]["span"]["bytes"],
+            json!([start, start + barrier.len()])
+        );
+        assert_eq!(
+            reference["blocker"]["scope_span"]["bytes"],
+            json!([0, source.len()])
+        );
+    }
+}
+
+#[test]
+fn semantic_blocker_retains_first_unsafe_read_with_utf8_positions() {
+    let source = "f <- function(π) {\r\n\tπ; π; π\r\n}";
+    let output = analyze(source);
+    let reads: Vec<_> = output["files"][0]["references"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|reference| reference["name"] == "π")
+        .collect();
+    assert_eq!(reads.len(), 3);
+    assert_eq!(reads[0]["resolution_status"], "resolved");
+    assert!(reads[0]["blocker"].is_null());
+    let first = source.find("\tπ").unwrap() + 1;
+    for reference in &reads[1..] {
+        assert_eq!(reference["reason"], "after_unsafe_read");
+        assert_eq!(reference["blocker"]["kind"], "prior_read");
+        assert_eq!(reference["blocker"]["cause"], "unsafe_read");
+        assert_eq!(
+            reference["blocker"]["span"]["bytes"],
+            json!([first, first + "π".len()])
+        );
+        assert_eq!(reference["blocker"]["span"]["start"], json!([2, 2]));
+        assert_eq!(reference["blocker"]["span"]["end"], json!([2, 3]));
+        assert_eq!(
+            reference["blocker"]["scope_span"]["bytes"],
+            json!([source.find("function").unwrap(), source.len()])
+        );
+        assert!(reference["definition_id"].is_null());
+        assert!(reference["type_at_reference"].is_null());
+    }
+}
+
+#[test]
+fn whole_scope_and_ancestor_blockers_have_documented_precedence() {
+    for (source, fragment, kind, cause, blocker) in [
+        (
+            "f <- function(x) { x; mutate(); x <- 1L; x }",
+            "x; mutate",
+            "whole_scope",
+            "formal_write",
+            "x <-",
+        ),
+        (
+            "`x` <- 1L; mutate(); x <- 2L; x",
+            "2L; x",
+            "whole_scope",
+            "mixed_spelling",
+            "x <-",
+        ),
+        (
+            "mutate(); f <- function(x) { x; x <- 1L }",
+            "x; x",
+            "inherited_scope",
+            "unsupported_statement",
+            "mutate()",
+        ),
+        (
+            "x <- 1L; first(); second(x)",
+            "second(x)",
+            "prior_statement",
+            "unsupported_statement",
+            "first()",
+        ),
+    ] {
+        let output = analyze(source);
+        let reference = reference_at(&output, source, fragment, "x");
+        assert_eq!(reference["reason"], "unsupported_scope", "{output}");
+        assert_eq!(reference["blocker"]["kind"], kind, "{output}");
+        assert_eq!(reference["blocker"]["cause"], cause, "{output}");
+        let start = source.find(blocker).unwrap();
+        let length = if kind == "whole_scope" {
+            1
+        } else {
+            blocker.len()
+        };
+        assert_eq!(
+            reference["blocker"]["span"]["bytes"],
+            json!([start, start + length])
+        );
+        assert!(reference["definition_id"].is_null());
+        assert!(reference["type_at_reference"].is_null());
+    }
+}
+
+#[test]
+fn inherited_blocker_keeps_the_original_nested_owner() {
+    let source = "outer <- function() { inner <- function(x) { x }; mutate() }";
+    let output = analyze(source);
+    let reference = reference_at(&output, source, "x }", "x");
+    assert_eq!(reference["blocker"]["kind"], "inherited_scope");
+    let barrier = source.find("mutate()").unwrap();
+    assert_eq!(
+        reference["blocker"]["span"]["bytes"],
+        json!([barrier, barrier + "mutate()".len()])
+    );
+    assert_eq!(
+        reference["blocker"]["scope_span"]["bytes"],
+        json!([source.find("function").unwrap(), source.len()])
+    );
+}

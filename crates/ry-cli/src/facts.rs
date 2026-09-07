@@ -233,6 +233,12 @@ fn export_references(file: &SourceFile, facts: ry_checker::ReferenceFacts) -> (V
         "definition_id": reference.definition.map(|id| id.0),
         "type_at_reference": reference.type_at_reference.as_ref().map(facts_types::export_type),
         "reason": reference.reason,
+        "blocker": reference.blocker.map(|blocker| json!({
+            "kind": blocker.kind,
+            "cause": blocker.cause,
+            "span": blocker.span.map(|span| source_span(&file.source, span)),
+            "scope_span": source_span(&file.source, blocker.scope_span),
+        })),
     })).collect();
     (json!(definitions), json!(references))
 }

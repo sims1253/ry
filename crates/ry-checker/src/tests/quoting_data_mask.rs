@@ -1409,3 +1409,64 @@ fn forwarded_data_mask_dots_do_not_use_lexical_column_types() {
     let source = "wrap <- function(data, ...) dplyr::summarise(data, ...)\nx <- list(1)\nwrap(data.frame(x = 1), result = mean(x))";
     assert!(check(source).is_empty(), "{:?}", check(source));
 }
+
+#[test]
+fn wrapper_capture_modes_follow_the_matched_helper_formal() {
+    for body in [
+        "base::delayedAssign(val=p, x='held')",
+        "base::substitute(en=list(), ex=p)",
+        "rlang::enquos(item=p, .named=FALSE)",
+    ] {
+        let diagnostics = check(&format!("f <- function(p) {body}; f(unbound_capture)"));
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.code == "RY010" && d.message.contains("unbound_capture")),
+            "{body}: {diagnostics:?}"
+        );
+    }
+    for body in [
+        "base::delayedAssign(p, 1L)",
+        "base::delayedAssign('held', 1L, eval.env=p)",
+        "base::delayedAssign('held', 1L, assign.env=p)",
+        "base::substitute(env=p, expr=1L)",
+        "rlang::enquos(.named=p)",
+    ] {
+        let diagnostics = check(&format!("f <- function(p) {body}; f(unbound_control)"));
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code == "RY010" && d.message.contains("unbound_control")),
+            "{body}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn forwarded_dots_keep_exact_and_all_capture_actuals_quoted() {
+    for body in [
+        "rlang::enquo(p, ...)",
+        "rlang::enquo(..., p)",
+        "rlang::enquo(ar=p, ...)",
+        "rlang::enquo(arg=p, ...)",
+        "delayedAssign(x='held', value=p, ...)",
+    ] {
+        let diagnostics = check(&format!("f <- function(p, ...) {body}; f(unbound_capture)"));
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.code == "RY010" && d.message.contains("unbound_capture")),
+            "{body}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn escaped_names_of_all_capture_helpers_add_no_eager_wrapper_diagnostic() {
+    let diagnostics = check(r"f <- function(p) rlang::enquo(`\x61rg`=p); f(unbound_capture)");
+    let mut codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    codes.sort();
+    // The ordinary matcher still sees the recovery spelling. Preserve its
+    // existing diagnostics, without adding RY010 at the valid wrapper call.
+    assert_eq!(codes, ["RY090", "RY091"]);
+}

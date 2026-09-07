@@ -171,6 +171,14 @@ All notable changes to ry are documented in this file.
   longer trigger dollar-access errors. Keep slot results and replaced roots
   unknown, including mixed nested replacements; respect explicit accessors.
 
+- Account for forwarded `...` when checking missing and unknown arguments.
+  Expanded arguments can fill required parameters and resolve partial names;
+  explicit named holes and unrelated argument names still produce warnings.
+
+- Keep `grep`, `confint`, and fold results conservative across their supported
+  return shapes. Complete `grep` and `confint` formals; character grep results
+  and list-valued confidence intervals no longer cause false type errors.
+
 - Honor tidy-evaluation injection in `ggplot2::aes` aesthetics and `vars` facets,
   avoiding false negation errors for unquoting and list splicing. Ordinary
   helper arguments continue to execute R negation.
@@ -178,6 +186,7 @@ All notable changes to ry are documented in this file.
 - Forget stale receiver types after `storage.mode(x) <- ...` and `mode(x) <- ...`.
   Coercing a character or list value no longer leaves arithmetic checking its
   previous storage type; the assignment expression still returns its right side.
+
 - Match `rapply` result controls through the full R argument match, including
   positional and partial `how` arguments. Keep recursive unlisting and dynamic
   modes unknown; preserve outer list shape only for proven list/replace calls,
@@ -270,13 +279,18 @@ All notable changes to ry are documented in this file.
   `substitute`, `expression`, and `rlang::expr` calls in defaults. Keep
   checking evaluated control arguments and tidy-injection payloads.
 
+- Keep `expand.grid` results conservative, so dropped numeric columns and
+  data-frame arithmetic do not inherit the plain-list storage type. Include
+  its exact `KEEP.OUT.ATTRS` and `stringsAsFactors` control names.
+
 - Resolve S3 operators before inferring data-frame results, so subclass methods
   can return other types and conflicting methods do not retain column schemas.
 
 - Validate typeshed updates before replacing the vendored snapshot. Failed
   validation leaves the existing stubs and provenance intact. Restore the old
   snapshot if installation fails or receives a handled interrupt, and retain a
-  recovery copy if restoration fails.
+  recovery copy if restoration fails. Refresh the embedded provenance timestamp
+  after validation so the next Cargo build includes the installed snapshot.
 
 - Infer vector-constructor lengths from size values, including empty defaults
   and fractional sizes. Correct factor arithmetic with NULL and unary minus.

@@ -917,6 +917,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_s3_dispatch.R
 - diagnostics: []
+  fixture: ok_s3_hist_receiver.R
+- diagnostics: []
   fixture: ok_s3_literal_ops_chooser.R
 - diagnostics: []
   fixture: ok_s3_opaque_group_stops_lookup.R

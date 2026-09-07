@@ -145,15 +145,6 @@
       "severity": "warning",
       "message": "comparing `character` with `integer`; R coerces the numeric value to character and compares lexicographically, which is rarely intended"
     },
-    "broom::RY061::R/gmm.R:96:11": {
-      "package": "broom",
-      "code": "RY061",
-      "path": "R/gmm.R",
-      "line": 96,
-      "column": 11,
-      "severity": "error",
-      "message": "$ operator is invalid for atomic vectors of mode `double`"
-    },
     "bslib::RY010::R/accordion.R:168:10": {
       "package": "bslib",
       "code": "RY010",
@@ -3177,24 +3168,6 @@
       "severity": "warning",
       "message": "comparison with `NA` always produces `NA`; use `is.na()` instead"
     },
-    "lintr::RY060::tests/testthat/test-linter_tags.R:172:24": {
-      "package": "lintr",
-      "code": "RY060",
-      "path": "tests/testthat/test-linter_tags.R",
-      "line": 172,
-      "column": 24,
-      "severity": "error",
-      "message": "column `tag` not found in data frame schema; available columns: filename, line_number, column_number, type, message, ..."
-    },
-    "lintr::RY060::tests/testthat/test-linter_tags.R:178:15": {
-      "package": "lintr",
-      "code": "RY060",
-      "path": "tests/testthat/test-linter_tags.R",
-      "line": 178,
-      "column": 15,
-      "severity": "error",
-      "message": "column `tag` not found in data frame schema; available columns: filename, line_number, column_number, type, message, ..."
-    },
     "lubridate::RY010::R/ops-compare.r:20:64": {
       "package": "lubridate",
       "code": "RY010",
@@ -4498,7 +4471,7 @@
       "line": 531,
       "column": 7,
       "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical"
+      "message": "`if` condition is `opaque<len=0>`, expected length-1 logical"
     },
     "rlang::RY001::R/trace.R:540:7": {
       "package": "rlang",

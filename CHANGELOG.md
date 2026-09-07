@@ -171,6 +171,10 @@ All notable changes to ry are documented in this file.
 - Report missing format arguments only for proven base `sprintf` and
   `gettextf` calls, avoiding false RY094 warnings for custom functions.
 
+- Require a matching receiver class before inferring a registered S3 method's
+  return type. Keep uncertain dispatch opaque instead of borrowing a method or
+  scalar default return from an unrelated class.
+
 - Stop applying `hasArg` and `on.exit` deferred semantics to explicit competing
   bindings, formals, and aliases. Retain existing inference under ambient
   lookup uncertainty, while requiring methods provenance for RY096.

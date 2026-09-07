@@ -1,6 +1,58 @@
 use super::*;
 
 #[test]
+fn registered_s3_method_return_requires_matching_receiver() {
+    for source in [
+        "hist.data.frame <- function(x, ...) 1; result <- hist(1:10, plot=FALSE); result$breaks",
+        "hist.data.frame <- function(x, ...) 1; result <- hist(structure(1:10, class='other'), plot=FALSE); result$breaks",
+        "hist.data.frame <- function(x, ...) 1; f <- function(x) hist(x, plot=FALSE)$breaks; f(1:10)",
+    ] {
+        let diags = check_with(source, |checker| {
+            checker.set_external_s3_methods(HashSet::from([("hist".into(), "data.frame".into())]));
+        });
+        assert!(
+            diags.iter().all(|d| d.code != "RY061"),
+            "{source}: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn registered_s3_method_return_retains_matching_receiver() {
+    let diags = check_with(
+        "hist.data.frame <- function(x, ...) 1; result <- hist(data.frame(x=1:10)); result$breaks",
+        |checker| {
+            checker.set_external_s3_methods(HashSet::from([("hist".into(), "data.frame".into())]));
+        },
+    );
+    assert!(diags.iter().any(|d| d.code == "RY061"), "{diags:?}");
+}
+
+#[test]
+fn registered_s3_method_miss_does_not_borrow_scalar_default() {
+    let diags = check_with(
+        "`^.widget` <- function(e1, e2) e1; mean.widget <- function(x, ...) list(value=2L); f <- function(x) mean(x^2)$value; f(structure(1L, class='widget'))",
+        |checker| {
+            checker.set_external_s3_methods(HashSet::from([
+                ("mean".into(), "widget".into()),
+                ("^".into(), "widget".into()),
+            ]));
+        },
+    );
+    assert!(diags.iter().all(|d| d.code != "RY061"), "{diags:?}");
+}
+
+#[test]
+fn registered_s3_method_without_local_body_keeps_dispatch_opaque() {
+    let diags = check_with("f <- function(x) mean(x)$value", |checker| {
+        checker.set_external_s3_methods(HashSet::from([("mean".into(), "widget".into())]));
+    });
+    assert!(diags.iter().all(|d| d.code != "RY061"), "{diags:?}");
+    let control = check("f <- function(x) mean(x)$value");
+    assert!(control.iter().any(|d| d.code == "RY061"), "{control:?}");
+}
+
+#[test]
 fn scalar_data_frame_arithmetic_computes_column_results() {
     for (expression, expected) in [
         ("frame + 0.5", Mode::Double),

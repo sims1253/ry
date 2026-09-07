@@ -1156,6 +1156,71 @@ fn dollar_on_list_no_warning() {
 }
 
 #[test]
+fn dollar_on_classed_atomic_values_keeps_dispatch_opaque() {
+    for value in [
+        "structure(1L, class='widget')",
+        "structure('payload', class='widget')",
+        "if (runif(1) > 0.5) structure(1L, class='widget') else 'plain'",
+    ] {
+        let (diags, scope) = check_with_scope(&format!(
+            "`$.widget` <- function(x, name) list(value=2L); x <- {value}; out <- x$field; out$value + 1L"
+        ));
+        assert!(
+            diags.iter().all(|d| !matches!(d.code, "RY061" | "RY040")),
+            "{value}: {diags:?}"
+        );
+        assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque, "{value}");
+    }
+}
+
+#[test]
+fn dollar_on_classed_atomic_values_invalidates_caller_effects() {
+    let diags = check(
+        "`$.widget` <- function(x, name) { assign('marker', 1L, envir=parent.frame()); 2L }; f <- function() { marker <- 'before'; x <- structure(1L, class='widget'); out <- x$field; marker + 1L }; f()",
+    );
+    assert!(
+        diags.iter().all(|d| !matches!(d.code, "RY061" | "RY040")),
+        "{diags:?}"
+    );
+}
+
+#[test]
+fn dollar_on_classed_atomic_values_does_not_require_a_collected_method() {
+    let (diags, scope) = check_with_scope("x <- structure(1L, class='external'); out <- x$field");
+    assert!(diags.iter().all(|d| d.code != "RY061"), "{diags:?}");
+    assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque);
+}
+
+#[test]
+fn dollar_on_union_with_outer_class_invalidates_caller_effects() {
+    let diags = check(
+        "`$.widget` <- function(x,name) { assign('marker',1L,envir=parent.frame()); 2L }; f <- function(flag) { marker <- 'before'; x <- structure(if(flag) 1L else 'payload',class='widget'); out <- x$field; marker+1L }; f(TRUE); f(FALSE)",
+    );
+    assert!(
+        diags.iter().all(|d| !matches!(d.code, "RY061" | "RY040")),
+        "{diags:?}"
+    );
+}
+
+#[test]
+fn dollar_assignment_on_classed_atomic_values_preserves_uncertainty() {
+    for value in [
+        "structure(1L,class='widget')",
+        "structure(if(flag) 1L else 'payload',class='widget')",
+    ] {
+        let diags = check(&format!(
+            "`$<-.widget` <- function(x,name,value) {{ assign('marker',1L,envir=parent.frame()); list(saved=value) }}; f <- function(flag) {{ marker <- 'before'; x <- {value}; x$field <- 3L; marker+1L; x$saved }}; f(TRUE); f(FALSE)"
+        ));
+        assert!(
+            diags.iter().all(|d| !matches!(d.code, "RY061" | "RY040")),
+            "{value}: {diags:?}"
+        );
+    }
+    let diags = check("x <- 1L; x$field <- 3L");
+    assert!(diags.iter().any(|d| d.code == "RY061"), "{diags:?}");
+}
+
+#[test]
 fn dollar_on_data_frame_no_warning() {
     let diags = check("val <- mtcars$mpg\n");
     assert!(diags.iter().all(|d| d.code != "RY061"), "got {:?}", diags);

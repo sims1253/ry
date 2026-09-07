@@ -1469,6 +1469,12 @@ impl Checker {
             let _ = self.infer(base, scope);
             return true;
         };
+        if matches!(kind, IndexKind::Dollar) && index::dollar_atomic_receiver_may_dispatch(&base_t)
+        {
+            // `$<-` may replace the whole value and write to its caller.
+            scope.invalidate_unknown_effects();
+            return true;
+        }
         if matches!(kind, IndexKind::Single) {
             let names = args
                 .first()

@@ -170,6 +170,10 @@ All notable changes to ry are documented in this file.
   and UTF-8 byte sequences correctly. Preserve physical escaped newlines and
   retain raw recovery text for malformed or unrepresentable string values.
 
+- Keep classed atomic `$` reads and writes conservative when an S3 method may
+  handle the access, including classes attached to a union of payload types.
+  Discard caller facts that the method could change.
+
 - Report missing format arguments only for proven base `sprintf` and
   `gettextf` calls, avoiding false RY094 warnings for custom functions.
 

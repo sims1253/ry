@@ -370,8 +370,8 @@ pub struct RType {
     /// closures).
     pub fn_sig: Option<Arc<FunctionSignature>>,
     /// Members of a union type (`mode == Mode::Union`). `None` for all
-    /// non-union types. Members are bare atomic shapes (class/columns/
-    /// fn_sig cleared); the union owns those dimensions. Built by `join`
+    /// non-union types. Members retain their class, columns, and function
+    /// signature; the union can also carry its own metadata. Built by `join`
     /// when two incompatible branches merge (e.g. `if (p) 1L else "a"`),
     /// capped at `MAX_UNION_MEMBERS` (beyond the cap, join collapses to
     /// `RType::unknown()`).

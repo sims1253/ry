@@ -17,8 +17,8 @@ the other, `upstream-ggplot2`, names the upstream package.
 
 | Ledger | `ry` | Packages | Diagnostics | TP / FP / Unc | Reconciliation |
 | :-- | :-- | :-- | ---: | :-- | :-- |
-| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.7.1 | 24 | 123 | 10 / 61 / 0 (+52 unowned) | hermetic (strict CI gate) |
-| [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 699 | 43 / 656 / 0 | hermetic (strict CI gate) |
+| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.7.1 | 24 | 107 | 10 / 45 / 0 (+52 unowned) | hermetic (strict CI gate) |
+| [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 689 | 43 / 646 / 0 | hermetic (strict CI gate) |
 
 Two historical ledgers were removed as generated artifacts: the 0.8.0
 audit transcript (1,142 identities, reconciliation `audit-transcript`) and

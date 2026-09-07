@@ -450,33 +450,7 @@ impl RParser {
         // subset/subset2 share the same shape as call: `function` + `arguments`.
         let base = self.lower_expr(n.child_by_field_name("function")?, src)?;
         let span = self.span(n);
-        let mut args = self.lower_arguments(n.child_by_field_name("arguments"), src);
-        // tree-sitter does not expose a named `argument` node for an empty
-        // matrix/data-frame index. Preserve it explicitly so `x[, j]` stays
-        // distinguishable from the one-dimensional `x[j]` downstream.
-        if matches!(kind, IndexKind::Single)
-            && let Some(raw) = text(n, src)
-            && let Some(open) = raw.rfind('[')
-            && let Some(content) = raw.get(open + 1..raw.len().saturating_sub(1))
-        {
-            if content.trim_start().starts_with(',') {
-                args.insert(
-                    0,
-                    Arg {
-                        name: None,
-                        value: Expr::Unknown(span),
-                        span,
-                    },
-                );
-            }
-            if content.trim_end().ends_with(',') {
-                args.push(Arg {
-                    name: None,
-                    value: Expr::Unknown(span),
-                    span,
-                });
-            }
-        }
+        let args = self.lower_arguments(n.child_by_field_name("arguments"), src);
         Some(Expr::Index {
             base: Box::new(base),
             kind,
@@ -486,44 +460,62 @@ impl RParser {
     }
 
     fn lower_arguments(&self, maybe: Option<Node>, src: &str) -> Vec<Arg> {
+        let Some(args_node) = maybe else {
+            return Vec::new();
+        };
+        let missing = |node: Node| {
+            let mut span = self.span(node);
+            span.end = span.start;
+            Arg {
+                name: None,
+                value: Expr::Missing(span),
+                span,
+            }
+        };
         let mut out = Vec::new();
-        if let Some(args_node) = maybe {
-            let mut cur = args_node.walk();
-            for arg in args_node.named_children(&mut cur) {
-                if arg.kind() == "argument" {
-                    out.push(self.lower_arg(arg, src));
+        let mut pending = None;
+        let mut saw_comma = false;
+        let mut cursor = args_node.walk();
+        // Commas are named children too. Walking argument nodes alone drops
+        // omitted slots and shifts every later positional binding.
+        for child in args_node.named_children(&mut cursor) {
+            match child.kind() {
+                "argument" => pending = Some(self.lower_arg(child, src)),
+                "comma" => {
+                    out.push(pending.take().unwrap_or_else(|| missing(child)));
+                    saw_comma = true;
+                }
+                "comment" => {}
+                _ => {
+                    let span = self.span(child);
+                    pending = Some(Arg {
+                        name: None,
+                        value: Expr::Unknown(span),
+                        span,
+                    });
                 }
             }
+        }
+        if let Some(argument) = pending {
+            out.push(argument);
+        } else if saw_comma {
+            out.push(missing(
+                args_node.child_by_field_name("close").unwrap_or(args_node),
+            ));
         }
         out
     }
 
     fn lower_arg(&self, n: Node, src: &str) -> Arg {
         let span = self.span(n);
-        if let Some(name_node) = n.child_by_field_name("name")
-            && let Some(value_node) = n.child_by_field_name("value")
-        {
-            let name = text(name_node, src);
-            let value = self
-                .lower_expr(value_node, src)
-                .unwrap_or(Expr::Unknown(span));
-            return Arg { name, value, span };
-        }
-        // Positional: there's still a `value` field in tree-sitter-r.
-        if let Some(value_node) = n.child_by_field_name("value")
-            && let Some(v) = self.lower_expr(value_node, src)
-        {
-            return Arg {
-                name: None,
-                value: v,
-                span,
-            };
-        }
-        Arg {
-            name: None,
-            value: Expr::Unknown(span),
-            span,
-        }
+        let name = n
+            .child_by_field_name("name")
+            .and_then(|node| text(node, src));
+        let value = match n.child_by_field_name("value") {
+            Some(node) => self.lower_expr(node, src).unwrap_or(Expr::Unknown(span)),
+            None => Expr::Missing(span),
+        };
+        Arg { name, value, span }
     }
 
     fn lower_binary(&self, n: Node, src: &str) -> Option<Expr> {

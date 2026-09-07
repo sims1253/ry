@@ -144,7 +144,8 @@ fn expr_span(expr: &ry_core::ast::Expr) -> Span {
         | Expr::String(_, span)
         | Expr::Null(span)
         | Expr::Na(_, span)
-        | Expr::Unknown(span) => *span,
+        | Expr::Unknown(span)
+        | Expr::Missing(span) => *span,
         Expr::Call { span, .. }
         | Expr::Ident { span, .. }
         | Expr::BinOp { span, .. }

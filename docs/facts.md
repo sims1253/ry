@@ -172,6 +172,10 @@ inventory uses this deterministic precedence:
 | `prior_read` | `unsafe_read` | First unsafe read observed by the semantic walk and its owning scope. |
 | `semantic_effect` | `unknown_effect` | Unknown operation span; owning scope is retained. |
 
+`parse_error` is available to library consumers that capture a recovered syntax
+tree. `ry dump-facts` rejects files with parse errors before capture and does
+not export this cause.
+
 For an otherwise eligible occurrence, the semantic walk retains its existing
 reason precedence. `after_unsafe_read` gains the first unsafe-read location,
 or `unknown_effect` if unlocated invalidation happened first. A later unsafe

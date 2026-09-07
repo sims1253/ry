@@ -478,17 +478,18 @@ fn inherited_semantic_blocker_keeps_the_first_read_and_outer_owner() {
 
 #[test]
 fn lazy_defaults_retain_their_separate_expression_spans() {
-    let source = "f <- function(a = first, b = second) 1L";
+    let source = "f <- function(a = list(first), b = list(second)) 1L";
     let output = analyze(source);
     for name in ["first", "second"] {
         let reference = reference_at(&output, source, name, name);
         assert_eq!(reference["reason"], "unsupported_scope");
         assert_eq!(reference["blocker"]["kind"], "default_expression");
         assert_eq!(reference["blocker"]["cause"], "lazy_default");
-        let start = source.find(name).unwrap();
+        let expression = format!("list({name})");
+        let start = source.find(&expression).unwrap();
         assert_eq!(
             reference["blocker"]["span"]["bytes"],
-            json!([start, start + name.len()])
+            json!([start, start + expression.len()])
         );
         assert_eq!(
             reference["blocker"]["scope_span"]["bytes"],

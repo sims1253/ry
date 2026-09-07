@@ -722,6 +722,29 @@ mod tests {
     }
 
     #[test]
+    fn library_capture_locates_the_first_parse_error() {
+        let source = "x <- 1L\nx\n)\n";
+        let parsed = file(source);
+        let first_error = *parsed
+            .parse_errors
+            .iter()
+            .min_by_key(|span| (span.start, span.end))
+            .unwrap();
+        let captured = facts(source);
+        let reference = named(&captured, "x")[0];
+        assert_eq!(reference.resolution, ReferenceResolution::Unsupported);
+        assert_eq!(
+            reference.blocker,
+            Some(ReferenceBlocker {
+                kind: "whole_scope",
+                cause: "parse_error",
+                span: Some(first_error),
+                scope_span: whole_file_span(source),
+            })
+        );
+    }
+
+    #[test]
     fn comments_do_not_end_a_supported_reference_prefix() {
         let source = "# header\nx <- 1L\n# before read\ny <- x\n# before function\nf <- function() {\n# local\nz <- 2L\nz\n# tail\n}\n# end\n";
         let captured = facts(source);

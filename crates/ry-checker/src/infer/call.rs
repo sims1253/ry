@@ -14,7 +14,7 @@ impl Checker {
         // Calls may install delayed bindings, not just mutate current values.
         // Preserve environment certainty only for a closed literal constructor.
         let environment_known_before_call = !scope.ops_environment_unknown;
-        let pure = ops_chooser::pure_structure_call(self, func, args, scope);
+        let pure = ops_chooser::pure_literal_constructor(self, func, args, scope);
         if !pure {
             scope.invalidate_ops_environment();
         }

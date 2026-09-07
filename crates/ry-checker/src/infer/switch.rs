@@ -194,7 +194,7 @@ impl Checker {
         let Expr::Call { func, args, .. } = expression else {
             return false;
         };
-        if ops_chooser::pure_structure_call(self, func, args, scope) {
+        if ops_chooser::pure_literal_constructor(self, func, args, scope) {
             return true;
         }
         let Some(name) = ident_name(func) else {

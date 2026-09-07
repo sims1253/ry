@@ -205,6 +205,7 @@ impl Checker {
                 let value_has_list_origin = scope_marked_origin || every_mode_is_list(&vt);
                 let function_alias = self.function_alias_target(value, scope);
                 let literal_function = ops_chooser::literal_function(self, value, scope);
+                let plain_vector = ops_chooser::plain_vector(self, value, scope);
                 if self.try_assign_value(target, vt, class_write, scope)
                     && let Some(name) = binding_name(target)
                 {
@@ -222,6 +223,11 @@ impl Checker {
                     if matches!(value, Expr::Function { .. }) && !self.enclosing_formals.is_empty()
                     {
                         scope.mark_lexical_function(name.to_string());
+                    }
+                    if plain_vector {
+                        scope
+                            .plain_ops_vectors
+                            .insert(semantic_argument_name(name).to_string());
                     }
                     if let Some(function) = literal_function {
                         scope
@@ -703,6 +709,7 @@ impl Checker {
         // Types can compare equal after replacing a literal function. Do not
         // carry its identity or constant result across a branch merge.
         scope.literal_functions.clear();
+        scope.plain_ops_vectors.clear();
         scope.ops_environment_unknown |=
             then_scope.ops_environment_unknown || else_scope.ops_environment_unknown;
         scope.effects_unknown |= then_scope.effects_unknown || else_scope.effects_unknown;
@@ -1871,15 +1878,20 @@ impl Checker {
                 // Syntax-shape rules. Both read the operand syntax, so
                 // they run before `infer` collapses the operands to types.
                 self.check_constant_length_comparison(*op, lhs, rhs, *span, scope);
+                let left_plain = ops_chooser::plain_vector(self, lhs, scope);
                 let lt = self.infer(lhs, scope);
+                let right_plain = ops_chooser::plain_vector(self, rhs, scope);
                 let rt = self.infer(rhs, scope);
                 self.infer_binop(
                     *op,
                     lt,
                     rt,
                     *span,
-                    known_null_arithmetic_operand(lhs, scope)
-                        || known_null_arithmetic_operand(rhs, scope),
+                    binop::OperandEvidence {
+                        known_null: known_null_arithmetic_operand(lhs, scope)
+                            || known_null_arithmetic_operand(rhs, scope),
+                        plain_vectors: left_plain && right_plain && !scope.ops_environment_unknown,
+                    },
                     scope,
                 )
             }

@@ -132,11 +132,36 @@ fn false_ops_fallback_does_not_extend_scalar_attribute_rules_to_other_lengths() 
             "+",
             &lhs,
             scope.get("y").unwrap(),
+            false,
             &scope,
         );
         assert!(
             matches!(result, Some(crate::infer::ops_chooser::Dispatch::Value(value)) if value.mode == Mode::Opaque),
             "{length:?}"
         );
+    }
+}
+
+#[test]
+fn plain_vector_fallback_rejects_both_empty_length_representations() {
+    let prefix = source("+", "left", "right").replace("out <- x + y", "");
+    let mut checker = Checker::new("test.R");
+    let (_, scope) = checker.check_with_scope(&parse_file("test.R", &prefix));
+    for length in [Length::Zero, Length::Known(0)] {
+        for empty_on_left in [true, false] {
+            let mut lhs = scope.get("x").unwrap().clone();
+            let mut rhs = scope.get("y").unwrap().clone();
+            if empty_on_left {
+                lhs.length = length;
+            } else {
+                rhs.length = length;
+            }
+            let result =
+                crate::infer::ops_chooser::dispatch(&checker, "+", &lhs, &rhs, true, &scope);
+            assert!(
+                matches!(result, Some(crate::infer::ops_chooser::Dispatch::Value(value)) if value.mode == Mode::Opaque),
+                "{length:?}, empty_on_left={empty_on_left}"
+            );
+        }
     }
 }

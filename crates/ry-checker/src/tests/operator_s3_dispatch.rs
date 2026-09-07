@@ -623,3 +623,112 @@ fn literal_ops_proof_rejects_unproven_formal_shapes() {
         assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque, "{source}");
     }
 }
+
+#[test]
+fn explicit_false_choosers_use_plain_vector_lengths_and_classes() {
+    for (left, right, length, class) in [
+        ("base::c(1L,2L)", "base::c(3L,4L)", Length::Known(2), "left"),
+        ("1L", "base::c(3L,4L)", Length::Known(2), "right"),
+        ("1L", "base::c(3L)", Length::Known(1), "left"),
+        ("base::c(1L)", "3L", Length::Known(1), "left"),
+        (
+            "base::c(1L,2L,3L)",
+            "base::c(3L,4L)",
+            Length::Known(3),
+            "left",
+        ),
+    ] {
+        for op in ["+", "==", "&"] {
+            let source = format!(
+                "x <- base::structure({left},class='left')\ny <- base::structure({right},class='right')\n`{op}.left` <- function(e1,e2) 1L\n`{op}.right` <- function(e1,e2) 'method'\nchooseOpsMethod.left <- function(...) FALSE\nchooseOpsMethod.right <- function(...) FALSE\nz <- x\nout <- z {op} y"
+            );
+            let (diags, scope) = check_with_scope(&source);
+            assert!(
+                diags.iter().any(|d| d.code == "RY051"),
+                "{source}: {diags:?}"
+            );
+            let out = scope.get("out").unwrap();
+            assert_eq!(out.length, length, "{source}");
+            assert_eq!(
+                out.mode,
+                if op == "+" {
+                    Mode::Integer
+                } else {
+                    Mode::Logical
+                },
+                "{source}"
+            );
+            if op == "+" {
+                assert!(out.class.contains(class), "{source}");
+            } else {
+                assert_eq!(out.class.len, 0, "{source}");
+            }
+        }
+    }
+}
+
+#[test]
+fn plain_vector_chooser_evidence_rejects_attributes_and_mutation() {
+    let methods = "`+.left` <- function(e1,e2) 1L\n`+.right` <- function(e1,e2) 'method'\nchooseOpsMethod.left <- function(...) FALSE\nchooseOpsMethod.right <- function(...) FALSE\n";
+    for payload in [
+        "base::c()",
+        "integer()",
+        "base::c(base::c(1L,2L))",
+        "base::c(a=1L,b=2L)",
+    ] {
+        let source = format!(
+            "x <- base::structure({payload},class='left')\ny <- base::structure(base::c(1L,2L),class='right')\n{methods}out <- x+y"
+        );
+        let (diags, _) = check_with_scope(&source);
+        assert!(!diags.iter().any(|d| d.code == "RY051"), "{source}");
+    }
+    for attrs in [", names='a'", ", dim=2L"] {
+        let source = format!(
+            "x <- base::structure(base::c(1L,2L),class='left'{attrs})\ny <- base::structure(base::c(1L,2L),class='right')\n{methods}out <- x+y"
+        );
+        let (diags, _) = check_with_scope(&source);
+        assert!(!diags.iter().any(|d| d.code == "RY051"), "{source}");
+    }
+    for mutation in [
+        "x <- unknown",
+        "attr(x,'dim') <- 2L",
+        "mutate()",
+        "if (TRUE) x <- x",
+        "for (i in 1L) x <- x",
+    ] {
+        let source = format!(
+            "x <- base::structure(base::c(1L,2L),class='left')\ny <- base::structure(base::c(1L,2L),class='right')\n{methods}{mutation}\nout <- x+y"
+        );
+        let (diags, _) = check_with_scope(&source);
+        assert!(!diags.iter().any(|d| d.code == "RY051"), "{source}");
+    }
+}
+
+#[test]
+fn plain_vector_proof_respects_namespace_stubs_and_scalar_dimensions() {
+    let methods = "`+.left` <- function(e1,e2) 1L\n`+.right` <- function(e1,e2) 'method'\nchooseOpsMethod.left <- function(...) FALSE\nchooseOpsMethod.right <- function(...) FALSE\n";
+    let vectors = "x <- base::structure(base::c(1L,2L),class='left')\ny <- base::structure(base::c(1L,2L),class='right')\n";
+    for binding in [
+        "`::` <- function(...) function(...) 1L",
+        r"`\x3a\x3a` <- function(...) function(...) 1L",
+    ] {
+        let source = format!("{binding}\n{vectors}{methods}out <- x+y");
+        let (diags, _) = check_with_scope(&source);
+        assert!(!diags.iter().any(|d| d.code == "RY051"), "{source}");
+    }
+    let source = format!("{vectors}{methods}out <- x+y");
+    let (diags, _) = check_with_stubs(&source, &[("base.json", &stub_file(&[]))]);
+    assert!(!diags.iter().any(|d| d.code == "RY051"));
+    let source = format!(
+        "x <- base::structure(1L,class='left',dim=1L)\ny <- base::structure(base::c(1L,2L),class='right')\n{methods}out <- x+y"
+    );
+    let (diags, _) = check_with_scope(&source);
+    assert!(!diags.iter().any(|d| d.code == "RY051"));
+}
+
+#[test]
+fn literal_c_attributes_do_not_widen_scalar_fallback() {
+    let source = "x <- base::structure(1L,class='left',dim=base::c(1L,1L))\ny <- base::structure(1L,class='right',dim=1L)\n`+.left` <- function(e1,e2) 1L\n`+.right` <- function(e1,e2) 'method'\nchooseOpsMethod.left <- function(...) FALSE\nchooseOpsMethod.right <- function(...) FALSE\nout <- x+y";
+    let (diags, _) = check_with_scope(source);
+    assert!(!diags.iter().any(|d| d.code == "RY051"));
+}

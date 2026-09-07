@@ -466,6 +466,9 @@ All notable changes to ry are documented in this file.
   logical results drop it. Attributes, unknown lengths, and empty constructors
   remain outside this proof.
 
+- Parse spaces, newlines, and comments between double-subscript closing
+  brackets, preserving diagnostics for valid R files that use `x[[i] ]`.
+
 - Parse exponent and hexadecimal integer literals with their values, and use
   double storage when an `L`-suffixed value exceeds R's integer range.
 

@@ -49,3 +49,7 @@ stopifnot(identical(class(base::structure(1L, class = base::c("widget", recursiv
   structure <- get(paste("target"))
   stopifnot(identical(structure(1L, class = "widget"), "actual"))
 })()
+
+# A string call head names a binding, not a namespace expression.
+`base::structure` <- function(...) "custom"
+stopifnot(identical("base::structure"(1L, class = "widget"), "custom"))

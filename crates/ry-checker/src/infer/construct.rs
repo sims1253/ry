@@ -7,6 +7,7 @@ impl Checker {
     pub(crate) fn infer_class_constructor_call(
         &mut self,
         original_name: &str,
+        original_callee: &Expr,
         semantic_name: &str,
         lookup_name: &str,
         args: &[Arg],
@@ -20,7 +21,10 @@ impl Checker {
         // inference with `ClassVector::unknown()` so RY050 stays quiet.
         // Spelling aliases do not prove which function object was captured;
         // neither this model nor the base stub may lend them payload facts.
-        if lookup_name == "structure" && original_name != semantic_name {
+        if lookup_name == "structure"
+            && (original_name != semantic_name
+                || (matches!(original_callee, Expr::String(_, _)) && semantic_name.contains("::")))
+        {
             return Some(RType::unknown());
         }
         if lookup_name == "structure" && self.structure_namespace_unavailable(semantic_name, scope)

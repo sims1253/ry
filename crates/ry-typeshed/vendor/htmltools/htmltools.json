@@ -1,0 +1,13 @@
+{
+  "schema_version": "2",
+  "package": "htmltools",
+  "version": "0.0.1",
+  "functions": {},
+  "datasets": {
+    "tags": {
+      "mode": "list",
+      "length": "unknown",
+      "na": false
+    }
+  }
+}

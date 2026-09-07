@@ -48,5 +48,3 @@ inst/app_template/app.R:15:3 RY000
 inst/app_template/app.R:25:3 RY000
 inst/app_template/app.R:27:3 RY000
 inst/examples/03_reactivity/app.R:38:44 RY010
-inst/examples/09_upload/app.R:23:7 RY010
-inst/examples/09_upload/app.R:43:7 RY010

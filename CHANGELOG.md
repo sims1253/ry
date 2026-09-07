@@ -278,6 +278,10 @@ All notable changes to ry are documented in this file.
   `substitute`, `expression`, and `rlang::expr` calls in defaults. Keep
   checking evaluated control arguments and tidy-injection payloads.
 
+- Resolve the exported `htmltools::tags` list and shiny re-export under
+  ordinary namespace/import lookup, avoiding unbound-name warnings for tag
+  constructors without adding an ambient global.
+
 - Keep `expand.grid` results conservative, so dropped numeric columns and
   data-frame arithmetic do not inherit the plain-list storage type. Include
   its exact `KEEP.OUT.ATTRS` and `stringsAsFactors` control names.

@@ -863,3 +863,38 @@ fn model_extract_quotes_component_names_and_checks_frame_arguments() {
     );
     assert!(check("f <- function(mf) { x <- 1L; stats::model.extract({ x <- 'a'; mf }, response); x + 1L }").iter().any(|d| d.code == "RY040"));
 }
+
+#[test]
+fn exported_html_tags_are_values_under_package_lookup() {
+    for package in ["htmltools", "shiny"] {
+        let diagnostics = check(&format!("{package}::tags$div('ok')"));
+        assert!(diagnostics.is_empty(), "{package}: {diagnostics:?}");
+        let diagnostics = check(&format!(
+            "library({package})\nmissing_before\ntags$div('ok')\n"
+        ));
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.code == "RY010" && d.message.contains("`tags`")),
+            "{diagnostics:?}"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code == "RY010" && d.message.contains("missing_before")),
+            "{diagnostics:?}"
+        );
+        let diagnostics = check(&format!("library({package})\ntags <- 1L\ntags$div\n"));
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY061"),
+            "{diagnostics:?}"
+        );
+    }
+    let diagnostics = check("tags$div('ok')\n");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == "RY010" && d.message.contains("`tags`")),
+        "{diagnostics:?}"
+    );
+}

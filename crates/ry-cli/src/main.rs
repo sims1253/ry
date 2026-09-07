@@ -167,12 +167,10 @@ impl Default for CheckArgs {
 enum Cmd {
     /// Check a project (or files) for type errors.
     Check(CheckArgs),
-    /// Dump inferred types for every lexical scope in R files, as JSON on
-    /// stdout. Non-interactive counterpart of the LSP's inline type
-    /// hints: bindings map to the same type strings. Downstream tooling
-    /// (training-data builders, IDE backends) can query which names a
-    /// scope binds and with what inferred types, without re-implementing
-    /// the checker.
+    /// Dump inferred scope types as JSON.
+    ///
+    /// Write lexical scope bindings and their inferred types to stdout.
+    /// Type strings use the same format as the language server's inline hints.
     DumpTypes {
         /// R files or directories to dump. A directory expands to every
         /// discoverable R file under it, using `ry check`'s discovery
@@ -210,10 +208,10 @@ enum Cmd {
         #[arg(long)]
         references: bool,
     },
-    /// Start the language server. Speaks the Language Server Protocol
-    /// (LSP) over stdio, publishing type-check diagnostics for open R
-    /// files. Connect to it from any LSP-aware editor (VS Code, Neovim,
-    /// Helix, etc.).
+    /// Start the language server over stdio.
+    ///
+    /// Connect from an editor that supports the Language Server Protocol (LSP)
+    /// to receive diagnostics and type hints for R files.
     Server {
         /// Tracing filter for the LSP server. Passed to
         /// `tracing_subscriber`'s `EnvFilter`. Defaults to `ry=warn`.
@@ -227,8 +225,7 @@ enum Cmd {
         #[arg(long, value_name = "FORMAT", default_value = "text")]
         output_format: String,
     },
-    /// Explain a rule (or all rules). `ry rule` is an alias (matches
-    /// ruff's `ruff rule`).
+    /// Explain a rule (or all rules).
     #[command(visible_alias = "rule")]
     ExplainRule(ExplainRuleArgs),
     /// Explain analyzer data and configuration.

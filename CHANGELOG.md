@@ -161,7 +161,8 @@ All notable changes to ry are documented in this file.
 - Match `rapply` result controls through the full R argument match, including
   positional and partial `how` arguments. Keep recursive unlisting and dynamic
   modes unknown; preserve outer list shape only for proven list/replace calls,
-  including the retained outer class for replace mode.
+  including the retained outer class for replace mode. Sync the verified opaque
+  `rapply` source contract from base revision 0.0.10.
 
 - Math and Summary member calls no longer emit RY050 just because an unrelated
   class has a local group method. Built-ins such as `sum()` and `abs()` can

@@ -121,3 +121,60 @@ fn printf_arity_counts_supplied_values_without_shifting_format_references() {
         );
     }
 }
+
+#[test]
+fn forwarded_dots_can_supply_required_arguments() {
+    for source in [
+        "f <- function(...) base::attr(..., exact = TRUE)",
+        "f <- function(...) gsub(..., ignore.case = TRUE)",
+        "f <- function(x, ...) gsub(x = x, ...)",
+        "target <- function(x, y) x + y; f <- function(...) target(...)",
+        "target <- function(x, y) x + y; f <- function(...) target(tag = ...)",
+        "target <- function(x, y) x + y; f <- function(...) target(`...`)",
+        "target <- function(xyz, y) xyz + y; f <- function(...) target(xyz = ..., x = 1L)",
+        "target <- function(alpha, alpine) alpha + alpine; f <- function(...) target(al = 1L, ...)",
+        "target <- function(alpha, alpine) alpha + alpine; f <- function(...) target(`al` = 1L, ...)",
+        "target <- function(alpha, alpine) alpha + alpine; f <- function(...) target('al' = 1L, ...)",
+        "target <- function(x, y) x + y; f <- function(...) target(..., ...)",
+        "target <- function(x, y = 2L) x + y; f <- function(...) target(, ...); f(x = 1L)",
+        "target <- function(x = 1L, y) x + y; f <- function(...) target(..., ); f(y = 2L)",
+        "target <- function(x, ...) x; f <- function(...) target(..., ); f(1L)",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics
+                .iter()
+                .all(|d| d.code != "RY091" && d.code != "RY090"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn forwarding_retains_explicit_named_holes_and_other_argument_checks() {
+    for source in [
+        "target <- function(x, y) x + y; f <- function(...) target(x = , ...)",
+        "f <- function(...) gsub(replacement = , ...)",
+        "target <- function(x, y) x + y; f <- function(...) target(x = ..., x = )",
+        "target <- function(x, y) x + y; f <- function(...) target(`x` = , ...)",
+        "target <- function(x, y) x + y; f <- function(...) target('x' = , ...)",
+        "target <- function(x, y) x + y; f <- function(...) target((...))",
+        "target <- function(x, y) x + y; f <- function(...) target((`...`))",
+        "gsub('a')",
+        "f <- function(...) gsub(list(...))",
+        "f <- function(...) gsub(quote(...))",
+        "gsub('...')",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY091"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    let diagnostics =
+        check("target <- function(x, y) x + y; f <- function(...) target(typo = 1L, ...)");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY090"),
+        "{diagnostics:?}"
+    );
+}

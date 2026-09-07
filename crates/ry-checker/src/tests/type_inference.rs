@@ -1355,3 +1355,32 @@ fn loop_carried_values_do_not_keep_the_initial_empty_length() {
     let source = "quote <- raw()\nfor (x in as.raw(c(1, 2))) {\nif (length(quote)) { if (x == quote) print(x) }\nquote <- x\n}";
     assert!(check(source).is_empty(), "{:?}", check(source));
 }
+
+#[test]
+fn quoted_top_level_symbols_resolve_as_values_in_functions() {
+    for source in [
+        "`n1` <- 42; f <- function() n1 + 1",
+        "`g` <- function(x) x + 1; f <- function() { z <- g; z(1) }",
+        "`g` <- function() 1; `g` <- 42; f <- function() g + 1",
+        "`n1` <- 1; n1 <- 2; f <- function() n1",
+        "n1 <- 1; `n1` <- 2; f <- function() n1",
+    ] {
+        let diagnostics = check(source);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+    }
+}
+
+#[test]
+fn quoted_symbol_existence_does_not_invent_distinct_bindings() {
+    for source in [
+        "`n1` <- 42; f <- function() n2",
+        r#""`n1`" <- 42; f <- function() n1"#,
+        r#"`n\x31` <- 42; f <- function() n2"#,
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY010"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}

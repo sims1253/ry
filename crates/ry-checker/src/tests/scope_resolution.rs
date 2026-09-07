@@ -644,6 +644,16 @@ fn cross_file_top_level_variables_resolve_between_files() {
     for (label, definition, use_src) in [
         ("literal constant", "my_const <- 42\n", "x <- my_const\n"),
         (
+            "backtick-bound constant",
+            "`my_const` <- 42\n",
+            "read_constant <- function() my_const + 1\n",
+        ),
+        (
+            "backtick-bound function as value",
+            "`helper` <- function(x) x + 1\n",
+            "read_helper <- function() { f <- helper; f(1) }\n",
+        ),
+        (
             "opaque call result",
             "GeomRect <- ggproto(\"GeomRect\", Geom, draw = function() NULL)\n",
             "x <- GeomRect\n",

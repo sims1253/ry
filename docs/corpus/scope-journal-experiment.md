@@ -1,10 +1,9 @@
 # Scope journal experiment
 
-The journal prototype stays outside production. It cuts work on wide scopes with
-sparse branch writes, but dense branches that alternate inferred types remain
-slower. The ordinary fixture corpus gains too little to justify the extra state
-and mutation paths. [Issue #130](https://github.com/sims1253/ry/issues/130) remains
-open.
+This historical report records rejected prototypes. Their sparse-write savings
+did not justify their dense-write regressions. A later implementation now uses
+[journaled statement branches](scope-journal.md) in production; that report
+contains the current design and separate-baseline measurements.
 
 This follows the [#225 investigation](https://github.com/sims1253/ry/issues/130#issuecomment-5560333325),
 which retained cheaper branch merging and rejected whole-map copy-on-write.

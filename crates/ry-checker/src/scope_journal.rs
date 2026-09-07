@@ -46,7 +46,7 @@ impl BindingState {
         }
     }
     fn restore(self, scope: &mut Scope, name: String) {
-        fn marker(set: &mut HashSet<String>, name: &str, present: bool) {
+        fn marker(set: &mut FxSet<String>, name: &str, present: bool) {
             if present {
                 set.insert(name.to_string());
             } else {
@@ -146,8 +146,8 @@ pub(crate) enum Undo {
         bool,
     ),
     OpsTables(
-        HashMap<String, Arc<infer::ops_chooser::LiteralFunction>>,
-        HashSet<String>,
+        FxMap<String, Arc<infer::ops_chooser::LiteralFunction>>,
+        FxSet<String>,
     ),
 }
 

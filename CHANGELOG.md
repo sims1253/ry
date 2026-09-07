@@ -167,6 +167,9 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Capture bare component names in `stats::model.extract` without reporting
+  them as unbound variables; keep ordinary frame arguments checked.
+
 - Keep `grep`, `confint`, and fold results conservative across their supported
   return shapes. Complete `grep` and `confint` formals; character grep results
   and list-valued confidence intervals no longer cause false type errors.

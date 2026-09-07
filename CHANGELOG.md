@@ -10,24 +10,154 @@ All notable changes to ry are documented in this file.
   retain proven reads before opaque statements. The schema-2 reference
   capability is now `same_file_ordered_prefix`; coverage remains partial.
 
+- Use reviewed typeshed forcing contracts for RY098. Qualified calls to
+  `typeof()`, `length()`, `is.null()`, `is.function()`, and `invisible()` can
+  expose recursive defaults or force defaults before local assignments. Calls,
+  other promise reads, and possible binding replacements stop attribution of
+  later reads to the original default. Subscript promises remain lazy across dispatch.
+
+- `ry dump-facts` exports versioned structured types, scope-exit snapshots,
+  UTF-8 source spans, and analysis context hashes for downstream tools.
+  Add `--references` for conservative same-file reference facts, explicit
+  resolution status, and source definition IDs in schema 2.
+  See the [facts schema](docs/facts.md). Existing `dump-types` output is unchanged.
+
+- **`ry dump-types` command**: `ry dump-types <FILE>...` runs the same
+  analysis pass as `ry check` and prints recorded lexical scopes of the
+  requested files as JSON on stdout: scope kind, name, and extent, plus
+  each binding's name, kind (`param`/`local`/`closed-over`/`imported`),
+  type string (the same rendering the editor's inlay hints show, `unknown`
+  when inference has nothing), and definition site. `--position LINE:COL`
+  (repeatable) restricts output to the innermost recorded scope containing each
+  position and drops locals assigned after it. `--project-root <DIR>`
+  overrides the analysis root for non-package files; the default mirrors
+  `ry check`'s per-package (DESCRIPTION) grouping. The exit code is 0 even
+  when the analyzed code has diagnostics; non-zero means a usage, IO, or
+  internal failure.
+
+- **Bounded file discovery**: `index.max-files` (default 20,000),
+  `index.max-file-bytes` (default 2 MiB), and `index.max-depth`
+  (default 64) limit how many files `ry check` and the language server
+  discover. Each accepts a positive integer; zero is a configuration
+  error. Hitting a cap produces one warning per scan in the editor and a
+  CLI warning.
+
+- **Identical file sets in CLI and editor**: `ry check` and the language
+  server share one directory-discovery engine, so both see the same
+  project, including hidden, excluded, oversized, deeply nested,
+  symlinked, and test-fixture files.
+
+- **VS Code / Positron extension** (`editors/code/`): installable from the
+  VS Code Marketplace and Open VSX. Bundles the `ry` binary, exposes the
+  `ry.lint.*` settings, and supports both `fromEnvironment` and
+  `useBundled` import strategies.
+
+- **Zed extension** (`editors/zed/`): locates the `ry` binary via
+  settings, `PATH`, a previous download, or a fresh GitHub-release
+  download, with path construction unit-tested for all six cargo-dist
+  targets. Settings are validated (`minConfidence` must be `low`,
+  `medium`, or `high`).
+  Zed verifies downloaded server executables against published SHA-256 sidecars
+  and rechecks cached binaries before starting them. Missing or invalid sidecars
+  and mismatched binaries fail installation and remove the download directory.
+  Automatic downloads require ry 0.9.0 or newer; settings and PATH overrides
+  remain available for user-managed binaries.
+
+- **Matching diagnostics in CLI and editor**: `ignore`, `select`,
+  `extend-select`, `error`, `warn`, `exclude`, `baseline`,
+  `min-confidence`, default-disabled rules, package metadata, and Unicode
+  positions produce the same codes, severities, messages, and locations
+  in `ry check` and in the editor for a single workspace root.
+
+- **`ry.toml` hot-reload**: editing `ry.toml` updates diagnostics without
+  restarting the language server.
+
+- **Multi-root workspaces**: per-folder `ry.toml` configs are honoured.
+
+- **`ry server --log-level`**: configurable server tracing on stderr.
+
+- **Documentation**: `docs/editor-defaults.md` collects evidence-backed
+  editor-safe settings, and `docs/release-runbook.md` documents the
+  binary, VS Code, and Zed release processes.
+
+### Changed
+
+- Move detailed configuration, usage, rule, and inferred-type references from
+  the README into linked guides, including `docs/types.md`. The README now
+  focuses on installation and first-use examples.
+
+- **More accurate `if`-condition nudges**: the "non-empty check" idiom
+  (`if (length(x))`, `if (nrow(df))`, ...) is now recognized from the
+  function's declared return type instead of a fixed name list, so it
+  covers every function that returns a count which can never be `NA`
+  (`nobs`, `vec_size`, ...). `if (Position(...))` is deliberately NOT
+  treated as that idiom anymore: when nothing matches, `Position()`
+  returns `NA`, and R errors on the condition instead of testing
+  non-empty — you now get the coercion note there, same as for
+  `if (1L)`. A local binding that shadows the called name (including a
+  locally defined `is.*` predicate feeding `sum(...)`) no longer
+  inherits the idiom credit; an aliased base predicate does.
+
+- **List-valued results are tracked by inferred type**: which values
+  count as list-shaped now follows the inferred mode instead of a
+  fixed name list, so the roughly 90 functions that return a list
+  (`strsplit`, `split`, `read.table`, ...) keep that fact through
+  renames and re-assignment — in blocks and `if` expressions too, not
+  only direct calls. This feeds RY101's always-FALSE check for
+  `identical(x[1], "scalar")` on list subsets.
+
+- **Quoting helpers are known from their signatures**: base
+  `quote`/`substitute`/`bquote`/`expression`/`delayedAssign` and rlang
+  `expr`/`exprs`/`quo`/`enquo` now suppress unbound-variable warnings
+  only for the arguments they actually quote. Two visible
+  consequences: `delayedAssign` no longer stays silent about its other
+  arguments, and rlang's ordinary evaluating helpers (`sym()`,
+  `abort()`, `inform()`, `new_formula()`, `new_quosure()`) now report
+  undefined names passed to them — R reads those arguments, so
+  `abort(undefined_name)` was always a bug. `rlang::quo()` with no
+  argument is also understood to create an empty quosure instead of
+  reporting a missing argument.
+
+- **Package test files see the package's imports**: testthat runs
+  `tests/testthat/` inside a copy of the package namespace, so names
+  supplied by a wholesale `import(pkg)` directive in NAMESPACE are
+  available there. `ry check` now models this: bare `expr(...)`/
+  `quo(...)` calls in a package's testthat files no longer report
+  unbound variables when the package imports rlang, matching how the
+  same call in `R/` was already treated. Outside that context (no
+  attachment and no import), a bare unattached `expr(undefined)` still
+  reports the name like any other unknown call.
+
+- **Names inside quoted blocks cannot borrow unrelated function
+  types**: inside an unevaluated block (a data-mask argument, or code
+  quoted for later use), a bare name that matches nothing locally used
+  to resolve to a same-named base function — so a data-mask column
+  called `class` behaved like the `class()` function in a comparison,
+  and a logical formal like `append` inside withr-style deferred code
+  behaved like `append()`. Such names now type as unknown inside those
+  blocks, removing spurious condition and comparison warnings
+  (RY001/RY030) there, while genuine argument mistakes inside the same
+  blocks are still reported.
+
+- **JSON diagnostics no longer suggest fixes**: the `fix` payload is gone
+  from `ry check --output-format json` and from the `data` field of
+  published editor diagnostics. Nothing ever applied these suggestions —
+  there is no `ry check --fix`, and the editor's quick-fix actions only
+  insert suppression comments — and a replacement that is correct in
+  isolation can be wrong under R's non-standard evaluation. Diagnostics
+  are otherwise unchanged: codes, spans, messages, severities, and
+  confidences are identical. No shipped release ever contained the `fix`
+  field; where autofix should live is tracked in #89.
+
 ### Fixed
 
-- Select only the executed alternative for proved base `switch` calls with literal scalar selectors, preserving missing fallthrough and caller assignments. Dynamic selectors and custom-call argument laziness remain outside this model.
+- Select only the executed alternative for proved base `switch` calls with
+  literal scalar selectors, preserving missing fallthrough and caller assignments.
+  Dynamic selectors and custom-call argument laziness remain outside this model.
 
-- Preserve omitted call arguments and their names without shifting later
-  arguments. Calls and indexes now share missing-position handling. The public
-  `ry-core` AST adds `Expr::Missing(Span)`; consumers with exhaustive expression
-  matches must handle it separately from unsupported `Expr::Unknown` forms.
-
-- Custom or masked `factor` and `new` calls no longer acquire builtin constructor facts. S4 constructor inference requires methods provenance, and detaching a package invalidates the default search-path assumption.
 - Decode octal and braced Unicode string escapes, escaped backticks, and UTF-8
   byte sequences correctly. Preserve physical escaped newlines and retain raw
   recovery text for malformed or unrepresentable string values.
-
-- Resolve visible custom arithmetic, comparison, and vector logical operators
-  before their operands. Avoid primitive diagnostics for ignored operands and
-  preserve proven constant returns; discard caller facts after uncertain effects.
-- Class assignments no longer infer literal classes from custom class builders or preserve payload types under an unproven replacement function.
 
 - Compute data-frame column types after scalar arithmetic instead of copying
   their input types. Keep classed column results unknown when methods may run.
@@ -39,13 +169,6 @@ All notable changes to ry are documented in this file.
   information for resolved base calls, and evaluate class attributes. Respect
   shadowed constructors and class-vector builders; discard stale column names
   after name attributes change.
-
-- Infer conflicting S3 operator results when top-level literal methods
-  and `chooseOpsMethod` values prove selection, including aliases and reverse
-  selection. Keep uncertain dispatch unknown.
-
-- Report RY051 when two literal `chooseOpsMethod` results reject provably distinct
-  operator methods. Infer scalar primitive fallback and its class behavior.
 
 - Refresh incremental diagnostics when a callback changes, including callbacks
   passed as values and their downstream callers.
@@ -63,16 +186,6 @@ All notable changes to ry are documented in this file.
   column-access errors when later classes define another operator method.
   Keep custom opaque method results unknown.
 
-- Parse exponent and hexadecimal integer literals with their values, and use
-  double storage when an `L`-suffixed value exceeds R's integer range.
-
-### Cleanup
-
-- Refine only affected functions after edits, using observed callable reads and
-  forwarding or S3 metadata dependencies. Keep diagnostic invalidation conservative.
-- Check corpus package totals against their reviewed findings to catch stale
-  summary counts in CI.
-
 - Show editor type hints from each assignment, including function locals,
   rather than applying the file's final binding type to earlier assignments.
   Refresh cached hints when local stubs change.
@@ -83,301 +196,46 @@ All notable changes to ry are documented in this file.
 - Avoid RY098 warnings for body-local names captured by qualified `base::quote`,
   `substitute`, `expression`, and `rlang::expr` calls in defaults. Keep
   checking evaluated control arguments and tidy-injection payloads.
-- Reduce scope copying for assertions and short-circuit expressions.
+
 - Resolve S3 operators before inferring data-frame results, so subclass methods
   can return other types and conflicting methods do not retain column schemas.
+
 - Validate typeshed updates before replacing the vendored snapshot. Failed
   validation leaves the existing stubs and provenance intact. Restore the old
   snapshot if installation fails or receives a handled interrupt, and retain a
   recovery copy if restoration fails.
-- Shorten the README and move the inferred-types reference to `docs/types.md`.
-- Replace the unmaintained xz2 bindings with liblzma for compressed R data.
-  Pin rds2rust to a tested fork revision with the same dependency switch.
+
 - Infer vector-constructor lengths from size values, including empty defaults
   and fractional sizes. Correct factor arithmetic with NULL and unary minus.
+
 - Check typed purrr callback contracts independently of output-length inference.
   RY080 now reports incompatible results as errors; empty inputs stay silent.
+
 - Preserve ordinary double negation in known evaluation contexts and
   propagate splicing and data-mask behavior through wrappers and S3 methods.
   Keep unresolved callables conservative about argument capture.
+
 - Discard initial values for bindings reassigned inside loops, preventing
   stale lengths and types from being applied to later iterations.
-- Split inference, workspace discovery/serialization, and LSP handlers into
-  focused modules. Avoid allocating names and scanning infix methods on ordinary calls.
-- Validate editor JSON responses, remove unsafe type assertions, and keep rule
-  lookup asynchronous so it does not block the extension host.
 
-This cycle adds the `ry dump-types` command, first-party VS Code and Zed
-extensions, and discovery limits for large projects. It slims the language
-server to what a static checker can serve reliably — inline type hints and
-suppression actions — and fixes a parser panic plus several editor issues.
-
-### Added
-
-- Use reviewed typeshed forcing contracts for RY098. Qualified calls to
-  `typeof()`, `length()`, `is.null()`, `is.function()`, and `invisible()` can
-  expose recursive defaults or force defaults before local assignments. Calls,
-  other promise reads, and possible binding replacements stop attribution of
-  later reads to the original default. Subscript promises remain lazy across dispatch.
-
-- `ry dump-facts` exports versioned structured types, scope-exit snapshots,
-  UTF-8 source spans, and analysis context hashes for downstream tools.
-  Add `--references` for conservative same-file reference facts, explicit
-  resolution status, and source definition IDs in schema 2.
-  See the [facts schema](docs/facts.md). Existing `dump-types` output is unchanged.
-
-- Zed verifies downloaded server executables against published SHA-256 sidecars
-  and rechecks cached binaries before starting them. Missing or invalid sidecars
-  and mismatched binaries fail installation and remove the download directory.
-  Automatic downloads require ry 0.9.0 or newer; settings and PATH overrides
-  remain available for user-managed binaries.
-
-- **`ry dump-types` command**: `ry dump-types <FILE>...` runs the same
-  analysis pass as `ry check` and prints every lexical scope of the
-  requested files as JSON on stdout: scope kind, name, and extent, plus
-  each binding's name, kind (`param`/`local`/`closed-over`/`imported`),
-  type string (the same rendering the editor's inlay hints show, `unknown`
-  when inference has nothing), and definition site. `--position LINE:COL`
-  (repeatable) restricts output to the innermost scope containing each
-  position and drops locals assigned after it. `--project-root <DIR>`
-  overrides the analysis root for non-package files; the default mirrors
-  `ry check`'s per-package (DESCRIPTION) grouping. The exit code is 0 even
-  when the analyzed code has diagnostics; non-zero means a usage, IO, or
-  internal failure.
-- **Bounded file discovery**: `index.max-files` (default 20,000),
-  `index.max-file-bytes` (default 2 MiB), and `index.max-depth`
-  (default 64) limit how many files `ry check` and the language server
-  discover. Each accepts a positive integer; zero is a configuration
-  error. Hitting a cap produces one warning per scan in the editor and a
-  CLI warning.
-- **Identical file sets in CLI and editor**: `ry check` and the language
-  server share one directory-discovery engine, so both see the same
-  project, including hidden, excluded, oversized, deeply nested,
-  symlinked, and test-fixture files.
-- **VS Code / Positron extension** (`editors/code/`): installable from the
-  VS Code Marketplace and Open VSX. Bundles the `ry` binary, exposes the
-  `ry.lint.*` settings, and supports both `fromEnvironment` and
-  `useBundled` import strategies.
-- **Zed extension** (`editors/zed/`): locates the `ry` binary via
-  settings, `PATH`, a previous download, or a fresh GitHub-release
-  download, with path construction unit-tested for all six cargo-dist
-  targets. Settings are validated (`minConfidence` must be `low`,
-  `medium`, or `high`). Downloaded binaries are not yet verified against
-  a published digest; releases publish checksums for the archive, not the
-  extracted executable (#80).
-- **Matching diagnostics in CLI and editor**: `ignore`, `select`,
-  `extend-select`, `error`, `warn`, `exclude`, `baseline`,
-  `min-confidence`, default-disabled rules, package metadata, and Unicode
-  positions produce the same codes, severities, messages, and locations
-  in `ry check` and in the editor for a single workspace root.
-- **`ry.toml` hot-reload**: editing `ry.toml` updates diagnostics without
-  restarting the language server.
-- **Multi-root workspaces**: per-folder `ry.toml` configs are honoured.
-- **`ry server --log-level`**: configurable server tracing on stderr.
-- **Documentation**: `docs/editor-defaults.md` collects evidence-backed
-  editor-safe settings, and `docs/release-runbook.md` documents the
-  binary, VS Code, and Zed release processes.
-
-### Changed
-
-- Give CLI commands short summaries in `ry --help`; keep scope-dump and language-server details in their command help.
-
-- Shorten the README to installation and first-use examples. Move detailed
-  configuration, usage, and rule references into linked guides.
-
-- **More accurate `if`-condition nudges**: the "non-empty check" idiom
-  (`if (length(x))`, `if (nrow(df))`, ...) is now recognized from the
-  function's declared return type instead of a fixed name list, so it
-  covers every function that returns a count which can never be `NA`
-  (`nobs`, `vec_size`, ...). `if (Position(...))` is deliberately NOT
-  treated as that idiom anymore: when nothing matches, `Position()`
-  returns `NA`, and R errors on the condition instead of testing
-  non-empty — you now get the coercion note there, same as for
-  `if (1L)`. A local binding that shadows the called name (including a
-  locally defined `is.*` predicate feeding `sum(...)`) no longer
-  inherits the idiom credit; an aliased base predicate does.
-- **List-valued results are tracked by inferred type**: which values
-  count as list-shaped now follows the inferred mode instead of a
-  fixed name list, so the roughly 90 functions that return a list
-  (`strsplit`, `split`, `read.table`, ...) keep that fact through
-  renames and re-assignment — in blocks and `if` expressions too, not
-  only direct calls. This feeds RY101's always-FALSE check for
-  `identical(x[1], "scalar")` on list subsets.
-- **Quoting helpers are known from their signatures**: base
-  `quote`/`substitute`/`bquote`/`expression`/`delayedAssign` and rlang
-  `expr`/`exprs`/`quo`/`enquo` now suppress unbound-variable warnings
-  only for the arguments they actually quote. Two visible
-  consequences: `delayedAssign` no longer stays silent about its other
-  arguments, and rlang's ordinary evaluating helpers (`sym()`,
-  `abort()`, `inform()`, `new_formula()`, `new_quosure()`) now report
-  undefined names passed to them — R reads those arguments, so
-  `abort(undefined_name)` was always a bug. `rlang::quo()` with no
-  argument is also understood to create an empty quosure instead of
-  reporting a missing argument.
-- **Package test files see the package's imports**: testthat runs
-  `tests/testthat/` inside a copy of the package namespace, so names
-  supplied by a wholesale `import(pkg)` directive in NAMESPACE are
-  available there. `ry check` now models this: bare `expr(...)`/
-  `quo(...)` calls in a package's testthat files no longer report
-  unbound variables when the package imports rlang, matching how the
-  same call in `R/` was already treated. Outside that context (no
-  attachment and no import), a bare unattached `expr(undefined)` still
-  reports the name like any other unknown call.
-- **Names inside quoted blocks cannot borrow unrelated function
-  types**: inside an unevaluated block (a data-mask argument, or code
-  quoted for later use), a bare name that matches nothing locally used
-  to resolve to a same-named base function — so a data-mask column
-  called `class` behaved like the `class()` function in a comparison,
-  and a logical formal like `append` inside withr-style deferred code
-  behaved like `append()`. Such names now type as unknown inside those
-  blocks, removing spurious condition and comparison warnings
-  (RY001/RY030) there, while genuine argument mistakes inside the same
-  blocks are still reported.
-- **One pass-1 walk per file, syntax-only attachment harvest**: the
-  collection pass now harvests each file's `library()`/`require()`
-  attachments in the same walk that collects its function definitions,
-  replacing a second full discarding inference walk per file (#178).
-  The syntactic harvest drops the rare alias indirection `lib <-
-  library; lib(dplyr)` but counts attachments after code the walker
-  proves unreachable (past a `stop()`); diagnostics and inferred types
-  are otherwise unchanged.
-- **Checker and CLI internals consolidated**: the typeshed-resolution
-  ladders share one attached-package lookup per attachment gate (#166),
-  and `ry check`'s orchestration moved out of the CLI entrypoint into
-  `check.rs` (#182); the last owned `collapsible_if` debt was lifted
-  (#185). Diagnostics, inferred types, and CLI behavior are unchanged.
-- **Remaining `collect.rs` walkers on the shared walker**: the
-  parameter-use collector, the declared-globals scan, the
-  function-definition collection, and the nested-definition collection
-  now express their traversal through the shared `ry_core` walker
-  (`Walk::ALL` for the first two; a statement-level policy that skips
-  control tests for the definition walks) instead of four hand-rolled
-  Stmt/Expr recursions. The `first_parameter_use` family stays
-  hand-rolled: it answers a first-use query in evaluation order whose
-  rules select individual children (the value side of a complex
-  assignment before its target, both `if` branches past their first
-  hits, the `for` re-binding between iterator and body), not whole
-  subtrees. Every converted walker ships with a test pinning its skip
-  policy; diagnostics and inferred types are unchanged (#163).
-- **Shared test harnesses, leaner comments, `suppress.rs` renamed to
-  `resolve.rs`**: the checker's inline tests gained `check_with` (parse,
-  configure, check) and a shared `parse_file`, replacing copy-pasted
-  parser/checker scaffolding; the language server's test binaries share
-  one harness module (`tests/harness/`) for spawning sessions (with or
-  without client capabilities and `initializationOptions`), incremental
-  edit splicing, and the `Published` normalization used to compare LSP
-  and CLI diagnostics item by item; near-duplicate literal-pair tests
-  are table-driven. Narrating comments that restated the next line were
-  removed. Contributor-facing rename: `crates/ry-checker/src/suppress.rs`
-  is now `crates/ry-checker/src/resolve.rs` (same code; it holds the
-  typeshed/package signature and value resolution plus the checker's
-  emit helpers). No behavior change.
-- **One shared front half for `ry check` and `ry dump-types`**: both
-  commands resolve their per-package groups, workspace contexts, and
-  checker inputs through one pipeline helper, so their file sets,
-  resolution roots, and degraded-scope notes cannot drift apart.
-  Diagnostics and dump output are unchanged.
-- **Consolidated duplicated helpers across the crates**: `ry rule` and
-  `ry explain rule` share one argument struct; `ry.toml` merging takes a
-  single `CliOverrides` value instead of ten positional flags; the
-  checker's argument matching, condition inference, and plain-assignment
-  binding each have one implementation; the language server partitions
-  open documents per folder once, carries the owning folder through
-  publication, and reads the parse cache under a single lock; workspace
-  resolution caches DESCRIPTION reads per package root. Tests for
-  workspace discovery, `.Rbuildignore` translation, and baselines moved
-  into the crates whose code they exercise. Behavior, diagnostics, and
-  inferred types are unchanged.
 - **`enable` is honored per folder**: a workspace folder whose settings
   set `enable: false` is skipped: the language server publishes no
   diagnostics and returns no inlay hints for it. The setting was
   accepted and ignored before. The server also stops modeling settings
   it never read; unknown settings keys remain ignored.
-- **Less work per `if` during checking**: a condition that proves no type
-  refinement skips the narrowing machinery, and merging branch bindings no
-  longer copies the branch scopes. Diagnostics and inferred types are
-  unchanged.
-- **Less duplicate work per call and per function entry**: a call site now
-  matches its arguments against the callee's formals once instead of once per
-  argument query, function bodies are entered through a single walker path,
-  and the RY098 defusing-helper set is built once per collection round
-  instead of per function literal. Diagnostics and inferred types are
-  unchanged.
-- **JSON diagnostics no longer suggest fixes**: the `fix` payload is gone
-  from `ry check --output-format json` and from the `data` field of
-  published editor diagnostics. Nothing ever applied these suggestions —
-  there is no `ry check --fix`, and the editor's quick-fix actions only
-  insert suppression comments — and a replacement that is correct in
-  isolation can be wrong under R's non-standard evaluation. Diagnostics
-  are otherwise unchanged: codes, spans, messages, severities, and
-  confidences are identical. No shipped release ever contained the `fix`
-  field; where autofix should live is tracked in #89.
-- **README rule table restored**: RY003, RY102, RY103, and RY105 are
+
+- **Rule table restored in `docs/rules.md`**: RY003, RY102, RY103, and RY105 are
   listed again, with a note that RY003 is default-off, and an automated
   check now fails if the table and the rule registry drift apart (#107).
-- **Fewer redundant editor updates**: when a check pass leaves the
-  workspace environment unchanged, the language server no longer re-emits
-  every file's diagnostics; a genuine change still invalidates the whole
-  project (#86).
-
-### Removed
-
-- **Slimmed language-server capabilities**: the server no longer
-  advertises `textDocument/rename`/`prepareRename`,
-  `textDocument/documentHighlight`, `textDocument/foldingRange`,
-  `textDocument/selectionRange`, `textDocument/hover`,
-  `textDocument/definition`, `textDocument/references`,
-  `textDocument/documentSymbol`, `workspace/symbol`,
-  `textDocument/completion`, and `textDocument/signatureHelp`. Rename,
-  highlighting, and navigation resolved identifiers purely by spelling,
-  which is unsafe in R (NSE, `assign()`/`get()`, S3 dispatch by naming
-  convention, `$` on lists/environments, formulas, and `library()`
-  masking). Folding, selection ranges, outline, and symbol search
-  duplicate what every tree-sitter-based R editor integration already
-  provides. Cross-file hover, definition, references, completion, and
-  signature help never worked as shipped (requests collapsed to empty
-  ranges). Real completion and signature help belong to dedicated R
-  editor integrations, and rename will return once real cross-file symbol
-  resolution lands.
-- **Remaining language-server surface**: exactly `textDocument/inlayHint`
-  (the checker's output rendered inline) and `textDocument/codeAction`
-  (inserting suppression comments), both scoped to open documents. The
-  background file index stays, so published diagnostics continue to merge
-  on-disk files with open documents and the editor sees the whole project
-  exactly as `ry check` reports it. None of the removed capabilities ever
-  shipped in a release, so released capability schemas are unchanged.
-- **`r-version` config key**: the no-op key, reserved for future use and
-  accepted but ignored, is gone. `ry.toml` files that still set it now
-  fail config parsing (`deny_unknown_fields` rejects unknown keys), so
-  delete the line when upgrading.
-- **Dead feature and API-surface sweep**: the AST's statement-position
-  `function(...)` literal loses its never-populated `name` field (named
-  functions lower to assignment form), the checker's write-only
-  `vector_intent_parameters` stack is gone, and `Project::add_file_arc`
-  replaces the deep `SourceFile` clones the CLI and the benchmark made
-  just to re-wrap each file in an `Arc`. Public surface trimmed:
-  ry-workspace's `PackageFileKind`/`package_file_kind` (now an internal
-  predicate that classifies the same paths as test fixtures),
-  `TruncationReport::omitted_count` (the adjacent per-file loop already
-  reports oversized files precisely), `SeverityFilter`'s raw token
-  buckets, ry-checker's unused re-export of the package file kinds, and
-  six unused `FixtureProject` builder methods. The CLI drops its unused
-  `thiserror`, `toml`, and `glob` dependencies, and the checker its
-  unused `thiserror`. Tests that duplicated another test or could not
-  fail were deleted rather than kept as theater; diagnostics and
-  inferred types are unchanged.
-
-### Fixed
 
 - Detect recursive defaults forced by `TRUE && x` and `FALSE || x`, including nested operands.
 
 - Detect recursive and prematurely forced defaults passed to `base::identity` or
   `base::force`, while preserving laziness in quoted, masked, and conditional calls.
 
-- Avoid assuming the left S3 method wins when operator operands resolve to
-  different methods. Keep the result unknown when dispatch is uncertain.
 - Correct RY002 and RY032 explanations: R rejects conditions and scalar
   logical operands with more than one element.
+
 - Avoid RY098 warnings for recursive names in default expressions when literal
   `if` conditions or short-circuit operators skip their evaluation.
 
@@ -393,9 +251,12 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 - Reject duplicate function keys and S3 dispatch definitions when loading
   typesheds. Function key ordering no longer produces a validation warning.
+
 - CLI and LSP use the same UTF-8/Latin-1 source decoder for on-disk R files.
+
 - Environment profile paths use anchored glob matching, preventing bindings
   from leaking into directories with similar names.
+
 - Serialized workspace files stream through the decoded-byte limit instead
   of allocating the complete input before checking the limit. The setting
   continues to limit decoded bytes, so compression overhead does not reject
@@ -422,8 +283,6 @@ suppression actions — and fixes a parser panic plus several editor issues.
 - Invalid config reloads retain the language server's last valid settings.
   A missing explicit configuration path is also a load failure; removing an
   automatically discovered `ry.toml` restores ancestor settings or defaults.
-- Removed the nonfunctional VS Code setting `ry.checkTestFixtures`. Set
-  `check-test-fixtures = true` in `ry.toml` to enable fixture checks.
 
 - Typeshed loading and validation now discover mixed-case nested filenames,
   including `rcpp/Rcpp.json` and `s7/S7.json`.
@@ -440,42 +299,48 @@ suppression actions — and fixes a parser panic plus several editor issues.
   lookalikes such as `testing.R` and legacy S-dialect spellings
   (`.S`/`.s`/`.q`) anywhere under `tests/` are fixtures — skipped
   unless `check_test_fixtures` is enabled (#174).
+
 - **Operator S3 dispatch sees the same methods as calls** (#165):
   `x + 1` now resolves `+.foo`/`Ops.foo` through the same source ladder
   as `+(x, 1)` — external registrations, project functions, base and
   package typesheds. A miss is silent, as in R (the primitive is the
   fallback): no RY050, and `+.default` is never consulted as a
   fallback. `&&`/`||` never dispatch through `Ops`, so their
-  RY031/RY032 diagnostics cannot be hidden. Factor arithmetic warns RY042
-  for any counterpart (`factor + list` warns instead of erroring RY040)
-  without a false RY041 recycling warning. When operands resolve to different
-  methods, ry keeps the result unknown. Full `chooseOpsMethod` selection and
-  primitive-fallback warnings remain tracked in #193.
+  RY031/RY032 diagnostics cannot be hidden. When the default `Ops.factor`
+  behavior applies, factor arithmetic warns RY042 even for a list counterpart
+  instead of erroring RY040, without a false RY041 recycling warning. When
+  operands resolve to different methods, ry no longer assumes the left method wins. Top-level literal
+  methods and `chooseOpsMethod` values can prove selection, including aliases
+  and reverse selection. Uncertain dispatch stays unknown; remaining
+  `chooseOpsMethod` support is tracked in #193.
+
 - **`bquote` quotes unquotes inside braced bodies**: a `.(x)` in
   `bquote({ 1 == .(x) })` was not recognized as quoting, so the
   argument passed at the call site was treated as eagerly evaluated and
   an unbound name there got `RY010` (`unbound-variable`). Braced bodies
   now get the same unquote scan as the rest of the template.
+
 - **`-vv` now enables trace logging**: the CLI mapped every verbosity
   level above `-v` to `ry=debug`, so the trace tier promised by the help
   text never activated. `-vv` and higher now set `ry=trace`; `-v` and the
   quiet flags are unchanged. The help text also claimed `-v` selects
   debug; it now says info, matching the filter `init_tracing` applies.
+
 - **Oversized-file warning no longer contains stray spaces**: the
   `index.max-file-bytes` warning printed a wide run of stray spaces
   inside the sentence. The message now uses single spaces.
+
 - **Corrected garbled messages**: RY032's `||`/`&&` operand-length
   warning now ends "R errors at runtime for vector operands" instead of
   "current R errors for vectors"; the `ry dump-types --format` error
   says "only `json` is supported" instead of "expected one of: json";
   and `ry check` with no R files prints its search roots with normal
   path formatting instead of Rust debug output.
+
 - The language server no longer panics on every later check when a worker
   thread panicked once: the serialized-workspace cache recovers from a
   poisoned mutex instead of propagating the panic.
-- The test harness's async JSON-RPC decoder now applies the same 16 MiB
-  message cap as the blocking decoder, rejecting oversized headers instead
-  of buffering without limit.
+
 - RY010 now fires for arguments that bogus or redundant hardcoded NSE
   entries used to suppress: calls spelled `tidyselect(...)` (a package
   name, not a function), rlang defusing helpers (`enexpr`, `ensym`,
@@ -484,21 +349,18 @@ suppression actions — and fixes a parser panic plus several editor issues.
   `library(dplyr)`. Loaded or qualified calls keep their stub behavior:
   the rlang helpers capture their arguments, and `dplyr::all_vars`
   data-masks its expression.
+
 - Parsing no longer panics when a string literal ends inside a multi-byte
   UTF-8 character.
+
 - Re-running the checker on a single file no longer leaks inference state
   (functions, known variables) from the previous run into the next, so
   diagnostics no longer accumulate across files.
+
 - The VS Code extension's language server now uses the binary path
   resolved by the extension itself, and untrusted workspaces can no
   longer execute arbitrary binaries via checked-in `ry.path` settings.
-- Editing no longer forces a full project re-collection on every
-  keystroke; the removed workaround did not prevent the failure it was
-  added for.
-- VS Code extension publishing: fixed the duplicate `needs: version` key
-  in the release workflow, made its version and core-tag inputs explicit,
-  replaced the empty pull-request build workflow with a required one, and
-  standardized the publisher identity to `sims1253.ry`.
+
 - **Corrected rule table in `docs/editor-defaults.md`**: RY020, RY030,
   RY040, and RY090 now carry their registry names (`unary-minus-type`,
   `invalid-comparison`, `invalid-arithmetic`, `unknown-argument`). RY032
@@ -506,8 +368,200 @@ suppression actions — and fixes a parser panic plus several editor issues.
   its measured 1 TP / 47 FP, instead of a disabled "test fixture" rule.
   RY003 is documented as the only default-off rule. The baseline-findings
   table now points at `docs/corpus/0.9-release-evidence.md` instead of
-  duplicating it, and the drift check that guards the README rule table
+  duplicating it, and the drift check that guards the `docs/rules.md` rule table
   (#107) now also guards this table.
+
+- Preserve omitted call arguments and their names without shifting later
+  arguments. Calls and indexes now share missing-position handling. The public
+  `ry-core` AST adds `Expr::Missing(Span)`; consumers with exhaustive expression
+  matches must handle it separately from unsupported `Expr::Unknown` forms.
+
+- Custom or masked `factor` and `new` calls no longer acquire builtin constructor facts. S4 constructor inference requires methods provenance, and detaching a package invalidates the default search-path assumption.
+
+- Resolve visible custom arithmetic, comparison, and vector logical operators
+  before their operands. Avoid primitive diagnostics for ignored operands and
+  preserve proven constant returns; discard caller facts after uncertain effects.
+
+- Class assignments no longer infer literal classes from custom class builders or preserve payload types under an unproven replacement function.
+
+- Report RY051 when literal `chooseOpsMethod` results are `FALSE` on both
+  sides and reject provably distinct operator methods. Infer primitive
+  fallback and its class behavior only for proven scalar operands.
+
+- Parse exponent and hexadecimal integer literals with their values, and use
+  double storage when an `L`-suffixed value exceeds R's integer range.
+
+- Give CLI commands short summaries in `ry --help`; keep scope-dump and language-server details in their command help.
+
+### Removed
+
+- **Slimmed language-server capabilities**: the server no longer
+  advertises `textDocument/rename`/`prepareRename`,
+  `textDocument/documentHighlight`, `textDocument/foldingRange`,
+  `textDocument/selectionRange`, `textDocument/hover`,
+  `textDocument/definition`, `textDocument/references`,
+  `textDocument/documentSymbol`, `workspace/symbol`,
+  `textDocument/completion`, and `textDocument/signatureHelp`. Rename,
+  highlighting, and navigation resolved identifiers purely by spelling,
+  which is unsafe in R (NSE, `assign()`/`get()`, S3 dispatch by naming
+  convention, `$` on lists/environments, formulas, and `library()`
+  masking). Folding, selection ranges, outline, and symbol search
+  duplicate what every tree-sitter-based R editor integration already
+  provides. Cross-file hover, definition, references, completion, and
+  signature help never worked as shipped (requests collapsed to empty
+  ranges). Real completion and signature help belong to dedicated R
+  editor integrations. Navigation and rename remain deferred feature ideas
+  in #88; revisiting them would require real cross-file symbol resolution
+  and a decision to expand the checker-focused scope in #87.
+
+- **Remaining language-server surface**: exactly `textDocument/inlayHint`
+  (the checker's output rendered inline) and `textDocument/codeAction`
+  (inserting suppression comments), both scoped to open documents. The
+  background file index stays, so published diagnostics continue to merge
+  on-disk files with open documents and the editor sees the whole project
+  exactly as `ry check` reports it. Version 0.8.0 advertised the removed
+  capabilities, so upgrading reduces the server capability set. Use another
+  R editor integration for navigation, completion, signature help, and rename.
+
+- **`r-version` config key**: the no-op key, reserved for future use and
+  accepted but ignored, is gone. `ry.toml` files that still set it now
+  fail config parsing (`deny_unknown_fields` rejects unknown keys), so
+  delete the line when upgrading.
+
+- Removed the nonfunctional VS Code setting `ry.checkTestFixtures`. Set
+  `check-test-fixtures = true` in `ry.toml` to enable fixture checks.
+
+### Performance
+
+- Keep only promise-capturing functions in the collection index, reducing startup
+  allocations without changing capture lookup results.
+
+- Refine only affected functions after edits, using observed callable reads and
+  forwarding or S3 metadata dependencies. Keep diagnostic invalidation conservative.
+
+- Reduce scope copying for assertions and short-circuit expressions.
+
+- **One pass-1 walk per file, syntax-only attachment harvest**: the
+  collection pass now harvests each file's `library()`/`require()`
+  attachments in the same walk that collects its function definitions,
+  replacing a second full discarding inference walk per file (#178).
+  The syntactic harvest drops the rare alias indirection `lib <-
+  library; lib(dplyr)` but counts attachments after code the walker
+  proves unreachable (past a `stop()`); diagnostics and inferred types
+  are otherwise unchanged.
+
+- **Less work per `if` during checking**: a condition that proves no type
+  refinement skips the narrowing machinery, and merging branch bindings no
+  longer copies the branch scopes. Diagnostics and inferred types are
+  unchanged.
+
+- **Less duplicate work per call and per function entry**: a call site now
+  matches its arguments against the callee's formals once instead of once per
+  argument query, function bodies are entered through a single walker path,
+  and the RY098 defusing-helper set is built once per collection round
+  instead of per function literal. Diagnostics and inferred types are
+  unchanged.
+
+- **Fewer redundant editor updates**: when a check pass leaves the
+  workspace environment unchanged, the language server no longer re-emits
+  every file's diagnostics; a genuine change still invalidates the whole
+  project (#86).
+
+- Editing no longer forces a full project re-collection on every
+  keystroke; the removed workaround did not prevent the failure it was
+  added for.
+
+### Maintenance
+
+- Check corpus package totals against their reviewed findings to catch stale
+  summary counts in CI.
+
+- Replace the unmaintained xz2 bindings with liblzma for compressed R data.
+  Pin rds2rust to a tested fork revision with the same dependency switch.
+
+- Split inference, workspace discovery/serialization, and LSP handlers into
+  focused modules. Avoid allocating names and scanning infix methods on ordinary calls.
+
+- Validate editor JSON responses, remove unsafe type assertions, and keep rule
+  lookup asynchronous so it does not block the extension host.
+
+- **Checker and CLI internals consolidated**: the typeshed-resolution
+  ladders share one attached-package lookup per attachment gate (#166),
+  and `ry check`'s orchestration moved out of the CLI entrypoint into
+  `check.rs` (#182); the last owned `collapsible_if` debt was lifted
+  (#185). Diagnostics, inferred types, and CLI behavior are unchanged.
+
+- **Remaining `collect.rs` walkers on the shared walker**: the
+  parameter-use collector, the declared-globals scan, the
+  function-definition collection, and the nested-definition collection
+  now express their traversal through the shared `ry_core` walker
+  (`Walk::ALL` for the first two; a statement-level policy that skips
+  control tests for the definition walks) instead of four hand-rolled
+  Stmt/Expr recursions. The `first_parameter_use` family stays
+  hand-rolled: it answers a first-use query in evaluation order whose
+  rules select individual children (the value side of a complex
+  assignment before its target, both `if` branches past their first
+  hits, the `for` re-binding between iterator and body), not whole
+  subtrees. Every converted walker ships with a test pinning its skip
+  policy; diagnostics and inferred types are unchanged (#163).
+
+- **Shared test harnesses, leaner comments, `suppress.rs` renamed to
+  `resolve.rs`**: the checker's inline tests gained `check_with` (parse,
+  configure, check) and a shared `parse_file`, replacing copy-pasted
+  parser/checker scaffolding; the language server's test binaries share
+  one harness module (`tests/harness/`) for spawning sessions (with or
+  without client capabilities and `initializationOptions`), incremental
+  edit splicing, and the `Published` normalization used to compare LSP
+  and CLI diagnostics item by item; near-duplicate literal-pair tests
+  are table-driven. Narrating comments that restated the next line were
+  removed. Contributor-facing rename: `crates/ry-checker/src/suppress.rs`
+  is now `crates/ry-checker/src/resolve.rs` (same code; it holds the
+  typeshed/package signature and value resolution plus the checker's
+  emit helpers). No behavior change.
+
+- **One shared front half for `ry check` and `ry dump-types`**: both
+  commands resolve their per-package groups, workspace contexts, and
+  checker inputs through one pipeline helper, so their file sets,
+  resolution roots, and degraded-scope notes cannot drift apart.
+  Diagnostics and dump output are unchanged.
+
+- **Consolidated duplicated helpers across the crates**: `ry rule` and
+  `ry explain rule` share one argument struct; `ry.toml` merging takes a
+  single `CliOverrides` value instead of ten positional flags; the
+  checker's argument matching, condition inference, and plain-assignment
+  binding each have one implementation; the language server partitions
+  open documents per folder once, carries the owning folder through
+  publication, and reads the parse cache under a single lock; workspace
+  resolution caches DESCRIPTION reads per package root. Tests for
+  workspace discovery, `.Rbuildignore` translation, and baselines moved
+  into the crates whose code they exercise. Behavior, diagnostics, and
+  inferred types are unchanged.
+
+- **Dead feature and API-surface sweep**: the AST's statement-position
+  `function(...)` literal loses its never-populated `name` field (named
+  functions lower to assignment form), the checker's write-only
+  `vector_intent_parameters` stack is gone, and `Project::add_file_arc`
+  replaces the deep `SourceFile` clones the CLI and the benchmark made
+  just to re-wrap each file in an `Arc`. Public surface trimmed:
+  ry-workspace's `PackageFileKind`/`package_file_kind` (now an internal
+  predicate that classifies the same paths as test fixtures),
+  `TruncationReport::omitted_count` (the adjacent per-file loop already
+  reports oversized files precisely), `SeverityFilter`'s raw token
+  buckets, ry-checker's unused re-export of the package file kinds, and
+  six unused `FixtureProject` builder methods. The CLI drops its unused
+  `thiserror`, `toml`, and `glob` dependencies, and the checker its
+  unused `thiserror`. Tests that duplicated another test or could not
+  fail were deleted rather than kept as theater; diagnostics and
+  inferred types are unchanged.
+
+- The test harness's async JSON-RPC decoder now applies the same 16 MiB
+  message cap as the blocking decoder, rejecting oversized headers instead
+  of buffering without limit.
+
+- VS Code extension publishing: fixed the duplicate `needs: version` key
+  in the release workflow, made its version and core-tag inputs explicit,
+  replaced the empty pull-request build workflow with a required one, and
+  standardized the publisher identity to `sims1253.ry`.
 
 ## [0.8.0] - 2026-08-04
 

@@ -170,6 +170,10 @@ All notable changes to ry are documented in this file.
 - Capture bare component names in `stats::model.extract` without reporting
   them as unbound variables; keep ordinary frame arguments checked.
 
+- Account for forwarded `...` when checking missing and unknown arguments.
+  Expanded arguments can fill required parameters and resolve partial names;
+  explicit named holes and unrelated argument names still produce warnings.
+
 - Keep `grep`, `confint`, and fold results conservative across their supported
   return shapes. Complete `grep` and `confint` formals; character grep results
   and list-valued confidence intervals no longer cause false type errors.
@@ -181,6 +185,7 @@ All notable changes to ry are documented in this file.
 - Forget stale receiver types after `storage.mode(x) <- ...` and `mode(x) <- ...`.
   Coercing a character or list value no longer leaves arithmetic checking its
   previous storage type; the assignment expression still returns its right side.
+
 - Match `rapply` result controls through the full R argument match, including
   positional and partial `how` arguments. Keep recursive unlisting and dynamic
   modes unknown; preserve outer list shape only for proven list/replace calls,
@@ -283,7 +288,8 @@ All notable changes to ry are documented in this file.
 - Validate typeshed updates before replacing the vendored snapshot. Failed
   validation leaves the existing stubs and provenance intact. Restore the old
   snapshot if installation fails or receives a handled interrupt, and retain a
-  recovery copy if restoration fails.
+  recovery copy if restoration fails. Refresh the embedded provenance timestamp
+  after validation so the next Cargo build includes the installed snapshot.
 
 - Infer vector-constructor lengths from size values, including empty defaults
   and fractional sizes. Correct factor arithmetic with NULL and unary minus.

@@ -9,6 +9,8 @@
 use std::fmt;
 use std::sync::Arc;
 
+use crate::ast::BinOpKind;
+
 /// Atomic mode of an R vector, mirrors `typeof()` for vectors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Mode {
@@ -54,8 +56,8 @@ impl Mode {
         }
     }
 
-    /// Result of a binary arithmetic op between two atomic modes,
-    /// following R's coercion rules. Returns None if the combination is
+    /// Shared numeric promotion for binary arithmetic. Division and powers
+    /// require the further promotion in [`RType::arith_for`]. Returns None if the combination is
     /// not arithmetic-valid (e.g. list + double). Opaque (unknown) is
     /// permissive: an unknown operand cannot prove an error, so the
     /// result is also opaque rather than None.
@@ -475,25 +477,32 @@ impl RType {
         }
     }
 
-    /// Result of `lhs op rhs` for an arithmetic operator, or None if the
-    /// mode combination is invalid (e.g. list + numeric). Arithmetic
-    /// strips any S3 class attribute and the column schema, matching
-    /// R's actual semantics (arithmetic on data frames is either a loop
-    /// over columns producing a new frame or a runtime error depending
-    /// on the operator; we conservatively report the bare atomic mode).
+    /// Primitive storage result for addition, subtraction or multiplication.
+    /// Use [`Self::arith_for`] for operator-specific coercion. Class dispatch
+    /// belongs to the checker; this operation returns no class or schema.
     ///
     /// Union semantics: distribute over members;
     /// the op errors ONLY if every member-pair errors. A union of
     /// integer and character `+ 1` yields integer (the character member
     /// errors but the integer one is fine) -> stay quiet in v1.
     pub fn arith(self, rhs: RType) -> Option<RType> {
-        distribute(self, rhs, |a, b| a.arith_atomic(b))
+        self.arith_for(rhs, BinOpKind::Add)
+    }
+
+    /// Primitive arithmetic after method dispatch. Division and powers promote
+    /// integer results to double; remainder and integer division reject
+    /// nonempty complex operands. Non-arithmetic operators return `None`.
+    pub fn arith_for(self, rhs: RType, op: BinOpKind) -> Option<RType> {
+        if !op.is_arithmetic() {
+            return None;
+        }
+        distribute(self, rhs, |a, b| a.arith_atomic(b, op))
     }
 
     /// Atomic (non-union) arithmetic; called per-member by `arith`'s
     /// distributor.
-    fn arith_atomic(self, rhs: RType) -> Option<RType> {
-        let mode = self.mode.arith_result(rhs.mode)?;
+    fn arith_atomic(self, rhs: RType, op: BinOpKind) -> Option<RType> {
+        let mut mode = self.mode.arith_result(rhs.mode)?;
         // R returns a zero-length vector when one operand is NULL (e.g.
         // `NULL + 1` -> `numeric(0)`); model the length as Zero in that
         // case, overriding the normal recycling rule.
@@ -501,13 +510,26 @@ impl RType {
             (Mode::Null, _) | (_, Mode::Null) => Length::Zero,
             _ => self.length.binary(rhs.length),
         };
+        if matches!(op, BinOpKind::Div | BinOpKind::Pow) && mode == Mode::Integer {
+            mode = Mode::Double;
+        }
+        if matches!(op, BinOpKind::Mod | BinOpKind::IDiv)
+            && (self.mode == Mode::Complex || rhs.mode == Mode::Complex)
+            && length != Length::Zero
+        {
+            let nonempty = |length| matches!(length, Length::One | Length::Known(1..));
+            if nonempty(self.length) && nonempty(rhs.length) {
+                return None;
+            }
+            // Empty complex arithmetic succeeds before R checks the operator.
+            // An unknown length cannot prove that the call reaches the error.
+            return Some(RType::unknown());
+        }
         Some(RType {
             mode,
             length,
-            // Arithmetic on S3 objects strips the class in R, and the
-            // column schema is meaningless on the atomic result. The
-            // function signature is likewise dropped: you cannot add
-            // two closures and get a meaningful signature back.
+            // The primitive storage model does not infer class dispatch or
+            // attribute propagation from operand types alone.
             class: ClassVector::empty(),
             columns: None,
             fn_sig: None,
@@ -825,6 +847,94 @@ impl RType {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arithmetic_operator_modes_and_empty_lengths() {
+        for op in [BinOpKind::Div, BinOpKind::Pow] {
+            for mode in [Mode::Logical, Mode::Integer, Mode::Double, Mode::Complex] {
+                let result = RType::scalar(mode)
+                    .arith_for(RType::scalar(Mode::Integer), op)
+                    .unwrap();
+                assert_eq!(
+                    result.mode,
+                    if mode == Mode::Complex {
+                        mode
+                    } else {
+                        Mode::Double
+                    }
+                );
+                assert_eq!(result.length, Length::One);
+            }
+            let empty = RType::new(Mode::Null, Length::Zero)
+                .arith_for(RType::scalar(Mode::Integer), op)
+                .unwrap();
+            assert_eq!(empty.mode, Mode::Double);
+            assert_eq!(empty.length, Length::Zero);
+            assert!(
+                RType::scalar(Mode::Character)
+                    .arith_for(RType::scalar(Mode::Integer), op)
+                    .is_none()
+            );
+            assert_eq!(
+                RType::unknown()
+                    .arith_for(RType::scalar(Mode::Integer), op)
+                    .unwrap()
+                    .mode,
+                Mode::Opaque
+            );
+        }
+        for op in [
+            BinOpKind::Add,
+            BinOpKind::Sub,
+            BinOpKind::Mul,
+            BinOpKind::Mod,
+            BinOpKind::IDiv,
+        ] {
+            assert_eq!(
+                RType::scalar(Mode::Integer)
+                    .arith_for(RType::scalar(Mode::Integer), op)
+                    .unwrap()
+                    .mode,
+                Mode::Integer
+            );
+        }
+    }
+
+    #[test]
+    fn complex_remainder_requires_proven_nonempty_operands() {
+        for op in [BinOpKind::Mod, BinOpKind::IDiv] {
+            let complex = RType::scalar(Mode::Complex);
+            let integer = RType::scalar(Mode::Integer);
+            assert!(complex.clone().arith_for(integer.clone(), op).is_none());
+            assert!(integer.arith_for(complex.clone(), op).is_none());
+            for empty in [
+                RType::new(Mode::Integer, Length::Zero),
+                RType::new(Mode::Null, Length::Zero),
+            ] {
+                let result = complex.clone().arith_for(empty, op).unwrap();
+                assert_eq!(result.mode, Mode::Complex);
+                assert_eq!(result.length, Length::Zero);
+            }
+            let uncertain = complex
+                .arith_for(RType::new(Mode::Double, Length::Unknown), op)
+                .unwrap();
+            assert_eq!(uncertain.mode, Mode::Opaque);
+        }
+    }
+
+    #[test]
+    fn arithmetic_operator_coercion_distributes_over_unions() {
+        let mixed = RType::scalar(Mode::Integer).join(RType::scalar(Mode::Character));
+        let divided = mixed
+            .arith_for(RType::scalar(Mode::Integer), BinOpKind::Div)
+            .unwrap();
+        assert_eq!(divided.mode, Mode::Double);
+        let mixed = RType::scalar(Mode::Integer).join(RType::scalar(Mode::Complex));
+        let remainder = mixed
+            .arith_for(RType::scalar(Mode::Integer), BinOpKind::Mod)
+            .unwrap();
+        assert_eq!(remainder.mode, Mode::Integer);
+    }
 
     #[test]
     fn arith_null_plus_character_errors() {

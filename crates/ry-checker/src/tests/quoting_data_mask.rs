@@ -1460,3 +1460,13 @@ fn forwarded_dots_keep_exact_and_all_capture_actuals_quoted() {
         );
     }
 }
+
+#[test]
+fn escaped_names_of_all_capture_helpers_add_no_eager_wrapper_diagnostic() {
+    let diagnostics = check(r"f <- function(p) rlang::enquo(`\x61rg`=p); f(unbound_capture)");
+    let mut codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    codes.sort();
+    // The ordinary matcher still sees the recovery spelling. Preserve its
+    // existing diagnostics, without adding RY010 at the valid wrapper call.
+    assert_eq!(codes, ["RY090", "RY091"]);
+}

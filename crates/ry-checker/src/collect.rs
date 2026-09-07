@@ -573,12 +573,28 @@ fn capture_signature_arguments(signature: &FunctionSig, args: &[Arg], captured: 
     {
         return;
     }
+    let all_capture = signature
+        .params
+        .iter()
+        .all(|param| signature.eval.get(&param.name) == Some(&EvalMode::CapturesPromise));
     // Recovery spellings do not prove R argument names. Exact and partial
     // matching otherwise share the ordinary call matcher's occupancy map.
     if args
         .iter()
         .any(|arg| arg.name.as_deref().is_some_and(|name| name.contains('\\')))
     {
+        // This does not validate escaped names. In any successful call to an
+        // all-capture signature, no explicit actual can move to normal
+        // evaluation. Preserve that fact without changing call diagnostics.
+        if all_capture {
+            for (index, arg) in args.iter().enumerate() {
+                if !matches!(arg.value, Expr::Missing(_))
+                    && !matches!(&arg.value, Expr::Ident { name, .. } if name == "...")
+                {
+                    captured[index] = true;
+                }
+            }
+        }
         return;
     }
     let params: Vec<_> = signature.params.iter().map(|p| p.name.as_str()).collect();
@@ -639,9 +655,6 @@ fn capture_signature_arguments(signature: &FunctionSig, args: &[Arg], captured: 
     let forwarded = args
         .iter()
         .any(|arg| matches!(&arg.value, Expr::Ident { name, .. } if name == "..."));
-    let all_capture = params
-        .iter()
-        .all(|param| signature.eval.get(*param) == Some(&EvalMode::CapturesPromise));
     for (index, arg) in args.iter().enumerate() {
         // Preserve the existing blanket forwarding approximation: a wrapper's
         // `...` remains quoting when passed to a capturing dots formal. Runtime
@@ -1160,6 +1173,7 @@ mod collect_walker_tests {
             "rlang::enquo(..., p)",
             "rlang::enquo(ar=p, ...)",
             "rlang::enquo(arg=p, ...)",
+            r"rlang::enquo(`\x61rg`=p)",
             "delayedAssign(x='held', value=p, ...)",
         ] {
             let checker = collect(&format!("f <- function(p) {call}"));
@@ -1184,6 +1198,7 @@ mod collect_walker_tests {
             "delayedAssign('held', p, ...)",
             "delayedAssign('held', val=p, ...)",
             "base::delayedAssign('held', 1L, eval.env=p)",
+            r"base::delayedAssign('held', 1L, `\x65val.env`=p)",
             "base::delayedAssign('held', 1L, assign.env=p)",
             "base::delayedAssign('held', 1L, p)",
             "substitute(expr=foo, env=p)",

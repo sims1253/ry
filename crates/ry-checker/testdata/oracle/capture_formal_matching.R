@@ -15,6 +15,7 @@ forces <- function(f) {
 }
 forces(function(p) base::delayedAssign(p, 1L))
 forces(function(p) base::delayedAssign("held", 1L, eval.env = p))
+forces(function(p) base::delayedAssign("held", 1L, `\x65val.env` = p))
 forces(function(p) base::delayedAssign("held", 1L, assign.env = p))
 forces(function(p) base::substitute(expr = x, env = p))
 stopifnot(inherits(tryCatch(base::substitute(e = x), error = identity), "error"))
@@ -42,3 +43,8 @@ mixed_forward <- function(p, ...) delayedAssign("held", p, ...)
 error <- tryCatch(mixed_forward(stop("normal forwarded control"), value = 1L), error = identity)
 stopifnot(inherits(error, "error"))
 stopifnot(identical(conditionMessage(error), "normal forwarded control"))
+
+if (requireNamespace("rlang", quietly = TRUE)) {
+  escaped_name <- function(p) rlang::enquo(`\x61rg` = p)
+  stopifnot(rlang::is_quosure(escaped_name(unbound_capture)))
+}

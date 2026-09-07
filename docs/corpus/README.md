@@ -17,8 +17,8 @@ the other, `upstream-ggplot2`, names the upstream package.
 
 | Ledger | `ry` | Packages | Diagnostics | TP / FP / Unc | Reconciliation |
 | :-- | :-- | :-- | ---: | :-- | :-- |
-| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.7.1 | 24 | 157 | 10 / 91 / 0 (+56 unowned) | hermetic (strict CI gate) |
-| [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 707 | 43 / 664 / 0 | hermetic (strict CI gate) |
+| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.7.1 | 24 | 123 | 10 / 57 / 0 (+56 unowned) | hermetic (strict CI gate) |
+| [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 699 | 43 / 656 / 0 | hermetic (strict CI gate) |
 
 Two historical ledgers were removed as generated artifacts: the 0.8.0
 audit transcript (1,142 identities, reconciliation `audit-transcript`) and
@@ -30,8 +30,8 @@ audit records summarized in [`pre-governance-measurement.md`](pre-governance-mea
 
 The [instruction baseline](instructions-baseline.json) records the fixed performance
 sample. See the [measurement guide](instructions.md) for local runs and CI deltas.
-The [scope journal experiment](scope-journal-experiment.md) records sparse and
-dense branch tradeoffs for issue #130.
+The [scope storage experiments](scope-journal-experiment.md) record journal
+tradeoffs and persistent-map measurements for issue #130.
 
 ## Parser invariant evidence
 

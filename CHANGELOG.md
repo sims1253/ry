@@ -170,6 +170,8 @@ suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Changed
 
+- Give CLI commands short summaries in `ry --help`; keep scope-dump and language-server details in their command help.
+
 - Shorten the README to installation and first-use examples. Move detailed
   configuration, usage, and rule references into linked guides.
 

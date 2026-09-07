@@ -83,8 +83,8 @@ instruction totals. DHAT totals are cumulative allocations; its peak is live
 heap, not process RSS.
 
 A future design should improve dense writes and ordinary workloads before it
-replaces the current storage. Persistent collections would need their own
-lookup-cost and public-API review; they were not measured here.
+replaces the current storage. The persistent-map follow-up below measures one
+alternative; it does not change the public API or production storage.
 
 ## Follow-up experiments
 
@@ -114,3 +114,59 @@ historical experiment base and do not claim to cover later `Scope` fields.
 
 The remaining dense regression and small corpus gain do not justify the extra
 branch state. These results leave #130 open without changing production storage.
+
+## Persistent-map screening
+
+A fourth prototype replaces only `Scope::bindings` and
+`Scope::function_aliases` with `im::HashMap` 15.1.0. Marker sets and reference
+provenance keep their existing clone behavior, so this is a partial storage
+experiment. The two persistent maps apply wherever a `Scope` is cloned, unlike
+the journal prototype's statement-`if` boundary. It uses historical clone
+baseline `e67fb55`, without any journal plumbing or adaptive thresholds.
+A compile-time feature selects standard or
+persistent maps in the same source; the ordinary build retains the public
+standard-map field types.
+
+The [measured source and harness](https://github.com/sims1253/ry/tree/3ce456c14c5c7a0ba7154ccf569566b40fd0e0a5/experiments/persistent-scope)
+are pinned at `3ce456c14c5c7a0ba7154ccf569566b40fd0e0a5`.
+The [recorded results](https://github.com/sims1253/ry/blob/885a2b779d7d2c6a9543367f39b135bb442d4455/experiments/persistent-scope/results.json)
+include exact totals, input hashes, binary hashes, and tool versions. Both
+variants use locked dependencies, one Rayon thread, and no installed R libraries.
+The dense input and 240-file corpus match the original journal experiment.
+
+| Workload | Standard instructions | Persistent instructions | Change |
+| :-- | --: | --: | --: |
+| Dense, same type | 1,622,272,839 | 1,706,583,364 | +5.20% |
+| 240-file corpus | 197,044,917 | 201,874,723 | +2.45% |
+
+| Workload | Standard allocated bytes | Persistent allocated bytes | Change |
+| :-- | --: | --: | --: |
+| Dense, same type | 185,605,760 | 270,489,732 | +45.73% |
+| 240-file corpus | 30,995,908 | 39,830,695 | +28.50% |
+
+Callgrind counts the whole process, including parsing and diagnostic formatting;
+DHAT counts cumulative allocations. These are not wall-time comparisons. Dense
+peak live heap rises from 50,665,773 to 78,956,964 bytes; corpus peak rises from
+12,214,162 to 12,272,956 bytes. Diagnostics match byte for byte between modes
+under both tools.
+
+The dense and ordinary workloads already regress, so the staged screening stops
+here. The harness preserves all four original inputs, but sparse and alternating
+dense workloads were not measured. The feature-enabled checker build,
+formatting, and diff checks passed. Full workspace tests, Clippy, and the R
+oracle gates were not run after rejection; diagnostic equality is not a claim
+of complete semantic equivalence.
+
+Reproduce the screening from the experiment branch:
+
+```sh
+git fetch origin experiment/persistent-scope-maps
+git worktree add --detach /tmp/ry-persistent-scope 885a2b779d7d2c6a9543367f39b135bb442d4455
+cd /tmp/ry-persistent-scope
+python3 experiments/persistent-scope/profile.py \
+  --out /tmp/ry-persistent-screening --workloads dense corpus --tools callgrind dhat
+```
+
+No production dependency or storage change follows from this result. It rejects
+this two-map substitution on the measured workloads, not every persistent
+collection design. Issue #130 remains open.

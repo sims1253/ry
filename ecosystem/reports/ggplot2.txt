@@ -1,8 +1,4 @@
 R/facet-.R:1074:28 RY010
-R/guide-axis-stack.R:35:25 RY010
-R/guide-custom.R:43:22 RY010
-R/guide-custom.R:44:23 RY010
-R/guide-custom.R:45:24 RY010
 R/plot-render.R:297:19 RY010
 R/plot-render.R:64:12 RY010
 R/plot-render.R:65:12 RY010

@@ -5,10 +5,7 @@
   "functions": {
     "absolute.size": {
       "params": [
-        {
-          "name": "unit",
-          "required": true
-        }
+        "unit"
       ],
       "return": {
         "mode": "opaque",
@@ -18,14 +15,8 @@
     },
     "addGrob": {
       "params": [
-        {
-          "name": "gTree",
-          "required": true
-        },
-        {
-          "name": "child",
-          "required": true
-        },
+        "gTree",
+        "child",
         "gPath",
         "strict",
         "grep",
@@ -40,14 +31,8 @@
     },
     "applyEdit": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "edit",
-          "required": true
-        }
+        "x",
+        "edit"
       ],
       "return": {
         "mode": "opaque",
@@ -57,14 +42,8 @@
     },
     "applyEdits": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "edits",
-          "required": true
-        }
+        "x",
+        "edits"
       ],
       "return": {
         "mode": "opaque",
@@ -74,10 +53,7 @@
     },
     "arcCurvature": {
       "params": [
-        {
-          "name": "theta",
-          "required": true
-        }
+        "theta"
       ],
       "return": {
         "mode": "opaque",
@@ -120,10 +96,7 @@
     },
     "as.mask": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
+        "x",
         "type"
       ],
       "return": {
@@ -134,10 +107,7 @@
     },
     "as.path": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
+        "x",
         "gp",
         "rule"
       ],
@@ -149,10 +119,7 @@
     },
     "ascentDetails": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        }
+        "x"
       ],
       "return": {
         "mode": "opaque",
@@ -180,10 +147,7 @@
     },
     "bezierPoints": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        }
+        "x"
       ],
       "return": {
         "mode": "opaque",
@@ -193,10 +157,7 @@
     },
     "calcStringMetric": {
       "params": [
-        {
-          "name": "text",
-          "required": true
-        }
+        "text"
       ],
       "return": {
         "mode": "opaque",
@@ -206,10 +167,7 @@
     },
     "childNames": {
       "params": [
-        {
-          "name": "gTree",
-          "required": true
-        }
+        "gTree"
       ],
       "return": {
         "mode": "opaque",
@@ -254,14 +212,8 @@
     },
     "convertHeight": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "unitTo",
-          "required": true
-        },
+        "x",
+        "unitTo",
         "valueOnly"
       ],
       "return": {
@@ -272,10 +224,7 @@
     },
     "convertNative": {
       "params": [
-        {
-          "name": "unit",
-          "required": true
-        },
+        "unit",
         "dimension",
         "type"
       ],
@@ -287,14 +236,8 @@
     },
     "convertUnit": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "unitTo",
-          "required": true
-        },
+        "x",
+        "unitTo",
         "axisFrom",
         "typeFrom",
         "axisTo",
@@ -309,14 +252,8 @@
     },
     "convertWidth": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "unitTo",
-          "required": true
-        },
+        "x",
+        "unitTo",
         "valueOnly"
       ],
       "return": {
@@ -327,14 +264,8 @@
     },
     "convertX": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "unitTo",
-          "required": true
-        },
+        "x",
+        "unitTo",
         "valueOnly"
       ],
       "return": {
@@ -345,14 +276,8 @@
     },
     "convertY": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "unitTo",
-          "required": true
-        },
+        "x",
+        "unitTo",
         "valueOnly"
       ],
       "return": {
@@ -415,22 +340,10 @@
     },
     "curveGrob": {
       "params": [
-        {
-          "name": "x1",
-          "required": true
-        },
-        {
-          "name": "y1",
-          "required": true
-        },
-        {
-          "name": "x2",
-          "required": true
-        },
-        {
-          "name": "y2",
-          "required": true
-        },
+        "x1",
+        "y1",
+        "x2",
+        "y2",
         "default.units",
         "curvature",
         "angle",
@@ -469,10 +382,7 @@
     },
     "defineGrob": {
       "params": [
-        {
-          "name": "src",
-          "required": true
-        },
+        "src",
         "op",
         "dst",
         "coords",
@@ -488,10 +398,7 @@
     },
     "defnRotate": {
       "params": [
-        {
-          "name": "group",
-          "required": true
-        },
+        "group",
         "inverse",
         "device"
       ],
@@ -503,10 +410,7 @@
     },
     "defnScale": {
       "params": [
-        {
-          "name": "group",
-          "required": true
-        },
+        "group",
         "inverse"
       ],
       "return": {
@@ -517,10 +421,7 @@
     },
     "defnTranslate": {
       "params": [
-        {
-          "name": "group",
-          "required": true
-        },
+        "group",
         "inverse",
         "device"
       ],
@@ -533,10 +434,7 @@
     "delayGrob": {
       "params": [
         "expr",
-        {
-          "name": "list",
-          "required": true
-        },
+        "list",
         "name",
         "gp",
         "vp"
@@ -552,10 +450,7 @@
     },
     "depth": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
+        "x",
         "..."
       ],
       "return": {
@@ -566,10 +461,7 @@
     },
     "descentDetails": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        }
+        "x"
       ],
       "return": {
         "mode": "opaque",
@@ -579,14 +471,8 @@
     },
     "deviceDim": {
       "params": [
-        {
-          "name": "w",
-          "required": true
-        },
-        {
-          "name": "h",
-          "required": true
-        },
+        "w",
+        "h",
         "valueOnly",
         "device"
       ],
@@ -598,14 +484,8 @@
     },
     "deviceLoc": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "y",
-          "required": true
-        },
+        "x",
+        "y",
         "valueOnly",
         "device"
       ],
@@ -617,10 +497,7 @@
     },
     "downViewport": {
       "params": [
-        {
-          "name": "name",
-          "required": true
-        },
+        "name",
         "strict",
         "recording"
       ],
@@ -632,14 +509,8 @@
     },
     "draw.details": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "recording",
-          "required": true
-        }
+        "x",
+        "recording"
       ],
       "return": {
         "mode": "opaque",
@@ -649,14 +520,8 @@
     },
     "drawDetails": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "recording",
-          "required": true
-        }
+        "x",
+        "recording"
       ],
       "return": {
         "mode": "opaque",
@@ -666,14 +531,8 @@
     },
     "editDetails": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "specs",
-          "required": true
-        }
+        "x",
+        "specs"
       ],
       "return": {
         "mode": "opaque",
@@ -683,10 +542,7 @@
     },
     "editGrob": {
       "params": [
-        {
-          "name": "grob",
-          "required": true
-        },
+        "grob",
         "gPath",
         "...",
         "strict",
@@ -713,10 +569,7 @@
     },
     "emptyGrobCoords": {
       "params": [
-        {
-          "name": "name",
-          "required": true
-        }
+        "name"
       ],
       "return": {
         "mode": "opaque",
@@ -726,10 +579,7 @@
     },
     "emptyGTreeCoords": {
       "params": [
-        {
-          "name": "name",
-          "required": true
-        }
+        "name"
       ],
       "return": {
         "mode": "opaque",
@@ -749,10 +599,7 @@
     },
     "explode": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        }
+        "x"
       ],
       "return": {
         "mode": "opaque",
@@ -762,10 +609,7 @@
     },
     "fillGrob": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
+        "x",
         "..."
       ],
       "return": {
@@ -776,10 +620,7 @@
     },
     "fillStrokeGrob": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
+        "x",
         "..."
       ],
       "return": {
@@ -790,10 +631,7 @@
     },
     "forceGrob": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        }
+        "x"
       ],
       "return": {
         "mode": "opaque",
@@ -816,10 +654,7 @@
     },
     "functionGrob": {
       "params": [
-        {
-          "name": "f",
-          "required": true
-        },
+        "f",
         "n",
         "range",
         "units",
@@ -865,14 +700,8 @@
     },
     "getGrob": {
       "params": [
-        {
-          "name": "gTree",
-          "required": true
-        },
-        {
-          "name": "gPath",
-          "required": true
-        },
+        "gTree",
+        "gPath",
         "strict",
         "grep",
         "global"
@@ -903,10 +732,7 @@
     },
     "glyphGrob": {
       "params": [
-        {
-          "name": "glyphInfo",
-          "required": true
-        },
+        "glyphInfo",
         "x",
         "y",
         "default.units",
@@ -956,14 +782,8 @@
     },
     "grid.add": {
       "params": [
-        {
-          "name": "gPath",
-          "required": true
-        },
-        {
-          "name": "child",
-          "required": true
-        },
+        "gPath",
+        "child",
         "strict",
         "grep",
         "global",
@@ -1057,14 +877,8 @@
     },
     "grid.convert": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "unitTo",
-          "required": true
-        },
+        "x",
+        "unitTo",
         "axisFrom",
         "typeFrom",
         "axisTo",
@@ -1079,14 +893,8 @@
     },
     "grid.convertHeight": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "unitTo",
-          "required": true
-        },
+        "x",
+        "unitTo",
         "valueOnly"
       ],
       "return": {
@@ -1097,14 +905,8 @@
     },
     "grid.convertWidth": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "unitTo",
-          "required": true
-        },
+        "x",
+        "unitTo",
         "valueOnly"
       ],
       "return": {
@@ -1115,14 +917,8 @@
     },
     "grid.convertX": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "unitTo",
-          "required": true
-        },
+        "x",
+        "unitTo",
         "valueOnly"
       ],
       "return": {
@@ -1133,14 +929,8 @@
     },
     "grid.convertY": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "unitTo",
-          "required": true
-        },
+        "x",
+        "unitTo",
         "valueOnly"
       ],
       "return": {
@@ -1151,10 +941,7 @@
     },
     "grid.copy": {
       "params": [
-        {
-          "name": "grob",
-          "required": true
-        }
+        "grob"
       ],
       "return": {
         "mode": "opaque",
@@ -1174,10 +961,7 @@
     },
     "grid.define": {
       "params": [
-        {
-          "name": "src",
-          "required": true
-        },
+        "src",
         "op",
         "dst",
         "coords",
@@ -1194,10 +978,7 @@
     "grid.delay": {
       "params": [
         "expr",
-        {
-          "name": "list",
-          "required": true
-        },
+        "list",
         "name",
         "gp",
         "vp"
@@ -1223,10 +1004,7 @@
     },
     "grid.DLapply": {
       "params": [
-        {
-          "name": "FUN",
-          "required": true
-        },
+        "FUN",
         "..."
       ],
       "return": {
@@ -1237,10 +1015,7 @@
     },
     "grid.draw": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
+        "x",
         "recording"
       ],
       "return": {
@@ -1251,10 +1026,7 @@
     },
     "grid.edit": {
       "params": [
-        {
-          "name": "gPath",
-          "required": true
-        },
+        "gPath",
         "...",
         "strict",
         "grep",
@@ -1290,10 +1062,7 @@
     },
     "grid.force": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
+        "x",
         "..."
       ],
       "return": {
@@ -1340,10 +1109,7 @@
     },
     "grid.get": {
       "params": [
-        {
-          "name": "gPath",
-          "required": true
-        },
+        "gPath",
         "strict",
         "grep",
         "global",
@@ -1392,10 +1158,7 @@
     },
     "grid.grabExpr": {
       "params": [
-        {
-          "name": "expr",
-          "required": true
-        },
+        "expr",
         "warn",
         "wrap",
         "wrap.grobs",
@@ -1424,10 +1187,7 @@
     },
     "grid.grep": {
       "params": [
-        {
-          "name": "path",
-          "required": true
-        },
+        "path",
         "x",
         "grobs",
         "viewports",
@@ -1459,10 +1219,7 @@
     },
     "grid.grob": {
       "params": [
-        {
-          "name": "list.struct",
-          "required": true
-        },
+        "list.struct",
         "cl",
         "draw"
       ],
@@ -1474,10 +1231,7 @@
     },
     "grid.group": {
       "params": [
-        {
-          "name": "src",
-          "required": true
-        },
+        "src",
         "op",
         "dst",
         "coords",
@@ -1634,14 +1388,8 @@
     },
     "grid.pack": {
       "params": [
-        {
-          "name": "gPath",
-          "required": true
-        },
-        {
-          "name": "grob",
-          "required": true
-        },
+        "gPath",
+        "grob",
         "redraw",
         "side",
         "row",
@@ -1699,14 +1447,8 @@
     },
     "grid.place": {
       "params": [
-        {
-          "name": "gPath",
-          "required": true
-        },
-        {
-          "name": "grob",
-          "required": true
-        },
+        "gPath",
+        "grob",
         "row",
         "col",
         "redraw"
@@ -1773,10 +1515,7 @@
     },
     "grid.pretty": {
       "params": [
-        {
-          "name": "range",
-          "required": true
-        },
+        "range",
         "n"
       ],
       "return": {
@@ -1787,10 +1526,7 @@
     },
     "grid.raster": {
       "params": [
-        {
-          "name": "image",
-          "required": true
-        },
+        "image",
         "x",
         "y",
         "width",
@@ -1813,10 +1549,7 @@
     "grid.record": {
       "params": [
         "expr",
-        {
-          "name": "list",
-          "required": true
-        },
+        "list",
         "name",
         "gp",
         "vp"
@@ -1861,10 +1594,7 @@
     },
     "grid.remove": {
       "params": [
-        {
-          "name": "gPath",
-          "required": true
-        },
+        "gPath",
         "warn",
         "strict",
         "grep",
@@ -1880,14 +1610,8 @@
     },
     "grid.reorder": {
       "params": [
-        {
-          "name": "gPath",
-          "required": true
-        },
-        {
-          "name": "order",
-          "required": true
-        },
+        "gPath",
+        "order",
         "back",
         "grep",
         "redraw"
@@ -1900,10 +1624,7 @@
     },
     "grid.revert": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
+        "x",
         "..."
       ],
       "return": {
@@ -1943,14 +1664,8 @@
     },
     "grid.set": {
       "params": [
-        {
-          "name": "gPath",
-          "required": true
-        },
-        {
-          "name": "newGrob",
-          "required": true
-        },
+        "gPath",
+        "newGrob",
         "strict",
         "grep",
         "redraw"
@@ -1963,10 +1678,7 @@
     },
     "grid.show.layout": {
       "params": [
-        {
-          "name": "l",
-          "required": true
-        },
+        "l",
         "newpage",
         "vp.ex",
         "bg",
@@ -1986,10 +1698,7 @@
     },
     "grid.show.viewport": {
       "params": [
-        {
-          "name": "v",
-          "required": true
-        },
+        "v",
         "parent.layout",
         "newpage",
         "vp.ex",
@@ -2032,10 +1741,7 @@
     },
     "grid.text": {
       "params": [
-        {
-          "name": "label",
-          "required": true
-        },
+        "label",
         "x",
         "y",
         "just",
@@ -2057,10 +1763,7 @@
     },
     "grid.use": {
       "params": [
-        {
-          "name": "group",
-          "required": true
-        },
+        "group",
         "transform",
         "name",
         "gp",
@@ -2118,14 +1821,8 @@
     },
     "gridCoords": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "y",
-          "required": true
-        }
+        "x",
+        "y"
       ],
       "return": {
         "mode": "opaque",
@@ -2135,14 +1832,8 @@
     },
     "gridGrobCoords": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "name",
-          "required": true
-        },
+        "x",
+        "name",
         "rule"
       ],
       "return": {
@@ -2153,14 +1844,8 @@
     },
     "gridGTreeCoords": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "name",
-          "required": true
-        }
+        "x",
+        "name"
       ],
       "return": {
         "mode": "opaque",
@@ -2184,10 +1869,7 @@
     },
     "grobAscent": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        }
+        "x"
       ],
       "return": {
         "mode": "opaque",
@@ -2197,14 +1879,8 @@
     },
     "grobCoords": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "closed",
-          "required": true
-        },
+        "x",
+        "closed",
         "..."
       ],
       "return": {
@@ -2215,10 +1891,7 @@
     },
     "grobDescent": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        }
+        "x"
       ],
       "return": {
         "mode": "opaque",
@@ -2228,10 +1901,7 @@
     },
     "grobHeight": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        }
+        "x"
       ],
       "return": {
         "mode": "opaque",
@@ -2252,10 +1922,7 @@
     },
     "grobPathListing": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
+        "x",
         "..."
       ],
       "return": {
@@ -2266,14 +1933,8 @@
     },
     "grobPoints": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "closed",
-          "required": true
-        },
+        "x",
+        "closed",
         "..."
       ],
       "return": {
@@ -2299,10 +1960,7 @@
     },
     "grobWidth": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        }
+        "x"
       ],
       "return": {
         "mode": "opaque",
@@ -2312,14 +1970,8 @@
     },
     "grobX": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "theta",
-          "required": true
-        }
+        "x",
+        "theta"
       ],
       "return": {
         "mode": "opaque",
@@ -2329,14 +1981,8 @@
     },
     "grobY": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "theta",
-          "required": true
-        }
+        "x",
+        "theta"
       ],
       "return": {
         "mode": "opaque",
@@ -2357,10 +2003,7 @@
     },
     "groupGrob": {
       "params": [
-        {
-          "name": "src",
-          "required": true
-        },
+        "src",
         "op",
         "dst",
         "coords",
@@ -2436,10 +2079,7 @@
     },
     "heightDetails": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        }
+        "x"
       ],
       "return": {
         "mode": "opaque",
@@ -2449,10 +2089,7 @@
     },
     "is.grob": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        }
+        "x"
       ],
       "return": {
         "mode": "opaque",
@@ -2462,10 +2099,7 @@
     },
     "is.unit": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        }
+        "x"
       ],
       "return": {
         "mode": "opaque",
@@ -2475,10 +2109,7 @@
     },
     "isClosed": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
+        "x",
         "..."
       ],
       "return": {
@@ -2489,10 +2120,7 @@
     },
     "isEmptyCoords": {
       "params": [
-        {
-          "name": "coords",
-          "required": true
-        }
+        "coords"
       ],
       "return": {
         "mode": "opaque",
@@ -2502,10 +2130,7 @@
     },
     "layout.heights": {
       "params": [
-        {
-          "name": "lay",
-          "required": true
-        }
+        "lay"
       ],
       "return": {
         "mode": "opaque",
@@ -2523,10 +2148,7 @@
     },
     "layout.widths": {
       "params": [
-        {
-          "name": "lay",
-          "required": true
-        }
+        "lay"
       ],
       "return": {
         "mode": "opaque",
@@ -2547,10 +2169,7 @@
     },
     "legendGrob": {
       "params": [
-        {
-          "name": "labels",
-          "required": true
-        },
+        "labels",
         "nrow",
         "ncol",
         "byrow",
@@ -2621,10 +2240,7 @@
     },
     "makeContent": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        }
+        "x"
       ],
       "return": {
         "mode": "opaque",
@@ -2634,10 +2250,7 @@
     },
     "makeContext": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        }
+        "x"
       ],
       "return": {
         "mode": "opaque",
@@ -2661,10 +2274,7 @@
     },
     "nestedListing": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
+        "x",
         "gindent",
         "vpindent"
       ],
@@ -2690,14 +2300,8 @@
     },
     "packGrob": {
       "params": [
-        {
-          "name": "frame",
-          "required": true
-        },
-        {
-          "name": "grob",
-          "required": true
-        },
+        "frame",
+        "grob",
         "side",
         "row",
         "row.before",
@@ -2720,14 +2324,8 @@
     },
     "pathGrob": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "y",
-          "required": true
-        },
+        "x",
+        "y",
         "id",
         "id.lengths",
         "pathId",
@@ -2746,10 +2344,7 @@
     },
     "pathListing": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
+        "x",
         "gvpSep",
         "gAlign"
       ],
@@ -2761,10 +2356,7 @@
     },
     "pattern": {
       "params": [
-        {
-          "name": "grob",
-          "required": true
-        },
+        "grob",
         "x",
         "y",
         "width",
@@ -2785,14 +2377,8 @@
     },
     "placeGrob": {
       "params": [
-        {
-          "name": "frame",
-          "required": true
-        },
-        {
-          "name": "grob",
-          "required": true
-        },
+        "frame",
+        "grob",
         "row",
         "col"
       ],
@@ -2889,10 +2475,7 @@
     },
     "postDrawDetails": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        }
+        "x"
       ],
       "return": {
         "mode": "opaque",
@@ -2902,10 +2485,7 @@
     },
     "preDrawDetails": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        }
+        "x"
       ],
       "return": {
         "mode": "opaque",
@@ -2957,10 +2537,7 @@
     },
     "rasterGrob": {
       "params": [
-        {
-          "name": "image",
-          "required": true
-        },
+        "image",
         "x",
         "y",
         "width",
@@ -2983,10 +2560,7 @@
     "recordGrob": {
       "params": [
         "expr",
-        {
-          "name": "list",
-          "required": true
-        },
+        "list",
         "name",
         "gp",
         "vp"
@@ -3022,14 +2596,8 @@
     },
     "removeGrob": {
       "params": [
-        {
-          "name": "gTree",
-          "required": true
-        },
-        {
-          "name": "gPath",
-          "required": true
-        },
+        "gTree",
+        "gPath",
         "strict",
         "grep",
         "global",
@@ -3043,14 +2611,8 @@
     },
     "reorderGrob": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "order",
-          "required": true
-        },
+        "x",
+        "order",
         "back"
       ],
       "return": {
@@ -3061,14 +2623,8 @@
     },
     "resolveHJust": {
       "params": [
-        {
-          "name": "just",
-          "required": true
-        },
-        {
-          "name": "hjust",
-          "required": true
-        }
+        "just",
+        "hjust"
       ],
       "return": {
         "mode": "opaque",
@@ -3078,10 +2634,7 @@
     },
     "resolveRasterSize": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        }
+        "x"
       ],
       "return": {
         "mode": "opaque",
@@ -3091,14 +2644,8 @@
     },
     "resolveVJust": {
       "params": [
-        {
-          "name": "just",
-          "required": true
-        },
-        {
-          "name": "vjust",
-          "required": true
-        }
+        "just",
+        "vjust"
       ],
       "return": {
         "mode": "opaque",
@@ -3127,10 +2674,7 @@
     },
     "seekViewport": {
       "params": [
-        {
-          "name": "name",
-          "required": true
-        },
+        "name",
         "recording"
       ],
       "return": {
@@ -3159,14 +2703,8 @@
     },
     "setChildren": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "children",
-          "required": true
-        }
+        "x",
+        "children"
       ],
       "return": {
         "mode": "opaque",
@@ -3176,18 +2714,9 @@
     },
     "setGrob": {
       "params": [
-        {
-          "name": "gTree",
-          "required": true
-        },
-        {
-          "name": "gPath",
-          "required": true
-        },
-        {
-          "name": "newGrob",
-          "required": true
-        },
+        "gTree",
+        "gPath",
+        "newGrob",
         "strict",
         "grep"
       ],
@@ -3235,10 +2764,7 @@
     },
     "stringAscent": {
       "params": [
-        {
-          "name": "string",
-          "required": true
-        }
+        "string"
       ],
       "return": {
         "mode": "opaque",
@@ -3248,10 +2774,7 @@
     },
     "stringDescent": {
       "params": [
-        {
-          "name": "string",
-          "required": true
-        }
+        "string"
       ],
       "return": {
         "mode": "opaque",
@@ -3261,10 +2784,7 @@
     },
     "stringHeight": {
       "params": [
-        {
-          "name": "string",
-          "required": true
-        }
+        "string"
       ],
       "return": {
         "mode": "opaque",
@@ -3274,10 +2794,7 @@
     },
     "stringWidth": {
       "params": [
-        {
-          "name": "string",
-          "required": true
-        }
+        "string"
       ],
       "return": {
         "mode": "opaque",
@@ -3287,10 +2804,7 @@
     },
     "strokeGrob": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
+        "x",
         "..."
       ],
       "return": {
@@ -3301,10 +2815,7 @@
     },
     "textGrob": {
       "params": [
-        {
-          "name": "label",
-          "required": true
-        },
+        "label",
         "x",
         "y",
         "just",
@@ -3325,14 +2836,8 @@
     },
     "unit": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "units",
-          "required": true
-        },
+        "x",
+        "units",
         "data"
       ],
       "return": {
@@ -3354,10 +2859,7 @@
     },
     "unit.length": {
       "params": [
-        {
-          "name": "unit",
-          "required": true
-        }
+        "unit"
       ],
       "return": {
         "mode": "opaque",
@@ -3397,10 +2899,7 @@
     },
     "unit.rep": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
+        "x",
         "..."
       ],
       "return": {
@@ -3411,10 +2910,7 @@
     },
     "unitType": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
+        "x",
         "recurse"
       ],
       "return": {
@@ -3436,10 +2932,7 @@
     },
     "useGrob": {
       "params": [
-        {
-          "name": "group",
-          "required": true
-        },
+        "group",
         "transform",
         "name",
         "gp",
@@ -3485,10 +2978,7 @@
     },
     "valid.just": {
       "params": [
-        {
-          "name": "just",
-          "required": true
-        }
+        "just"
       ],
       "return": {
         "mode": "opaque",
@@ -3498,10 +2988,7 @@
     },
     "validDetails": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        }
+        "x"
       ],
       "return": {
         "mode": "opaque",
@@ -3536,10 +3023,7 @@
     },
     "viewport.layout": {
       "params": [
-        {
-          "name": "vp",
-          "required": true
-        }
+        "vp"
       ],
       "return": {
         "mode": "opaque",
@@ -3549,10 +3033,7 @@
     },
     "viewport.transform": {
       "params": [
-        {
-          "name": "vp",
-          "required": true
-        }
+        "vp"
       ],
       "return": {
         "mode": "opaque",
@@ -3562,10 +3043,7 @@
     },
     "viewportRotate": {
       "params": [
-        {
-          "name": "group",
-          "required": true
-        },
+        "group",
         "device"
       ],
       "return": {
@@ -3576,10 +3054,7 @@
     },
     "viewportScale": {
       "params": [
-        {
-          "name": "group",
-          "required": true
-        },
+        "group",
         "device"
       ],
       "return": {
@@ -3590,10 +3065,7 @@
     },
     "viewportTransform": {
       "params": [
-        {
-          "name": "group",
-          "required": true
-        },
+        "group",
         "shear",
         "flip",
         "device"
@@ -3606,10 +3078,7 @@
     },
     "viewportTranslate": {
       "params": [
-        {
-          "name": "group",
-          "required": true
-        },
+        "group",
         "device"
       ],
       "return": {
@@ -3650,14 +3119,8 @@
     },
     "vpTree": {
       "params": [
-        {
-          "name": "parent",
-          "required": true
-        },
-        {
-          "name": "children",
-          "required": true
-        }
+        "parent",
+        "children"
       ],
       "return": {
         "mode": "opaque",
@@ -3667,10 +3130,7 @@
     },
     "widthDetails": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        }
+        "x"
       ],
       "return": {
         "mode": "opaque",
@@ -3696,14 +3156,8 @@
     },
     "xDetails": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "theta",
-          "required": true
-        }
+        "x",
+        "theta"
       ],
       "return": {
         "mode": "opaque",
@@ -3734,10 +3188,7 @@
     },
     "xsplinePoints": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        }
+        "x"
       ],
       "return": {
         "mode": "opaque",
@@ -3763,14 +3214,8 @@
     },
     "yDetails": {
       "params": [
-        {
-          "name": "x",
-          "required": true
-        },
-        {
-          "name": "theta",
-          "required": true
-        }
+        "x",
+        "theta"
       ],
       "return": {
         "mode": "opaque",

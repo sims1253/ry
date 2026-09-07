@@ -1,6 +1,57 @@
 use super::*;
 
 #[test]
+fn primitive_arithmetic_uses_operator_specific_result_modes() {
+    let (diagnostics, scope) = check_with_scope(
+        "division <- 1L / 2L\npower <- 2L ^ 3L\nalternate <- 2L ** 3L\nlogical <- TRUE / FALSE\nquotient <- 3L %/% 2L\nremainder <- 3L %% 2L\nf <- function() 1L / 2L\nreturned <- f()\n",
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    for name in ["division", "power", "alternate", "logical", "returned"] {
+        assert_eq!(scope.get(name).unwrap().mode, Mode::Double, "{name}");
+    }
+    for name in ["quotient", "remainder"] {
+        assert_eq!(scope.get(name).unwrap().mode, Mode::Integer, "{name}");
+    }
+}
+
+#[test]
+fn primitive_coercion_does_not_override_s3_arithmetic_returns() {
+    let (diagnostics, scope) = check_with_scope(
+        "`/.widget` <- function(e1, e2) 1L\n`^.widget` <- function(e1, e2) 'power'\nx <- structure(2L, class = 'widget')\ndivision <- x / 2L\npower <- x ^ 2L\n",
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert_eq!(scope.get("division").unwrap().mode, Mode::Integer);
+    assert_eq!(scope.get("power").unwrap().mode, Mode::Character);
+}
+
+#[test]
+fn complex_remainder_errors_only_for_known_nonempty_values() {
+    let (diagnostics, scope) = check_with_stubs(
+        "z <- values::scalar_complex()\nbad_mod <- z %% 2L\nbad_div <- 2L %/% z\nempty <- z %% values::empty_integer()\nuncertain <- z %% values::unknown_integer()\n",
+        &[(
+            "values.json",
+            r#"{"version":"test","functions":{
+            "scalar_complex":{"params":[],"return":{"mode":"complex","length":"1"}},
+            "empty_integer":{"params":[],"return":{"mode":"integer","length":"0"}},
+            "unknown_integer":{"params":[],"return":{"mode":"integer","length":"?"}}
+        }}"#,
+        )],
+    );
+    assert_eq!(
+        diagnostics
+            .iter()
+            .filter(|d| d.code == "RY040")
+            .map(|d| d.span.line)
+            .collect::<Vec<_>>(),
+        [1, 2],
+        "{diagnostics:?}"
+    );
+    assert_eq!(scope.get("empty").unwrap().mode, Mode::Complex);
+    assert_eq!(scope.get("empty").unwrap().length, Length::Zero);
+    assert_eq!(scope.get("uncertain").unwrap().mode, Mode::Opaque);
+}
+
+#[test]
 fn detects_char_plus_int() {
     let diags = check(r#""a" + 1L"#);
     assert!(

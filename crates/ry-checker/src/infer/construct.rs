@@ -45,82 +45,25 @@ impl Checker {
             return Some(RType::unknown());
         }
         if matches!(lookup_name, "factor" | "new") {
-            if original_name != semantic_name
-                || (matches!(original_callee, Expr::String(_, _)) && semantic_name.contains("::"))
-            {
-                return Some(Self::infer_unknown_constructor(scope));
-            }
             let package = if lookup_name == "factor" {
                 "base"
             } else {
                 "methods"
             };
-            if let Some((prefix, _)) = semantic_name.rsplit_once("::") {
-                if self.literal_bindings_may_be_shadowed(
-                    ["::", "`::`", ":::", "`:::`"],
-                    &HashSet::new(),
-                    scope,
-                ) {
+            match self.special_call_provenance(
+                original_name,
+                original_callee,
+                semantic_name,
+                lookup_name,
+                package,
+                scope,
+            ) {
+                crate::resolve::SpecialCallProvenance::Proven => {}
+                crate::resolve::SpecialCallProvenance::Ordinary => return None,
+                crate::resolve::SpecialCallProvenance::Unknown
+                | crate::resolve::SpecialCallProvenance::AmbientUncertainty => {
                     return Some(Self::infer_unknown_constructor(scope));
                 }
-                if prefix.trim_end_matches(':') != package {
-                    // Only an actual package contract can describe another
-                    // constructor with this spelling; avoid the shared standard
-                    // package database lending it a base signature.
-                    return if self
-                        .package_typeshed(prefix.trim_end_matches(':'))
-                        .is_some_and(|typeshed| typeshed.functions.contains_key(lookup_name))
-                    {
-                        None
-                    } else {
-                        Some(Self::infer_unknown_constructor(scope))
-                    };
-                }
-            } else {
-                if scope.is_parameter(semantic_name) {
-                    // An untyped callable formal must not fall back to a base stub.
-                    return Some(Self::infer_unknown_constructor(scope));
-                }
-                // Known custom functions keep the ordinary call path.
-                if self.fn_table.fns.contains_key(semantic_name)
-                    || scope
-                        .get(semantic_name)
-                        .is_some_and(|ty| ty.fn_sig.is_some())
-                {
-                    return None;
-                }
-                if let Some(imported) = self.imported_from.get(semantic_name)
-                    && imported != package
-                {
-                    return if self
-                        .package_typeshed(imported)
-                        .is_some_and(|typeshed| typeshed.functions.contains_key(semantic_name))
-                    {
-                        None
-                    } else {
-                        Some(Self::infer_unknown_constructor(scope))
-                    };
-                }
-                if scope.data_mask_unknown
-                    || self.literal_bindings_may_shadow_package(
-                        [semantic_name, format!("`{semantic_name}`").as_str()],
-                        &HashSet::new(),
-                        scope,
-                        package,
-                    )
-                {
-                    return Some(Self::infer_unknown_constructor(scope));
-                }
-                let explicit_import = self
-                    .imported_from
-                    .get(semantic_name)
-                    .is_some_and(|pkg| pkg == package);
-                if !explicit_import && (scope.search_path_unknown || !self.bare_loaded.is_empty()) {
-                    return Some(Self::infer_unknown_constructor(scope));
-                }
-            }
-            if self.user_stubs.contains_key(package) || self.user_stubs.contains_key("base") {
-                return None;
             }
         }
         // `factor(x)` returns an integer vector with class "factor".

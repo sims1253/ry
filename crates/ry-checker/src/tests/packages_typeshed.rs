@@ -828,6 +828,75 @@ fn grep_value_results_do_not_claim_numeric_comparisons() {
 }
 
 #[test]
+fn grep_position_length_predicate_is_silent_only_as_a_boolean_guard() {
+    for source in [
+        "f <- function(pattern, i) is.character(i) && length(grep(pattern, i) > 0)\n",
+        "if (length(grep('a', c('a', 'b'), value = FALSE) > 0)) TRUE\n",
+        "if (length(grep('a', c('a', 'b'), FALSE, FALSE, FALSE) > 0)) TRUE\n",
+        "if (length(grep('a', c('a', 'b'), val = FALSE) > 0)) TRUE\n",
+        "if (length(base::grep('a', c('a', 'b')) > 0)) TRUE\n",
+        "if (length(grep(x = c('a', 'b'), pattern = 'a') > 0)) TRUE\n",
+        "if (length(grep('a', c('a', 'b')) > 0) && identical(1L, 1L)) TRUE\n",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            !diagnostics.iter().any(|d| d.code == "RY093"),
+            "proven grep position guard should be silent: {source}: {diagnostics:?}"
+        );
+    }
+
+    for source in [
+        "length(grep('a', c('a', 'b')) > 0)\n",
+        "if (length(grep('a', c('a', 'b')) > 0) == 1L) TRUE\n",
+        "if (identical(length(grep('a', c('a', 'b')) > 0), 1L)) TRUE\n",
+        "if (isTRUE(identity(length(grep('a', c('a', 'b')) > 0)))) TRUE\n",
+        "grep <- function(pattern, x, ...) 1L\nif (length(grep('a', c('a', 'b')) > 0)) TRUE\n",
+        "`>` <- function(e1, e2) logical(0)\nif (length(grep('a', c('a', 'b')) > 0)) TRUE\n",
+        "library(unknown_package)\nif (length(grep('a', c('a', 'b')) > 0)) TRUE\n",
+        "value <- TRUE\nif (length(grep('a', c('a', 'b'), value = value) > 0)) TRUE\n",
+        "control <- TRUE\nif (length(grep('a', c('a', 'b'), ignore.case = control) > 0)) TRUE\n",
+        "if (length(grep('a', c('a', 'b'), value = TRUE) > 0)) TRUE\n",
+        "if (length(grep('a', c('a', 'b'), FALSE, FALSE, TRUE) > 0)) TRUE\n",
+        "if (length(grep('a', c('a', 'b'), val = TRUE) > 0)) TRUE\n",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY093"),
+            "non-proven grep comparison should retain RY093: {source}: {diagnostics:?}"
+        );
+    }
+
+    // A user `base` stub replaces the embedded base database. Its declarations
+    // may give grep a different result contract, so the built-in position proof
+    // must not override that model for either bare or qualified calls.
+    let custom_base = r#"{
+        "schema_version": "1",
+        "package": "base",
+        "version": "test",
+        "functions": {
+            "grep": {
+                "params": ["pattern", "x", "ignore.case", "perl", "value", "fixed", "useBytes", "invert"],
+                "return": {"mode": "character", "length": "many"}
+            },
+            "length": {
+                "params": ["x"],
+                "return": {"mode": "integer", "length": "1"}
+            }
+        }
+    }"#;
+    for source in [
+        "if (length(grep('a', c('a', 'b')) > 0)) TRUE\n",
+        "if (length(base::grep('a', c('a', 'b')) > 0)) TRUE\n",
+    ] {
+        let (diagnostics, _) = check_with_stubs(source, &[("base.json", custom_base)]);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY093"),
+            "custom base stub must retain RY093: {source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
 fn confint_dispatch_does_not_claim_an_atomic_result() {
     let diagnostics = check("f <- function(model) { ci <- stats::confint(model); ci$interval }");
     assert!(diagnostics.is_empty(), "{diagnostics:?}");

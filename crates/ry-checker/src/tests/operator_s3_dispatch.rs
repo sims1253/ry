@@ -723,3 +723,10 @@ fn plain_vector_proof_respects_namespace_stubs_and_scalar_dimensions() {
     let (diags, _) = check_with_scope(&source);
     assert!(!diags.iter().any(|d| d.code == "RY051"));
 }
+
+#[test]
+fn literal_c_attributes_do_not_widen_scalar_fallback() {
+    let source = "x <- base::structure(1L,class='left',dim=base::c(1L,1L))\ny <- base::structure(1L,class='right',dim=1L)\n`+.left` <- function(e1,e2) 1L\n`+.right` <- function(e1,e2) 'method'\nchooseOpsMethod.left <- function(...) FALSE\nchooseOpsMethod.right <- function(...) FALSE\nout <- x+y";
+    let (diags, _) = check_with_scope(source);
+    assert!(!diags.iter().any(|d| d.code == "RY051"));
+}

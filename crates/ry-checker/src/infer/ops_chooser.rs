@@ -191,7 +191,7 @@ pub(crate) fn pure_literal_constructor(
                 .imported_from
                 .get("structure")
                 .is_none_or(|package| package == "base"));
-    base && args.iter().all(|arg| {
+    let literal = |arg: &Arg| {
         matches!(
             arg.value,
             Expr::Logical(..)
@@ -199,8 +199,13 @@ pub(crate) fn pure_literal_constructor(
                 | Expr::Double(..)
                 | Expr::String(..)
                 | Expr::Null(..)
-        ) || matches!(&arg.value, Expr::Call { func, args, .. } if pure_literal_c(checker, func, args, scope))
-    }) && !syntax_rebound(checker, scope)
+        )
+    };
+    let vector_payload = matches!(args, [payload, class]
+        if payload.name.is_none() && class.name.as_deref() == Some("class")
+            && matches!(class.value, Expr::String(..))
+            && matches!(&payload.value, Expr::Call { func, args, .. } if pure_literal_c(checker, func, args, scope)));
+    base && (args.iter().all(literal) || vector_payload) && !syntax_rebound(checker, scope)
 }
 
 /// Some statement operators lose their identity during lowering. Admit only

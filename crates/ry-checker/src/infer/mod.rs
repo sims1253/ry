@@ -1350,7 +1350,8 @@ impl Checker {
         let Some(Expr::Ident { name, .. }) = args.first().map(|arg| &arg.value) else {
             return false;
         };
-        // Coercion can replace list storage with an atomic vector.
+        // Base coercion or a custom setter can replace list storage with an
+        // atomic vector. Unknown setter results cannot retain this proof.
         let had_list_origin =
             !matches!(accessor.as_str(), "storage.mode" | "mode") && scope.has_list_origin(name);
         scope.insert(name.clone(), RType::unknown());

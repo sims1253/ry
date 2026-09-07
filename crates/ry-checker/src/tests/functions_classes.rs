@@ -834,3 +834,21 @@ fn typed_multi_input_maps_preserve_atomic_modes_without_claiming_a_length() {
     let (_, scope) = check_with_scope("position <- Position(is.na, c(1, 2, 3))\n");
     assert_eq!(scope.get("position").unwrap().length, Length::One);
 }
+
+#[test]
+fn custom_mode_setters_cannot_preserve_unproven_list_origin() {
+    for setter in ["mode", "storage.mode"] {
+        for result in ["1L", "x"] {
+            let source = format!(
+                "`{setter}<-` <- function(x, value) {result}\nx <- list(1L)\n{setter}(x) <- 'integer'\nidentical(x[1L], 1L)\n"
+            );
+            let (diagnostics, scope) = check_with_scope(&source);
+            assert_eq!(scope.get("x").unwrap().mode, Mode::Opaque);
+            assert!(!scope.has_list_origin("x"));
+            assert!(
+                diagnostics.iter().all(|d| d.code != "RY101"),
+                "{source}: {diagnostics:?}"
+            );
+        }
+    }
+}

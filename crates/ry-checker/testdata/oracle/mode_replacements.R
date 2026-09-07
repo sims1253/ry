@@ -30,3 +30,30 @@ local({
   mode(x) <- "integer"
   stopifnot(identical(x + 1L, 3L))
 })
+
+# A custom replacement may preserve a list or replace it with an atom.
+# Its spelling alone cannot prove the result still has list storage.
+local({
+  `mode<-` <- function(x, value) 1L
+  x <- list(1L)
+  mode(x) <- "integer"
+  stopifnot(identical(x[1L], 1L))
+})
+local({
+  `storage.mode<-` <- function(x, value) 1L
+  x <- list(1L)
+  storage.mode(x) <- "integer"
+  stopifnot(identical(x[1L], 1L))
+})
+local({
+  `mode<-` <- function(x, value) x
+  x <- list(1L)
+  mode(x) <- "integer"
+  stopifnot(is.list(x), !identical(x[1L], 1L))
+})
+local({
+  `storage.mode<-` <- function(x, value) x
+  x <- list(1L)
+  storage.mode(x) <- "integer"
+  stopifnot(is.list(x), !identical(x[1L], 1L))
+})

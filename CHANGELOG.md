@@ -167,6 +167,10 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Account for forwarded `...` when checking missing and unknown arguments.
+  Expanded arguments can fill required parameters and resolve partial names;
+  explicit named holes and unrelated argument names still produce warnings.
+
 - Match `rapply` result controls through the full R argument match, including
   positional and partial `how` arguments. Keep recursive unlisting and dynamic
   modes unknown; preserve outer list shape only for proven list/replace calls,

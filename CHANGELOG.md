@@ -163,6 +163,10 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Forget stale receiver types after `storage.mode(x) <- ...` and `mode(x) <- ...`.
+  Coercing a character or list value no longer leaves arithmetic checking its
+  previous storage type; the assignment expression still returns its right side.
+
 - Math and Summary member calls no longer emit RY050 just because an unrelated
   class has a local group method. Built-ins such as `sum()` and `abs()` can
   use their default behavior without a class-specific method. The Math

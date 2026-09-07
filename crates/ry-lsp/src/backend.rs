@@ -1210,6 +1210,8 @@ impl Backend {
             };
             if !stale {
                 backend.publish_diagnostics(uri, generation).await;
+                #[cfg(feature = "test-util")]
+                crate::test_seam::note_initial_diagnostic_cycle();
             }
         });
     }

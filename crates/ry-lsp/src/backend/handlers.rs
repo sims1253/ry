@@ -173,6 +173,8 @@ impl LanguageServer for Backend {
 
         self.refresh_watchers().await;
 
+        #[cfg(feature = "test-util")]
+        crate::test_seam::maybe_pause_initial_index().await;
         self.spawn_background_index().await;
     }
 

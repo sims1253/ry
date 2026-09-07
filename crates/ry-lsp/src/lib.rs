@@ -74,6 +74,54 @@ pub mod test_seam {
 
     thread_local! {
         static PARSE_BARRIER: Arc<ParseBarrier> = Arc::new(ParseBarrier::new());
+        static INITIAL_INDEX_BARRIER: Arc<InitialIndexBarrier> = Arc::new(InitialIndexBarrier::default());
+    }
+
+    #[derive(Default)]
+    struct InitialIndexBarrier {
+        armed: AtomicBool,
+        cycle_waiting: AtomicBool,
+        arrived: Notify,
+        release: Notify,
+        cycle_completed: Notify,
+    }
+
+    /// Hold initial indexing until a diagnostic cycle has run on an open file.
+    pub fn arm_initial_index() {
+        INITIAL_INDEX_BARRIER.with(|barrier| {
+            barrier.armed.store(true, Ordering::Release);
+            barrier.cycle_waiting.store(true, Ordering::Release);
+        });
+    }
+
+    pub async fn wait_initial_index() {
+        let barrier = INITIAL_INDEX_BARRIER.with(Arc::clone);
+        barrier.arrived.notified().await;
+    }
+
+    pub async fn wait_initial_diagnostic_cycle() {
+        let barrier = INITIAL_INDEX_BARRIER.with(Arc::clone);
+        barrier.cycle_completed.notified().await;
+    }
+
+    pub fn release_initial_index() {
+        INITIAL_INDEX_BARRIER.with(|barrier| barrier.release.notify_one());
+    }
+
+    pub(crate) async fn maybe_pause_initial_index() {
+        let barrier = INITIAL_INDEX_BARRIER.with(Arc::clone);
+        if barrier.armed.swap(false, Ordering::AcqRel) {
+            barrier.arrived.notify_one();
+            barrier.release.notified().await;
+        }
+    }
+
+    pub(crate) fn note_initial_diagnostic_cycle() {
+        INITIAL_INDEX_BARRIER.with(|barrier| {
+            if barrier.cycle_waiting.swap(false, Ordering::AcqRel) {
+                barrier.cycle_completed.notify_one();
+            }
+        });
     }
 
     /// Clone the thread-local barrier out for async use.

@@ -30,6 +30,8 @@ All notable changes to ry are documented in this file.
 
 ### Cleanup
 
+- Refine only affected functions after edits, using observed callable reads and
+  forwarding or S3 metadata dependencies. Keep diagnostic invalidation conservative.
 - Check corpus package totals against their reviewed findings to catch stale
   summary counts in CI.
 

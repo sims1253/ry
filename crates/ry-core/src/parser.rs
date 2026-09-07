@@ -845,7 +845,8 @@ fn try_unwrap_raw_string(body: &str) -> Option<String> {
 /// Hex/octal escapes contribute bytes, while Unicode escapes contribute scalar
 /// values. R rejects unknown escapes, NUL, and mixed byte/Unicode escapes; this
 /// tolerant parser retains the original inner text for those cases, invalid
-/// scalars, and byte strings that cannot be represented by the AST's String.
+/// scalars (including surrogate escapes that are not combined here), and byte
+/// strings that cannot be represented by the AST's String.
 fn process_r_escapes(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -1581,7 +1582,7 @@ mod tests {
     }
 
     #[test]
-    fn malformed_or_unrepresentable_escapes_preserve_the_whole_inner_text() {
+    fn unsupported_or_malformed_escapes_preserve_the_whole_inner_text() {
         for inner in [
             r"\q",
             r"\0",
@@ -1590,6 +1591,8 @@ mod tests {
             r"\u{000041}",
             r"\U{110000}",
             r"\uD800",
+            r"\uD83D\uDE00", // valid R surrogate pair; retain until pair decoding is supported
+            r"\UFFFFFFFF",
             r"\n\xff",
             r"\x41\u42",
             r"\u41\101",

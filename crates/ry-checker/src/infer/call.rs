@@ -684,7 +684,12 @@ impl Checker {
         if matches!(lookup_name, "sprintf" | "gettextf")
             && let Some(Expr::String(format, format_span)) = args.first().map(|arg| &arg.value)
             && let Some(required) = printf_argument_count(format)
-            && args.len().saturating_sub(1) < required
+            && let supplied = args
+                .iter()
+                .skip(1)
+                .filter(|arg| !matches!(arg.value, Expr::Missing(_)))
+                .count()
+            && supplied < required
         {
             self.emit(
                 Severity::Warning,
@@ -692,7 +697,7 @@ impl Checker {
                 "RY094",
                 format!(
                     "format string requires {required} value argument(s), but {} provided",
-                    args.len().saturating_sub(1)
+                    supplied
                 ),
             );
         }

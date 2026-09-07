@@ -21,6 +21,53 @@ fn argument_bound_to_formal<'a>(
         .and_then(|index| args.get(index))
 }
 
+fn simplify_control(
+    base_identity: bool,
+    params: &[ParamSpec],
+    args: &[Arg],
+    argument_match: &ArgumentMatch,
+) -> Option<bool> {
+    if !base_identity {
+        return Some(true);
+    }
+    let control = params
+        .iter()
+        .position(|param| matches!(param.name.as_str(), "simplify" | "SIMPLIFY"));
+    let Some(control) = control else {
+        return Some(true);
+    };
+    let Some(argument) = argument_bound_to_formal(args, argument_match, control) else {
+        return Some(true);
+    };
+    match &argument.value {
+        Expr::Logical(value, _) => Some(*value),
+        _ => None,
+    }
+}
+
+fn definitely_nonempty(length: Length) -> bool {
+    matches!(length, Length::One) || matches!(length, Length::Known(n) if n > 0)
+}
+
+fn result_may_be_empty(
+    spec: &HigherOrderSpec,
+    arg_types: &[RType],
+    argument_match: &ArgumentMatch,
+    inputs: &[RType],
+) -> bool {
+    if spec.callback_args == [CallbackArg::ElementsAfterCallback] {
+        return inputs.is_empty()
+            || inputs
+                .iter()
+                .any(|input| !definitely_nonempty(input.length));
+    }
+    let Some(length_arg) = spec.result.length_arg else {
+        return false;
+    };
+    !matched_argument_type(arg_types, argument_match, length_arg)
+        .is_some_and(|input| definitely_nonempty(input.length))
+}
+
 /// With a `...` formal, every unmatched actual is part of dots (one
 /// ordinary R argument match drives callback, source, length, and
 /// template lookup throughout the higher-order path).
@@ -54,6 +101,12 @@ impl Checker {
         span: Span,
     ) -> Option<RType> {
         let spec = signature.higher_order.as_ref()?;
+        // The simplification controls have this meaning only for the base
+        // sapply/mapply contracts. Resolve the callee before callback
+        // traversal, which can extend the lexical scope with callback data.
+        let base_simplification = !self.user_stubs.contains_key("base")
+            && matches!(crate::semantic_lists::bare_name(name), "sapply" | "mapply")
+            && self.resolves_to_base(name, scope);
         self.walk_callback_for_diagnostics(signature, args, arg_types, scope);
         // A fold's initializer describes only the first invocation. Later
         // accumulators are callback results, and zero iterations return the
@@ -66,6 +119,12 @@ impl Checker {
             return Some(RType::unknown());
         }
         let argument_match = match_params(&signature.params, args);
+        let simplify = simplify_control(
+            base_simplification,
+            &signature.params,
+            args,
+            &argument_match,
+        );
         let declared_length = match &signature.return_ {
             ReturnSpec::Concrete(ty) => json_length_to_length(JsonLength::parse(&ty.length)),
             ReturnSpec::Slot(_) => Length::Unknown,
@@ -79,6 +138,7 @@ impl Checker {
             &argument_match,
             scope,
             span,
+            simplify,
         ))
     }
 
@@ -98,6 +158,7 @@ impl Checker {
         argument_match: &ArgumentMatch,
         scope: &Scope,
         span: Span,
+        simplify: Option<bool>,
     ) -> RType {
         let inputs = self.higher_order_input_types(spec, arg_types, argument_match);
         let callback_runs = !inputs.is_empty()
@@ -199,6 +260,16 @@ impl Checker {
             HigherOrderResultKind::Simplify => {
                 if spec.callback_args == [CallbackArg::Unknown] {
                     return Self::ho_rapply(args, arg_types, argument_match);
+                }
+                if simplify != Some(true) {
+                    return if simplify == Some(false) {
+                        RType::new(Mode::List, Length::Unknown)
+                    } else {
+                        RType::unknown()
+                    };
+                }
+                if result_may_be_empty(spec, arg_types, argument_match, &inputs) {
+                    return RType::unknown();
                 }
                 match callback_return {
                     Some(ty)

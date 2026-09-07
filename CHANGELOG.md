@@ -171,6 +171,11 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Avoid claiming atomic `sapply()` and `mapply()` results when simplification
+  is disabled or uncertain, or when their inputs may be empty. Scalar
+  simplification requires a matched, enabled control and a provably nonempty
+  input.
+
 - Distinguish `@` slot extraction from `$`. Valid atomic `.Data` reads no
   longer trigger dollar-access errors. Keep slot results and replaced roots
   unknown, including mixed nested replacements; respect explicit accessors.

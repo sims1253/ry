@@ -368,6 +368,40 @@ fn lsp_edit_sim(c: &mut Criterion) {
     });
 }
 
+/// Editing one callee should not refine unrelated functions sharing its caller file.
+fn warm_edit_sparse_callers(c: &mut Criterion) {
+    let mut callers = "caller <- function() leaf()\n".to_string();
+    for i in 0..100 {
+        callers.push_str(&format!("stable{i} <- function() {i}L\n"));
+    }
+    let mut parser = RParser::new().unwrap();
+    let variants: Vec<_> = ["leaf <- function() 1L", "leaf <- function() 'changed'"]
+        .iter()
+        .map(|source| Arc::new(parser.parse("leaf.R", source).unwrap()))
+        .collect();
+    let mut project = Project::new();
+    project.add_file("leaf.R".into(), (*variants[0]).clone());
+    project.add_file(
+        "callers.R".into(),
+        parser.parse("callers.R", &callers).unwrap(),
+    );
+    project.add_file(
+        "outer.R".into(),
+        parser
+            .parse("outer.R", "outer <- function() stable0()")
+            .unwrap(),
+    );
+    project.check_incremental();
+    let mut edit = 0;
+    c.bench_function("warm_edit_sparse_callers", |b| {
+        b.iter(|| {
+            edit ^= 1;
+            project.update_file("leaf.R".into(), Arc::clone(&variants[edit]));
+            black_box(project.check_incremental());
+        });
+    });
+}
+
 criterion_group! {
     name = performance;
     config = Criterion::default()
@@ -376,6 +410,6 @@ criterion_group! {
         .measurement_time(Duration::from_secs(3));
     targets = parse_large, check_project_glue, check_single_synthetic, check_branch_scopes, check_selected_branch_scopes,
               warm_edit_dependent, warm_edit_leaf, warm_edit_library,
-              lsp_edit_sim
+              lsp_edit_sim, warm_edit_sparse_callers
 }
 criterion_main!(performance);

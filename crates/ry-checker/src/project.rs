@@ -16,10 +16,7 @@
 //! single-file use cases (the corpus harness and the existing unit
 //! tests rely on this).
 
-use crate::infer::semantic_argument_name;
-use crate::{
-    CallerVisibleSignature, Checker, Diagnostic, FnTable, ReturnSlots, usemethod_generic_name,
-};
+use crate::{CallerVisibleSignature, Checker, Diagnostic, FnTable, ReturnSlots};
 use rayon::prelude::*;
 use ry_core::SourceFile;
 use ry_typeshed::Typeshed;
@@ -110,6 +107,13 @@ pub struct Project {
     /// Actual callable reads during emission include callbacks and aliases
     /// absent from syntactic call sites. Names survive return-slot renumbering.
     file_read_fns: HashMap<String, HashSet<String>>,
+    /// Actual per-function reads from completed refinement rounds. These only
+    /// limit refinement; file emission keeps its conservative dependencies.
+    refinement_dependencies: HashMap<String, HashSet<String>>,
+    /// Alias-based attachments are absent from collection and can affect any body.
+    refinement_discovered_attachments: bool,
+    #[cfg(test)]
+    last_refinement_counts: HashMap<String, usize>,
     /// Previous pass-2 refined return types, keyed by function name.
     /// Used to seed the next fixpoint iteration so already-converged
     /// entries start from their refined value rather than re-converging
@@ -364,6 +368,7 @@ impl Project {
         self.has_prev_emit = false;
         self.prev_fn_returns.clear();
         self.file_read_fns.clear();
+        self.refinement_dependencies.clear();
         self.prev_fn_signatures.clear();
         self.prev_known_vars.clear();
         self.invalidated_fns.clear();
@@ -433,7 +438,7 @@ impl Project {
     /// transitive callers via the reverse call graph.
     fn compute_fixpoint_scope(&self) -> Option<HashSet<String>> {
         // First call → refine everything.
-        if !self.has_prev_emit {
+        if !self.has_prev_emit || self.refinement_discovered_attachments {
             return None;
         }
         // If loaded changed (library() calls appeared/disappeared), the stub
@@ -465,36 +470,46 @@ impl Project {
             }
         }
 
-        // S3 dispatch is not an ordinary call-graph edge: a method change can
-        // change the generic's propagated quoting metadata. Include matching
-        // UseMethod generics before walking their ordinary callers.
-        let affected_generics: Vec<String> = self
-            .fn_table
-            .fns
-            .iter()
-            .filter_map(|(name, function)| {
-                let dispatch = usemethod_generic_name(&function.body)?;
-                if semantic_argument_name(name) != dispatch {
-                    return None;
-                }
-                let prefix = format!("{dispatch}.");
-                affected
-                    .iter()
-                    .any(|method| {
-                        semantic_argument_name(method)
-                            .strip_prefix(&prefix)
-                            .is_some_and(|class| !class.is_empty())
-                    })
-                    .then(|| name.clone())
-            })
-            .collect();
-        affected.extend(affected_generics);
-
-        // Transitive closure: if function G's defining file calls function F,
-        // and F is affected, then G is also affected.
-        let affected = self.with_transitive_callers(affected);
+        let affected = self.with_refinement_callers(affected);
 
         Some(affected)
+    }
+
+    fn with_refinement_callers(&self, mut affected: HashSet<String>) -> HashSet<String> {
+        let methods = crate::fixpoint::s3_evaluation_methods(&self.fn_table);
+        let mut callers: HashMap<&str, HashSet<&str>> = HashMap::new();
+        for (caller, dependencies) in &self.refinement_dependencies {
+            for dependency in dependencies {
+                callers.entry(dependency).or_default().insert(caller);
+            }
+        }
+        // Evaluation metadata is propagated outside the body read recorder.
+        // Include these edges even before any quoting/injection is present.
+        for call in &self.fn_table.forwarded_calls {
+            if !call.stub_callee.contains("::")
+                && self.fn_table.fns.contains_key(&call.callee)
+                && self.fn_table.fns.contains_key(&call.caller)
+            {
+                callers
+                    .entry(&call.callee)
+                    .or_default()
+                    .insert(&call.caller);
+            }
+        }
+        for (generic, methods) in &methods {
+            for method in methods {
+                callers.entry(method).or_default().insert(generic);
+            }
+        }
+        let mut pending: Vec<_> = affected.iter().cloned().collect();
+        while let Some(callee) = pending.pop() {
+            for caller in callers.get(callee.as_str()).into_iter().flatten() {
+                if affected.insert((*caller).to_string()) {
+                    pending.push((*caller).to_string());
+                }
+            }
+        }
+        affected
     }
 
     fn callable_names_changed(&self) -> bool {
@@ -546,7 +561,7 @@ impl Project {
         // iterations to re-stabilize after a small edit.
         // Compute scope before moving the current tables into the refiner;
         // S3 generic-to-method dependencies are recorded in `fn_table`.
-        let fixpoint_scope = self.compute_fixpoint_scope();
+        let mut fixpoint_scope = self.compute_fixpoint_scope();
         let mut refiner = Checker::with_tables(
             "__project_pass2__",
             std::mem::take(&mut self.fn_table),
@@ -554,6 +569,7 @@ impl Project {
         );
         refiner.set_loaded(self.loaded.clone());
         refiner.set_user_stubs(Arc::clone(&self.user_stubs));
+        refiner.refinement_dependencies = Some(HashMap::new());
 
         // Scoping: refine only functions whose return type can have
         // changed, rather than the entire project. On the first call or
@@ -567,6 +583,42 @@ impl Project {
             // check. Old metadata can belong to a replaced or shadowed
             // definition, and recursive returns can preserve an old seed.
             refiner.run_fixpoint();
+        }
+        if fixpoint_scope.is_some() && *refiner.loaded != self.loaded {
+            // Alias-based library/require calls can change every bare lookup.
+            // Rebuild from collection: widening the seeded scope could retain
+            // stale recursive returns or argument evaluation metadata.
+            let mut table = FnTable::default();
+            let mut slots = ReturnSlots::default();
+            for (path, _) in &self.files {
+                let collected = &self.collected_files[path];
+                table.append_collected(&collected.fn_table, &mut slots, &collected.return_slots);
+            }
+            table.known_vars = self.pooled_known_vars();
+            #[cfg(test)]
+            let attempted_counts = std::mem::take(&mut refiner.refinement_counts);
+            refiner = Checker::with_tables("__project_pass2__", table, slots);
+            refiner.set_loaded(self.loaded.clone());
+            refiner.set_user_stubs(Arc::clone(&self.user_stubs));
+            refiner.refinement_dependencies = Some(HashMap::new());
+            refiner.run_fixpoint();
+            #[cfg(test)]
+            for (name, count) in attempted_counts {
+                *refiner.refinement_counts.entry(name).or_default() += count;
+            }
+            fixpoint_scope = None;
+        }
+        self.refinement_discovered_attachments = *refiner.loaded != self.loaded;
+        if fixpoint_scope.is_none() {
+            self.refinement_dependencies.clear();
+        }
+        self.refinement_dependencies
+            .extend(refiner.refinement_dependencies.take().unwrap());
+        self.refinement_dependencies
+            .retain(|name, _| refiner.fn_table.fns.contains_key(name));
+        #[cfg(test)]
+        {
+            self.last_refinement_counts = std::mem::take(&mut refiner.refinement_counts);
         }
         let (fn_table, return_slots) = refiner.into_tables();
         self.fn_table = fn_table;
@@ -863,6 +915,138 @@ impl Project {
 mod tests {
     use super::*;
     use crate::tests::parse_file;
+
+    fn assert_matches_cold(project: &mut Project) {
+        let actual = project.check_incremental();
+        let mut cold = Project::new();
+        for (path, file) in &project.files {
+            cold.add_file(path.clone(), (**file).clone());
+        }
+        let expected = cold.check();
+        assert_eq!(project.prev_fn_returns, cold.prev_fn_returns);
+        assert_eq!(project.prev_fn_signatures, cold.prev_fn_signatures);
+        assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+    }
+
+    #[test]
+    fn function_dependencies_skip_unrelated_callers_and_retain_edges() {
+        let mut project = Project::new();
+        project.add_file(
+            "leaf.R".into(),
+            parse_file("leaf.R", "leaf <- function() 1L"),
+        );
+        let mut callers = "caller <- function() leaf()\n".to_string();
+        for i in 0..100 {
+            callers.push_str(&format!("stable{i} <- function() {i}L\n"));
+        }
+        project.add_file("callers.R".into(), parse_file("callers.R", &callers));
+        project.add_file(
+            "outer.R".into(),
+            parse_file("outer.R", "outer <- function() stable0()"),
+        );
+        project.check();
+        for source in ["leaf <- function() 'changed'", "leaf <- function() 1L"] {
+            project.update_file("leaf.R".into(), parse_file("leaf.R", source).into());
+            assert_matches_cold(&mut project);
+            assert!(project.last_refinement_counts.contains_key("leaf"));
+            assert!(project.last_refinement_counts.contains_key("caller"));
+            assert_eq!(
+                project.last_refinement_counts.len(),
+                2,
+                "{:?}",
+                project.last_refinement_counts
+            );
+            assert!(project.refinement_dependencies["outer"].contains("stable0"));
+        }
+        project.update_file(
+            "callers.R".into(),
+            parse_file(
+                "callers.R",
+                &callers.replace("stable0 <- function() 0L", "stable0 <- function() 'new'"),
+            )
+            .into(),
+        );
+        assert_matches_cold(&mut project);
+        assert!(project.last_refinement_counts.contains_key("outer"));
+    }
+
+    #[test]
+    fn function_dependencies_cover_aliases_callbacks_and_metadata() {
+        for (before, after, caller) in [
+            (
+                "leaf <- function() 1L",
+                "leaf <- function() 'x'",
+                "caller <- function() { alias <- leaf; alias() }",
+            ),
+            (
+                "leaf <- function(x) 1L",
+                "leaf <- function(x) 'x'",
+                "caller <- function() lapply(1L, leaf)",
+            ),
+            (
+                "leaf <- function(x) x",
+                "leaf <- function(x) substitute(x)",
+                "middle <- function(x) leaf(x)\ncaller <- function(x) middle(x)",
+            ),
+            (
+                "generic.foo <- function(x, y) y",
+                "generic.foo <- function(x, y) substitute(y)",
+                "generic <- function(x, y) UseMethod('generic')\ncaller <- function(x, y) generic(x, y)",
+            ),
+            (
+                "leaf <- function() 1L",
+                "leaf <- function() other()",
+                "other <- function() leaf()\ncaller <- function() other()",
+            ),
+            (
+                "leaf <- function() 1L",
+                "leaf <- function() 1L\nmissing <- function(x) 'x'",
+                "caller <- function() lapply(1L, missing)",
+            ),
+        ] {
+            let mut project = Project::new();
+            project.add_file("leaf.R".into(), parse_file("leaf.R", before));
+            project.add_file("caller.R".into(), parse_file("caller.R", caller));
+            project.check();
+            for source in [after, before, after] {
+                project.update_file("leaf.R".into(), parse_file("leaf.R", source).into());
+                assert_matches_cold(&mut project);
+            }
+        }
+    }
+
+    #[test]
+    fn scoped_refinement_restarts_after_alias_attachment() {
+        let before = "a_attach <- function() NULL";
+        let after = "a_attach <- function() { loader <- library; loader(dplyr); NULL }";
+        let callers = "z_consumer <- function() a_attach()\nb_unrelated <- function() filter(data.frame(x = 1L), x > 0)";
+        let mut warm = Project::new();
+        warm.add_file("loader.R".into(), parse_file("loader.R", before));
+        warm.add_file("callers.R".into(), parse_file("callers.R", callers));
+        warm.check();
+        let previous = warm.prev_fn_returns.clone();
+        warm.update_file("loader.R".into(), parse_file("loader.R", after).into());
+        let warm_diags = warm.check_incremental();
+        let mut cold = Project::new();
+        cold.add_file("loader.R".into(), parse_file("loader.R", after));
+        cold.add_file("callers.R".into(), parse_file("callers.R", callers));
+        let cold_diags = cold.check();
+        assert_ne!(previous["b_unrelated"], cold.prev_fn_returns["b_unrelated"]);
+        assert_eq!(warm.prev_fn_returns, cold.prev_fn_returns);
+        assert_eq!(warm.prev_fn_signatures, cold.prev_fn_signatures);
+        assert_eq!(format!("{warm_diags:?}"), format!("{cold_diags:?}"));
+        assert!(warm.refinement_dependencies.contains_key("b_unrelated"));
+        // A later edit must rediscover the alias attachment even when the
+        // loader is not in that edit's dependency closure.
+        warm.update_file(
+            "callers.R".into(),
+            parse_file("callers.R", &callers.replace("1L", "2L")).into(),
+        );
+        assert_matches_cold(&mut warm);
+        warm.update_file("loader.R".into(), parse_file("loader.R", before).into());
+        assert_matches_cold(&mut warm);
+        assert!(!warm.refinement_discovered_attachments);
+    }
 
     #[test]
     fn empty_project_has_no_diagnostics() {

@@ -681,6 +681,8 @@ pub struct Checker {
     pub(crate) return_slots: Arc<ReturnSlots>,
     // Slot reads during one refinement, including signature-only dependencies.
     refinement_reads: std::cell::RefCell<Option<Vec<usize>>>,
+    // Optional named dependencies for the next incremental project check.
+    refinement_dependencies: Option<HashMap<String, HashSet<String>>>,
     #[cfg(test)]
     refinement_counts: HashMap<String, usize>,
     // Stack of function names currently being inferred (cycle detection).
@@ -839,6 +841,7 @@ impl Checker {
             known_vars: Arc::new(HashSet::new()),
             return_slots,
             refinement_reads: std::cell::RefCell::new(None),
+            refinement_dependencies: None,
             #[cfg(test)]
             refinement_counts: HashMap::new(),
             inferring: Vec::new(),

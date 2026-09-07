@@ -6,6 +6,7 @@ impl Checker {
     /// payload value.
     pub(crate) fn infer_class_constructor_call(
         &mut self,
+        original_name: &str,
         semantic_name: &str,
         lookup_name: &str,
         args: &[Arg],
@@ -17,6 +18,11 @@ impl Checker {
         //   * `class = c("a", "b", ...)` attaches a class vector.
         // Non-literal or unparseable forms fall through to opaque
         // inference with `ClassVector::unknown()` so RY050 stays quiet.
+        // Spelling aliases do not prove which function object was captured.
+        // Ordinary call inference can still use a captured function signature.
+        if lookup_name == "structure" && original_name != semantic_name {
+            return None;
+        }
         if lookup_name == "structure" && self.structure_namespace_unavailable(semantic_name, scope)
         {
             return Some(RType::unknown());
@@ -156,10 +162,9 @@ impl Checker {
         let Some(name) = ident_name(func) else {
             return ClassLiteral::Unknown;
         };
-        let semantic_name = scope.function_alias(name).unwrap_or(name);
-        if crate::semantic_lists::bare_name(semantic_name) != "c"
-            || !self.resolves_to_base(semantic_name, scope)
-            || self.structure_namespace_unavailable(semantic_name, scope)
+        if crate::semantic_lists::bare_name(name) != "c"
+            || !self.resolves_to_base(name, scope)
+            || self.structure_namespace_unavailable(name, scope)
             || args.iter().any(|arg| arg.name.is_some())
         {
             return ClassLiteral::Unknown;

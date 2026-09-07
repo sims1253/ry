@@ -29,3 +29,15 @@ stopifnot(identical(g(function(...) "custom"), "custom"))
   stopifnot(identical(base::structure(missing_payload, class = missing_class), "custom"))
 })()
 stopifnot(identical(class(base::structure(1L, class = base::c("widget", recursive = "TRUE"))), "widget"))
+
+(function() {
+  c <- local(function(...) "actual")
+  maker <- c
+  c <- NULL
+  out <- base::structure(1L, class = maker("widget"))
+  stopifnot(identical(class(out), "actual"))
+  structure <- local(function(...) "actual")
+  maker <- structure
+  structure <- NULL
+  stopifnot(identical(maker(1L, class = "widget"), "actual"))
+})()

@@ -147,7 +147,7 @@ fn structure_ambiguous_search_path_does_not_borrow_base_payload_facts() {
 
 #[test]
 fn structure_namespace_rebinding_never_recovers_base_stub_facts() {
-    for binding in ["`::`", "`:::`", r#""\x3a\x3a""#] {
+    for binding in ["`::`", "`:::`", r#""::""#, "'::'", r#""\x3a\x3a""#] {
         let source = format!(
             "{binding} <- function(pkg, name) function(...) 'custom'\nout <- base::structure(missing_payload, class = missing_class)"
         );
@@ -183,4 +183,19 @@ fn structure_namespace_rebinding_never_recovers_base_stub_facts() {
         .unwrap();
     assert_eq!(out.mode, Mode::Opaque);
     assert!(!out.class.known);
+}
+
+#[test]
+fn structure_spelling_aliases_do_not_prove_captured_base_functions() {
+    for source in [
+        "c <- local(function(...) 'actual'); maker <- c; c <- NULL; out <- base::structure(1L, class = maker('widget'))",
+        "structure <- local(function(...) 'actual'); maker <- structure; structure <- NULL; out <- maker(1L, class = 'widget')",
+    ] {
+        let (_, scope) = check_with_scope(source);
+        assert!(
+            !scope.get("out").unwrap().class.contains("widget"),
+            "{source}: {:?}",
+            scope.get("out")
+        );
+    }
 }

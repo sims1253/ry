@@ -247,7 +247,7 @@ fn scalar_primitive(ty: &RType) -> bool {
 }
 
 fn known_atomic(ty: &RType) -> bool {
-    ty.length != Length::Unknown
+    matches!(ty.length, Length::One | Length::Known(1..))
         && matches!(
             ty.mode,
             Mode::Logical | Mode::Integer | Mode::Double | Mode::Character

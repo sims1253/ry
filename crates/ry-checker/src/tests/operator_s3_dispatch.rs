@@ -629,6 +629,8 @@ fn explicit_false_choosers_use_plain_vector_lengths_and_classes() {
     for (left, right, length, class) in [
         ("base::c(1L,2L)", "base::c(3L,4L)", Length::Known(2), "left"),
         ("1L", "base::c(3L,4L)", Length::Known(2), "right"),
+        ("1L", "base::c(3L)", Length::Known(1), "left"),
+        ("base::c(1L)", "3L", Length::Known(1), "left"),
         (
             "base::c(1L,2L,3L)",
             "base::c(3L,4L)",

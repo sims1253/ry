@@ -50,11 +50,19 @@ impl Checker {
                         "RY051",
                         format!("incompatible S3 methods `{left_method}` and `{right_method}` for `{}`; R uses the primitive operator", op_symbol(op)),
                     );
-                    let result_class = match (lt.length, rt.length) {
-                        (Length::Zero, _) | (_, Length::Zero) => ClassVector::empty(),
-                        (Length::One, Length::Known(_)) => rt.class.clone(),
-                        (Length::Known(a), Length::Known(b)) if b > a => rt.class.clone(),
-                        _ => lt.class.clone(),
+                    // Constructors may retain Known(1), so compare numeric
+                    // lengths rather than treating every Known value as plural.
+                    let exact_length = |length| match length {
+                        Length::Zero => Some(0),
+                        Length::One => Some(1),
+                        Length::Known(n) => Some(n),
+                        Length::Unknown => None,
+                    };
+                    let result_class = match (exact_length(lt.length), exact_length(rt.length)) {
+                        (Some(0), _) | (_, Some(0)) => ClassVector::empty(),
+                        (Some(a), Some(b)) if b > a => rt.class.clone(),
+                        (Some(_), Some(_)) => lt.class.clone(),
+                        _ => ClassVector::unknown(),
                     };
                     // Primitive fallback does not call Ops.factor or
                     // Ops.data.frame. Arithmetic keeps the longer operand class;

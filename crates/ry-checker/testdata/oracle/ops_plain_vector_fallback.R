@@ -25,3 +25,8 @@ stopifnot(is.null(attributes(suppressWarnings(x == y_equal))),
 a <- structure(c(1L,2L,3L,4L), dim=c(2L,2L), class='left')
 b <- structure(c(1L,2L,3L,4L), dim=c(4L,1L), class='right')
 stopifnot(inherits(try(suppressWarnings(a+b), silent=TRUE), 'try-error'))
+# A scalar literal and a singleton c() tie in either operand order.
+single_left <- structure(1L, class='left')
+single_right <- structure(base::c(2L), class='right')
+stopifnot(identical(class(suppressWarnings(single_left + single_right)), 'left'),
+          identical(class(suppressWarnings(single_right + single_left)), 'right'))

@@ -126,6 +126,8 @@ pub struct Project {
     /// Previous pooled known_vars set, used to detect when non-function
     /// bindings changed across files (affects RY010 diagnostics).
     prev_known_vars: HashSet<String>,
+    /// Callable bindings without return slots also affect call resolution.
+    prev_callable_vars: HashSet<String>,
     /// When true, pass-3 emitters snapshot each file's lexical scopes.
     /// Off by default; see [`Checker::enable_scope_capture`].
     capture_scopes: bool,
@@ -371,6 +373,7 @@ impl Project {
         self.refinement_dependencies.clear();
         self.prev_fn_signatures.clear();
         self.prev_known_vars.clear();
+        self.prev_callable_vars.clear();
         self.invalidated_fns.clear();
         self.refine_and_emit()
     }
@@ -434,8 +437,8 @@ impl Project {
     ///
     /// Returns `None` when the scope is "all functions" (first call or no
     /// incremental state). Returns `Some(set)` with only the functions whose
-    /// return type can have changed: those defined in dirty files plus their
-    /// transitive callers via the reverse call graph.
+    /// return type can have changed: dirty-file definitions and their observed
+    /// callers, including forwarding and S3 metadata dependencies.
     fn compute_fixpoint_scope(&self) -> Option<HashSet<String>> {
         // First call → refine everything.
         if !self.has_prev_emit || self.refinement_discovered_attachments {
@@ -453,7 +456,7 @@ impl Project {
         }
         // A new callable can resolve a previously unknown callback or alias;
         // no observed dependency exists for that earlier lookup miss.
-        if self.callable_names_changed() {
+        if self.callable_names_changed() || self.prev_callable_vars != self.fn_table.callable_vars {
             return None;
         }
         // Nothing changed → nothing to refine.
@@ -686,7 +689,8 @@ impl Project {
         // changed. When loaded changes, every file is dirty.
         // On the first call, every file must be emitted. Otherwise, use
         // the incremental dirty set.
-        let known_vars_changed = self.prev_known_vars != self.fn_table.known_vars;
+        let known_vars_changed = self.prev_known_vars != self.fn_table.known_vars
+            || self.prev_callable_vars != self.fn_table.callable_vars;
         let first_call = !self.has_prev_emit;
         let must_emit: HashSet<&str> = if first_call
             || loaded_changed
@@ -882,6 +886,7 @@ impl Project {
         self.prev_loaded = Some(self.loaded.clone());
         self.has_prev_emit = true;
         self.prev_known_vars = self.fn_table.known_vars.clone();
+        self.prev_callable_vars = self.fn_table.callable_vars.clone();
         // Save refined return types keyed by function name for the next
         // fixpoint seeding.
         self.prev_fn_returns = self
@@ -1010,6 +1015,29 @@ mod tests {
             project.check();
             for source in [after, before, after] {
                 project.update_file("leaf.R".into(), parse_file("leaf.R", source).into());
+                assert_matches_cold(&mut project);
+            }
+        }
+    }
+
+    #[test]
+    fn function_dependencies_invalidate_changed_callable_bindings() {
+        let before = "list <- S7::new_class('Thing')\nz <- function() 1L";
+        let after = "list <- NULL\nz <- function() 1L";
+        for body in ["list(1, 2)", "list(1, 2); NULL"] {
+            let callers = format!(
+                "a <- function() {{ list <- 1L; {body} }}\nb <- function() a()\nc <- function() z()"
+            );
+            let mut project = Project::new();
+            project.add_file("s7.R".into(), parse_file("s7.R", before));
+            project.add_file("callers.R".into(), parse_file("callers.R", &callers));
+            project.add_file(
+                "top.R".into(),
+                parse_file("top.R", "list <- 1L; list(1, 2)"),
+            );
+            project.check();
+            for source in [after, before, after] {
+                project.update_file("s7.R".into(), parse_file("s7.R", source).into());
                 assert_matches_cold(&mut project);
             }
         }

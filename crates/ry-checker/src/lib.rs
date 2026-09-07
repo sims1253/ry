@@ -284,11 +284,16 @@ pub fn builtin_environment_bindings(path: &str) -> &'static [&'static str] {
     }
 }
 
+#[cfg(feature = "persistent-scope")]
+pub type ScopeMap<V> = im::HashMap<String, V>;
+#[cfg(not(feature = "persistent-scope"))]
+pub type ScopeMap<V> = HashMap<String, V>;
+
 /// A single scope's binding table.
 #[derive(Debug, Clone, Default)]
 pub struct Scope {
     pub(crate) reference_provenance: Option<Box<reference_facts::ScopeProvenance>>,
-    pub bindings: HashMap<String, RType>,
+    pub bindings: ScopeMap<RType>,
     /// Names whose current binding was installed by flow narrowing rather
     /// than an R assignment. `insert` clears this marker, so branch merging
     /// can distinguish a temporary refinement from a rebinding.
@@ -306,7 +311,7 @@ pub struct Scope {
     pub default_parameter_bindings: HashSet<String>,
     /// Bare-identifier function aliases, keyed by the local binding name.
     /// The value is the ultimate semantic callee name used by call inference.
-    pub function_aliases: HashMap<String, String>,
+    pub function_aliases: ScopeMap<String>,
     /// Function literals defined in a nested lexical environment. These must
     /// not be resolved through the project-wide, name-only function table.
     pub(crate) lexical_functions: HashSet<String>,

@@ -16,7 +16,8 @@ parser.add_argument('--tools', nargs='+', choices=['callgrind', 'dhat'], default
 args = parser.parse_args()
 repo = Path(__file__).resolve().parents[2]
 baseline = args.baseline_repo.resolve()
-assert baseline != repo, 'baseline needs its own worktree and target directory'
+if baseline == repo:
+    parser.error('baseline needs its own worktree and target directory')
 args.out.mkdir(parents=True, exist_ok=False)
 out = args.out.resolve()
 for kind in ['sparse', 'dense', 'alternating']:

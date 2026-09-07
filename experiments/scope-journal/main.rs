@@ -2,6 +2,9 @@ use std::{path::Path, time::Instant};
 fn paths(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
     for entry in std::fs::read_dir(dir).unwrap() {
         let p = entry.unwrap().path();
+        if p.is_symlink() && p.is_dir() {
+            continue;
+        }
         if p.is_dir() {
             paths(&p, out)
         } else if p.extension().is_some_and(|x| x == "R") {

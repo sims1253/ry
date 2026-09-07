@@ -859,9 +859,8 @@ fn typed_multi_input_maps_preserve_atomic_modes_without_claiming_a_length() {
 
 #[test]
 fn expand_grid_dropped_columns_do_not_inherit_list_storage() {
-    let (diagnostics, _) = check_with_scope(
-        "p23 <- expand.grid(0:2, 0:2)\nvalue <- 2^p23[, 1] * 3^p23[, 2]\n",
-    );
+    let (diagnostics, _) =
+        check_with_scope("p23 <- expand.grid(0:2, 0:2)\nvalue <- 2^p23[, 1] * 3^p23[, 2]\n");
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
     let (diagnostics, _) = check_with_scope("x <- list(1L)\nx + 1L\n");
     assert!(diagnostics.iter().any(|d| d.code == "RY040"));

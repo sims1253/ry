@@ -867,6 +867,8 @@ fn model_extract_quotes_component_names_and_checks_frame_arguments() {
 #[test]
 fn exported_html_tags_are_values_under_package_lookup() {
     for package in ["htmltools", "shiny"] {
+        let diagnostics = check(&format!("{package}::tags$div('ok')"));
+        assert!(diagnostics.is_empty(), "{package}: {diagnostics:?}");
         let diagnostics = check(&format!(
             "library({package})\nmissing_before\ntags$div('ok')\n"
         ));

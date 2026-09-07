@@ -112,9 +112,12 @@ impl Checker {
             return t;
         }
 
-        // `switch(EXPR, ...)`: the join of all alternatives.
-        if semantic_name == "switch" {
-            return self.infer_switch_call(args, scope);
+        // Proved base switch selects before evaluating its alternatives.
+        if lookup_name == "switch"
+            && let Some(result) =
+                self.infer_switch_special(&name, func, &semantic_name, args, scope)
+        {
+            return result;
         }
 
         // `tryCatch(expr, ..., handler = fun)`: the join of the main

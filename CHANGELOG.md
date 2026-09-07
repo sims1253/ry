@@ -12,6 +12,8 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Select only the executed alternative for proved base `switch` calls with literal scalar selectors, preserving missing fallthrough and caller assignments. Dynamic selectors and custom-call argument laziness remain outside this model.
+
 - Preserve omitted call arguments and their names without shifting later
   arguments. Calls and indexes now share missing-position handling. The public
   `ry-core` AST adds `Expr::Missing(Span)`; consumers with exhaustive expression

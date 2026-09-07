@@ -302,42 +302,6 @@
     },
     {
       "package": "dplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-count-tally.R",
-      "line": 139,
-      "column": 38,
-      "label": "false_positive",
-      "audit_group": "P2"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-count-tally.R",
-      "line": 173,
-      "column": 38,
-      "label": "false_positive",
-      "audit_group": "P2"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-count-tally.R",
-      "line": 214,
-      "column": 42,
-      "label": "false_positive",
-      "audit_group": "P2"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-count-tally.R",
-      "line": 245,
-      "column": 42,
-      "label": "false_positive",
-      "audit_group": "P2"
-    },
-    {
-      "package": "dplyr",
       "code": "RY060",
       "path": "tests/testthat/test-group-by.R",
       "line": 26,
@@ -350,42 +314,6 @@
       "code": "RY060",
       "path": "tests/testthat/test-group-by.R",
       "line": 40,
-      "column": 16,
-      "label": "false_positive",
-      "audit_group": "P3e"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-mutate.R",
-      "line": 408,
-      "column": 23,
-      "label": "false_positive",
-      "audit_group": "P3b"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-mutate.R",
-      "line": 410,
-      "column": 36,
-      "label": "false_positive",
-      "audit_group": "P3b"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY002",
-      "path": "tests/testthat/test-mutate.R",
-      "line": 793,
-      "column": 16,
-      "label": "false_positive",
-      "audit_group": "P3d"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY060",
-      "path": "tests/testthat/test-mutate.R",
-      "line": 794,
       "column": 16,
       "label": "false_positive",
       "audit_group": "P3e"
@@ -425,24 +353,6 @@
       "column": 28,
       "label": "false_positive",
       "audit_group": "P2"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY002",
-      "path": "tests/testthat/test-summarise.R",
-      "line": 321,
-      "column": 11,
-      "label": "false_positive",
-      "audit_group": "P3d"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY002",
-      "path": "tests/testthat/test-summarise.R",
-      "line": 331,
-      "column": 38,
-      "label": "false_positive",
-      "audit_group": "P3d"
     },
     {
       "package": "purrr",
@@ -585,60 +495,6 @@
       "path": "tests/testthat/test-dplyr-conditions.R",
       "line": 30,
       "column": 21,
-      "label": "false_positive",
-      "audit_group": "P2"
-    },
-    {
-      "package": "duckplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-dplyr-count-tally.R",
-      "line": 143,
-      "column": 48,
-      "label": "false_positive",
-      "audit_group": "P2"
-    },
-    {
-      "package": "duckplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-dplyr-count-tally.R",
-      "line": 144,
-      "column": 47,
-      "label": "false_positive",
-      "audit_group": "P2"
-    },
-    {
-      "package": "duckplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-dplyr-count-tally.R",
-      "line": 179,
-      "column": 38,
-      "label": "false_positive",
-      "audit_group": "P2"
-    },
-    {
-      "package": "duckplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-dplyr-count-tally.R",
-      "line": 222,
-      "column": 52,
-      "label": "false_positive",
-      "audit_group": "P2"
-    },
-    {
-      "package": "duckplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-dplyr-count-tally.R",
-      "line": 223,
-      "column": 51,
-      "label": "false_positive",
-      "audit_group": "P2"
-    },
-    {
-      "package": "duckplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-dplyr-count-tally.R",
-      "line": 254,
-      "column": 42,
       "label": "false_positive",
       "audit_group": "P2"
     },
@@ -1212,7 +1068,7 @@
   ],
   "classification": {
     "true_positive": 10,
-    "false_positive": 61,
+    "false_positive": 45,
     "uncertain": 0,
     "unowned": 52
   },
@@ -1224,10 +1080,10 @@
     "P4b": 1,
     "P4a": 3,
     "P4c": 1,
-    "P2": 36,
-    "P3e": 3,
-    "P3b": 2,
-    "P3d": 3,
+    "P2": 26,
+    "P3e": 2,
+    "P3b": 0,
+    "P3d": 0,
     "P8": 4,
     "P7b": 3,
     "P3a": 0,
@@ -1239,8 +1095,9 @@
     "Ecosystem reports are generated hermetically with RY_NO_INSTALLED_LIBRARIES=1; the source audit used installed R libraries.",
     "The ecosystem audit reconciles each hermetic report against finding identities in this ledger, including diagnostics that are absent from production-only reports.",
     "The grid export inventory resolves four ggplot2 RY010 findings for is.unit and is.grob callback values under import(grid). They were unowned in this ledger and are now verified as missing-export false positives; all other identities are unchanged.",
-    "The source digest now records the concatenated bytes of all 32 unprefixed root reports in filename order from the complete default-manifest regeneration. The ledger retains its existing reviewed-package coverage."
+    "The source digest now records the concatenated bytes of all 32 unprefixed root reports in filename order from the complete default-manifest regeneration. The ledger retains its existing reviewed-package coverage.",
+    "Unproven factor/new calls discard downstream facts because the callee or skipped arguments may mutate caller bindings. This conservatively reduces coverage by the ten dplyr identities recorded in the Posit ledger, plus six duckplyr RY040 identities in tests/testthat/test-dplyr-count-tally.R:143/144/179/222/223/254. These retain their existing false-positive audit labels; their disappearance is reduced coverage after uncertain factor calls, not individual diagnostic fixes. Required true-positive identities remain covered."
   ],
-  "ry_commit": "3e94a5a1fb05b010aca074570bd68cdb27903b50",
-  "source_sha256": "1a6a768dcb70d8a4e2ebe9dbcba04e7366e532c9bacc7263042cfcf7f9a7f831"
+  "ry_commit": "71a2ae0e896dfaf17c62c8073dc264fe6cbda1ab",
+  "source_sha256": "3467d1b9b1b472c7bc8ee20d1679471c6717a768e1cbe1727ba828e0c0ec7964"
 }

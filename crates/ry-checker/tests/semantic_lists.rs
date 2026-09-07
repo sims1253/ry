@@ -655,3 +655,14 @@ fn ops_proof_syntax_names_can_be_rebound() {
         assert_eq!(output, "TRUE", "{name}: {source}");
     }
 }
+
+#[test]
+fn plain_new_classes_do_not_gain_object_dispatch() {
+    if !rscript_available() {
+        return;
+    }
+    for class in semantic_lists::PLAIN_NEW_CLASSES {
+        let output = r_eval(&format!("cat(!is.object(methods::new({class:?})))"));
+        assert_eq!(output.trim(), "TRUE", "{class}");
+    }
+}

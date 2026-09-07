@@ -15,6 +15,7 @@ All notable changes to ry are documented in this file.
 - Decode octal and braced Unicode string escapes, escaped backticks, and UTF-8
   byte sequences correctly. Preserve physical escaped newlines and retain raw
   recovery text for malformed or unrepresentable string values.
+- Custom or masked `factor` and `new` calls no longer acquire builtin constructor facts. S4 constructor inference requires methods provenance, and detaching a package invalidates the default search-path assumption.
 
 - Resolve visible custom arithmetic, comparison, and vector logical operators
   before their operands. Avoid primitive diagnostics for ignored operands and
@@ -26,6 +27,7 @@ All notable changes to ry are documented in this file.
 
 - Infer double results for primitive division and powers of integers. Reject
   complex remainder and integer division only when both operands are nonempty.
+
 - Match `structure()` payloads through `.Data`, preserve class and list-column
   information for resolved base calls, and evaluate class attributes. Respect
   shadowed constructors and class-vector builders; discard stale column names

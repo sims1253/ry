@@ -1016,6 +1016,27 @@ mod tests {
     }
 
     #[test]
+    fn function_dependencies_include_divergence_probe_helpers() {
+        let before = "leaf <- function() 1L";
+        let after = "leaf <- function() stop('halt')";
+        let source = "middle <- function() { if (FALSE) leaf() else stop('halt') }\ncaller <- function(x) { if (!is.numeric(x)) middle(); x }";
+        let mut project = Project::new();
+        project.add_file("leaf.R".into(), parse_file("leaf.R", before));
+        project.add_file("callers.R".into(), parse_file("callers.R", source));
+        project.check();
+        let previous = project.prev_fn_returns["caller"].clone();
+        assert!(project.refinement_dependencies["middle"].contains("leaf"));
+        for source in [after, before] {
+            project.update_file("leaf.R".into(), parse_file("leaf.R", source).into());
+            assert_matches_cold(&mut project);
+            assert!(project.last_refinement_counts.contains_key("caller"));
+            if source == after {
+                assert_ne!(project.prev_fn_returns["caller"], previous);
+            }
+        }
+    }
+
+    #[test]
     fn scoped_refinement_restarts_after_alias_attachment() {
         let before = "a_attach <- function() NULL";
         let after = "a_attach <- function() { loader <- library; loader(dplyr); NULL }";

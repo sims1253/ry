@@ -365,6 +365,7 @@ impl Checker {
                 );
             }
             Stmt::While { cond, body, .. } => {
+                // RY103: a loop condition is a length-1 logical context.
                 self.infer_condition(cond, scope, ConditionContext::Loop);
                 let mut inner = scope.clone();
                 self.insert_loop_carried_bindings(body, &mut inner);

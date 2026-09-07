@@ -778,3 +778,18 @@ fn signaling_calls_only_establish_reviewed_argument_forcing() {
         );
     }
 }
+
+#[test]
+fn ggplot2_catalog_owns_capture_and_ordinary_argument_evaluation() {
+    let captured = check("library(ggplot2)\naes(unbound_column)\nvars(other_column)\n");
+    assert!(captured.is_empty(), "{captured:?}");
+    for name in ["from_theme", "aes_", "aes_string", "aes_q"] {
+        let diagnostics = check(&format!("ggplot2::{name}(unbound_argument)\n"));
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY010"),
+            "{name} evaluates its argument outside a captured mapping: {diagnostics:?}"
+        );
+    }
+}

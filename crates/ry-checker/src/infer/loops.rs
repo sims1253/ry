@@ -123,7 +123,8 @@ impl Checker {
             // can also finish after the body or a next; their initial state
             // remains possible unless entry was established.
             if !always_true {
-                if !inner.unreachable {
+                // Unknown-effect paths were already included above.
+                if !inner.unreachable && !inner.effects_unknown {
                     join_path(&mut exits, &inner);
                 }
                 if let Some(next) = &frame.nexts {

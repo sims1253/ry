@@ -6,6 +6,13 @@ All notable changes to ry are documented in this file.
 
 ### Added
 
+- Embed verified ggplot2 signatures for 498 functions, 145 exported values, and
+  11 lazy datasets. Curated capture metadata now owns aesthetic evaluation;
+  ordinary helpers such as `aes_string` no longer suppress unbound arguments.
+  Complete base matrix/array construction and row/column summary formals.
+  Preserve unknown result shapes for polymorphic `regmatches`, `sort`, and `sort.int`
+  calls instead of assuming character or double vectors.
+
 - Export reference identities across ordinary literal/copy reassignments and
   retain proven reads before opaque statements. The schema-2 reference
   capability is now `same_file_ordered_prefix`; coverage remains partial.
@@ -127,6 +134,11 @@ All notable changes to ry are documented in this file.
   same call in `R/` was already treated. Outside that context (no
   attachment and no import), a bare unattached `expr(undefined)` still
   reports the name like any other unknown call.
+
+- **Backtick-bound top-level values resolve from functions**: a bare
+  read of `n1` after `` `n1` <- 42 `` no longer reports RY010. This also
+  covers functions used as values. Escaped identifier spellings remain
+  conservative, and string assignment targets retain their literal names.
 
 - **Names inside quoted blocks cannot borrow unrelated function
   types**: inside an unevaluated block (a data-mask argument, or code

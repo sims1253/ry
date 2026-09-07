@@ -151,6 +151,9 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Report missing format arguments only for proven base `sprintf` and
+  `gettextf` calls, avoiding false RY094 warnings for custom functions.
+
 - Stop applying `hasArg` and `on.exit` deferred semantics to explicit competing
   bindings, formals, and aliases. Retain existing inference under ambient
   lookup uncertainty, while requiring methods provenance for RY096.

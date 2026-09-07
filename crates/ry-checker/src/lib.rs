@@ -928,9 +928,17 @@ impl Checker {
     ///
     /// Only functions that exist in both the current table and the seed map
     /// are updated. Functions new to the table (or absent from the seed)
-    /// keep their pass-1 collection value.
-    pub(crate) fn seed_return_types(&mut self, seed: &HashMap<String, ry_core::RType>) {
+    /// keep their pass-1 collection value. Affected functions also start fresh:
+    /// an old seed can otherwise sustain a newly introduced recursive cycle.
+    pub(crate) fn seed_return_types(
+        &mut self,
+        seed: &HashMap<String, ry_core::RType>,
+        scope: &HashSet<String>,
+    ) {
         for (name, uf) in &self.fn_table.fns {
+            if scope.contains(name) {
+                continue;
+            }
             if let Some(t) = seed.get(name) {
                 Arc::make_mut(&mut self.return_slots).set(uf.return_slot, t.clone());
             }
@@ -944,11 +952,11 @@ impl Checker {
     pub(crate) fn seed_caller_visible_signatures(
         &mut self,
         seed: &HashMap<String, CallerVisibleSignature>,
-        scope: Option<&HashSet<String>>,
+        scope: &HashSet<String>,
     ) {
         let table = Arc::make_mut(&mut self.fn_table);
         for (name, function) in &mut table.fns {
-            if scope.is_some_and(|scope| scope.contains(name)) {
+            if scope.contains(name) {
                 continue;
             }
             if let Some(signature) = seed.get(name) {

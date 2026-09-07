@@ -1296,3 +1296,221 @@ fn renamed_function_matches_cold_for_transitive_callers() {
 
     assert_eq!(incremental, cold);
 }
+
+fn callback_project(sources: &[(&str, &str)]) -> Project {
+    let mut project = Project::new();
+    for &(path, source) in sources {
+        project.add_file(path.into(), parse(path, source));
+    }
+    project
+}
+
+#[test]
+fn incremental_callback_returns_match_cold_checks() {
+    for callback_use in [
+        "wrapper <- function() lapply(1, leaf)[[1]]",
+        "wrapper <- function() { callback <- leaf; callback(1) }",
+    ] {
+        let mut sources = vec![
+            ("leaf.R", "leaf <- function(x) 1"),
+            ("wrapper.R", callback_use),
+            ("use.R", "wrapper() + 1"),
+            ("direct.R", "lapply(1, leaf)[[1]] + 1"),
+        ];
+        let mut project = callback_project(&sources);
+        assert!(
+            project
+                .check_incremental()
+                .iter()
+                .all(|(_, d)| d.is_empty())
+        );
+        for source in ["leaf <- function(x) 'bad'", "leaf <- function(x) 1"] {
+            sources[0].1 = source;
+            project.update_file("leaf.R".into(), Arc::new(parse("leaf.R", source)));
+            let incremental = project.check_incremental();
+            let cold = callback_project(&sources).check();
+            assert_eq!(incremental, cold, "{callback_use}: {source}");
+            if source.contains("bad") && callback_use.contains("lapply") {
+                for path in ["use.R", "direct.R"] {
+                    assert!(incremental.iter().any(|(p, diagnostics)| {
+                        p == path
+                            && diagnostics
+                                .iter()
+                                .any(|diagnostic| diagnostic.code == "RY040")
+                    }));
+                }
+            }
+            assert_eq!(project.check_incremental(), cold);
+        }
+    }
+}
+
+#[test]
+fn incremental_callback_replacement_drops_stale_reads() {
+    let mut sources = vec![
+        ("leaf.R", "leaf <- function(x) 1"),
+        ("wrapper.R", "wrapper <- function() lapply(1, leaf)[[1]]"),
+        ("use.R", "wrapper() + 1"),
+    ];
+    let mut project = callback_project(&sources);
+    project.check_incremental();
+    sources[1].1 = "wrapper <- function() 1";
+    project.update_file(
+        "wrapper.R".into(),
+        Arc::new(parse("wrapper.R", sources[1].1)),
+    );
+    assert_eq!(
+        project.check_incremental(),
+        callback_project(&sources).check()
+    );
+    sources[0].1 = "leaf <- function(x) 'bad'";
+    project.update_file("leaf.R".into(), Arc::new(parse("leaf.R", sources[0].1)));
+    assert_eq!(
+        project.check_incremental(),
+        callback_project(&sources).check()
+    );
+    assert_eq!(
+        project.emit_count, 1,
+        "replaced callback must not retain its old read"
+    );
+}
+
+#[test]
+fn incremental_callback_removal_and_readdition_match_cold() {
+    let mut sources = vec![
+        ("leaf.R", "leaf <- function(x) 1"),
+        ("wrapper.R", "wrapper <- function() lapply(1, leaf)[[1]]"),
+        ("use.R", "wrapper() + 1"),
+    ];
+    let mut project = callback_project(&sources);
+    project.check_incremental();
+    // Keep the binding name while replacing its callable identity. This
+    // cannot rely on pooled known-variable changes to invalidate readers.
+    for source in ["leaf <- 1", "leaf <- function(x) 'bad'"] {
+        sources[0].1 = source;
+        project.update_file("leaf.R".into(), Arc::new(parse("leaf.R", source)));
+        assert_eq!(
+            project.check_incremental(),
+            callback_project(&sources).check()
+        );
+    }
+    project.remove_file("leaf.R");
+    sources.remove(0);
+    assert_eq!(
+        project.check_incremental(),
+        callback_project(&sources).check()
+    );
+    sources.push(("leaf.R", "leaf <- function(x) 'bad'"));
+    project.update_file("leaf.R".into(), Arc::new(parse("leaf.R", sources[2].1)));
+    assert_eq!(
+        project.check_incremental(),
+        callback_project(&sources).check()
+    );
+}
+
+#[test]
+fn full_invalidation_keeps_fresh_shadowed_signatures() {
+    let operations = [
+        Operation::RepeatedUpdate {
+            file: 2,
+            first: SourceModel::UnrelatedInteger,
+            second: SourceModel::IntegerReturn,
+        },
+        Operation::RemoveThenReadd {
+            file: 1,
+            source: SourceModel::QuotingParameter,
+        },
+        Operation::Update {
+            file: 1,
+            source: SourceModel::ForwardingCaller,
+        },
+        Operation::Add {
+            file: 0,
+            source: SourceModel::DirectCaller,
+        },
+    ];
+    let mut project = Project::new();
+    let mut state = ProjectState::default();
+    for operation in operations {
+        apply_operation(&mut project, &mut state, operation);
+        assert_eq!(project.check_incremental(), cold_check(&state));
+    }
+    assert!(
+        project
+            .check_incremental()
+            .iter()
+            .flat_map(|(_, d)| d)
+            .any(|d| d.code == "RY010")
+    );
+}
+
+#[test]
+fn loaded_change_keeps_fresh_signatures() {
+    let mut sources = vec![
+        ("callee.R", "target <- function(value) substitute(value)"),
+        ("use.R", "target(not_bound)"),
+    ];
+    let mut project = callback_project(&sources);
+    project.check_incremental();
+    sources[0].1 = "library(stats)\ntarget <- function(value) 1L";
+    project.update_file("callee.R".into(), Arc::new(parse("callee.R", sources[0].1)));
+    let incremental = project.check_incremental();
+    assert_eq!(incremental, callback_project(&sources).check());
+    assert!(
+        incremental
+            .iter()
+            .flat_map(|(_, d)| d)
+            .any(|d| d.code == "RY010")
+    );
+}
+
+#[test]
+fn full_invalidation_does_not_seed_recursive_returns() {
+    let mut sources = vec![
+        ("callee.R", "target <- function() 'old'"),
+        ("use.R", "target() + 1"),
+    ];
+    let mut project = callback_project(&sources);
+    project.check_incremental();
+    sources[0].1 = "target <- function() target()\nadded <- function() 1";
+    project.update_file("callee.R".into(), Arc::new(parse("callee.R", sources[0].1)));
+    assert_eq!(
+        project.check_incremental(),
+        callback_project(&sources).check()
+    );
+}
+
+#[test]
+fn scoped_invalidation_does_not_seed_replaced_recursive_returns() {
+    let mut sources = vec![
+        ("callee.R", "target <- function() 'old'"),
+        ("use.R", "target() + 1"),
+    ];
+    let mut project = callback_project(&sources);
+    project.check_incremental();
+    sources[0].1 = "target <- function() target()";
+    project.update_file("callee.R".into(), Arc::new(parse("callee.R", sources[0].1)));
+    assert_eq!(
+        project.check_incremental(),
+        callback_project(&sources).check()
+    );
+}
+
+#[test]
+fn scoped_invalidation_does_not_seed_mutually_recursive_returns() {
+    let mut sources = vec![
+        (
+            "callee.R",
+            "target <- function() 'old'\nother <- function() 'old'",
+        ),
+        ("use.R", "target() + 1"),
+    ];
+    let mut project = callback_project(&sources);
+    project.check_incremental();
+    sources[0].1 = "target <- function() other()\nother <- function() target()";
+    project.update_file("callee.R".into(), Arc::new(parse("callee.R", sources[0].1)));
+    assert_eq!(
+        project.check_incremental(),
+        callback_project(&sources).check()
+    );
+}

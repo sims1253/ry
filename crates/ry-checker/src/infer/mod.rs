@@ -941,7 +941,7 @@ impl Checker {
                 if p.default.is_some() {
                     scope.insert_parameter_default(p.name.clone(), t.clone());
                 } else {
-                    scope.insert(p.name.clone(), t.clone());
+                    scope.insert_parameter(p.name.clone(), t.clone());
                 }
                 param_types.push(t);
             }

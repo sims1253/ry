@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "corpus": "tidyverse",
-  "ry_version": "0.7.1",
+  "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/*.root.txt (excluding posit.*)",
   "packages": [
     {

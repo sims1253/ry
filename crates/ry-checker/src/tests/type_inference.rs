@@ -1203,6 +1203,24 @@ fn dollar_on_union_with_outer_class_invalidates_caller_effects() {
 }
 
 #[test]
+fn dollar_assignment_on_classed_atomic_values_preserves_uncertainty() {
+    for value in [
+        "structure(1L,class='widget')",
+        "structure(if(flag) 1L else 'payload',class='widget')",
+    ] {
+        let diags = check(&format!(
+            "`$<-.widget` <- function(x,name,value) {{ assign('marker',1L,envir=parent.frame()); list(saved=value) }}; f <- function(flag) {{ marker <- 'before'; x <- {value}; x$field <- 3L; marker+1L; x$saved }}; f(TRUE); f(FALSE)"
+        ));
+        assert!(
+            diags.iter().all(|d| !matches!(d.code, "RY061" | "RY040")),
+            "{value}: {diags:?}"
+        );
+    }
+    let diags = check("x <- 1L; x$field <- 3L");
+    assert!(diags.iter().any(|d| d.code == "RY061"), "{diags:?}");
+}
+
+#[test]
 fn dollar_on_data_frame_no_warning() {
     let diags = check("val <- mtcars$mpg\n");
     assert!(diags.iter().all(|d| d.code != "RY061"), "got {:?}", diags);

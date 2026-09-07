@@ -151,6 +151,10 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Keep classed atomic `$` reads and writes conservative when an S3 method may
+  handle the access, including classes attached to a union of payload types.
+  Discard caller facts that the method could change.
+
 - Report an explicit nesting-limit error before deeply nested syntax can
   overflow the parser stack. The limit is 128 tree-sitter syntax levels.
 

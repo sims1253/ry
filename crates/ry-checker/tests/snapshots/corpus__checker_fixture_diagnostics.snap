@@ -689,6 +689,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_divisible_recycling.R
 - diagnostics: []
+  fixture: ok_dollar_assign_classed_atomic.R
+- diagnostics: []
   fixture: ok_dollar_classed_atomic.R
 - diagnostics: []
   fixture: ok_dollar_missing_list.R

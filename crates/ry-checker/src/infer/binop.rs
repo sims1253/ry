@@ -545,6 +545,7 @@ fn data_frame_binop_result(op: BinOpKind, lhs: &RType, rhs: &RType) -> Option<RT
 /// to model guard narrowing, so copy just those assignment targets back (not
 /// the guard refinement itself) after evaluating the RHS.
 fn merge_condition_assignments(scope: &mut Scope, evaluated: &Scope, expr: &Expr) {
+    scope.custom_operator_effects_unknown |= evaluated.custom_operator_effects_unknown;
     if evaluated.ops_environment_unknown {
         scope.invalidate_ops_environment();
     }

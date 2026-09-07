@@ -80,6 +80,8 @@ fn concrete_data_skips_function_lookup_without_resurrecting_stale_functions() {
 fn uncertain_effects_survive_branch_loop_and_later_assignment() {
     let prefix = "`+` <- function(e1,e2) { force(e1); 1L }; x <- 'old'; ";
     for body in [
+        "ignored <- TRUE && (assign('x', 1L) + 2L); result <- x * 2L",
+        "ignored <- if (TRUE) assign('x', 1L) + 2L else 0L; result <- x * 2L",
         "if (TRUE) { ignored <- assign('x', 1L) + 2L }; result <- x * 2L",
         "for (i in 1L) { ignored <- assign('x', 1L) + 2L }; result <- x * 2L",
         "done <- FALSE; while (!done) { ignored <- assign('x', 1L) + 2L; done <- TRUE }; result <- x * 2L",

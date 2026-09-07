@@ -12,3 +12,10 @@ stopifnot(identical(x * 2L, 2L))
 x <- "old"
 for (i in 1L) { ignored <- assign("x", 1L) + 2L }
 stopifnot(identical(x * 2L, 2L))
+
+x <- "old"
+ignored <- TRUE && (assign("x", 1L) + 2L)
+stopifnot(identical(x * 2L, 2L))
+x <- "old"
+ignored <- if (TRUE) assign("x", 1L) + 2L else 0L
+stopifnot(identical(x * 2L, 2L))

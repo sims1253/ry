@@ -155,6 +155,9 @@ All notable changes to ry are documented in this file.
   handle the access, including classes attached to a union of payload types.
   Discard caller facts that the method could change.
 
+- `ry check` now emits an empty JSON/GitLab array or JUnit report when no R
+  files are discovered, including when configuration excludes every source.
+
 - Report an explicit nesting-limit error before deeply nested syntax can
   overflow the parser stack. The limit is 128 tree-sitter syntax levels.
 

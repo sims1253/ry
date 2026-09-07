@@ -313,7 +313,13 @@ impl Checker {
                 // assignments inside an `if` branch leak to the enclosing
                 // scope, so a name bound conditionally must still be visible
                 // after the `if` (otherwise uses fire RY010 false positives).
-                self.merge_branch_bindings(scope, &then_scope, &else_scope, has_else, &narrowed);
+                self.merge_branch_bindings(
+                    scope,
+                    &then_scope,
+                    &else_scope,
+                    (then, else_.as_deref()),
+                    &narrowed,
+                );
                 // Refinements normally remain branch-local (see
                 // `apply_narrowing`). A diverging arm is the exception: the
                 // continuation is reachable only through its sibling, so its
@@ -678,13 +684,10 @@ impl Checker {
     /// Merge bindings introduced inside the two `if` branches back into the
     /// parent `scope`.
     ///
-    /// A name that is newly bound in BOTH branches gets the join of the two
-    /// branch types. A name bound in only one branch (or when there is no
-    /// `else`) is inserted into the parent as [`RType::unknown`]: there is no
-    /// sound type for "possibly missing" in the current model, and the goal
-    /// here is solely to stop RY010 false positives on the conditional
-    /// assignment idiom. Modeling "definitely unbound" as a diagnostic is a
-    /// separate future rule and intentionally out of scope.
+    /// A name assigned in both branches gets the join of their types.
+    /// If a path can retain an existing parent binding, its type contributes
+    /// too. A name introduced on only one path becomes [`RType::unknown`]:
+    /// the current model has no sound type for "possibly missing".
     ///
     /// "Newly bound" means present in the branch scope but absent from the
     /// parent (or bound to a different type): names that already existed in
@@ -703,9 +706,10 @@ impl Checker {
         scope: &mut Scope,
         then_scope: &Scope,
         else_scope: &Scope,
-        has_else: bool,
+        branches: (&[Stmt], Option<&[Stmt]>),
         narrowed: &HashSet<String>,
     ) {
+        let has_else = branches.1.is_some();
         // Types can compare equal after replacing a literal function. Do not
         // carry its identity or constant result across a branch merge.
         scope.literal_functions.clear();
@@ -771,38 +775,40 @@ impl Checker {
                 }
             }
         }
+        // Scope differences alone do not prove assignment: loop inference
+        // can expose a body write even when the loop executes zero times.
+        let definitely_rebound = if branch_types
+            .values()
+            .any(|(a, b)| a.is_some() && b.is_some())
+        {
+            let mut names = definitely_assigned_names(branches.0);
+            let other = definitely_assigned_names(branches.1.unwrap_or_default());
+            names.retain(|name| other.contains(name));
+            names
+        } else {
+            HashSet::new()
+        };
         for (name, (then_t, else_t)) in branch_types {
             let merged = match (then_t, else_t) {
-                (Some(a), Some(b)) => a.clone().join(b.clone()),
+                (Some(a), Some(b)) => {
+                    let joined = a.clone().join(b.clone());
+                    match scope.get(name) {
+                        Some(parent) if !definitely_rebound.contains(name) => {
+                            parent.clone().join(joined)
+                        }
+                        _ => joined,
+                    }
+                }
                 (Some(a), None) | (None, Some(a)) => {
-                    // The name is assigned in only one branch (no
-                    // `else`). When the name is already bound in the
-                    // parent it is definitely defined on every path --
-                    // only its type changes -- so carry the branch's
-                    // type and let the parent fold below union in the
-                    // prior type (so `s <- 1L; if (c) { s <- "x" }`
-                    // stays `union[integer, character]` rather than
-                    // collapsing to opaque). When the parent has NO
-                    // binding the name is possibly missing, which has no
-                    // sound type, so it degrades to opaque. Joining with
-                    // `RType::unknown()` here would be absorbing and make
-                    // the parent fold below dead code.
-                    if scope.get(name).is_some() {
-                        a.clone()
-                    } else {
-                        a.clone().join(RType::unknown())
+                    // One path keeps the parent binding, including an
+                    // unchanged assignment or an implicit no-else path.
+                    // If no parent binding exists, the name may be missing.
+                    match scope.get(name) {
+                        Some(parent) => parent.clone().join(a.clone()),
+                        None => RType::unknown(),
                     }
                 }
                 (None, None) => continue,
-            };
-            // If the name already existed in the parent with a *different*
-            // type, fold that prior type into the merge so a branch
-            // reassignment doesn't silently degrade a precise parent type
-            // to unknown (e.g. `s <- 1L; if (c) { s <- "x" }` keeps `s` as
-            // union[integer, character] rather than collapsing to unknown).
-            let merged = match scope.get(name) {
-                Some(p) => p.clone().join(merged),
-                None => merged,
             };
             // A branch scope that does not bind the name (an implicit
             // no-`else`, or an arm that never assigns it) cannot supply a
@@ -2139,4 +2145,37 @@ pub(crate) fn embraced_symbol(body: &[Stmt]) -> Option<(&str, Span)> {
         return None;
     };
     Some((name, *span))
+}
+
+/// Names assigned on every path that reaches the end of this block.
+/// Loops, calls, and nested function bodies cannot establish this fact.
+fn definitely_assigned_names(body: &[Stmt]) -> HashSet<&str> {
+    let mut names = HashSet::new();
+    for statement in body {
+        match statement {
+            Stmt::Assign {
+                target: Expr::Ident { name, .. },
+                ..
+            } => {
+                names.insert(name.as_str());
+            }
+            Stmt::If {
+                then,
+                else_: Some(other),
+                ..
+            } => {
+                let then_names = definitely_assigned_names(then);
+                let else_names = definitely_assigned_names(other);
+                names.extend(
+                    then_names
+                        .into_iter()
+                        .filter(|name| else_names.contains(name)),
+                );
+            }
+            Stmt::Expr(Expr::Block { body, .. }) => names.extend(definitely_assigned_names(body)),
+            Stmt::Return { .. } => break,
+            _ => {}
+        }
+    }
+    names
 }

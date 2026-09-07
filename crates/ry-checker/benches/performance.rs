@@ -151,6 +151,37 @@ fn check_branch_scopes(c: &mut Criterion) {
     group.finish();
 }
 
+/// Expression arms discard bindings and need only one live child scope at a time.
+fn check_if_expression_scopes(c: &mut Criterion) {
+    let mut group = c.benchmark_group("check_if_expression_scopes");
+    for bindings in [128, 1024] {
+        for with_else in [false, true] {
+            let mut source = String::from("f <- function(flag) {\n");
+            for i in 0..bindings {
+                source.push_str(&format!("x{i} <- {i}L\n"));
+            }
+            source.push_str("result <- ");
+            for _ in 0..24 {
+                source.push_str("if (flag) (");
+            }
+            source.push_str("x0");
+            for _ in 0..24 {
+                source.push_str(if with_else { ") else 0L" } else { ")" });
+            }
+            source.push_str("\nresult\n}\nf(TRUE)\n");
+            let file = RParser::new().unwrap().parse("if_expr.R", &source).unwrap();
+            let arm = if with_else { "two_arms" } else { "one_arm" };
+            group.bench_with_input(BenchmarkId::new(arm, bindings), &file, |b, file| {
+                b.iter(|| {
+                    let mut checker = Checker::new("if_expr.R");
+                    black_box(checker.check(black_box(file)));
+                });
+            });
+        }
+    }
+    group.finish();
+}
+
 /// Guards need only one continuation, even in a scope with many unrelated names.
 fn check_selected_branch_scopes(c: &mut Criterion) {
     let mut group = c.benchmark_group("check_selected_branch_scopes");
@@ -408,7 +439,7 @@ criterion_group! {
         .sample_size(20)
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(3));
-    targets = parse_large, check_project_glue, check_single_synthetic, check_branch_scopes, check_selected_branch_scopes,
+    targets = parse_large, check_project_glue, check_single_synthetic, check_branch_scopes, check_selected_branch_scopes, check_if_expression_scopes,
               warm_edit_dependent, warm_edit_leaf, warm_edit_library,
               lsp_edit_sim, warm_edit_sparse_callers
 }

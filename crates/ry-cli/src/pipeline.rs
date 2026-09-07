@@ -69,11 +69,8 @@ pub(crate) enum FailureAction {
 
 /// Parse every path in parallel on rayon's pool, in input order.
 ///
-/// tree-sitter parsers are NOT `Send`, so each rayon thread keeps its
-/// own `RParser` in a `thread_local!` (the grammar is loaded once per
-/// thread; the thread pool is reused across runs). The single-parser
-/// optimization (reusing one parser across documents) is preserved
-/// within each thread.
+/// Each rayon thread reuses an `RParser` across files and runs to avoid
+/// loading the grammar for every file.
 ///
 /// Every failure is passed to `on_failure` as it happens; the callback
 /// reports it and picks the action. `Skip`ped files are dropped from
@@ -227,13 +224,12 @@ pub(crate) fn resolve_groups(
             })
             .collect();
         let degraded_scopes = std::mem::take(&mut package_scope.degraded_scopes);
-        let workspace = package_scope;
         resolved.push(ResolvedGroup {
             resolution_root,
             check_input: crate::check::CheckInput {
                 files: analysis_files,
                 user_stubs: Arc::clone(user_stubs),
-                workspace: Some(workspace),
+                workspace: package_scope,
             },
             degraded_scopes,
         });

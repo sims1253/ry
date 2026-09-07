@@ -29,33 +29,30 @@ pub struct CheckInput {
     /// User typeshed stubs.
     pub user_stubs: Arc<BTreeMap<String, ry_typeshed::Typeshed>>,
     /// Workspace context (package metadata, bindings).
-    pub workspace: Option<ry_workspace::WorkspaceContext>,
+    pub workspace: ry_workspace::WorkspaceContext,
 }
 
-/// Result of a unified diagnostics check.
-pub struct CheckOutput {
-    /// Per-file diagnostics: (path, Vec<Diagnostic>).
-    pub diagnostics: Vec<(String, Vec<ry_checker::Diagnostic>)>,
+impl CheckInput {
+    fn into_project(self) -> ry_checker::Project {
+        let mut project = ry_checker::Project::new();
+        let workspace = self.workspace;
+        project.set_loaded(workspace.attached_packages);
+        project.set_bare_loaded(workspace.bare_bindings);
+        project.set_user_stubs(self.user_stubs);
+        project.set_external_bindings(workspace.external_bindings);
+        project.set_imported_from(workspace.imported_bindings);
+        project.set_external_s3_methods(workspace.s3_methods);
+        project.set_load_bindings(workspace.load_bindings);
+        for (path, file) in self.files {
+            project.add_file_arc(path, file);
+        }
+        project
+    }
 }
 
 /// Run a one-shot project check with workspace metadata.
-///
-/// This is the single entry point for diagnostics computation.
-/// ry-cli calls this instead of coordinating Project setters.
-pub fn check_project(input: CheckInput) -> CheckOutput {
-    let mut project = apply_workspace(
-        ry_checker::Project::new(),
-        input.workspace.as_ref(),
-        &input.user_stubs,
-    );
-
-    for (path, file) in &input.files {
-        project.add_file_arc(path.clone(), Arc::clone(file));
-    }
-
-    let diagnostics = project.check();
-
-    CheckOutput { diagnostics }
+pub fn check_project(input: CheckInput) -> Vec<(String, Vec<ry_checker::Diagnostic>)> {
+    input.into_project().check()
 }
 
 /// Run the same one-shot check, additionally snapshotting every file's
@@ -83,14 +80,7 @@ pub(crate) fn check_project_with_facts_capture(
     input: CheckInput,
     references: bool,
 ) -> CapturedFacts {
-    let mut project = apply_workspace(
-        ry_checker::Project::new(),
-        input.workspace.as_ref(),
-        &input.user_stubs,
-    );
-    for (path, file) in &input.files {
-        project.add_file_arc(path.clone(), Arc::clone(file));
-    }
+    let mut project = input.into_project();
     project.enable_scope_capture();
     if references {
         project.enable_reference_capture();
@@ -100,26 +90,6 @@ pub(crate) fn check_project_with_facts_capture(
         scopes: project.take_scope_records(),
         references: project.take_reference_facts(),
     }
-}
-
-/// Install the workspace metadata onto a fresh project. Shared by
-/// [`check_project`] and [`check_project_with_scope_capture`] so the two
-/// entry points can never drift in what environment they model.
-fn apply_workspace(
-    mut project: ry_checker::Project,
-    workspace: Option<&ry_workspace::WorkspaceContext>,
-    user_stubs: &Arc<BTreeMap<String, ry_typeshed::Typeshed>>,
-) -> ry_checker::Project {
-    let empty_workspace = ry_workspace::WorkspaceContext::default();
-    let workspace = workspace.unwrap_or(&empty_workspace);
-    project.set_loaded(workspace.attached_packages.clone());
-    project.set_bare_loaded(workspace.bare_bindings.clone());
-    project.set_user_stubs(Arc::clone(user_stubs));
-    project.set_external_bindings(workspace.external_bindings.clone());
-    project.set_imported_from(workspace.imported_bindings.clone());
-    project.set_external_s3_methods(workspace.s3_methods.clone());
-    project.set_load_bindings(workspace.load_bindings.clone());
-    project
 }
 
 /// Drive `ry check`: merge the CLI flags with `ry.toml`, discover the
@@ -191,11 +161,7 @@ pub(crate) fn run_check(
         None => None,
     };
 
-    // Re-init tracing with the merged verbosity so a `verbose = 2` in
-    // ry.toml takes effect even when the user runs a bare `ry check`.
-    // `try_init` is idempotent (the first subscriber wins), so if main
-    // already installed one this is a no-op; that's fine because main
-    // used the CLI counts which are a superset here.
+    // Initialize after config discovery so ry.toml verbosity takes effect.
     init_tracing(cfg.verbose, cfg.quiet);
 
     let format = ry_checker::format::OutputFormat::parse(&cfg.output_format).ok_or_else(|| {
@@ -505,8 +471,7 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
 
     let mut per_file_diagnostics = Vec::new();
     for group in groups {
-        let check_output = check_project(group.check_input);
-        per_file_diagnostics.extend(check_output.diagnostics);
+        per_file_diagnostics.extend(check_project(group.check_input));
         for (path, reason) in group.degraded_scopes {
             degraded.insert(format!("{} ({})", path.display(), reason));
         }
@@ -1082,11 +1047,11 @@ mod tests {
         let input = CheckInput {
             files: vec![("test.R".to_string(), Arc::new(file))],
             user_stubs: Arc::new(BTreeMap::new()),
-            workspace: None,
+            workspace: Default::default(),
         };
         let output = check_project(input);
         // A clean file should produce no diagnostics.
-        let total: usize = output.diagnostics.iter().map(|(_, d)| d.len()).sum();
+        let total: usize = output.iter().map(|(_, d)| d.len()).sum();
         assert_eq!(total, 0, "clean file should have no diagnostics");
     }
 
@@ -1097,10 +1062,10 @@ mod tests {
         let input = CheckInput {
             files: vec![("test.R".to_string(), Arc::new(file))],
             user_stubs: Arc::new(BTreeMap::new()),
-            workspace: None,
+            workspace: Default::default(),
         };
         let output = check_project(input);
-        let total: usize = output.diagnostics.iter().map(|(_, d)| d.len()).sum();
+        let total: usize = output.iter().map(|(_, d)| d.len()).sum();
         assert!(total > 0, "undefined variable should produce diagnostics");
     }
 
@@ -1113,7 +1078,7 @@ mod tests {
         // check_project actually feeds attached_packages into the checker
         // instead of ignoring it.
         let src = "x <- NULL\nif (is_null(x)) stop(\"missing\")\nx()\n";
-        let run = |workspace: Option<ry_workspace::WorkspaceContext>| -> usize {
+        let run = |workspace: ry_workspace::WorkspaceContext| -> usize {
             let mut parser = ry_core::RParser::new().unwrap();
             let file = parser.parse("test.R", src).unwrap();
             let output = check_project(CheckInput {
@@ -1122,14 +1087,13 @@ mod tests {
                 workspace,
             });
             output
-                .diagnostics
                 .iter()
                 .flat_map(|(_, diags)| diags.iter())
                 .filter(|d| d.code == "RY070")
                 .count()
         };
 
-        let without = run(None);
+        let without = run(Default::default());
         assert!(
             without > 0,
             "without rlang the predicate cannot narrow x; RY070 must fire for x()"
@@ -1138,7 +1102,7 @@ mod tests {
         let mut with = ry_workspace::WorkspaceContext::default();
         with.attached_packages.insert("rlang".to_string());
         assert_eq!(
-            run(Some(with)),
+            run(with),
             0,
             "with rlang attached the predicate narrows x; no RY070 may survive"
         );
@@ -1155,12 +1119,11 @@ mod tests {
                 ("b.R".to_string(), Arc::new(file_b)),
             ],
             user_stubs: Arc::new(BTreeMap::new()),
-            workspace: None,
+            workspace: Default::default(),
         };
         let output = check_project(input);
         // shared_fn is defined in a.R and called in b.R — should resolve.
         let b_diags: usize = output
-            .diagnostics
             .iter()
             .find(|(p, _)| p == "b.R")
             .map(|(_, d)| d.len())
@@ -1177,7 +1140,7 @@ mod tests {
         let records = check_project_with_scope_capture(CheckInput {
             files: vec![("a.R".to_string(), Arc::new(file))],
             user_stubs: Arc::new(BTreeMap::new()),
-            workspace: None,
+            workspace: Default::default(),
         });
         assert_eq!(records.len(), 1);
         let (path, file_records) = &records[0];

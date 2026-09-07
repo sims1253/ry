@@ -302,6 +302,9 @@ fn class_assignment_drops_payload_for_unknown_or_coercing_classes() {
     let (_, scope) =
         check_with_scope("c <- function(...) 'character'; out <- 1L; class(out) <- c('widget')");
     assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque);
+    let (_, scope) = check_with_scope("out <- 1L; class(out) <- 'symbol'");
+    assert_eq!(scope.get("out").unwrap().mode, Mode::Integer);
+    assert!(scope.get("out").unwrap().class.contains("symbol"));
     let (_, scope) = check_with_scope("out <- 1L; class(out) <- c('double', 'widget')");
     assert_eq!(scope.get("out").unwrap().mode, Mode::Integer);
     assert!(scope.get("out").unwrap().class.contains("widget"));

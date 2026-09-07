@@ -1261,19 +1261,7 @@ impl Checker {
         // applies those coercions only to singleton class vectors.
         if matches!(class_write, ClassLiteral::Unknown)
             || singleton.is_some_and(|class| {
-                matches!(
-                    class,
-                    "numeric"
-                        | "integer"
-                        | "double"
-                        | "logical"
-                        | "character"
-                        | "complex"
-                        | "raw"
-                        | "list"
-                        | "expression"
-                        | "symbol"
-                )
+                crate::semantic_lists::CLASS_ASSIGNMENT_COERCERS.contains(&class)
             })
         {
             scope.insert(name.clone(), RType::unknown());

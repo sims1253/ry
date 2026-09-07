@@ -145,9 +145,29 @@ pub(crate) fn is_quoting_form(name: &str) -> bool {
 /// server function, as documented by the `shiny` package.
 pub const BUILTIN_ENVIRONMENT_BINDINGS: &[&str] = &["input", "output", "session"];
 
+/// Singleton class replacements that can change the payload's storage type.
+/// Multi-element class vectors do not take R's intrinsic coercion path.
+pub const CLASS_ASSIGNMENT_COERCERS: &[&str] = &[
+    "numeric",
+    "integer",
+    "double",
+    "logical",
+    "character",
+    "complex",
+    "raw",
+    "list",
+    "expression",
+];
+
 /// The complete registry. Every hardcoded semantic list must appear here.
 pub fn registry() -> Vec<SemanticList> {
     vec![
+        SemanticList {
+            name: "CLASS_ASSIGNMENT_COERCERS",
+            items: CLASS_ASSIGNMENT_COERCERS,
+            check: CheckKind::ROracle,
+            claim: "singleton class replacements that can change storage, unlike multi-class vectors",
+        },
         SemanticList {
             name: "OPERATORS",
             items: OPERATORS,

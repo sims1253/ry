@@ -593,3 +593,26 @@ fn lexical_shadow_of_container_suppresses_ry102() {
         "lexically shadowed c() should NOT fire RY102, got {diags:?}"
     );
 }
+
+#[test]
+fn class_assignment_coercers_match_r_oracle() {
+    if !rscript_available() {
+        return;
+    }
+    for class in semantic_lists::CLASS_ASSIGNMENT_COERCERS {
+        let seed = match *class {
+            "numeric" => "TRUE",
+            "integer" => "1.5",
+            _ => "1L",
+        };
+        let output = r_eval(&format!(
+            "x <- {seed}; before <- typeof(x); class(x) <- '{class}'; cat(typeof(x) != before); y <- {seed}; class(y) <- c('{class}', 'widget'); cat(typeof(y) == before)"
+        ));
+        assert_eq!(output.trim(), "TRUETRUE", "{class}");
+    }
+    assert!(!semantic_lists::CLASS_ASSIGNMENT_COERCERS.contains(&"symbol"));
+    assert_eq!(
+        r_eval("x <- 1L; class(x) <- 'symbol'; cat(typeof(x) == 'integer')").trim(),
+        "TRUE"
+    );
+}

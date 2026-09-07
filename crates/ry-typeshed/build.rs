@@ -78,4 +78,22 @@ fn main() {
         "no vendored stubs found under {} (run scripts/sync_typeshed.sh)",
         vendor.display()
     );
+
+    // Cargo does not clean OUT_DIR between build-script reruns, so a
+    // renamed or removed vendor file would leave its stale blob behind.
+    // Delete any deflate output that no longer corresponds to a vendor
+    // stub; everything left over is exactly the set just written.
+    for entry in fs::read_dir(&out_dir).expect("read OUT_DIR") {
+        let path = entry.expect("read OUT_DIR entry").path();
+        let stale = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.strip_suffix(".json.deflate"))
+            .map(|stem| !stems.contains(&stem.to_owned()))
+            .unwrap_or(false);
+        if stale {
+            fs::remove_file(&path)
+                .unwrap_or_else(|error| panic!("remove stale {}: {error}", path.display()));
+        }
+    }
 }

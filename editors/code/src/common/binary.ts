@@ -117,13 +117,10 @@ interface VersionProbe {
 const versionProbes = new Map<string, VersionProbe>();
 
 const statBinary = (binaryPath: string) =>
-  Effect.sync(() => {
-    try {
-      return fs.statSync(binaryPath);
-    } catch {
-      return undefined;
-    }
-  });
+  Effect.tryPromise({
+    try: () => fs.promises.stat(binaryPath),
+    catch: () => undefined,
+  }).pipe(Effect.catchAll(() => Effect.succeed(undefined)));
 
 /** An unavailable binary or invalid response produces an unknown version. */
 export const getRyVersion = (binaryPath: string) =>
@@ -146,7 +143,10 @@ export const getRyVersion = (binaryPath: string) =>
       Effect.map(({ version }) => versionFromString(version)),
       Effect.catchAll(() => Effect.succeed(undefined)),
     );
-    if (stats) {
+    // Cache only successful probes: a failed spawn (resource pressure, an
+    // AV lock on a freshly-replaced binary) must be retried on the next
+    // restart rather than pinning an unknown version for the session.
+    if (stats && version !== undefined) {
       versionProbes.set(binaryPath, {
         mtimeMs: stats.mtimeMs,
         size: stats.size,

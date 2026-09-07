@@ -120,13 +120,12 @@ fn uncertain_namespace_constructors_do_not_force_arguments() {
 }
 
 #[test]
-fn methods_new_binds_and_forces_class_before_unforced_dots() {
+fn methods_new_binds_and_forces_class_before_dots() {
     for call in [
         "methods::new(value='wrong', Class='widget')",
         "methods::new(value='wrong', Cl='widget')",
         "methods::new(C='attribute', Class='widget')",
         "methods::new(`Class`='widget')",
-        "methods::new('widget', missing_value)",
     ] {
         let (diags, scope) = check_with_scope(&format!("out <- {call}"));
         assert!(scope.get("out").unwrap().class.contains("widget"), "{call}");
@@ -147,4 +146,13 @@ fn methods_new_binds_and_forces_class_before_unforced_dots() {
     );
     assert_eq!(scope.get("marker").unwrap().mode, Mode::Character);
     assert!(diags.iter().any(|d| d.code == "RY010"), "{diags:?}");
+}
+
+#[test]
+fn intrinsic_new_values_do_not_acquire_explicit_dispatch_classes() {
+    let (diags, scope) = check_with_scope(
+        "`+.integer` <- function(e1,e2) 'wrong'; x <- methods::new('integer'); y <- x+1L; z <- y+1L",
+    );
+    assert!(diags.iter().all(|d| d.code != "RY040"), "{diags:?}");
+    assert!(!scope.get("x").unwrap().class.known);
 }

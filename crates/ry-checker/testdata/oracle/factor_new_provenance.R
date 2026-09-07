@@ -23,8 +23,11 @@ local({
 methods::setClass("ry_new_binding", slots = c(value = "character", C = "character"))
 stopifnot(inherits(methods::new(value = "wrong", Cl = "ry_new_binding"), "ry_new_binding"))
 stopifnot(inherits(methods::new(C = "attribute", Class = "ry_new_binding"), "ry_new_binding"))
-methods::setMethod("initialize", "ry_new_binding", function(.Object, ...) .Object)
-stopifnot(inherits(methods::new("ry_new_binding", missing_value), "ry_new_binding"))
 marker <- 1L
 stopifnot(inherits(tryCatch(methods::new(Class = { marker <- "forced"; missing_class }), error = identity), "error"))
 stopifnot(identical(marker, "forced"))
+local({
+  `+.integer` <- function(e1, e2) "wrong"
+  x <- methods::new("integer")
+  stopifnot(is.null(attributes(x)), identical(x + 1L + 1L, integer(0)))
+})

@@ -171,12 +171,19 @@ impl Checker {
         {
             return RType::unknown();
         }
-        // Class is forced before initialize dispatch. A custom initialize
-        // method may leave every dots argument unforced, but R verifies that
-        // its returned object still belongs to the requested class.
+        // Class is forced before initialization. Retain the existing dots
+        // traversal until initializer laziness has a complete effect model.
         self.infer(&args[class_index].value, scope);
+        for (index, argument) in args.iter().enumerate() {
+            if index != class_index {
+                self.infer(&argument.value, scope);
+            }
+        }
         match &args[class_index].value {
-            Expr::String(class, _) if !class.is_empty() => {
+            Expr::String(class, _)
+                if !class.is_empty()
+                    && !crate::semantic_lists::PLAIN_NEW_CLASSES.contains(&class.as_str()) =>
+            {
                 RType::unknown().with_class(ClassVector::single(class))
             }
             _ => RType::unknown(),

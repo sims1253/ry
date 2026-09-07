@@ -135,7 +135,7 @@ fn stub_default_method_does_not_hijack_operator_dispatch() {
         "a stub `+.default` must neither satisfy nor report operator dispatch: {with:?}"
     );
     let (guarded, scope) = check_with_stubs(
-        "d <- structure(1, class = \"default\")\nout <- d + 1\n",
+        "d <- 1; class(d) <- \"default\"\nout <- d + 1\n",
         &[("base.json", &json)],
     );
     assert!(

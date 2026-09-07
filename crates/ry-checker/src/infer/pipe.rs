@@ -274,17 +274,24 @@ impl Checker {
         // expression-position assignment is rare and merging here would
         // require plumbing owned branch scopes back to the caller.
         let narrowing = self.extract_type_narrowing(cond, scope);
-        let (mut then_scope, mut else_scope, _narrowed) = apply_narrowing(scope, &narrowing);
-        let then_t = self.infer(then, &mut then_scope);
-        let else_t = match else_ {
-            Some(e) => self.infer(e, &mut else_scope),
-            None => RType::new(Mode::Null, Length::Zero),
+        // Expression arms do not merge bindings. Drop each child before
+        // creating its sibling, and avoid a child for an absent else arm.
+        // Delay propagating effects until both arms have seen the same base.
+        let mut infer_arm = |expr, branch| {
+            let mut child = scope.clone();
+            apply_narrowing_branch(&mut child, &narrowing, branch);
+            let ty = self.infer(expr, &mut child);
+            (ty, child.ops_environment_unknown, child.effects_unknown)
+        };
+        let (then_t, then_ops, then_effects) = infer_arm(then, NarrowingBranch::Then);
+        let (else_t, else_ops, else_effects) = match else_ {
+            Some(e) => infer_arm(e, NarrowingBranch::Else),
+            None => (RType::new(Mode::Null, Length::Zero), false, false),
         };
         scope.literal_functions.clear();
         scope.plain_ops_vectors.clear();
-        scope.ops_environment_unknown |=
-            then_scope.ops_environment_unknown || else_scope.ops_environment_unknown;
-        scope.effects_unknown |= then_scope.effects_unknown || else_scope.effects_unknown;
+        scope.ops_environment_unknown |= then_ops || else_ops;
+        scope.effects_unknown |= then_effects || else_effects;
         then_t.join(else_t)
     }
 
@@ -342,5 +349,68 @@ impl Checker {
             return RType::unknown();
         }
         join_all(types.into_iter())
+    }
+}
+
+#[cfg(test)]
+mod if_expression_scope_tests {
+    use super::*;
+    use ry_core::RParser;
+
+    fn infer_expression(source: &str, scope: &mut Scope) -> RType {
+        let file = RParser::new().unwrap().parse("test.R", source).unwrap();
+        let Stmt::Assign { value, .. } = &file.stmts[0] else {
+            panic!("expected an expression assignment");
+        };
+        let Expr::If {
+            cond, then, else_, ..
+        } = value
+        else {
+            panic!("expected an if expression");
+        };
+        Checker::new("test.R").infer_if_expr(cond, then, else_, scope)
+    }
+
+    #[test]
+    fn sibling_expression_arms_share_the_original_binding() {
+        let mut scope = Scope::default();
+        scope.insert("x", RType::scalar(Mode::Integer));
+        let ty = infer_expression("result <- if (TRUE) (x <- 'changed') else x", &mut scope);
+        assert_eq!(ty.mode, Mode::Union);
+        let members = ty.members.unwrap();
+        assert!(members.iter().any(|ty| ty.mode == Mode::Integer));
+        assert!(members.iter().any(|ty| ty.mode == Mode::Character));
+        assert_eq!(scope.get("x").unwrap().mode, Mode::Integer);
+    }
+
+    #[test]
+    fn absent_else_joins_null_and_keeps_existing_effects() {
+        for effects_unknown in [false, true] {
+            let mut scope = Scope {
+                effects_unknown,
+                ops_environment_unknown: effects_unknown,
+                ..Scope::default()
+            };
+            let ty = infer_expression("result <- if (TRUE) 1L", &mut scope);
+            assert_eq!(ty.mode, Mode::Union);
+            let members = ty.members.unwrap();
+            assert!(members.iter().any(|ty| ty.mode == Mode::Integer));
+            assert!(members.iter().any(|ty| ty.mode == Mode::Null));
+            assert_eq!(scope.effects_unknown, effects_unknown);
+            assert_eq!(scope.ops_environment_unknown, effects_unknown);
+        }
+    }
+
+    #[test]
+    fn effects_from_either_expression_arm_reach_the_parent() {
+        for source in [
+            "result <- if (TRUE) unknown_call()",
+            "result <- if (TRUE) unknown_call() else 1L",
+            "result <- if (TRUE) 1L else unknown_call()",
+        ] {
+            let mut scope = Scope::default();
+            infer_expression(source, &mut scope);
+            assert!(scope.ops_environment_unknown, "{source}");
+        }
     }
 }

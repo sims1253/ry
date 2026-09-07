@@ -84,7 +84,7 @@ use ry_typeshed::{
     DefaultCurrentScope, EvalMode, FunctionSig, Globals, HigherOrderResultKind, HigherOrderSpec,
     InjectionMode, JsonLength, JsonMode, JsonRType, ParamSpec, ReturnLengthSpec, ReturnSlot,
     ReturnSpec, SchemaEffect, ScopeEffect, Typeshed, is_known_package, known_packages,
-    load_base_cached, load_package,
+    load_base_cached, load_package, package_has_injects, package_has_s3_methods,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -1305,6 +1305,24 @@ impl Checker {
         self.user_stubs
             .get(package)
             .or_else(|| load_package(package))
+    }
+
+    /// Conservative gate for cross-package injection scans (see
+    /// `infer_injected_call`): an embedded stub that declares no
+    /// `injects` cannot contribute a signature, and skipping it keeps
+    /// the package from being parsed at all. User stubs shadow
+    /// embedded data and are always scanned.
+    pub(crate) fn package_may_inject(&self, package: &str) -> bool {
+        self.user_stubs.contains_key(package) || package_has_injects(package)
+    }
+
+    /// Conservative gate for cross-package S3 method scans (see
+    /// `s3_lookup_method` and `s3_dispatch_miss`): an embedded stub
+    /// that ships no S3 methods cannot contribute, and skipping it
+    /// keeps the package from being parsed at all. User stubs shadow
+    /// embedded data and are always scanned.
+    pub(crate) fn package_may_declare_s3(&self, package: &str) -> bool {
+        self.user_stubs.contains_key(package) || package_has_s3_methods(package)
     }
 
     pub(crate) fn package_is_known(&self, package: &str) -> bool {

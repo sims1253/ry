@@ -55,6 +55,16 @@ impl Checker {
     ) -> Option<RType> {
         let spec = signature.higher_order.as_ref()?;
         self.walk_callback_for_diagnostics(signature, args, arg_types, scope);
+        // A fold's initializer describes only the first invocation. Later
+        // accumulators are callback results, and zero iterations return the
+        // initializer/input directly. Neither one invocation nor an input
+        // element establishes the final result (including accumulated output).
+        if spec
+            .callback_args
+            .contains(&CallbackArg::AccumulatorAndElement)
+        {
+            return Some(RType::unknown());
+        }
         let argument_match = match_params(&signature.params, args);
         let declared_length = match &signature.return_ {
             ReturnSpec::Concrete(ty) => json_length_to_length(JsonLength::parse(&ty.length)),
@@ -188,7 +198,7 @@ impl Checker {
             .unwrap_or_else(RType::unknown),
             HigherOrderResultKind::Simplify => {
                 if spec.callback_args == [CallbackArg::Unknown] {
-                    return self.ho_rapply(args, arg_types, argument_match, scope);
+                    return Self::ho_rapply(args, arg_types, argument_match);
                 }
                 match callback_return {
                     Some(ty)
@@ -271,11 +281,7 @@ impl Checker {
                 }
                 CallbackArg::Unknown => types.push(RType::unknown()),
                 CallbackArg::AccumulatorAndElement => {
-                    let data_index = if spec.callback_position == 0 { 1 } else { 0 };
-                    let element = matched_argument_type(arg_types, argument_match, data_index)
-                        .cloned()
-                        .unwrap_or_else(RType::unknown);
-                    types.extend([element.clone(), element]);
+                    types.extend([RType::unknown(), RType::unknown()]);
                 }
                 CallbackArg::ElementsAfterCallback => {
                     types.extend(arguments_bound_to_dots(arg_types, argument_match).cloned())
@@ -343,44 +349,30 @@ impl Checker {
         }
     }
 
-    /// `rapply(L, f, ...)`: recursively applies `f` to each leaf of
-    /// list `L`. The result is a list of the same shape. We model only
-    /// the top-level shape: result is a list with L's length.
-    pub(crate) fn ho_rapply(
-        &mut self,
-        args: &[Arg],
-        arg_types: &[RType],
-        argument_match: &ArgumentMatch,
-        scope: &Scope,
-    ) -> RType {
-        let l_type = matched_argument_type(arg_types, argument_match, 0)
-            .cloned()
-            .unwrap_or_else(RType::unknown);
-        let callback_return = argument_bound_to_formal(args, argument_match, 1)
-            .map(|argument| &argument.value)
-            .and_then(|cb| self.callback_return_type(cb, &[RType::unknown()], scope));
-        let how = args
-            .iter()
-            .find(|arg| arg.name.as_deref() == Some("how"))
-            .map(|arg| &arg.value);
-        let unlists =
-            how.is_none() || matches!(how, Some(Expr::String(value, _)) if value == "unlist");
-        if unlists {
-            if let Some(ret) = callback_return {
-                if matches!(
-                    ret.mode,
-                    Mode::Logical
-                        | Mode::Integer
-                        | Mode::Double
-                        | Mode::Complex
-                        | Mode::Character
-                        | Mode::Raw
-                ) {
-                    return RType::new(ret.mode, Length::Unknown);
-                }
+    /// Recursive simplification can return NULL, an atomic vector, or a list.
+    /// Only literal list/replace controls establish a retained outer shape.
+    fn ho_rapply(args: &[Arg], arg_types: &[RType], argument_match: &ArgumentMatch) -> RType {
+        let Some(Expr::String(how, _)) =
+            argument_bound_to_formal(args, argument_match, 4).map(|argument| &argument.value)
+        else {
+            return RType::unknown();
+        };
+        // R's match.arg() accepts unique nonempty prefixes of these modes.
+        if how.is_empty() {
+            return RType::unknown();
+        }
+        let input = matched_argument_type(arg_types, argument_match, 0);
+        if "list".starts_with(how.as_str()) {
+            return RType::new(Mode::List, input.map_or(Length::Unknown, |ty| ty.length));
+        }
+        if "replace".starts_with(how.as_str()) {
+            if let Some(input) = input.filter(|ty| ty.mode == Mode::List) {
+                return RType::new(Mode::List, input.length).with_class(input.class.clone());
             }
         }
-        RType::new(Mode::List, l_type.length)
+        // replace also accepts expressions, whose runtime mode is not modeled.
+        // unlist depends on recursive leaves, filtering, defaults, and callbacks.
+        RType::unknown()
     }
 
     /// Infer the return type of a single callback invocation, given the
@@ -487,6 +479,63 @@ impl Checker {
         })
     }
 
+    fn fold_callback_inputs(
+        signature: &FunctionSig,
+        args: &[Arg],
+        arg_types: &[RType],
+        argument_match: &ArgumentMatch,
+    ) -> Vec<RType> {
+        let unknown = || vec![RType::unknown(), RType::unknown()];
+        // Dots can supply controls or shift positional matching.
+        if args
+            .iter()
+            .any(|arg| matches!(&arg.value, Expr::Ident { name, .. } if name == "..."))
+        {
+            return unknown();
+        }
+        let formal = |name| signature.params.iter().position(|param| param.name == name);
+        let actual =
+            |name| formal(name).and_then(|i| argument_bound_to_formal(args, argument_match, i));
+        let (data, init, right) = if formal("right").is_some() {
+            let right = match actual("right").map(|arg| &arg.value) {
+                None | Some(Expr::Missing(_)) => Some(false),
+                Some(Expr::Logical(value, _)) => Some(*value),
+                _ => None,
+            };
+            (formal("x"), actual("init"), right)
+        } else if formal(".dir").is_some() {
+            let right = match actual(".dir").map(|arg| &arg.value) {
+                None | Some(Expr::Missing(_)) => Some(false),
+                Some(Expr::String(value, _)) if value == "forward" => Some(false),
+                Some(Expr::String(value, _)) if value == "backward" => Some(true),
+                _ => None,
+            };
+            (formal(".x"), actual(".init"), right)
+        } else {
+            return unknown();
+        };
+        let Some(input) = data.and_then(|i| matched_argument_type(arg_types, argument_match, i))
+        else {
+            return unknown();
+        };
+        if input.class.is_unknown() || input.class.has_known_class() {
+            return unknown();
+        }
+        let init_missing = init.is_none_or(|arg| matches!(arg.value, Expr::Missing(_)));
+        if matches!(input.length, Length::Zero | Length::Known(0))
+            || (init_missing && matches!(input.length, Length::One | Length::Known(1)))
+        {
+            return Vec::new();
+        }
+        // Keep the element operand precise, but never reuse the initializer
+        // or input element as the loop-carried accumulator's type.
+        match right {
+            Some(false) => vec![RType::unknown(), input.clone()],
+            Some(true) => vec![input.clone(), RType::unknown()],
+            None => unknown(),
+        }
+    }
+
     /// Walk the callback body of a higher-order function call for
     /// diagnostics (RY010 unbound variables, RY040 type errors, etc.).
     /// Called from pass 3 (`infer_call`) before the type-computation
@@ -515,7 +564,11 @@ impl Checker {
             return;
         }
         let argument_match = match_params(&signature.params, args);
-        let inputs = self.higher_order_input_types(spec, arg_types, &argument_match);
+        let inputs = if spec.callback_args == [CallbackArg::AccumulatorAndElement] {
+            Self::fold_callback_inputs(signature, args, arg_types, &argument_match)
+        } else {
+            self.higher_order_input_types(spec, arg_types, &argument_match)
+        };
         if inputs.is_empty()
             || inputs.iter().any(|ty| {
                 matches!(ty.length, Length::Zero | Length::Known(0)) || ty.mode == Mode::Function
@@ -532,7 +585,7 @@ impl Checker {
         // function's body is walked (in_parallel is type-transparent).
         let cb = self.unwrap_callback_identity(cb);
         if let Expr::Function { params, body, .. } = cb {
-            let mut fn_scope = scope.clone();
+            let mut fn_scope = scope.independent_execution_scope();
             for (i, p) in params.iter().enumerate() {
                 let t = elem_types.get(i).cloned().unwrap_or(RType::unknown());
                 fn_scope.insert(p.name.clone(), t);

@@ -100,3 +100,63 @@ fn conditional_maps_and_accumulations_do_not_claim_one_callback_shape() {
     assert!(diags.is_empty(), "{diags:?}");
     assert_eq!(scope.get("y").unwrap().length, Length::Unknown);
 }
+
+#[test]
+fn recursive_apply_matches_how_and_keeps_unlisted_shapes_unknown() {
+    for call in [
+        "rapply(list(a = 1L), function(x) 1L, 'ANY', NULL, 'replace')",
+        "rapply(list(a = 1L), function(x) 1L, ho = 'replace')",
+        "rapply(list(a = 1L), function(x) 1L, how = 'rep')",
+        "rapply(f = function(x) 1L, how = 'replace', object = list(a = 1L))",
+    ] {
+        let source = format!("result <- {call}; result$a");
+        let diagnostics = check(&source);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+    }
+    for source in [
+        "result <- rapply(list(1L), identity)",
+        "result <- rapply(list(1L), identity, how = 'unlist')",
+        "result <- rapply(list(1L), identity, how = 'u')",
+        "result <- rapply(list(1L), function(x) NULL)",
+        "how <- getOption('rapply_mode', 'unlist'); result <- rapply(list(1L), function(x) NULL, how = how)",
+        "result <- rapply(list(1L), function(x) list())",
+        "result <- rapply(list(list(1L, 2L)), function(x) c(x, x))",
+        "result <- rapply(expression(1L), identity, how = 'replace')",
+    ] {
+        let (diagnostics, scope) = check_with_scope(source);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+        let result = scope.get("result").unwrap();
+        assert_eq!(
+            (result.mode, result.length),
+            (Mode::Opaque, Length::Unknown),
+            "{source}: {result:?}"
+        );
+    }
+}
+
+#[test]
+fn recursive_apply_literal_list_modes_preserve_top_level_length() {
+    for how in ["list", "replace", "l", "r"] {
+        let source =
+            format!("result <- rapply(list(1L, 2L), function(x) c(1L, 2L), how = '{how}')");
+        let (diagnostics, scope) = check_with_scope(&source);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+        let result = scope.get("result").unwrap();
+        assert_eq!(
+            (result.mode, result.length),
+            (Mode::List, Length::Known(2)),
+            "{source}: {result:?}"
+        );
+    }
+}
+
+#[test]
+fn recursive_apply_replace_preserves_outer_class_without_element_claims() {
+    let (diagnostics, scope) = check_with_scope(
+        "`+.widget` <- function(e1, e2) 7L; input <- structure(list(a = 1L), class = 'widget'); result <- rapply(input, identity, how = 'replace'); result + 1L",
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let result = scope.get("result").unwrap();
+    assert!(result.class.contains("widget"));
+    assert!(result.columns.is_none());
+}

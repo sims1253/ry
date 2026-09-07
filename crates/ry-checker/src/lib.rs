@@ -23,8 +23,8 @@ pub mod project;
 mod reference_facts;
 mod resolve;
 pub use reference_facts::{
-    DefinitionId, ReferenceDefinition, ReferenceDefinitionKind, ReferenceFacts, ReferenceRecord,
-    ReferenceResolution,
+    DefinitionId, ReferenceBlocker, ReferenceDefinition, ReferenceDefinitionKind, ReferenceFacts,
+    ReferenceRecord, ReferenceResolution,
 };
 pub mod rules;
 pub mod semantic_lists;
@@ -293,6 +293,8 @@ pub fn builtin_environment_bindings(path: &str) -> &'static [&'static str] {
 /// A single scope's binding table.
 #[derive(Debug, Clone, Default)]
 pub struct Scope {
+    /// Active loop in this execution frame; independent function scopes clear it.
+    pub(crate) loop_frame: Option<usize>,
     // An unknown effect may install delayed bindings or change syntax itself.
     // Later literal assignments cannot prove that those effects disappeared.
     pub(crate) ops_environment_unknown: bool,
@@ -334,6 +336,15 @@ pub struct Scope {
 }
 
 impl Scope {
+    /// Start a function, deferred expression, or speculative walk without
+    /// inheriting transfers from the caller's active loop.
+    pub(crate) fn independent_execution_scope(&self) -> Self {
+        let mut scope = self.clone();
+        scope.loop_frame = None;
+        scope.unreachable = false;
+        scope
+    }
+
     /// Unknown code may mutate values or install active bindings. Keep names,
     /// but make value uncertainty persist across writes.
     pub(crate) fn invalidate_unknown_effects(&mut self) {
@@ -370,14 +381,32 @@ impl Scope {
         if let Some(provenance) = self.reference_provenance.as_mut() {
             provenance.invalidate(&name);
         }
-        self.literal_functions.remove(semantic_argument_name(&name));
-        self.plain_ops_vectors.remove(semantic_argument_name(&name));
-        self.function_aliases.remove(&name);
-        self.lexical_functions.remove(&name);
-        self.list_origin_bindings.remove(&name);
-        self.parameter_bindings.remove(&name);
-        self.default_parameter_bindings.remove(&name);
-        self.narrowed_bindings.remove(&name);
+        // Empty tables can retain capacity; skipping their removal avoids
+        // hashing names that cannot be present.
+        if !self.literal_functions.is_empty() {
+            self.literal_functions.remove(semantic_argument_name(&name));
+        }
+        if !self.plain_ops_vectors.is_empty() {
+            self.plain_ops_vectors.remove(semantic_argument_name(&name));
+        }
+        if !self.function_aliases.is_empty() {
+            self.function_aliases.remove(&name);
+        }
+        if !self.lexical_functions.is_empty() {
+            self.lexical_functions.remove(&name);
+        }
+        if !self.list_origin_bindings.is_empty() {
+            self.list_origin_bindings.remove(&name);
+        }
+        if !self.parameter_bindings.is_empty() {
+            self.parameter_bindings.remove(&name);
+        }
+        if !self.default_parameter_bindings.is_empty() {
+            self.default_parameter_bindings.remove(&name);
+        }
+        if !self.narrowed_bindings.is_empty() {
+            self.narrowed_bindings.remove(&name);
+        }
         self.bindings.insert(name, t);
     }
 
@@ -705,6 +734,7 @@ pub(crate) struct EnclosingFormals {
 }
 
 pub struct Checker {
+    pub(crate) loop_frames: Vec<infer::loops::LoopExitFrame>,
     typeshed: Arc<Typeshed>,
     user_stubs: Arc<BTreeMap<String, Typeshed>>,
     pub(crate) diagnostics: Vec<Diagnostic>,
@@ -916,6 +946,7 @@ impl Checker {
             load_bindings: HashMap::new(),
             deferred_captures: Vec::new(),
             enclosing_formals: Vec::new(),
+            loop_frames: Vec::new(),
             pipe_argument_types: HashMap::new(),
             capture_scopes: false,
             capture_references: false,

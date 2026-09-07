@@ -89,6 +89,7 @@ Each reference contains:
 | `definition_id` | An ID in this file's `definitions`, or `null`. |
 | `type_at_reference` | A structured type, or `null` when resolution is not established. |
 | `reason` | The checker's explanation for missing evidence, or `null`. |
+| `blocker` | One primary restriction with `kind`, `cause`, `span`, and `scope_span`, or `null`. Additive in schema 2; it does not change the evidence above. |
 
 The checker supports a conservative subset of same-file code: literal
 assignments, copies of established bindings, and a function's own formals and
@@ -118,11 +119,29 @@ through equivalent plain/backtick spellings are excluded. A differently
 spelled read cannot resolve by matching a decoded name.
 
 Calls, operators, indexing, control flow, nonstandard evaluation, and other
-unsupported statements end the supported prefix. The entire statement and
-its suffix remain unsupported, including fresh literal assignments. Earlier
+unsupported statements end the supported prefix. Except for the bounded read
+below, the entire statement and its suffix remain unsupported, including fresh
+literal assignments. Earlier
 proven reads retain their definition IDs and types. This does not establish
 evaluation order inside an unsupported expression. Top-level braces that the
 parser flattens into a statement sequence follow that sequence.
+
+A standalone `base::length(x)` statement can capture its one unnamed ordinary
+identifier argument when callable provenance and the shared `sole_argument`
+forcing contract are proven. An established local keeps its assignment ID and
+type; an own formal keeps its formal ID with unknown type. The namespace callee
+has no same-file definition. Aliases, bare/custom callees, named or multiple
+arguments, parenthesized/nested expressions, and assignment RHS calls are
+excluded. Shadowing `::`, earlier barriers, and uncertain bindings also prevent
+proof. Comments between the direct call's tokens do not change its shape.
+
+This boundary relies on R's eager primitive evaluation, not the checker's
+argument traversal order: [`length` is registered with evaluation flag 1](https://github.com/wch/r-source/blob/trunk/src/main/names.c),
+and [the builtin evaluator evaluates the argument list before calling the primitive](https://github.com/wch/r-source/blob/trunk/src/main/eval.c).
+The call still ends the prefix, even for a known local, because dispatch can
+change bindings. In `f <- function(p = { x <- "changed"; 1L }) { x <- 1L;
+base::length(p); x }`, `p` may resolve with unknown type; the final `x` remains
+unsupported. A later assignment cannot restore reference evidence.
 
 Mixed equivalent spellings, writes to formals, and unsupported declaration
 names still exclude the whole lexical scope. Nested function bodies remain
@@ -137,6 +156,60 @@ not establish that a rename or other edit is safe.
 
 See the [fixed coverage panel](corpus/reference-prefixes.md) for measured
 changes and unchanged real-source cases.
+
+### Blocker provenance
+
+`blocker` explains a refusal; it never supplies a definition, type, or runtime
+read order. Its spans use the same original-source byte and line/column format
+as reference spans. `scope_span` identifies the scope that owns the blocker,
+which can be an ancestor of the reference's scope. `span` is `null` when the
+operation is not located. A null blocker means no additional provenance was
+recorded, not that the reference is safe.
+
+Only **one primary blocker** is reported. It is not an exhaustive list. Static
+inventory uses this deterministic precedence:
+
+1. An inherited restriction retains the ancestor's original cause and spans.
+   Parse errors restrict the whole file; the earliest error span is reported.
+2. Whole-scope declaration restrictions take precedence over all statement
+   barriers, even for reads before the declaration. The first restriction in
+   formal order, then assignment traversal order, wins. A write that is both
+   a formal write and a spelling conflict is reported as `formal_write`.
+3. The first unsupported statement blocks itself and its suffix. It is
+   `containing_statement` for reads in that statement, then `prior_statement`
+   for later reads, even if their own statement is also unsupported.
+4. Lazy default expressions are inventoried separately with `lazy_default`;
+   their nested functions inherit that restriction.
+
+| `kind` | `cause` codes | Location |
+| --- | --- | --- |
+| `containing_statement`, `prior_statement` | `unsupported_statement` | First unsupported statement and its owning scope; expression spans may omit wrapping parentheses. |
+| `inherited_scope` | Original ancestor cause from this table. | Original ancestor blocker and owner, not the nested read. |
+| `whole_scope` | `parse_error`, `duplicate_formal`, `unsupported_formal`, `unbacked_formal`, `formal_write`, `mixed_spelling`, `unsupported_declaration` | Error region, formal, or assignment target; owning scope. |
+| `default_expression` | `lazy_default` | Default expression and function scope. |
+| `prior_read` | `unsafe_read` | First unsafe read observed by the semantic walk and its owning scope. |
+| `semantic_effect` | `unknown_effect` | Unknown operation span; owning scope is retained. |
+
+`parse_error` is available to library consumers that capture a recovered syntax
+tree. `ry dump-facts` rejects files with parse errors before capture and does
+not export this cause.
+
+For an otherwise eligible occurrence, the semantic walk retains its existing
+reason precedence. `after_unsafe_read` gains the first unsafe-read location,
+or `unknown_effect` if unlocated invalidation happened first. A later unsafe
+read cannot replace that first blocker. Conflicting observations discard
+blocker provenance along with definition/type evidence. Newly resolved reads
+have no blocker.
+
+The existing `reason` codes remain unchanged: `unsupported_scope`,
+`not_observed`, `after_unsafe_read`, `unknown_environment`, `deferred_capture`,
+`untracked_binding`, `unbound_name`, `untracked_lookup`, and
+`conflicting_observations`. Reasons without further recorded provenance keep
+`blocker: null`. Neither the schema version nor the reference capability is
+promoted by this addition.
+
+See the [blocker regression panel](corpus/reference-blockers.md) for preserved
+legacy facts and the primary-reason breakdown on selected real sources.
 
 ## Schema version 1
 

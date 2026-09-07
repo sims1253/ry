@@ -1196,3 +1196,57 @@ fn registered_native_symbols_resolve_in_value_position() {
         "without .registration the symbol is not proven bound: {undeclared_stdout}"
     );
 }
+
+#[test]
+fn empty_discovery_preserves_output_format_contracts() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(
+        tmp.path().join("DESCRIPTION"),
+        "Package: dataonly\nVersion: 1.0\n",
+    )
+    .unwrap();
+    for format in ["json", "gitlab", "junit", "github", "full", "concise"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+            .current_dir(tmp.path())
+            .args(["check", ".", "--output-format", format])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{format}: {output:?}");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("no .R / .r files found"));
+        match format {
+            "json" | "gitlab" => {
+                let value: serde_json::Value = serde_json::from_slice(&output.stdout)
+                    .unwrap_or_else(|error| panic!("{format}: {error}: {output:?}"));
+                assert_eq!(value, serde_json::json!([]));
+            }
+            "junit" => {
+                let stdout = String::from_utf8(output.stdout).unwrap();
+                assert!(stdout.contains("<?xml"), "{stdout}");
+                assert!(stdout.contains("tests=\"0\""), "{stdout}");
+                assert!(stdout.contains("failures=\"0\""), "{stdout}");
+                assert!(stdout.contains("</testsuites>"), "{stdout}");
+            }
+            _ => assert!(output.stdout.is_empty(), "{format}: {output:?}"),
+        }
+    }
+}
+
+#[test]
+fn excluded_sources_still_emit_json_document() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(
+        tmp.path().join("ry.toml"),
+        "exclude = [\"*.R\"]\noutput-format = \"json\"\n",
+    )
+    .unwrap();
+    fs::write(tmp.path().join("excluded.R"), "1 + 'bad'\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .current_dir(tmp.path())
+        .args(["check", "."])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no .R / .r files found"));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value, serde_json::json!([]));
+}

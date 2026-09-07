@@ -911,6 +911,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_recursive_default_user_defuser.R
 - diagnostics: []
+  fixture: ok_regmatches_callback_lengths.R
+- diagnostics: []
   fixture: ok_s3_data_frame.R
 - diagnostics: []
   fixture: ok_s3_data_frame_operator_override.R
@@ -938,6 +940,8 @@ expression: snapshots
   fixture: ok_seq_for_loop.R
 - diagnostics: []
   fixture: ok_short_circuit_narrowing.R
+- diagnostics: []
+  fixture: ok_sort_int_indexed_result.R
 - diagnostics: []
   fixture: ok_standalone_guard_uncertain_and_collisions.R
 - diagnostics:

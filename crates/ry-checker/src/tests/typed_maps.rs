@@ -1,6 +1,30 @@
 use super::*;
 
 #[test]
+fn regmatches_callbacks_do_not_assume_scalar_elements() {
+    for source in [
+        "x <- c('ab','z'); matches <- regmatches(x,regexec('(a)(b)',x)); Filter(function(z) length(z)>0L,matches)",
+        "x <- c('aa','z'); matches <- regmatches(x,gregexpr('a',x)); lapply(matches,function(z) { if(length(z)==0L) return(z); toupper(z) })",
+        "matches <- regmatches('ab',regexpr('a','ab'),invert=TRUE); lapply(matches,function(z) { if(length(z)==0L) return(z); z })",
+    ] {
+        let diags = check(source);
+        assert!(diags.iter().all(|d| d.code != "RY105"), "{source}: {diags:?}");
+    }
+}
+
+#[test]
+fn ordinary_character_callback_elements_still_have_scalar_length() {
+    let diags = check("Filter(function(z) length(z)>0L,c('', 'ab'))");
+    assert!(diags.iter().any(|d| d.code == "RY105"), "{diags:?}");
+}
+
+#[test]
+fn indexed_sort_does_not_borrow_input_vector_shape() {
+    let diags = check("x <- sort.int(c(2,1),method='quick',index.return=TRUE); x$ix; x$x");
+    assert!(diags.iter().all(|d| d.code != "RY061"), "{diags:?}");
+}
+
+#[test]
 fn typed_callback_contract_is_independent_of_result_length() {
     for call in [
         "map_dbl(1, function(x) 'x')",

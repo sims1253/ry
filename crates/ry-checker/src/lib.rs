@@ -189,8 +189,8 @@ fn type_with_assigned_column(mut base: RType, name: &str, value: RType) -> RType
 
 /// Returns `Some((generic, class))` if `name` matches the S3 method
 /// naming convention `<generic>.<class>` and `<generic>` is in the
-/// curated stub-data generic table. Longest match wins (handles rare
-/// multi-segment cases).
+/// curated stub-data or group-member generic tables. Longest match wins
+/// (handles rare multi-segment cases).
 fn split_s3_method_name(name: &str, globals: &Globals) -> Option<(String, String)> {
     if globals
         .s3_split_denylist
@@ -200,7 +200,13 @@ fn split_s3_method_name(name: &str, globals: &Globals) -> Option<(String, String
         return None;
     }
     let mut best: Option<(String, String)> = None;
-    for generic in &globals.s3_generics {
+    for generic in globals
+        .s3_generics
+        .iter()
+        .map(String::as_str)
+        .chain(semantic_lists::S3_MATH_GENERICS.iter().copied())
+        .chain(semantic_lists::S3_SUMMARY_GENERICS.iter().copied())
+    {
         if let Some(class) = name
             .strip_prefix(generic)
             .and_then(|rest| rest.strip_prefix('.'))
@@ -211,7 +217,7 @@ fn split_s3_method_name(name: &str, globals: &Globals) -> Option<(String, String
             // Prefer the longest matching prefix (more specific).
             let is_better = best.as_ref().is_none_or(|(g, _)| g.len() < generic.len());
             if is_better {
-                best = Some((generic.clone(), class.to_string()));
+                best = Some((generic.to_string(), class.to_string()));
             }
         }
     }

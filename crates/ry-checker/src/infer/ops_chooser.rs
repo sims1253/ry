@@ -8,11 +8,36 @@ pub(crate) enum Dispatch {
     },
 }
 
+/// Literal body values can prove inequality without assuming that separately
+/// allocated closures differ. R ignores numeric spelling and source locations.
+#[derive(Debug, PartialEq)]
+enum LiteralBody {
+    Logical(bool),
+    Integer(i64),
+    Double(f64),
+    Character(Option<String>),
+}
+
+impl LiteralBody {
+    fn definitely_differs(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Double(left), Self::Double(right)) => {
+                left != right && !(left.is_nan() && right.is_nan())
+            }
+            (Self::Character(left), Self::Character(right)) => {
+                matches!((left, right), (Some(left), Some(right)) if left != right)
+            }
+            _ => self != other,
+        }
+    }
+}
+
 /// Evidence about a function value installed by an ordinary assignment.
 /// Aliases share this allocation; equal return types alone are not identity.
 #[derive(Debug)]
 pub(crate) struct LiteralFunction {
     mode: Mode,
+    body: LiteralBody,
     choice: Option<bool>,
     accepts_two: bool,
     accepts_six: bool,
@@ -36,11 +61,17 @@ pub(crate) fn literal_function(
     let [Stmt::Expr(value)] = body.as_slice() else {
         return None;
     };
-    let (mode, choice) = match value {
-        Expr::Logical(value, _) => (Mode::Logical, Some(*value)),
-        Expr::Integer(..) => (Mode::Integer, None),
-        Expr::Double(..) => (Mode::Double, None),
-        Expr::String(..) => (Mode::Character, None),
+    let (mode, body, choice) = match value {
+        Expr::Logical(value, _) => (Mode::Logical, LiteralBody::Logical(*value), Some(*value)),
+        Expr::Integer(value, _) => (Mode::Integer, LiteralBody::Integer(*value), None),
+        Expr::Double(value, _) => (Mode::Double, LiteralBody::Double(*value), None),
+        Expr::String(value, _) => (
+            Mode::Character,
+            // Undecodable byte escapes remain raw text in the AST. Do not
+            // mistake alternate escape spellings for unequal R strings.
+            LiteralBody::Character((!value.contains('\\')).then(|| value.clone())),
+            None,
+        ),
         _ => return None,
     };
     if syntax_rebound(checker, scope) {
@@ -60,6 +91,7 @@ pub(crate) fn literal_function(
     };
     Some(Arc::new(LiteralFunction {
         mode,
+        body,
         choice,
         accepts_two: accepts(&["e1", "e2"]),
         accepts_six: accepts(&["x", "y", "mx", "my", "cl", "reverse"]),
@@ -131,12 +163,12 @@ pub(crate) fn dispatch(
         (Some(true), _) => Dispatch::Value(RType::scalar(left.mode)),
         (Some(false), Some(true)) => Dispatch::Value(RType::scalar(right.mode)),
         (Some(false), Some(false))
-            if left.mode != right.mode
+            if left.body.definitely_differs(&right.body)
                 && ((scalar_primitive(lhs) && scalar_primitive(rhs))
                     || (plain_vectors && known_atomic(lhs) && known_atomic(rhs))) =>
         {
-            // Different literal storage modes prove that the method bodies
-            // are not identical. Equal modes alone prove nothing about identity.
+            // Unequal literal values prove distinct bodies even when their
+            // storage modes match. Equal bodies alone do not prove identity.
             Dispatch::IncompatiblePrimitive {
                 left_method: left_name,
                 right_method: right_name,

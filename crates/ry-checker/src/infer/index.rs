@@ -34,6 +34,18 @@ fn dollar_receiver_is_definitely_atomic(receiver: &RType) -> bool {
     }
 }
 
+pub(super) fn dollar_atomic_receiver_may_dispatch(receiver: &RType) -> bool {
+    if receiver.mode == Mode::Union {
+        // structure() can attach the dispatch class to the union itself.
+        return receiver.class != ClassVector::empty()
+            || receiver
+                .members
+                .as_ref()
+                .is_some_and(|members| members.iter().any(dollar_atomic_receiver_may_dispatch));
+    }
+    atomic_mode(receiver) && receiver.class != ClassVector::empty()
+}
+
 /// A human-readable description of the receiver's mode(s) for the RY061
 /// message. For a single type this is just the mode name; for a union
 /// the member modes are listed so the user can see which types combined.
@@ -94,6 +106,13 @@ impl Checker {
         }
         match kind {
             IndexKind::Dollar => {
+                // `$` dispatches on classed atomic values. The pooled method
+                // table cannot prove which method applies here, its return
+                // type, or its writes to the caller.
+                if dollar_atomic_receiver_may_dispatch(&bt) {
+                    scope.invalidate_unknown_effects();
+                    return RType::unknown();
+                }
                 // RY061: `$` on an atomic vector is a runtime error in R
                 // ("$ operator is invalid for atomic vectors"). Only flag
                 // when we're confident the type is atomic (not opaque,
@@ -573,17 +592,11 @@ pub(crate) fn extract_literal_int(e: &Expr) -> Option<i64> {
 ///   * base: `makeActiveBinding` has no stub.
 ///   * rlang: `defuse` and `tidyeval_data` are unexported and ship no
 ///     stub.
-///   * ggplot2 and data.table ship no stubs.
+///   * data.table ships no stubs.
 ///   * tidyselect's stub does not declare `peek_vars`. `all_vars` is
 ///     not here: dplyr — the package it is called through — declares
 ///     `expr: data_mask` for it.
 pub(crate) const NSE_SYMBOL_FNS: &[&str] = &[
-    // ggplot2 NSE
-    "from_theme",
-    "aes",
-    "aes_",
-    "aes_string",
-    "aes_q",
     // rlang NSE
     "defuse",
     "tidyeval_data",
@@ -628,10 +641,22 @@ pub(crate) fn insert_s3_dispatch_context(method_name: &str, scope: &mut Scope, g
     let method_name = semantic_argument_name(method_name);
     let group_method = split_s3_method_name(method_name, globals)
         .is_some_and(|(generic, _)| crate::semantic_lists::is_group_generic(&generic));
-    if group_method {
+    // Subset primitives supply the S3 dispatch bindings too, but do not
+    // belong to a group. Require a nonempty class suffix, as for group methods.
+    let subset_method = ["[", "[[", "$", "[<-", "[[<-", "$<-"]
+        .iter()
+        .any(|generic| {
+            method_name
+                .strip_prefix(generic)
+                .and_then(|suffix| suffix.strip_prefix('.'))
+                .is_some_and(|class| !class.is_empty())
+        });
+    if group_method || subset_method {
         scope.insert(".Generic", RType::scalar(Mode::Character));
         scope.insert(".Method", RType::new(Mode::Character, Length::Unknown));
         scope.insert(".Class", RType::new(Mode::Character, Length::Unknown));
+    }
+    if group_method {
         scope.insert(".Group", RType::scalar(Mode::Character));
     }
 }

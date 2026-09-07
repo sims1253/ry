@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "base",
-  "version": "0.0.10",
+  "version": "0.0.13",
   "globals": {
     "ambient": [
       "..deparseOpts",
@@ -2623,13 +2623,13 @@
           "accumulator_and_element"
         ],
         "result": {
-          "kind": "callback_return",
-          "source_arg": 1
+          "kind": "callback_return"
         }
       },
       "return": {
         "mode": "opaque",
-        "length": "1"
+        "length": "unknown",
+        "na": true
       }
     },
     "Sys.Date": {
@@ -3301,12 +3301,15 @@
     },
     "confint": {
       "params": [
-        "object"
+        "object",
+        "parm",
+        "level",
+        "..."
       ],
       "return": {
-        "mode": "double",
+        "mode": "opaque",
         "length": "unknown",
-        "na": false
+        "na": true
       }
     },
     "constrOptim": {
@@ -4225,12 +4228,18 @@
     "grep": {
       "params": [
         "pattern",
-        "x"
+        "x",
+        "ignore.case",
+        "perl",
+        "value",
+        "fixed",
+        "useBytes",
+        "invert"
       ],
       "return": {
-        "mode": "integer",
+        "mode": "opaque",
         "length": "unknown",
-        "na": false
+        "na": true
       }
     },
     "grepl": {

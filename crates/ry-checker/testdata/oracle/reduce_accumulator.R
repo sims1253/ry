@@ -29,3 +29,9 @@ if (requireNamespace('purrr', quietly = TRUE)) {
   stopifnot(identical(purrr::reduce(c('a', 'b'), function(a, b) b | TRUE, .init = FALSE, .dir = 'backward'), TRUE))
   stopifnot(identical(purrr::reduce('a', function(a, b) TRUE), 'a'))
 }
+
+# A fold result can be empty; the zero-length guard is meaningful.
+groups <- list(c('a', 'b'), 'c')
+intersection <- Reduce(intersect, groups)
+stopifnot(identical(intersection, character()))
+if (length(Reduce(intersect, groups)) == 0) TRUE

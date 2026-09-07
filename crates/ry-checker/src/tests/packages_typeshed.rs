@@ -813,3 +813,35 @@ fn ggplot2_aesthetic_and_facet_injection_preserves_ordinary_helpers() {
         "ordinary helper arguments still execute negation: {diagnostics:?}"
     );
 }
+
+#[test]
+fn grep_value_results_do_not_claim_numeric_comparisons() {
+    for call in [
+        "grep('a', c('a', 'b'), value = TRUE)",
+        "grep('a', c('a', 'b'), FALSE, FALSE, TRUE)",
+        "grep('a', c('a', 'b'), val = TRUE)",
+    ] {
+        let diagnostics = check(&format!("matches <- {call}; matches != 'b'"));
+        assert!(diagnostics.is_empty(), "{call}: {diagnostics:?}");
+    }
+    assert!(check("1L != 'b'").iter().any(|d| d.code == "RY033"));
+}
+
+#[test]
+fn confint_dispatch_does_not_claim_an_atomic_result() {
+    let diagnostics = check("f <- function(model) { ci <- stats::confint(model); ci$interval }");
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert!(check("c(1, 2)$interval").iter().any(|d| d.code == "RY061"));
+}
+
+#[test]
+fn fold_results_do_not_claim_scalar_length_guards() {
+    let diagnostics =
+        check("groups <- list(c('a', 'b'), 'c'); if (length(Reduce(intersect, groups)) == 0) TRUE");
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert!(
+        check("if (length(sum(1:3)) == 0) TRUE")
+            .iter()
+            .any(|d| d.code == "RY105")
+    );
+}

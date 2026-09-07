@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "180a25bef678edd5b05e296abab80e25588d9e28632b1117280eefbc074069c8",
-  "ry_commit": "957fe80911fb90b5984cd4d2e7ac573b380056fc",
+  "source_sha256": "63b93b03df9815b10c75a9eec59c28cd6e49dc23dd85cf73ab9bb779b152115c",
+  "ry_commit": "0042db75b6a75eae7d56d3ae36afc91e1c228969",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -173,7 +173,7 @@
       "repo": "r-lib/styler",
       "stars": 770,
       "commit": "d3d7854df2d73f539b6cb2286dbf5dddaf3e58f6",
-      "diagnostics": 7
+      "diagnostics": 6
     },
     {
       "name": "glue",
@@ -208,7 +208,7 @@
       "repo": "tidymodels/recipes",
       "stars": 618,
       "commit": "92704cb072b1bb4951061034be6bfa4678e0e43a",
-      "diagnostics": 28
+      "diagnostics": 0
     },
     {
       "name": "ellmer",
@@ -3972,258 +3972,6 @@
       "audit_group": "type-narrowing"
     },
     {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 43,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 44,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 45,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 46,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 47,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 48,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 49,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 50,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 51,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 52,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 53,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 54,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 55,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 58,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 59,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 60,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 61,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 62,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 63,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 64,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 65,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 66,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 67,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 68,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 69,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 70,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 71,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "recipes",
-      "code": "RY033",
-      "path": "tests/testthat/test-skipping.R",
-      "line": 72,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
       "package": "renv",
       "code": "RY001",
       "path": "R/bootstrap.R",
@@ -5783,15 +5531,6 @@
     {
       "package": "styler",
       "code": "RY033",
-      "path": "R/roxygen-examples-add-remove.R",
-      "line": 57,
-      "column": 25,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "styler",
-      "code": "RY033",
       "path": "R/rules-line-breaks.R",
       "line": 364,
       "column": 9,
@@ -6278,7 +6017,7 @@
   ],
   "classification": {
     "true_positive": 43,
-    "false_positive": 605,
+    "false_positive": 576,
     "uncertain": 0
   },
   "audit_group_counts": {
@@ -6292,7 +6031,7 @@
     "reassign-scope": 10,
     "s3-method-dispatch": 3,
     "test-fixture": 71,
-    "type-narrowing": 96,
+    "type-narrowing": 67,
     "upstream-package": 31
   },
   "notes": [
@@ -6305,6 +6044,7 @@
     "Unproven factor/new calls now discard downstream facts because the callee or skipped arguments may change caller bindings. This reduces coverage by ten previously audited dplyr identities: RY002 test-mutate.R:793 and test-summarise.R:321/331; RY040 test-count-tally.R:139/173/214/245 and test-mutate.R:408/410; RY060 test-mutate.R:794 (all under tests/testthat/). These are conservative coverage losses after uncertain bare factor calls, not ten individually corrected false positives. Their existing false-positive labels are unchanged; all 43 required true positives remain covered.",
     "Conservative switch provenance and selected-effect handling removes 31 previously audited false-positive identities: bslib 12, cli 6, shinydashboard 5, pak 3, rlang 3, gt 1, and rmarkdown 1. These are coverage changes where switch selection or caller effects cannot be proved, not 31 individually established semantic corrections. The exact pinned 62-package parent comparison adds no findings and preserves all 43 required true positives.",
     "Registered S3 methods no longer lend return types to receivers without a matching class; uncertain registered dispatch stays opaque instead of falling through to a scalar default. The full pinned comparison removes three previously reviewed false-positive identities: broom RY061 at R/gmm.R:96:11 and lintr RY060 at tests/testthat/test-linter_tags.R:172:24 and :178:15. No identities are added and all 43 true positives remain. The existing rlang RY001 at R/trace.R:531:7 retains its identity with an opaque rather than logical condition mode in its message.",
-    "Truthful polymorphic regmatches returns remove seven reviewed RY105 false positives: bookdown R/html.R:878:9, :965:9, :1069:9, :1138:9 and R/utils.R:441:9; flexdashboard R/flex_dashboard.R:633:9; rmarkdown R/html_dependencies.R:245:9. These guards inspect variable-length character vectors from gregexpr/regexec match lists, not known scalar strings. Runtime oracle controls cover empty and multiple-match elements; all required true positives remain covered."
+    "Truthful polymorphic regmatches returns remove seven reviewed RY105 false positives: bookdown R/html.R:878:9, :965:9, :1069:9, :1138:9 and R/utils.R:441:9; flexdashboard R/flex_dashboard.R:633:9; rmarkdown R/html_dependencies.R:245:9. These guards inspect variable-length character vectors from gregexpr/regexec match lists, not known scalar strings. Runtime oracle controls cover empty and multiple-match elements; all required true positives remain covered.",
+    "The verified grep contract removes 29 reviewed RY033 false positives: recipes tests/testthat/test-skipping.R lines 43\u201355 and 58\u201372, and styler R/roxygen-examples-add-remove.R:57:25. Each compares character values returned by grep(value = TRUE). The full pinned comparison adds no identities and retains all 43 true positives. The same source sync includes truthful fold and confint contracts and ggplot2 injection metadata, which add no other Posit identity changes."
   ]
 }

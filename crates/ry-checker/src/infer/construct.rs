@@ -114,7 +114,7 @@ impl Checker {
             || (exact == 0 && partial > 1)
             || args.iter().any(|arg| {
                 matches!(&arg.value, Expr::Ident { name, .. } if name == "...")
-                    || matches!(&arg.value, Expr::Unknown(_))
+                    || matches!(&arg.value, Expr::Unknown(_) | Expr::Missing(_))
             })
         {
             return Self::infer_unknown_constructor(scope);
@@ -170,7 +170,7 @@ impl Checker {
             || (exact_payloads == 0 && partial_payloads > 1)
             || args.iter().enumerate().any(|(index, arg)| {
                 matches!(&arg.value, Expr::Ident { name, .. } if name == "...")
-                    || matches!(&arg.value, Expr::Unknown(_))
+                    || matches!(&arg.value, Expr::Unknown(_) | Expr::Missing(_))
                     || (index != payload && arg.name.is_none())
             })
         {
@@ -386,7 +386,10 @@ impl Checker {
                 }
             });
         }
-        let length = if args.iter().any(|a| matches!(a.value, Expr::Unknown(_))) {
+        let length = if args
+            .iter()
+            .any(|a| matches!(a.value, Expr::Unknown(_) | Expr::Missing(_)))
+        {
             Length::Unknown
         } else {
             Length::Known(total_len)
@@ -415,7 +418,7 @@ impl Checker {
         // cannot justify missing-column diagnostics.
         if args.iter().any(|arg| {
             matches!(&arg.value, Expr::Ident { name, .. } if name == "...")
-                || matches!(&arg.value, Expr::Unknown(_))
+                || matches!(&arg.value, Expr::Unknown(_) | Expr::Missing(_))
         }) {
             schema.complete = false;
         }

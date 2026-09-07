@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "d1a0031bdd2a1d4776cf9aa650352f694e4c46596a1beb5804745d1ba620d763",
-  "ry_commit": "59f5792d07946ccdf6588b7cb0d850393dced503",
+  "source_sha256": "180a25bef678edd5b05e296abab80e25588d9e28632b1117280eefbc074069c8",
+  "ry_commit": "957fe80911fb90b5984cd4d2e7ac573b380056fc",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -138,7 +138,7 @@
       "repo": "rstudio/flexdashboard",
       "stars": 846,
       "commit": "8ae8623f2d9cdadb2316b953908bed0ba7bc3f87",
-      "diagnostics": 6
+      "diagnostics": 5
     },
     {
       "name": "pak",
@@ -257,14 +257,14 @@
       "repo": "rstudio/bookdown",
       "stars": 4063,
       "commit": "92e702a5133adcbce1f7e3f35cd9700bcbb370b6",
-      "diagnostics": 5
+      "diagnostics": 0
     },
     {
       "name": "rmarkdown",
       "repo": "rstudio/rmarkdown",
       "stars": 3054,
       "commit": "194c2a11e3d345e294906152b6f60f0439422022",
-      "diagnostics": 3
+      "diagnostics": 2
     },
     {
       "name": "devtools",
@@ -475,51 +475,6 @@
       "code": "RY105",
       "path": "R/hugo.R",
       "line": 380,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bookdown",
-      "code": "RY105",
-      "path": "R/html.R",
-      "line": 878,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bookdown",
-      "code": "RY105",
-      "path": "R/html.R",
-      "line": 965,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bookdown",
-      "code": "RY105",
-      "path": "R/html.R",
-      "line": 1069,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bookdown",
-      "code": "RY105",
-      "path": "R/html.R",
-      "line": 1138,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bookdown",
-      "code": "RY105",
-      "path": "R/utils.R",
-      "line": 441,
       "column": 9,
       "label": "false_positive",
       "audit_group": "manual-audit"
@@ -2080,15 +2035,6 @@
       "column": 7,
       "label": "false_positive",
       "audit_group": "type-narrowing"
-    },
-    {
-      "package": "flexdashboard",
-      "code": "RY105",
-      "path": "R/flex_dashboard.R",
-      "line": 633,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
     },
     {
       "package": "ggplot2",
@@ -4971,15 +4917,6 @@
       "audit_group": "manual-audit"
     },
     {
-      "package": "rmarkdown",
-      "code": "RY105",
-      "path": "R/html_dependencies.R",
-      "line": 245,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
       "package": "shiny-r",
       "code": "RY000",
       "path": "inst/app_template/app.R",
@@ -6341,11 +6278,11 @@
   ],
   "classification": {
     "true_positive": 43,
-    "false_positive": 612,
+    "false_positive": 605,
     "uncertain": 0
   },
   "audit_group_counts": {
-    "manual-audit": 356,
+    "manual-audit": 349,
     "data-masking-nse": 2,
     "delayed-assign": 15,
     "function-shadowing": 3,
@@ -6367,6 +6304,7 @@
     "The grid export inventory removes four ggplot2 RY010 false positives: is.unit at R/guide-axis-stack.R:35:25 and R/guide-custom.R:44:23 and :45:24, and is.grob at R/guide-custom.R:43:22. These callback names resolve through the package NAMESPACE import(grid). All other reviewed identities, including all 43 true positives, are unchanged.",
     "Unproven factor/new calls now discard downstream facts because the callee or skipped arguments may change caller bindings. This reduces coverage by ten previously audited dplyr identities: RY002 test-mutate.R:793 and test-summarise.R:321/331; RY040 test-count-tally.R:139/173/214/245 and test-mutate.R:408/410; RY060 test-mutate.R:794 (all under tests/testthat/). These are conservative coverage losses after uncertain bare factor calls, not ten individually corrected false positives. Their existing false-positive labels are unchanged; all 43 required true positives remain covered.",
     "Conservative switch provenance and selected-effect handling removes 31 previously audited false-positive identities: bslib 12, cli 6, shinydashboard 5, pak 3, rlang 3, gt 1, and rmarkdown 1. These are coverage changes where switch selection or caller effects cannot be proved, not 31 individually established semantic corrections. The exact pinned 62-package parent comparison adds no findings and preserves all 43 required true positives.",
-    "Registered S3 methods no longer lend return types to receivers without a matching class; uncertain registered dispatch stays opaque instead of falling through to a scalar default. The full pinned comparison removes three previously reviewed false-positive identities: broom RY061 at R/gmm.R:96:11 and lintr RY060 at tests/testthat/test-linter_tags.R:172:24 and :178:15. No identities are added and all 43 true positives remain. The existing rlang RY001 at R/trace.R:531:7 retains its identity with an opaque rather than logical condition mode in its message."
+    "Registered S3 methods no longer lend return types to receivers without a matching class; uncertain registered dispatch stays opaque instead of falling through to a scalar default. The full pinned comparison removes three previously reviewed false-positive identities: broom RY061 at R/gmm.R:96:11 and lintr RY060 at tests/testthat/test-linter_tags.R:172:24 and :178:15. No identities are added and all 43 true positives remain. The existing rlang RY001 at R/trace.R:531:7 retains its identity with an opaque rather than logical condition mode in its message.",
+    "Truthful polymorphic regmatches returns remove seven reviewed RY105 false positives: bookdown R/html.R:878:9, :965:9, :1069:9, :1138:9 and R/utils.R:441:9; flexdashboard R/flex_dashboard.R:633:9; rmarkdown R/html_dependencies.R:245:9. These guards inspect variable-length character vectors from gregexpr/regexec match lists, not known scalar strings. Runtime oracle controls cover empty and multiple-match elements; all required true positives remain covered."
   ]
 }

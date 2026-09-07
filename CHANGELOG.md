@@ -12,6 +12,8 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Wait for workspace bindings before publishing initial editor diagnostics,
+  including files opened while the workspace scan is running.
 - Custom or masked `factor` and `new` calls no longer acquire builtin constructor facts. S4 constructor inference requires methods provenance, and detaching a package invalidates the default search-path assumption.
 
 - Resolve visible custom arithmetic, comparison, and vector logical operators

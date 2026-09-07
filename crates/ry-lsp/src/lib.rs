@@ -29,9 +29,9 @@
 //! and crash the client. All `tracing` output is routed to stderr via
 //! the CLI's `tracing_subscriber` initialization before `run()` is called.
 
-/// Test-only scheduler/barrier seam for forcing parse/didChange
-/// interleaving (the forced sequence is documented at the `maybe_pause`
-/// call site in `backend::parsed_file`). The seam controls scheduling
+/// Test-only barriers for parse/didChange interleaving and initial indexing.
+/// The parse sequence is documented at the `maybe_pause` call site in
+/// `backend::parsed_file`. The seams control scheduling
 /// only; cache policy (version-stamped tree rejection) is production
 /// code in `backend::parsed_file` and `State::store_tree`/`State::tree_for`.
 ///

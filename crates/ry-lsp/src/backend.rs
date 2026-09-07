@@ -77,6 +77,8 @@ pub(super) struct State {
     /// background task captures the generation at dispatch and checks it
     /// before writing.
     index_generation: u64,
+    /// Files opened during initialization wait for the first workspace context.
+    initial_index_pending: bool,
     /// Runtime stubs loaded from the workspace's `ry.toml`. Kept in state so
     /// every rebuilt Project and single-file scope check sees the same data.
     user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
@@ -835,6 +837,9 @@ impl Backend {
         // eligible documents' versions are snapshotted.
         let (doc_versions, requested_is_eligible, supports_diagnostic_data) = {
             let state = self.state.lock().await;
+            if state.initial_index_pending {
+                return;
+            }
             (
                 state
                     .docs
@@ -1055,8 +1060,8 @@ impl Backend {
     /// This function never publishes diagnostics itself: callers await it
     /// and then republish (e.g. `did_change_watched_files`), which is what
     /// makes cross-file calls into unopened files resolve on the next
-    /// check.
-    async fn spawn_background_index(&self) {
+    /// check. Returns false when a newer scan or folder change supersedes it.
+    async fn spawn_background_index(&self) -> bool {
         let (roots_with_config, index_gen) = {
             let mut state = self.state.lock().await;
             state.index_generation = state.index_generation.wrapping_add(1);
@@ -1079,9 +1084,16 @@ impl Backend {
             (roots, idx_gen)
         };
         if roots_with_config.is_empty() {
-            return;
+            let mut state = self.state.lock().await;
+            if state.index_generation == index_gen {
+                state.initial_index_pending = false;
+                return true;
+            }
+            return false;
         }
 
+        #[cfg(feature = "test-util")]
+        crate::test_seam::maybe_pause_initial_index().await;
         let indexed = tokio::task::spawn_blocking(move || {
             let mut all_disk_files: HashMap<String, Arc<SourceFile>> = HashMap::new();
             let mut contexts = Vec::new();
@@ -1153,7 +1165,7 @@ impl Backend {
                         current = state.index_generation,
                         "discarding stale background index results"
                     );
-                    return;
+                    return false;
                 }
                 state.disk_files = disk_files;
                 for ctx in &mut state.folder_contexts {
@@ -1161,6 +1173,7 @@ impl Backend {
                         ctx.workspace_context = Some(wc.clone());
                     }
                 }
+                state.initial_index_pending = false;
                 if cap_hit {
                     let _ = self
                         .client
@@ -1170,8 +1183,18 @@ impl Backend {
                         )
                         .await;
                 }
+                true
             }
-            Err(error) => tracing::warn!(%error, "background workspace index failed"),
+            Err(error) => {
+                tracing::warn!(%error, "background workspace index failed");
+                let mut state = self.state.lock().await;
+                if state.index_generation == index_gen {
+                    state.initial_index_pending = false;
+                    true
+                } else {
+                    false
+                }
+            }
         }
     }
 

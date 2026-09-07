@@ -107,6 +107,7 @@ impl LanguageServer for Backend {
             compute_folder_filter(&file_config, &folder_settings);
 
         let mut state = self.state.lock().await;
+        state.initial_index_pending = true;
         state.user_stubs = user_stubs;
         state.root = root;
         state.file_config = file_config;
@@ -173,9 +174,11 @@ impl LanguageServer for Backend {
 
         self.refresh_watchers().await;
 
-        #[cfg(feature = "test-util")]
-        crate::test_seam::maybe_pause_initial_index().await;
-        self.spawn_background_index().await;
+        // didOpen can run while indexing. Replay those documents only after
+        // their workspace bindings and package metadata have been installed.
+        if self.spawn_background_index().await {
+            self.republish_all_open_documents().await;
+        }
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
@@ -323,6 +326,9 @@ impl LanguageServer for Backend {
                 .sort_by_key(|ctx| std::cmp::Reverse(ctx.root.as_os_str().len()));
 
             state.index_generation = state.index_generation.wrapping_add(1);
+            if state.folder_contexts.is_empty() {
+                state.initial_index_pending = false;
+            }
         }
 
         self.refresh_watchers().await;

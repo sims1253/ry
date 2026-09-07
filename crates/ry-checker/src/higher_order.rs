@@ -784,7 +784,9 @@ pub(crate) fn s3_group_generic(generic: &str) -> Option<&'static str> {
 /// classification combines the base stub's `s3_generics`, the registered
 /// Math/Summary group members, and the standalone `mean` generic. Callers may
 /// add rule-specific fallbacks at their callsite, such as RY105's `length`
-/// exception.
+/// exception. `mean.<class>` dispatches, while `Summary.<class>` does not;
+/// once r-typeshed registers `mean` in `s3_generics` (issue #41), this
+/// fallback can be removed.
 pub(crate) fn is_dispatch_capable_generic(
     globals: &ry_typeshed::Globals,
     function_name: &str,

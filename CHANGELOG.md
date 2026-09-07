@@ -167,6 +167,10 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Keep callback input types and result lengths unknown when classed inputs can
+  dispatch during coercion or extraction. Account for empty-list results from
+  `sapply` and `mapply`, and for callbacks that run despite empty input storage.
+
 - Capture bare component names in `stats::model.extract` without reporting
   them as unbound variables; keep ordinary frame arguments checked.
 

@@ -11,6 +11,26 @@ fn matched_argument_type<'a>(
         .and_then(|index| arg_types.get(index))
 }
 
+// Coercion and extraction can dispatch before a callback sees its input.
+// Unlike a for-loop element, neither its mode nor its length follows from
+// the underlying storage of a classed value.
+fn callback_input_may_dispatch(ty: &RType) -> bool {
+    ty.class.is_unknown()
+        || ty.class.has_known_class()
+        || (ty.mode == Mode::Union
+            && ty
+                .members
+                .as_ref()
+                .is_none_or(|members| members.iter().any(callback_input_may_dispatch)))
+}
+
+fn callback_input_type(ty: &RType) -> RType {
+    if callback_input_may_dispatch(ty) {
+        return RType::unknown();
+    }
+    ty.clone()
+}
+
 fn argument_bound_to_formal<'a>(
     args: &'a [Arg],
     argument_match: &ArgumentMatch,
@@ -99,7 +119,8 @@ impl Checker {
         scope: &Scope,
         span: Span,
     ) -> RType {
-        let inputs = self.higher_order_input_types(spec, arg_types, argument_match);
+        let (inputs, inputs_may_dispatch) =
+            self.higher_order_input_types(spec, arg_types, argument_match);
         let callback_runs = !inputs.is_empty()
             && !inputs.iter().any(|ty| {
                 matches!(ty.length, Length::Zero | Length::Known(0)) || ty.mode == Mode::Function
@@ -132,7 +153,7 @@ impl Checker {
                     .result
                     .length_arg
                     .and_then(|i| matched_argument_type(arg_types, argument_match, i))
-                    .map(|ty| ty.length)
+                    .map(|ty| callback_input_type(ty).length)
                     .unwrap_or(Length::Unknown);
                 let mut result = RType::new(Mode::List, length);
                 if spec.result.include_callback_schema {
@@ -163,7 +184,7 @@ impl Checker {
                     .result
                     .length_arg
                     .and_then(|i| matched_argument_type(arg_types, argument_match, i))
-                    .map(|ty| ty.length)
+                    .map(|ty| callback_input_type(ty).length)
                     .unwrap_or(declared_length);
                 RType::new(mode, length)
             }
@@ -200,6 +221,11 @@ impl Checker {
                 if spec.callback_args == [CallbackArg::Unknown] {
                     return Self::ho_rapply(args, arg_types, argument_match);
                 }
+                if inputs_may_dispatch {
+                    // Coercion can produce no elements. Then sapply returns
+                    // an empty list even when the callback would return a scalar.
+                    return RType::unknown();
+                }
                 match callback_return {
                     Some(ty)
                         if matches!(ty.length, Length::One)
@@ -209,7 +235,7 @@ impl Checker {
                             .result
                             .length_arg
                             .and_then(|i| matched_argument_type(arg_types, argument_match, i))
-                            .map(|ty| ty.length)
+                            .map(|ty| callback_input_type(ty).length)
                             .unwrap_or(Length::Unknown);
                         RType::new(ty.mode, length)
                     }
@@ -232,7 +258,7 @@ impl Checker {
                     spec.result
                         .length_arg
                         .and_then(|i| matched_argument_type(arg_types, argument_match, i))
-                        .map(|ty| ty.length)
+                        .map(|ty| callback_input_type(ty).length)
                         .unwrap_or(Length::Unknown)
                 } else {
                     Length::Unknown
@@ -250,31 +276,40 @@ impl Checker {
         spec: &HigherOrderSpec,
         arg_types: &[RType],
         argument_match: &ArgumentMatch,
-    ) -> Vec<RType> {
+    ) -> (Vec<RType>, bool) {
         let mut types = Vec::new();
+        let mut may_dispatch = false;
+        let mut input_type = |ty: &RType| {
+            may_dispatch |= callback_input_may_dispatch(ty);
+            callback_input_type(ty)
+        };
         for callback_arg in &spec.callback_args {
             match callback_arg {
                 CallbackArg::ElementOfArg0 => types.push(
                     matched_argument_type(arg_types, argument_match, 0)
-                        .cloned()
+                        .map(&mut input_type)
                         .unwrap_or_else(RType::unknown),
                 ),
                 CallbackArg::ElementOfArg1 => types.push(
                     matched_argument_type(arg_types, argument_match, 1)
-                        .cloned()
+                        .map(&mut input_type)
                         .unwrap_or_else(RType::unknown),
                 ),
                 CallbackArg::ElementsOfArg0 => {
-                    if matched_argument_type(arg_types, argument_match, 0)
+                    let input =
+                        matched_argument_type(arg_types, argument_match, 0).map(&mut input_type);
+                    if input
+                        .as_ref()
                         .is_some_and(|ty| matches!(ty.length, Length::Zero | Length::Known(0)))
                     {
                         continue;
                     }
-                    if let Some(schema) = matched_argument_type(arg_types, argument_match, 0)
+                    if let Some(schema) = input
+                        .as_ref()
                         .and_then(|ty| ty.columns.as_ref())
                         .filter(|schema| schema.complete)
                     {
-                        types.extend(schema.columns.iter().map(|(_, ty)| ty.clone()));
+                        types.extend(schema.columns.iter().map(|(_, ty)| input_type(ty)));
                     } else {
                         types.push(RType::unknown());
                     }
@@ -283,12 +318,12 @@ impl Checker {
                 CallbackArg::AccumulatorAndElement => {
                     types.extend([RType::unknown(), RType::unknown()]);
                 }
-                CallbackArg::ElementsAfterCallback => {
-                    types.extend(arguments_bound_to_dots(arg_types, argument_match).cloned())
-                }
+                CallbackArg::ElementsAfterCallback => types.extend(
+                    arguments_bound_to_dots(arg_types, argument_match).map(&mut input_type),
+                ),
             }
         }
-        types
+        (types, may_dispatch)
     }
 
     /// If `expr` is a `purrr::in_parallel(.f)` / `in_parallel(.f)` call
@@ -568,6 +603,7 @@ impl Checker {
             Self::fold_callback_inputs(signature, args, arg_types, &argument_match)
         } else {
             self.higher_order_input_types(spec, arg_types, &argument_match)
+                .0
         };
         if inputs.is_empty()
             || inputs.iter().any(|ty| {

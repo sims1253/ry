@@ -1,6 +1,94 @@
 use super::*;
 
 #[test]
+fn classed_callback_inputs_do_not_borrow_storage_elements() {
+    for call in [
+        "Filter(function(v) v + 1L > 0L, x)",
+        "Position(function(v) v + 1L > 0L, x, right=TRUE)",
+        "Find(function(v) v + 1L > 0L, x)",
+        "lapply(x, function(v) v + 1L)",
+    ] {
+        let source = format!(
+            "x <- structure(c('a','b'),class='ry_input')\nas.list.ry_input <- function(x,...) list(1L,2L)\n`[[.ry_input` <- function(x,i,...) 1L\n{call}"
+        );
+        let diagnostics = check(&source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY040"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn classed_empty_storage_does_not_prove_callbacks_are_skipped() {
+    for call in [
+        "Filter(function(v) 1L + 'bad', x)",
+        "lapply(x, function(v) 1L + 'bad')",
+    ] {
+        let source = format!(
+            "x <- structure(character(),class='ry_input')\nas.list.ry_input <- function(x,...) list(1L)\n{call}"
+        );
+        let diagnostics = check(&source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY040"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn classed_callback_results_do_not_borrow_input_length() {
+    for call in [
+        "lapply(x, function(v) 1L)",
+        "vapply(x, function(v) 1L, integer(1), USE.NAMES=FALSE)",
+        "sapply(x, function(v) 1L, USE.NAMES=FALSE)",
+    ] {
+        let source = format!(
+            "as.list.ry_empty <- function(x,...) list()\nx <- structure('a',class='ry_empty')\nz <- {call}\nif (length(z) == 0L) 1L"
+        );
+        let (diagnostics, scope) = check_with_scope(&source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY105"),
+            "{source}: {diagnostics:?}"
+        );
+        assert_eq!(scope.get("z").unwrap().length, Length::Unknown, "{call}");
+        if call.starts_with("sapply") {
+            assert_eq!(scope.get("z").unwrap().mode, Mode::Opaque);
+        }
+    }
+}
+
+#[test]
+fn classed_dots_input_can_make_mapply_return_an_empty_list() {
+    let source = "length.ry_zero <- function(x) 0L\nx <- structure('a',class='ry_zero')\nz <- mapply(function(v) 1L,x,USE.NAMES=FALSE)\nz$field";
+    let (diagnostics, scope) = check_with_scope(source);
+    assert!(
+        diagnostics.iter().all(|d| d.code != "RY061"),
+        "{diagnostics:?}"
+    );
+    assert_eq!(scope.get("z").unwrap().mode, Mode::Opaque);
+}
+
+#[test]
+fn callback_inputs_guard_classed_union_members_and_pmap_components() {
+    for source in [
+        "x <- if(flag) structure('a',class='ry_input') else 1L\nas.list.ry_input <- function(x,...) list(1L)\nlapply(x,function(v) v+1L)",
+        "vec_proxy.ry_component <- function(x,...) list(1L)\nvec_restore.ry_component <- function(x,to,...) x\nx <- structure(list('a'),class='ry_component')\npurrr::pmap(list(x,1:2),function(v,other) v+other)",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY040"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    let diagnostics = check("purrr::pmap(list(list('a'),1:2),function(v,other) v+other)");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY040"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
 fn regmatches_callbacks_do_not_assume_scalar_elements() {
     for source in [
         "x <- c('ab','z'); matches <- regmatches(x,regexec('(a)(b)',x)); Filter(function(z) length(z)>0L,matches)",

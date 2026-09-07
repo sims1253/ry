@@ -23,12 +23,12 @@ All notable changes to ry are documented in this file.
   See the [facts schema](docs/facts.md). Existing `dump-types` output is unchanged.
 
 - **`ry dump-types` command**: `ry dump-types <FILE>...` runs the same
-  analysis pass as `ry check` and prints every lexical scope of the
+  analysis pass as `ry check` and prints recorded lexical scopes of the
   requested files as JSON on stdout: scope kind, name, and extent, plus
   each binding's name, kind (`param`/`local`/`closed-over`/`imported`),
   type string (the same rendering the editor's inlay hints show, `unknown`
   when inference has nothing), and definition site. `--position LINE:COL`
-  (repeatable) restricts output to the innermost scope containing each
+  (repeatable) restricts output to the innermost recorded scope containing each
   position and drops locals assigned after it. `--project-root <DIR>`
   overrides the analysis root for non-package files; the default mirrors
   `ry check`'s per-package (DESCRIPTION) grouping. The exit code is 0 even

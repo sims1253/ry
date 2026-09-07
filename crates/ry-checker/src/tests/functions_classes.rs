@@ -629,6 +629,45 @@ fn replacement_calls_keep_targets_bound_without_argument_diagnostics() {
 }
 
 #[test]
+fn mode_replacements_discard_the_previous_binding_type() {
+    for accessor in ["storage.mode", "mode"] {
+        for source in [
+            format!("x <- '2'; {accessor}(x) <- 'integer'; x + 1L"),
+            format!("x <- list(2); {accessor}(x) <- 'integer'; x + 1L"),
+            format!(
+                "f <- function(mode = 'integer') {{ x <- '2'; {accessor}(x) <- mode; x }}; f() + 1L"
+            ),
+            format!(
+                "`{accessor}<-` <- function(x, value) 2L; x <- 'old'; {accessor}(x) <- 'integer'; x + 1L"
+            ),
+        ] {
+            let diagnostics = check(&source);
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+        }
+        let source = format!("x <- 2L; y <- ({accessor}(x) <- 'character'); y + 1L");
+        let (diagnostics, scope) = check_with_scope(&source);
+        assert_eq!(scope.get("x").unwrap().mode, Mode::Opaque);
+        assert_eq!(scope.get("y").unwrap().mode, Mode::Character);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY040")
+        );
+        let source = format!(
+            "x <- 2L; marker <- 1L; {accessor}(x) <- {{ marker <- 'evaluated'; 'character' }}"
+        );
+        let (_, scope) = check_with_scope(&source);
+        assert_eq!(scope.get("marker").unwrap().mode, Mode::Character);
+    }
+    let diagnostics = check("x <- '2'; storage.mode(x); x + 1L");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY040")
+    );
+}
+
+#[test]
 fn purrr_map_walks_callback_and_infers_list() {
     // purrr::map(.x, .f) is modeled like lapply -- the
     // callback body is walked (RY010 fires on the unbound `bug`)
@@ -855,4 +894,22 @@ fn typed_multi_input_maps_preserve_atomic_modes_without_claiming_a_length() {
     }
     let (_, scope) = check_with_scope("position <- Position(is.na, c(1, 2, 3))\n");
     assert_eq!(scope.get("position").unwrap().length, Length::One);
+}
+
+#[test]
+fn custom_mode_setters_cannot_preserve_unproven_list_origin() {
+    for setter in ["mode", "storage.mode"] {
+        for result in ["1L", "x"] {
+            let source = format!(
+                "`{setter}<-` <- function(x, value) {result}\nx <- list(1L)\n{setter}(x) <- 'integer'\nidentical(x[1L], 1L)\n"
+            );
+            let (diagnostics, scope) = check_with_scope(&source);
+            assert_eq!(scope.get("x").unwrap().mode, Mode::Opaque);
+            assert!(!scope.has_list_origin("x"));
+            assert!(
+                diagnostics.iter().all(|d| d.code != "RY101"),
+                "{source}: {diagnostics:?}"
+            );
+        }
+    }
 }

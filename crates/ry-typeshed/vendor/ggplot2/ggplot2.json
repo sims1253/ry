@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "ggplot2",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "functions": {
     ".expose_data": {
       "params": [
@@ -71,6 +71,11 @@
         "x": "data_mask",
         "y": "data_mask",
         "...": "data_mask"
+      },
+      "injection": {
+        "x": "full",
+        "y": "full",
+        "...": "full"
       }
     },
     "aes_": {
@@ -7689,6 +7694,9 @@
       },
       "eval": {
         "...": "data_mask"
+      },
+      "injection": {
+        "...": "full"
       }
     },
     "waiver": {

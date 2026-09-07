@@ -154,6 +154,10 @@ All notable changes to ry are documented in this file.
 - Report an explicit nesting-limit error before deeply nested syntax can
   overflow the parser stack. The limit is 128 tree-sitter syntax levels.
 
+- Stop applying `hasArg` and `on.exit` deferred semantics to explicit competing
+  bindings, formals, and aliases. Retain existing inference under ambient
+  lookup uncertainty, while requiring methods provenance for RY096.
+
 - Compute data-frame column types after scalar arithmetic instead of copying
   their input types. Keep classed column results unknown when methods may run.
 

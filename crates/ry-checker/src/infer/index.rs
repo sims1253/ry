@@ -34,6 +34,16 @@ fn dollar_receiver_is_definitely_atomic(receiver: &RType) -> bool {
     }
 }
 
+fn dollar_atomic_receiver_may_dispatch(receiver: &RType) -> bool {
+    if receiver.mode == Mode::Union {
+        return receiver
+            .members
+            .as_ref()
+            .is_some_and(|members| members.iter().any(dollar_atomic_receiver_may_dispatch));
+    }
+    atomic_mode(receiver) && receiver.class != ClassVector::empty()
+}
+
 /// A human-readable description of the receiver's mode(s) for the RY061
 /// message. For a single type this is just the mode name; for a union
 /// the member modes are listed so the user can see which types combined.
@@ -94,6 +104,13 @@ impl Checker {
         }
         match kind {
             IndexKind::Dollar => {
+                // `$` dispatches on classed atomic values. The pooled method
+                // table cannot prove which method applies here, its return
+                // type, or its writes to the caller.
+                if dollar_atomic_receiver_may_dispatch(&bt) {
+                    scope.invalidate_unknown_effects();
+                    return RType::unknown();
+                }
                 // RY061: `$` on an atomic vector is a runtime error in R
                 // ("$ operator is invalid for atomic vectors"). Only flag
                 // when we're confident the type is atomic (not opaque,

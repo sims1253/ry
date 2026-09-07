@@ -710,6 +710,12 @@ impl Checker {
         scope: &mut Scope,
         span: Span,
     ) -> Option<RType> {
+        // Detaching a package invalidates the ordinary default-search-path
+        // assumption, including methods::new being available as bare `new`.
+        if lookup_name == "detach" && self.resolves_to_base(semantic_name, scope) {
+            scope.mark_search_path_unknown();
+        }
+
         // `library(foo)` and `require(foo)` take a package name as a bare
         // symbol, not an expression. Inferring their args would trigger
         // spurious RY010 on every `library(magrittr)` etc. We ALSO record

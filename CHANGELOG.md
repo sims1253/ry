@@ -17,6 +17,11 @@ All notable changes to ry are documented in this file.
   `ry-core` AST adds `Expr::Missing(Span)`; consumers with exhaustive expression
   matches must handle it separately from unsupported `Expr::Unknown` forms.
 
+- Custom or masked `factor` and `new` calls no longer acquire builtin constructor facts. S4 constructor inference requires methods provenance, and detaching a package invalidates the default search-path assumption.
+
+- Resolve visible custom arithmetic, comparison, and vector logical operators
+  before their operands. Avoid primitive diagnostics for ignored operands and
+  preserve proven constant returns; discard caller facts after uncertain effects.
 - Class assignments no longer infer literal classes from custom class builders or preserve payload types under an unproven replacement function.
 
 - Compute data-frame column types after scalar arithmetic instead of copying
@@ -24,6 +29,7 @@ All notable changes to ry are documented in this file.
 
 - Infer double results for primitive division and powers of integers. Reject
   complex remainder and integer division only when both operands are nonempty.
+
 - Match `structure()` payloads through `.Data`, preserve class and list-column
   information for resolved base calls, and evaluate class attributes. Respect
   shadowed constructors and class-vector builders; discard stale column names

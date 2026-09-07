@@ -73,6 +73,11 @@ pub(crate) struct ScopeProvenance {
 }
 
 impl ScopeProvenance {
+    pub(crate) fn invalidate_all(&mut self) {
+        self.bindings.clear();
+        self.after_unsafe_read = true;
+    }
+
     pub(crate) fn invalidate(&mut self, name: &str) {
         self.bindings.remove(name);
     }

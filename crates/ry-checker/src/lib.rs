@@ -290,6 +290,9 @@ pub struct Scope {
     // An unknown effect may install delayed bindings or change syntax itself.
     // Later literal assignments cannot prove that those effects disappeared.
     pub(crate) ops_environment_unknown: bool,
+    /// An unmodeled call may force promises that mutate this frame or install
+    /// active bindings. Later expression inference cannot reuse caller facts.
+    pub(crate) effects_unknown: bool,
     pub(crate) literal_functions: HashMap<String, Arc<infer::ops_chooser::LiteralFunction>>,
     pub(crate) reference_provenance: Option<Box<reference_facts::ScopeProvenance>>,
     pub bindings: HashMap<String, RType>,
@@ -323,6 +326,27 @@ pub struct Scope {
 }
 
 impl Scope {
+    /// Unknown code may mutate values or install active bindings. Keep names,
+    /// but make value uncertainty persist across writes.
+    pub(crate) fn invalidate_unknown_effects(&mut self) {
+        for ty in self.bindings.values_mut() {
+            *ty = RType::unknown();
+        }
+        self.narrowed_bindings.clear();
+        self.parameter_bindings.clear();
+        self.list_origin_bindings.clear();
+        self.default_parameter_bindings.clear();
+        self.function_aliases.clear();
+        self.lexical_functions.clear();
+        if let Some(provenance) = self.reference_provenance.as_mut() {
+            provenance.invalidate_all();
+        }
+        self.effects_unknown = true;
+        self.data_mask_unknown = true;
+        self.search_path_unknown = true;
+        self.invalidate_ops_environment();
+    }
+
     pub(crate) fn invalidate_ops_environment(&mut self) {
         self.literal_functions.clear();
         self.ops_environment_unknown = true;
@@ -562,6 +586,9 @@ pub(crate) struct FnTable {
     pub(crate) fns: HashMap<String, UserFn>,
     // Collected once so conservative syntax checks do not rescan all functions.
     pub(crate) has_escaped_binding_names: bool,
+    // Operator lookup also checks formals/nested names during source-less
+    // project refinement, without broadening other syntax proof guards.
+    pub(crate) has_escaped_operator_names: bool,
     // `(generic, class)` -> return slot index. Mirrors the same
     // `return_slots` storage as `fns`; lookups during dispatch consult
     // this map for an S3 method before falling back to the generic.
@@ -608,6 +635,7 @@ impl FnTable {
                 .retain(|call| !replaced.contains(&call.caller));
         }
         self.has_escaped_binding_names |= collected.has_escaped_binding_names;
+        self.has_escaped_operator_names |= collected.has_escaped_operator_names;
         self.fns.extend(collected.fns.iter().map(|(name, f)| {
             let mut f = f.clone();
             f.return_slot += slot_offset;
@@ -673,6 +701,7 @@ pub struct Checker {
     /// Messages that quote source spelling slice this exact text by parser
     /// spans.
     pub(crate) source: String,
+    escaped_operator_bindings: bool,
     // When true, `emit` is a no-op. Set during pass-2 (fixpoint) return-
     // type refinement and closure-signature building so the single
     // inference engine can be used for both the pure and the diagnostic
@@ -795,6 +824,11 @@ impl Checker {
     fn run_passes(&mut self, file: &SourceFile) {
         self.path = file.path.clone();
         self.source.clone_from(&file.source);
+        self.escaped_operator_bindings = self
+            .external_bindings
+            .iter()
+            .chain(self.imported_from.keys())
+            .any(|name| infer::custom_operator::escaped_name_may_mask_operator(name));
         self.diagnostics.clear();
         self.fn_table = Arc::new(FnTable::default());
         self.return_slots = Arc::new(ReturnSlots::default());
@@ -850,6 +884,7 @@ impl Checker {
             diagnostics: Vec::new(),
             path: path.to_string(),
             source: String::new(),
+            escaped_operator_bindings: false,
             discarding: false,
             validate_user_call_arguments: true,
             fn_table,
@@ -990,6 +1025,11 @@ impl Checker {
     pub(crate) fn emit_diagnostics(&mut self, file: &SourceFile) -> Scope {
         self.path = file.path.clone();
         self.source.clone_from(&file.source);
+        self.escaped_operator_bindings = self
+            .external_bindings
+            .iter()
+            .chain(self.imported_from.keys())
+            .any(|name| infer::custom_operator::escaped_name_may_mask_operator(name));
         if let Some(types) = &mut self.assignment_types {
             types.clear();
         }

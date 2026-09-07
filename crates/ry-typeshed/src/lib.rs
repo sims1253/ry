@@ -308,6 +308,7 @@ const S7_JSON: &str = include_str!("../vendor/s7/S7.json");
 const RLANG_JSON: &str = include_str!("../vendor/rlang/rlang.json");
 const CLI_JSON: &str = include_str!("../vendor/cli/cli.json");
 const VCTRS_JSON: &str = include_str!("../vendor/vctrs/vctrs.json");
+const GRID_JSON: &str = include_str!("../vendor/grid/grid.json");
 
 /// Single source of truth for embedded non-base packages, in signature
 /// resolution order. Every package maps one-to-one to its vendored file.
@@ -344,6 +345,7 @@ const PACKAGE_SPECS: &[(&str, &str)] = &[
     ("rlang", RLANG_JSON),
     ("cli", CLI_JSON),
     ("vctrs", VCTRS_JSON),
+    ("grid", GRID_JSON),
 ];
 
 pub fn known_packages() -> impl Iterator<Item = &'static str> {
@@ -1911,7 +1913,11 @@ mod tests {
     fn every_known_package_loads() {
         let report = validate_stub_dirs(&[Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor")]);
         assert_eq!(report.error_count(), 0, "{report:?}");
-        assert!(report.files > 0, "vendored stubs must be discovered");
+        assert_eq!(
+            report.files,
+            known_packages().count() + 1,
+            "every vendored package must be embedded (plus base)"
+        );
         for name in known_packages() {
             assert!(load_package(name).is_some(), "{name} must load");
         }

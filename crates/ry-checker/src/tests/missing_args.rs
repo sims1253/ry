@@ -77,3 +77,12 @@ fn duplicate_payload_names_cannot_lend_constructor_facts() {
     assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque);
     assert!(!scope.get("out").unwrap().class.contains("widget"));
 }
+
+#[test]
+fn omitted_initializer_actual_cannot_prove_an_s4_instance() {
+    let (_, scope) = check_with_scope(
+        "methods::setClass('Widget', slots=c(value='integer')); out <- methods::new('Widget', value=)",
+    );
+    assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque);
+    assert!(!scope.get("out").unwrap().class.contains("Widget"));
+}

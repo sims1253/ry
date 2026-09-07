@@ -1251,6 +1251,41 @@ fn guarded_unknown_parameter_vector_emits_ry032_without_other_vector_intent() {
 }
 
 #[test]
+fn parameter_guards_respect_scalar_membership_and_exact_length() {
+    for source in [
+        "f <- function(x) is.null(x) || 'value' %in% x",
+        "f <- function(x) is.null(x) || !('value' %in% x)",
+        "f <- function(x) length(x) == 1L && is.na(x)",
+        "f <- function(x) 1 == length(x) && x == ''",
+        "f <- function(x) base::length(x) == 1 && x == ''",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY032"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn guarded_vector_membership_and_nonempty_lengths_still_warn() {
+    for source in [
+        "f <- function(x) is.null(x) || x %in% 'value'",
+        "f <- function(x) length(x) > 0 && x == ''",
+        "f <- function(x) length(x) == 2L && is.na(x)",
+        "length <- function(x) 1L; f <- function(x) length(x) == 1L && is.na(x)",
+        "f <- function(x, length) length(x) == 1L && is.na(x)",
+        "f <- function(x) other::length(x) == 1L && is.na(x)",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY032"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
 fn loop_carried_values_do_not_keep_the_initial_empty_length() {
     let source = "quote <- raw()\nfor (x in as.raw(c(1, 2))) {\nif (length(quote)) { if (x == quote) print(x) }\nquote <- x\n}";
     assert!(check(source).is_empty(), "{:?}", check(source));

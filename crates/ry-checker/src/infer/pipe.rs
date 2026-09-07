@@ -53,12 +53,12 @@ impl Checker {
         f: impl FnOnce(&mut Self, &mut Scope) -> R,
     ) -> R {
         let restore = matches!(form, PipeForm::Magrittr)
-            .then(|| scope.bindings.insert(".".to_string(), lhs_t.clone()));
+            .then(|| scope.replace_binding_only(".", Some(lhs_t.clone())));
         let result = f(self, scope);
         if let Some(previous) = restore {
             match previous {
-                Some(t) => scope.bindings.insert(".".to_string(), t),
-                None => scope.bindings.remove("."),
+                Some(t) => scope.replace_binding_only(".", Some(t)),
+                None => scope.replace_binding_only(".", None),
             };
         }
         result
@@ -269,7 +269,7 @@ impl Checker {
         // `y <- if (c) (x <- 1) else (x <- 2); x`) mutates only the clone, so
         // any binding introduced inside an `if` *expression* is silently
         // dropped. The statement-form `Stmt::If` merges its branch bindings
-        // back into the parent (see `merge_branch_bindings`); doing the same
+        // back into the parent (see `walk_journal_if`); doing the same
         // for the expression form is deferred to a later phase because
         // expression-position assignment is rare and merging here would
         // require plumbing owned branch scopes back to the caller.
@@ -294,8 +294,7 @@ impl Checker {
             Some(e) => infer_arm(e, NarrowingBranch::Else),
             None => (RType::new(Mode::Null, Length::Zero), false, false, false),
         };
-        scope.literal_functions.clear();
-        scope.plain_ops_vectors.clear();
+        scope.clear_ops_facts();
         scope.ops_environment_unknown |= then_ops || else_ops;
         scope.effects_unknown |= then_effects || else_effects;
         scope.unreachable |= then_unreachable && else_unreachable;

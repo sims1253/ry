@@ -67,7 +67,7 @@ impl Checker {
                     &HashSet::new(),
                     scope,
                 )
-                || (self.imported_from.get(semantic).is_none()
+                || (!self.imported_from.contains_key(semantic)
                     && (scope.search_path_unknown || !self.bare_loaded.is_empty()))
             {
                 return unknown(scope);

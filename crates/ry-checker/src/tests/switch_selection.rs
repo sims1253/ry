@@ -94,3 +94,19 @@ fn uncertain_switch_calls_invalidate_caller_facts_without_forcing_actuals() {
         );
     }
 }
+
+#[test]
+fn selected_stop_marks_only_the_executed_path_unreachable() {
+    let (diagnostics, stopped) = check_with_scope("out <- switch(1L, stop('selected'), 'bad'+1)");
+    assert_eq!(stopped.get("out").unwrap().mode, Mode::Opaque);
+    assert!(!diagnostics.iter().any(|d| d.code == "RY040"));
+    let (_, returned) = check_with_scope("switch(1L, {return(1L); 2L}, 3L)");
+    assert!(returned.unreachable);
+    let (_, continuing) = check_with_scope("switch(2L, stop('unselected'), 1L)");
+    assert!(!continuing.unreachable);
+    let (diagnostics, _) = check_with_scope("f <- function(switch) switch(1L, 'bad'+1)");
+    assert!(
+        !diagnostics.iter().any(|d| d.code == "RY040"),
+        "{diagnostics:?}"
+    );
+}

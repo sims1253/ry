@@ -151,6 +151,9 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Report an explicit nesting-limit error before deeply nested syntax can
+  overflow the parser stack. The limit is 128 tree-sitter syntax levels.
+
 - Compute data-frame column types after scalar arithmetic instead of copying
   their input types. Keep classed column results unknown when methods may run.
 

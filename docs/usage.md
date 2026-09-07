@@ -185,6 +185,12 @@ vim.lsp.start({
 
 ## Known limits
 
+ry rejects source whose tree-sitter syntax tree exceeds 128 nested levels,
+with a parser error that identifies ry’s nesting limit and the source location.
+This protects recursive analysis on ordinary worker-thread stacks; it is not
+an R language limit. Flat files and wide argument lists are not limited by
+this bound.
+
 When both operator operands have different S3 methods, ry can follow a
 `chooseOpsMethod` returning literal `TRUE` or `FALSE` when the current scope
 proves both methods and the chooser values in top-level code using ordinary

@@ -167,6 +167,10 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Honor tidy-evaluation injection in `ggplot2::aes` aesthetics and `vars` facets,
+  avoiding false negation errors for unquoting and list splicing. Ordinary
+  helper arguments continue to execute R negation.
+
 - Forget stale receiver types after `storage.mode(x) <- ...` and `mode(x) <- ...`.
   Coercing a character or list value no longer leaves arithmetic checking its
   previous storage type; the assignment expression still returns its right side.

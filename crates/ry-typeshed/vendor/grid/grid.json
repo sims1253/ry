@@ -1,0 +1,3792 @@
+{
+  "schema_version": "2",
+  "package": "grid",
+  "version": "0.0.1",
+  "functions": {
+    "absolute.size": {
+      "params": [
+        {
+          "name": "unit",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "addGrob": {
+      "params": [
+        {
+          "name": "gTree",
+          "required": true
+        },
+        {
+          "name": "child",
+          "required": true
+        },
+        "gPath",
+        "strict",
+        "grep",
+        "global",
+        "warn"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "applyEdit": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "edit",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "applyEdits": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "edits",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "arcCurvature": {
+      "params": [
+        {
+          "name": "theta",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "arrow": {
+      "params": [
+        "angle",
+        "length",
+        "ends",
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "arrowsGrob": {
+      "params": [
+        "x",
+        "y",
+        "default.units",
+        "grob",
+        "angle",
+        "length",
+        "ends",
+        "type",
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.mask": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.path": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "gp",
+        "rule"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ascentDetails": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "bezierGrob": {
+      "params": [
+        "x",
+        "y",
+        "id",
+        "id.lengths",
+        "default.units",
+        "arrow",
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "bezierPoints": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "calcStringMetric": {
+      "params": [
+        {
+          "name": "text",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "childNames": {
+      "params": [
+        {
+          "name": "gTree",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "circleGrob": {
+      "params": [
+        "x",
+        "y",
+        "r",
+        "default.units",
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "clipGrob": {
+      "params": [
+        "x",
+        "y",
+        "width",
+        "height",
+        "just",
+        "hjust",
+        "vjust",
+        "default.units",
+        "name",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "convertHeight": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "unitTo",
+          "required": true
+        },
+        "valueOnly"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "convertNative": {
+      "params": [
+        {
+          "name": "unit",
+          "required": true
+        },
+        "dimension",
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "convertUnit": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "unitTo",
+          "required": true
+        },
+        "axisFrom",
+        "typeFrom",
+        "axisTo",
+        "typeTo",
+        "valueOnly"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "convertWidth": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "unitTo",
+          "required": true
+        },
+        "valueOnly"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "convertX": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "unitTo",
+          "required": true
+        },
+        "valueOnly"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "convertY": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "unitTo",
+          "required": true
+        },
+        "valueOnly"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "current.parent": {
+      "params": [
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "current.rotation": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "current.transform": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "current.viewport": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "current.vpPath": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "current.vpTree": {
+      "params": [
+        "all"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "curveGrob": {
+      "params": [
+        {
+          "name": "x1",
+          "required": true
+        },
+        {
+          "name": "y1",
+          "required": true
+        },
+        {
+          "name": "x2",
+          "required": true
+        },
+        {
+          "name": "y2",
+          "required": true
+        },
+        "default.units",
+        "curvature",
+        "angle",
+        "ncp",
+        "shape",
+        "square",
+        "squareShape",
+        "inflect",
+        "arrow",
+        "open",
+        "debug",
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dataViewport": {
+      "params": [
+        "xData",
+        "yData",
+        "xscale",
+        "yscale",
+        "extension",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "defineGrob": {
+      "params": [
+        {
+          "name": "src",
+          "required": true
+        },
+        "op",
+        "dst",
+        "coords",
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "defnRotate": {
+      "params": [
+        {
+          "name": "group",
+          "required": true
+        },
+        "inverse",
+        "device"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "defnScale": {
+      "params": [
+        {
+          "name": "group",
+          "required": true
+        },
+        "inverse"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "defnTranslate": {
+      "params": [
+        {
+          "name": "group",
+          "required": true
+        },
+        "inverse",
+        "device"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "delayGrob": {
+      "params": [
+        "expr",
+        {
+          "name": "list",
+          "required": true
+        },
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "eval": {
+        "expr": "quoted_expression"
+      }
+    },
+    "depth": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "descentDetails": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "deviceDim": {
+      "params": [
+        {
+          "name": "w",
+          "required": true
+        },
+        {
+          "name": "h",
+          "required": true
+        },
+        "valueOnly",
+        "device"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "deviceLoc": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "y",
+          "required": true
+        },
+        "valueOnly",
+        "device"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "downViewport": {
+      "params": [
+        {
+          "name": "name",
+          "required": true
+        },
+        "strict",
+        "recording"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "draw.details": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "recording",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "drawDetails": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "recording",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "editDetails": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "specs",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "editGrob": {
+      "params": [
+        {
+          "name": "grob",
+          "required": true
+        },
+        "gPath",
+        "...",
+        "strict",
+        "grep",
+        "global",
+        "warn"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "editViewport": {
+      "params": [
+        "vp",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "emptyGrobCoords": {
+      "params": [
+        {
+          "name": "name",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "emptyGTreeCoords": {
+      "params": [
+        {
+          "name": "name",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "engine.display.list": {
+      "params": [
+        "on"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "explode": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fillGrob": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fillStrokeGrob": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "forceGrob": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "frameGrob": {
+      "params": [
+        "layout",
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "functionGrob": {
+      "params": [
+        {
+          "name": "f",
+          "required": true
+        },
+        "n",
+        "range",
+        "units",
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "gEdit": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "gEditList": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "get.gpar": {
+      "params": [
+        "names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "getGrob": {
+      "params": [
+        {
+          "name": "gTree",
+          "required": true
+        },
+        {
+          "name": "gPath",
+          "required": true
+        },
+        "strict",
+        "grep",
+        "global"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "getNames": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "gList": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "glyphGrob": {
+      "params": [
+        {
+          "name": "glyphInfo",
+          "required": true
+        },
+        "x",
+        "y",
+        "default.units",
+        "hjust",
+        "vjust",
+        "gp",
+        "vp",
+        "name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "gpar": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "gPath": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.abline": {
+      "params": [
+        "intercept",
+        "slope",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.add": {
+      "params": [
+        {
+          "name": "gPath",
+          "required": true
+        },
+        {
+          "name": "child",
+          "required": true
+        },
+        "strict",
+        "grep",
+        "global",
+        "allDevices",
+        "redraw"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.arrows": {
+      "params": [
+        "x",
+        "y",
+        "default.units",
+        "grob",
+        "angle",
+        "length",
+        "ends",
+        "type",
+        "name",
+        "gp",
+        "draw",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.bezier": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.cap": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.circle": {
+      "params": [
+        "x",
+        "y",
+        "r",
+        "default.units",
+        "name",
+        "gp",
+        "draw",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.clip": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.collection": {
+      "params": [
+        "...",
+        "gp",
+        "draw",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.convert": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "unitTo",
+          "required": true
+        },
+        "axisFrom",
+        "typeFrom",
+        "axisTo",
+        "typeTo",
+        "valueOnly"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.convertHeight": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "unitTo",
+          "required": true
+        },
+        "valueOnly"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.convertWidth": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "unitTo",
+          "required": true
+        },
+        "valueOnly"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.convertX": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "unitTo",
+          "required": true
+        },
+        "valueOnly"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.convertY": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "unitTo",
+          "required": true
+        },
+        "valueOnly"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.copy": {
+      "params": [
+        {
+          "name": "grob",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.curve": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.define": {
+      "params": [
+        {
+          "name": "src",
+          "required": true
+        },
+        "op",
+        "dst",
+        "coords",
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.delay": {
+      "params": [
+        "expr",
+        {
+          "name": "list",
+          "required": true
+        },
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "eval": {
+        "expr": "quoted_expression"
+      }
+    },
+    "grid.display.list": {
+      "params": [
+        "on"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.DLapply": {
+      "params": [
+        {
+          "name": "FUN",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.draw": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "recording"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.edit": {
+      "params": [
+        {
+          "name": "gPath",
+          "required": true
+        },
+        "...",
+        "strict",
+        "grep",
+        "global",
+        "allDevices",
+        "redraw"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.fill": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.fillStroke": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.force": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.frame": {
+      "params": [
+        "layout",
+        "name",
+        "gp",
+        "vp",
+        "draw"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.function": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.gedit": {
+      "params": [
+        "...",
+        "grep",
+        "global"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.get": {
+      "params": [
+        {
+          "name": "gPath",
+          "required": true
+        },
+        "strict",
+        "grep",
+        "global",
+        "allDevices"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.gget": {
+      "params": [
+        "...",
+        "grep",
+        "global"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.glyph": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.grab": {
+      "params": [
+        "warn",
+        "wrap",
+        "wrap.grobs",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.grabExpr": {
+      "params": [
+        {
+          "name": "expr",
+          "required": true
+        },
+        "warn",
+        "wrap",
+        "wrap.grobs",
+        "width",
+        "height",
+        "device",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.gremove": {
+      "params": [
+        "...",
+        "grep",
+        "global"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.grep": {
+      "params": [
+        {
+          "name": "path",
+          "required": true
+        },
+        "x",
+        "grobs",
+        "viewports",
+        "strict",
+        "grep",
+        "global",
+        "no.match",
+        "vpPath"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.grill": {
+      "params": [
+        "h",
+        "v",
+        "default.units",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.grob": {
+      "params": [
+        {
+          "name": "list.struct",
+          "required": true
+        },
+        "cl",
+        "draw"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.group": {
+      "params": [
+        {
+          "name": "src",
+          "required": true
+        },
+        "op",
+        "dst",
+        "coords",
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.layout": {
+      "params": [
+        "nrow",
+        "ncol",
+        "widths",
+        "heights",
+        "default.units",
+        "respect",
+        "just"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.legend": {
+      "params": [
+        "...",
+        "draw"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.line.to": {
+      "params": [
+        "x",
+        "y",
+        "default.units",
+        "arrow",
+        "name",
+        "gp",
+        "draw",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.lines": {
+      "params": [
+        "x",
+        "y",
+        "default.units",
+        "arrow",
+        "name",
+        "gp",
+        "draw",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.locator": {
+      "params": [
+        "unit"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.ls": {
+      "params": [
+        "x",
+        "grobs",
+        "viewports",
+        "fullNames",
+        "recursive",
+        "print",
+        "flatten",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.move.to": {
+      "params": [
+        "x",
+        "y",
+        "default.units",
+        "name",
+        "draw",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.multipanel": {
+      "params": [
+        "x",
+        "y",
+        "z",
+        "nplots",
+        "nrow",
+        "ncol",
+        "newpage",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.newpage": {
+      "params": [
+        "recording",
+        "clearGroups"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.null": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.pack": {
+      "params": [
+        {
+          "name": "gPath",
+          "required": true
+        },
+        {
+          "name": "grob",
+          "required": true
+        },
+        "redraw",
+        "side",
+        "row",
+        "row.before",
+        "row.after",
+        "col",
+        "col.before",
+        "col.after",
+        "width",
+        "height",
+        "force.width",
+        "force.height",
+        "border",
+        "dynamic"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.panel": {
+      "params": [
+        "x",
+        "y",
+        "zrange",
+        "zbin",
+        "xscale",
+        "yscale",
+        "axis.left",
+        "axis.left.label",
+        "axis.right",
+        "axis.right.label",
+        "axis.bottom",
+        "axis.bottom.label",
+        "axis.top",
+        "axis.top.label",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.path": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.place": {
+      "params": [
+        {
+          "name": "gPath",
+          "required": true
+        },
+        {
+          "name": "grob",
+          "required": true
+        },
+        "row",
+        "col",
+        "redraw"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.plot.and.legend": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.points": {
+      "params": [
+        "x",
+        "y",
+        "pch",
+        "size",
+        "default.units",
+        "name",
+        "gp",
+        "draw",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.polygon": {
+      "params": [
+        "x",
+        "y",
+        "id",
+        "id.lengths",
+        "default.units",
+        "name",
+        "gp",
+        "draw",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.polyline": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.pretty": {
+      "params": [
+        {
+          "name": "range",
+          "required": true
+        },
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.raster": {
+      "params": [
+        {
+          "name": "image",
+          "required": true
+        },
+        "x",
+        "y",
+        "width",
+        "height",
+        "just",
+        "hjust",
+        "vjust",
+        "interpolate",
+        "default.units",
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.record": {
+      "params": [
+        "expr",
+        {
+          "name": "list",
+          "required": true
+        },
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "eval": {
+        "expr": "quoted_expression"
+      }
+    },
+    "grid.rect": {
+      "params": [
+        "x",
+        "y",
+        "width",
+        "height",
+        "just",
+        "hjust",
+        "vjust",
+        "default.units",
+        "name",
+        "gp",
+        "draw",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.refresh": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.remove": {
+      "params": [
+        {
+          "name": "gPath",
+          "required": true
+        },
+        "warn",
+        "strict",
+        "grep",
+        "global",
+        "allDevices",
+        "redraw"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.reorder": {
+      "params": [
+        {
+          "name": "gPath",
+          "required": true
+        },
+        {
+          "name": "order",
+          "required": true
+        },
+        "back",
+        "grep",
+        "redraw"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.revert": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.roundrect": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.segments": {
+      "params": [
+        "x0",
+        "y0",
+        "x1",
+        "y1",
+        "default.units",
+        "arrow",
+        "name",
+        "gp",
+        "draw",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.set": {
+      "params": [
+        {
+          "name": "gPath",
+          "required": true
+        },
+        {
+          "name": "newGrob",
+          "required": true
+        },
+        "strict",
+        "grep",
+        "redraw"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.show.layout": {
+      "params": [
+        {
+          "name": "l",
+          "required": true
+        },
+        "newpage",
+        "vp.ex",
+        "bg",
+        "cell.border",
+        "cell.fill",
+        "cell.label",
+        "label.col",
+        "unit.col",
+        "vp",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.show.viewport": {
+      "params": [
+        {
+          "name": "v",
+          "required": true
+        },
+        "parent.layout",
+        "newpage",
+        "vp.ex",
+        "border.fill",
+        "vp.col",
+        "vp.fill",
+        "scale.col",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.strip": {
+      "params": [
+        "label",
+        "range.full",
+        "range.thumb",
+        "fill",
+        "thumb",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.stroke": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.text": {
+      "params": [
+        {
+          "name": "label",
+          "required": true
+        },
+        "x",
+        "y",
+        "just",
+        "hjust",
+        "vjust",
+        "rot",
+        "check.overlap",
+        "default.units",
+        "name",
+        "gp",
+        "draw",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.use": {
+      "params": [
+        {
+          "name": "group",
+          "required": true
+        },
+        "transform",
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.xaxis": {
+      "params": [
+        "at",
+        "label",
+        "main",
+        "edits",
+        "name",
+        "gp",
+        "draw",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.xspline": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.yaxis": {
+      "params": [
+        "at",
+        "label",
+        "main",
+        "edits",
+        "name",
+        "gp",
+        "draw",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "gridCoords": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "y",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "gridGrobCoords": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "name",
+          "required": true
+        },
+        "rule"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "gridGTreeCoords": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "name",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grob": {
+      "params": [
+        "...",
+        "name",
+        "gp",
+        "vp",
+        "cl"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grobAscent": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grobCoords": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "closed",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grobDescent": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grobHeight": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grobName": {
+      "params": [
+        "grob",
+        "prefix"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grobPathListing": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grobPoints": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "closed",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grobTree": {
+      "params": [
+        "...",
+        "name",
+        "gp",
+        "vp",
+        "childrenvp",
+        "cl"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grobWidth": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grobX": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "theta",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grobY": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "theta",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "groupFlip": {
+      "params": [
+        "flipX",
+        "flipY"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "groupGrob": {
+      "params": [
+        {
+          "name": "src",
+          "required": true
+        },
+        "op",
+        "dst",
+        "coords",
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "groupRotate": {
+      "params": [
+        "r",
+        "device"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "groupScale": {
+      "params": [
+        "sx",
+        "sy"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "groupShear": {
+      "params": [
+        "sx",
+        "sy"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "groupTranslate": {
+      "params": [
+        "dx",
+        "dy"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "gTree": {
+      "params": [
+        "...",
+        "name",
+        "gp",
+        "vp",
+        "children",
+        "childrenvp",
+        "cl"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "heightDetails": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is.grob": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is.unit": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "isClosed": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "isEmptyCoords": {
+      "params": [
+        {
+          "name": "coords",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "layout.heights": {
+      "params": [
+        {
+          "name": "lay",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "layout.torture": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "layout.widths": {
+      "params": [
+        {
+          "name": "lay",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "layoutRegion": {
+      "params": [
+        "layout.pos.row",
+        "layout.pos.col"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "legendGrob": {
+      "params": [
+        {
+          "name": "labels",
+          "required": true
+        },
+        "nrow",
+        "ncol",
+        "byrow",
+        "do.lines",
+        "lines.first",
+        "hgap",
+        "vgap",
+        "default.units",
+        "pch",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "linearGradient": {
+      "params": [
+        "colours",
+        "stops",
+        "x1",
+        "y1",
+        "x2",
+        "y2",
+        "default.units",
+        "extend",
+        "group"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "linesGrob": {
+      "params": [
+        "x",
+        "y",
+        "default.units",
+        "arrow",
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "lineToGrob": {
+      "params": [
+        "x",
+        "y",
+        "default.units",
+        "arrow",
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "makeContent": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "makeContext": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "moveToGrob": {
+      "params": [
+        "x",
+        "y",
+        "default.units",
+        "name",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "nestedListing": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "gindent",
+        "vpindent"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "nullGrob": {
+      "params": [
+        "x",
+        "y",
+        "default.units",
+        "name",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "packGrob": {
+      "params": [
+        {
+          "name": "frame",
+          "required": true
+        },
+        {
+          "name": "grob",
+          "required": true
+        },
+        "side",
+        "row",
+        "row.before",
+        "row.after",
+        "col",
+        "col.before",
+        "col.after",
+        "width",
+        "height",
+        "force.width",
+        "force.height",
+        "border",
+        "dynamic"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pathGrob": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "y",
+          "required": true
+        },
+        "id",
+        "id.lengths",
+        "pathId",
+        "pathId.lengths",
+        "rule",
+        "default.units",
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pathListing": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "gvpSep",
+        "gAlign"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pattern": {
+      "params": [
+        {
+          "name": "grob",
+          "required": true
+        },
+        "x",
+        "y",
+        "width",
+        "height",
+        "default.units",
+        "just",
+        "hjust",
+        "vjust",
+        "extend",
+        "gp",
+        "group"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "placeGrob": {
+      "params": [
+        {
+          "name": "frame",
+          "required": true
+        },
+        {
+          "name": "grob",
+          "required": true
+        },
+        "row",
+        "col"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "plotViewport": {
+      "params": [
+        "margins",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pointsGrob": {
+      "params": [
+        "x",
+        "y",
+        "pch",
+        "size",
+        "default.units",
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "polygonGrob": {
+      "params": [
+        "x",
+        "y",
+        "id",
+        "id.lengths",
+        "default.units",
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "polylineGrob": {
+      "params": [
+        "x",
+        "y",
+        "id",
+        "id.lengths",
+        "default.units",
+        "arrow",
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pop.viewport": {
+      "params": [
+        "n",
+        "recording"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "popViewport": {
+      "params": [
+        "n",
+        "recording"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "postDrawDetails": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "preDrawDetails": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "push.viewport": {
+      "params": [
+        "...",
+        "recording"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pushViewport": {
+      "params": [
+        "...",
+        "recording"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "radialGradient": {
+      "params": [
+        "colours",
+        "stops",
+        "cx1",
+        "cy1",
+        "r1",
+        "cx2",
+        "cy2",
+        "r2",
+        "default.units",
+        "extend",
+        "group"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rasterGrob": {
+      "params": [
+        {
+          "name": "image",
+          "required": true
+        },
+        "x",
+        "y",
+        "width",
+        "height",
+        "just",
+        "hjust",
+        "vjust",
+        "interpolate",
+        "default.units",
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "recordGrob": {
+      "params": [
+        "expr",
+        {
+          "name": "list",
+          "required": true
+        },
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "eval": {
+        "expr": "quoted_expression"
+      }
+    },
+    "rectGrob": {
+      "params": [
+        "x",
+        "y",
+        "width",
+        "height",
+        "just",
+        "hjust",
+        "vjust",
+        "default.units",
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "removeGrob": {
+      "params": [
+        {
+          "name": "gTree",
+          "required": true
+        },
+        {
+          "name": "gPath",
+          "required": true
+        },
+        "strict",
+        "grep",
+        "global",
+        "warn"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "reorderGrob": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "order",
+          "required": true
+        },
+        "back"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "resolveHJust": {
+      "params": [
+        {
+          "name": "just",
+          "required": true
+        },
+        {
+          "name": "hjust",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "resolveRasterSize": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "resolveVJust": {
+      "params": [
+        {
+          "name": "just",
+          "required": true
+        },
+        {
+          "name": "vjust",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "roundrectGrob": {
+      "params": [
+        "x",
+        "y",
+        "width",
+        "height",
+        "default.units",
+        "r",
+        "just",
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "seekViewport": {
+      "params": [
+        {
+          "name": "name",
+          "required": true
+        },
+        "recording"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "segmentsGrob": {
+      "params": [
+        "x0",
+        "y0",
+        "x1",
+        "y1",
+        "default.units",
+        "arrow",
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setChildren": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "children",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setGrob": {
+      "params": [
+        {
+          "name": "gTree",
+          "required": true
+        },
+        {
+          "name": "gPath",
+          "required": true
+        },
+        {
+          "name": "newGrob",
+          "required": true
+        },
+        "strict",
+        "grep"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "showGrob": {
+      "params": [
+        "x",
+        "gPath",
+        "strict",
+        "grep",
+        "recurse",
+        "depth",
+        "labelfun",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "showViewport": {
+      "params": [
+        "vp",
+        "recurse",
+        "depth",
+        "newpage",
+        "leaves",
+        "col",
+        "fill",
+        "label",
+        "nrow",
+        "ncol"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stringAscent": {
+      "params": [
+        {
+          "name": "string",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stringDescent": {
+      "params": [
+        {
+          "name": "string",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stringHeight": {
+      "params": [
+        {
+          "name": "string",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stringWidth": {
+      "params": [
+        {
+          "name": "string",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "strokeGrob": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "textGrob": {
+      "params": [
+        {
+          "name": "label",
+          "required": true
+        },
+        "x",
+        "y",
+        "just",
+        "hjust",
+        "vjust",
+        "rot",
+        "check.overlap",
+        "default.units",
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "unit": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "units",
+          "required": true
+        },
+        "data"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "unit.c": {
+      "params": [
+        "...",
+        "check"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "unit.length": {
+      "params": [
+        {
+          "name": "unit",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "unit.pmax": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "unit.pmin": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "unit.psum": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "unit.rep": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "unitType": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "recurse"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "upViewport": {
+      "params": [
+        "n",
+        "recording"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "useGrob": {
+      "params": [
+        {
+          "name": "group",
+          "required": true
+        },
+        "transform",
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "useRotate": {
+      "params": [
+        "inverse",
+        "device"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "useScale": {
+      "params": [
+        "inverse"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "useTranslate": {
+      "params": [
+        "inverse",
+        "device"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "valid.just": {
+      "params": [
+        {
+          "name": "just",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "validDetails": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "viewport": {
+      "params": [
+        "x",
+        "y",
+        "width",
+        "height",
+        "default.units",
+        "just",
+        "gp",
+        "clip",
+        "mask",
+        "xscale",
+        "yscale",
+        "angle",
+        "layout",
+        "layout.pos.row",
+        "layout.pos.col",
+        "name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "viewport.layout": {
+      "params": [
+        {
+          "name": "vp",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "viewport.transform": {
+      "params": [
+        {
+          "name": "vp",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "viewportRotate": {
+      "params": [
+        {
+          "name": "group",
+          "required": true
+        },
+        "device"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "viewportScale": {
+      "params": [
+        {
+          "name": "group",
+          "required": true
+        },
+        "device"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "viewportTransform": {
+      "params": [
+        {
+          "name": "group",
+          "required": true
+        },
+        "shear",
+        "flip",
+        "device"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "viewportTranslate": {
+      "params": [
+        {
+          "name": "group",
+          "required": true
+        },
+        "device"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "vpList": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "vpPath": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "vpStack": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "vpTree": {
+      "params": [
+        {
+          "name": "parent",
+          "required": true
+        },
+        {
+          "name": "children",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "widthDetails": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xaxisGrob": {
+      "params": [
+        "at",
+        "label",
+        "main",
+        "edits",
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xDetails": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "theta",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xsplineGrob": {
+      "params": [
+        "x",
+        "y",
+        "id",
+        "id.lengths",
+        "default.units",
+        "shape",
+        "open",
+        "arrow",
+        "repEnds",
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xsplinePoints": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "yaxisGrob": {
+      "params": [
+        "at",
+        "label",
+        "main",
+        "edits",
+        "name",
+        "gp",
+        "vp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "yDetails": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "theta",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  },
+  "datasets": {
+    "emptyCoords": {
+      "mode": "list",
+      "length": "2",
+      "na": false,
+      "class": [
+        "GridCoords"
+      ]
+    }
+  }
+}

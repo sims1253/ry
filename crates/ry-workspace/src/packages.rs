@@ -41,11 +41,6 @@ pub struct NamespaceMetadata {
     pub imported_packages: HashSet<String>,
     /// Names made public by `export(name, ...)`.
     pub exports: HashSet<String>,
-    /// Generic names mentioned by `S3method(generic, class)`. A generic is
-    /// looked up in function position even when a data binding with the same
-    /// name exists locally, so these are function candidates as well as
-    /// namespace metadata.
-    pub s3_generics: HashSet<String>,
     /// Explicit `(generic, class)` registrations from `S3method()`.
     pub s3_methods: HashSet<(String, String)>,
 }
@@ -103,9 +98,6 @@ pub fn namespace_metadata(file: &SourceFile) -> NamespaceMetadata {
             }
             "S3method" => {
                 let generic = args.first().and_then(|arg| static_name(&arg.value));
-                if let Some(generic) = &generic {
-                    metadata.s3_generics.insert(generic.clone());
-                }
                 if let (Some(generic), Some(class)) = (
                     &generic,
                     args.get(1).and_then(|arg| static_name(&arg.value)),

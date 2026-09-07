@@ -225,6 +225,11 @@ fn s3_registration_does_not_hide_primitive_diagnostics_or_real_custom_bindings()
             "`+` <- function(...) 'ok'; out <- missing_name + 1L",
             false,
         ),
+        (
+            "S3method(grid.draw, foo)\nimport(grid)\n",
+            "draw <- grid.draw; out <- lapply(list(), grid.draw)",
+            false,
+        ),
     ] {
         std::fs::write(dir.path().join("NAMESPACE"), namespace).unwrap();
         std::fs::write(&path, source).unwrap();
@@ -241,6 +246,8 @@ fn s3_registration_does_not_hide_primitive_diagnostics_or_real_custom_bindings()
         .unwrap();
         let mut project = ry_checker::Project::new();
         project.add_file(path.into(), file);
+        project.set_loaded(context.attached_packages);
+        project.set_bare_loaded(context.bare_bindings);
         project.set_external_bindings(context.external_bindings);
         project.set_imported_from(context.imported_bindings);
         project.set_external_s3_methods(context.s3_methods);

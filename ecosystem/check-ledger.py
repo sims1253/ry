@@ -9,6 +9,8 @@ Asserts:
     categories no finding carries must be 0)
   - every audit_group_counts entry equals the actual audit group count,
     likewise
+  - each optional package diagnostic count equals its findings count
+  - findings belong to declared packages when a package summary is present
 
 Comparing per key over the union of summary and observed labels rejects
 what per-key loops over the observed labels alone miss: a negative entry
@@ -75,13 +77,31 @@ def check_ledger(path: str) -> int:
     actual_groups = Counter(f.get("audit_group") for f in findings)
     compare_summary("audit_group_counts", group_counts, actual_groups, errors)
 
+    # Historical ledgers may omit per-package summaries. When a count is
+    # supplied, it describes findings, including repeated diagnostic identities.
+    package_counts = Counter(f.get("package") for f in findings)
+    if "packages" in data:
+        declared_packages = {package["name"] for package in data["packages"]}
+        for name in sorted(set(package_counts) - declared_packages, key=repr):
+            errors.append(f"findings package {name!r} is absent from packages")
+    for package in data.get("packages", []):
+        if "diagnostics" not in package:
+            continue
+        name = package["name"]
+        expected = package_counts[name]
+        if package["diagnostics"] != expected:
+            errors.append(
+                f"packages[{name!r}].diagnostics ({package['diagnostics']}) "
+                f"!= actual count ({expected})"
+            )
+
     if errors:
         print(f"FAIL: {path}")
         for e in errors:
             print(f"  {e}")
         return 1
 
-    print(f"OK: {path} — {n} findings, classification and audit group sums match")
+    print(f"OK: {path} — {n} findings, summary counts match")
     return 0
 
 

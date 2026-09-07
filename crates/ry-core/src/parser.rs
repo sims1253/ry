@@ -326,6 +326,9 @@ impl RParser {
 
     fn lower_expr(&self, n: Node, src: &str) -> Option<Expr> {
         match n.kind() {
+            // Comments have their own SourceFile metadata for suppressions and
+            // tooling. They are not expressions in the executable AST.
+            "comment" => None,
             "true" => Some(Expr::Logical(true, self.span(n))),
             "false" => Some(Expr::Logical(false, self.span(n))),
             "null" => Some(Expr::Null(self.span(n))),
@@ -393,7 +396,10 @@ impl RParser {
             "function_definition" => self.lower_function_literal(n, src),
             "parenthesized_expression" => {
                 let mut cur = n.walk();
-                if let Some(ch) = n.named_children(&mut cur).next() {
+                if let Some(ch) = n
+                    .named_children(&mut cur)
+                    .find(|child| child.kind() != "comment")
+                {
                     return self.lower_expr(ch, src);
                 }
                 None
@@ -1063,6 +1069,69 @@ mod tests {
     fn parses_simple_assignment() {
         let f = parse("x <- 1L\n");
         assert_eq!(f.stmts.len(), 1);
+    }
+
+    #[test]
+    fn comments_stay_in_metadata_without_becoming_statements() {
+        let source = "# header\nx <- 1L # inline\n{ # block\nx\n# block tail\n}\nf <- function() { # function\n1L\n# function tail\n}\n";
+        let file = parse(source);
+        assert!(file.parse_errors.is_empty());
+        assert_eq!(file.source, source);
+        assert_eq!(file.stmts.len(), 3, "{:?}", file.stmts);
+        let Stmt::Assign {
+            value: Expr::Function { body, .. },
+            ..
+        } = &file.stmts[2]
+        else {
+            panic!("expected function assignment");
+        };
+        assert!(matches!(body.as_slice(), [Stmt::Expr(Expr::Integer(1, _))]));
+        assert_eq!(file.comments.len(), 6);
+        for comment in &file.comments {
+            let line = source.lines().nth(comment.line).unwrap();
+            assert_eq!(&line[comment.col..comment.col + 1], "#");
+            assert_eq!(&line[comment.col + 1..], comment.body);
+        }
+        let only_comments = parse("# first\n# second\n");
+        assert!(only_comments.stmts.is_empty());
+        assert_eq!(only_comments.comments.len(), 2);
+    }
+
+    #[test]
+    fn comments_inside_parentheses_do_not_replace_the_expression() {
+        let file = parse(
+            "x <- (\n# before\n1L\n# after\n)\ny <- list(\n# argument\n2L, z = (\n# nested\n3L\n))\n",
+        );
+        assert!(file.parse_errors.is_empty());
+        assert!(matches!(
+            &file.stmts[0],
+            Stmt::Assign {
+                value: Expr::Integer(1, _),
+                ..
+            }
+        ));
+        let Stmt::Assign {
+            value: Expr::Call { args, .. },
+            ..
+        } = &file.stmts[1]
+        else {
+            panic!("expected list call");
+        };
+        assert_eq!(args.len(), 2);
+        assert!(matches!(args[1].value, Expr::Integer(3, _)));
+        assert_eq!(file.comments.len(), 4);
+    }
+
+    #[test]
+    fn ignoring_comments_preserves_strings_and_unsupported_expressions() {
+        let file = parse("'# not a comment'\n1i\n# real comment\n");
+        assert!(file.parse_errors.is_empty());
+        assert!(
+            matches!(&file.stmts[0], Stmt::Expr(Expr::String(value, _)) if value == "# not a comment")
+        );
+        assert!(matches!(&file.stmts[1], Stmt::Expr(Expr::Unknown(_))));
+        assert_eq!(file.stmts.len(), 2);
+        assert_eq!(file.comments.len(), 1);
     }
 
     #[test]

@@ -5,8 +5,7 @@ gettextf <- function(...) 2L
 stopifnot(identical(gettextf('%s'), 2L))
 
 local({
-  sprintf <- local(function(...) 1L)
+  sprintf <- function(...) 1L
   probe <- sprintf
-  sprintf <- NULL
   stopifnot(identical(probe('%d'), 1L))
 })

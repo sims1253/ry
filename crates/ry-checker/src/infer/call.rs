@@ -101,7 +101,20 @@ impl Checker {
             return t;
         }
 
-        self.check_comparison_inside_aggregate(&lookup_name, args);
+        let base_aggregate = lookup_name == "length"
+            && self.boolean_context_span == Some(span)
+            && matches!(
+                self.special_call_provenance(
+                    &name,
+                    func,
+                    &semantic_name,
+                    &lookup_name,
+                    "base",
+                    scope,
+                ),
+                crate::resolve::SpecialCallProvenance::Proven
+            );
+        self.check_comparison_inside_aggregate(&lookup_name, args, scope, span, base_aggregate);
         self.check_comparison_inside_math_fn(&lookup_name, args);
         self.check_identical_list_subset(&lookup_name, args, scope);
 
@@ -590,20 +603,140 @@ impl Checker {
     /// an element guard but counts coercion results. `sum(x > 0)` is the
     /// idiomatic R way to count matches, so `sum` is deliberately excluded
     /// from this mis-parenthesization family.
-    fn check_comparison_inside_aggregate(&mut self, lookup_name: &str, args: &[Arg]) {
-        if matches!(lookup_name, "length" | "nchar")
-            && let Some(Expr::BinOp {
-                op,
-                span: comparison_span,
-                ..
-            }) = args.first().map(|arg| &arg.value)
-            && is_comparison(*op)
-        {
+    fn check_comparison_inside_aggregate(
+        &mut self,
+        lookup_name: &str,
+        args: &[Arg],
+        scope: &Scope,
+        call_span: Span,
+        base_aggregate: bool,
+    ) {
+        if !matches!(lookup_name, "length" | "nchar") {
+            return;
+        }
+        let Some(Expr::BinOp {
+            op,
+            lhs,
+            rhs,
+            span: comparison_span,
+        }) = args.first().map(|arg| &arg.value)
+        else {
+            return;
+        };
+        if !is_comparison(*op) {
+            return;
+        }
+        let proven_boolean_grep = lookup_name == "length"
+            && self.boolean_context_span == Some(call_span)
+            && base_aggregate
+            && self.resolves_to_base(op_symbol(*op), scope)
+            && !ops_chooser::operator_rebound(self, op_symbol(*op), scope)
+            && self.proven_grep_position_call(*op, lhs, rhs, scope);
+        if !proven_boolean_grep {
             let message = format!(
                 "comparison is inside `{lookup_name}()`; compare `{lookup_name}(x)` instead"
             );
             self.emit(Severity::Warning, *comparison_span, "RY093", message);
         }
+    }
+
+    /// The result of ordinary `grep()` is a positive integer position for
+    /// each match. Therefore `length(grep(...) > 0)` has the same boolean
+    /// truth behavior as `length(grep(...)) > 0`, but only when `grep()` is
+    /// proven to return positions. `value = TRUE` changes that contract to
+    /// character results and remains under RY093.
+    fn proven_grep_position_call(
+        &self,
+        op: BinOpKind,
+        lhs: &Expr,
+        rhs: &Expr,
+        scope: &Scope,
+    ) -> bool {
+        let is_zero = |expr: &Expr| match expr {
+            Expr::Integer(0, _) => true,
+            Expr::Double(value, _) => *value == 0.0,
+            _ => false,
+        };
+        let grep_expr = match op {
+            BinOpKind::Gt | BinOpKind::Ge if is_zero(rhs) => lhs,
+            BinOpKind::Lt | BinOpKind::Le if is_zero(lhs) => rhs,
+            BinOpKind::Ne if is_zero(rhs) => lhs,
+            BinOpKind::Ne if is_zero(lhs) => rhs,
+            _ => return false,
+        };
+        let Expr::Call {
+            func: grep_func,
+            args: grep_args,
+            ..
+        } = grep_expr
+        else {
+            return false;
+        };
+        let Some(grep_name) = ident_name(grep_func) else {
+            return false;
+        };
+        if crate::semantic_lists::bare_name(grep_name) != "grep"
+            || !matches!(
+                self.special_call_provenance(
+                    grep_name, grep_func, grep_name, "grep", "base", scope,
+                ),
+                crate::resolve::SpecialCallProvenance::Proven
+            )
+        {
+            return false;
+        }
+
+        // `grep`'s fifth formal is `value`; match it exactly as R does so
+        // reordered and partial named arguments cannot bypass the control.
+        let bindings = match_arguments(
+            &[
+                "pattern",
+                "x",
+                "ignore.case",
+                "perl",
+                "value",
+                "fixed",
+                "useBytes",
+                "invert",
+            ],
+            grep_args,
+        );
+        // A failed match, duplicate formal, or missing required input means
+        // R does not produce a positional result at all. Keep the exemption
+        // out of those calls instead of proving a shape for an invalid call.
+        if !bindings.unmatched_named.is_empty()
+            || bindings.param_for_arg.iter().any(Option::is_none)
+            || bindings
+                .param_for_arg
+                .iter()
+                .enumerate()
+                .any(|(index, param)| {
+                    param
+                        .is_some_and(|param| bindings.param_for_arg[..index].contains(&Some(param)))
+                })
+            || (0..=1).any(|formal| {
+                bindings
+                    .arg_for_param(formal)
+                    .is_none_or(|index| matches!(grep_args[index].value, Expr::Missing(_)))
+            })
+        {
+            return false;
+        }
+        // The position contract is independent of pattern/text values, but
+        // unknown controls can still change whether the call succeeds. A
+        // literal logical control keeps this proof deliberately bounded.
+        if grep_args.iter().enumerate().any(|(index, argument)| {
+            bindings.param_for_arg[index]
+                .is_some_and(|formal| formal >= 2 && !matches!(argument.value, Expr::Logical(_, _)))
+        }) {
+            return false;
+        }
+        let Some(value_index) = bindings.arg_for_param(4) else {
+            // The default is `value = FALSE`, so an omitted control still
+            // produces integer positions.
+            return true;
+        };
+        matches!(grep_args[value_index].value, Expr::Logical(false, _))
     }
 
     /// RY100: numeric math functions coerce logical comparisons to 0/1,

@@ -171,6 +171,10 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Suppress RY093 for proven base `grep()` position comparisons used directly
+  as boolean guards, while retaining warnings for value results and uncertain
+  or nested comparisons.
+
 - Distinguish `@` slot extraction from `$`. Valid atomic `.Data` reads no
   longer trigger dollar-access errors. Keep slot results and replaced roots
   unknown, including mixed nested replacements; respect explicit accessors.

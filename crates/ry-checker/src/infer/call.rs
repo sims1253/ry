@@ -138,7 +138,21 @@ impl Checker {
             }
         }
 
-        self.check_printf_format_arity(&lookup_name, args);
+        if matches!(lookup_name.as_str(), "sprintf" | "gettextf")
+            && matches!(
+                self.special_call_provenance(
+                    &name,
+                    func,
+                    &semantic_name,
+                    &lookup_name,
+                    "base",
+                    scope
+                ),
+                crate::resolve::SpecialCallProvenance::Proven
+            )
+        {
+            self.check_printf_format_arity(&lookup_name, args);
+        }
 
         if let Some(t) =
             self.infer_nse_quoting_call(&semantic_name, &lookup_name, args, scope, span)

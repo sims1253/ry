@@ -91,7 +91,7 @@ cargo test -p ry-cli --test editor_playground
 | R/daily-report.R | 0 | 1 | RY010@43:51 |
 | R/menu.R | 0 | 0 | none |
 | R/prices.R | 0 | 0 | none |
-| R/quality.R | 1 | 7 | RY091@17:12; RY090@17:19; RY091@20:14; RY092@29:19; RY093@33:20; RY094@36:20; RY010@48:17; RY010@53:25 |
+| R/quality.R | 1 | 7 | RY091@17:12; RY090@17:19; RY091@20:14; RY092@29:19; RY093@33:20; RY094@36:26; RY010@48:17; RY010@53:25 |
 | R/resolution.R | 0 | 1 | RY010@33:11 |
 | R/warts.R | 6 | 8 | RY031@21:20; RY031@22:19; RY032@24:23; RY033@26:21; RY034@29:10; RY034@30:10; RY040@32:14; RY041@34:16; RY042@37:15; RY060@40:16; RY061@43:18; RY070@46:18; RY099@49:19; RY002@54:7 |
 <!-- playground-diagnostics:end -->

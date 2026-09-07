@@ -960,6 +960,7 @@ const MAX_SYNTAX_DEPTH: usize = 128;
 /// that appears inside a string literal is part of the string, not a
 /// comment, so the suppression parser must consume this list rather
 /// than scanning source lines for `#`.
+/// Reject trees deeper than `MAX_SYNTAX_DEPTH` before recursive AST lowering.
 fn collect_comments(
     root: tree_sitter::Node,
     src: &str,

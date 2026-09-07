@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "5d9e1edc4350621fcb16e117438ff2a436879fdf9b0e6584e9e7c805ac899c55",
-  "ry_commit": "9c644d65b66727bc02c797a444795ca78f70573e",
+  "source_sha256": "af0836a094dbb361d3008e7853634d7f59145b655ecdfd4ed72b5aa7e189dde1",
+  "ry_commit": "3e94a5a1fb05b010aca074570bd68cdb27903b50",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -12,7 +12,7 @@
       "repo": "tidyverse/ggplot2",
       "stars": 6982,
       "commit": "6870419aa6e106c3580c45c81d5b688cb31758bd",
-      "diagnostics": 49
+      "diagnostics": 45
     },
     {
       "name": "shiny-r",
@@ -2366,42 +2366,6 @@
       "path": "R/facet-.R",
       "line": 1074,
       "column": 28,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/guide-axis-stack.R",
-      "line": 35,
-      "column": 25,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/guide-custom.R",
-      "line": 43,
-      "column": 22,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/guide-custom.R",
-      "line": 44,
-      "column": 23,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/guide-custom.R",
-      "line": 45,
-      "column": 24,
       "label": "false_positive",
       "audit_group": "manual-audit"
     },
@@ -6773,11 +6737,11 @@
   ],
   "classification": {
     "true_positive": 43,
-    "false_positive": 660,
+    "false_positive": 656,
     "uncertain": 0
   },
   "audit_group_counts": {
-    "manual-audit": 378,
+    "manual-audit": 374,
     "data-masking-nse": 4,
     "delayed-assign": 15,
     "function-shadowing": 3,
@@ -6795,6 +6759,7 @@
     "The RY032 cleanup produced a zero diagnostic identity delta from the measured starting-tree baseline. Later intentional behavior changes must update this ledger with a reviewed identity diff.",
     "Every identity has a retained or manually audited label; this strict ledger is a CI gate, not an audit transcript.",
     "The sole force-contract identity delta removes gt RY098 at R/cols_align.R:198:17, retaining its existing reviewed false-positive classification. This is a conservative coverage reduction for the col_classes default after opaque names()/index selection, not a runtime disproof of recursion when that default is omitted. Full hermetic regeneration preserves every other finding; stale per-package summary counts were recomputed from the same reports.",
-    "Constructor provenance guards remove four previously reviewed RY061 false positives in rlang tests/testthat/test-nse-defuse.R:829\u2013832. The custom S3 result stays unknown when the class constructor cannot be proved; the rest of the CI identity set is unchanged."
+    "Constructor provenance guards remove four previously reviewed RY061 false positives in rlang tests/testthat/test-nse-defuse.R:829\u2013832. The custom S3 result stays unknown when the class constructor cannot be proved; the rest of the CI identity set is unchanged.",
+    "The grid export inventory removes four ggplot2 RY010 false positives: is.unit at R/guide-axis-stack.R:35:25 and R/guide-custom.R:44:23 and :45:24, and is.grob at R/guide-custom.R:43:22. These callback names resolve through the package NAMESPACE import(grid). All other reviewed identities, including all 43 true positives, are unchanged."
   ]
 }

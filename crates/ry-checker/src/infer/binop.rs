@@ -509,19 +509,48 @@ impl Checker {
             direct_parameter(&args.first()?.value, scope)
         }
 
-        fn length_guard_parameter<'a>(expr: &'a Expr, scope: &Scope) -> Option<&'a str> {
+        fn length_guard_parameter<'a>(
+            checker: &Checker,
+            expr: &'a Expr,
+            scope: &Scope,
+        ) -> Option<&'a str> {
             if let Some(parameter) = call_on_parameter(expr, &["length"], scope) {
                 return Some(parameter);
             }
-            let Expr::BinOp { lhs, rhs, .. } = expr else {
+            let Expr::BinOp { op, lhs, rhs, .. } = expr else {
                 return None;
             };
+            // The RHS of `length(x) == 1 && ...` is reached only for a
+            // scalar x. This guard is not evidence of an unchecked vector.
+            let is_one = |value: &Expr| {
+                matches!(value, Expr::Integer(1, _))
+                    || matches!(value, Expr::Double(n, _) if *n == 1.0)
+            };
+            let base_length = |value: &Expr| {
+                let Expr::Call { func, .. } = value else {
+                    return false;
+                };
+                ident_name(func).is_some_and(|name| checker.resolves_to_base(name, scope))
+                    && call_on_parameter(value, &["length"], scope).is_some()
+            };
+            if *op == BinOpKind::Eq
+                && ((is_one(rhs) && base_length(lhs)) || (is_one(lhs) && base_length(rhs)))
+            {
+                return None;
+            }
             call_on_parameter(lhs, &["length"], scope)
                 .or_else(|| call_on_parameter(rhs, &["length"], scope))
         }
 
         fn vector_predicate_parameter<'a>(expr: &'a Expr, scope: &Scope) -> Option<&'a str> {
             match expr {
+                // Membership returns one logical per LHS element; the
+                // lookup table on the RHS does not determine result length.
+                Expr::BinOp {
+                    op: BinOpKind::In,
+                    lhs,
+                    ..
+                } => direct_parameter(lhs, scope),
                 Expr::BinOp {
                     op:
                         BinOpKind::Lt
@@ -529,8 +558,7 @@ impl Checker {
                         | BinOpKind::Gt
                         | BinOpKind::Ge
                         | BinOpKind::Eq
-                        | BinOpKind::Ne
-                        | BinOpKind::In,
+                        | BinOpKind::Ne,
                     lhs,
                     rhs,
                     ..
@@ -547,7 +575,7 @@ impl Checker {
 
         let guarded = match op {
             BinOpKind::OrOr => call_on_parameter(lhs, &["is.null"], scope),
-            BinOpKind::AndAnd => length_guard_parameter(lhs, scope),
+            BinOpKind::AndAnd => length_guard_parameter(self, lhs, scope),
             _ => None,
         };
         // Both `guarded` and `vector_predicate_parameter` resolve through

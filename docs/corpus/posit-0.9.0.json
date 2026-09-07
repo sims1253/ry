@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "d5305306fd6c7a92c3b9cd179d29d943f3bc90b84d7658e254ca1fb4ac4c52c7",
-  "ry_commit": "71a2ae0e896dfaf17c62c8073dc264fe6cbda1ab",
+  "source_sha256": "180a25bef678edd5b05e296abab80e25588d9e28632b1117280eefbc074069c8",
+  "ry_commit": "59f5792d07946ccdf6588b7cb0d850393dced503",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -54,7 +54,7 @@
       "repo": "tidymodels/broom",
       "stars": 1524,
       "commit": "6230a9014b0d839e4e8ed5b1763de65dde8f2205",
-      "diagnostics": 7
+      "diagnostics": 6
     },
     {
       "name": "plumber",
@@ -82,7 +82,7 @@
       "repo": "r-lib/lintr",
       "stars": 1289,
       "commit": "990e57870498634ce67d1fa0e53311f385b4b3d4",
-      "diagnostics": 11
+      "diagnostics": 9
     },
     {
       "name": "renv",
@@ -529,15 +529,6 @@
       "code": "RY033",
       "path": "R/utilities.R",
       "line": 108,
-      "column": 11,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "broom",
-      "code": "RY061",
-      "path": "R/gmm.R",
-      "line": 96,
       "column": 11,
       "label": "false_positive",
       "audit_group": "type-narrowing"
@@ -3513,24 +3504,6 @@
       "audit_group": "upstream-package"
     },
     {
-      "package": "lintr",
-      "code": "RY060",
-      "path": "tests/testthat/test-linter_tags.R",
-      "line": 172,
-      "column": 24,
-      "label": "false_positive",
-      "audit_group": "data-masking-nse"
-    },
-    {
-      "package": "lintr",
-      "code": "RY060",
-      "path": "tests/testthat/test-linter_tags.R",
-      "line": 178,
-      "column": 15,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
       "package": "lubridate",
       "code": "RY010",
       "path": "R/ops-compare.r",
@@ -6305,12 +6278,12 @@
   ],
   "classification": {
     "true_positive": 43,
-    "false_positive": 608,
+    "false_positive": 605,
     "uncertain": 0
   },
   "audit_group_counts": {
     "manual-audit": 349,
-    "data-masking-nse": 3,
+    "data-masking-nse": 2,
     "delayed-assign": 15,
     "function-shadowing": 3,
     "local-closure-forward-ref": 19,
@@ -6319,7 +6292,7 @@
     "reassign-scope": 10,
     "s3-method-dispatch": 3,
     "test-fixture": 71,
-    "type-narrowing": 98,
+    "type-narrowing": 96,
     "upstream-package": 31
   },
   "notes": [
@@ -6331,6 +6304,7 @@
     "The grid export inventory removes four ggplot2 RY010 false positives: is.unit at R/guide-axis-stack.R:35:25 and R/guide-custom.R:44:23 and :45:24, and is.grob at R/guide-custom.R:43:22. These callback names resolve through the package NAMESPACE import(grid). All other reviewed identities, including all 43 true positives, are unchanged.",
     "Unproven factor/new calls now discard downstream facts because the callee or skipped arguments may change caller bindings. This reduces coverage by ten previously audited dplyr identities: RY002 test-mutate.R:793 and test-summarise.R:321/331; RY040 test-count-tally.R:139/173/214/245 and test-mutate.R:408/410; RY060 test-mutate.R:794 (all under tests/testthat/). These are conservative coverage losses after uncertain bare factor calls, not ten individually corrected false positives. Their existing false-positive labels are unchanged; all 43 required true positives remain covered.",
     "Conservative switch provenance and selected-effect handling removes 31 previously audited false-positive identities: bslib 12, cli 6, shinydashboard 5, pak 3, rlang 3, gt 1, and rmarkdown 1. These are coverage changes where switch selection or caller effects cannot be proved, not 31 individually established semantic corrections. The exact pinned 62-package parent comparison adds no findings and preserves all 43 required true positives.",
+    "Registered S3 methods no longer lend return types to receivers without a matching class; uncertain registered dispatch stays opaque instead of falling through to a scalar default. The full pinned comparison removes three previously reviewed false-positive identities: broom RY061 at R/gmm.R:96:11 and lintr RY060 at tests/testthat/test-linter_tags.R:172:24 and :178:15. No identities are added and all 43 true positives remain. The existing rlang RY001 at R/trace.R:531:7 retains its identity with an opaque rather than logical condition mode in its message.",
     "Truthful polymorphic regmatches returns remove seven reviewed RY105 false positives: bookdown R/html.R:878:9, :965:9, :1069:9, :1138:9 and R/utils.R:441:9; flexdashboard R/flex_dashboard.R:633:9; rmarkdown R/html_dependencies.R:245:9. These guards inspect variable-length character vectors from gregexpr/regexec match lists, not known scalar strings. Runtime oracle controls cover empty and multiple-match elements; all required true positives remain covered."
   ]
 }

@@ -124,16 +124,13 @@ pub const METADATA_ARGS: &[&str] = &[
 /// generic, so `abs(x)` can hit a `Math.foo` method (the `Ops` group is
 /// operator syntax, handled in `infer/binop.rs`).
 ///
-/// Checked by typeshed agreement: every member exists in the embedded base
-/// typeshed -- most in the `functions` map, with `acosh`, `asinh`, and
-/// `atanh` declared as ambient functions. The set is the subset of R's
-/// `Math` group that ry models; R additionally routes `signif`, the
-/// `cum*` family, and the `*pi`/`digamma`/`trigamma` members through the
-/// group, which ry does not model.
+/// Checked against R's Math and Math2 inventories and the embedded base
+/// typeshed. S3 uses Math for both S4 subgroups, including round and signif.
 pub const S3_MATH_GENERICS: &[&str] = &[
-    "abs", "acos", "acosh", "asin", "asinh", "atan", "atanh", "ceiling", "cos", "cosh", "exp",
-    "expm1", "floor", "gamma", "lgamma", "log", "log10", "log1p", "log2", "round", "sign", "sin",
-    "sinh", "sqrt", "tan", "tanh", "trunc",
+    "abs", "acos", "acosh", "asin", "asinh", "atan", "atanh", "ceiling", "cos", "cosh", "cospi",
+    "cummax", "cummin", "cumprod", "cumsum", "digamma", "exp", "expm1", "floor", "gamma", "lgamma",
+    "log", "log10", "log1p", "log2", "round", "sign", "signif", "sin", "sinh", "sinpi", "sqrt",
+    "tan", "tanh", "tanpi", "trigamma", "trunc",
 ];
 
 /// Functions whose ordinary calls dispatch through the S3 `Summary` group

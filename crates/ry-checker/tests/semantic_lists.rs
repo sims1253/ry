@@ -215,6 +215,30 @@ fn operators_match_r_oracle() {
     );
 }
 
+/// S3 Math includes S4 Math2 (round/signif); Summary has the same inventory.
+#[test]
+fn math_summary_groups_match_r_oracle() {
+    if !rscript_available() {
+        eprintln!("Rscript not on PATH; skipping oracle check");
+        return;
+    }
+    for (groups, members) in [
+        (
+            "c(getGroupMembers('Math'), getGroupMembers('Math2'))",
+            semantic_lists::S3_MATH_GENERICS,
+        ),
+        (
+            "getGroupMembers('Summary')",
+            semantic_lists::S3_SUMMARY_GENERICS,
+        ),
+    ] {
+        let output = r_eval(&format!("cat({groups}, sep='\\n')"));
+        let actual: BTreeSet<&str> = output.trim().lines().collect();
+        let expected: BTreeSet<&str> = members.iter().copied().collect();
+        assert_eq!(expected, actual, "group inventory differs from R: {groups}");
+    }
+}
+
 /// METADATA_ARGS matches the non-`...` parameter names of `formals(data.frame)`.
 #[test]
 fn metadata_args_match_r_oracle() {

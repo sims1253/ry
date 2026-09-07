@@ -586,9 +586,6 @@ fn data_frame_binop_result(op: BinOpKind, lhs: &RType, rhs: &RType) -> Option<RT
 /// to model guard narrowing, so copy just those assignment targets back (not
 /// the guard refinement itself) after evaluating the RHS.
 fn merge_condition_assignments(scope: &mut Scope, evaluated: &Scope, expr: &Expr) {
-    if evaluated.ops_environment_unknown {
-        scope.invalidate_ops_environment();
-    }
     let mut names = HashSet::new();
     collect_condition_assignment_names(expr, &mut names);
     for name in names {

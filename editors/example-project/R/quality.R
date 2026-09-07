@@ -33,7 +33,7 @@ audit_prices <- function(prices) {
   n_over <- length(prices == 3)
 
   # RY094: two conversions in the format string, one value argument.
-  label <- sprintf("%d of %d items", n_over)
+  label <- base::sprintf("%d of %d items", n_over)
 
   list(avg_bad, avg_good, label)
 }

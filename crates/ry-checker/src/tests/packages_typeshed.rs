@@ -369,7 +369,7 @@ fn nse_function_alias_quotes_cli_time_ago_expressions() {
 }
 
 #[test]
-fn quote_and_printf_semantics_follow_function_aliases() {
+fn quote_aliases_keep_quoting_but_format_aliases_require_callee_proof() {
     let diags = check("q <- quote\nq(undefined_sym)\ns <- sprintf\ns(\"%d %d\", 1)\n");
     assert!(
         diags.iter().all(|diagnostic| diagnostic.code != "RY010"),
@@ -380,8 +380,8 @@ fn quote_and_printf_semantics_follow_function_aliases() {
             .iter()
             .filter(|diagnostic| diagnostic.code == "RY094")
             .count(),
-        1,
-        "sprintf() format validation must run through an alias: {diags:?}"
+        0,
+        "a spelling alias does not prove the captured formatter: {diags:?}"
     );
 }
 

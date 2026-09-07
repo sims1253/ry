@@ -144,3 +144,43 @@ fn structure_ambiguous_search_path_does_not_borrow_base_payload_facts() {
         assert!(!out.class.known);
     }
 }
+
+#[test]
+fn structure_namespace_rebinding_never_recovers_base_stub_facts() {
+    for binding in ["`::`", "`:::`", r#""\x3a\x3a""#] {
+        let source = format!(
+            "{binding} <- function(pkg, name) function(...) 'custom'\nout <- base::structure(missing_payload, class = missing_class)"
+        );
+        let (diags, scope) = check_with_scope(&source);
+        assert!(diags.is_empty(), "{binding}: {diags:?}");
+        assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque);
+        assert!(!scope.get("out").unwrap().class.known);
+    }
+    let (_, scope) = check_with_scope(
+        "`::` <- function(pkg, name) function(...) 'actual'\nout <- structure(1L, class = base::c('widget'))",
+    );
+    assert!(!scope.get("out").unwrap().class.known);
+
+    let mut project = crate::project::Project::new();
+    project.add_file(
+        "operator.R".into(),
+        parse_file(
+            "operator.R",
+            "`::` <- function(pkg, name) function(...) 'custom'",
+        ),
+    );
+    project.add_file(
+        "call.R".into(),
+        parse_file("call.R", "out <- base::structure(1L, class = 'widget')"),
+    );
+    project.enable_scope_capture();
+    project.check();
+    let records = project.take_scope_records();
+    let (_, scopes) = records.iter().find(|(path, _)| path == "call.R").unwrap();
+    let out = scopes
+        .iter()
+        .find_map(|record| record.scope.get("out"))
+        .unwrap();
+    assert_eq!(out.mode, Mode::Opaque);
+    assert!(!out.class.known);
+}

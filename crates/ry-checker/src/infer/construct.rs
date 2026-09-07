@@ -17,6 +17,10 @@ impl Checker {
         //   * `class = c("a", "b", ...)` attaches a class vector.
         // Non-literal or unparseable forms fall through to opaque
         // inference with `ClassVector::unknown()` so RY050 stays quiet.
+        if lookup_name == "structure" && self.structure_namespace_unavailable(semantic_name, scope)
+        {
+            return Some(RType::unknown());
+        }
         if lookup_name == "structure" && !self.user_stubs.contains_key("base") {
             if self.resolves_to_base(semantic_name, scope) {
                 return Some(self.infer_structure_call(args, scope));
@@ -155,6 +159,7 @@ impl Checker {
         let semantic_name = scope.function_alias(name).unwrap_or(name);
         if crate::semantic_lists::bare_name(semantic_name) != "c"
             || !self.resolves_to_base(semantic_name, scope)
+            || self.structure_namespace_unavailable(semantic_name, scope)
             || args.iter().any(|arg| arg.name.is_some())
         {
             return ClassLiteral::Unknown;
@@ -170,6 +175,15 @@ impl Checker {
             Some(names) if !names.is_empty() => ClassLiteral::Multi(names),
             _ => ClassLiteral::Unknown,
         }
+    }
+
+    fn structure_namespace_unavailable(&self, name: &str, scope: &Scope) -> bool {
+        crate::semantic_lists::is_base_qualified(name)
+            && self.literal_bindings_may_be_shadowed(
+                ["::", "`::`", ":::", "`:::`"],
+                &HashSet::new(),
+                scope,
+            )
     }
 
     /// The atomic-constructor stage of `infer_call`: `c`, `list`,

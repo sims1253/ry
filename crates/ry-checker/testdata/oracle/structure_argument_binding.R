@@ -23,3 +23,9 @@ f <- function(c) base::structure(1L, class = c("widget"))
 stopifnot(identical(class(f(function(...) "actual")), "actual"))
 g <- function(structure) structure(1L, class = "widget")
 stopifnot(identical(g(function(...) "custom"), "custom"))
+
+(function() {
+  `::` <- function(pkg, name) function(...) "custom"
+  stopifnot(identical(base::structure(missing_payload, class = missing_class), "custom"))
+})()
+stopifnot(identical(class(base::structure(1L, class = base::c("widget", recursive = "TRUE"))), "widget"))

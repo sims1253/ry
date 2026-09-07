@@ -602,3 +602,24 @@ fn literal_ops_proof_is_cleared_before_unknown_operator_arguments() {
         );
     }
 }
+
+#[test]
+fn literal_ops_proof_rejects_unproven_formal_shapes() {
+    let prefix = "x <- structure(1L,class='left')\ny <- structure(2L,class='right')\n`+.left` <- function(e1,e2) 'left'\n`+.right` <- function(e1,e2) 1L\nchooseOpsMethod.left <- function(...) TRUE\nchooseOpsMethod.right <- function(...) TRUE\n";
+    // Too few formals cause unused-argument errors in R. Extra unused formals
+    // and alternate positional names can work, but remain outside this proof.
+    for replacement in [
+        "`+.left` <- function(e1) 'left'",
+        "`+.left` <- function(e1,e2,extra) 'left'",
+        "`+.right` <- function(e1) 1L; chooseOpsMethod.left <- function(...) FALSE",
+        "`+.right` <- function(e1,e2,extra) 1L; chooseOpsMethod.left <- function(...) FALSE",
+        "chooseOpsMethod.left <- function(x,y,mx,my,cl) TRUE",
+        "chooseOpsMethod.left <- function(a,b,c,d,e,f) TRUE",
+        "chooseOpsMethod.left <- function(...) FALSE; chooseOpsMethod.right <- function(x,y,mx,my,cl) TRUE",
+        "chooseOpsMethod.left <- function(...) FALSE; chooseOpsMethod.right <- function(a,b,c,d,e,f) TRUE",
+    ] {
+        let source = format!("{prefix}{replacement}\nout <- x + y");
+        let (_, scope) = check_with_scope(&source);
+        assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque, "{source}");
+    }
+}

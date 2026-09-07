@@ -43,6 +43,16 @@ fn registered_s3_method_miss_does_not_borrow_scalar_default() {
 }
 
 #[test]
+fn registered_s3_method_without_local_body_keeps_dispatch_opaque() {
+    let diags = check_with("f <- function(x) mean(x)$value", |checker| {
+        checker.set_external_s3_methods(HashSet::from([("mean".into(), "widget".into())]));
+    });
+    assert!(diags.iter().all(|d| d.code != "RY061"), "{diags:?}");
+    let control = check("f <- function(x) mean(x)$value");
+    assert!(control.iter().any(|d| d.code == "RY061"), "{control:?}");
+}
+
+#[test]
 fn scalar_data_frame_arithmetic_computes_column_results() {
     for (expression, expected) in [
         ("frame + 0.5", Mode::Double),
@@ -194,6 +204,31 @@ fn s3_dispatch_missing_method() {
         "expected RY050 for missing method, got {:?}",
         diags
     );
+}
+
+#[test]
+fn math_summary_members_do_not_require_a_class_method() {
+    for generic in crate::semantic_lists::S3_MATH_GENERICS
+        .iter()
+        .chain(crate::semantic_lists::S3_SUMMARY_GENERICS)
+    {
+        let source = format!(
+            "Math.other <- function(x, ...) 99\n\
+             Summary.other <- function(..., na.rm = FALSE) 99L\n\
+             x <- structure(c(1L, 2L), class = \"widget\")\n\
+             result <- {generic}(x)\n"
+        );
+        let (diagnostics, scope) = check_with_scope(&source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY050"),
+            "{generic} has a built-in fallback: {diagnostics:?}"
+        );
+        assert_eq!(
+            scope.get("result").map(|ty| ty.mode),
+            Some(Mode::Opaque),
+            "a missing local method does not prove absence of registered methods: {generic}"
+        );
+    }
 }
 
 #[test]

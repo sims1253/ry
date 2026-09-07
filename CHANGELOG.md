@@ -10,7 +10,7 @@ All notable changes to ry are documented in this file.
   11 lazy datasets. Curated capture metadata now owns aesthetic evaluation;
   ordinary helpers such as `aes_string` no longer suppress unbound arguments.
   Complete base matrix/array construction and row/column summary formals.
-  Preserve unknown result shapes for polymorphic `regmatches` and `sort.int`
+  Preserve unknown result shapes for polymorphic `regmatches`, `sort`, and `sort.int`
   calls instead of assuming character or double vectors.
 
 - Export reference identities across ordinary literal/copy reassignments and

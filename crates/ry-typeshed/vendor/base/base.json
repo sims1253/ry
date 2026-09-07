@@ -6732,9 +6732,15 @@
     },
     "sort": {
       "params": [
-        "x"
+        "x",
+        "decreasing",
+        "..."
       ],
-      "return": "arg0"
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
     },
     "sort.int": {
       "params": [

@@ -171,6 +171,10 @@ All notable changes to ry are documented in this file.
   Expanded arguments can fill required parameters and resolve partial names;
   explicit named holes and unrelated argument names still produce warnings.
 
+- Forget stale receiver types after `storage.mode(x) <- ...` and `mode(x) <- ...`.
+  Coercing a character or list value no longer leaves arithmetic checking its
+  previous storage type; the assignment expression still returns its right side.
+
 - Match `rapply` result controls through the full R argument match, including
   positional and partial `how` arguments. Keep recursive unlisting and dynamic
   modes unknown; preserve outer list shape only for proven list/replace calls,

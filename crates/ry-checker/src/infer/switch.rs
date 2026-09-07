@@ -97,15 +97,9 @@ impl Checker {
         }
         let literal_selector = matches!(
             first.value,
-            Expr::String(..)
-                | Expr::Integer(..)
-                | Expr::Double(..)
-                | Expr::Logical(..)
-                | Expr::UnaryOp {
-                    op: UnaryOpKind::Neg,
-                    ..
-                }
-        );
+            Expr::String(..) | Expr::Integer(..) | Expr::Double(..) | Expr::Logical(..)
+        ) || matches!(&first.value, Expr::UnaryOp { op: UnaryOpKind::Neg, expr, .. }
+                if matches!(expr.as_ref(), Expr::Integer(..) | Expr::Double(..)));
         // Earlier calls or deferred bodies can replace switch or namespace
         // operators. The current call's own barrier is not a prior effect.
         if literal_selector && !environment_known_before_call {
@@ -149,16 +143,15 @@ impl Checker {
                 expr,
                 ..
             } => {
+                let value = match expr.as_ref() {
+                    Expr::Integer(value, _) => *value as f64,
+                    Expr::Double(value, _) => *value,
+                    _ => return Some(self.infer_switch_call(args, scope)),
+                };
                 if self.literal_bindings_may_be_shadowed(["-", "`-`"], &HashSet::new(), scope) {
                     return unknown(scope);
                 }
-                match expr.as_ref() {
-                    Expr::Integer(value, _) => {
-                        switch_numeric_index(-(*value as f64), alternatives.len())
-                    }
-                    Expr::Double(value, _) => switch_numeric_index(-*value, alternatives.len()),
-                    _ => return Some(self.infer_switch_call(args, scope)),
-                }
+                switch_numeric_index(-value, alternatives.len())
             }
             Expr::Missing(_) | Expr::Unknown(_) | Expr::Null(_) | Expr::Na(_, _) => {
                 return unknown(scope);

@@ -142,3 +142,11 @@ fn prior_calls_cannot_lend_base_switch_identity() {
         );
     }
 }
+
+#[test]
+fn dynamic_negative_selectors_keep_the_legacy_join() {
+    for selector in ["-x", "-f()"] {
+        let (_, scope) = check_with_scope(&format!("unknown(); out <- switch({selector}, 1L, 2L)"));
+        assert_eq!(scope.get("out").unwrap().mode, Mode::Integer, "{selector}");
+    }
+}

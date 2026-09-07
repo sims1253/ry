@@ -680,11 +680,7 @@ fn plain_vector_chooser_evidence_rejects_attributes_and_mutation() {
         let (diags, _) = check_with_scope(&source);
         assert!(!diags.iter().any(|d| d.code == "RY051"), "{source}");
     }
-    for mutation in ["", "; names='a'", "; dim=2L"] {
-        if mutation.is_empty() {
-            continue;
-        }
-        let attrs = mutation.replace(';', ",");
+    for attrs in [", names='a'", ", dim=2L"] {
         let source = format!(
             "x <- base::structure(base::c(1L,2L),class='left'{attrs})\ny <- base::structure(base::c(1L,2L),class='right')\n{methods}out <- x+y"
         );

@@ -46,51 +46,6 @@
       "severity": "warning",
       "message": "`expdir` is a length-1 character, so `length(...)` is 1 here and this zero-length guard is always FALSE"
     },
-    "bookdown::RY105::R/html.R:1069:9": {
-      "package": "bookdown",
-      "code": "RY105",
-      "path": "R/html.R",
-      "line": 1069,
-      "column": 9,
-      "severity": "warning",
-      "message": "`target` is a length-1 character, so `length(...)` is 1 here and this zero-length guard is always FALSE"
-    },
-    "bookdown::RY105::R/html.R:1138:9": {
-      "package": "bookdown",
-      "code": "RY105",
-      "path": "R/html.R",
-      "line": 1138,
-      "column": 9,
-      "severity": "warning",
-      "message": "`z` is a length-1 character, so `length(...)` is 1 here and this zero-length guard is always FALSE"
-    },
-    "bookdown::RY105::R/html.R:878:9": {
-      "package": "bookdown",
-      "code": "RY105",
-      "path": "R/html.R",
-      "line": 878,
-      "column": 9,
-      "severity": "warning",
-      "message": "`tag` is a length-1 character, so `length(...)` is 1 here and this zero-length guard is always FALSE"
-    },
-    "bookdown::RY105::R/html.R:965:9": {
-      "package": "bookdown",
-      "code": "RY105",
-      "path": "R/html.R",
-      "line": 965,
-      "column": 9,
-      "severity": "warning",
-      "message": "`x` is a length-1 character, so `length(...)` is 1 here and this zero-length guard is always FALSE"
-    },
-    "bookdown::RY105::R/utils.R:441:9": {
-      "package": "bookdown",
-      "code": "RY105",
-      "path": "R/utils.R",
-      "line": 441,
-      "column": 9,
-      "severity": "warning",
-      "message": "`ps` is a length-1 character, so `length(...)` is 1 here and this zero-length guard is always FALSE"
-    },
     "broom::RY030::tests/testthat/test-metafor.R:129:15": {
       "package": "broom",
       "code": "RY030",
@@ -1700,15 +1655,6 @@
       "column": 7,
       "severity": "warning",
       "message": "comparing `logical` with `character`; R coerces the numeric value to character and compares lexicographically, which is rarely intended"
-    },
-    "flexdashboard::RY105::R/flex_dashboard.R:633:9": {
-      "package": "flexdashboard",
-      "code": "RY105",
-      "path": "R/flex_dashboard.R",
-      "line": 633,
-      "column": 9,
-      "severity": "warning",
-      "message": "`match` is a length-1 character, so `length(...)` is 1 here and this zero-length guard is always TRUE"
     },
     "ggplot2::RY001::R/bin.R:101:14": {
       "package": "ggplot2",
@@ -4607,15 +4553,6 @@
       "column": 33,
       "severity": "warning",
       "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
-    },
-    "rmarkdown::RY105::R/html_dependencies.R:245:9": {
-      "package": "rmarkdown",
-      "code": "RY105",
-      "path": "R/html_dependencies.R",
-      "line": 245,
-      "column": 9,
-      "severity": "warning",
-      "message": "`match` is a length-1 character, so `length(...)` is 1 here and this zero-length guard is always TRUE"
     },
     "shiny-r::RY000::inst/app_template/app.R:15:3": {
       "package": "shiny-r",

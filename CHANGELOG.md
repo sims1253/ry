@@ -265,6 +265,9 @@ All notable changes to ry are documented in this file.
 - Detect recursive and prematurely forced defaults passed to `base::identity` or
   `base::force`, while preserving laziness in quoted, masked, and conditional calls.
 
+- Avoid RY032 warnings when a parameter is only the lookup table for `%in%`,
+  or a base `length(x) == 1` guard protects a scalar predicate.
+
 - Correct RY002 and RY032 explanations: R rejects conditions and scalar
   logical operands with more than one element.
 

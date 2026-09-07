@@ -155,6 +155,31 @@ fn s3_dispatch_missing_method() {
 }
 
 #[test]
+fn math_summary_members_do_not_require_a_class_method() {
+    for generic in crate::semantic_lists::S3_MATH_GENERICS
+        .iter()
+        .chain(crate::semantic_lists::S3_SUMMARY_GENERICS)
+    {
+        let source = format!(
+            "Math.other <- function(x, ...) 99\n\
+             Summary.other <- function(..., na.rm = FALSE) 99L\n\
+             x <- structure(c(1L, 2L), class = \"widget\")\n\
+             result <- {generic}(x)\n"
+        );
+        let (diagnostics, scope) = check_with_scope(&source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY050"),
+            "{generic} has a built-in fallback: {diagnostics:?}"
+        );
+        assert_eq!(
+            scope.get("result").map(|ty| ty.mode),
+            Some(Mode::Opaque),
+            "a missing local method does not prove absence of registered methods: {generic}"
+        );
+    }
+}
+
+#[test]
 fn s3_dispatch_walks_every_class_before_reporting_a_miss() {
     let diags = check(
         "print.b <- function(x, ...) invisible(x)\n\

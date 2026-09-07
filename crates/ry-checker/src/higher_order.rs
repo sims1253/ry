@@ -664,6 +664,13 @@ impl Checker {
         if !has_known_s3_method {
             return None;
         }
+        // Math/Summary members have built-in fallbacks. An unrelated local
+        // group method cannot make a class-specific method mandatory. Keep
+        // the result opaque: the local inventory cannot rule out registered
+        // methods, and their return types need not match the primitive.
+        if s3_group_generic(generic).is_some() {
+            return Some(RType::unknown());
+        }
         // The generic has no dispatch target for this class. Emit RY050
         // and return opaque so callers don't trip further diagnostics on
         // the result.

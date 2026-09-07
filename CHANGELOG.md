@@ -513,6 +513,8 @@ All notable changes to ry are documented in this file.
 - Refine only affected functions after edits, using observed callable reads and
   forwarding or S3 metadata dependencies. Keep diagnostic invalidation conservative.
 
+- Skip name hashing when assignments invalidate empty scope metadata tables.
+
 - Reduce scope copying for assertions and short-circuit expressions.
 
 - **One pass-1 walk per file, syntax-only attachment harvest**: the

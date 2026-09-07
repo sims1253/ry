@@ -108,7 +108,9 @@ impl ScopeProvenance {
     }
 
     pub(crate) fn invalidate(&mut self, name: &str) {
-        self.bindings.remove(name);
+        if !self.bindings.is_empty() {
+            self.bindings.remove(name);
+        }
     }
 }
 

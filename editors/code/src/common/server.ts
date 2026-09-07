@@ -1,3 +1,4 @@
+import { Effect } from "effect";
 import * as vscode from "vscode";
 import { type Disposable, type OutputChannel } from "vscode";
 import {
@@ -51,131 +52,131 @@ const disposables = new WeakMap<LanguageClient, Disposable[]>();
  * `findRyBinaryPath()` (which honors workspace trust) so the launched
  * binary is the same one that was version-gated and displayed.
  */
-export async function startServer(
+export const startServer = (
   namespace: string,
   binaryPath: string,
   outputChannel: OutputChannel,
   traceOutputChannel: OutputChannel,
-): Promise<LanguageClient | null> {
-  const initializationOptions = getInitializationOptions(namespace);
-  logger.info(
-    `Initialization options: ${JSON.stringify(initializationOptions, null, 4)}`,
-  );
+) =>
+  Effect.gen(function* () {
+    const initializationOptions = getInitializationOptions(namespace);
+    logger.info(
+      `Initialization options: ${JSON.stringify(initializationOptions, null, 4)}`,
+    );
 
-  const logLevel = vscode.workspace
-    .getConfiguration(namespace)
-    .get<string>("logLevel");
-  const serverArgs: string[] = logLevel
-    ? [RY_SERVER_SUBCOMMAND, "--log-level", logLevel]
-    : [RY_SERVER_SUBCOMMAND];
-  logger.info(
-    `ry language server command: '${[binaryPath, ...serverArgs].join(" ")}'`,
-  );
+    const logLevel = vscode.workspace
+      .getConfiguration(namespace)
+      .get<string>("logLevel");
+    const serverArgs: string[] = logLevel
+      ? [RY_SERVER_SUBCOMMAND, "--log-level", logLevel]
+      : [RY_SERVER_SUBCOMMAND];
+    logger.info(
+      `ry language server command: '${[binaryPath, ...serverArgs].join(" ")}'`,
+    );
 
-  const serverOptions = {
-    command: binaryPath,
-    args: serverArgs,
-    options: { env: process.env },
-  };
+    const serverOptions = {
+      command: binaryPath,
+      args: serverArgs,
+      options: { env: process.env },
+    };
 
-  const clientOptions: LanguageClientOptions = {
-    // Register the server for R documents (and ry.toml).
-    documentSelector: [
-      { scheme: "file", language: "r" },
-      { scheme: "untitled", language: "r" },
-      { scheme: "vscode-notebook", language: "r" },
-      { scheme: "vscode-notebook-cell", language: "r" },
-      { scheme: "file", pattern: "**/{ry.toml}" },
-    ],
-    outputChannel,
-    traceOutputChannel,
-    revealOutputChannelOn: RevealOutputChannelOn.Never,
-    initializationOptions,
-    synchronize: { configurationSection: namespace },
-    middleware: {
-      workspace: {
-        configuration: async (params, token, next) => {
-          const values = await next(params, token);
-          if (!Array.isArray(values)) return values;
-          return params.items.map((item, index) => {
-            if (item.section !== namespace) return values[index];
-            const folder = item.scopeUri
-              ? vscode.workspace.getWorkspaceFolder(
-                  vscode.Uri.parse(item.scopeUri),
-                )
-              : undefined;
-            return folder
-              ? getWorkspaceSettings(namespace, folder)
-              : getGlobalSettings(namespace);
-          });
+    const clientOptions: LanguageClientOptions = {
+      // Register the server for R documents (and ry.toml).
+      documentSelector: [
+        { scheme: "file", language: "r" },
+        { scheme: "untitled", language: "r" },
+        { scheme: "vscode-notebook", language: "r" },
+        { scheme: "vscode-notebook-cell", language: "r" },
+        { scheme: "file", pattern: "**/{ry.toml}" },
+      ],
+      outputChannel,
+      traceOutputChannel,
+      revealOutputChannelOn: RevealOutputChannelOn.Never,
+      initializationOptions,
+      synchronize: { configurationSection: namespace },
+      middleware: {
+        workspace: {
+          configuration: async (params, token, next) => {
+            const values = await next(params, token);
+            if (!Array.isArray(values)) return values;
+            return params.items.map((item, index) => {
+              if (item.section !== namespace) return values[index];
+              const folder = item.scopeUri
+                ? vscode.workspace.getWorkspaceFolder(
+                    vscode.Uri.parse(item.scopeUri),
+                  )
+                : undefined;
+              return folder
+                ? getWorkspaceSettings(namespace, folder)
+                : getGlobalSettings(namespace);
+            });
+          },
         },
       },
-    },
-  };
+    };
 
-  const newLSClient = new LanguageClient(
-    namespace,
-    `${LOG_CHANNEL_NAME} Language Server`,
-    serverOptions,
-    clientOptions,
-  );
-
-  disposables.set(newLSClient, [
-    newLSClient.onDidChangeState((e) => {
-      switch (e.newState) {
-        case State.Stopped:
-          logger.debug("Server State: Stopped");
-          break;
-        case State.Starting:
-          logger.debug("Server State: Starting");
-          break;
-        case State.Running:
-          logger.debug("Server State: Running");
-          break;
-      }
-    }),
-    // Intercept `window/showMessage` from the server and attach a
-    // "Show Logs" button, turning an opaque server error into something
-    // actionable.
-    newLSClient.onNotification(ShowMessageNotification.type, (params) => {
-      const showMessageMethod =
-        params.type === MessageType.Error
-          ? vscode.window.showErrorMessage
-          : params.type === MessageType.Warning
-            ? vscode.window.showWarningMessage
-            : vscode.window.showInformationMessage;
-      showMessageMethod(params.message, "Show Logs").then((selection) => {
-        if (selection) {
-          outputChannel.show();
-        }
-      });
-    }),
-  ]);
-
-  logger.info("Server: Start requested.");
-  try {
-    await newLSClient.start();
-  } catch (ex) {
-    logger.error(`Server: Start failed: ${ex}`);
-    await dispose(newLSClient).catch((error) =>
-      logger.error(`Server cleanup failed: ${error}`),
+    const newLSClient = new LanguageClient(
+      namespace,
+      `${LOG_CHANNEL_NAME} Language Server`,
+      serverOptions,
+      clientOptions,
     );
-    return null;
-  }
 
-  return newLSClient;
-}
+    disposables.set(newLSClient, [
+      newLSClient.onDidChangeState((e) => {
+        switch (e.newState) {
+          case State.Stopped:
+            logger.debug("Server State: Stopped");
+            break;
+          case State.Starting:
+            logger.debug("Server State: Starting");
+            break;
+          case State.Running:
+            logger.debug("Server State: Running");
+            break;
+        }
+      }),
+      // Intercept `window/showMessage` from the server and attach a
+      // "Show Logs" button, turning an opaque server error into something
+      // actionable.
+      newLSClient.onNotification(ShowMessageNotification.type, (params) => {
+        const showMessageMethod =
+          params.type === MessageType.Error
+            ? vscode.window.showErrorMessage
+            : params.type === MessageType.Warning
+              ? vscode.window.showWarningMessage
+              : vscode.window.showInformationMessage;
+        showMessageMethod(params.message, "Show Logs").then((selection) => {
+          if (selection) {
+            outputChannel.show();
+          }
+        });
+      }),
+    ]);
 
-/**
- * Stop the language server client.
- */
-export async function stopServer(lsClient: LanguageClient): Promise<void> {
-  logger.info("Server: Stop requested");
-  await dispose(lsClient);
-}
+    logger.info("Server: Start requested.");
+    yield* Effect.tryPromise(() => newLSClient.start()).pipe(
+      Effect.onError(() =>
+        dispose(newLSClient).pipe(
+          Effect.catchAll((error) =>
+            Effect.sync(() => logger.error(`Server cleanup failed: ${error}`)),
+          ),
+        ),
+      ),
+    );
+    return newLSClient;
+  });
 
-async function dispose(client: LanguageClient): Promise<void> {
-  for (const disposable of disposables.get(client) ?? []) disposable.dispose();
-  disposables.delete(client);
-  await client.dispose();
-}
+export const stopServer = (lsClient: LanguageClient) =>
+  Effect.gen(function* () {
+    logger.info("Server: Stop requested");
+    yield* dispose(lsClient);
+  });
+
+const dispose = (client: LanguageClient) =>
+  Effect.gen(function* () {
+    for (const disposable of disposables.get(client) ?? [])
+      disposable.dispose();
+    disposables.delete(client);
+    yield* Effect.tryPromise(() => client.dispose());
+  });

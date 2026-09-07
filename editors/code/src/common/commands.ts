@@ -3,86 +3,104 @@
  */
 
 import * as vscode from "vscode";
-import { execFile } from "child_process";
-import { promisify } from "util";
-
-const execFileAsync = promisify(execFile);
+import { Effect, Schema } from "effect";
+import { runBinary } from "./process";
 import { ResolvedBinary } from "./binary";
 import { type ISettings } from "./settings";
 
-export async function debugInformationCommand(
+export const debugInformationCommand = (
   binary: ResolvedBinary | undefined,
   settings: ISettings | undefined,
-): Promise<void> {
-  const lines: string[] = [];
-  lines.push("## ry debug information");
-  lines.push("");
-  lines.push(`**Binary path**: ${binary?.path ?? "not resolved"}`);
-  lines.push(
-    `**Version**: ${
-      binary?.version
-        ? `${binary.version.major}.${binary.version.minor}.${binary.version.patch}`
-        : "unknown"
-    }`,
-  );
-  lines.push("");
-  lines.push("**Settings:**");
-  lines.push("```json");
-  lines.push(JSON.stringify(settings ?? {}, null, 2));
-  lines.push("```");
-  lines.push("");
-  lines.push("**Workspace folders:**");
-  for (const folder of vscode.workspace.workspaceFolders ?? []) {
-    lines.push(`- ${folder.name}: ${folder.uri.fsPath}`);
-  }
-
-  const output = lines.join("\n");
-  const doc = await vscode.workspace.openTextDocument({
-    content: output,
-    language: "markdown",
-  });
-  await vscode.window.showTextDocument(doc);
-}
-
-export async function explainRuleCommand(binaryPath: string): Promise<void> {
-  try {
-    const { stdout } = await execFileAsync(
-      binaryPath,
-      ["explain", "rule", "--output-format", "json"],
-      {
-        encoding: "utf-8",
-        timeout: 5000,
-      },
+) =>
+  Effect.gen(function* () {
+    const lines: string[] = [];
+    lines.push("## ry debug information");
+    lines.push("");
+    lines.push(`**Binary path**: ${binary?.path ?? "not resolved"}`);
+    lines.push(
+      `**Version**: ${
+        binary?.version
+          ? `${binary.version.major}.${binary.version.minor}.${binary.version.patch}`
+          : "unknown"
+      }`,
     );
-    const rules: unknown = JSON.parse(stdout);
-    if (!Array.isArray(rules)) throw new Error("Expected a rule list");
-    const items = rules.map((rule: unknown) => {
-      if (
-        typeof rule !== "object" ||
-        rule === null ||
-        !("code" in rule) ||
-        typeof rule.code !== "string" ||
-        !("name" in rule) ||
-        typeof rule.name !== "string" ||
-        !("summary" in rule) ||
-        typeof rule.summary !== "string"
-      ) {
-        throw new Error("Invalid rule description");
-      }
-      return { label: rule.code, description: rule.name, detail: rule.summary };
-    });
-    const picked = await vscode.window.showQuickPick(items, {
-      placeHolder: "Select a rule to explain",
-    });
-    if (!picked) return;
+    lines.push("");
+    lines.push("**Settings:**");
+    lines.push("```json");
+    lines.push(JSON.stringify(settings ?? {}, null, 2));
+    lines.push("```");
+    lines.push("");
+    lines.push("**Workspace folders:**");
+    for (const folder of vscode.workspace.workspaceFolders ?? []) {
+      lines.push(`- ${folder.name}: ${folder.uri.fsPath}`);
+    }
 
-    const md = `# ${picked.label}: ${picked.description}\n\n${picked.detail}`;
-    const doc = await vscode.workspace.openTextDocument({
-      content: md,
-      language: "markdown",
-    });
-    await vscode.window.showTextDocument(doc, { preview: true });
-  } catch (e) {
-    vscode.window.showErrorMessage(`Failed to explain rule: ${e}`);
-  }
-}
+    const output = lines.join("\n");
+    const doc = yield* Effect.tryPromise(() =>
+      Promise.resolve(
+        vscode.workspace.openTextDocument({
+          content: output,
+          language: "markdown",
+        }),
+      ),
+    );
+    yield* Effect.tryPromise(() =>
+      Promise.resolve(vscode.window.showTextDocument(doc)),
+    );
+  });
+
+const decodeRules = Schema.decodeUnknown(
+  Schema.parseJson(
+    Schema.Array(
+      Schema.Struct({
+        code: Schema.String,
+        name: Schema.String,
+        summary: Schema.String,
+      }),
+    ),
+  ),
+);
+
+export const explainRuleCommand = (binaryPath: string) =>
+  Effect.gen(function* () {
+    const { stdout } = yield* runBinary(binaryPath, [
+      "explain",
+      "rule",
+      "--output-format",
+      "json",
+    ]);
+    const rules = yield* decodeRules(stdout);
+    const items = rules.map((rule) => ({
+      label: rule.code,
+      description: rule.name,
+      detail: rule.summary,
+    }));
+    const picked = yield* Effect.tryPromise(() =>
+      Promise.resolve(
+        vscode.window.showQuickPick(items, {
+          placeHolder: "Select a rule to explain",
+        }),
+      ),
+    );
+    if (!picked) return;
+    const doc = yield* Effect.tryPromise(() =>
+      Promise.resolve(
+        vscode.workspace.openTextDocument({
+          content: `# ${picked.label}: ${picked.description}\n\n${picked.detail}`,
+          language: "markdown",
+        }),
+      ),
+    );
+    yield* Effect.tryPromise(() =>
+      Promise.resolve(vscode.window.showTextDocument(doc, { preview: true })),
+    );
+  }).pipe(
+    Effect.catchAll((error) =>
+      Effect.tryPromise(() =>
+        Promise.resolve(
+          vscode.window.showErrorMessage(`Failed to explain rule: ${error}`),
+        ),
+      ),
+    ),
+    Effect.asVoid,
+  );

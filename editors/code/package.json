@@ -223,6 +223,7 @@
     ]
   },
   "dependencies": {
+    "effect": "^3",
     "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {

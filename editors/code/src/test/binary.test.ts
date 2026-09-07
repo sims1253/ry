@@ -1,3 +1,5 @@
+import { Effect, Either } from "effect";
+import { runBinary } from "../common/process";
 /**
  * Unit tests for binary resolution trust behavior.
  *
@@ -102,7 +104,7 @@ it.skipIf(process.platform === "win32")(
         { mode: 0o755 },
       );
       let resolved = false;
-      const probe = getRyVersion(binary).then((version) => {
+      const probe = Effect.runPromise(getRyVersion(binary)).then((version) => {
         resolved = true;
         return version;
       });
@@ -132,8 +134,49 @@ it.skipIf(process.platform === "win32")(
         fs.writeFileSync(binary, `#!/bin/sh\nprintf '%s\\n' '${output}'\n`, {
           mode: 0o755,
         });
-        expect(await getRyVersion(binary)).toBeUndefined();
+        expect(await Effect.runPromise(getRyVersion(binary))).toBeUndefined();
       }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+it("returns an unknown version when the executable is missing", async () => {
+  expect(
+    await Effect.runPromise(getRyVersion("/nonexistent/ry")),
+  ).toBeUndefined();
+});
+
+it("keeps process failures in the typed error channel", async () => {
+  const result = await Effect.runPromise(
+    runBinary("/nonexistent/ry", []).pipe(Effect.either),
+  );
+  expect(Either.isLeft(result)).toBe(true);
+  if (Either.isLeft(result)) {
+    expect(result.left._tag).toBe("ProcessError");
+    expect(result.left.binaryPath).toBe("/nonexistent/ry");
+  }
+});
+
+it.skipIf(process.platform === "win32")(
+  "CLI effects are lazy and reusable",
+  async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ry-effect-"));
+    try {
+      const binary = path.join(dir, "ry");
+      const marker = path.join(dir, "invocations");
+      fs.writeFileSync(
+        binary,
+        `#!/bin/sh\necho run >> "$0.marker"\necho '{"version":"0.9.0"}'\n`,
+        { mode: 0o755 },
+      );
+      const probe = getRyVersion(binary);
+      expect(fs.existsSync(binary + ".marker")).toBe(false);
+      await Effect.runPromise(probe);
+      await Effect.runPromise(probe);
+      fs.renameSync(binary + ".marker", marker);
+      expect(fs.readFileSync(marker, "utf8")).toBe("run\nrun\n");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

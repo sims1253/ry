@@ -1,3 +1,4 @@
+import { Effect } from "effect";
 import * as vscode from "vscode";
 import { LOG_CHANNEL_NAME, RY_SETTINGS_NAMESPACE } from "./common/constants";
 import { LazyOutputChannel, logger } from "./common/logger";
@@ -71,56 +72,66 @@ export async function activate(
     logger.error(message);
     if (serverState && resolvedBinary) statusItem?.setReady(resolvedBinary);
     else statusItem?.setError(message);
-    void vscode.window
-      .showErrorMessage(message, "Show Logs", "Configure")
-      .then((action) => {
+    void Effect.runPromise(
+      Effect.gen(function* () {
+        const action = yield* Effect.tryPromise(() =>
+          Promise.resolve(
+            vscode.window.showErrorMessage(message, "Show Logs", "Configure"),
+          ),
+        );
         if (action === "Show Logs") outputChannel.show();
-        else if (action === "Configure")
-          void vscode.commands.executeCommand(
-            "workbench.action.openSettings",
-            "ry.path",
+        else if (action === "Configure") {
+          yield* Effect.tryPromise(() =>
+            Promise.resolve(
+              vscode.commands.executeCommand(
+                "workbench.action.openSettings",
+                "ry.path",
+              ),
+            ),
           );
-      });
+        }
+      }).pipe(
+        Effect.catchAll((error) => Effect.sync(() => logger.error(error))),
+      ),
+    );
   };
-  const runServer = async () => {
-    const nextSettings = readSettings();
-    const path = findRyBinaryPath(nextSettings, !vscode.workspace.isTrusted);
-    const nextBinary = { path, version: await getRyVersion(path) };
-    const error = checkVersionCapability(
-      nextBinary,
-      MINIMUM_SETTINGS_CHANNEL_VERSION,
-      "settings channel",
-    );
-    if (error) {
-      reportFailure(error);
-      return;
-    }
-
-    statusItem?.setBusy();
-    const nextClient = await startServer(
-      serverId,
-      path,
-      outputChannel,
-      traceOutputChannel,
-    );
-    if (!nextClient) {
-      reportFailure(`Server failed to start at ${path}`);
-      return;
-    }
-
-    const previous = serverState;
-    serverState = nextClient;
-    resolvedBinary = nextBinary;
-    settings = nextSettings;
-    statusItem?.setReady(nextBinary);
-    if (previous) {
-      try {
-        await stopServer(previous);
-      } catch (error) {
-        reportFailure(`Failed to stop the previous server: ${error}`);
+  const runServer = () =>
+    Effect.gen(function* () {
+      const nextSettings = readSettings();
+      const path = findRyBinaryPath(nextSettings, !vscode.workspace.isTrusted);
+      const nextBinary = { path, version: yield* getRyVersion(path) };
+      const error = checkVersionCapability(
+        nextBinary,
+        MINIMUM_SETTINGS_CHANNEL_VERSION,
+        "settings channel",
+      );
+      if (error) {
+        reportFailure(error);
+        return;
       }
-    }
-  };
+
+      statusItem?.setBusy();
+      const nextClient = yield* startServer(
+        serverId,
+        path,
+        outputChannel,
+        traceOutputChannel,
+      );
+      const previous = serverState;
+      serverState = nextClient;
+      resolvedBinary = nextBinary;
+      settings = nextSettings;
+      statusItem?.setReady(nextBinary);
+      if (previous) {
+        yield* stopServer(previous).pipe(
+          Effect.catchAll((error) =>
+            Effect.sync(() =>
+              reportFailure(`Failed to stop the previous server: ${error}`),
+            ),
+          ),
+        );
+      }
+    });
 
   // Restart orchestration: at most one restart runs, at most one pends.
   const requestRestart = async () => {
@@ -136,22 +147,30 @@ export async function activate(
     }
 
     restartQueued = false;
-    restartPromise = (async () => {
-      try {
+    restartPromise = Effect.runPromise(
+      Effect.gen(function* () {
+        // Publish the in-flight promise before even a synchronous failure completes.
+        yield* Effect.yieldNow();
         do {
           restartQueued = false;
-          try {
-            await runServer();
-          } catch (error) {
-            reportFailure(
-              `Failed to start the ${LOG_CHANNEL_NAME} server: ${error}`,
-            );
-          }
+          yield* runServer().pipe(
+            Effect.catchAllCause((cause) =>
+              Effect.sync(() =>
+                reportFailure(
+                  `Failed to start the ${LOG_CHANNEL_NAME} server: ${cause}`,
+                ),
+              ),
+            ),
+          );
         } while (restartQueued);
-      } finally {
-        restartPromise = null;
-      }
-    })();
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            restartPromise = null;
+          }),
+        ),
+      ),
+    );
     await restartPromise;
   };
 
@@ -193,12 +212,14 @@ export async function activate(
     vscode.commands.registerCommand(
       `${serverId}.debugInformation`,
       async () => {
-        await debugInformationCommand(resolvedBinary ?? undefined, settings);
+        await Effect.runPromise(
+          debugInformationCommand(resolvedBinary ?? undefined, settings),
+        );
       },
     ),
     vscode.commands.registerCommand(`${serverId}.explainRule`, async () => {
       if (resolvedBinary) {
-        await explainRuleCommand(resolvedBinary.path);
+        await Effect.runPromise(explainRuleCommand(resolvedBinary.path));
       }
     }),
   );
@@ -211,16 +232,19 @@ export async function activate(
   });
 }
 
-export async function deactivate(): Promise<void> {
-  if (restartPromise != null) {
-    try {
-      await restartPromise;
-    } catch {
-      // A failed start leaves nothing to stop.
-    }
-  }
-  if (serverState != null) {
-    await stopServer(serverState);
-    serverState = null;
-  }
+export function deactivate(): Promise<void> {
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const pendingRestart = restartPromise;
+      if (pendingRestart != null) {
+        yield* Effect.tryPromise(() => pendingRestart).pipe(
+          Effect.catchAll(() => Effect.void),
+        );
+      }
+      if (serverState != null) {
+        yield* stopServer(serverState);
+        serverState = null;
+      }
+    }),
+  );
 }

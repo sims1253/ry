@@ -151,6 +151,10 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Require a matching receiver class before inferring a registered S3 method's
+  return type. Keep uncertain dispatch opaque instead of borrowing a method or
+  scalar default return from an unrelated class.
+
 - Report an explicit nesting-limit error before deeply nested syntax can
   overflow the parser stack. The limit is 128 tree-sitter syntax levels.
 

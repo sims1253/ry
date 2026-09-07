@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "base",
-  "version": "0.0.13",
+  "version": "0.0.14",
   "globals": {
     "ambient": [
       "..deparseOpts",
@@ -3903,12 +3903,14 @@
     },
     "expand.grid": {
       "params": [
-        "..."
+        "...",
+        "KEEP.OUT.ATTRS",
+        "stringsAsFactors"
       ],
       "return": {
-        "mode": "list",
+        "mode": "opaque",
         "length": "unknown",
-        "na": false
+        "na": true
       }
     },
     "expm1": {

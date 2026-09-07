@@ -270,6 +270,10 @@ All notable changes to ry are documented in this file.
   `substitute`, `expression`, and `rlang::expr` calls in defaults. Keep
   checking evaluated control arguments and tidy-injection payloads.
 
+- Keep `expand.grid` results conservative, so dropped numeric columns and
+  data-frame arithmetic do not inherit the plain-list storage type. Include
+  its exact `KEEP.OUT.ATTRS` and `stringsAsFactors` control names.
+
 - Resolve S3 operators before inferring data-frame results, so subclass methods
   can return other types and conflicting methods do not retain column schemas.
 

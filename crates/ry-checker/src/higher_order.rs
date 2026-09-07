@@ -55,6 +55,16 @@ impl Checker {
     ) -> Option<RType> {
         let spec = signature.higher_order.as_ref()?;
         self.walk_callback_for_diagnostics(signature, args, arg_types, scope);
+        // A fold's initializer describes only the first invocation. Later
+        // accumulators are callback results, and zero iterations return the
+        // initializer/input directly. Neither one invocation nor an input
+        // element establishes the final result (including accumulated output).
+        if spec
+            .callback_args
+            .contains(&CallbackArg::AccumulatorAndElement)
+        {
+            return Some(RType::unknown());
+        }
         let argument_match = match_params(&signature.params, args);
         let declared_length = match &signature.return_ {
             ReturnSpec::Concrete(ty) => json_length_to_length(JsonLength::parse(&ty.length)),
@@ -271,11 +281,7 @@ impl Checker {
                 }
                 CallbackArg::Unknown => types.push(RType::unknown()),
                 CallbackArg::AccumulatorAndElement => {
-                    let data_index = if spec.callback_position == 0 { 1 } else { 0 };
-                    let element = matched_argument_type(arg_types, argument_match, data_index)
-                        .cloned()
-                        .unwrap_or_else(RType::unknown);
-                    types.extend([element.clone(), element]);
+                    types.extend([RType::unknown(), RType::unknown()]);
                 }
                 CallbackArg::ElementsAfterCallback => {
                     types.extend(arguments_bound_to_dots(arg_types, argument_match).cloned())
@@ -473,6 +479,63 @@ impl Checker {
         })
     }
 
+    fn fold_callback_inputs(
+        signature: &FunctionSig,
+        args: &[Arg],
+        arg_types: &[RType],
+        argument_match: &ArgumentMatch,
+    ) -> Vec<RType> {
+        let unknown = || vec![RType::unknown(), RType::unknown()];
+        // Dots can supply controls or shift positional matching.
+        if args
+            .iter()
+            .any(|arg| matches!(&arg.value, Expr::Ident { name, .. } if name == "..."))
+        {
+            return unknown();
+        }
+        let formal = |name| signature.params.iter().position(|param| param.name == name);
+        let actual =
+            |name| formal(name).and_then(|i| argument_bound_to_formal(args, argument_match, i));
+        let (data, init, right) = if formal("right").is_some() {
+            let right = match actual("right").map(|arg| &arg.value) {
+                None | Some(Expr::Missing(_)) => Some(false),
+                Some(Expr::Logical(value, _)) => Some(*value),
+                _ => None,
+            };
+            (formal("x"), actual("init"), right)
+        } else if formal(".dir").is_some() {
+            let right = match actual(".dir").map(|arg| &arg.value) {
+                None | Some(Expr::Missing(_)) => Some(false),
+                Some(Expr::String(value, _)) if value == "forward" => Some(false),
+                Some(Expr::String(value, _)) if value == "backward" => Some(true),
+                _ => None,
+            };
+            (formal(".x"), actual(".init"), right)
+        } else {
+            return unknown();
+        };
+        let Some(input) = data.and_then(|i| matched_argument_type(arg_types, argument_match, i))
+        else {
+            return unknown();
+        };
+        if input.class.is_unknown() || input.class.has_known_class() {
+            return unknown();
+        }
+        let init_missing = init.is_none_or(|arg| matches!(arg.value, Expr::Missing(_)));
+        if matches!(input.length, Length::Zero | Length::Known(0))
+            || (init_missing && matches!(input.length, Length::One | Length::Known(1)))
+        {
+            return Vec::new();
+        }
+        // Keep the element operand precise, but never reuse the initializer
+        // or input element as the loop-carried accumulator's type.
+        match right {
+            Some(false) => vec![RType::unknown(), input.clone()],
+            Some(true) => vec![input.clone(), RType::unknown()],
+            None => unknown(),
+        }
+    }
+
     /// Walk the callback body of a higher-order function call for
     /// diagnostics (RY010 unbound variables, RY040 type errors, etc.).
     /// Called from pass 3 (`infer_call`) before the type-computation
@@ -501,7 +564,11 @@ impl Checker {
             return;
         }
         let argument_match = match_params(&signature.params, args);
-        let inputs = self.higher_order_input_types(spec, arg_types, &argument_match);
+        let inputs = if spec.callback_args == [CallbackArg::AccumulatorAndElement] {
+            Self::fold_callback_inputs(signature, args, arg_types, &argument_match)
+        } else {
+            self.higher_order_input_types(spec, arg_types, &argument_match)
+        };
         if inputs.is_empty()
             || inputs.iter().any(|ty| {
                 matches!(ty.length, Length::Zero | Length::Known(0)) || ty.mode == Mode::Function

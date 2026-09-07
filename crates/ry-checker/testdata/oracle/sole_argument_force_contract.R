@@ -96,3 +96,12 @@ if (requireNamespace("magrittr", quietly = TRUE)) {
         stopifnot(identical(ignored_pipe(), 1L))
     })
 }
+# A gt-shaped helper need not force the data default when no columns match.
+select_columns <- function(data = data, classes = classes) {
+    selected <- names(classes[classes == "character"])
+    for (column in selected) {
+        value <- data[[column]]
+    }
+    classes
+}
+stopifnot(identical(select_columns(classes = c(a = "integer")), c(a = "integer")))

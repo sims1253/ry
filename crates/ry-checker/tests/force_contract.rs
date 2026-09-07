@@ -225,3 +225,17 @@ fn pipes_and_visible_syntax_rebindings_do_not_prove_forcing() {
         1
     );
 }
+
+#[test]
+fn unknown_column_selection_does_not_guarantee_a_loop_body_force() {
+    let source = r#"
+        columns <- function(data = data, classes = classes) {
+            selected <- names(classes[classes == "character"])
+            for (column in selected) {
+                value <- data[[column]]
+            }
+            classes
+        }
+    "#;
+    assert_eq!(recursive_warnings(source, BTreeMap::new()), 0);
+}

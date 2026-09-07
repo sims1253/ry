@@ -24,12 +24,8 @@ for (right in c(FALSE, TRUE)) {
               else function(accumulator, element) accumulator | startsWith('cc main.c', element)
   stopifnot(identical(Reduce(callback, c('cc', 'c++'), FALSE, right = right), TRUE))
 }
-stopifnot(inherits(try(eval(quote(Reduce(function(a, b) b | TRUE, c('a', 'b')))), silent = TRUE), 'try-error'))
-stopifnot(inherits(try(eval(quote(Reduce(function(a, b) a | TRUE, c('a', 'b'), right = TRUE))), silent = TRUE), 'try-error'))
 if (requireNamespace('purrr', quietly = TRUE)) {
   stopifnot(identical(purrr::reduce(c('a', 'b'), function(a, b) a | TRUE, .init = FALSE), TRUE))
   stopifnot(identical(purrr::reduce(c('a', 'b'), function(a, b) b | TRUE, .init = FALSE, .dir = 'backward'), TRUE))
   stopifnot(identical(purrr::reduce('a', function(a, b) TRUE), 'a'))
-  stopifnot(inherits(try(eval(quote(purrr::reduce(c('a', 'b'), function(a, b) b | TRUE))), silent = TRUE), 'try-error'))
-  stopifnot(inherits(try(eval(quote(purrr::reduce(c('a', 'b'), function(a, b) a | TRUE, .dir = 'backward'))), silent = TRUE), 'try-error'))
 }

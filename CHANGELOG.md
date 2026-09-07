@@ -151,8 +151,12 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
-- Wait for workspace bindings before publishing initial editor diagnostics,
-  including files opened while the workspace scan is running.
+- Decode adjacent high/low Unicode surrogate escapes as a single UTF-8 scalar,
+  while retaining raw recovery text for unpaired or malformed surrogates.
+
+- Decode octal and braced Unicode string escapes, escaped spaces and backticks,
+  and UTF-8 byte sequences correctly. Preserve physical escaped newlines and
+  retain raw recovery text for malformed or unrepresentable string values.
 
 - Report missing format arguments only for proven base `sprintf` and
   `gettextf` calls, avoiding false RY094 warnings for custom functions.
@@ -187,6 +191,9 @@ All notable changes to ry are documented in this file.
 - Stop S3 operator lookup at the winning group method, avoiding false
   column-access errors when later classes define another operator method.
   Keep custom opaque method results unknown.
+
+- Wait for workspace bindings before publishing initial editor diagnostics,
+  including files opened while the workspace scan is running.
 
 - Show editor type hints from each assignment, including function locals,
   rather than applying the file's final binding type to earlier assignments.

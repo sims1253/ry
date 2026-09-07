@@ -121,7 +121,9 @@ branch state. These results leave #130 open without changing production storage.
 A fourth prototype replaces only `Scope::bindings` and
 `Scope::function_aliases` with `im::HashMap` 15.1.0. Marker sets and reference
 provenance keep their existing clone behavior, so this is a partial storage
-experiment. It uses historical clone baseline `e67fb55`, without any journal
+experiment. The two persistent maps apply wherever a `Scope` is cloned, unlike
+the journal prototype's statement-`if` boundary. It uses historical clone
+baseline `e67fb55`, without any journal
 plumbing or adaptive thresholds. A compile-time feature selects standard or
 persistent maps in the same source; the ordinary build retains the public
 standard-map field types.

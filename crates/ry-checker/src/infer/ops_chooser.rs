@@ -217,6 +217,16 @@ pub(crate) fn operator_rebound(checker: &Checker, symbol: &str, scope: &Scope) -
     )
 }
 
+/// A constant function body ignores its arguments after argument matching.
+/// The caller checks that the binding environment still has this identity.
+pub(crate) fn literal_operator_return(symbol: &str, scope: &Scope) -> Option<RType> {
+    scope
+        .literal_functions
+        .get(symbol)
+        .filter(|function| function.accepts_two)
+        .map(|function| RType::scalar(function.mode))
+}
+
 fn scalar_primitive(ty: &RType) -> bool {
     ty.length == Length::One
         && matches!(

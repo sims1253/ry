@@ -286,9 +286,8 @@ impl Checker {
         {
             return true;
         }
-        // NAMESPACE imports and S3 registrations are opaque value bindings,
-        // but in call position they are also proof that a function candidate
-        // exists outside the local value namespace.
+        // Treat externally supplied names, including NAMESPACE imports, as
+        // possible function candidates outside the local value namespace.
         if self.external_bindings.contains(name) {
             return true;
         }

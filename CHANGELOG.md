@@ -12,6 +12,9 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Resolve visible custom arithmetic, comparison, and vector logical operators
+  before their operands. Avoid primitive diagnostics for ignored operands and
+  preserve proven constant returns; discard caller facts after uncertain effects.
 - Class assignments no longer infer literal classes from custom class builders or preserve payload types under an unproven replacement function.
 
 - Compute data-frame column types after scalar arithmetic instead of copying

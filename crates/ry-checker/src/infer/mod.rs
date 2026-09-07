@@ -15,7 +15,7 @@ pub(crate) mod index;
 pub(crate) mod loops;
 mod narrow;
 pub(crate) mod pipe;
-mod quoting;
+pub(crate) mod quoting;
 pub(crate) mod recall;
 mod switch;
 mod types;
@@ -1310,14 +1310,25 @@ impl Checker {
         };
         if !matches!(
             accessor.as_str(),
-            "names" | "dimnames" | "colnames" | "rownames" | "attr" | "levels" | "environment"
+            "names"
+                | "dimnames"
+                | "colnames"
+                | "rownames"
+                | "attr"
+                | "levels"
+                | "environment"
+                | "storage.mode"
+                | "mode"
         ) {
             return false;
         }
         let Some(Expr::Ident { name, .. }) = args.first().map(|arg| &arg.value) else {
             return false;
         };
-        let had_list_origin = scope.has_list_origin(name);
+        // Base coercion or a custom setter can replace list storage with an
+        // atomic vector. Unknown setter results cannot retain this proof.
+        let had_list_origin =
+            !matches!(accessor.as_str(), "storage.mode" | "mode") && scope.has_list_origin(name);
         scope.insert(name.clone(), RType::unknown());
         if had_list_origin {
             scope.mark_list_origin(name.clone());
@@ -1740,7 +1751,7 @@ impl Checker {
                 found_lexical.then_some(&result),
                 unresolved,
             );
-            self.finish_reference_read(name, scope);
+            self.finish_reference_read(name, *span, scope);
         }
         result
     }

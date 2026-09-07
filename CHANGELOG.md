@@ -17,6 +17,10 @@ All notable changes to ry are documented in this file.
   retain proven reads before opaque statements. The schema-2 reference
   capability is now `same_file_ordered_prefix`; coverage remains partial.
 
+- Capture the argument read in standalone proven `base::length(x)` calls.
+  Preserve local/formal identity at that read and keep the post-call suffix
+  unsupported, including fresh assignments.
+
 - Use reviewed typeshed forcing contracts for RY098. Qualified calls to
   `typeof()`, `length()`, `is.null()`, `is.function()`, and `invisible()` can
   expose recursive defaults or force defaults before local assignments. Calls,
@@ -167,6 +171,9 @@ All notable changes to ry are documented in this file.
   avoiding false negation errors for unquoting and list splicing. Ordinary
   helper arguments continue to execute R negation.
 
+- Forget stale receiver types after `storage.mode(x) <- ...` and `mode(x) <- ...`.
+  Coercing a character or list value no longer leaves arithmetic checking its
+  previous storage type; the assignment expression still returns its right side.
 - Match `rapply` result controls through the full R argument match, including
   positional and partial `how` arguments. Keep recursive unlisting and dynamic
   modes unknown; preserve outer list shape only for proven list/replace calls,
@@ -202,6 +209,10 @@ All notable changes to ry are documented in this file.
 - Require a matching receiver class before inferring a registered S3 method's
   return type. Keep uncertain dispatch opaque instead of borrowing a method or
   scalar default return from an unrelated class.
+
+- Add primary blocker provenance to reference facts, locating statement,
+  ancestor, declaration, and unsafe-read restrictions while preserving existing
+  resolution statuses, reasons, and unavailable evidence.
 
 - Stop applying `hasArg` and `on.exit` deferred semantics to explicit competing
   bindings, formals, and aliases. Retain existing inference under ambient
@@ -443,6 +454,9 @@ All notable changes to ry are documented in this file.
   `ry-core` AST adds `Expr::Missing(Span)`; consumers with exhaustive expression
   matches must handle it separately from unsupported `Expr::Unknown` forms.
 
+- Keep fold accumulators and results conservative in `Reduce()` and
+  `purrr::reduce()`, while retaining element checks for known directions.
+
 - Custom or masked `factor` and `new` calls no longer acquire builtin constructor facts. S4 constructor inference requires methods provenance, and detaching a package invalidates the default search-path assumption.
 
 - Resolve visible custom arithmetic, comparison, and vector logical operators
@@ -461,6 +475,9 @@ All notable changes to ry are documented in this file.
   Arithmetic keeps the longer operand's class (left on ties); comparison and
   logical results drop it. Attributes, unknown lengths, and empty constructors
   remain outside this proof.
+
+- Parse spaces, newlines, and comments between double-subscript closing
+  brackets, preserving diagnostics for valid R files that use `x[[i] ]`.
 
 - Parse exponent and hexadecimal integer literals with their values, and use
   double storage when an `L`-suffixed value exceeds R's integer range.
@@ -512,6 +529,8 @@ All notable changes to ry are documented in this file.
 
 - Refine only affected functions after edits, using observed callable reads and
   forwarding or S3 metadata dependencies. Keep diagnostic invalidation conservative.
+
+- Skip name hashing when assignments invalidate empty scope metadata tables.
 
 - Reduce scope copying for assertions and short-circuit expressions.
 

@@ -11,6 +11,9 @@ impl Checker {
         scope: &mut Scope,
         span: Span,
     ) -> RType {
+        if self.capture_references {
+            self.enable_eager_reference_argument(func, args, scope, span);
+        }
         // Calls may install delayed bindings, not just mutate current values.
         // Preserve environment certainty only for a closed literal constructor.
         let environment_known_before_call = !scope.ops_environment_unknown;

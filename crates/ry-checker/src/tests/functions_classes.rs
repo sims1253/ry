@@ -629,6 +629,45 @@ fn replacement_calls_keep_targets_bound_without_argument_diagnostics() {
 }
 
 #[test]
+fn mode_replacements_discard_the_previous_binding_type() {
+    for accessor in ["storage.mode", "mode"] {
+        for source in [
+            format!("x <- '2'; {accessor}(x) <- 'integer'; x + 1L"),
+            format!("x <- list(2); {accessor}(x) <- 'integer'; x + 1L"),
+            format!(
+                "f <- function(mode = 'integer') {{ x <- '2'; {accessor}(x) <- mode; x }}; f() + 1L"
+            ),
+            format!(
+                "`{accessor}<-` <- function(x, value) 2L; x <- 'old'; {accessor}(x) <- 'integer'; x + 1L"
+            ),
+        ] {
+            let diagnostics = check(&source);
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+        }
+        let source = format!("x <- 2L; y <- ({accessor}(x) <- 'character'); y + 1L");
+        let (diagnostics, scope) = check_with_scope(&source);
+        assert_eq!(scope.get("x").unwrap().mode, Mode::Opaque);
+        assert_eq!(scope.get("y").unwrap().mode, Mode::Character);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY040")
+        );
+        let source = format!(
+            "x <- 2L; marker <- 1L; {accessor}(x) <- {{ marker <- 'evaluated'; 'character' }}"
+        );
+        let (_, scope) = check_with_scope(&source);
+        assert_eq!(scope.get("marker").unwrap().mode, Mode::Character);
+    }
+    let diagnostics = check("x <- '2'; storage.mode(x); x + 1L");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY040")
+    );
+}
+
+#[test]
 fn purrr_map_walks_callback_and_infers_list() {
     // purrr::map(.x, .f) is modeled like lapply -- the
     // callback body is walked (RY010 fires on the unbound `bug`)
@@ -718,19 +757,80 @@ fn purrr_not_loaded_does_not_treat_map_as_higher_order() {
 }
 
 #[test]
-fn reduce_returns_element_type() {
-    // `Reduce(f, x)` returns the element type of x. For a double
-    // vector, the result is double. Using it with character fires
-    // RY040.
-    let diags = check(
-        "v <- Reduce(function(a, b) a + b, c(1.0, 2.0, 3.0))\n\
-             bad <- v + \"x\"\n",
-    );
-    assert!(
-        diags.iter().any(|d| d.code == "RY040"),
-        "expected RY040 from Reduce result + character, got {:?}",
-        diags
-    );
+fn reduce_accumulator_is_not_an_input_element() {
+    for code in [
+        "Reduce(function(keep, cmp) keep | startsWith('cc main.c', cmp), c('cc', 'c++'), FALSE)",
+        "Reduce(x = c('cc', 'c++'), init = FALSE, f = function(keep, cmp) keep | startsWith('cc main.c', cmp))",
+        "Reduce(function(cmp, keep) keep | startsWith('cc main.c', cmp), c('cc', 'c++'), FALSE, right = TRUE)",
+        "Reduce(function(a, b) { if (is.character(a)) 1L else a + 1L }, c('a', 'b', 'c'))",
+    ] {
+        let diagnostics = check(code);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| matches!(d.code, "RY031" | "RY040")),
+            "{code}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn reduce_preserves_element_errors_when_direction_is_known() {
+    for code in [
+        "Reduce(function(a, b) b | TRUE, c('a', 'b'))",
+        "Reduce(function(a, b) a | TRUE, c('a', 'b'), right = TRUE)",
+        "Reduce(function(a, b) b | TRUE, c('a', 'b'), right = FALSE)",
+        "Reduce(x = c('a', 'b'), f = function(a, b) a | TRUE, ri = TRUE)",
+        "purrr::reduce(c('a', 'b'), function(a, b) b | TRUE)",
+        "purrr::reduce(.f = function(a, b) a | TRUE, .x = c('a', 'b'), .dir = 'backward')",
+    ] {
+        let diagnostics = check(code);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY031"),
+            "{code}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn reduce_dynamic_controls_and_skipped_callbacks_stay_conservative() {
+    for code in [
+        "f <- function(flag) Reduce(function(a, b) a | b, c('a', 'b'), FALSE, right = flag)",
+        "f <- function(...) Reduce(function(a, b) a | b, c('a', 'b'), ...)",
+        "f <- function(direction) purrr::reduce(c('a', 'b'), function(a, b) a | b, .init = FALSE, .dir = direction)",
+        "Reduce(function(a, b) b | TRUE, 'a')",
+        "Reduce(function(a, b) b | TRUE, character(), FALSE)",
+        "Reduce(function(a, b) b | TRUE, 'a', init = )",
+        "purrr::reduce('a', function(a, b) b | TRUE)",
+        "purrr::reduce(c('a', 'b'), function(a, b) a | TRUE, .init = FALSE)",
+        "purrr::reduce(c('a', 'b'), function(a, b) b | TRUE, .init = FALSE, .dir = 'backward')",
+    ] {
+        let diagnostics = check(code);
+        assert!(
+            !diagnostics.iter().any(|d| d.code == "RY031"),
+            "{code}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn reduce_result_does_not_borrow_input_or_first_callback_type() {
+    for code in [
+        "v <- Reduce(function(a, b) TRUE, c('a', 'b')); v | FALSE",
+        "v <- Reduce(function(a, b) 'changed', 1:3, FALSE); nchar(v)",
+        "v <- Reduce(function(a, b) TRUE, character(), list(1L)); v[[1L]]",
+        "v <- Reduce(function(a, b) TRUE, c('a', 'b'), accumulate = TRUE)",
+        "v <- purrr::reduce('a', function(a, b) TRUE)",
+    ] {
+        let (diagnostics, scope) = check_with_scope(code);
+        assert_eq!(scope.get("v").unwrap().mode, Mode::Opaque, "{code}");
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| matches!(d.code, "RY031" | "RY040")),
+            "{code}: {diagnostics:?}"
+        );
+    }
 }
 
 #[test]
@@ -794,4 +894,22 @@ fn typed_multi_input_maps_preserve_atomic_modes_without_claiming_a_length() {
     }
     let (_, scope) = check_with_scope("position <- Position(is.na, c(1, 2, 3))\n");
     assert_eq!(scope.get("position").unwrap().length, Length::One);
+}
+
+#[test]
+fn custom_mode_setters_cannot_preserve_unproven_list_origin() {
+    for setter in ["mode", "storage.mode"] {
+        for result in ["1L", "x"] {
+            let source = format!(
+                "`{setter}<-` <- function(x, value) {result}\nx <- list(1L)\n{setter}(x) <- 'integer'\nidentical(x[1L], 1L)\n"
+            );
+            let (diagnostics, scope) = check_with_scope(&source);
+            assert_eq!(scope.get("x").unwrap().mode, Mode::Opaque);
+            assert!(!scope.has_list_origin("x"));
+            assert!(
+                diagnostics.iter().all(|d| d.code != "RY101"),
+                "{source}: {diagnostics:?}"
+            );
+        }
+    }
 }

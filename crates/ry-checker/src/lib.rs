@@ -23,8 +23,8 @@ pub mod project;
 mod reference_facts;
 mod resolve;
 pub use reference_facts::{
-    DefinitionId, ReferenceDefinition, ReferenceDefinitionKind, ReferenceFacts, ReferenceRecord,
-    ReferenceResolution,
+    DefinitionId, ReferenceBlocker, ReferenceDefinition, ReferenceDefinitionKind, ReferenceFacts,
+    ReferenceRecord, ReferenceResolution,
 };
 pub mod rules;
 pub mod semantic_lists;
@@ -381,14 +381,32 @@ impl Scope {
         if let Some(provenance) = self.reference_provenance.as_mut() {
             provenance.invalidate(&name);
         }
-        self.literal_functions.remove(semantic_argument_name(&name));
-        self.plain_ops_vectors.remove(semantic_argument_name(&name));
-        self.function_aliases.remove(&name);
-        self.lexical_functions.remove(&name);
-        self.list_origin_bindings.remove(&name);
-        self.parameter_bindings.remove(&name);
-        self.default_parameter_bindings.remove(&name);
-        self.narrowed_bindings.remove(&name);
+        // Empty tables can retain capacity; skipping their removal avoids
+        // hashing names that cannot be present.
+        if !self.literal_functions.is_empty() {
+            self.literal_functions.remove(semantic_argument_name(&name));
+        }
+        if !self.plain_ops_vectors.is_empty() {
+            self.plain_ops_vectors.remove(semantic_argument_name(&name));
+        }
+        if !self.function_aliases.is_empty() {
+            self.function_aliases.remove(&name);
+        }
+        if !self.lexical_functions.is_empty() {
+            self.lexical_functions.remove(&name);
+        }
+        if !self.list_origin_bindings.is_empty() {
+            self.list_origin_bindings.remove(&name);
+        }
+        if !self.parameter_bindings.is_empty() {
+            self.parameter_bindings.remove(&name);
+        }
+        if !self.default_parameter_bindings.is_empty() {
+            self.default_parameter_bindings.remove(&name);
+        }
+        if !self.narrowed_bindings.is_empty() {
+            self.narrowed_bindings.remove(&name);
+        }
         self.bindings.insert(name, t);
     }
 

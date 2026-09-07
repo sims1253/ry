@@ -171,6 +171,9 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Respect S3 `length()` dispatch and uncertain class metadata before reporting
+  zero-length guards as constant; classless scalar bindings retain RY105.
+
 - Avoid claiming atomic `sapply()`, `mapply()`, and `tapply()` results when
   simplification is disabled or uncertain, controls are forwarded through
   `...`, or inputs may be empty. Scalar simplification requires a matched,

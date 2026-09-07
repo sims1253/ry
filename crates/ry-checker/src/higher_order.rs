@@ -872,6 +872,25 @@ pub(crate) fn s3_group_generic(generic: &str) -> Option<&'static str> {
     }
 }
 
+/// Whether an ordinary function call can dispatch through an S3 generic. The
+/// classification combines the base stub's `s3_generics`, the registered
+/// Math/Summary group members, and the standalone `mean` generic. Callers may
+/// add rule-specific fallbacks at their callsite, such as RY105's `length`
+/// exception. `mean.<class>` dispatches, while `Summary.<class>` does not;
+/// once r-typeshed registers `mean` in `s3_generics` (issue #41), this
+/// fallback can be removed.
+pub(crate) fn is_dispatch_capable_generic(
+    globals: &ry_typeshed::Globals,
+    function_name: &str,
+) -> bool {
+    globals
+        .s3_generics
+        .iter()
+        .any(|generic| generic == function_name)
+        || s3_group_generic(function_name).is_some()
+        || function_name == "mean"
+}
+
 fn higher_order_mode(mode: Option<&str>) -> Mode {
     match mode.and_then(JsonMode::parse) {
         Some(JsonMode::Logical) => Mode::Logical,

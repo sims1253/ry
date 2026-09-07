@@ -575,7 +575,7 @@ fn non_base_qualified_does_not_resolve() {
 /// diagnostic. A shadowed sum does not.
 #[test]
 fn scalar_reduction_respects_base_resolution() {
-    let diags = check_source("f <- function(x) if (length(base::sum(x)) > 0) 1\n");
+    let diags = check_source("if (length(base::sum(1L)) > 0) 1\n");
     assert!(
         diags.iter().any(|c| c == "RY105"),
         "base::sum length comparison should fire RY105, got {diags:?}"

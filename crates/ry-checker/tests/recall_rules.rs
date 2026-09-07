@@ -245,10 +245,7 @@ fn ry103_stays_silent_for_elementwise_operators() {
 fn ry105_fires_on_length_of_a_scalar_reduction() {
     // pak R/confirmation.R:42. `length(sum(...))` is 1 by construction, so
     // the guard is always TRUE.
-    assert!(fires(
-        "f <- function(v) if (length(sum(v)) > 0) 1\n",
-        "RY105"
-    ));
+    assert!(fires("if (length(sum(1L)) > 0) 1\n", "RY105"));
 }
 
 #[test]
@@ -260,8 +257,76 @@ fn ry105_fires_through_a_local_binding() {
 }
 
 #[test]
+fn ry105_stays_silent_for_a_classed_scalar_local() {
+    // Storage length does not determine `length(x)` for an S3 object:
+    // `length.<class>` may return any length.
+    assert!(!fires(
+        "length.ry_cleanup <- function(x) 0L\nx <- structure(1L, class = \"ry_cleanup\")\nif (length(x) > 0L) stop(\"unreachable\")\n",
+        "RY105"
+    ));
+}
+
+#[test]
+fn ry105_stays_silent_for_a_classed_scalar_call() {
+    // A scalar-returning typeshed generic may dispatch to a method that
+    // returns a non-scalar vector.
+    assert!(!fires(
+        "sum.ry_cleanup <- function(x, ...) integer(0)\nx <- structure(1L, class = \"ry_cleanup\")\nif (length(sum(x)) > 0L) stop(\"unreachable\")\n",
+        "RY105"
+    ));
+    // A class constructor hidden inside the direct call carries the same
+    // dispatch uncertainty as a classed local binding.
+    assert!(!fires(
+        "sum.ry_cleanup <- function(x, ...) integer(0)\nif (length(sum(structure(1L, class = \"ry_cleanup\"))) > 0L) stop(\"unreachable\")\n",
+        "RY105"
+    ));
+}
+
+#[test]
+fn ry105_stays_silent_for_a_parameter_with_a_scalar_default() {
+    assert!(!fires(
+        "sum.ry_cleanup <- function(x, ...) integer(0)\nf <- function(x = 1L) if (length(sum(x)) > 0L) stop(\"unreachable\")\nf(structure(1L, class = \"ry_cleanup\"))\n",
+        "RY105"
+    ));
+}
+
+#[test]
+fn ry105_stays_silent_for_a_masked_operator_argument() {
+    assert!(!fires(
+        "`+` <- function(x, y) structure(1L, class = \"ry_cleanup\")\nsum.ry_cleanup <- function(x, ...) integer(0)\nif (length(sum(1L + 1L)) > 0L) stop(\"unreachable\")\n",
+        "RY105"
+    ));
+}
+
+#[test]
+fn ry105_stays_silent_when_a_scalar_class_is_unknown() {
+    // A dynamic class may add an S3 length method, so storage length is not
+    // enough evidence for the zero-length comparison.
+    assert!(!fires(
+        "class_name <- \"ry_cleanup\"\nx <- structure(1L, class = class_name)\nif (length(x) > 0L) stop(\"unreachable\")\n",
+        "RY105"
+    ));
+}
+
+#[test]
+fn ry105_stays_silent_when_length_is_masked() {
+    assert!(!fires(
+        "length <- function(x) 1L\nx <- 1L\nif (length(x) > 0L) stop(\"unreachable\")\n",
+        "RY105"
+    ));
+}
+
+#[test]
 fn ry105_stays_silent_on_a_plain_vector() {
     assert!(!fires("f <- function(v) if (length(v) > 0) 1\n", "RY105"));
+}
+
+#[test]
+fn ry105_retains_the_classless_scalar_warning() {
+    assert!(fires(
+        "x <- 1L\nif (length(x) > 0L) stop(\"unreachable\")\n",
+        "RY105"
+    ));
 }
 
 #[test]
@@ -301,7 +366,7 @@ fn ry105_normalizes_operand_order_for_constant_outcome() {
     let file = parser
         .parse(
             "recall.R",
-            "f <- function(v) if (0 > length(sum(v))) 1
+            "if (0 > length(sum(1L))) 1
 ",
         )
         .expect("parse");
@@ -319,7 +384,7 @@ fn ry105_normalizes_operand_order_for_constant_outcome() {
     let file = parser
         .parse(
             "recall.R",
-            "f <- function(v) if (0 < length(sum(v))) 1
+            "if (0 < length(sum(1L))) 1
 ",
         )
         .expect("parse");

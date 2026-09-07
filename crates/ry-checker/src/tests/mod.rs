@@ -65,6 +65,8 @@ fn check_with_stubs(src: &str, stub_files: &[(&str, &str)]) -> (Vec<Diagnostic>,
 mod factor_new_constructor;
 mod structure_constructor;
 
-mod missing_args;
+mod deferred_calls;
 
+mod missing_args;
 mod switch_selection;
+mod printf_provenance;

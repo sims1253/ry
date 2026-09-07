@@ -12,6 +12,9 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Report RY051 when two literal `chooseOpsMethod` results reject provably distinct
+  operator methods. Infer scalar primitive fallback and its class behavior.
+
 - Match `structure()` payloads through `.Data`, preserve class and list-column
   information for resolved base calls, and evaluate class attributes. Respect
   shadowed constructors and class-vector builders; discard stale column names
@@ -19,7 +22,7 @@ All notable changes to ry are documented in this file.
 
 - Infer conflicting S3 operator results when top-level literal methods
   and `chooseOpsMethod` values prove selection, including aliases and reverse
-  selection. Keep uncertain dispatch and primitive fallback unknown.
+  selection. Keep uncertain dispatch unknown.
 
 - Infer double results for primitive division and powers of integers. Reject
   complex remainder and integer division only when both operands are nonempty.

@@ -331,10 +331,19 @@ fn main() -> Result<ExitCode> {
                 .try_init()
                 .ok();
             // The LSP server is async (tower-lsp is built on tokio), but
-            // `main` is synchronous. We spin up a multi-threaded tokio
-            // runtime for the server case only. Other subcommands keep
-            // their synchronous behavior and pay no runtime cost.
-            let rt = tokio::runtime::Runtime::new()
+            // `main` is synchronous. A current-thread runtime is all the
+            // server needs: tower-lsp's serve loop is executor-agnostic
+            // (no worker threads required), every CPU-heavy step already
+            // runs through `spawn_blocking` or the bounded rayon index
+            // pool, and ry-lsp's integration suite drives the identical
+            // `run_with` loop on current-thread runtimes. Skipping the
+            // multi-thread scheduler removes N worker threads from
+            // `ry server` startup (one per core) and the context-switch
+            // traffic between them. Other subcommands keep their
+            // synchronous behavior and pay no runtime cost.
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
                 .map_err(|e| miette::miette!("failed to start tokio runtime: {}", e))?;
             rt.block_on(async { ry_lsp::run().await })
                 .map_err(|e| miette::miette!("ry LSP server error: {}", e))?;

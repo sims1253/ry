@@ -147,7 +147,7 @@ jobs:
         working-directory: editors/code
         run: |
           # Preserve the already-published Open VSX identity.
-          npm pkg set name=ry
+          npm pkg set name=ry displayName=ry
           mkdir -p openvsx
           bunx @vscode/vsce package --target ${{ matrix.code-target }} --no-dependencies ${{ inputs.pre-release && '--pre-release' || '' }} --out openvsx/ry-${{ matrix.code-target }}.vsix
 

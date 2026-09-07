@@ -249,3 +249,48 @@ fn opaque_conditions_remain_barriers_even_when_all_branches_read_default() {
         assert_eq!(recursive_warnings(source, BTreeMap::new()), 0, "{source}");
     }
 }
+
+#[test]
+fn visible_namespace_and_function_syntax_bindings_disable_force_assumptions() {
+    for source in [
+        r"`\x3a\x3a` <- function(pkg, name) function(...) 1L; f <- function(x = x) base::typeof(x)",
+        r"f <- function(`\x3a\x3a`, x = x) base::typeof(x)",
+        "`::` <- function(pkg, name) function(...) 1L; f <- function(x = x) base::typeof(x)",
+        "`:::` <- function(pkg, name) function(...) 1L; f <- function(x = x) base:::typeof(x)",
+        "f <- function(`::`, x = x) base::typeof(x)",
+        "f <- function(`:::`, x = x) base:::typeof(x)",
+        "`function` <- function(...) 1L; f <- function(x = x) x",
+        "outer <- function(`function`) { f <- function(x = x) x }",
+    ] {
+        assert_eq!(recursive_warnings(source, BTreeMap::new()), 0, "{source}");
+    }
+}
+
+#[test]
+fn project_syntax_bindings_survive_table_merging_without_literal_functions() {
+    for binding in [r"`\x3a\x3a`", "`::`"] {
+        for rhs in [
+            "function(pkg, name) function(...) 1L",
+            "lazy",
+            "make_namespace()",
+        ] {
+            let mut parser = RParser::new().unwrap();
+            let mut project = ry_checker::Project::new();
+            let operator = format!("{binding} <- {rhs}");
+            for (path, source) in [
+                ("operator.R", operator.as_str()),
+                ("caller.R", "f <- function(x = x) base::typeof(x)"),
+            ] {
+                project.add_file(path.into(), parser.parse(path, source).unwrap());
+            }
+            assert!(
+                project.check().iter().all(|(_, diagnostics)| {
+                    diagnostics
+                        .iter()
+                        .all(|diagnostic| diagnostic.code != "RY098")
+                }),
+                "{operator}"
+            );
+        }
+    }
+}

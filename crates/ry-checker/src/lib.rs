@@ -548,6 +548,8 @@ impl ReturnSlots {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct FnTable {
     pub(crate) fns: HashMap<String, UserFn>,
+    // Collected once so conservative syntax checks do not rescan all functions.
+    pub(crate) has_escaped_binding_names: bool,
     // `(generic, class)` -> return slot index. Mirrors the same
     // `return_slots` storage as `fns`; lookups during dispatch consult
     // this map for an S3 method before falling back to the generic.
@@ -593,6 +595,7 @@ impl FnTable {
             self.forwarded_calls
                 .retain(|call| !replaced.contains(&call.caller));
         }
+        self.has_escaped_binding_names |= collected.has_escaped_binding_names;
         self.fns.extend(collected.fns.iter().map(|(name, f)| {
             let mut f = f.clone();
             f.return_slot += slot_offset;

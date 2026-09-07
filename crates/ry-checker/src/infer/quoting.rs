@@ -68,6 +68,18 @@ impl Checker {
         // Syntax operators can be rebound to lazy closures. This narrow rule
         // does not resolve such closures, so abandon its primitive assumptions
         // when a visible binding or local assignment could replace one.
+        // The parser can retain escapes in quoted binding names. Without
+        // decoding them, an escaped spelling may name any syntax primitive.
+        if self.fn_table.has_escaped_binding_names
+            || assigned
+                .iter()
+                .chain(scope.bindings.keys())
+                .chain(self.external_bindings.iter())
+                .chain(self.imported_from.keys())
+                .any(|name| name.contains('\\'))
+        {
+            return;
+        }
         let syntax_names = [
             "+", "`+`", "-", "`-`", "*", "`*`", "/", "`/`", "^", "`^`", "%%", "`%%`", "%/%",
             "`%/%`", ":", "`:`", "<", "`<`", "<=", "`<=`", ">", "`>`", ">=", "`>=`", "==", "`==`",
@@ -75,11 +87,25 @@ impl Checker {
             "`[`", "[[", "`[[`", "$", "`$`", "if", "`if`", "while", "`while`", "for", "`for`",
             "return", "`return`", "{", "`{`", "(", "`(`", "<-", "`<-`", "<<-", "`<<-`", "=", "`=`",
         ];
-        if syntax_names.iter().any(|name| {
-            assigned.contains(*name)
-                || scope.get(name).is_some()
-                || !self.resolves_to_base_lenient(name, scope)
-        }) {
+        let namespace_syntax = ["::", "`::`", ":::", "`:::`", "function", "`function`"];
+        // These are literal binding names, including `::` itself, rather than
+        // namespace-qualified identifiers accepted by resolves_to_base.
+        if syntax_names
+            .iter()
+            .chain(namespace_syntax.iter())
+            .any(|name| {
+                assigned.contains(*name)
+                    || scope.get(name).is_some()
+                    || self.fn_table.fns.contains_key(*name)
+                    || self.fn_table.known_vars.contains(*name)
+                    || self
+                        .imported_from
+                        .get(*name)
+                        .is_some_and(|package| package != "base")
+                    || (self.external_bindings.contains(*name)
+                        && !self.imported_from.contains_key(*name))
+            })
+        {
             return;
         }
         let formals: HashSet<&str> = params.iter().map(|param| param.name.as_str()).collect();

@@ -109,3 +109,23 @@ stopifnot(identical(select_columns(classes = c(a = "integer")), c(a = "integer")
 both_branches <- function(flag = { x <- 1L; TRUE }, x = if (flag) x else x) base::force(x)
 logical_paths <- function(flag = { x <- TRUE; FALSE }, x = flag && x || x) base::force(x)
 stopifnot(identical(both_branches(), 1L), identical(logical_paths(), TRUE))
+local({
+    `::` <- function(pkg, name) function(...) 1L
+    namespace_binding <- function(x = x) base::typeof(x)
+    stopifnot(identical(namespace_binding(), 1L))
+    `:::` <- function(pkg, name) function(...) 1L
+    internal_namespace_binding <- function(x = x) base:::typeof(x)
+    stopifnot(identical(internal_namespace_binding(), 1L))
+    `function` <- function(...) 1L
+    function_binding <- function(x = x) x
+    stopifnot(identical(function_binding, 1L))
+})
+local({
+    lazy_namespace <- function(pkg, name) function(...) 1L
+    `\x3a\x3a` <- lazy_namespace
+    escaped_namespace_binding <- function(x = x) base::typeof(x)
+    stopifnot(identical(escaped_namespace_binding(), 1L))
+    namespace_factory <- function() lazy_namespace
+    `\x3a\x3a` <- namespace_factory()
+    stopifnot(identical(escaped_namespace_binding(), 1L))
+})

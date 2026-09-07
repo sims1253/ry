@@ -55,6 +55,8 @@ All notable changes to ry are documented in this file.
 
 ### Cleanup
 
+- Keep only promise-capturing functions in the collection index, reducing startup
+  allocations without changing capture lookup results.
 - Refine only affected functions after edits, using observed callable reads and
   forwarding or S3 metadata dependencies. Keep diagnostic invalidation conservative.
 - Check corpus package totals against their reviewed findings to catch stale

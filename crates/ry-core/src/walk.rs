@@ -195,7 +195,7 @@ fn expr_step<B>(
         }
         Expr::BinOp { op, lhs, rhs, .. } => {
             let assignment = matches!(op, BinOpKind::Assign | BinOpKind::SuperAssign);
-            if !(assignment && !policy.assign_operands) {
+            if !assignment || policy.assign_operands {
                 expr_step(lhs, policy, fn_depth, visit)?;
             }
             expr_step(rhs, policy, fn_depth, visit)?;
@@ -205,7 +205,7 @@ fn expr_step<B>(
             base, kind, args, ..
         } => {
             expr_step(base, policy, fn_depth, visit)?;
-            if !(*kind == IndexKind::Dollar && !policy.dollar_args) {
+            if *kind != IndexKind::Dollar || policy.dollar_args {
                 for argument in args {
                     expr_step(&argument.value, policy, fn_depth, visit)?;
                 }

@@ -863,3 +863,69 @@ fn model_extract_quotes_component_names_and_checks_frame_arguments() {
     );
     assert!(check("f <- function(mf) { x <- 1L; stats::model.extract({ x <- 'a'; mf }, response); x + 1L }").iter().any(|d| d.code == "RY040"));
 }
+
+#[test]
+fn exported_html_tags_are_values_under_package_lookup() {
+    for package in ["htmltools", "shiny"] {
+        let diagnostics = check(&format!("{package}::tags$div('ok')"));
+        assert!(diagnostics.is_empty(), "{package}: {diagnostics:?}");
+        let diagnostics = check(&format!(
+            "library({package})\nmissing_before\ntags$div('ok')\n"
+        ));
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.code == "RY010" && d.message.contains("`tags`")),
+            "{diagnostics:?}"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code == "RY010" && d.message.contains("missing_before")),
+            "{diagnostics:?}"
+        );
+        let diagnostics = check(&format!("library({package})\ntags <- 1L\ntags$div\n"));
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY061"),
+            "{diagnostics:?}"
+        );
+    }
+    let diagnostics = check("tags$div('ok')\n");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == "RY010" && d.message.contains("`tags`")),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn filter_and_position_results_do_not_borrow_input_or_index_shapes() {
+    for expression in [
+        "if (length(Filter(function(x) FALSE, 1L)) == 0) TRUE",
+        "found <- Position(function(x) FALSE, 1:3, nomatch = list(value = NA_real_)); found$value",
+        "found <- Position(function(x) FALSE, 1:3, FALSE, list(value = NA_real_)); found$value",
+        "found <- Position(function(x) FALSE, 1:3, nom = list(value = NA_real_)); found$value",
+        "Position(function(x) x + 1L > 0L, list('a', 1L), right = TRUE)",
+    ] {
+        let diagnostics = check(expression);
+        assert!(diagnostics.is_empty(), "{expression}: {diagnostics:?}");
+    }
+    for expression in [
+        "Filter(function(x) x + 'a', 1:2)",
+        "Position(function(x) x + 'a', 1:2, right = FALSE)",
+        "Position(function(x) x + 'a', 1:2, right = TRUE)",
+    ] {
+        let diagnostics = check(expression);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY040"),
+            "{expression}: {diagnostics:?}"
+        );
+    }
+    assert!(
+        check("if (length(sum(1:3)) == 0) TRUE")
+            .iter()
+            .any(|d| d.code == "RY105")
+    );
+    assert!(check("1L$value").iter().any(|d| d.code == "RY061"));
+}

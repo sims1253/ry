@@ -462,12 +462,10 @@ impl Checker {
     /// pure noise there; a genuinely wrong condition (e.g. `if (1L)`)
     /// still emits it.
     ///
-    /// The explicit `na: false` matters: `Position` also returns a
-    /// scalar integer, but its no-match value is `nomatch`
-    /// (`NA_integer_`), so `if (Position(...))` is TRUE-or-error — R
-    /// raises "argument is not interpretable as logical" on the NA —
-    /// and can never be the non-empty idiom. A stub that omits `na` has
-    /// not claimed the value is NA-free, so it does not qualify either.
+    /// The explicit `na: false` matters: `match` can return NA, so
+    /// `if (match(1L, 2L))` errors in R. Its stub declares `na: true`
+    /// and does not qualify. A stub that omits `na` has not claimed
+    /// the value is NA-free, so it does not qualify either.
     ///
     /// `sum` declares a `double_or_int` return, so its count idiom
     /// (`if (sum(x > 0))`) is recognized by argument shape instead: a

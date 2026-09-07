@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "63b93b03df9815b10c75a9eec59c28cd6e49dc23dd85cf73ab9bb779b152115c",
-  "ry_commit": "0042db75b6a75eae7d56d3ae36afc91e1c228969",
+  "source_sha256": "292fe6ae95b1ee8a2c67b1f9d6290ae119e2c109f768fd9d2e542a41e241a1ed",
+  "ry_commit": "c974a96fd4bc9e1f5d354c590105b327af9b6a4e",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -19,7 +19,7 @@
       "repo": "rstudio/shiny",
       "stars": 5673,
       "commit": "ca1800475ac5a1e6037fea1020260a868d8798ee",
-      "diagnostics": 52
+      "diagnostics": 50
     },
     {
       "name": "dplyr",
@@ -138,7 +138,7 @@
       "repo": "rstudio/flexdashboard",
       "stars": 846,
       "commit": "8ae8623f2d9cdadb2316b953908bed0ba7bc3f87",
-      "diagnostics": 5
+      "diagnostics": 4
     },
     {
       "name": "pak",
@@ -334,7 +334,7 @@
       "repo": "rstudio/shinydashboard",
       "stars": 927,
       "commit": "b6d9ca7fb0d9572cd91a8e97f513ee66d610f9af",
-      "diagnostics": 31
+      "diagnostics": 0
     },
     {
       "name": "leaflet",
@@ -425,7 +425,7 @@
       "repo": "rstudio/bslib",
       "stars": 565,
       "commit": "f74283b4782f0871254d21b3edf59d84a621b1d2",
-      "diagnostics": 58
+      "diagnostics": 5
     },
     {
       "name": "forcats",
@@ -536,15 +536,6 @@
     {
       "package": "bslib",
       "code": "RY010",
-      "path": "R/accordion.R",
-      "line": 168,
-      "column": 10,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
       "path": "R/bs-dependencies.R",
       "line": 245,
       "column": 22,
@@ -572,330 +563,6 @@
     {
       "package": "bslib",
       "code": "RY010",
-      "path": "R/bs-theme-preview.R",
-      "line": 90,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/bs-theme-preview.R",
-      "line": 91,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/bs-theme-preview.R",
-      "line": 107,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/bs-theme-preview.R",
-      "line": 109,
-      "column": 11,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/bs-theme-preview.R",
-      "line": 185,
-      "column": 12,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/bs-theme-preview.R",
-      "line": 267,
-      "column": 11,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/bs-theme-preview.R",
-      "line": 276,
-      "column": 13,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/bs-theme-preview.R",
-      "line": 627,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/buttons.R",
-      "line": 146,
-      "column": 3,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/card.R",
-      "line": 357,
-      "column": 12,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/card.R",
-      "line": 441,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/card.R",
-      "line": 454,
-      "column": 3,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/input-submit.R",
-      "line": 128,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/input-submit.R",
-      "line": 138,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/input-switch.R",
-      "line": 108,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/input-switch.R",
-      "line": 115,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/input-switch.R",
-      "line": 118,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/nav-items.R",
-      "line": 72,
-      "column": 3,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/navs-legacy.R",
-      "line": 338,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/navs-legacy.R",
-      "line": 431,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/navs-legacy.R",
-      "line": 516,
-      "column": 3,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/navs-legacy.R",
-      "line": 622,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/navs-legacy.R",
-      "line": 624,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/navs-legacy.R",
-      "line": 667,
-      "column": 17,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/navs-legacy.R",
-      "line": 674,
-      "column": 17,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/navs-legacy.R",
-      "line": 783,
-      "column": 3,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/navs-legacy.R",
-      "line": 784,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/navs-legacy.R",
-      "line": 813,
-      "column": 15,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/navs-legacy.R",
-      "line": 815,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/navs-legacy.R",
-      "line": 824,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/navs.R",
-      "line": 67,
-      "column": 43,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/navs.R",
-      "line": 141,
-      "column": 52,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/offcanvas.R",
-      "line": 301,
-      "column": 13,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/page.R",
-      "line": 28,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/page.R",
-      "line": 189,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/page.R",
-      "line": 189,
-      "column": 15,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
       "path": "R/page.R",
       "line": 199,
       "column": 21,
@@ -905,153 +572,9 @@
     {
       "package": "bslib",
       "code": "RY010",
-      "path": "R/page.R",
-      "line": 305,
-      "column": 11,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/popover.R",
-      "line": 145,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/sidebar.R",
-      "line": 140,
-      "column": 14,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/sidebar.R",
-      "line": 213,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/sidebar.R",
-      "line": 224,
-      "column": 18,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/sidebar.R",
-      "line": 230,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/sidebar.R",
-      "line": 480,
-      "column": 3,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/toast.R",
-      "line": 324,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/toast.R",
-      "line": 378,
-      "column": 19,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/toolbar.R",
-      "line": 642,
-      "column": 17,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/toolbar.R",
-      "line": 659,
-      "column": 17,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/toolbar.R",
-      "line": 665,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/toolbar.R",
-      "line": 675,
-      "column": 16,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/tooltip.R",
-      "line": 119,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
       "path": "R/utils-deps.R",
       "line": 55,
       "column": 22,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/value-box.R",
-      "line": 118,
-      "column": 14,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/value-box.R",
-      "line": 121,
-      "column": 14,
       "label": "false_positive",
       "audit_group": "manual-audit"
     },
@@ -2015,15 +1538,6 @@
       "path": "R/bslib.R",
       "line": 34,
       "column": 24,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "flexdashboard",
-      "code": "RY010",
-      "path": "R/valuebox.R",
-      "line": 58,
-      "column": 10,
       "label": "false_positive",
       "audit_group": "manual-audit"
     },
@@ -5080,24 +4594,6 @@
     },
     {
       "package": "shiny-r",
-      "code": "RY010",
-      "path": "inst/examples/09_upload/app.R",
-      "line": 23,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "inst/examples/09_upload/app.R",
-      "line": 43,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shiny-r",
       "code": "RY032",
       "path": "R/conditions.R",
       "line": 154,
@@ -5131,285 +4627,6 @@
       "column": 18,
       "label": "true_positive",
       "audit_group": "upstream-package"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/boxes.R",
-      "line": 301,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/boxes.R",
-      "line": 421,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardBody.R",
-      "line": 12,
-      "column": 34,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardHeader.R",
-      "line": 109,
-      "column": 19,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardHeader.R",
-      "line": 109,
-      "column": 29,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardHeader.R",
-      "line": 126,
-      "column": 3,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardHeader.R",
-      "line": 131,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardHeader.R",
-      "line": 146,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardHeader.R",
-      "line": 264,
-      "column": 3,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardHeader.R",
-      "line": 270,
-      "column": 29,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardHeader.R",
-      "line": 302,
-      "column": 3,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardHeader.R",
-      "line": 323,
-      "column": 3,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardHeader.R",
-      "line": 326,
-      "column": 16,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardPage.R",
-      "line": 66,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardSidebar.R",
-      "line": 79,
-      "column": 19,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardSidebar.R",
-      "line": 79,
-      "column": 29,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardSidebar.R",
-      "line": 142,
-      "column": 3,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardSidebar.R",
-      "line": 147,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardSidebar.R",
-      "line": 209,
-      "column": 3,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardSidebar.R",
-      "line": 213,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardSidebar.R",
-      "line": 222,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardSidebar.R",
-      "line": 390,
-      "column": 11,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardSidebar.R",
-      "line": 436,
-      "column": 17,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardSidebar.R",
-      "line": 447,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardSidebar.R",
-      "line": 475,
-      "column": 3,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardSidebar.R",
-      "line": 487,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardSidebar.R",
-      "line": 526,
-      "column": 3,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/menuOutput.R",
-      "line": 17,
-      "column": 40,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/menuOutput.R",
-      "line": 33,
-      "column": 41,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/menuOutput.R",
-      "line": 48,
-      "column": 41,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/menuOutput.R",
-      "line": 62,
-      "column": 41,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
     },
     {
       "package": "sparklyr",
@@ -6017,11 +5234,11 @@
   ],
   "classification": {
     "true_positive": 43,
-    "false_positive": 576,
+    "false_positive": 489,
     "uncertain": 0
   },
   "audit_group_counts": {
-    "manual-audit": 349,
+    "manual-audit": 262,
     "data-masking-nse": 2,
     "delayed-assign": 15,
     "function-shadowing": 3,
@@ -6045,6 +5262,7 @@
     "Conservative switch provenance and selected-effect handling removes 31 previously audited false-positive identities: bslib 12, cli 6, shinydashboard 5, pak 3, rlang 3, gt 1, and rmarkdown 1. These are coverage changes where switch selection or caller effects cannot be proved, not 31 individually established semantic corrections. The exact pinned 62-package parent comparison adds no findings and preserves all 43 required true positives.",
     "Registered S3 methods no longer lend return types to receivers without a matching class; uncertain registered dispatch stays opaque instead of falling through to a scalar default. The full pinned comparison removes three previously reviewed false-positive identities: broom RY061 at R/gmm.R:96:11 and lintr RY060 at tests/testthat/test-linter_tags.R:172:24 and :178:15. No identities are added and all 43 true positives remain. The existing rlang RY001 at R/trace.R:531:7 retains its identity with an opaque rather than logical condition mode in its message.",
     "Truthful polymorphic regmatches returns remove seven reviewed RY105 false positives: bookdown R/html.R:878:9, :965:9, :1069:9, :1138:9 and R/utils.R:441:9; flexdashboard R/flex_dashboard.R:633:9; rmarkdown R/html_dependencies.R:245:9. These guards inspect variable-length character vectors from gregexpr/regexec match lists, not known scalar strings. Runtime oracle controls cover empty and multiple-match elements; all required true positives remain covered.",
-    "The verified grep contract removes 29 reviewed RY033 false positives: recipes tests/testthat/test-skipping.R lines 43\u201355 and 58\u201372, and styler R/roxygen-examples-add-remove.R:57:25. Each compares character values returned by grep(value = TRUE). The full pinned comparison adds no identities and retains all 43 true positives. The same source sync includes truthful fold and confint contracts and ggplot2 injection metadata, which add no other Posit identity changes."
+    "The verified grep contract removes 29 reviewed RY033 false positives: recipes tests/testthat/test-skipping.R lines 43\u201355 and 58\u201372, and styler R/roxygen-examples-add-remove.R:57:25. Each compares character values returned by grep(value = TRUE). The full pinned comparison adds no identities and retains all 43 true positives. The same source sync includes truthful fold and confint contracts and ggplot2 injection metadata, which add no other Posit identity changes.",
+    "Verified htmltools tags and the identical shiny re-export remove 87 RY010 false positives under explicit namespace/import lookup: bslib 53, shinydashboard 31, shiny-r 2, and flexdashboard 1. The source values are lists of tag constructors; no ambient global or constructor-result schema is added. The full pinned comparison adds no findings and preserves all 43 true positives."
   ]
 }

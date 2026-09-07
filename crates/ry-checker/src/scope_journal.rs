@@ -808,11 +808,20 @@ mod tests {
     #[test]
     fn fixture_corpus_preserves_full_scope_and_reference_facts() {
         let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata");
-        let mut paths: Vec<_> = std::fs::read_dir(directory)
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .filter(|path| path.extension().is_some_and(|ext| ext == "R"))
-            .collect();
+        fn collect_fixtures(directory: &std::path::Path, paths: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(directory).unwrap() {
+                let entry = entry.unwrap();
+                let path = entry.path();
+                let kind = entry.file_type().unwrap();
+                if kind.is_dir() {
+                    collect_fixtures(&path, paths);
+                } else if kind.is_file() && path.extension().is_some_and(|ext| ext == "R") {
+                    paths.push(path);
+                }
+            }
+        }
+        let mut paths = Vec::new();
+        collect_fixtures(&directory, &mut paths);
         paths.sort();
         for path in paths {
             let source = std::fs::read_to_string(&path).unwrap();

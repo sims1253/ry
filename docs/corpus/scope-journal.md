@@ -38,8 +38,8 @@ semantic state and discard journal history. Independent execution scopes clear
 the caller's loop ownership. No public Scope fields or lookup signatures changed.
 
 The cloned implementation remains only in a test module. Tests compare complete
-scopes, diagnostics, and reference records against it, including the entire
-top-level fixture corpus. Production has no environment switch or second branch
+scopes, diagnostics, and reference records against it, including all 500 fixture files discovered
+recursively under `testdata` (oracle and vendor fixtures included). Production has no environment switch or second branch
 implementation.
 
 ## Measurement

@@ -191,6 +191,7 @@ fn structure_namespace_rebinding_never_recovers_base_stub_facts() {
 #[test]
 fn structure_spelling_aliases_do_not_prove_captured_base_functions() {
     for source in [
+        "`base::structure` <- function(...) 'custom'; out <- \"base::structure\"(1L, class = 'widget')",
         "flag <- TRUE; c <- if (flag) function(...) 'actual' else 1L; out <- base::structure(1L, class = c('widget'))",
         "`c` <- function(...) 'actual'; out <- base::structure(1L, class = c('widget'))",
         "`structure` <- function(...) 'actual'; out <- structure(1L, class = 'widget')",

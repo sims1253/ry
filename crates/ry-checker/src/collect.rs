@@ -180,20 +180,6 @@ impl Checker {
 
     fn collect_s4_call(&mut self, name: &str, args: &[Arg]) {
         match name {
-            "setClass" => {
-                let Some(class) = args.first().and_then(|arg| string_literal(&arg.value)) else {
-                    return;
-                };
-                let slots_expr = args
-                    .iter()
-                    .find(|arg| arg.name.as_deref() == Some("slots"))
-                    .or_else(|| args.get(1))
-                    .map(|arg| &arg.value);
-                let slots = slots_expr.map(s4_slots).unwrap_or_default();
-                Arc::make_mut(&mut self.fn_table)
-                    .s4_classes
-                    .insert(class.to_string(), slots);
-            }
             "setGeneric" => {
                 if let Some(generic) = args.first().and_then(|arg| string_literal(&arg.value)) {
                     let table = Arc::make_mut(&mut self.fn_table);
@@ -1007,24 +993,6 @@ fn s4_signature_class(expr: &Expr) -> Option<String> {
         }
         _ => None,
     }
-}
-
-fn s4_slots(expr: &Expr) -> HashMap<String, String> {
-    let Expr::Call { func, args, .. } = expr else {
-        return HashMap::new();
-    };
-    if !matches!(func.as_ref(), Expr::Ident { name, .. } if name == "representation" || name == "c")
-    {
-        return HashMap::new();
-    }
-    args.iter()
-        .filter_map(|argument| {
-            Some((
-                semantic_argument_name(argument.name.as_deref()?).to_string(),
-                string_literal(&argument.value)?.to_string(),
-            ))
-        })
-        .collect()
 }
 
 /// Return whether evaluating a block must force `name`, and whether control

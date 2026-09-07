@@ -704,7 +704,6 @@ pub(crate) struct FnTable {
     // this map for an S3 method before falling back to the generic.
     pub(crate) s3_methods: HashMap<(String, String), usize>,
     pub(crate) s4_methods: HashMap<(String, String), usize>,
-    pub(crate) s4_classes: HashMap<String, HashMap<String, String>>,
     // Names of all top-level variable assignments across all files in
     // the project. Used to suppress RY010 for cross-file references:
     // when an identifier is not in the current scope but IS in this
@@ -764,7 +763,6 @@ impl FnTable {
                 .iter()
                 .map(|(k, &slot)| (k.clone(), slot + slot_offset)),
         );
-        self.s4_classes.extend(collected.s4_classes.clone());
         self.known_vars.extend(collected.known_vars.iter().cloned());
         self.callable_vars
             .extend(collected.callable_vars.iter().cloned());

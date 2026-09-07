@@ -214,13 +214,13 @@ run after correcting the cause. It reuses the packaged artifacts, and
 
 Follow the [Zed publishing guide](https://zed.dev/docs/extensions/publishing/publishing-guide).
 In a fork of `zed-industries/extensions`, add `https://github.com/sims1253/ry`
-as the `extensions/ry` submodule and check out the reviewed release commit.
+as the `extensions/ry-lsp` submodule and check out the reviewed release commit.
 The commit must also be reachable from a branch in the public ry repository.
 Add this entry to the gallery's `extensions.toml`:
 
 ```toml
-[ry]
-submodule = "extensions/ry"
+[ry-lsp]
+submodule = "extensions/ry-lsp"
 path = "editors/zed"
 version = "0.9.0"
 ```

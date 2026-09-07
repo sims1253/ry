@@ -62,6 +62,8 @@ impl RParser {
                 message: "parser returned no tree".into(),
             })?;
         let root = tree.root_node();
+        // Check nesting before recursive lowering (and eventual AST drop).
+        let comments = collect_comments(root, src)?;
         let tree = tree.clone(); // Clone for return value; root borrows the original.
         let mut stmts = Vec::new();
         let mut cursor = root.walk();
@@ -80,7 +82,6 @@ impl RParser {
             }
         }
         let parse_errors = collect_parse_errors(root);
-        let comments = collect_comments(root, src);
         Ok((
             SourceFile {
                 path: path.to_string(),
@@ -958,16 +959,31 @@ fn process_r_escapes(s: &str) -> String {
     String::from_utf8(out).unwrap_or_else(|_| s.to_owned())
 }
 
+// Keep recursive lowering within an ordinary 2 MiB Rust worker stack.
+const MAX_SYNTAX_DEPTH: usize = 128;
+
 /// Collect every `comment` node in the tree, returning `(line, body)`
 /// pairs in source order. The body is the text AFTER the leading `#`
 /// (untrimmed). These are the ONLY lexically-real comments -- a `#`
 /// that appears inside a string literal is part of the string, not a
 /// comment, so the suppression parser must consume this list rather
 /// than scanning source lines for `#`.
-fn collect_comments(root: tree_sitter::Node, src: &str) -> Vec<crate::ast::Comment> {
+/// Reject trees deeper than `MAX_SYNTAX_DEPTH` before recursive AST lowering.
+fn collect_comments(
+    root: tree_sitter::Node,
+    src: &str,
+) -> Result<Vec<crate::ast::Comment>, ParseError> {
     let mut out = Vec::new();
-    let mut stack: Vec<tree_sitter::Node> = vec![root];
-    while let Some(node) = stack.pop() {
+    let mut stack = vec![(root, 0_usize)];
+    while let Some((node, depth)) = stack.pop() {
+        if depth > MAX_SYNTAX_DEPTH {
+            let position = node.start_position();
+            return Err(ParseError::TreeSitter {
+                line: position.row + 1,
+                col: position.column + 1,
+                message: format!("source exceeds ry's syntax nesting limit of {MAX_SYNTAX_DEPTH}"),
+            });
+        }
         if node.kind() == "comment" {
             let pos = node.start_position();
             let line = pos.row;
@@ -981,11 +997,11 @@ fn collect_comments(root: tree_sitter::Node, src: &str) -> Vec<crate::ast::Comme
         }
         let mut child_cursor = node.walk();
         for child in node.children(&mut child_cursor) {
-            stack.push(child);
+            stack.push((child, depth + 1));
         }
     }
     out.sort_by_key(|c| c.line);
-    out
+    Ok(out)
 }
 
 /// Walk the parse tree and collect spans of `ERROR` and `MISSING` nodes.
@@ -1073,6 +1089,55 @@ mod tests {
     fn parse(src: &str) -> SourceFile {
         let mut p = RParser::new().expect("parser init");
         p.parse("test.R", src).expect("parse ok")
+    }
+
+    #[test]
+    fn syntax_depth_limit_protects_small_stacks_and_parser_reuse() {
+        std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(|| {
+                let mut parser = RParser::new().unwrap();
+                for source in [
+                    format!("{}1", "-".repeat(96)),
+                    format!("{}1", "1+".repeat(96)),
+                    format!("{}1{}", "f(".repeat(40), ")".repeat(40)),
+                    format!("{}1{}", "{".repeat(96), "}".repeat(96)),
+                    format!("{}1", "if (TRUE) ".repeat(40)),
+                    format!("{}1", "function() ".repeat(40)),
+                    format!("f({})", vec!["1"; 10_000].join(",")),
+                ] {
+                    let file = parser.parse("ordinary.R", &source).unwrap();
+                    assert!(file.parse_errors.is_empty());
+                    drop(file);
+                }
+                for source in [
+                    format!("{}1", "-".repeat(512)),
+                    format!("{}1", "1+".repeat(512)),
+                    format!("{}1{}", "f(".repeat(512), ")".repeat(512)),
+                    format!("{}1{}", "{".repeat(512), "}".repeat(512)),
+                    format!("{}1", "if (TRUE) ".repeat(512)),
+                    format!("{}1", "function() ".repeat(512)),
+                ] {
+                    let source = format!("# before\n{source}");
+                    let error = parser.parse("deep.R", &source).unwrap_err();
+                    match error {
+                        super::ParseError::TreeSitter { line, col, message } => {
+                            assert_eq!(line, 2);
+                            assert!(col > 0 && col <= source.len());
+                            assert_eq!(message, "source exceeds ry's syntax nesting limit of 128");
+                        }
+                    }
+                    let recovered = parser
+                        .parse("next.R", "# retained\nx <- 1 # trailing")
+                        .unwrap();
+                    assert!(recovered.parse_errors.is_empty());
+                    assert_eq!(recovered.stmts.len(), 1);
+                    assert_eq!(recovered.comments.len(), 2);
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 
     #[test]

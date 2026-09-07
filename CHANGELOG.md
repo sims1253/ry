@@ -151,6 +151,9 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Report an explicit nesting-limit error before deeply nested syntax can
+  overflow the parser stack. The limit is 128 tree-sitter syntax levels.
+
 - Decode adjacent high/low Unicode surrogate escapes as a single UTF-8 scalar,
   while retaining raw recovery text for unpaired or malformed surrogates.
 

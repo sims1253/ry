@@ -167,6 +167,9 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Keep `Filter` subset results and `Position` no-match values unknown instead
+  of borrowing input types or assuming scalar indices.
+
 - Capture bare component names in `stats::model.extract` without reporting
   them as unbound variables; keep ordinary frame arguments checked.
 

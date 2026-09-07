@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "base",
-  "version": "0.0.15",
+  "version": "0.0.16",
   "globals": {
     "ambient": [
       "..deparseOpts",
@@ -2430,11 +2430,15 @@
           "element_of_arg1"
         ],
         "result": {
-          "kind": "same_as_arg0",
-          "source_arg": 1
+          "kind": "vector_of",
+          "mode": "opaque"
         }
       },
-      "return": "arg0"
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
     },
     "Find": {
       "params": [
@@ -2562,12 +2566,13 @@
         ],
         "result": {
           "kind": "vector_of",
-          "mode": "integer"
+          "mode": "opaque"
         }
       },
       "return": {
-        "mode": "integer",
-        "length": "1"
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
       }
     },
     "R.version": {

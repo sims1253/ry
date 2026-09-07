@@ -154,9 +154,13 @@ All notable changes to ry are documented in this file.
 - Decode adjacent high/low Unicode surrogate escapes as a single UTF-8 scalar,
   while retaining raw recovery text for unpaired or malformed surrogates.
 
-- Decode octal and braced Unicode string escapes, escaped backticks, and UTF-8
-  byte sequences correctly. Preserve physical escaped newlines and retain raw
-  recovery text for malformed or unrepresentable string values.
+- Decode octal and braced Unicode string escapes, escaped spaces and backticks,
+  and UTF-8 byte sequences correctly. Preserve physical escaped newlines and
+  retain raw recovery text for malformed or unrepresentable string values.
+
+- Stop applying `hasArg` and `on.exit` deferred semantics to explicit competing
+  bindings, formals, and aliases. Retain existing inference under ambient
+  lookup uncertainty, while requiring methods provenance for RY096.
 
 - Compute data-frame column types after scalar arithmetic instead of copying
   their input types. Keep classed column results unknown when methods may run.

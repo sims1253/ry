@@ -117,6 +117,9 @@ v{version}  (e.g. v0.9.0)
 
 ## VS Code extension release
 
+The `registry` dispatch input defaults to `both`; select `marketplace` or
+`openvsx` when an extension update is specific to one registry.
+
 ### Prerequisites
 
 - Marketplace identity verified: `scholzmx.ry-checker` across `package.json`,

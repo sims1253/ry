@@ -513,6 +513,8 @@ All notable changes to ry are documented in this file.
 - Refine only affected functions after edits, using observed callable reads and
   forwarding or S3 metadata dependencies. Keep diagnostic invalidation conservative.
 
+- Keep fold accumulators and results conservative in `Reduce()` and
+  `purrr::reduce()`, while retaining element checks for known directions.
 - Reduce scope copying for assertions and short-circuit expressions.
 
 - **One pass-1 walk per file, syntax-only attachment harvest**: the

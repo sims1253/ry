@@ -283,7 +283,7 @@ impl Checker {
         let names: Vec<&str> = params.iter().map(|param| param.name()).collect();
         let required: Vec<bool> = params.iter().map(|param| param.required()).collect();
         self.emit_unknown_arguments(function_name, &names, args, bindings, report_unknown);
-        self.emit_missing_required(function_name, &names, &required, bindings, call_span);
+        self.emit_missing_required(function_name, &names, &required, args, bindings, call_span);
     }
 
     fn emit_unknown_arguments(
@@ -314,11 +314,16 @@ impl Checker {
         function_name: &str,
         names: &[&str],
         required: &[bool],
+        args: &[Arg],
         bindings: &ArgumentMatch,
         call_span: Span,
     ) {
         for (parameter_index, required) in required.iter().enumerate() {
-            if *required && !bindings.bound_params[parameter_index] {
+            let missing = !bindings.bound_params[parameter_index]
+                || bindings
+                    .arg_for_param(parameter_index)
+                    .is_some_and(|index| matches!(args[index].value, Expr::Missing(_)));
+            if *required && missing {
                 self.emit(
                     Severity::Warning,
                     call_span,

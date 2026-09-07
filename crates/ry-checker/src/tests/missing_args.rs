@@ -54,3 +54,26 @@ fn omitted_payload_cannot_borrow_the_next_actuals_type() {
         "{diagnostics:?}"
     );
 }
+
+#[test]
+fn required_missing_actuals_are_unfilled_but_optional_defaults_remain_valid() {
+    for source in ["Filter()", "Filter(, x=1L)", "Filter(f=, x=1L)"] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY091"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    let diagnostics = check("round(1.25, digits=)");
+    assert!(
+        diagnostics.iter().all(|d| d.code != "RY091"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn duplicate_payload_names_cannot_lend_constructor_facts() {
+    let (_, scope) = check_with_scope("out <- structure(.Data=, .Data=1L, class='widget')");
+    assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque);
+    assert!(!scope.get("out").unwrap().class.contains("widget"));
+}

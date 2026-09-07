@@ -103,13 +103,58 @@ const decodeVersion = Schema.decodeUnknown(
   Schema.parseJson(Schema.Struct({ version: Schema.String })),
 );
 
+/**
+ * Version probes cached by binary identity (mtime + size) so restarts do
+ * not respawn `ry version` for a binary that has not changed. A replaced
+ * binary gets a new mtime or size and is probed again.
+ */
+interface VersionProbe {
+  mtimeMs: number;
+  size: number;
+  version: VersionInfo | undefined;
+}
+
+const versionProbes = new Map<string, VersionProbe>();
+
+const statBinary = (binaryPath: string) =>
+  Effect.sync(() => {
+    try {
+      return fs.statSync(binaryPath);
+    } catch {
+      return undefined;
+    }
+  });
+
 /** An unavailable binary or invalid response produces an unknown version. */
 export const getRyVersion = (binaryPath: string) =>
-  runBinary(binaryPath, ["version", "--output-format", "json"]).pipe(
-    Effect.flatMap(({ stdout }) => decodeVersion(stdout)),
-    Effect.map(({ version }) => versionFromString(version)),
-    Effect.catchAll(() => Effect.succeed(undefined)),
-  );
+  Effect.gen(function* () {
+    const stats = yield* statBinary(binaryPath);
+    const cached = stats && versionProbes.get(binaryPath);
+    if (
+      cached &&
+      cached.mtimeMs === stats.mtimeMs &&
+      cached.size === stats.size
+    ) {
+      return cached.version;
+    }
+    const version = yield* runBinary(binaryPath, [
+      "version",
+      "--output-format",
+      "json",
+    ]).pipe(
+      Effect.flatMap(({ stdout }) => decodeVersion(stdout)),
+      Effect.map(({ version }) => versionFromString(version)),
+      Effect.catchAll(() => Effect.succeed(undefined)),
+    );
+    if (stats) {
+      versionProbes.set(binaryPath, {
+        mtimeMs: stats.mtimeMs,
+        size: stats.size,
+        version,
+      });
+    }
+    return version;
+  });
 
 /**
  * Check if the resolved binary meets the minimum version for a capability.

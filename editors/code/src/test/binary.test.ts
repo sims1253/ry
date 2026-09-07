@@ -162,7 +162,7 @@ it("keeps process failures in the typed error channel", async () => {
 });
 
 it.skipIf(process.platform === "win32")(
-  "CLI effects are lazy and reusable",
+  "CLI effects are lazy and reusable, with cached version probes",
   async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ry-effect-"));
     try {
@@ -176,6 +176,12 @@ it.skipIf(process.platform === "win32")(
       const probe = getRyVersion(binary);
       expect(fs.existsSync(binary + ".marker")).toBe(false);
       await Effect.runPromise(probe);
+      // Re-running against an unchanged binary is served from the cache.
+      await Effect.runPromise(probe);
+      expect(fs.readFileSync(binary + ".marker", "utf8")).toBe("run\n");
+      // Replacing the binary (new mtime) invalidates the cache entry.
+      const later = new Date(Date.now() + 2000);
+      fs.utimesSync(binary, later, later);
       await Effect.runPromise(probe);
       fs.renameSync(binary + ".marker", marker);
       expect(fs.readFileSync(marker, "utf8")).toBe("run\nrun\n");

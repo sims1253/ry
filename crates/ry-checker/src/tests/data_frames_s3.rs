@@ -907,3 +907,22 @@ fn for_over_homogeneous_list_does_not_fire_ry040() {
         diags
     );
 }
+
+#[test]
+fn s4_initializer_certificates_cannot_come_from_registration_syntax_or_queries() {
+    for source in [
+        include_str!("../../testdata/oracle/new_before_initializer_registration.R"),
+        include_str!("../../testdata/oracle/new_after_initializer_removal.R"),
+        include_str!("../../testdata/oracle/new_masked_initializer_registration.R"),
+        include_str!("../../testdata/oracle/new_initializer_metadata_replacement.R"),
+        include_str!("../../testdata/oracle/new_initializer_query_is_not_certificate.R"),
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY040"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}

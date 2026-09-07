@@ -1,0 +1,203 @@
+{
+  "commit": "e89d18b21b595901395222cbac1a9c2b2d69ca0e",
+  "baseline_commit": "f6eefb2dfcb473783f85b7d4b2bd38b7ac4eb698",
+  "rustc": "rustc 1.96.1 (31fca3adb 2026-06-26)",
+  "valgrind": "valgrind-3.18.1",
+  "binary_sha256": {
+    "False": "2fc25364852849cbf461ea3473a7c26a84ca53c0e5f1bafa69f43ab8580e4afb",
+    "True": "d3446b3861ca7239ac4761d24c7df83431f6ee55629c554ef37c9b4eadd02d90"
+  },
+  "settings": {
+    "rayon_threads": 1,
+    "no_installed_libraries": true
+  },
+  "inputs": {
+    "sparse": {
+      "sha256": "3f0919104342b5f19a5d144e1dd36dee98239cb2bf3b8787ee4d536cac67e564",
+      "files": 1
+    },
+    "dense": {
+      "sha256": "811323d0932294376dff2f8e80eecddc55b1770efad0b6d3e8cf54e3b302e654",
+      "files": 1
+    },
+    "alternating": {
+      "sha256": "5146b6c11182f912733bf0e1f17e01a1f87b01da3ffe9eb39d6c9b6907d006ae",
+      "files": 1
+    },
+    "corpus": {
+      "sha256": "06127717e2b41e7d80f76972c5506a8e5a516de411bef1fdb4837a12375c5cb5",
+      "files": 253
+    }
+  },
+  "measurements": [
+    {
+      "workload": "sparse",
+      "tool": "callgrind",
+      "journal": false,
+      "instructions": 229963328
+    },
+    {
+      "workload": "sparse",
+      "tool": "callgrind",
+      "journal": true,
+      "instructions": 115413916
+    },
+    {
+      "workload": "sparse",
+      "tool": "dhat",
+      "journal": false,
+      "allocated_bytes": 71425872,
+      "peak_live_bytes": 23845300
+    },
+    {
+      "workload": "sparse",
+      "tool": "dhat",
+      "journal": true,
+      "allocated_bytes": 25703431,
+      "peak_live_bytes": 13676202
+    },
+    {
+      "workload": "dense",
+      "tool": "callgrind",
+      "journal": false,
+      "instructions": 1723246860
+    },
+    {
+      "workload": "dense",
+      "tool": "callgrind",
+      "journal": true,
+      "instructions": 1622702399
+    },
+    {
+      "workload": "dense",
+      "tool": "dhat",
+      "journal": false,
+      "allocated_bytes": 189984294,
+      "peak_live_bytes": 50809833
+    },
+    {
+      "workload": "dense",
+      "tool": "dhat",
+      "journal": true,
+      "allocated_bytes": 146676580,
+      "peak_live_bytes": 44671854
+    },
+    {
+      "workload": "alternating",
+      "tool": "callgrind",
+      "journal": false,
+      "instructions": 1840950214
+    },
+    {
+      "workload": "alternating",
+      "tool": "callgrind",
+      "journal": true,
+      "instructions": 1837317371
+    },
+    {
+      "workload": "alternating",
+      "tool": "dhat",
+      "journal": false,
+      "allocated_bytes": 244833818,
+      "peak_live_bytes": 50812428
+    },
+    {
+      "workload": "alternating",
+      "tool": "dhat",
+      "journal": true,
+      "allocated_bytes": 235740286,
+      "peak_live_bytes": 43668306
+    },
+    {
+      "workload": "corpus",
+      "tool": "callgrind",
+      "journal": false,
+      "instructions": 268500305
+    },
+    {
+      "workload": "corpus",
+      "tool": "callgrind",
+      "journal": true,
+      "instructions": 267598168
+    },
+    {
+      "workload": "corpus",
+      "tool": "dhat",
+      "journal": false,
+      "allocated_bytes": 37464695,
+      "peak_live_bytes": 15169860
+    },
+    {
+      "workload": "corpus",
+      "tool": "dhat",
+      "journal": true,
+      "allocated_bytes": 37139965,
+      "peak_live_bytes": 15152016
+    }
+  ],
+  "reviewer": "astra-low",
+  "checker_source_tree": "b9602f26e855fcfa9ff62d0a85bf838e16f850bb",
+  "validation": {
+    "workspace": "passed",
+    "clippy": "passed",
+    "fmt": "passed",
+    "oracle": "17 passed; all R fixtures enabled",
+    "checker_unit_tests": 684,
+    "criterion_branch_smoke": "128 and 1,024 bindings passed",
+    "packages": {
+      "original": {
+        "removed": 540,
+        "added": 3
+      },
+      "441": {
+        "removed": 533,
+        "added": 3
+      },
+      "byte_identical_packages": 500
+    },
+    "tidyverse_ledger": "full tier passed",
+    "posit_ledger": "full tier and readable message identities passed"
+  },
+  "cli_sha256": {
+    "baseline": "f34c46ebc86a249e310867b619f2b3cb14c49f76db71c34fa676ddd874b99a60",
+    "journal": "5fe0ffc134c7dca303d29316f67bb5567f04ea03ae49bcc3705caf852c1ec744"
+  },
+  "manifest_sha256": "88f205a88349f03cc92c758ed18a0c431740b374f75e06240723d586322dcd3d",
+  "dense_repeated_callgrind": [
+    {
+      "repeat": 0,
+      "journal": false,
+      "instructions": 1841070881
+    },
+    {
+      "repeat": 0,
+      "journal": true,
+      "instructions": 1837605473
+    },
+    {
+      "repeat": 1,
+      "journal": false,
+      "instructions": 1840975186
+    },
+    {
+      "repeat": 1,
+      "journal": true,
+      "instructions": 1837609568
+    },
+    {
+      "repeat": 2,
+      "journal": false,
+      "instructions": 1841045427
+    },
+    {
+      "repeat": 2,
+      "journal": true,
+      "instructions": 1837570369
+    }
+  ],
+  "dense_repeat_instruction_percent": [
+    -0.18822784259765468,
+    -0.18281713005120492,
+    -0.18875460371787778
+  ]
+}

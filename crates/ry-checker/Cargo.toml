@@ -8,6 +8,7 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+hashbrown = { version = "0.17.1", default-features = false, features = ["inline-more"] }
 ry-core = { path = "../ry-core" }
 ry-config = { path = "../ry-config" }
 ry-workspace = { path = "../ry-workspace" }

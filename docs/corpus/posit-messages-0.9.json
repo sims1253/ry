@@ -3204,15 +3204,6 @@
       "severity": "error",
       "message": "argument `option` to `check_string` is `logical<len=1>`, expected character"
     },
-    "gt::RY098::R/cols_align.R:198:17": {
-      "package": "gt",
-      "code": "RY098",
-      "path": "R/cols_align.R",
-      "line": 198,
-      "column": 17,
-      "severity": "warning",
-      "message": "parameter `col_classes` has a self-referential default that recurses when forced"
-    },
     "httr::RY032::R/content-parse.r:57:7": {
       "package": "httr",
       "code": "RY032",

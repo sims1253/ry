@@ -93,6 +93,8 @@ jobs:
             ecosystem-${{ runner.os }}-
       - name: Build release binary
         run: cargo build --release --locked -p ry-cli --bin ry
+      - name: Test ledger validation
+        run: python3 ecosystem/test-check-ledger.py
       - name: "Validate ledger summary consistency"
         run: python3 ecosystem/check-ledger.py docs/corpus/posit-0.9.0.json docs/corpus/tidyverse-0.7.1.json
       - name: Check Posit corpus

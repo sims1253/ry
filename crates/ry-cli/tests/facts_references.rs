@@ -87,6 +87,10 @@ fn literal_copy_resolves_to_source_definition_with_reference_type() {
     assert_eq!(output["scope_snapshot_kind"], "scope_exit");
     assert!(output.get("snapshot_kind").is_none());
     assert_eq!(output["capabilities"]["reference_coverage"], "partial");
+    assert_eq!(
+        output["capabilities"]["reference_facts"],
+        "same_file_ordered_prefix"
+    );
     for (fragment, name, definition_start) in [("y <- x", "x", 0), ("z <- y", "y", 8)] {
         let reference = reference_at(&output, source, fragment, name);
         assert_eq!(reference["snapshot_kind"], "reference");
@@ -106,7 +110,9 @@ fn literal_copy_resolves_to_source_definition_with_reference_type() {
 fn later_reassignment_never_lends_its_final_type_to_an_earlier_read() {
     let source = "x <- 1L\ny <- x\nx <- \"later\"\n";
     let output = analyze(source);
-    assert_uncertain(&reference_at(&output, source, "y <- x", "x"));
+    let early = reference_at(&output, source, "y <- x", "x");
+    assert_eq!(early["resolution_status"], "resolved");
+    assert_eq!(early["type_at_reference"]["mode"], "integer");
     let top = output["files"][0]["scopes"]
         .as_array()
         .unwrap()
@@ -219,7 +225,7 @@ fn reference_capture_is_deterministic_opt_in_and_does_not_execute_source() {
     let directory = tempfile::tempdir().unwrap();
     fs::write(
         directory.path().join("case.R"),
-        "x <- 1L\ny <- x\nf <- function(arg = 1L) { copy <- arg; copy }\n",
+        "x <- 1L\ny <- x\nx <- 'later'\ny\nf <- function(arg = 1L) { copy <- arg; copy }\nmutate()\ny\n",
     )
     .unwrap();
     let legacy_before = invoke(directory.path(), false);

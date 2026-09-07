@@ -420,7 +420,7 @@ impl Checker {
             fn_scope.insert_parameter(parameter.name.clone(), RType::unknown());
         }
         let assigned = assigned_names_in_body(body);
-        self.check_lazy_default_reachability(params, body, &assigned);
+        self.check_lazy_default_reachability(params, body, &assigned, &fn_scope);
         let mut default_scope = fn_scope.clone();
         for name in &assigned {
             default_scope.insert(name.clone(), RType::unknown());

@@ -4,6 +4,12 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Export reference identities across ordinary literal/copy reassignments and
+  retain proven reads before opaque statements. The schema-2 reference
+  capability is now `same_file_ordered_prefix`; coverage remains partial.
+
 ### Fixed
 
 - Refresh incremental diagnostics when a callback changes, including callbacks
@@ -26,6 +32,8 @@ All notable changes to ry are documented in this file.
 
 - Refine only affected functions after edits, using observed callable reads and
   forwarding or S3 metadata dependencies. Keep diagnostic invalidation conservative.
+- Check corpus package totals against their reviewed findings to catch stale
+  summary counts in CI.
 
 - Show editor type hints from each assignment, including function locals,
   rather than applying the file's final binding type to earlier assignments.
@@ -67,6 +75,12 @@ server to what a static checker can serve reliably — inline type hints and
 suppression actions — and fixes a parser panic plus several editor issues.
 
 ### Added
+
+- Use reviewed typeshed forcing contracts for RY098. Qualified calls to
+  `typeof()`, `length()`, `is.null()`, `is.function()`, and `invisible()` can
+  expose recursive defaults or force defaults before local assignments. Calls,
+  other promise reads, and possible binding replacements stop attribution of
+  later reads to the original default. Subscript promises remain lazy across dispatch.
 
 - `ry dump-facts` exports versioned structured types, scope-exit snapshots,
   UTF-8 source spans, and analysis context hashes for downstream tools.

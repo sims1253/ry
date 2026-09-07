@@ -51,6 +51,7 @@ impl Checker {
         // this same file) without triggering RY010.
         if let Some(name) = binding_name(target) {
             let table = Arc::make_mut(&mut self.fn_table);
+            table.has_escaped_binding_names |= name.contains('\\');
             table.known_vars.insert(name.to_string());
             if is_callable_object_constructor(value) {
                 table.callable_vars.insert(name.to_string());
@@ -121,9 +122,9 @@ impl Checker {
                     if bare == "globalVariables" {
                         if let Some(first) = args.first() {
                             for declared in string_literals(&first.value) {
-                                Arc::make_mut(&mut self.fn_table)
-                                    .known_vars
-                                    .insert(declared);
+                                let table = Arc::make_mut(&mut self.fn_table);
+                                table.has_escaped_binding_names |= declared.contains('\\');
+                                table.known_vars.insert(declared);
                             }
                         }
                     }
@@ -139,9 +140,9 @@ impl Checker {
                         && let Some(first) = args.first()
                         && let Some(binding) = string_literal(&first.value)
                     {
-                        Arc::make_mut(&mut self.fn_table)
-                            .known_vars
-                            .insert(binding.to_string());
+                        let table = Arc::make_mut(&mut self.fn_table);
+                        table.has_escaped_binding_names |= binding.contains('\\');
+                        table.known_vars.insert(binding.to_string());
                     }
                     self.collect_s4_call(bare, args);
                 }
@@ -168,9 +169,9 @@ impl Checker {
             }
             "setGeneric" => {
                 if let Some(generic) = args.first().and_then(|arg| string_literal(&arg.value)) {
-                    Arc::make_mut(&mut self.fn_table)
-                        .known_vars
-                        .insert(generic.to_string());
+                    let table = Arc::make_mut(&mut self.fn_table);
+                    table.has_escaped_binding_names |= generic.contains('\\');
+                    table.known_vars.insert(generic.to_string());
                 }
             }
             "setMethod" => {
@@ -299,7 +300,9 @@ impl Checker {
         // Wrap the body in an Arc so the per-fixpoint clone in
         // refine_fn_return is a refcount bump, not a deep copy.
         let body: Arc<[Stmt]> = Arc::from(body);
-        let prev = Arc::make_mut(&mut self.fn_table).fns.insert(
+        let fn_table = Arc::make_mut(&mut self.fn_table);
+        fn_table.has_escaped_binding_names |= name.contains('\\');
+        let prev = fn_table.fns.insert(
             name.clone(),
             UserFn {
                 params,

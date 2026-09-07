@@ -11,11 +11,15 @@ e <- sapply(1L, function(v) 1L, simplify = control)
 f <- tapply(1L, 1L, function(v) 1L, simplify = FALSE)
 wrapper <- function(...) sapply(1L, function(v) 1L, ...)
 g <- wrapper(simplify = FALSE)
+wrapper_true <- function(...) sapply(1L, function(v) 1L, simplify = TRUE, ...)
+h <- wrapper_true(USE.NAMES = FALSE)
+wrapper_false <- function(...) sapply(1L, function(v) 1L, simplify = FALSE, ...)
+i <- wrapper_false(USE.NAMES = FALSE)
 stopifnot(
   is.list(a), is.list(b), is.list(c), is.list(d), is.list(e), is.list(f),
-  is.list(g),
+  is.list(g), is.atomic(h), is.list(i),
   identical(a$field, NULL), identical(b$field, NULL),
   identical(c$field, NULL), identical(d$field, NULL),
   identical(e$field, NULL), identical(f$field, NULL),
-  identical(g$field, NULL)
+  identical(g$field, NULL), identical(i$field, NULL)
 )

@@ -8,6 +8,7 @@ fn simplify_false_keeps_sapply_and_mapply_results_as_lists() {
         "b <- mapply(SIMPLIFY = FALSE, FUN = function(x) 1L, x = 1L); b$field",
         "b <- mapply(FUN = function(x) 1L, x = 1L, SIMPLIFY = FALSE); b$field",
         "c <- tapply(1L, 1L, function(v) 1L, simplify = FALSE); c$field",
+        "wrapper <- function(...) sapply(1L, function(v) 1L, simplify = FALSE, ...); wrapper(USE.NAMES = FALSE)$field",
     ] {
         let diagnostics = check(source);
         assert!(
@@ -97,6 +98,7 @@ fn known_nonempty_scalar_simplification_still_reports_atomic_dollar() {
         "a <- sapply(1L, function(v) 1L, simplify = TRUE); a$field",
         "b <- mapply(FUN = function(x) 1L, x = 1L, SIMPLIFY = TRUE); b$field",
         "c <- tapply(1L, 1L, function(v) 1L, simplify = TRUE); c$field",
+        "wrapper <- function(...) sapply(1L, function(v) 1L, simplify = TRUE, ...); wrapper(USE.NAMES = FALSE)$field",
     ] {
         let diagnostics = check(source);
         assert!(

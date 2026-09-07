@@ -29,10 +29,7 @@ fn simplify_control(
     argument_match: &ArgumentMatch,
 ) -> Option<bool> {
     match base_identity {
-        Some(true) if !forwarded_dots => {}
-        // Forwarded dots can supply an omitted simplify control, so the
-        // default cannot establish the base function's enabled contract.
-        Some(true) => return None,
+        Some(true) => {}
         Some(false) => return Some(true),
         // An unresolved bare name may be supplied by an attached package;
         // its control must not be treated as the base contract by default.
@@ -45,6 +42,11 @@ fn simplify_control(
         return Some(true);
     };
     let Some(argument) = argument_bound_to_formal(args, argument_match, control) else {
+        // Forwarded dots can supply an omitted simplify control, so the
+        // default cannot establish the base function's enabled contract.
+        if forwarded_dots {
+            return None;
+        }
         return Some(true);
     };
     match &argument.value {

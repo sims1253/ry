@@ -85,3 +85,32 @@ heap, not process RSS.
 A future design should improve dense writes and ordinary workloads before it
 replaces the current storage. Persistent collections would need their own
 lookup-cost and public-API review; they were not measured here.
+
+## Follow-up experiments
+
+Two further prototypes reduced the dense-write penalty but did not remove it.
+Neither is a production candidate.
+
+The [operation-specific records](https://github.com/sims1253/ry/blob/ef88b3defe6f8daddf8cc42767779d3535e8439a/experiments/scope-journal/operation-undo-results.md)
+save metadata returned by mutations instead of looking it up again. The
+[adaptive version](https://github.com/sims1253/ry/blob/0a9923071d40cc19ee18c4c4cf063dbaf98fa04b/experiments/scope-journal/adaptive-undo-results.md)
+switches a branch to cloning after enough distinct bindings change. Conversion
+occurs between statements without replaying inference; spare map capacity counts
+toward its threshold.
+
+Each row compares journal and clone modes in the same prototype binary, using
+the four original inputs. Instruction counts cover the whole process; allocations
+are cumulative bytes, not peak memory or elapsed time.
+
+| Prototype | Sparse instructions | Alternating dense instructions | Alternating dense allocations | Corpus instructions |
+| :-- | --: | --: | --: | --: |
+| Operation-specific records | -48.11% | +15.72% | +23.71% | -0.36% |
+| Adaptive branches | -47.45% | +10.94% | +8.70% | -0.29% |
+
+Diagnostics matched between modes, and both prototypes passed workspace tests,
+Clippy, formatting, and the R oracle suite. The linked records include exact
+counts, source revisions, input hashes, and reproduction commands. They use the
+historical experiment base and do not claim to cover later `Scope` fields.
+
+The remaining dense regression and small corpus gain do not justify the extra
+branch state. These results leave #130 open without changing production storage.

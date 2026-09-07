@@ -12,8 +12,4 @@ R/trace.R:531:7 RY001
 R/trace.R:540:7 RY001
 tests/testthat/helper-locale.R:134:5 RY070
 tests/testthat/test-cnd-entrace.R:284:28 RY040
-tests/testthat/test-nse-defuse.R:829:20 RY061
-tests/testthat/test-nse-defuse.R:830:20 RY061
-tests/testthat/test-nse-defuse.R:831:20 RY061
-tests/testthat/test-nse-defuse.R:832:20 RY061
 tests/testthat/test-trace.R:325:5 RY091

@@ -229,7 +229,7 @@
       "repo": "r-lib/rlang",
       "stars": 581,
       "commit": "1d0e00659b628c07c93c362687550727597ef09f",
-      "diagnostics": 19
+      "diagnostics": 15
     },
     {
       "name": "torch",
@@ -5314,42 +5314,6 @@
     },
     {
       "package": "rlang",
-      "code": "RY061",
-      "path": "tests/testthat/test-nse-defuse.R",
-      "line": 829,
-      "column": 20,
-      "label": "false_positive",
-      "audit_group": "s3-method-dispatch"
-    },
-    {
-      "package": "rlang",
-      "code": "RY061",
-      "path": "tests/testthat/test-nse-defuse.R",
-      "line": 830,
-      "column": 20,
-      "label": "false_positive",
-      "audit_group": "s3-method-dispatch"
-    },
-    {
-      "package": "rlang",
-      "code": "RY061",
-      "path": "tests/testthat/test-nse-defuse.R",
-      "line": 831,
-      "column": 20,
-      "label": "false_positive",
-      "audit_group": "s3-method-dispatch"
-    },
-    {
-      "package": "rlang",
-      "code": "RY061",
-      "path": "tests/testthat/test-nse-defuse.R",
-      "line": 832,
-      "column": 20,
-      "label": "false_positive",
-      "audit_group": "s3-method-dispatch"
-    },
-    {
-      "package": "rlang",
       "code": "RY070",
       "path": "tests/testthat/helper-locale.R",
       "line": 134,
@@ -6809,7 +6773,7 @@
   ],
   "classification": {
     "true_positive": 43,
-    "false_positive": 664,
+    "false_positive": 660,
     "uncertain": 0
   },
   "audit_group_counts": {
@@ -6821,7 +6785,7 @@
     "namespace-on-load": 46,
     "numeric-if-idiom": 3,
     "reassign-scope": 10,
-    "s3-method-dispatch": 7,
+    "s3-method-dispatch": 3,
     "test-fixture": 76,
     "type-narrowing": 103,
     "upstream-package": 31
@@ -6830,6 +6794,7 @@
     "Hermetic moving 0.9 ledger, regenerated after the RY032 cleanup from the exact full 62-package run with RY_NO_INSTALLED_LIBRARIES=1.",
     "The RY032 cleanup produced a zero diagnostic identity delta from the measured starting-tree baseline. Later intentional behavior changes must update this ledger with a reviewed identity diff.",
     "Every identity has a retained or manually audited label; this strict ledger is a CI gate, not an audit transcript.",
-    "The sole force-contract identity delta removes gt RY098 at R/cols_align.R:198:17, retaining its existing reviewed false-positive classification. This is a conservative coverage reduction for the col_classes default after opaque names()/index selection, not a runtime disproof of recursion when that default is omitted. Full hermetic regeneration preserves every other finding; stale per-package summary counts were recomputed from the same reports."
+    "The sole force-contract identity delta removes gt RY098 at R/cols_align.R:198:17, retaining its existing reviewed false-positive classification. This is a conservative coverage reduction for the col_classes default after opaque names()/index selection, not a runtime disproof of recursion when that default is omitted. Full hermetic regeneration preserves every other finding; stale per-package summary counts were recomputed from the same reports.",
+    "Constructor provenance guards remove four previously reviewed RY061 false positives in rlang tests/testthat/test-nse-defuse.R:829\u2013832. The custom S3 result stays unknown when the class constructor cannot be proved; the rest of the CI identity set is unchanged."
   ]
 }

@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "ry",
+      "name": "ry-checker",
       "dependencies": {
         "effect": "^3",
         "vscode-languageclient": "^9.0.1",

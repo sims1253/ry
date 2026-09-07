@@ -7,7 +7,7 @@ const { performance } = require("node:perf_hooks");
 // Invoked inside a fresh extension host by @vscode/test-electron.
 exports.run = async () => {
   const vscode = require("vscode");
-  const extension = vscode.extensions.getExtension("scholzmx.ry");
+  const extension = vscode.extensions.getExtension("scholzmx.ry-checker");
   assert.ok(extension, "ry extension is available");
   assert.equal(extension.isActive, false, "ry must not activate before timing");
   assert.equal(vscode.workspace.isTrusted, true);

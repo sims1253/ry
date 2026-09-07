@@ -97,8 +97,8 @@ impl Checker {
         let alternatives = &args[1..];
         let index = match &first.value {
             Expr::String(selector, _) => {
-                // The parser's string decoder does not yet cover all R octal
-                // and byte-encoding cases. Do not select on uncertain text.
+                // Keep this proof within decoded ASCII. Undecoded escapes,
+                // NUL recovery and non-ASCII encoding remain opaque.
                 if !selector.is_ascii() || selector.contains(['\\', '\0']) {
                     return unknown(scope);
                 }

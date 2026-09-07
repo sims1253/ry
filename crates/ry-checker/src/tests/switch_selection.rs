@@ -110,3 +110,20 @@ fn selected_stop_marks_only_the_executed_path_unreachable() {
         "{diagnostics:?}"
     );
 }
+
+#[test]
+fn decoded_ascii_selectors_follow_r_escape_values() {
+    for call in [
+        r#"switch('\141', a=1L, 'wrong')"#,
+        r#"switch('\u{61}', a=1L, 'wrong')"#,
+        r#"switch('\x61', a=1L, 'wrong')"#,
+        "switch('a\\\nb', ab='wrong', 1L)",
+    ] {
+        let (_, scope) = check_with_scope(&format!("out <- {call}"));
+        assert_eq!(scope.get("out").unwrap().mode, Mode::Integer, "{call}");
+    }
+    for call in [r#"switch('\u{e9}', a=1L, 2L)"#, r#"switch('\\', a=1L, 2L)"#] {
+        let (_, scope) = check_with_scope(&format!("out <- {call}"));
+        assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque, "{call}");
+    }
+}

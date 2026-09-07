@@ -21,3 +21,9 @@ stopifnot(inherits(tryCatch(switch(1L, , 2L), error=identity), 'error'))
 stopifnot(inherits(tryCatch(switch(1L, stop('selected'), 'bad'+1), error=identity), 'error'))
 f <- function() { switch(1L, {return(1L); stop('unreachable')}, 2L); 3L }
 stopifnot(identical(f(), 1L))
+
+stopifnot(identical(switch('\141', a=1L, 'wrong'), 1L))
+stopifnot(identical(switch('\u{61}', a=1L, 'wrong'), 1L))
+stopifnot(identical(switch('\x61', a=1L, 'wrong'), 1L))
+stopifnot(identical(switch('a\
+b', ab='wrong', 1L), 1L))

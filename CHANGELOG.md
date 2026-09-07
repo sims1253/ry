@@ -202,6 +202,10 @@ All notable changes to ry are documented in this file.
   rather than applying the file's final binding type to earlier assignments.
   Refresh cached hints when local stubs change.
 
+- Match promise-capture helpers by formal argument when collecting wrapper
+  evaluation modes. Recognize qualified base helpers and keep their environment
+  arguments, and explicit rlang controls, separate from captured expressions.
+
 - Avoid recursive-default warnings for signaling arguments that may be ignored
   or evaluated conditionally.
 

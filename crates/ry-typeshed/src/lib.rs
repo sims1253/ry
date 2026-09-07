@@ -1905,7 +1905,7 @@ mod tests {
     #[test]
     fn typeshed_preserves_embedded_schema_version() {
         let t = load_base().expect("loads");
-        assert_eq!(t.version, "0.0.6");
+        assert_eq!(t.version, "0.0.7");
         assert_eq!(t.schema_version.as_deref(), Some("2"));
     }
 

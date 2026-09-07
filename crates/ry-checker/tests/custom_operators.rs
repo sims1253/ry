@@ -316,3 +316,39 @@ fn unrelated_escaped_names_do_not_mask_operators() {
         result_mode(&format!("{prefix} result <- missing_name {operator} 1L"));
     }
 }
+
+#[test]
+fn escaped_slot_cache_refreshes_unchanged_files_after_project_edits() {
+    let make_project = |mask: &str| {
+        let mut project = ry_checker::Project::new();
+        let mut parser = RParser::new().unwrap();
+        for (path, source) in [("mask.R", mask), ("use.R", "not_bound@slot")] {
+            project.add_file(path.into(), parser.parse(path, source).unwrap());
+        }
+        project
+    };
+    let ordinary = "f <- function(z) 0L";
+    let escaped = r"f <- function(`@\x3c-`) 0L";
+    let mut warm = make_project(ordinary);
+    assert!(
+        warm.check_incremental()
+            .iter()
+            .flat_map(|(_, ds)| ds)
+            .any(|d| d.code == "RY010")
+    );
+    for mask in [escaped, ordinary] {
+        warm.update_file(
+            "mask.R".into(),
+            std::sync::Arc::new(RParser::new().unwrap().parse("mask.R", mask).unwrap()),
+        );
+        let actual = warm.check_incremental();
+        assert_eq!(actual, make_project(mask).check(), "{mask}");
+        assert_eq!(
+            actual
+                .iter()
+                .flat_map(|(_, ds)| ds)
+                .any(|d| d.code == "RY010"),
+            mask == ordinary
+        );
+    }
+}

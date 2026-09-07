@@ -167,7 +167,7 @@ fn assigned_column_name(kind: IndexKind, args: &[Arg]) -> Option<&str> {
             Some(Expr::String(name, _)) => Some(name.as_str()),
             _ => None,
         },
-        IndexKind::Single => None,
+        IndexKind::Single | IndexKind::Slot => None,
     }
 }
 
@@ -294,6 +294,9 @@ pub fn builtin_environment_bindings(path: &str) -> &'static [&'static str] {
 /// A single scope's binding table.
 #[derive(Debug, Default)]
 pub struct Scope {
+    // Sticky evidence for raw escaped slot names supplied directly to a scope.
+    // It records possible masks, never absence of dynamically created bindings.
+    pub(crate) has_escaped_slot_names: bool,
     undo: Vec<scope_journal::Undo>,
     snapshot_depth: usize,
     /// Active loop in this execution frame; independent function scopes clear it.
@@ -341,6 +344,7 @@ pub struct Scope {
 impl Clone for Scope {
     fn clone(&self) -> Self {
         Self {
+            has_escaped_slot_names: self.has_escaped_slot_names,
             loop_frame: self.loop_frame,
             effects_unknown: self.effects_unknown,
             ops_environment_unknown: self.ops_environment_unknown,
@@ -423,6 +427,9 @@ impl Scope {
 
     pub fn insert(&mut self, name: impl Into<String>, t: RType) {
         let name = name.into();
+        if !self.has_escaped_slot_names {
+            self.has_escaped_slot_names = infer::custom_operator::escaped_name_may_mask_slot(&name);
+        }
         if self.snapshot_depth > 0 {
             self.insert_with_assignment_undo(name, t);
             return;
@@ -460,6 +467,9 @@ impl Scope {
         // Preserve parameter, default-parameter, and list-origin markers;
         // clear function aliases and lexical-function markers, then mark narrowed.
         let name = name.into();
+        if !self.has_escaped_slot_names {
+            self.has_escaped_slot_names = infer::custom_operator::escaped_name_may_mask_slot(&name);
+        }
         let journal = self.begin_binding_change(&name);
         self.clear_ops_binding(&name);
         if let Some(provenance) = self.reference_provenance.as_mut() {
@@ -483,6 +493,9 @@ impl Scope {
         // Preserve lexical-function and list-origin markers; clear function
         // aliases and narrowing, then set both parameter markers.
         let name = name.into();
+        if !self.has_escaped_slot_names {
+            self.has_escaped_slot_names = infer::custom_operator::escaped_name_may_mask_slot(&name);
+        }
         let journal = self.begin_binding_change(&name);
         self.clear_ops_binding(&name);
         if let Some(provenance) = self.reference_provenance.as_mut() {
@@ -685,12 +698,12 @@ pub(crate) struct FnTable {
     // Operator lookup also checks formals/nested names during source-less
     // project refinement, without broadening other syntax proof guards.
     pub(crate) has_escaped_operator_names: bool,
+    pub(crate) has_escaped_slot_names: bool,
     // `(generic, class)` -> return slot index. Mirrors the same
     // `return_slots` storage as `fns`; lookups during dispatch consult
     // this map for an S3 method before falling back to the generic.
     pub(crate) s3_methods: HashMap<(String, String), usize>,
     pub(crate) s4_methods: HashMap<(String, String), usize>,
-    pub(crate) s4_classes: HashMap<String, HashMap<String, String>>,
     // Names of all top-level variable assignments across all files in
     // the project. Used to suppress RY010 for cross-file references:
     // when an identifier is not in the current scope but IS in this
@@ -732,6 +745,7 @@ impl FnTable {
         }
         self.has_escaped_binding_names |= collected.has_escaped_binding_names;
         self.has_escaped_operator_names |= collected.has_escaped_operator_names;
+        self.has_escaped_slot_names |= collected.has_escaped_slot_names;
         self.fns.extend(collected.fns.iter().map(|(name, f)| {
             let mut f = f.clone();
             f.return_slot += slot_offset;
@@ -749,7 +763,6 @@ impl FnTable {
                 .iter()
                 .map(|(k, &slot)| (k.clone(), slot + slot_offset)),
         );
-        self.s4_classes.extend(collected.s4_classes.clone());
         self.known_vars.extend(collected.known_vars.iter().cloned());
         self.callable_vars
             .extend(collected.callable_vars.iter().cloned());
@@ -802,6 +815,7 @@ pub struct Checker {
     /// spans.
     pub(crate) source: String,
     escaped_operator_bindings: bool,
+    escaped_slot_bindings: bool,
     // When true, `emit` is a no-op. Set during pass-2 (fixpoint) return-
     // type refinement and closure-signature building so the single
     // inference engine can be used for both the pure and the diagnostic
@@ -929,6 +943,11 @@ impl Checker {
             .iter()
             .chain(self.imported_from.keys())
             .any(|name| infer::custom_operator::escaped_name_may_mask_operator(name));
+        self.escaped_slot_bindings = self
+            .external_bindings
+            .iter()
+            .chain(self.imported_from.keys())
+            .any(|name| infer::custom_operator::escaped_name_may_mask_slot(name));
         self.diagnostics.clear();
         self.fn_table = Arc::new(FnTable::default());
         self.return_slots = Arc::new(ReturnSlots::default());
@@ -985,6 +1004,7 @@ impl Checker {
             path: path.to_string(),
             source: String::new(),
             escaped_operator_bindings: false,
+            escaped_slot_bindings: false,
             discarding: false,
             validate_user_call_arguments: true,
             fn_table,
@@ -1134,6 +1154,11 @@ impl Checker {
             .iter()
             .chain(self.imported_from.keys())
             .any(|name| infer::custom_operator::escaped_name_may_mask_operator(name));
+        self.escaped_slot_bindings = self
+            .external_bindings
+            .iter()
+            .chain(self.imported_from.keys())
+            .any(|name| infer::custom_operator::escaped_name_may_mask_slot(name));
         if let Some(types) = &mut self.assignment_types {
             types.clear();
         }
@@ -1300,10 +1325,20 @@ impl Checker {
         self.native_registration =
             bindings.contains(ry_workspace::packages::NATIVE_REGISTRATION_SENTINEL);
         self.external_bindings = bindings;
+        self.refresh_escaped_slot_bindings();
+    }
+
+    fn refresh_escaped_slot_bindings(&mut self) {
+        self.escaped_slot_bindings = self
+            .external_bindings
+            .iter()
+            .chain(self.imported_from.keys())
+            .any(|name| infer::custom_operator::escaped_name_may_mask_slot(name));
     }
 
     pub fn set_imported_from(&mut self, imports: HashMap<String, String>) {
         self.imported_from = imports;
+        self.refresh_escaped_slot_bindings();
     }
 
     pub fn set_external_s3_methods(&mut self, methods: HashSet<(String, String)>) {

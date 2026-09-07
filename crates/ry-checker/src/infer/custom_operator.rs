@@ -1,6 +1,69 @@
 use super::*;
 
 impl Checker {
+    /// Recognize explicit replacement evidence, not absence of dynamic dispatch.
+    /// Ambient uncertainty alone keeps the caller's existing effects policy.
+    pub(crate) fn has_explicit_operator_mask(
+        &self,
+        symbol: &str,
+        quoted: &str,
+        scope: &Scope,
+    ) -> bool {
+        let names = [symbol, quoted];
+        let escaped = if matches!(symbol, "@" | "@<-") {
+            self.fn_table.has_escaped_slot_names
+                || self.escaped_slot_bindings
+                || scope.has_escaped_slot_names
+        } else {
+            self.fn_table.has_escaped_operator_names || self.escaped_operator_bindings
+        };
+        let local = names.iter().find_map(|name| scope.get(name));
+        let project_function = names
+            .iter()
+            .any(|name| self.fn_table.fns.contains_key(*name));
+        let external = names.iter().any(|name| {
+            self.imported_from
+                .get(*name)
+                .is_some_and(|package| package != "base")
+                || (self.external_bindings.contains(*name)
+                    && !self.imported_from.contains_key(*name))
+        });
+        let known_project_binding = names
+            .iter()
+            .any(|name| self.fn_table.known_vars.contains(*name));
+        let local_may_call = local
+            .is_some_and(|ty| matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union))
+            || names.iter().any(|name| scope.is_parameter(name));
+        // Concrete data is skipped in call position. A flat project definition
+        // behind that data may instead be a stale same-frame definition: do not
+        // resurrect its return type without lexical provenance.
+        escaped
+            || local_may_call
+            || project_function
+            || external
+            || (known_project_binding && local.is_none())
+    }
+
+    /// A custom slot accessor or setter may write to its caller. Accessor
+    /// lookup must run before forcing a possibly ignored receiver; replacement
+    /// syntax still looks up the existing object before invoking its setter.
+    pub(crate) fn infer_custom_slot_operator(
+        &self,
+        replacement: bool,
+        scope: &mut Scope,
+    ) -> Option<RType> {
+        let (symbol, quoted) = if replacement {
+            ("@<-", "`@<-`")
+        } else {
+            ("@", "`@`")
+        };
+        if !self.has_explicit_operator_mask(symbol, quoted, scope) {
+            return None;
+        }
+        scope.invalidate_unknown_effects();
+        Some(RType::unknown())
+    }
+
     /// Function-position lookup precedes promise creation/forcing. A custom
     /// operator may ignore both operands; primitive diagnostics cannot apply.
     pub(crate) fn infer_custom_operator(&self, op: BinOpKind, scope: &mut Scope) -> Option<RType> {
@@ -31,36 +94,10 @@ impl Checker {
             BinOpKind::Or => "`|`",
             _ => return None,
         };
-        let names = [symbol, quoted];
-        let escaped = self.fn_table.has_escaped_operator_names || self.escaped_operator_bindings;
-        let local = names.iter().find_map(|name| scope.get(name));
-        let project_function = names
-            .iter()
-            .any(|name| self.fn_table.fns.contains_key(*name));
-        let external = names.iter().any(|name| {
-            self.imported_from
-                .get(*name)
-                .is_some_and(|package| package != "base")
-                || (self.external_bindings.contains(*name)
-                    && !self.imported_from.contains_key(*name))
-        });
-        let known_project_binding = names
-            .iter()
-            .any(|name| self.fn_table.known_vars.contains(*name));
-        let local_may_call = local
-            .is_some_and(|ty| matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union))
-            || names.iter().any(|name| scope.is_parameter(name));
-        // Concrete data is skipped in call position. A flat project definition
-        // behind that data may instead be a stale same-frame definition: do not
-        // resurrect its return type without lexical provenance.
-        let explicit_mask = escaped
-            || local_may_call
-            || project_function
-            || external
-            || (known_project_binding && local.is_none());
-        if !explicit_mask {
+        if !self.has_explicit_operator_mask(symbol, quoted, scope) {
             return None;
         }
+        let escaped = self.fn_table.has_escaped_operator_names || self.escaped_operator_bindings;
         if !escaped
             && !scope.ops_environment_unknown
             && !scope.data_mask_unknown
@@ -81,17 +118,25 @@ impl Checker {
 /// Cache this during collection, including project refinement without source.
 /// Raw escaped names need a binding decoder before they can prove base lookup.
 pub(crate) fn has_escaped_names(stmts: &[Stmt]) -> bool {
+    has_escaped_names_matching(stmts, escaped_name_may_mask_operator)
+}
+
+pub(crate) fn has_escaped_slot_names(stmts: &[Stmt]) -> bool {
+    has_escaped_names_matching(stmts, escaped_name_may_mask_slot)
+}
+
+fn has_escaped_names_matching(stmts: &[Stmt], may_mask: fn(&str) -> bool) -> bool {
     use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
     use std::ops::ControlFlow;
     walk_stmts(stmts, Walk::ALL, |node, _| {
         let escaped = match node {
             AstNode::Expr(Expr::Ident { name, .. }) | AstNode::Stmt(Stmt::For { name, .. }) => {
-                escaped_name_may_mask_operator(name)
+                may_mask(name)
             }
             AstNode::Expr(Expr::Function { params, .. })
-            | AstNode::Stmt(Stmt::FunctionDef { params, .. }) => params
-                .iter()
-                .any(|param| escaped_name_may_mask_operator(&param.name)),
+            | AstNode::Stmt(Stmt::FunctionDef { params, .. }) => {
+                params.iter().any(|param| may_mask(&param.name))
+            }
             _ => false,
         };
         if escaped {
@@ -116,4 +161,14 @@ pub(crate) fn escaped_name_may_mask_operator(name: &str) -> bool {
     ]
     .iter()
     .any(|operator| operator.starts_with(prefix))
+}
+
+// Slot-specific escaped prefixes must not widen the existing Ops cache.
+pub(crate) fn escaped_name_may_mask_slot(name: &str) -> bool {
+    let name = semantic_argument_name(name);
+    if !matches!(name.as_bytes().first(), Some(b'@' | b'\\')) {
+        return false;
+    }
+    name.split_once('\\')
+        .is_some_and(|(prefix, _)| "@<-".starts_with(prefix))
 }

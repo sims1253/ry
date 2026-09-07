@@ -47,6 +47,56 @@ fn false_ops_choosers_use_scalar_primitive_modes_and_classes() {
 }
 
 #[test]
+fn false_ops_choosers_recognize_distinct_literals_of_the_same_mode() {
+    for (left, right) in [
+        ("1L", "2L"),
+        ("1", "2"),
+        ("TRUE", "FALSE"),
+        ("'left'", "'right'"),
+    ] {
+        for (operator, mode) in [("+", Mode::Integer), ("==", Mode::Logical)] {
+            let source = source(operator, "left", "right")
+                .replace("function(e1,e2) 1L", &format!("function(e1,e2) {left}"))
+                .replace(
+                    "function(e1,e2) 'right'",
+                    &format!("function(e1,e2) {right}"),
+                );
+            let (diagnostics, scope) = check_with_scope(&source);
+            assert_eq!(
+                diagnostics.iter().filter(|d| d.code == "RY051").count(),
+                1,
+                "{source}: {diagnostics:?}"
+            );
+            assert_eq!(scope.get("out").unwrap().mode, mode, "{source}");
+            assert_eq!(scope.get("out").unwrap().length, Length::One, "{source}");
+        }
+    }
+}
+
+#[test]
+fn equal_literal_spellings_do_not_prove_distinct_methods() {
+    for (left, right) in [
+        ("1L", "1L"),
+        ("1", "1.0"),
+        ("TRUE", "TRUE"),
+        ("'same'", "\"same\""),
+        (r#""\xff""#, r#""\377""#),
+    ] {
+        let source = source("+", "left", "right")
+            .replace("function(e1,e2) 1L", &format!("function(e1,e2) {left}"))
+            .replace(
+                "function(e1,e2) 'right'",
+                &format!("function(e1,e2) {right}"),
+            );
+        let (diagnostics, _) = check_with_scope(&source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY051"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
 fn false_ops_choosers_bypass_factor_and_data_frame_methods() {
     for class in ["factor", "data.frame"] {
         let source = source("+", class, "right");
@@ -68,7 +118,7 @@ fn false_ops_choosers_bypass_factor_and_data_frame_methods() {
 }
 
 #[test]
-fn false_ops_fallback_needs_both_choices_and_different_method_modes() {
+fn false_ops_fallback_needs_both_choices_and_distinct_method_bodies() {
     let original = source("+", "left", "right");
     for source in [
         original.replace(
@@ -81,7 +131,7 @@ fn false_ops_fallback_needs_both_choices_and_different_method_modes() {
         ),
         original.replace("chooseOpsMethod.right <- function(...) FALSE", ""),
         original.replace("chooseOpsMethod.left <- function(...) FALSE", ""),
-        original.replace("function(e1,e2) 'right'", "function(e1,e2) 2L"),
+        original.replace("function(e1,e2) 'right'", "function(e1,e2) 1L"),
         original.replace(
             "`+.right` <- function(e1,e2) 'right'",
             "`+.right` <- `+.left`",

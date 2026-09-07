@@ -314,6 +314,16 @@ impl Checker {
         assigned: &HashSet<String>,
         scope: &Scope,
     ) -> bool {
+        self.literal_bindings_may_shadow_package(names, assigned, scope, "base")
+    }
+
+    pub(crate) fn literal_bindings_may_shadow_package<'a>(
+        &self,
+        names: impl IntoIterator<Item = &'a str>,
+        assigned: &HashSet<String>,
+        scope: &Scope,
+        expected_package: &str,
+    ) -> bool {
         if self.fn_table.has_escaped_binding_names
             || assigned
                 .iter()
@@ -332,7 +342,7 @@ impl Checker {
                 || self
                     .imported_from
                     .get(name)
-                    .is_some_and(|package| package != "base")
+                    .is_some_and(|package| package != expected_package)
                 || (self.external_bindings.contains(name) && !self.imported_from.contains_key(name))
         })
     }

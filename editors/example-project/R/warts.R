@@ -33,7 +33,7 @@ bad_arith <- "latte" + 1L             # RY040: character + integer
 
 bad_recycle <- c(1, 2) + c(1, 2, 3)   # RY041: lengths 2 and 3
 
-sizes <- factor(c("small", "medium"))
+sizes <- base::factor(c("small", "medium"))
 bad_factor <- sizes + 1               # RY042: arithmetic on factor
 
 menu <- data.frame(item = c("espresso"), price = c(2.5))

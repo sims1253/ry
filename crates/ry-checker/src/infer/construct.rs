@@ -44,10 +44,89 @@ impl Checker {
             // Do not borrow base-stub payload facts or force quoted arguments.
             return Some(RType::unknown());
         }
+        if matches!(lookup_name, "factor" | "new") {
+            if original_name != semantic_name
+                || (matches!(original_callee, Expr::String(_, _)) && semantic_name.contains("::"))
+            {
+                return Some(RType::unknown());
+            }
+            let package = if lookup_name == "factor" {
+                "base"
+            } else {
+                "methods"
+            };
+            if let Some((prefix, _)) = semantic_name.rsplit_once("::") {
+                if self.literal_bindings_may_be_shadowed(
+                    ["::", "`::`", ":::", "`:::`"],
+                    &HashSet::new(),
+                    scope,
+                ) {
+                    return Some(RType::unknown());
+                }
+                if prefix.trim_end_matches(':') != package {
+                    // Only an actual package contract can describe another
+                    // constructor with this spelling; avoid the shared standard
+                    // package database lending it a base signature.
+                    return if self
+                        .package_typeshed(prefix.trim_end_matches(':'))
+                        .is_some_and(|typeshed| typeshed.functions.contains_key(lookup_name))
+                    {
+                        None
+                    } else {
+                        Some(RType::unknown())
+                    };
+                }
+            } else {
+                if scope.is_parameter(semantic_name) {
+                    // An untyped callable formal must not fall back to a base stub.
+                    return Some(RType::unknown());
+                }
+                // Known custom functions keep the ordinary call path.
+                if self.fn_table.fns.contains_key(semantic_name)
+                    || scope
+                        .get(semantic_name)
+                        .is_some_and(|ty| ty.fn_sig.is_some())
+                {
+                    return None;
+                }
+                if let Some(imported) = self.imported_from.get(semantic_name)
+                    && imported != package
+                {
+                    return if self
+                        .package_typeshed(imported)
+                        .is_some_and(|typeshed| typeshed.functions.contains_key(semantic_name))
+                    {
+                        None
+                    } else {
+                        Some(RType::unknown())
+                    };
+                }
+                if scope.data_mask_unknown
+                    || self.literal_bindings_may_shadow_package(
+                        [semantic_name, format!("`{semantic_name}`").as_str()],
+                        &HashSet::new(),
+                        scope,
+                        package,
+                    )
+                {
+                    return Some(RType::unknown());
+                }
+                let explicit_import = self
+                    .imported_from
+                    .get(semantic_name)
+                    .is_some_and(|pkg| pkg == package);
+                if !explicit_import && (scope.search_path_unknown || !self.bare_loaded.is_empty()) {
+                    return Some(RType::unknown());
+                }
+            }
+            if self.user_stubs.contains_key(package) || self.user_stubs.contains_key("base") {
+                return None;
+            }
+        }
         // `factor(x)` returns an integer vector with class "factor".
         // (And often also "ordered" if `ordered = TRUE`, but we keep v1
         // to the base case.)
-        if semantic_name == "factor" {
+        if lookup_name == "factor" {
             // Infer args so unbound-variable diagnostics still fire.
             self.infer_args_for_diagnostics(args, scope);
             return Some(
@@ -56,21 +135,52 @@ impl Checker {
             );
         }
         if lookup_name == "new" {
-            for argument in args.iter().skip(1) {
-                let _ = self.infer(&argument.value, scope);
-            }
-            return Some(
-                args.first()
-                    .and_then(|argument| match &argument.value {
-                        Expr::String(class, _) => {
-                            Some(RType::unknown().with_class(ClassVector::single(class)))
-                        }
-                        _ => None,
-                    })
-                    .unwrap_or_else(RType::unknown),
-            );
+            return Some(self.infer_methods_new(args, scope));
         }
         None
+    }
+
+    fn infer_methods_new(&mut self, args: &[Arg], scope: &mut Scope) -> RType {
+        let matched = match_argument_names(
+            &["Class", "..."],
+            args.iter()
+                .map(|arg| arg.name.as_deref().map(semantic_argument_name)),
+        );
+        let Some(class_index) = matched.arg_for_param(0) else {
+            return RType::unknown();
+        };
+        let exact = args
+            .iter()
+            .filter(|arg| arg.name.as_deref().map(semantic_argument_name) == Some("Class"))
+            .count();
+        let partial = args
+            .iter()
+            .filter(|arg| {
+                arg.name
+                    .as_deref()
+                    .map(semantic_argument_name)
+                    .is_some_and(|name| !name.is_empty() && "Class".starts_with(name))
+            })
+            .count();
+        if exact > 1
+            || (exact == 0 && partial > 1)
+            || args.iter().any(|arg| {
+                matches!(&arg.value, Expr::Ident { name, .. } if name == "...")
+                    || matches!(&arg.value, Expr::Unknown(_))
+            })
+        {
+            return RType::unknown();
+        }
+        // Class is forced before initialize dispatch. A custom initialize
+        // method may leave every dots argument unforced, but R verifies that
+        // its returned object still belongs to the requested class.
+        self.infer(&args[class_index].value, scope);
+        match &args[class_index].value {
+            Expr::String(class, _) if !class.is_empty() => {
+                RType::unknown().with_class(ClassVector::single(class))
+            }
+            _ => RType::unknown(),
+        }
     }
 
     /// Preserve the `.Data` payload under a literal class attachment. Match

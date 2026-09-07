@@ -12,6 +12,8 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Custom or masked `factor` and `new` calls no longer acquire builtin constructor facts. S4 constructor inference requires methods provenance, and detaching a package invalidates the default search-path assumption.
+
 - Class assignments no longer infer literal classes from custom class builders or preserve payload types under an unproven replacement function.
 
 - Match `structure()` payloads through `.Data`, preserve class and list-column

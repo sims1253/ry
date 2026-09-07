@@ -155,6 +155,9 @@ All notable changes to ry are documented in this file.
   and UTF-8 byte sequences correctly. Preserve physical escaped newlines and
   retain raw recovery text for malformed or unrepresentable string values.
 
+- Report missing format arguments only for proven base `sprintf` and
+  `gettextf` calls, avoiding false RY094 warnings for custom functions.
+
 - Stop applying `hasArg` and `on.exit` deferred semantics to explicit competing
   bindings, formals, and aliases. Retain existing inference under ambient
   lookup uncertainty, while requiring methods provenance for RY096.

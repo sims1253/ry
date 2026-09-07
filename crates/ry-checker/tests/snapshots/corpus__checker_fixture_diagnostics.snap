@@ -671,6 +671,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_compare_union_no_mode_mismatch.R
 - diagnostics: []
+  fixture: ok_custom_operator_lookup.R
+- diagnostics: []
   fixture: ok_data_frame_constructor.R
 - diagnostics: []
   fixture: ok_data_frame_derived_names.R

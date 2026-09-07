@@ -290,6 +290,9 @@ pub struct Scope {
     // An unknown effect may install delayed bindings or change syntax itself.
     // Later literal assignments cannot prove that those effects disappeared.
     pub(crate) ops_environment_unknown: bool,
+    /// A custom operator may force promises that mutate this frame or install
+    /// active bindings. Later expression inference cannot reuse caller facts.
+    pub(crate) custom_operator_effects_unknown: bool,
     pub(crate) literal_functions: HashMap<String, Arc<infer::ops_chooser::LiteralFunction>>,
     pub(crate) reference_provenance: Option<Box<reference_facts::ScopeProvenance>>,
     pub bindings: HashMap<String, RType>,
@@ -673,6 +676,7 @@ pub struct Checker {
     /// Messages that quote source spelling slice this exact text by parser
     /// spans.
     pub(crate) source: String,
+    escaped_operator_bindings: bool,
     // When true, `emit` is a no-op. Set during pass-2 (fixpoint) return-
     // type refinement and closure-signature building so the single
     // inference engine can be used for both the pure and the diagnostic
@@ -795,6 +799,12 @@ impl Checker {
     fn run_passes(&mut self, file: &SourceFile) {
         self.path = file.path.clone();
         self.source.clone_from(&file.source);
+        self.escaped_operator_bindings = infer::custom_operator::has_escaped_names(file)
+            || self
+                .external_bindings
+                .iter()
+                .chain(self.imported_from.keys())
+                .any(|name| name.contains('\\'));
         self.diagnostics.clear();
         self.fn_table = Arc::new(FnTable::default());
         self.return_slots = Arc::new(ReturnSlots::default());
@@ -850,6 +860,7 @@ impl Checker {
             diagnostics: Vec::new(),
             path: path.to_string(),
             source: String::new(),
+            escaped_operator_bindings: false,
             discarding: false,
             validate_user_call_arguments: true,
             fn_table,
@@ -990,6 +1001,12 @@ impl Checker {
     pub(crate) fn emit_diagnostics(&mut self, file: &SourceFile) -> Scope {
         self.path = file.path.clone();
         self.source.clone_from(&file.source);
+        self.escaped_operator_bindings = infer::custom_operator::has_escaped_names(file)
+            || self
+                .external_bindings
+                .iter()
+                .chain(self.imported_from.keys())
+                .any(|name| name.contains('\\'));
         if let Some(types) = &mut self.assignment_types {
             types.clear();
         }

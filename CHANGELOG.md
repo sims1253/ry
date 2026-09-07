@@ -167,6 +167,8 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Keep `Find` results unknown when no-match values or matching list elements
+  can have arbitrary types and lengths. Preserve predicate diagnostics.
 - Keep `Filter` subset results and `Position` no-match values unknown instead
   of borrowing input types or assuming scalar indices.
 

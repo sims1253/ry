@@ -30,6 +30,9 @@ All notable changes to ry are documented in this file.
 
 ### Cleanup
 
+- Check corpus package totals against their reviewed findings to catch stale
+  summary counts in CI.
+
 - Show editor type hints from each assignment, including function locals,
   rather than applying the file's final binding type to earlier assignments.
   Refresh cached hints when local stubs change.

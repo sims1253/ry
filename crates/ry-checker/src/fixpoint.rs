@@ -1,5 +1,48 @@
 use super::*;
 
+/// Resolve method identities once; only their parameter metadata changes
+/// during refinement. Include every dot prefix because generic names may
+/// themselves contain dots.
+pub(crate) fn s3_evaluation_methods(table: &FnTable) -> HashMap<String, Vec<String>> {
+    let mut by_generic: HashMap<&str, HashSet<usize>> = HashMap::new();
+    for (name, function) in &table.fns {
+        let name = semantic_argument_name(name);
+        for (dot, _) in name.match_indices('.') {
+            if dot + 1 < name.len() {
+                by_generic
+                    .entry(&name[..dot])
+                    .or_default()
+                    .insert(function.return_slot);
+            }
+        }
+    }
+    for ((generic, _), slot) in &table.s3_methods {
+        by_generic.entry(generic).or_default().insert(*slot);
+    }
+    let by_slot: HashMap<_, _> = table
+        .fns
+        .iter()
+        .map(|(name, function)| (function.return_slot, name))
+        .collect();
+    table
+        .fns
+        .iter()
+        .filter_map(|(name, function)| {
+            let dispatch = usemethod_generic_name(&function.body)?;
+            if semantic_argument_name(name) != dispatch {
+                return None;
+            }
+            let methods = by_generic
+                .get(dispatch.as_str())
+                .into_iter()
+                .flatten()
+                .filter_map(|slot| by_slot.get(slot).map(|name| (*name).clone()))
+                .collect();
+            Some((name.clone(), methods))
+        })
+        .collect()
+}
+
 impl Checker {
     // Pass 2: refine all function return types until convergence.
     // Safe to call once, after all files have been collected.
@@ -47,7 +90,7 @@ impl Checker {
         let mut pending: std::collections::BTreeSet<_> =
             (0..names.len()).filter(|&index| active[index]).collect();
         let mut callers = vec![HashSet::new(); self.return_slots.0.len()];
-        let methods = self.s3_evaluation_methods();
+        let methods = s3_evaluation_methods(&self.fn_table);
         let mut reads = Vec::new();
         let mut evaluation_pending = true;
         for _ in 0..MAX_FIXPOINT_DEPTH {
@@ -95,6 +138,27 @@ impl Checker {
                 break;
             }
         }
+        if let Some(dependencies) = &mut self.refinement_dependencies {
+            // Slots are local to the rebuilt table. Persist owning names, and
+            // retain reads from every round rather than only the final pass.
+            let mut names_by_slot = vec![Vec::new(); self.return_slots.0.len()];
+            for (index, slot) in slots.iter().enumerate() {
+                names_by_slot[*slot].push(index);
+                if active[index] {
+                    dependencies.insert(names[index].clone(), HashSet::new());
+                }
+            }
+            for (slot, readers) in callers.iter().enumerate() {
+                for reader in readers {
+                    let reads = dependencies.get_mut(&names[*reader]).unwrap();
+                    reads.extend(
+                        names_by_slot[slot]
+                            .iter()
+                            .map(|index| names[*index].clone()),
+                    );
+                }
+            }
+        }
         self.discarding = prev_discarding;
     }
 
@@ -107,50 +171,6 @@ impl Checker {
     pub(crate) fn read_return_slot(&self, slot: usize) -> RType {
         self.record_signature_read(slot);
         self.return_slots.get(slot)
-    }
-
-    /// Resolve method identities once; only their parameter metadata changes
-    /// during refinement. Include every dot prefix because generic names may
-    /// themselves contain dots.
-    fn s3_evaluation_methods(&self) -> HashMap<String, Vec<String>> {
-        let mut by_generic: HashMap<&str, HashSet<usize>> = HashMap::new();
-        for (name, function) in &self.fn_table.fns {
-            let name = semantic_argument_name(name);
-            for (dot, _) in name.match_indices('.') {
-                if dot + 1 < name.len() {
-                    by_generic
-                        .entry(&name[..dot])
-                        .or_default()
-                        .insert(function.return_slot);
-                }
-            }
-        }
-        for ((generic, _), slot) in &self.fn_table.s3_methods {
-            by_generic.entry(generic).or_default().insert(*slot);
-        }
-        let by_slot: HashMap<_, _> = self
-            .fn_table
-            .fns
-            .iter()
-            .map(|(name, function)| (function.return_slot, name))
-            .collect();
-        self.fn_table
-            .fns
-            .iter()
-            .filter_map(|(name, function)| {
-                let dispatch = usemethod_generic_name(&function.body)?;
-                if semantic_argument_name(name) != dispatch {
-                    return None;
-                }
-                let methods = by_generic
-                    .get(dispatch.as_str())
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|slot| by_slot.get(slot).map(|name| (*name).clone()))
-                    .collect();
-                Some((name.clone(), methods))
-            })
-            .collect()
     }
 
     /// A generic must allow the quoting and injection behavior of its known
@@ -382,7 +402,7 @@ mod tests {
         checker.discarding = true;
         let mut names: Vec<_> = checker.fn_table.fns.keys().cloned().collect();
         names.sort_unstable();
-        let methods = checker.s3_evaluation_methods();
+        let methods = s3_evaluation_methods(&checker.fn_table);
         for _ in 0..MAX_FIXPOINT_DEPTH {
             let before = checker.return_slots.0.clone();
             for name in &names {

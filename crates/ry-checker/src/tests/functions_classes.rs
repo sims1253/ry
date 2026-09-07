@@ -1,6 +1,15 @@
 use super::*;
 
 #[test]
+fn trailing_comments_preserve_function_return_types() {
+    let (diagnostics, scope) = check_with_scope(
+        "# header\nf <- function() {\n1L\n# return value above\n}\ng <- function() {\n'word' # inline\n# another comment\n}\nvalue <- f()\nbad <- g() + 1L\n",
+    );
+    assert_eq!(scope.get("value").unwrap().mode, Mode::Integer);
+    assert_eq!(diagnostics.iter().filter(|d| d.code == "RY040").count(), 1);
+}
+
+#[test]
 fn closure_factory_infers_inner_return() {
     // `make_counter <- function() { function() { 1L } }` produces a
     // function whose `fn_sig.return_type` is itself a function with

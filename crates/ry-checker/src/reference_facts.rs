@@ -588,6 +588,29 @@ mod tests {
     }
 
     #[test]
+    fn comments_do_not_end_a_supported_reference_prefix() {
+        let source = "# header\nx <- 1L\n# before read\ny <- x\n# before function\nf <- function() {\n# local\nz <- 2L\nz\n# tail\n}\n# end\n";
+        let captured = facts(source);
+        assert_eq!(captured.references.len(), 2);
+        for reference in &captured.references {
+            assert_eq!(reference.resolution, ReferenceResolution::Resolved);
+            assert_eq!(
+                reference.type_at_reference.as_ref().unwrap().mode,
+                Mode::Integer
+            );
+            assert_eq!(
+                &source[reference.span.start..reference.span.end],
+                reference.name
+            );
+        }
+        let opaque = facts("x <- 1L\n# harmless\nmutate()\nx");
+        assert_eq!(
+            named(&opaque, "x")[0].resolution,
+            ReferenceResolution::Unsupported
+        );
+    }
+
+    #[test]
     fn fixed_reference_panel_preserves_counts_and_inference() {
         let panel: serde_json::Value = serde_json::from_str(include_str!(
             "../../../docs/corpus/reference-prefix-panel.json"

@@ -43,8 +43,7 @@ impl RParser {
     /// Parse with an old tree-sitter `Tree` for incremental re-parsing.
     /// The old tree must have been edited via `InputEdit`
     /// before calling this method. The AST is rebuilt from the new tree,
-    /// but tree-sitter reuses unchanged subtrees internally, making
-    /// reparse cost proportional to the edited region, not the file size.
+    /// but tree-sitter reuses unchanged subtrees internally.
     ///
     /// If `old_tree` is `None`, falls back to a full parse.
     pub fn parse_with_tree(

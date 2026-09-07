@@ -64,9 +64,8 @@ pub(super) struct State {
     /// record the version here so cache freshness can be validated.
     versions: HashMap<String, i32>,
     /// path -> (version, parsed SourceFile). Populated lazily by the
-    /// request handlers, invalidated by `update_doc`. `SourceFile` is
-    /// `Send` but `RParser` is not, so the parser is constructed per
-    /// request and only the result is cached.
+    /// request handlers, invalidated by `update_doc`. Each cache miss
+    /// constructs a parser; only the result is cached.
     parsed: HashMap<String, (i32, Arc<SourceFile>)>,
     /// Hints belong to one document version and loaded stub snapshot.
     hints: HashMap<String, CachedHints>,
@@ -661,16 +660,13 @@ impl Backend {
     /// UTF-16 conversions that must match the AST's span offsets, so a
     /// concurrent `didChange` racing the parse can never yield a stale
     /// text applied to a fresher AST (or vice versa). The parse cache is
-    /// read and repopulated under the state lock; parsing itself (the
-    /// non-`Send` `RParser`) happens outside it. Returns `None` when the
-    /// path is not an open document or parsing fails.
+    /// read and repopulated under the state lock; parsing happens outside
+    /// it. Returns `None` when the path is not open or parsing fails.
     async fn parsed_file(&self, path: &str) -> Option<(Arc<SourceFile>, String)> {
         loop {
             // One guard reads the parse cache, the document text/version,
-            // and the old tree as one snapshot; only the parse itself
-            // (the non-`Send` `RParser`) happens outside the lock. The
-            // old tree is only cloned on the miss path — a cache hit must
-            // not pay for a tree copy it never hands to the parser.
+            // and the old tree as one snapshot; parsing happens outside
+            // the lock. Clone the old tree only on a cache miss.
             let (text, version, old_tree) = {
                 let state = self.state.lock().await;
                 if let (Some(text), Some(version)) =

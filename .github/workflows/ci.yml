@@ -75,10 +75,8 @@ jobs:
       - name: Check release.yml matches generated output
         run: dist generate --check
 
-  # Separate job: the oracle suite shells out to `Rscript`, so it needs
-  # R installed. Kept separate from `build-test` to keep the main job
-  # R-free and fast. The oracle test is `#[ignore]`'d by default, so
-  # `--ignored` is required to run it at all.
+  # Run the full oracle matrix with R and its fixture dependencies.
+  # build-test checks claim completeness without requiring R.
   oracle:
     name: Oracle (R)
     runs-on: ubuntu-latest

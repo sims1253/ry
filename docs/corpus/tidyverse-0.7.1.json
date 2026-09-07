@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "corpus": "tidyverse",
-  "ry_version": "0.7.1",
-  "source": "../ry-audits/aggregate.json",
+  "ry_version": "0.9.0-dev",
+  "source": "ecosystem/reports/*.root.txt (excluding posit.*)",
   "packages": [
     {
       "name": "tidyverse",
@@ -555,42 +555,6 @@
     {
       "package": "ggplot2",
       "code": "RY010",
-      "path": "R/guide-axis-stack.R",
-      "line": 35,
-      "column": 25,
-      "label": "unowned",
-      "audit_group": "plan-32-33"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/guide-custom.R",
-      "line": 43,
-      "column": 22,
-      "label": "unowned",
-      "audit_group": "plan-32-33"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/guide-custom.R",
-      "line": 44,
-      "column": 23,
-      "label": "unowned",
-      "audit_group": "plan-32-33"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/guide-custom.R",
-      "line": 45,
-      "column": 24,
-      "label": "unowned",
-      "audit_group": "plan-32-33"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
       "path": "R/plot-render.R",
       "line": 297,
       "column": 19,
@@ -1106,7 +1070,7 @@
     "true_positive": 10,
     "false_positive": 45,
     "uncertain": 0,
-    "unowned": 56
+    "unowned": 52
   },
   "audit_group_counts": {
     "plan-29": 1,
@@ -1124,14 +1088,16 @@
     "P7b": 3,
     "P3a": 0,
     "P3c": 0,
-    "plan-32-33": 56,
+    "plan-32-33": 52,
     "pr195-nse-stubs": 6
   },
   "notes": [
     "Ecosystem reports are generated hermetically with RY_NO_INSTALLED_LIBRARIES=1; the source audit used installed R libraries.",
     "The ecosystem audit reconciles each hermetic report against finding identities in this ledger, including diagnostics that are absent from production-only reports.",
+    "The grid export inventory resolves four ggplot2 RY010 findings for is.unit and is.grob callback values under import(grid). They were unowned in this ledger and are now verified as missing-export false positives; all other identities are unchanged.",
+    "The source digest now records the concatenated bytes of all 32 unprefixed root reports in filename order from the complete default-manifest regeneration. The ledger retains its existing reviewed-package coverage.",
     "Unproven factor/new calls discard downstream facts because the callee or skipped arguments may mutate caller bindings. This conservatively reduces coverage by the ten dplyr identities recorded in the Posit ledger, plus six duckplyr RY040 identities in tests/testthat/test-dplyr-count-tally.R:143/144/179/222/223/254. These retain their existing false-positive audit labels; their disappearance is reduced coverage after uncertain factor calls, not individual diagnostic fixes. Required true-positive identities remain covered."
   ],
-  "ry_commit": "c29fca934ac056bdc8fc6fa54a2c9ab36baf5e13",
-  "source_sha256": "17f2f79040ab797f263a71d9af7a686a3acd8865e44dc5581ae7343e2793f626"
+  "ry_commit": "71a2ae0e896dfaf17c62c8073dc264fe6cbda1ab",
+  "source_sha256": "3467d1b9b1b472c7bc8ee20d1679471c6717a768e1cbe1727ba828e0c0ec7964"
 }

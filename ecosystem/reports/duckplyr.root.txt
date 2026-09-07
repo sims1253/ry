@@ -8,12 +8,6 @@ tests/testthat/test-dplyr-conditions.R:18:30 RY040
 tests/testthat/test-dplyr-conditions.R:19:29 RY040
 tests/testthat/test-dplyr-conditions.R:20:28 RY040
 tests/testthat/test-dplyr-conditions.R:30:21 RY040
-tests/testthat/test-dplyr-count-tally.R:143:48 RY040
-tests/testthat/test-dplyr-count-tally.R:144:47 RY040
-tests/testthat/test-dplyr-count-tally.R:179:38 RY040
-tests/testthat/test-dplyr-count-tally.R:222:52 RY040
-tests/testthat/test-dplyr-count-tally.R:223:51 RY040
-tests/testthat/test-dplyr-count-tally.R:254:42 RY040
 tests/testthat/test-dplyr-select.R:196:43 RY040
 tests/testthat/test-dplyr-slice.R:109:24 RY040
 tests/testthat/test-dplyr-slice.R:110:46 RY040

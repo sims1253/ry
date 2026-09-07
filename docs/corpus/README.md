@@ -9,7 +9,7 @@ removing one finding can never be silently mistaken for removing another.
 The `audit_group` field groups reviewed findings by how the audit explained
 each label. `posit-0.9.0.json` has 12 groups; most name a cause
 (`type-narrowing`, `test-fixture`), one an owner (`upstream-package`), and
-the largest, `manual-audit` (378 of 707 findings), is the manually
+the largest, `manual-audit`, is the manually
 classified batch. `tidyverse-0.7.1.json` has 17 groups: 16 are batch ids
 (`P2`, `P3a`, `plan-32-33`, `pr195-nse-stubs`), kept verbatim because the
 planning records that defined them were local-only and no longer exist;
@@ -17,8 +17,11 @@ the other, `upstream-ggplot2`, names the upstream package.
 
 | Ledger | `ry` | Packages | Diagnostics | TP / FP / Unc | Reconciliation |
 | :-- | :-- | :-- | ---: | :-- | :-- |
-| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.7.1 | 24 | 157 | 10 / 91 / 0 (+56 unowned) | hermetic (strict CI gate) |
-| [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 707 | 43 / 664 / 0 | hermetic (strict CI gate) |
+| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.9 dev | 24 | 107 | 10 / 45 / 0 (+52 unowned) | hermetic (strict CI gate) |
+| [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 689 | 43 / 646 / 0 | hermetic (strict CI gate) |
+
+The default ledger keeps its historical `tidyverse-0.7.1.json` filename; its
+version and source revision describe the current regenerated diagnostics.
 
 Two historical ledgers were removed as generated artifacts: the 0.8.0
 audit transcript (1,142 identities, reconciliation `audit-transcript`) and
@@ -30,8 +33,8 @@ audit records summarized in [`pre-governance-measurement.md`](pre-governance-mea
 
 The [instruction baseline](instructions-baseline.json) records the fixed performance
 sample. See the [measurement guide](instructions.md) for local runs and CI deltas.
-The [scope journal experiment](scope-journal-experiment.md) records sparse and
-dense branch tradeoffs for issue #130.
+The [scope storage experiments](scope-journal-experiment.md) record journal
+tradeoffs and persistent-map measurements for issue #130.
 
 ## Parser invariant evidence
 
@@ -43,7 +46,7 @@ checker fixtures plus a deterministic sample of the vendored ecosystem sources.
 ## Readable message ledger
 
 [`posit-messages-0.9.json`](posit-messages-0.9.json) records the message and
-severity for all 705 distinct identities among the 707 reviewed Posit findings.
+severity for every distinct identity in the reviewed Posit findings.
 It previously also carried an optional structured fix; the autofix machinery was removed before 0.9.0 (see
 issue #89), so those payloads are gone.
 Each entry is keyed by the same stable `(package, code, path, line, column)`

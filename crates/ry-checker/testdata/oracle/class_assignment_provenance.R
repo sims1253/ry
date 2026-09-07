@@ -20,3 +20,9 @@ stopifnot(typeof(b) == "integer", identical(class(b), base::c("double", "widget"
 record <- structure(list(a = 1L), class = "widget")
 class(record) <- NULL
 stopifnot(identical(record, list(a = 1L)))
+masked <- with(list(`class<-` = function(x, value) "custom"), {
+  x <- 1L
+  class(x) <- "widget"
+  x
+})
+stopifnot(identical(masked, "custom"))

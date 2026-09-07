@@ -320,3 +320,25 @@ fn class_assignment_drops_payload_for_unknown_or_coercing_classes() {
     );
     assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque);
 }
+
+#[test]
+fn unknown_data_mask_can_replace_class_setter() {
+    let file = parse_file("test.R", "class(out) <- 'widget'");
+    for masked in [false, true] {
+        let mut checker = Checker::new("test.R");
+        let mut scope = Scope::default();
+        scope.insert("out", RType::new(Mode::Integer, Length::One));
+        // The mask may supply a replacement function absent from lexical
+        // bindings; every other setter-provenance guard remains clear.
+        scope.data_mask_unknown = masked;
+        checker.infer_stmt_value(&file.stmts[0], &mut scope);
+        let out = scope.get("out").unwrap();
+        if masked {
+            assert_eq!(out.mode, Mode::Opaque);
+            assert!(!out.class.known);
+        } else {
+            assert_eq!(out.mode, Mode::Integer);
+            assert!(out.class.contains("widget"));
+        }
+    }
+}

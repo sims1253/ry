@@ -13,11 +13,12 @@ impl Checker {
     ) -> RType {
         // Calls may install delayed bindings, not just mutate current values.
         // Preserve environment certainty only for a closed literal constructor.
+        let environment_known_before_call = !scope.ops_environment_unknown;
         let pure = ops_chooser::pure_structure_call(self, func, args, scope);
         if !pure {
             scope.invalidate_ops_environment();
         }
-        let result = self.infer_call_inner(func, args, scope, span);
+        let result = self.infer_call_inner(func, args, scope, span, environment_known_before_call);
         if !pure {
             scope.invalidate_ops_environment();
         }
@@ -30,6 +31,7 @@ impl Checker {
         args: &[Arg],
         scope: &mut Scope,
         span: Span,
+        environment_known_before_call: bool,
     ) -> RType {
         // A call to a function literal (IIFE) never reaches the
         // name-based stages below.
@@ -160,9 +162,18 @@ impl Checker {
             return t;
         }
 
-        // `switch(EXPR, ...)`: the join of all alternatives.
-        if semantic_name == "switch" {
-            return self.infer_switch_call(args, scope);
+        // Proved base switch selects before evaluating its alternatives.
+        if lookup_name == "switch"
+            && let Some(result) = self.infer_switch_special(
+                &name,
+                func,
+                &semantic_name,
+                args,
+                scope,
+                environment_known_before_call,
+            )
+        {
+            return result;
         }
 
         // `tryCatch(expr, ..., handler = fun)`: the join of the main

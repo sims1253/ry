@@ -208,60 +208,6 @@
       "severity": "warning",
       "message": "variable `tags` is not bound in this scope"
     },
-    "bslib::RY010::R/bs-theme-preview.R:134:11": {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/bs-theme-preview.R",
-      "line": 134,
-      "column": 11,
-      "severity": "warning",
-      "message": "variable `tags` is not bound in this scope"
-    },
-    "bslib::RY010::R/bs-theme-preview.R:141:11": {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/bs-theme-preview.R",
-      "line": 141,
-      "column": 11,
-      "severity": "warning",
-      "message": "variable `tags` is not bound in this scope"
-    },
-    "bslib::RY010::R/bs-theme-preview.R:152:9": {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/bs-theme-preview.R",
-      "line": 152,
-      "column": 9,
-      "severity": "warning",
-      "message": "variable `tags` is not bound in this scope"
-    },
-    "bslib::RY010::R/bs-theme-preview.R:153:9": {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/bs-theme-preview.R",
-      "line": 153,
-      "column": 9,
-      "severity": "warning",
-      "message": "variable `tags` is not bound in this scope"
-    },
-    "bslib::RY010::R/bs-theme-preview.R:163:15": {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/bs-theme-preview.R",
-      "line": 163,
-      "column": 15,
-      "severity": "warning",
-      "message": "variable `tags` is not bound in this scope"
-    },
-    "bslib::RY010::R/bs-theme-preview.R:172:13": {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/bs-theme-preview.R",
-      "line": 172,
-      "column": 13,
-      "severity": "warning",
-      "message": "variable `tags` is not bound in this scope"
-    },
     "bslib::RY010::R/bs-theme-preview.R:185:12": {
       "package": "bslib",
       "code": "RY010",
@@ -331,15 +277,6 @@
       "path": "R/card.R",
       "line": 357,
       "column": 12,
-      "severity": "warning",
-      "message": "variable `tags` is not bound in this scope"
-    },
-    "bslib::RY010::R/card.R:380:7": {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/card.R",
-      "line": 380,
-      "column": 7,
       "severity": "warning",
       "message": "variable `tags` is not bound in this scope"
     },
@@ -538,51 +475,6 @@
       "path": "R/navs.R",
       "line": 67,
       "column": 43,
-      "severity": "warning",
-      "message": "variable `tags` is not bound in this scope"
-    },
-    "bslib::RY010::R/offcanvas.R:229:7": {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/offcanvas.R",
-      "line": 229,
-      "column": 7,
-      "severity": "warning",
-      "message": "variable `tags` is not bound in this scope"
-    },
-    "bslib::RY010::R/offcanvas.R:236:5": {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/offcanvas.R",
-      "line": 236,
-      "column": 5,
-      "severity": "warning",
-      "message": "variable `tags` is not bound in this scope"
-    },
-    "bslib::RY010::R/offcanvas.R:245:5": {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/offcanvas.R",
-      "line": 245,
-      "column": 5,
-      "severity": "warning",
-      "message": "variable `tags` is not bound in this scope"
-    },
-    "bslib::RY010::R/offcanvas.R:249:5": {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/offcanvas.R",
-      "line": 249,
-      "column": 5,
-      "severity": "warning",
-      "message": "variable `tags` is not bound in this scope"
-    },
-    "bslib::RY010::R/offcanvas.R:280:7": {
-      "package": "bslib",
-      "code": "RY010",
-      "path": "R/offcanvas.R",
-      "line": 280,
-      "column": 7,
       "severity": "warning",
       "message": "variable `tags` is not bound in this scope"
     },
@@ -846,60 +738,6 @@
       "column": 24,
       "severity": "warning",
       "message": "variable `err_env` is not bound in this scope"
-    },
-    "cli::RY010::R/numbers.R:5:19": {
-      "package": "cli",
-      "code": "RY010",
-      "path": "R/numbers.R",
-      "line": 5,
-      "column": 19,
-      "severity": "warning",
-      "message": "variable `pretty_num_default` is not bound in this scope"
-    },
-    "cli::RY010::R/numbers.R:6:17": {
-      "package": "cli",
-      "code": "RY010",
-      "path": "R/numbers.R",
-      "line": 6,
-      "column": 17,
-      "severity": "warning",
-      "message": "variable `pretty_num_nopad` is not bound in this scope"
-    },
-    "cli::RY010::R/numbers.R:7:13": {
-      "package": "cli",
-      "code": "RY010",
-      "path": "R/numbers.R",
-      "line": 7,
-      "column": 13,
-      "severity": "warning",
-      "message": "variable `pretty_num_6` is not bound in this scope"
-    },
-    "cli::RY010::R/sizes.R:5:19": {
-      "package": "cli",
-      "code": "RY010",
-      "path": "R/sizes.R",
-      "line": 5,
-      "column": 19,
-      "severity": "warning",
-      "message": "variable `pretty_bytes_default` is not bound in this scope"
-    },
-    "cli::RY010::R/sizes.R:6:17": {
-      "package": "cli",
-      "code": "RY010",
-      "path": "R/sizes.R",
-      "line": 6,
-      "column": 17,
-      "severity": "warning",
-      "message": "variable `pretty_bytes_nopad` is not bound in this scope"
-    },
-    "cli::RY010::R/sizes.R:7:13": {
-      "package": "cli",
-      "code": "RY010",
-      "path": "R/sizes.R",
-      "line": 7,
-      "column": 13,
-      "severity": "warning",
-      "message": "variable `pretty_bytes_6` is not bound in this scope"
     },
     "cli::RY032::R/ansi-hyperlink.R:165:7": {
       "package": "cli",
@@ -3069,15 +2907,6 @@
       "severity": "error",
       "message": "$ operator is invalid for atomic vectors of mode `character`"
     },
-    "gt::RY092::R/tab_options.R:1054:26": {
-      "package": "gt",
-      "code": "RY092",
-      "path": "R/tab_options.R",
-      "line": 1054,
-      "column": 26,
-      "severity": "error",
-      "message": "argument `option` to `check_string` is `logical<len=1>`, expected character"
-    },
     "httr::RY032::R/content-parse.r:57:7": {
       "package": "httr",
       "code": "RY032",
@@ -3662,33 +3491,6 @@
       "column": 27,
       "severity": "warning",
       "message": "variable `target_platform` is not bound in this scope"
-    },
-    "pak::RY010::R/sizes.R:5:19": {
-      "package": "pak",
-      "code": "RY010",
-      "path": "R/sizes.R",
-      "line": 5,
-      "column": 19,
-      "severity": "warning",
-      "message": "variable `pretty_bytes_default` is not bound in this scope"
-    },
-    "pak::RY010::R/sizes.R:6:17": {
-      "package": "pak",
-      "code": "RY010",
-      "path": "R/sizes.R",
-      "line": 6,
-      "column": 17,
-      "severity": "warning",
-      "message": "variable `pretty_bytes_nopad` is not bound in this scope"
-    },
-    "pak::RY010::R/sizes.R:7:13": {
-      "package": "pak",
-      "code": "RY010",
-      "path": "R/sizes.R",
-      "line": 7,
-      "column": 13,
-      "severity": "warning",
-      "message": "variable `pretty_bytes_6` is not bound in this scope"
     },
     "pak::RY093::R/deps-explain.R:30:20": {
       "package": "pak",
@@ -4734,33 +4536,6 @@
       "severity": "warning",
       "message": "variable `execute_handlers` is not bound in this scope"
     },
-    "rlang::RY010::R/standalone-sizes.R:14:19": {
-      "package": "rlang",
-      "code": "RY010",
-      "path": "R/standalone-sizes.R",
-      "line": 14,
-      "column": 19,
-      "severity": "warning",
-      "message": "variable `pretty_bytes_default` is not bound in this scope"
-    },
-    "rlang::RY010::R/standalone-sizes.R:15:17": {
-      "package": "rlang",
-      "code": "RY010",
-      "path": "R/standalone-sizes.R",
-      "line": 15,
-      "column": 17,
-      "severity": "warning",
-      "message": "variable `pretty_bytes_nopad` is not bound in this scope"
-    },
-    "rlang::RY010::R/standalone-sizes.R:16:13": {
-      "package": "rlang",
-      "code": "RY010",
-      "path": "R/standalone-sizes.R",
-      "line": 16,
-      "column": 13,
-      "severity": "warning",
-      "message": "variable `pretty_bytes_6` is not bound in this scope"
-    },
     "rlang::RY010::R/trace.R:1125:8": {
       "package": "rlang",
       "code": "RY010",
@@ -4841,15 +4616,6 @@
       "column": 9,
       "severity": "warning",
       "message": "`match` is a length-1 character, so `length(...)` is 1 here and this zero-length guard is always TRUE"
-    },
-    "rmarkdown::RY105::R/jupyter.R:109:7": {
-      "package": "rmarkdown",
-      "code": "RY105",
-      "path": "R/jupyter.R",
-      "line": 109,
-      "column": 7,
-      "severity": "warning",
-      "message": "`fmt` is a length-1 character, so `length(...)` is 1 here and this zero-length guard is always FALSE"
     },
     "shiny-r::RY000::inst/app_template/app.R:15:3": {
       "package": "shiny-r",
@@ -5387,51 +5153,6 @@
       "code": "RY010",
       "path": "R/dashboardHeader.R",
       "line": 146,
-      "column": 9,
-      "severity": "warning",
-      "message": "variable `tags` is not bound in this scope"
-    },
-    "shinydashboard::RY010::R/dashboardHeader.R:218:3": {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardHeader.R",
-      "line": 218,
-      "column": 3,
-      "severity": "warning",
-      "message": "variable `tags` is not bound in this scope"
-    },
-    "shinydashboard::RY010::R/dashboardHeader.R:227:5": {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardHeader.R",
-      "line": 227,
-      "column": 5,
-      "severity": "warning",
-      "message": "variable `tags` is not bound in this scope"
-    },
-    "shinydashboard::RY010::R/dashboardHeader.R:229:7": {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardHeader.R",
-      "line": 229,
-      "column": 7,
-      "severity": "warning",
-      "message": "variable `tags` is not bound in this scope"
-    },
-    "shinydashboard::RY010::R/dashboardHeader.R:230:7": {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardHeader.R",
-      "line": 230,
-      "column": 7,
-      "severity": "warning",
-      "message": "variable `tags` is not bound in this scope"
-    },
-    "shinydashboard::RY010::R/dashboardHeader.R:231:9": {
-      "package": "shinydashboard",
-      "code": "RY010",
-      "path": "R/dashboardHeader.R",
-      "line": 231,
       "column": 9,
       "severity": "warning",
       "message": "variable `tags` is not bound in this scope"

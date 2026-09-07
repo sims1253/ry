@@ -248,6 +248,10 @@ All notable changes to ry are documented in this file.
 - Avoid RY098 warnings for recursive names in default expressions when literal
   `if` conditions or short-circuit operators skip their evaluation.
 
+- Select only the executed alternative for proved base `switch` calls with
+  literal scalar selectors, preserving missing fallthrough and caller assignments.
+  Dynamic selectors and custom-call argument laziness remain outside this model.
+
 - Correct typed purrr multi-input map results and remove an unsupported scalar-length fallback. Await the mirai oracle result before shutting down its daemons.
 
 - Watch custom editor configuration paths and reload settings when the path changes, retaining the last valid configuration after malformed edits.

@@ -16,6 +16,7 @@ mod narrow;
 pub(crate) mod pipe;
 mod quoting;
 pub(crate) mod recall;
+mod switch;
 mod types;
 
 /// Join an entire collection of types into one: the lattice join of every

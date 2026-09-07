@@ -69,3 +69,4 @@ mod deferred_calls;
 
 mod missing_args;
 mod printf_provenance;
+mod switch_selection;

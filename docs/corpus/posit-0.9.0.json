@@ -26,7 +26,7 @@
       "repo": "tidyverse/dplyr",
       "stars": 5054,
       "commit": "d5e94e7fa8fd4a5f79c1a707d1842216bb4c691f",
-      "diagnostics": 30
+      "diagnostics": 20
     },
     {
       "name": "gt",
@@ -1453,33 +1453,6 @@
     },
     {
       "package": "dplyr",
-      "code": "RY002",
-      "path": "tests/testthat/test-mutate.R",
-      "line": 793,
-      "column": 16,
-      "label": "false_positive",
-      "audit_group": "data-masking-nse"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY002",
-      "path": "tests/testthat/test-summarise.R",
-      "line": 321,
-      "column": 11,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY002",
-      "path": "tests/testthat/test-summarise.R",
-      "line": 331,
-      "column": 38,
-      "label": "false_positive",
-      "audit_group": "test-fixture"
-    },
-    {
-      "package": "dplyr",
       "code": "RY010",
       "path": "R/conditions.R",
       "line": 310,
@@ -1580,60 +1553,6 @@
     {
       "package": "dplyr",
       "code": "RY040",
-      "path": "tests/testthat/test-count-tally.R",
-      "line": 139,
-      "column": 38,
-      "label": "false_positive",
-      "audit_group": "test-fixture"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-count-tally.R",
-      "line": 173,
-      "column": 38,
-      "label": "false_positive",
-      "audit_group": "test-fixture"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-count-tally.R",
-      "line": 214,
-      "column": 42,
-      "label": "false_positive",
-      "audit_group": "test-fixture"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-count-tally.R",
-      "line": 245,
-      "column": 42,
-      "label": "false_positive",
-      "audit_group": "test-fixture"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-mutate.R",
-      "line": 408,
-      "column": 23,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY040",
-      "path": "tests/testthat/test-mutate.R",
-      "line": 410,
-      "column": 36,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY040",
       "path": "tests/testthat/test-select.R",
       "line": 167,
       "column": 34,
@@ -1672,15 +1591,6 @@
       "code": "RY060",
       "path": "tests/testthat/test-group-by.R",
       "line": 40,
-      "column": 16,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY060",
-      "path": "tests/testthat/test-mutate.R",
-      "line": 794,
       "column": 16,
       "label": "false_positive",
       "audit_group": "type-narrowing"
@@ -6773,12 +6683,12 @@
   ],
   "classification": {
     "true_positive": 43,
-    "false_positive": 660,
+    "false_positive": 650,
     "uncertain": 0
   },
   "audit_group_counts": {
     "manual-audit": 378,
-    "data-masking-nse": 4,
+    "data-masking-nse": 3,
     "delayed-assign": 15,
     "function-shadowing": 3,
     "local-closure-forward-ref": 31,
@@ -6786,8 +6696,8 @@
     "numeric-if-idiom": 3,
     "reassign-scope": 10,
     "s3-method-dispatch": 3,
-    "test-fixture": 76,
-    "type-narrowing": 103,
+    "test-fixture": 71,
+    "type-narrowing": 99,
     "upstream-package": 31
   },
   "notes": [
@@ -6795,6 +6705,7 @@
     "The RY032 cleanup produced a zero diagnostic identity delta from the measured starting-tree baseline. Later intentional behavior changes must update this ledger with a reviewed identity diff.",
     "Every identity has a retained or manually audited label; this strict ledger is a CI gate, not an audit transcript.",
     "The sole force-contract identity delta removes gt RY098 at R/cols_align.R:198:17, retaining its existing reviewed false-positive classification. This is a conservative coverage reduction for the col_classes default after opaque names()/index selection, not a runtime disproof of recursion when that default is omitted. Full hermetic regeneration preserves every other finding; stale per-package summary counts were recomputed from the same reports.",
-    "Constructor provenance guards remove four previously reviewed RY061 false positives in rlang tests/testthat/test-nse-defuse.R:829\u2013832. The custom S3 result stays unknown when the class constructor cannot be proved; the rest of the CI identity set is unchanged."
+    "Constructor provenance guards remove four previously reviewed RY061 false positives in rlang tests/testthat/test-nse-defuse.R:829\u2013832. The custom S3 result stays unknown when the class constructor cannot be proved; the rest of the CI identity set is unchanged.",
+    "Unproven factor/new calls now discard downstream facts because the callee or skipped arguments may change caller bindings. This reduces coverage by ten previously audited dplyr identities: RY002 test-mutate.R:793 and test-summarise.R:321/331; RY040 test-count-tally.R:139/173/214/245 and test-mutate.R:408/410; RY060 test-mutate.R:794 (all under tests/testthat/). These are conservative coverage losses after uncertain bare factor calls, not ten individually corrected false positives. Their existing false-positive labels are unchanged; all 43 required true positives remain covered."
   ]
 }

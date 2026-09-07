@@ -6,6 +6,10 @@ All notable changes to ry are documented in this file.
 
 ### Added
 
+- Capture the argument read in standalone proven `base::length(x)` calls.
+  Preserve local/formal identity at that read and keep the post-call suffix
+  unsupported, including fresh assignments.
+
 - Export reference identities across ordinary literal/copy reassignments and
   retain proven reads before opaque statements. The schema-2 reference
   capability is now `same_file_ordered_prefix`; coverage remains partial.

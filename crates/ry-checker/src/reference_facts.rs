@@ -6,7 +6,7 @@
 use std::collections::{HashMap, HashSet};
 use std::ops::ControlFlow;
 
-use ry_core::ast::{Expr, Param, SourceFile, Stmt};
+use ry_core::ast::{Arg, Expr, Param, SourceFile, Stmt};
 use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
 use ry_core::{RType, Span};
 
@@ -98,6 +98,7 @@ pub(crate) struct ReferenceCapture {
     installed: HashSet<DefinitionId>,
     occurrences: HashMap<Span, Occurrence>,
     eligible_scopes: HashSet<Span>,
+    eager_argument_candidates: HashMap<Span, Span>,
 }
 
 impl ReferenceCapture {
@@ -135,6 +136,7 @@ impl ReferenceCapture {
         let mut references = Vec::new();
         let mut functions = Vec::new();
         let mut defaults = Vec::new();
+        let mut eager_candidates = Vec::new();
         for param in params {
             if let Some(key) = ordinary_spelling(&param.name) {
                 if !formals.insert(key.to_string()) {
@@ -165,6 +167,10 @@ impl ReferenceCapture {
         }
         let mut supported_prefix = true;
         for statement in stmts {
+            if supported_prefix && let Some(candidate) = eager_argument_candidate(source, statement)
+            {
+                eager_candidates.push(candidate);
+            }
             let mut unsupported_statement = false;
             let mut statement_declarations = Vec::new();
             let mut statement_references = Vec::new();
@@ -265,6 +271,7 @@ impl ReferenceCapture {
         }
         if !unsafe_scope {
             self.eligible_scopes.insert(owner);
+            self.eager_argument_candidates.extend(eager_candidates);
             declarations.sort_by_key(|(_, span, _, _)| (span.start, span.end));
             for (name, span, kind, eligible) in declarations {
                 if !eligible || !Self::source_backed(source, span) {
@@ -356,6 +363,62 @@ fn ordinary_spelling(name: &str) -> Option<&str> {
     }
 }
 
+// Nominate syntax only. Callable identity and the forcing contract are checked
+// by the diagnostic walk before its existing identifier observer can capture it.
+fn eager_argument_candidate(source: &str, statement: &Stmt) -> Option<(Span, Span)> {
+    let Stmt::Expr(Expr::Call { func, args, span }) = statement else {
+        return None;
+    };
+    let Expr::Ident {
+        name,
+        span: callee_span,
+    } = func.as_ref()
+    else {
+        return None;
+    };
+    if name != "base::length" || callee_span.start != span.start {
+        return None;
+    }
+    let [
+        Arg {
+            name: None,
+            value:
+                Expr::Ident {
+                    name,
+                    span: argument_span,
+                },
+            ..
+        },
+    ] = args.as_slice()
+    else {
+        return None;
+    };
+    ordinary_spelling(name)?;
+    // Parentheses are erased by AST lowering. Certify the direct identifier
+    // argument and reject a surrounding parenthesized expression from source.
+    let before = skip_reference_trivia(source.get(callee_span.end..argument_span.start)?);
+    if !skip_reference_trivia(before.strip_prefix('(')?).is_empty() {
+        return None;
+    }
+    if skip_reference_trivia(source.get(argument_span.end..span.end)?) != ")"
+        || skip_reference_trivia(source.get(span.end..)?).starts_with(')')
+    {
+        return None;
+    }
+    Some((*span, *argument_span))
+}
+
+// These slices start between source-backed AST tokens, never inside strings.
+fn skip_reference_trivia(mut source: &str) -> &str {
+    loop {
+        source = source.trim_start();
+        if !source.starts_with('#') {
+            return source;
+        }
+        source = source.split_once('\n').map_or("", |(_, rest)| rest);
+    }
+}
+
 fn simple_value(expr: &Expr) -> bool {
     matches!(
         expr,
@@ -396,6 +459,55 @@ impl Checker {
                 after_unsafe_read: false,
                 bindings: HashMap::new(),
             }));
+        }
+    }
+
+    pub(crate) fn enable_eager_reference_argument(
+        &mut self,
+        func: &Expr,
+        args: &[Arg],
+        scope: &Scope,
+        call_span: Span,
+    ) {
+        if self.discarding {
+            return;
+        }
+        let Some(argument_span) = self
+            .reference_capture
+            .as_ref()
+            .and_then(|capture| capture.eager_argument_candidates.get(&call_span))
+            .copied()
+        else {
+            return;
+        };
+        let Expr::Ident { name, .. } = func else {
+            return;
+        };
+        // The nomination is deliberately limited to literal base::length.
+        // Normal argument inference is not evidence of R evaluation order.
+        if name != "base::length"
+            || !matches!(
+                self.special_call_provenance(name, func, name, "length", "base", scope),
+                crate::resolve::SpecialCallProvenance::Proven
+            )
+            || crate::infer::quoting::forced_argument(self, func, args)
+                .is_none_or(|argument| span_of(argument) != argument_span)
+        {
+            return;
+        }
+        let Some(provenance) = scope.reference_provenance.as_ref() else {
+            return;
+        };
+        let occurrence = self
+            .reference_capture
+            .as_mut()
+            .unwrap()
+            .occurrences
+            .get_mut(&argument_span);
+        if let Some(occurrence) = occurrence
+            && occurrence.owner == provenance.owner
+        {
+            occurrence.eligible = true;
         }
     }
 
@@ -591,6 +703,173 @@ mod tests {
 
     fn named<'a>(facts: &'a ReferenceFacts, name: &str) -> Vec<&'a ReferenceRecord> {
         facts.references.iter().filter(|r| r.name == name).collect()
+    }
+
+    #[test]
+    fn eager_length_reference_uses_existing_local_and_formal_evidence() {
+        for (source, name, mode, kind) in [
+            (
+                "x <- 1L\nbase::length(x)",
+                "x",
+                Mode::Integer,
+                ReferenceDefinitionKind::Assignment,
+            ),
+            (
+                "x <- 1L\nbase::length( # before\nx # after\n)",
+                "x",
+                Mode::Integer,
+                ReferenceDefinitionKind::Assignment,
+            ),
+            (
+                "f <- function(x) { base::length(x) }",
+                "x",
+                Mode::Opaque,
+                ReferenceDefinitionKind::Formal,
+            ),
+            (
+                "f <- function(x = 1L) { base::length(x) }",
+                "x",
+                Mode::Opaque,
+                ReferenceDefinitionKind::Formal,
+            ),
+            (
+                "é <- 1L\nbase::length(é)",
+                "é",
+                Mode::Integer,
+                ReferenceDefinitionKind::Assignment,
+            ),
+        ] {
+            let captured = facts(source);
+            let read = named(&captured, name)[0];
+            assert_eq!(
+                read.resolution,
+                ReferenceResolution::Resolved,
+                "{source}: {captured:?}"
+            );
+            assert_eq!(read.type_at_reference.as_ref().unwrap().mode, mode);
+            assert_eq!(&source[read.span.start..read.span.end], name);
+            let definition = captured
+                .definitions
+                .iter()
+                .find(|d| Some(d.id) == read.definition)
+                .unwrap();
+            assert_eq!(definition.kind, kind);
+            assert_eq!(&source[definition.span.start..definition.span.end], name);
+        }
+    }
+
+    #[test]
+    fn eager_length_reference_keeps_shape_and_provenance_exclusions() {
+        for source in [
+            "x <- 1L; length(x)",
+            "x <- 1L; alias <- base::length; alias(x)",
+            "x <- 1L; base::length(x = x)",
+            "x <- 1L; base::length(x, x)",
+            "x <- 1L; base::length(x, )",
+            "x <- 1L; base::length(...)",
+            "x <- 1L; base::length(..1)",
+            "x <- 1L; base::length(x + 1L)",
+            "x <- 1L; y <- base::length(x)",
+            "x <- 1L; identity(base::length(x))",
+            "x <- 1L; (base::length(x))",
+            "x <- 1L; (base::length(x) # comment\n)",
+            "x <- 1L; base::length((x))",
+            "x <- 1L; (base::length)(x)",
+            "x <- 1L; stats::length(x)",
+            "x <- 1L; base:::length(x)",
+            "x <- 1L; mutate(); base::length(x)",
+            "f <- function(x) base::length(x); mutate()",
+            "f <- function(x, `::`) base::length(x)",
+            "f <- function(x) { x <- 1L; base::length(x) }",
+            "x <- 1L; f <- function() base::length(x)",
+            "f <- function(x) { x; base::length(x) }",
+            "f <- function(x) { unknown; base::length(x) }",
+            "lazy <- function(x) 1L; x <- 1L; lazy(x)",
+            "x <- 1L; quote(base::length(x))",
+            "x <- 1L; with(data, base::length(x))",
+            "base::length(untracked)",
+        ] {
+            let captured = facts(source);
+            let last = captured.references.last().unwrap();
+            assert_ne!(
+                last.resolution,
+                ReferenceResolution::Resolved,
+                "{source}: {captured:?}"
+            );
+            assert!(
+                last.definition.is_none() && last.type_at_reference.is_none(),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn eager_length_reference_ends_the_prefix_even_for_a_known_local() {
+        for source in [
+            "x <- 1L; base::length(x); x <- 2L; x",
+            "f <- function(p = { x <- 'changed'; 1L }) { x <- 1L; base::length(p); x }",
+        ] {
+            let captured = facts(source);
+            let argument = &captured.references[captured.references.len() - 2];
+            assert_eq!(
+                argument.resolution,
+                ReferenceResolution::Resolved,
+                "{source}: {captured:?}"
+            );
+            let suffix = captured.references.last().unwrap();
+            assert_eq!(suffix.resolution, ReferenceResolution::Unsupported);
+            assert!(suffix.definition.is_none() && suffix.type_at_reference.is_none());
+            let callee = named(&captured, "base::length")[0];
+            assert_eq!(callee.resolution, ReferenceResolution::Unsupported);
+            assert!(callee.definition.is_none());
+        }
+    }
+
+    #[test]
+    fn eager_length_reference_requires_shared_forcing_metadata() {
+        let mut checker = Checker::new("refs.R");
+        std::sync::Arc::make_mut(&mut checker.typeshed)
+            .functions
+            .get_mut("length")
+            .unwrap()
+            .force = None;
+        checker.enable_reference_capture();
+        checker.check(&file("x <- 1L; base::length(x)"));
+        let captured = checker.take_reference_facts();
+        assert_eq!(
+            named(&captured, "x")[0].resolution,
+            ReferenceResolution::Unsupported
+        );
+    }
+
+    #[test]
+    fn eager_length_reference_is_deterministic_and_does_not_change_inference() {
+        for source in [
+            "é <- 1L; base::length(é); é <- 'changed'; é",
+            "f <- function(p = { x <- 'changed'; 1L }) { x <- 1L; base::length(p); x }",
+            "length.widget <- function(x) { marker <<- 'changed'; 1L }; f <- function(x) { base::length(x); marker }",
+            "f <- function(x, `::`) base::length(x)",
+        ] {
+            let file = file(source);
+            let mut plain = Checker::new("refs.R");
+            let (plain_diagnostics, plain_scope) = plain.check_with_scope(&file);
+            let mut captured = Checker::new("refs.R");
+            captured.enable_reference_capture();
+            let (captured_diagnostics, captured_scope) = captured.check_with_scope(&file);
+            assert_eq!(plain_scope.bindings, captured_scope.bindings, "{source}");
+            assert_eq!(
+                format!("{plain_diagnostics:?}"),
+                format!("{captured_diagnostics:?}"),
+                "{source}"
+            );
+            let first = captured.take_reference_facts();
+            captured.check(&file);
+            assert_eq!(
+                format!("{first:?}"),
+                format!("{:?}", captured.take_reference_facts()),
+                "{source}"
+            );
+        }
     }
 
     #[test]

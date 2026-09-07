@@ -373,7 +373,11 @@ fn qualified_signature<'a>(
     typeshed.functions.get(function)
 }
 
-fn forced_argument<'a>(checker: &Checker, func: &Expr, args: &'a [Arg]) -> Option<&'a Expr> {
+pub(crate) fn forced_argument<'a>(
+    checker: &Checker,
+    func: &Expr,
+    args: &'a [Arg],
+) -> Option<&'a Expr> {
     let signature = qualified_signature(checker, func)?;
     let ry_typeshed::ForceSpec::SoleArgument { param, allow_named } = signature.force.as_ref()?;
     let [argument] = args else { return None };

@@ -316,3 +316,40 @@ fn equivalent_identifier_spellings_and_syntax_rebinding_fail_closed() {
         assert_uncertain(&reference_at(&output, source, "y <- x", "x"));
     }
 }
+
+#[test]
+fn eager_length_argument_exports_point_evidence_and_keeps_suffix_unsupported() {
+    for (source, name, mode, kind) in [
+        (
+            "é <- 1L; base::length(é); é <- 'later'; é",
+            "é",
+            "integer",
+            "assignment",
+        ),
+        (
+            "f <- function(p = { x <- 'changed'; 1L }) { x <- 1L; base::length(p); x }",
+            "p",
+            "opaque",
+            "formal",
+        ),
+    ] {
+        let output = analyze(source);
+        let fragment = format!("base::length({name})");
+        let read = reference_at(&output, source, &fragment, name);
+        assert_eq!(read["resolution_status"], "resolved");
+        assert_eq!(read["type_at_reference"]["mode"], mode);
+        assert_eq!(definition(&output, &read)["kind"], kind);
+        assert_uncertain(&reference_at(&output, source, &fragment, "base::length"));
+        let references = output["files"][0]["references"].as_array().unwrap();
+        assert_uncertain(references.last().unwrap());
+        let repeated = analyze(source);
+        assert_eq!(
+            output["files"][0]["references"],
+            repeated["files"][0]["references"]
+        );
+        assert_eq!(
+            output["files"][0]["definitions"],
+            repeated["files"][0]["definitions"]
+        );
+    }
+}
